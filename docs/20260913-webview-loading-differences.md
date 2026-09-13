@@ -67,7 +67,7 @@ web 侧对全部命名空间 `?.` 降级守卫，宿主缺能力即 no-op——�
 
 **已收口**：`host.getProduct()` 已按商业同款契约补入社区线（构建期注入派生、不走 IPC、无硬编码身份分支）——web 新版可凭它识别 NuwaClaw 宿主。
 
-**待落地（web 侧，建议随 nuwax 下轮）**：`isImmersiveShell()` / `NavigationStylePanel.isNavStyleLocked` 的判定从「桥存在」收窄为「桥存在且 `getProduct() ∈ {nuwax, nuwawork}`」——否则社区宿主（桥已注入）会被 web 套上沉浸式单栏锁定与商业 chrome 几何避让（TOP 36 / CONTENT_TOP 28 / RIGHT 130 / TOOLBAR 44，按商业顶行写死）。旧商业宿主（无 host 命名空间）的兼容取向由商业侧定：保旧宿主可用 `getProduct() !== 'nuwaclaw'` 反转默认。
+**已实施（web 侧，2026-09-13）**：nuwax `feat-2026.9.30` 提交 `4415954f1`——`isDesktopHost()`（`getProduct() ∈ {nuwax, nuwawork}`）成为桌面适配唯一判定；`isImmersiveShell()`/单栏锁定（NavigationStylePanel、useUnifiedTheme、workbenchHistoryBase）/右键另存（OptimizedImage）/企业登录入口（Login）/主题壳同步（nuwaClawTheme）全部收口到商业宿主；`isNuwaClaw()` 降为环境探测专用并立使用纪律。产品规则落注释：**社区宿主（NuwaClaw 客户端）与浏览器同形态，不做沉浸退让与任何客户端特殊适配**。含社区宿主正反用例（54/54 绿，tsc 改动面干净；存量 dark/light 类型错误为分支原有）。旧商业宿主兼容取向选保守版（无 host 命名空间 → 回落浏览器行为），如需保旧宿主改 `getProduct() !== 'nuwaclaw'` 即可。该提交随分支推送发布（注意分支另有 ahead-1 在途提交）。
 
 **社区侧净缺口（产品决策项，非缺陷）**：
 1. **免重登**（auth 桥缺失，每次重启可能重登 webview）——属商业「登录架构重做」行为面，按「社区只保 0.13 历史兼容」边界默认不接，是否移植待拍板。
