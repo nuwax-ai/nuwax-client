@@ -1,59 +1,36 @@
 /**
- * 设置页面（对齐 Tauri 客户端）
+ * 设置页面（商业版行式重构：分组行列表 + 行内即点即存）
  *
  * 功能：
- * - 服务配置（端口、工作区目录）
- * - AI 配置（API key、模型、max_tokens、温度）
- * - 系统设置（主题、开机自启动、日志目录）
+ * - 服务（服务域名、工作区目录）
+ * - 高级（端口，默认折叠）
+ * - 系统（开机自启、本地化加速、主题、语言）
+ * - 目录（应用数据、日志）
+ *
+ * 交互语义（与旧「表单编辑解锁」版对齐，仅范式变化）：
+ * - 服务域名：行内提交 → 确认弹窗 → configureServerHost 事务（清 token→停服→写库→刷新回环网关）
+ * - 端口/工作区：行内提交保存 step1_config，提示需重启服务生效
  */
 
-import React, {
-  useState,
-  useEffect,
-  useCallback,
-  Suspense,
-  useRef,
-} from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import {
-  Button,
-  Form,
-  Row,
-  Col,
-  Input,
   AutoComplete,
+  Button,
   InputNumber,
   Select,
-  Slider,
-  Space,
+  Spin,
   Switch,
   message,
   Modal,
-  Spin,
-  Tooltip,
 } from "antd";
+import { RightOutlined } from "@ant-design/icons";
 import {
-  FolderOutlined,
-  SaveOutlined,
-  EditOutlined,
-  SettingOutlined,
-  DesktopOutlined,
-  ReloadOutlined,
-} from "@ant-design/icons";
-import { APP_DISPLAY_NAME, APP_DATA_DIR_NAME } from "@shared/constants";
-import {
-  setupService,
-  Step1Config,
-  DEFAULT_STEP1_CONFIG,
-} from "../../services/core/setup";
-import {
-  DEFAULT_AI_MODEL,
-  DEFAULT_MAX_TOKENS,
-  DEFAULT_TEMPERATURE,
-  MODEL_OPTIONS,
-  STORAGE_KEYS,
+  APP_DISPLAY_NAME,
+  APP_DATA_DIR_NAME,
   I18N_KEYS,
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
+import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   t,
   setCurrentLang,
@@ -62,9 +39,8 @@ import {
   prefetchLangMap,
   type I18nLangDto,
 } from "../../services/core/i18n";
-import i18next from "../../services/i18n";
 
-import styles from "../../styles/components/ClientPage.module.css";
+import styles from "../../styles/components/SettingsPage.module.css";
 import { useTheme, useI18nLang, type ThemeMode } from "../../App";
 
 // Dev tools: 仅开发模式加载
@@ -72,21 +48,6 @@ const IS_DEV = import.meta.env.DEV;
 const DevToolsPanel = IS_DEV
   ? React.lazy(() => import("../dev/DevToolsPanel"))
   : null;
-
-// AI 配置接口
-interface AISettings {
-  default_model: string;
-  max_tokens: number;
-  temperature: number;
-}
-
-const DEFAULT_AI_SETTINGS: AISettings = {
-  default_model: DEFAULT_AI_MODEL,
-  max_tokens: DEFAULT_MAX_TOKENS,
-  temperature: DEFAULT_TEMPERATURE,
-};
-
-// Backend options are not exposed in UI — "auto" is used by default.
 
 // 本地支持的语言选项（兜底用）
 // 使用与后端一致的完整语言码格式（如 zh-cn），与 i18nLang 格式对齐
@@ -97,111 +58,89 @@ const LOCAL_LANG_OPTIONS = [
   { value: "zh-hk", label: t("Claw.Settings.system.langChineseHK") },
 ];
 
+type PortKey = "fileServerPort" | "agentPort" | "ttydPort";
+const PORT_LABELS: Record<PortKey, string> = {
+  fileServerPort: "Claw.Settings.saveConfig.fileServerPort",
+  agentPort: "Claw.Settings.saveConfig.agentPort",
+  ttydPort: "Claw.Settings.saveConfig.ttydPort",
+};
+
+// 行式列表的单行：左标签+描述、右控件
+function SettingsRow(props: {
+  label: React.ReactNode;
+  desc?: React.ReactNode;
+  descMono?: boolean;
+  control?: React.ReactNode;
+}) {
+  const { label, desc, descMono, control } = props;
+  return (
+    <div className={styles.row}>
+      <div className={styles.rowInfo}>
+        <div className={styles.rowLabel}>{label}</div>
+        {desc != null && (
+          <div
+            className={
+              descMono
+                ? `${styles.rowDesc} ${styles.rowDescMono}`
+                : styles.rowDesc
+            }
+          >
+            {desc}
+          </div>
+        )}
+      </div>
+      {control != null && <div className={styles.rowControl}>{control}</div>}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   // 主题
   const { themeMode, setThemeMode } = useTheme();
 
-  // 服务配置
-  const [form] = Form.useForm<Step1Config>();
+  // 服务配置（config 为已保存值；draft 为行内未提交输入）
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [originalConfig, setOriginalConfig] = useState<Step1Config | null>(
-    null,
-  );
-
-  // AI 配置
-  const [aiForm] = Form.useForm<AISettings & { apiKey: string }>();
-  const [aiEditing, setAiEditing] = useState(false);
-  const [aiSaving, setAiSaving] = useState(false);
-  const [originalAiConfig, setOriginalAiConfig] = useState<
-    (AISettings & { apiKey: string }) | null
-  >(null);
+  const [config, setConfig] = useState<Step1Config | null>(null);
+  const [hostDraft, setHostDraft] = useState<string | null>(null);
+  const [portDrafts, setPortDrafts] = useState<
+    Partial<Record<PortKey, number | null>>
+  >({});
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // 系统设置
   const [autolaunchEnabled, setAutolaunchEnabled] = useState(false);
   const [autolaunchLoading, setAutolaunchLoading] = useState(false);
   const [logDir, setLogDir] = useState("");
+
+  // 本地化加速（即点即存）：映射 nuwaxLoadMode → 保存后重启生效
+  const [loopbackEnabled, setLoopbackEnabled] = useState(false);
+  const [loopbackApplying, setLoopbackApplying] = useState(false);
+
+  // 语言
   const { lang: i18nLang } = useI18nLang();
-  const [langChanging, setLangChanging] = useState(false);
   const [langList, setLangList] = useState<I18nLangDto[]>([]);
   const [langConfirmModalVisible, setLangConfirmModalVisible] = useState(false);
   const [langConfirmLoading, setLangConfirmLoading] = useState(false);
   const [pendingLang, setPendingLang] = useState("");
 
-  // 使用表单中的 workspaceDir 作为"系统模块"的展示源，确保编辑保存后展示保持实时一致。
-  const workspaceDir = Form.useWatch("workspaceDir", form) || "";
+  // 工作区目录行展示源：保存后即时跟随
+  const workspaceDir = config?.workspaceDir ?? "";
 
   // ========== 加载服务配置 ==========
-  // 本地化加速（「系统」区块开关，即点即存）：映射 nuwaxLoadMode → 保存后重启生效
-  //（服务域名 serverHost 归「服务配置」区块管理——前后端一体语义）
-  const [loopbackEnabled, setLoopbackEnabled] = useState(false);
-  const [loopbackApplying, setLoopbackApplying] = useState(false);
-
-  const handleLoopbackChange = async (checked: boolean) => {
-    setLoopbackApplying(true);
-    try {
-      const existing = await setupService.getStep1Config();
-      await setupService.saveStep1Config({
-        ...existing,
-        nuwaxLoadMode: checked ? "gateway" : "direct",
-      });
-      await window.electronAPI?.services?.restartAll?.();
-      setLoopbackEnabled(checked);
-      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-    } catch {
-      // 失败必须可见且状态不落定——静默会让用户误以为已生效
-      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-    } finally {
-      setLoopbackApplying(false);
-    }
-  };
-
   const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const config = await setupService.getStep1Config();
-      // 本地化加速状态按 nuwaxLoadMode 反推（服务域名 serverHost 归「服务配置」
-      // 表单原样带协议展示；登录流程改域会回写，此处自然跟随）
-      const loopbackOn =
-        ((config as unknown as Record<string, unknown>).nuwaxLoadMode ??
-          "direct") === "gateway";
-      const enriched = {
-        ...config,
-      };
-      form.setFieldsValue(enriched);
-      setLoopbackEnabled(loopbackOn);
-      setOriginalConfig(enriched);
+      const loaded = await setupService.getStep1Config();
+      setConfig(loaded);
+      setLoopbackEnabled((loaded.nuwaxLoadMode ?? "direct") === "gateway");
     } catch (error) {
       console.error("Failed to load config:", error);
       message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
     } finally {
       setLoading(false);
     }
-  }, [form]);
-
-  // ========== 加载 AI 配置 ==========
-  const loadAiConfig = useCallback(async () => {
-    try {
-      const apiKey = (await window.electronAPI?.settings.get(
-        STORAGE_KEYS.API_KEY,
-      )) as string | null;
-      const settings = (await window.electronAPI?.settings.get(
-        "app_settings",
-      )) as AISettings | null;
-      const aiConfig = {
-        apiKey: apiKey || "",
-        default_model:
-          settings?.default_model || DEFAULT_AI_SETTINGS.default_model,
-        max_tokens: settings?.max_tokens || DEFAULT_AI_SETTINGS.max_tokens,
-        temperature: settings?.temperature ?? DEFAULT_AI_SETTINGS.temperature,
-      };
-      aiForm.setFieldsValue(aiConfig);
-      setOriginalAiConfig(aiConfig);
-    } catch (error) {
-      console.error("Failed to load AI config:", error);
-    }
-  }, [aiForm]);
+  }, []);
 
   // ========== 加载系统设置 ==========
   const loadSystemSettings = useCallback(async () => {
@@ -221,7 +160,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadConfig();
-    loadAiConfig();
     loadSystemSettings();
 
     // 监听来自托盘等外部修改的自启动状态变化
@@ -238,7 +176,7 @@ export default function SettingsPage() {
         handleAutolaunchChanged as any,
       );
     };
-  }, [loadConfig, loadAiConfig, loadSystemSettings]);
+  }, [loadConfig, loadSystemSettings]);
 
   // ========== 加载语言列表 ==========
   useEffect(() => {
@@ -255,104 +193,135 @@ export default function SettingsPage() {
     loadLangList();
   }, []);
 
-  // ========== 服务配置操作 ==========
-  const handleSelectWorkspace = async () => {
+  // ========== 服务域名：行内提交 → 确认 → configureServerHost 事务 ==========
+  // 协议归一：支持带 http(s)://，未含默认补 https://
+  //（与登录域/lanproxy 探针的后端域解析同式，见 loopback 设计文档 §6）
+  const normalizeHost = (raw: string) => {
+    const host = raw.trim().replace(/\/+$/, "");
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(host) ? host : `https://${host}`;
+  };
+
+  const commitHost = () => {
+    const draft = hostDraft;
+    if (draft == null) return;
+    setHostDraft(null);
+    const saved = config?.serverHost ?? "";
+    const next = normalizeHost(draft);
+    if (!next || next === saved) return;
+    Modal.confirm({
+      title: t("Claw.Settings.messages.saveConfig"),
+      content: t("Claw.Settings.messages.saveConfigConfirm"),
+      okText: t("Claw.Settings.saveConfig.save"),
+      cancelText: t("Claw.Settings.saveConfig.cancel"),
+      onOk: async () => {
+        setSaving(true);
+        try {
+          const switched =
+            await window.electronAPI!.services.configureServerHost(next);
+          if (!switched.success)
+            throw new Error(switched.error || "Domain switch failed");
+          const latest = await setupService.getStep1Config();
+          await setupService.saveStep1Config({
+            ...latest,
+            serverHost: switched.serverHost!,
+          });
+          setConfig({ ...latest, serverHost: switched.serverHost! });
+          message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+        } catch (error) {
+          console.error("Failed to switch server host:", error);
+          message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  };
+
+  // ========== 端口：行内提交，保存后提示需重启生效 ==========
+  const commitPort = async (key: PortKey) => {
+    if (!(key in portDrafts)) return;
+    const draft = portDrafts[key];
+    setPortDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    const saved = config?.[key];
+    if (draft == null || draft === saved) return;
+    setSaving(true);
+    try {
+      const latest = await setupService.getStep1Config();
+      await setupService.saveStep1Config({ ...latest, [key]: draft });
+      setConfig({ ...latest, [key]: draft });
+      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+      message.info(t("Claw.Settings.saveConfig.restartHint"));
+    } catch (error) {
+      console.error("Failed to save port:", error);
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ========== 工作区目录：修改 / 打开 ==========
+  const handleModifyWorkspace = async () => {
     const result = await window.electronAPI?.dialog.openDirectory(
       t("Claw.Settings.dialog.selectWorkspace"),
     );
-    if (result?.success && result.path) {
-      form.setFieldValue("workspaceDir", result.path);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    if (originalConfig) {
-      form.setFieldsValue(originalConfig);
-    }
-    setEditing(false);
-  };
-
-  const handleSave = async () => {
+    if (!result?.success || !result.path) return;
+    setSaving(true);
     try {
-      const values = await form.validateFields();
-
-      Modal.confirm({
-        title: t("Claw.Settings.messages.saveConfig"),
-        content: t("Claw.Settings.messages.saveConfigConfirm"),
-        okText: t("Claw.Settings.saveConfig.save"),
-        cancelText: t("Claw.Settings.saveConfig.cancel"),
-        onOk: async () => {
-          setSaving(true);
-          try {
-            const existing = await setupService.getStep1Config();
-            const patch = { ...values };
-            // 服务域名协议归一：支持带 http(s)://，未含默认补 https://
-            //（与登录域/lanproxy 探针的后端域解析同式，见 loopback 设计文档 §6）
-            if (typeof patch.serverHost === "string") {
-              const host = patch.serverHost.trim().replace(/\/+$/, "");
-              patch.serverHost = /^[a-z][a-z0-9+.-]*:\/\//i.test(host)
-                ? host
-                : `https://${host}`;
-            }
-            if (existing.serverHost !== patch.serverHost) {
-              const switched =
-                await window.electronAPI!.services.configureServerHost(
-                  patch.serverHost,
-                );
-              if (!switched.success)
-                throw new Error(switched.error || "Domain switch failed");
-              patch.serverHost = switched.serverHost!;
-            }
-            await setupService.saveStep1Config({ ...existing, ...patch });
-            setOriginalConfig({ ...values, serverHost: patch.serverHost });
-            setEditing(false);
-            message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-          } catch (error) {
-            message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-          } finally {
-            setSaving(false);
-          }
-        },
+      const latest = await setupService.getStep1Config();
+      await setupService.saveStep1Config({
+        ...latest,
+        workspaceDir: result.path,
       });
-    } catch {
-      // form validation failed
+      setConfig({ ...latest, workspaceDir: result.path });
+      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+      message.info(t("Claw.Settings.saveConfig.restartHint"));
+    } catch (error) {
+      console.error("Failed to save workspace dir:", error);
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    } finally {
+      setSaving(false);
     }
   };
 
-  // ========== AI 配置操作 ==========
-  const handleCancelAiEdit = () => {
-    if (originalAiConfig) {
-      aiForm.setFieldsValue(originalAiConfig);
+  const handleOpenWorkspaceDir = async () => {
+    // 没有有效目录时直接提示，避免触发无意义 IPC 调用。
+    if (!workspaceDir) {
+      message.warning(t("Claw.Settings.messages.workspaceNotConfigured"));
+      return;
     }
-    setAiEditing(false);
-  };
-
-  const handleSaveAiConfig = async () => {
     try {
-      const values = await aiForm.validateFields();
-      setAiSaving(true);
-      try {
-        // 保存 API Key
-        await window.electronAPI?.settings.set(
-          STORAGE_KEYS.API_KEY,
-          values.apiKey || "",
+      const result = await window.electronAPI?.shell?.openPath(workspaceDir);
+      if (!result?.success) {
+        message.error(
+          result?.error || t("Claw.Settings.messages.openWorkspaceFailed"),
         );
-        // 保存其他 AI 设置
-        await window.electronAPI?.settings.set("app_settings", {
-          default_model: values.default_model,
-          max_tokens: values.max_tokens,
-          temperature: values.temperature,
-        });
-        setOriginalAiConfig(values);
-        setAiEditing(false);
-        message.success(t(I18N_KEYS.Toast.SUCCESS.AI_CONFIG_SAVED));
-      } catch (error) {
-        message.error(t(I18N_KEYS.Toast.ERROR.AI_CONFIG_SAVE_FAILED));
-      } finally {
-        setAiSaving(false);
       }
     } catch {
-      // form validation failed
+      message.error(t("Claw.Settings.messages.openWorkspaceFailed"));
+    }
+  };
+
+  // ========== 本地化加速 ==========
+  const handleLoopbackChange = async (checked: boolean) => {
+    setLoopbackApplying(true);
+    try {
+      const existing = await setupService.getStep1Config();
+      await setupService.saveStep1Config({
+        ...existing,
+        nuwaxLoadMode: checked ? "gateway" : "direct",
+      });
+      await window.electronAPI?.services?.restartAll?.();
+      setLoopbackEnabled(checked);
+      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+    } catch {
+      // 失败必须可见且状态不落定——静默会让用户误以为已生效
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    } finally {
+      setLoopbackApplying(false);
     }
   };
 
@@ -385,24 +354,6 @@ export default function SettingsPage() {
       await window.electronAPI?.log?.openDir();
     } catch {
       message.error(t(I18N_KEYS.Toast.ERROR.OPEN_LOGS_FAILED));
-    }
-  };
-
-  const handleOpenWorkspaceDir = async () => {
-    // 没有有效目录时直接提示，避免触发无意义 IPC 调用。
-    if (!workspaceDir) {
-      message.warning(t("Claw.Settings.messages.workspaceNotConfigured"));
-      return;
-    }
-    try {
-      const result = await window.electronAPI?.shell?.openPath(workspaceDir);
-      if (!result?.success) {
-        message.error(
-          result?.error || t("Claw.Settings.messages.openWorkspaceFailed"),
-        );
-      }
-    } catch {
-      message.error(t("Claw.Settings.messages.openWorkspaceFailed"));
     }
   };
 
@@ -461,357 +412,54 @@ export default function SettingsPage() {
     );
   }
 
+  const hostValue = hostDraft ?? config?.serverHost ?? "";
+
   return (
     <div className={styles.page}>
-      <div className={styles.pageContent}>
-        <div style={{ padding: "0 16px" }}>
-          {/* 服务配置 */}
-          <div className={styles.section}>
-            <div className={styles.servicesHeader}>
-              <div className={styles.servicesHeaderLeft}>
-                <SettingOutlined
-                  style={{
-                    fontSize: 14,
-                    color: "var(--color-text-secondary)",
-                  }}
+      {/* 服务 */}
+      <div className={styles.group}>
+        <div className={styles.groupTitle}>
+          {t("Claw.Settings.group.service")}
+        </div>
+        <div className={styles.groupCard}>
+          <SettingsRow
+            label={t("Claw.Settings.service.serverHost")}
+            desc={t("Claw.Settings.service.serverHostDesc")}
+            control={
+              // AutoComplete 无 onPressEnter prop：回车经外层 onKeyDown 冒泡提交；
+              // commitHost 幂等（draft 即清），与 blur 双触发安全
+              <span
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitHost();
+                }}
+              >
+                <AutoComplete
+                  style={{ width: 260 }}
+                  value={hostValue}
+                  options={[{ value: "https://agent.nuwax.com" }]}
+                  placeholder={t(
+                    "Claw.Settings.service.serverHostPlaceholder",
+                  )}
+                  disabled={saving}
+                  onChange={(value) => setHostDraft(value)}
+                  onBlur={commitHost}
                 />
-                <span className={styles.sectionTitle}>
-                  {t("Claw.Settings.saveConfig.title")}
-                </span>
-              </div>
-              {editing ? (
-                <div className={styles.servicesHeaderActions}>
-                  <Button
-                    size="small"
-                    onClick={handleCancelEdit}
-                    disabled={saving}
-                  >
-                    {t("Claw.Settings.saveConfig.cancel")}
-                  </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    icon={<SaveOutlined />}
-                    onClick={handleSave}
-                    loading={saving}
-                  >
-                    {t("Claw.Settings.saveConfig.save")}
-                  </Button>
-                </div>
-              ) : (
+              </span>
+            }
+          />
+          <SettingsRow
+            label={t("Claw.Settings.workspace.title")}
+            desc={workspaceDir || t("Claw.Settings.system.notSet")}
+            descMono
+            control={
+              <>
                 <Button
                   size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => setEditing(true)}
+                  onClick={handleModifyWorkspace}
+                  disabled={saving}
                 >
-                  {t("Claw.Settings.saveConfig.edit")}
+                  {t("Claw.Settings.service.workspaceModify")}
                 </Button>
-              )}
-            </div>
-            <div className={styles.sectionBody}>
-              <Form
-                form={form}
-                layout="vertical"
-                disabled={!editing}
-                size="small"
-              >
-                <Form.Item
-                  name="serverHost"
-                  label="服务域名"
-                  rules={[{ required: true, message: "填写服务域名" }]}
-                >
-                  <AutoComplete
-                    size="small"
-                    options={[{ value: "https://agent.nuwax.com" }]}
-                    placeholder="如 agent.nuwax.com"
-                  />
-                </Form.Item>
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <Form.Item
-                      name="fileServerPort"
-                      label={t("Claw.Settings.saveConfig.fileServerPort")}
-                      rules={[
-                        {
-                          required: true,
-                          message: t("Claw.Settings.saveConfig.enterPort"),
-                        },
-                      ]}
-                    >
-                      <InputNumber
-                        min={1}
-                        max={65535}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item
-                      name="agentPort"
-                      label={t("Claw.Settings.saveConfig.agentPort")}
-                      rules={[
-                        {
-                          required: true,
-                          message: t("Claw.Settings.saveConfig.enterPort"),
-                        },
-                      ]}
-                    >
-                      <InputNumber
-                        min={1}
-                        max={65535}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-                <Row gutter={16}>
-                  <Col span={24}>
-                    <Form.Item
-                      name="ttydPort"
-                      label={t("Claw.Settings.saveConfig.ttydPort")}
-                      rules={[
-                        {
-                          required: true,
-                          message: t("Claw.Settings.saveConfig.enterPort"),
-                        },
-                      ]}
-                    >
-                      <InputNumber
-                        min={1}
-                        max={65535}
-                        style={{ width: "100%" }}
-                      />
-                    </Form.Item>
-                  </Col>
-                </Row>
-
-                <Form.Item
-                  name="workspaceDir"
-                  label={t("Claw.Settings.workspace.title")}
-                  rules={[
-                    {
-                      required: true,
-                      message: t("Claw.Settings.workspace.selectDir"),
-                    },
-                  ]}
-                  style={{ marginBottom: 0 }}
-                >
-                  <Input
-                    placeholder={t("Claw.Settings.workspace.clickToSelect")}
-                    readOnly
-                    addonAfter={
-                      editing && (
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<FolderOutlined />}
-                          onClick={handleSelectWorkspace}
-                          style={{ padding: 0 }}
-                        >
-                          {t("Claw.Settings.workspace.select")}
-                        </Button>
-                      )
-                    }
-                  />
-                </Form.Item>
-              </Form>
-
-              {!editing && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    fontSize: 12,
-                    color: "var(--color-text-tertiary)",
-                  }}
-                >
-                  {t("Claw.Settings.saveConfig.restartHint")}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 系统设置 */}
-          <div className={styles.section}>
-            <div className={styles.sectionHeader}>
-              <DesktopOutlined
-                style={{
-                  fontSize: 14,
-                  color: "var(--color-text-secondary)",
-                }}
-              />
-              <span className={styles.sectionTitle}>
-                {t("Claw.Settings.system.title")}
-              </span>
-            </div>
-            <div className={styles.sectionBody} style={{ padding: "0 16px" }}>
-              {/* 开机自启动 */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>
-                      {t("Claw.Settings.system.autoLaunch")}
-                    </span>
-                    <div className={styles.serviceDescription}>
-                      {t("Claw.Settings.system.autoLaunchDesc", {
-                        appName: APP_DISPLAY_NAME,
-                      })}
-                    </div>
-                  </div>
-                </div>
-                <Switch
-                  size="small"
-                  checked={autolaunchEnabled}
-                  onChange={handleAutolaunchChange}
-                  loading={autolaunchLoading}
-                />
-              </div>
-
-              {/* 本地化加速（loopback 网关同源加载；服务域名在「服务配置」区块） */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>本地化加速</span>
-                    <div className={styles.serviceDescription}>
-                      页面经本地网关同源加载（更快且免跨域）。服务域名在「服务配置」区块修改，切换后自动重启服务。
-                    </div>
-                  </div>
-                </div>
-                <Switch
-                  size="small"
-                  checked={loopbackEnabled}
-                  onChange={handleLoopbackChange}
-                  loading={loopbackApplying}
-                />
-              </div>
-
-              {/* 主题设置（暗黑模式经环境变量关闭时恒浅色，外观项无意义随之隐藏） */}
-              {FEATURES.DARK_THEME && (
-                <div className={styles.serviceRow}>
-                  <div className={styles.serviceInfo}>
-                    <div>
-                      <span className={styles.serviceLabel}>
-                        {t("Claw.Settings.system.theme")}
-                      </span>
-                      <div className={styles.serviceDescription}>
-                        {t("Claw.Settings.system.themeDesc")}
-                      </div>
-                    </div>
-                  </div>
-                  <Select
-                    size="small"
-                    value={themeMode}
-                    onChange={(value) => setThemeMode(value)}
-                    style={{ width: 100 }}
-                    options={[
-                      {
-                        value: "system",
-                        label: t("Claw.Settings.system.themeSystem"),
-                      },
-                      {
-                        value: "light",
-                        label: t("Claw.Settings.system.themeLight"),
-                      },
-                      {
-                        value: "dark",
-                        label: t("Claw.Settings.system.themeDark"),
-                      },
-                    ]}
-                  />
-                </div>
-              )}
-
-              {/* 语言设置 */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>
-                      {t("Claw.Settings.system.language")}
-                    </span>
-                    <div className={styles.serviceDescription}>
-                      {t("Claw.Settings.system.languageDesc")}
-                    </div>
-                  </div>
-                </div>
-                <Select
-                  size="small"
-                  value={i18nLang}
-                  onChange={handleLanguageChange}
-                  loading={langChanging}
-                  style={{ width: 140 }}
-                  options={
-                    langList.length > 0
-                      ? langList.map((item) => ({
-                          value: item.lang.toLowerCase(),
-                          label: item.name,
-                        }))
-                      : LOCAL_LANG_OPTIONS
-                  }
-                />
-              </div>
-
-              {/* 应用数据目录 */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>
-                      {t("Claw.Settings.system.appDataDir")}
-                    </span>
-                    <div className={styles.serviceDescription}>
-                      ~/{APP_DATA_DIR_NAME}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 日志目录 */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>
-                      {t("Claw.Settings.system.logDir")}
-                    </span>
-                    <div
-                      className={styles.serviceDescription}
-                      style={{
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, Menlo, monospace",
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {logDir || t("Claw.Settings.system.loading")}
-                    </div>
-                  </div>
-                </div>
-                <Button size="small" onClick={handleOpenLogDir}>
-                  {t("Claw.Settings.system.open")}
-                </Button>
-              </div>
-
-              {/* 工作空间目录 */}
-              <div className={styles.serviceRow}>
-                <div className={styles.serviceInfo}>
-                  <div>
-                    <span className={styles.serviceLabel}>
-                      {t("Claw.Settings.system.workspaceDir")}
-                    </span>
-                    <div
-                      className={styles.serviceDescription}
-                      style={{
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, Menlo, monospace",
-                        maxWidth: "100%",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {workspaceDir || t("Claw.Settings.system.notSet")}
-                    </div>
-                  </div>
-                </div>
                 <Button
                   size="small"
                   onClick={handleOpenWorkspaceDir}
@@ -819,42 +467,200 @@ export default function SettingsPage() {
                 >
                   {t("Claw.Settings.system.open")}
                 </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* 开发工具 - 仅开发模式 */}
-          {IS_DEV && DevToolsPanel && (
-            <div className={styles.section}>
-              <Suspense fallback={<Spin size="small" />}>
-                <DevToolsPanel />
-              </Suspense>
-            </div>
-          )}
+              </>
+            }
+          />
         </div>
-
-        {/* 语言切换确认弹窗 */}
-        <Modal
-          open={langConfirmModalVisible}
-          title={t("Claw.Settings.languageConfirm.title")}
-          onCancel={handleLangCancel}
-          footer={[
-            <Button key="cancel" onClick={handleLangCancel}>
-              {t("Claw.Settings.languageConfirm.cancel")}
-            </Button>,
-            <Button
-              key="confirm"
-              type="primary"
-              loading={langConfirmLoading}
-              onClick={handleLangConfirm}
-            >
-              {t("Claw.Settings.languageConfirm.ok")}
-            </Button>,
-          ]}
-        >
-          <p>{t("Claw.Settings.languageConfirm.content")}</p>
-        </Modal>
       </div>
+
+      {/* 高级（端口，默认折叠） */}
+      <div className={styles.group}>
+        <button
+          type="button"
+          className={styles.advancedToggle}
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          <RightOutlined
+            className={
+              advancedOpen
+                ? `${styles.chevron} ${styles.chevronOpen}`
+                : styles.chevron
+            }
+          />
+          <span>{t("Claw.Settings.group.advanced")}</span>
+        </button>
+        {advancedOpen && (
+          <div className={styles.groupCard}>
+            {(Object.keys(PORT_LABELS) as PortKey[]).map((key) => (
+              <SettingsRow
+                key={key}
+                label={t(PORT_LABELS[key])}
+                control={
+                  <InputNumber
+                    min={1}
+                    max={65535}
+                    style={{ width: 120 }}
+                    value={
+                      key in portDrafts ? portDrafts[key] : config?.[key]
+                    }
+                    disabled={saving}
+                    onChange={(value) =>
+                      setPortDrafts((prev) => ({
+                        ...prev,
+                        [key]: value,
+                      }))
+                    }
+                    onBlur={() => commitPort(key)}
+                    onPressEnter={() => commitPort(key)}
+                  />
+                }
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 系统 */}
+      <div className={styles.group}>
+        <div className={styles.groupTitle}>
+          {t("Claw.Settings.system.title")}
+        </div>
+        <div className={styles.groupCard}>
+          <SettingsRow
+            label={t("Claw.Settings.system.autoLaunch")}
+            desc={t("Claw.Settings.system.autoLaunchDesc", {
+              appName: APP_DISPLAY_NAME,
+            })}
+            control={
+              <Switch
+                checked={autolaunchEnabled}
+                onChange={handleAutolaunchChange}
+                loading={autolaunchLoading}
+              />
+            }
+          />
+
+          {/* 本地化加速（loopback 网关同源加载；服务域名在「服务」区块） */}
+          <SettingsRow
+            label={t("Claw.Settings.service.loopback")}
+            desc={t("Claw.Settings.service.loopbackDesc")}
+            control={
+              <Switch
+                checked={loopbackEnabled}
+                onChange={handleLoopbackChange}
+                loading={loopbackApplying}
+              />
+            }
+          />
+
+          {/* 主题设置（暗黑模式经环境变量关闭时恒浅色，外观项无意义随之隐藏） */}
+          {FEATURES.DARK_THEME && (
+            <SettingsRow
+              label={t("Claw.Settings.system.theme")}
+              desc={t("Claw.Settings.system.themeDesc")}
+              control={
+                <Select
+                  style={{ width: 140 }}
+                  value={themeMode}
+                  onChange={(value) => setThemeMode(value as ThemeMode)}
+                  options={[
+                    {
+                      value: "system",
+                      label: t("Claw.Settings.system.themeSystem"),
+                    },
+                    {
+                      value: "light",
+                      label: t("Claw.Settings.system.themeLight"),
+                    },
+                    {
+                      value: "dark",
+                      label: t("Claw.Settings.system.themeDark"),
+                    },
+                  ]}
+                />
+              }
+            />
+          )}
+
+          {/* 语言设置 */}
+          <SettingsRow
+            label={t("Claw.Settings.system.language")}
+            desc={t("Claw.Settings.system.languageDesc")}
+            control={
+              <Select
+                style={{ width: 160 }}
+                value={i18nLang}
+                onChange={handleLanguageChange}
+                options={
+                  langList.length > 0
+                    ? langList.map((item) => ({
+                        value: item.lang.toLowerCase(),
+                        label: item.name,
+                      }))
+                    : LOCAL_LANG_OPTIONS
+                }
+              />
+            }
+          />
+        </div>
+      </div>
+
+      {/* 目录 */}
+      <div className={styles.group}>
+        <div className={styles.groupTitle}>
+          {t("Claw.Settings.group.directories")}
+        </div>
+        <div className={styles.groupCard}>
+          <SettingsRow
+            label={t("Claw.Settings.system.appDataDir")}
+            desc={`~/${APP_DATA_DIR_NAME}`}
+            descMono
+          />
+          <SettingsRow
+            label={t("Claw.Settings.system.logDir")}
+            desc={logDir || t("Claw.Settings.system.loading")}
+            descMono
+            control={
+              <Button size="small" onClick={handleOpenLogDir}>
+                {t("Claw.Settings.system.open")}
+              </Button>
+            }
+          />
+        </div>
+      </div>
+
+      {/* 开发工具 - 仅开发模式 */}
+      {IS_DEV && DevToolsPanel && (
+        <div className={styles.group}>
+          <div className={styles.groupCard}>
+            <Suspense fallback={<Spin size="small" />}>
+              <DevToolsPanel />
+            </Suspense>
+          </div>
+        </div>
+      )}
+
+      {/* 语言切换确认弹窗 */}
+      <Modal
+        open={langConfirmModalVisible}
+        title={t("Claw.Settings.languageConfirm.title")}
+        onCancel={handleLangCancel}
+        footer={[
+          <Button key="cancel" onClick={handleLangCancel}>
+            {t("Claw.Settings.languageConfirm.cancel")}
+          </Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            loading={langConfirmLoading}
+            onClick={handleLangConfirm}
+          >
+            {t("Claw.Settings.languageConfirm.ok")}
+          </Button>,
+        ]}
+      >
+        <p>{t("Claw.Settings.languageConfirm.content")}</p>
+      </Modal>
     </div>
   );
 }

@@ -1,0 +1,112 @@
+/**
+ * 设置页（商业版行式重构）私有样式
+ * 分组标题 + 卡片行列表；只用主题 CSS 变量，暗色随 [data-theme] 自动生效。
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* ========== 分组 ========== */
+.group {
+  margin-bottom: 20px;
+}
+
+.groupTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  margin: 0 2px 8px;
+  letter-spacing: 0.02em;
+}
+
+.groupCard {
+  background: var(--color-bg-section);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+
+/* ========== 行 ========== */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+  padding: 10px 16px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: var(--color-bg-section-header);
+}
+
+.rowInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowLabel {
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.rowDesc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* 等宽路径描述：超长省略（依赖 .rowInfo 的 min-width: 0 收缩） */
+.rowDescMono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowControl {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ========== 高级折叠（端口） ========== */
+.advancedToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  margin-bottom: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+}
+
+.advancedToggle:hover {
+  color: var(--color-text-secondary);
+}
+
+.chevron {
+  font-size: 9px;
+  transition: transform 0.2s ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}

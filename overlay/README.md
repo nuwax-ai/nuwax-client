@@ -19,7 +19,7 @@
 
 只放商业专属实现的整文件；基座若为商业功能开插槽（可选注册/扩展点），优先用插槽
 而不是大文件覆写，控制升级冲突面。bump 基座 pin 后必须跑 `npm run overlay:check`
-核对差异。当前覆写清单（11 文件）：
+核对差异。当前覆写清单（15 文件）：
 
 | overlay 文件（基座同路径） | 内容 |
 |---|---|
@@ -30,12 +30,13 @@
 | `src/main/services/loopbackGateway/index.ts` | 本地化承载编排（覆写基座 no-op 桩插槽；dist 解析优先 `NUWAX_FRONTEND_DIST` env=壳根 nuwax/dist，回落基座旧布局，打包=resources/nuwax-dist）；运行时键携带 backend，域名变更经 refreshLoopbackGateway 通知 renderer 重载 webview |
 | `src/main/services/loopbackGateway/gateway.ts` | 回环网关本体（dist 托管 + 后端反代 + Bearer/x-client-type 代注） |
 | `src/main/services/loopbackGateway/{gateway,index}.test.ts` | 配套测试（随 sync 进基座工作树随全量跑） |
-| `src/renderer/components/pages/SettingsPage.tsx` | **有意删减覆写（非超集）**：移除「实验功能」区块（Sandbox 开关/模式 + GUI MCP 开关）与 `guiMcpPort` 表单字段；其余跟随基座版 |
+| `src/renderer/components/pages/SettingsPage.tsx` | **独立行式重构（非超集）**：商业版设置页自持实现——分组行列表 + 行内即点即存（2026-09-13 重构，不再跟随基座表单版）；无「实验功能」区块与 `guiMcpPort`；配套私有样式 `src/renderer/styles/components/SettingsPage.module.css` |
+| `public/icon.{png,icns,ico}` + `public/icon-dock.png` | **商业黑标**：zinc 黑砖 + 反白字形（2026-09-13，由基座原紫标母版反解字形重绘，圆角轮廓沿用原 alpha）。覆盖 mac bundle/dock、win 安装包、加载屏与运行时 `app.dock.setIcon`；tray 模板图为单色语义不动。基座社区版保持原紫标 |
 | `src/main/bootstrap/migrate.ts` | **有意行为性覆写（非超集）**：迁移链置空——不迁移 `.nuwaclaw`/`.nuwawork`/`.nuwax-agent`/`.nuwaxbot` 任何旧产品数据与登录态（2026-09-11 改名决策，商业版全新开始）；迁移期强制关闭历史遗留的 `guiMcpEnabled`/`sandbox_policy.enabled`（v1.0.4 起实验功能移除，防老用户幽灵开关） |
 | `src/main/bootstrap/migrate.commercial.test.ts` | migrate.ts 的配套测试：目录隔离 + 实验开关清理 + workspaceDir 前缀重写（基座版测的是基座迁移行为，随 overlay 同步须一并覆写保持同步态自洽） |
 
 维护规则：基座对应文件演进时，先 `overlay:check` 看 diff，把基座侧改动手工
 合入 overlay 版本（overlay 版本必须是基座版本的严格超集；两类例外——
 `migrate.ts` 及配套 commercial 测试（行为性覆写，须保留「迁移链置空」语义）、
-`SettingsPage.tsx`（删减型覆写，须保留「实验功能区块已移除」语义，合入基座
-演进时不得把实验区块带回））。
+`SettingsPage.tsx`（独立行式重构，基座侧同文件演进须手工评估合入，不得把
+实验区块或「编辑解锁」范式带回））。
