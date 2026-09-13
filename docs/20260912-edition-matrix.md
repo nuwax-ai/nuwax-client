@@ -143,3 +143,15 @@ nuwa-electron-shell（基座，公开仓）
 ## 九、治理轮更新（2026-09-12 下午）
 
 本文「提交映射」与各节 SHA 为合并前快照。同日下午的治理轮（`plans/20260912-repo-governance-plan.md`）完成：两仓 feat/electron-1.0.4-fixes 经 PR rebase 合并进 main（基座 ae7e21aa→f0ddd9fe、外层链 tip→209bdacf，树等价）；pin/nuwawork 线退役（.gitmodules 改 branch=main，单主干模型）；外层仓新增 ci.yml 双轨门禁与 check-base-purity 防泄回守卫；基座远端收敛至 main + archive + dependabot。§五 门禁表的本地口径不变，双轨已由 CI 强制。
+
+## 十、增补（2026-09-13）：社区 0.14 线落地 + webview 加载链路差异
+
+### 10.1 本文社区版事实的当日更新
+
+- 社区版已不再走「pin main 旧点」路线：基座仓新建长线 **`community/main`**（复刻前基点 `3fe35df8` 起 + merge 0.13 final `19fa6d27` + 择优摘取 11 个中性提交；version **0.14.0**）。nuwaclaw 消费分支 `feature/electron-client-0.14` pin 该线（.gitmodules branch=community/main）。因此 §一「pin 9fb6f4f2」、§二「版本线停在 0.11.35 / 应用 version 1.0.0」、§三 各「未跟进（pin 落后）」**均以 community/main 线为准重读**——登录态重构、顶栏、启动动画等商业形态能力社区线**按产品决策永久不跟进**（商业单栏样式适配不在社区对接范围，社区 UI 只保 0.13 历史兼容；已写入基座 README 注入契约节）。
+- 社区线版本序列进入 **0.14**：`prerelease-v0.14.0` 已于 09-08 触发构建（GitHub Draft + OSS beta 通道在线），tag 指向 0.13 final、构建版本由 tag 名覆盖。
+- 社区线 guest preload 已补 `host.getProduct()`（返回构建期 `APP_NAME_IDENTIFIER`，默认 `nuwaclaw`）——与商业实现同契约。
+
+### 10.2 加载 nuwax（PC Web）链路差异深潜
+
+详见同日新增：**`docs/20260913-webview-loading-differences.md`**。一句话版：社区版 = 配置域单向直连 + ticket cookie 同步 + perf/host 最小桥面；商业版 = override/dev/loopback/step1 四级 URL 决策 + 回环网关同源形态 + webview 唯一事实源 token 桥 + 全量桥面（auth/native/localFiles/events/theme/layout/i18n/host）。
