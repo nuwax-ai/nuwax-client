@@ -13,6 +13,10 @@
  *     新开独立窗口打开 nuwax 站内页面（智能体详情/工作流/网页应用开发/我的电脑等
  *     全屏页）。带系统标题栏（零遮挡）+ 同一 webview 桥 preload；URL 追加 _shell=1
  *     让 nuwax 解除沉浸式门控。仅接受站内相对路径并校验同源。
+ * - native:openClientSettings
+ *     打开壳的「客户端配置」设置弹窗（nuwax web 用户区「客户端设置」按钮入口，
+ *     仅 nuwax 宿主渲染）。设置弹窗是壳 renderer 的 React state，主进程无法直接
+ *     打开，转发 nuwax:open-client-settings 给壳 renderer（同 open-same-window）。
  * - nuwax:theme-sync
  *     nuwax 女娲主题状态推送（{ active, 调色板 }）→ 转发 nuwax:theme-changed 给壳
  *     renderer，壳给自己的 antd tokens / CSS 变量叠加同套米白调色板（原生 UI 统一）。
@@ -538,6 +542,17 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  });
+
+  // ---- native：打开壳的「客户端配置」设置弹窗 ----
+  // nuwax web 用户区「客户端设置」按钮入口（仅 nuwax 宿主渲染，壳顶行设置按钮
+  // 在 nuwax 宿主下移除）。设置弹窗是壳 renderer 的 React state（webview 之上的
+  // antd Modal），主进程无法直接打开，转发 nuwax:open-client-settings 给壳
+  // renderer（同 open-same-window 模式；壳 preload on() 白名单已含该 channel）。
+  ipcMain.handle("native:openClientSettings", () => {
+    ctx.getMainWindow()?.webContents.send("nuwax:open-client-settings", {});
+    log.info("[NuwaxBridge] native:openClientSettings");
+    return { success: true };
   });
 
   // ---- native：右键另存图片 ----
