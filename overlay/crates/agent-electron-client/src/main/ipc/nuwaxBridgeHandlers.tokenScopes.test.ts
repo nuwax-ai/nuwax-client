@@ -90,9 +90,11 @@ import {
   registerNuwaxBridgeHandlers,
   NUWAX_TOKEN_KEY_PREFIX,
 } from "./nuwaxBridgeHandlers";
+import { DEFAULT_SERVER_HOST } from "../../shared/constants";
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
+const DEV_ORIGIN = "http://localhost:3000";
 
 function senderEvent(origin: string): { senderFrame: { url: string } } {
   return { senderFrame: { url: `${origin}/home` } };
@@ -154,7 +156,7 @@ describe("token 键空间统一（网关形态）", () => {
     expect(again).toBeNull();
   });
 
-  it("clear：同步清壳侧登录态键（savedKey 派生缓存 + saved_keys.* 前缀批删）", async () => {
+  it("clear：清登录态键但保留注册凭据族（登出≠注销设备，2026-09-14 语义收口）", async () => {
     settings.set("auth.saved_key", "sk");
     settings.set("auth.config_key", "ck");
     settings.set("auth.username", "user1");
@@ -162,12 +164,42 @@ describe("token 键空间统一（网关形态）", () => {
     settings.set("auth.saved_keys.example.com_user1", "sk1");
     settings.set("auth.saved_keys.example.com_user2", "sk2");
     await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
-    expect(settings.get("auth.saved_key")).toBeNull();
-    expect(settings.get("auth.config_key")).toBeNull();
-    expect(settings.get("auth.username")).toBeNull();
+    // 登录态清（user_info/saved_keys.* 域名级派生缓存批删）
     expect(settings.get("auth.user_info")).toBeNull();
     expect(settings.get("auth.saved_keys.example.com_user1")).toBeUndefined();
     expect(settings.get("auth.saved_keys.example.com_user2")).toBeUndefined();
+    // 注册凭据族保留：后端 reg 仍要 savedKey，清掉后同设备重登永远无法重新
+    // 注册；跨账号由 persistToken 的账号切换检测清除。
+    expect(settings.get("auth.saved_key")).toBe("sk");
+    expect(settings.get("auth.username")).toBe("user1");
+  });
+});
+
+describe("全新安装（step1_config 无 serverHost，dev 直连形态）", () => {
+  it("persistToken：双写 sender + 业务域缺省键——reg 门禁读键不再为空（Login required 修复）", async () => {
+    // 复刻 dev 全新库：无 serverHost（仅打包版首启种值）、网关未启用、
+    // webview 经 NUWAX_WEBVIEW_ORIGIN 直连本地前端
+    settings.set("step1_config", {});
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    settings.set("nuwax.webviewOverride", { origin: DEV_ORIGIN });
+    // getToken 先行：准入（override 命中）并注册文档，persistToken 才会受理
+    await handlers.get("auth:getToken")!(senderEvent(DEV_ORIGIN));
+    const ok = (await handlers.get("auth:persistToken")!(
+      senderEvent(DEV_ORIGIN),
+      "FRESH-DEV",
+    )) as boolean;
+    expect(ok).toBe(true);
+    expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${DEV_ORIGIN}`)).toBe(
+      "FRESH-DEV",
+    );
+    // 业务域候选回落 DEFAULT_SERVER_HOST（currentBusinessOrigin 同源逻辑）
+    expect(
+      settings.get(
+        `${NUWAX_TOKEN_KEY_PREFIX}${new URL(DEFAULT_SERVER_HOST).origin}`,
+      ),
+    ).toBe("FRESH-DEV");
+    // 网关未启用不写网关键
+    expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${GW_ORIGIN}`)).toBeUndefined();
   });
 });
 

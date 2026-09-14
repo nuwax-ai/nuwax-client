@@ -2,9 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   fetch: vi.fn(),
+  isPackaged: true,
 }));
 vi.mock("electron", () => ({
-  app: { isPackaged: true },
+  // getter 双向绑定：dev 种值分支测试可按用例切 isPackaged
+  app: {
+    get isPackaged() {
+      return mocks.isPackaged;
+    },
+  },
   net: { fetch: mocks.fetch },
 }));
 vi.mock("../db", () => ({
@@ -29,7 +35,11 @@ vi.mock("../services/system/deviceId", () => ({
 vi.mock("os", () => ({
   hostname: () => "fengfei-mac-xx.local",
 }));
-import { getComputerName, initializeCommercialAuth } from "./commercialAuth";
+import {
+  clearRegistration,
+  getComputerName,
+  initializeCommercialAuth,
+} from "./commercialAuth";
 const origin = "https://enterprise.example.com";
 function fixture() {
   const start = vi.fn(async () => ({ success: true }));
@@ -39,6 +49,8 @@ function fixture() {
 beforeEach(() => {
   mocks.settings.clear();
   mocks.fetch.mockReset();
+  mocks.isPackaged = true;
+  delete process.env.NUWAX_SERVER_HOST;
 });
 describe("commercial registration protocol", () => {
   it("fresh installation selects bundled UI without importing legacy credentials", () => {
@@ -134,5 +146,64 @@ describe("commercial registration protocol", () => {
     const { flow, start } = fixture();
     expect((await flow.start()).success).toBe(false);
     expect(start).not.toHaveBeenCalled();
+  });
+});
+
+describe("dev 首启种值（NUWAX_SERVER_HOST 旋钮）", () => {
+  it("dev 全新库 + env → 种 serverHost（直连形态，不种 gateway）", () => {
+    mocks.isPackaged = false;
+    process.env.NUWAX_SERVER_HOST = "https://testagent.xspaceagi.com";
+    try {
+      fixture();
+      expect(mocks.settings.get("step1_config")).toEqual({
+        serverHost: "https://testagent.xspaceagi.com",
+      });
+    } finally {
+      delete process.env.NUWAX_SERVER_HOST;
+    }
+  });
+  it("dev 全新库无 env → 不种值（业务域候选由 nuwaxTokenScopes 缺省兜底对齐）", () => {
+    mocks.isPackaged = false;
+    fixture();
+    expect(mocks.settings.has("step1_config")).toBe(false);
+  });
+});
+
+describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
+  beforeEach(() => {
+    mocks.settings.clear();
+    mocks.settings.set("auth.saved_key", "sk-1");
+    mocks.settings.set("auth.config_key", "sk-1");
+    mocks.settings.set("auth.username", "18000000000");
+    mocks.settings.set("lanproxy_config", {
+      serverIp: "old",
+      serverPort: 123,
+      enabled: true,
+    });
+  });
+
+  it("默认全清（换账号/换域场景）：savedKey/username/configKey/lanproxy 指针全清", () => {
+    clearRegistration();
+    expect(mocks.settings.get("auth.saved_key")).toBeNull();
+    expect(mocks.settings.get("auth.config_key")).toBeNull();
+    expect(mocks.settings.get("auth.username")).toBeNull();
+    expect(mocks.settings.get("lanproxy_config")).toEqual({ enabled: true });
+  });
+
+  it("preserveSavedKey=true（token 过期重登/登出/设备盐变更）：savedKey+username 成对保留，其余照清", () => {
+    clearRegistration({ preserveSavedKey: true });
+    expect(mocks.settings.get("auth.saved_key")).toBe("sk-1");
+    expect(mocks.settings.get("auth.username")).toBe("18000000000");
+    expect(mocks.settings.get("auth.config_key")).toBeNull();
+    expect(mocks.settings.get("lanproxy_config")).toEqual({ enabled: true });
+  });
+
+  it("preserveSavedKey 且无历史凭据（真首登）→ 不凭空造值", () => {
+    mocks.settings.delete("auth.saved_key");
+    mocks.settings.delete("auth.username");
+    clearRegistration({ preserveSavedKey: true });
+    // mock 的 writeSetting(null) = set null（真实库为删除），此处语义 = 无值
+    expect(mocks.settings.get("auth.saved_key")).toBeNull();
+    expect(mocks.settings.get("auth.username")).toBeNull();
   });
 });

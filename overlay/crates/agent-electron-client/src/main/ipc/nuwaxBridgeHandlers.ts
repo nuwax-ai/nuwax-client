@@ -27,13 +27,14 @@
  * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
+import { NUWAX_DEV_HOST } from "@shared/constants";
 import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 
@@ -61,16 +62,27 @@ function tokenKey(scope: string): string {
   return `${NUWAX_TOKEN_KEY_PREFIX}${scope}`;
 }
 
+/** 解析 JWT sub（与 reg 的 username 同源）；opaque/坏 token 返回 null。 */
+function jwtSub(token: string): string | null {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[1], "base64url").toString(),
+    );
+    return typeof payload?.sub === "string" && payload.sub ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * 清壳侧登录态键（登录态以 webview 为准，登出即全清）：定点键置 null（=
- * writeSetting 语义里的删除），域名级 savedKey 前缀键经 SQL 批删。savedKey/
- * configKey 是 reg 响应的派生缓存（lanproxy clientKey），不属于独立登录态。
+ * 清壳侧登录态键（登录态以 webview 为准，登出即清）：定点键置 null（=
+ * writeSetting 语义里的删除），域名级 savedKey 前缀键经 SQL 批删。
+ * 注册凭据族（auth.saved_key/config_key/username）不在此清——它们是
+ * 「设备×账号」维度的注册凭据，归 clearRegistration({preserveSavedKey})
+ * 统一管理（后端 reg 必须携带 savedKey，见该函数注释）。
  */
 function clearShellAuthState(): void {
   const directKeys = [
-    "auth.saved_key",
-    "auth.config_key",
-    "auth.username",
     "auth.user_info",
     "auth.online_status",
     "auth.token",
@@ -96,16 +108,12 @@ function clearShellAuthState(): void {
 export function nuwaxTokenScopes(senderScope: string): string[] {
   const scopes = [senderScope];
   try {
-    const step1 = readSetting("step1_config") as {
-      serverHost?: string;
-    } | null;
-    if (step1?.serverHost) {
-      const raw = step1.serverHost.trim().replace(/\/+$/, "");
-      const host = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
-        ? raw
-        : `https://${raw}`;
-      scopes.push(new URL(host).origin);
-    }
+    // 业务域候选无条件在列：与 reg 门禁/网关代注的读键（currentAccessToken →
+    // currentBusinessOrigin，serverHost 缺省回落 DEFAULT_SERVER_HOST）同源。
+    // 若仅在 step1_config.serverHost 存在时补列，全新安装（该字段仅打包版首启
+    // 种值，dev 为空）时 persistToken 单写 sender 键 → 门禁读业务域键为空 →
+    // 本地抛 "Login required"，reg 请求发不出（2026-09-14 dev 全新安装实证）。
+    scopes.push(currentBusinessOrigin());
     const loopback = readSetting("nuwax.loopback") as {
       enabled?: boolean;
       origin?: string | null;
@@ -144,12 +152,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     () => {
       // 注册接口也能发现登录失效；不依赖页面恰好发起下一次业务请求。
+      // token 失效 ≠ 注销设备：保留注册凭据（reg 仍要 savedKey），用户重新
+      // 登录即可闭环；换账号登录由 persistToken 的账号切换检测清除。
       authGeneration++;
       cancelTransfers();
       const scopes = nuwaxTokenScopes(currentBusinessOrigin());
       for (const scope of scopes) writeSetting(tokenKey(scope), null);
       clearShellAuthState();
-      clearRegistration();
+      clearRegistration({ preserveSavedKey: true });
       ctx
         .getMainWindow()
         ?.webContents.send("nuwax:authChanged", { loggedIn: false });
@@ -275,12 +285,28 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const overrideOrigin = (
       readSetting("nuwax.webviewOverride") as { origin?: string } | null
     )?.origin;
-    if (
-      ![currentBusinessOrigin(), loopbackOrigin, overrideOrigin].includes(
-        scopeOrigin,
-      )
-    )
+    // dev（未打包）构建下 webview 默认加载本地前端 dev server（NuwaxHostWebview
+    // 的 NUWAX_DEV_HOST 分支）——准入名单须与该 URL 解析同源，否则 dev 前端
+    // origin 不在名单，本 handler 在打日志前静默 return null，登录态进不了壳
+    // （零日志难排障；09-12/09-14 多次复发，此前靠手工种 webviewOverride 蒙混，
+    // 键被 refreshLoopbackGateway 按 env 覆写回 null 后即复发）。
+    // 打包版不进名单（app.isPackaged 守卫），对外安全面不变。
+    const devWebviewOrigin = app.isPackaged ? null : NUWAX_DEV_HOST;
+    const allowedOrigins = [
+      currentBusinessOrigin(),
+      loopbackOrigin,
+      overrideOrigin,
+      devWebviewOrigin,
+    ].filter(Boolean);
+    // 拒绝必须留痕：此前静默 return null 零日志，断链排障只能靠 DB+代码对拍
+    // （09-12/09-14 两次复发教训）。
+    if (!allowedOrigins.includes(scopeOrigin)) {
+      log.warn("[NuwaxBridge] auth:getToken origin 不在准入名单，拒绝", {
+        scope: scopeOrigin,
+        allowed: allowedOrigins,
+      });
       return null;
+    }
     const key = documentKey(event);
     if (documents.has(key) && documents.get(key) !== authGeneration)
       return null;
@@ -344,8 +370,23 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       authGeneration++;
       documents.set(documentKey(event), authGeneration);
       cancelTransfers();
+      // 注册凭据只在账号切换时清除（后端 reg 仍要求 savedKey，Bearer 非鉴权
+      // 主体；非换账号场景清掉 = 「savedKey 只能由 reg 发放、reg 又必须要它」
+      // 死局，2026-09-14 实证 token 过期重登即触发）。账号判据 = 新 token 的
+      // JWT sub 对上次注册账号（auth.username；旧 token 的 sub 兜底，涵盖
+      // previous 为 null 的登出后重登场景）。
+      const nextSub = jwtSub(token);
+      const lastAccount = readSetting("auth.username") || jwtSub(previous);
+      const accountSwitched =
+        !!nextSub && !!lastAccount && nextSub !== lastAccount;
+      clearRegistration({ preserveSavedKey: !accountSwitched });
+      log.info(
+        accountSwitched
+          ? "[NuwaxBridge] persistToken 账号切换，清除注册凭据"
+          : "[NuwaxBridge] persistToken 同账号，保留注册凭据",
+        { sub: nextSub, lastAccount },
+      );
       void lifecycle.stop().then(() => lifecycle.start());
-      clearRegistration();
     } else {
       void lifecycle.start();
     }
@@ -373,11 +414,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     for (const s of scopes) writeSetting(tokenKey(s), null);
     log.info("[NuwaxBridge] auth:clear", { scopes });
 
-    // 登录态以 webview 为准：登出即清壳侧全部登录态/派生凭证（savedKey 是 reg
-    // 响应的派生缓存，供 lanproxy clientKey；全清避免残留导致「伪已登录」与跨账号串用）。
+    // 登录态以 webview 为准：登出即清壳侧登录态。注册凭据族（savedKey/
+    // username）保留——登出 ≠ 注销设备，后端 reg 仍要 savedKey，清掉后同设备
+    // 重登将永远无法重新注册（2026-09-14 实证）；跨账号风险由 persistToken
+    // 的账号切换检测兜底（sub ≠ 上次账号 → 全清）。
     clearShellAuthState();
 
-    clearRegistration();
+    clearRegistration({ preserveSavedKey: true });
     ctx
       .getMainWindow()
       ?.webContents.send("nuwax:authChanged", { loggedIn: false });
@@ -431,6 +474,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     cancelTransfers();
     const scopes = nuwaxTokenScopes(resolveSenderOrigin(event));
     const stopping = lifecycle.stop();
+    // 换域 = 账号体系变化：全清注册凭据（与 persistToken 的账号切换、auth:clear
+    // 的登出保留相对——三者语义见 clearRegistration 注释）。
     clearShellAuthState();
     clearRegistration();
     for (const scope of scopes) writeSetting(tokenKey(scope), null);

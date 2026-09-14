@@ -29,10 +29,25 @@ export function currentAccessToken(): string | null {
   const value = readSetting(`nuwax.accessToken.${currentBusinessOrigin()}`);
   return typeof value === "string" && value ? value : null;
 }
-export function clearRegistration(): void {
+/**
+ * 清注册派生凭据（configKey/savedKey/lanproxy 指针）。
+ *
+ * preserveSavedKey（默认 false=全清）：后端 reg 仍要求 savedKey（Bearer 非鉴权
+ * 主体，缺省即「动态认证码或密码不能为空」），而 savedKey 只能由 reg 成功发放
+ * ——非换账号场景清掉它 = 此后永远无法重新注册（2026-09-14 实证）。因此
+ * 「token 过期重登 / 显式登出 / 设备盐变更」一律保留；仅账号体系变化（换账号
+ * 登录、换域）由调用方判账号切换后全清，防跨账号串用。savedKey+username 是
+ * 「设备×账号」维度的注册凭据族，成对保留/清除。
+ */
+export function clearRegistration(
+  opts?: { preserveSavedKey?: boolean },
+): void {
+  const legacySavedKey = readSetting("auth.saved_key");
+  const legacyUsername = readSetting("auth.username");
   for (const key of [
     "auth.config_key",
     "auth.saved_key",
+    "auth.username",
     "auth.token",
     "auth.online_status",
     "lanproxy.server_host",
@@ -47,6 +62,10 @@ export function clearRegistration(): void {
   const lp = (readSetting("lanproxy_config") || {}) as Record<string, unknown>;
   const { serverIp, serverPort, clientKey, ...preferences } = lp;
   writeSetting("lanproxy_config", preferences);
+  if (opts?.preserveSavedKey) {
+    if (legacySavedKey != null) writeSetting("auth.saved_key", legacySavedKey);
+    if (legacyUsername != null) writeSetting("auth.username", legacyUsername);
+  }
 }
 export function initializeCommercialAuth(
   start: (signal: AbortSignal) => Promise<ServiceResult>,
@@ -55,11 +74,19 @@ export function initializeCommercialAuth(
   expired?: () => void,
 ) {
   // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
-  if (app?.isPackaged && !readSetting("step1_config")) {
-    writeSetting("step1_config", {
-      serverHost: DEFAULT_SERVER_HOST,
-      nuwaxLoadMode: "gateway",
-    });
+  // dev 全新库同种种值：不种则业务域候选/注册回落 DEFAULT_SERVER_HOST（生产域），
+  // 与 dev 前端联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域，直连形态
+  // （不种 gateway——dev 走 NUWAX_WEBVIEW_ORIGIN 直连本地前端，不起网关）。
+  if (!readSetting("step1_config")) {
+    const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
+    if (app?.isPackaged) {
+      writeSetting("step1_config", {
+        serverHost: DEFAULT_SERVER_HOST,
+        nuwaxLoadMode: "gateway",
+      });
+    } else if (devSeedHost) {
+      writeSetting("step1_config", { serverHost: devSeedHost });
+    }
   }
   const deviceId = getDeviceId();
   if (readSetting("nuwax.registrationDeviceId") !== deviceId) {
@@ -67,9 +94,7 @@ export function initializeCommercialAuth(
     // 但保留 savedKey：现行后端注册必须携带 savedKey（首登 Bearer-only 返回
     // 4000），且实测接受「旧 savedKey + 新 deviceId」重注册——若一并清掉，
     // 1.0.3 存量用户升级后将永远无法重新注册（savedKey 无处再获取）。
-    const legacySavedKey = readSetting("auth.saved_key");
-    clearRegistration();
-    if (legacySavedKey != null) writeSetting("auth.saved_key", legacySavedKey);
+    clearRegistration({ preserveSavedKey: true });
     writeSetting("nuwax.registrationDeviceId", deviceId);
   }
   const flow = new AuthLifecycle({
