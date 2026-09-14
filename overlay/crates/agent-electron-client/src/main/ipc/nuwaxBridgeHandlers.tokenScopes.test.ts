@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   netFetch: vi.fn(),
   stop: vi.fn(async () => ({ success: true, results: {} })),
   storage: vi.fn(async () => undefined),
+  // captureTicketCookie 的 session.cookies.get（默认查不到 ticket）
+  cookiesGet: vi.fn(async () => []),
 }));
 
 vi.mock("electron", () => ({
@@ -50,6 +52,7 @@ vi.mock("electron", () => ({
   webContents: {
     getAllWebContents: () => [{ session: { clearStorageData: mocks.storage } }],
   },
+  session: { defaultSession: { cookies: { get: mocks.cookiesGet } } },
 }));
 
 vi.mock("electron-log", () => ({

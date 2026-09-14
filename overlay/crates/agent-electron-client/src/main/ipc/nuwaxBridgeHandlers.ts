@@ -27,7 +27,7 @@
  * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, session } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import * as fs from "fs";
 import * as path from "path";
@@ -43,6 +43,7 @@ import {
   currentAccessToken,
   currentBusinessOrigin,
   clearRegistration,
+  writeTicketForScopes,
 } from "./commercialAuth";
 
 /** nuwax ACCESS_TOKEN 存储键前缀，按来源 origin 分域，避免污染 sandbox ticket。 */
@@ -158,6 +159,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       cancelTransfers();
       const scopes = nuwaxTokenScopes(currentBusinessOrigin());
       for (const scope of scopes) writeSetting(tokenKey(scope), null);
+      writeTicketForScopes(scopes, null);
       clearShellAuthState();
       clearRegistration({ preserveSavedKey: true });
       ctx
@@ -275,6 +277,43 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ctx.getMainWindow()?.webContents.send("nuwax:layout-changed", forward);
   });
 
+  // ---- auth：登录会话 ticket cookie 同步（reg 凭据）----
+  // 后端 reg 认「动态认证码或密码」不认 Bearer，全新设备无 savedKey 即 4000；
+  // 解法=登录会话的 ticket cookie 同步进壳（存储/消费语义见 commercialAuth.ts
+  // NUWAX_TICKET_KEY_PREFIX 注释）。主进程 session.cookies 可读 HttpOnly 与
+  // 内存态 cookie；webview 无 partition=默认 session。ticket 是内存态 session
+  // cookie：app 重启后 session 里即消失，持久化的 settings 值才是跨重启来源
+  // （故 getToken 的后台刷新只写不清，防误清持久值）。
+  const captureTicketCookie = async (
+    senderScope: string,
+    opts?: { clearIfAbsent?: boolean },
+  ): Promise<void> => {
+    const scopes = nuwaxTokenScopes(senderScope);
+    const ses =
+      ctx.getMainWindow()?.webContents.session ?? session.defaultSession;
+    const candidates = [...new Set([...scopes, senderScope])].filter((url) =>
+      /^https?:\/\//.test(url),
+    );
+    let found: string | null = null;
+    for (const url of candidates) {
+      try {
+        const cookies = await ses.cookies.get({ url, name: "ticket" });
+        if (cookies[0]?.value) {
+          found = cookies[0].value;
+          break;
+        }
+      } catch {
+        /* session 不可用/域不合法：保持未找到 */
+      }
+    }
+    if (found || opts?.clearIfAbsent) writeTicketForScopes(scopes, found);
+    log.info("[NuwaxBridge] ticket cookie sync", {
+      captured: !!found,
+      clearIfAbsent: !!opts?.clearIfAbsent,
+      scopes,
+    });
+  };
+
   // ---- auth：ACCESS_TOKEN 双向同步 ----
   ipcMain.handle("auth:getToken", (event) => {
     if (switching) return null;
@@ -315,6 +354,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     // 跨 origin 回退链（nuwaxTokenScopes 统一视图）：direct↔gateway 切换后
     // sender 键为空时依次回退其余候选键，命中即回写——双向切换免重登。
     const scopes = nuwaxTokenScopes(scope);
+    // 后台刷新 ticket（只写不清）：webview 重载/会话内 cookie 轮转时保持新鲜，
+    // 重启后内存 cookie 消失不得误清持久值
+    void captureTicketCookie(scope);
     let value = readSetting(tokenKey(scopes[0]));
     if (typeof value !== "string" || !value) {
       for (const candidate of scopes.slice(1)) {
@@ -353,16 +395,20 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     return typeof value === "string" ? value : null;
   });
 
-  ipcMain.handle("auth:persistToken", (event, token: unknown) => {
+  ipcMain.handle("auth:persistToken", async (event, token: unknown) => {
     if (!isCurrentDocument(event)) return false;
     const previous = currentAccessToken();
     const scope = resolveSenderOrigin(event);
     if (typeof token !== "string" || !token) return false;
     // 双写全部候选键（sender + serverHost + 网关）：网关 Bearer 代注源读
-    // serverHost/网关键，单写 sender 会让代注拿到空/陈旧 token（键空间分裂修复）。
+    // serverHost/网关键，单写 sender 键会让代注拿到空/陈旧 token（键空间分裂修复）。
     const scopes = nuwaxTokenScopes(scope);
     for (const s of scopes) writeSetting(tokenKey(s), token);
     log.info("[NuwaxBridge] auth:persistToken saved", { scopes });
+
+    // 登录时刻捕获会话 ticket cookie（await：reg 链随后即起，凭据须先落库；
+    // 登录时刻即事实——找不到即清，防陈旧 ticket 顶替真实会话）
+    await captureTicketCookie(scope, { clearIfAbsent: true });
 
     // 主进程注册成功后启动业务服务；切换 token 先取消旧代次并等待停服。
     // renderer 仅消费状态通知，不另行注册或启动。
@@ -412,6 +458,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     // 过期 token「复活」——登出/401 后陷入 复活→401→clear 死循环（键空间分裂修复）。
     const scopes = nuwaxTokenScopes(scope);
     for (const s of scopes) writeSetting(tokenKey(s), null);
+    writeTicketForScopes(scopes, null);
     log.info("[NuwaxBridge] auth:clear", { scopes });
 
     // 登录态以 webview 为准：登出即清壳侧登录态。注册凭据族（savedKey/
@@ -479,8 +526,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     clearShellAuthState();
     clearRegistration();
     for (const scope of scopes) writeSetting(tokenKey(scope), null);
+    writeTicketForScopes(scopes, null);
     // 新域历史凭据一并清理，回切也必须重新登录。
     writeSetting(tokenKey(origin), null);
+    writeTicketForScopes([origin], null);
     ctx
       .getMainWindow()
       ?.webContents.send("nuwax:authChanged", { loggedIn: false });

@@ -39,6 +39,8 @@ import {
   clearRegistration,
   getComputerName,
   initializeCommercialAuth,
+  readTicketCookieValue,
+  writeTicketForScopes,
 } from "./commercialAuth";
 const origin = "https://enterprise.example.com";
 function fixture() {
@@ -110,8 +112,46 @@ describe("commercial registration protocol", () => {
     expect(getComputerName()).toBe("fengfei-mac-xx");
     expect(body.savedKey).toBeUndefined();
     expect(body.sandboxConfigValue.fileServerPort).toBe(61005);
+    // 无已同步 ticket：不附 Cookie（存量行为回归）
+    expect(options.headers.Cookie).toBeUndefined();
     expect(mocks.settings.get("auth.config_key")).toBe("new");
     expect(start).toHaveBeenCalledTimes(1);
+  });
+  it("reg 附登录会话 ticket cookie（无 savedKey 的首次设备注册凭据）", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "opaque-token");
+    // 网关域键命中优先级其次；此处业务域键命中即可验证候选序回读
+    mocks.settings.set(`nuwax.ticket.${origin}`, "session-ticket-value");
+    mocks.fetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "0000",
+          data: { configKey: "k1", serverHost: "t.example.com", serverPort: 443 },
+        }),
+      ),
+    );
+    const { flow } = fixture();
+    expect((await flow.start()).success).toBe(true);
+    const [, options] = mocks.fetch.mock.calls[0];
+    expect(options.headers.Cookie).toBe("ticket=session-ticket-value");
+    expect(options.headers.Authorization).toBe("Bearer opaque-token");
+  });
+  it("readTicketCookieValue 按候选序回读，writeTicketForScopes 双写/清", () => {
+    writeTicketForScopes(
+      ["https://a.example.com", "http://127.0.0.1:46800"],
+      "t-1",
+    );
+    expect(readTicketCookieValue(["https://a.example.com"])).toBe("t-1");
+    // 首候选缺失时回退次候选（直连↔gateway 双形态）
+    expect(
+      readTicketCookieValue(["https://missing.example.com", "http://127.0.0.1:46800"]),
+    ).toBe("t-1");
+    expect(readTicketCookieValue(["https://missing.example.com"])).toBeNull();
+    writeTicketForScopes(
+      ["https://a.example.com", "http://127.0.0.1:46800"],
+      null,
+    );
+    expect(readTicketCookieValue(["https://a.example.com"])).toBeNull();
   });
   it("late HTTP result after logout never commits or starts", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });

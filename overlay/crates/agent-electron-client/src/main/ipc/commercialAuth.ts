@@ -1,5 +1,6 @@
 import { app, net } from "electron";
 import * as os from "os";
+import log from "electron-log";
 import { readSetting, writeSetting, getDb } from "../db";
 import {
   DEFAULT_SERVER_HOST,
@@ -28,6 +29,38 @@ export function getComputerName(): string {
 export function currentAccessToken(): string | null {
   const value = readSetting(`nuwax.accessToken.${currentBusinessOrigin()}`);
   return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * nuwax web 登录会话 ticket cookie（服务端 Set-Cookie，内存态 session cookie）。
+ *
+ * 后端 reg 把「动态认证码或密码」当鉴权主体（Bearer 不算数）——全新设备无
+ * savedKey 时 4000「动态认证码或密码不能为空」（2026-09-14 新装实测）。解法
+ * （产品拍板）：登录会话的 ticket cookie 同步进壳、reg 请求附 Cookie——后端
+ * 认会话即可放行首次设备注册。
+ *
+ * 存储与 token 同族：按 origin 分键（直连形态在业务域、gateway 形态经 Set-Cookie
+ * 规整后落在回环网关域、dev 直连在本地前端域），捕获侧（桥）双写全部候选键、
+ * 消费侧（reg）按候选序回读。写/清在 nuwaxBridgeHandlers 的登录生命周期。
+ */
+export const NUWAX_TICKET_KEY_PREFIX = "nuwax.ticket.";
+
+/** 按候选域序回读已同步的 ticket（reg 消费）。 */
+export function readTicketCookieValue(scopes: string[]): string | null {
+  for (const scope of scopes) {
+    const value = readSetting(`${NUWAX_TICKET_KEY_PREFIX}${scope}`);
+    if (typeof value === "string" && value) return value;
+  }
+  return null;
+}
+
+/** 双写/清全部候选键（捕获与登出清理共用；null=writeSetting 的删除语义）。 */
+export function writeTicketForScopes(
+  scopes: string[],
+  value: string | null,
+): void {
+  for (const scope of scopes)
+    writeSetting(`${NUWAX_TICKET_KEY_PREFIX}${scope}`, value);
 }
 /**
  * 清注册派生凭据（configKey/savedKey/lanproxy 指针）。
@@ -112,6 +145,15 @@ export function initializeCommercialAuth(
         /* opaque tokens are valid too */
       }
       const savedKey = readSetting("auth.saved_key");
+      // 登录会话 ticket（桥侧捕获持久化）：后端认会话即可放行无 savedKey 的
+      // 首次设备注册（有 savedKey 时也附带，双凭据更稳）。候选=业务域+回环网关域。
+      const loopbackOrigin = (
+        readSetting("nuwax.loopback") as { origin?: string } | null
+      )?.origin;
+      const ticket = readTicketCookieValue(
+        [origin, loopbackOrigin].filter(Boolean) as string[],
+      );
+      if (ticket) log.info("[CommercialAuth] reg with session ticket cookie");
       const response = await net.fetch(`${origin}/api/sandbox/config/reg`, {
         method: "POST",
         redirect: "error",
@@ -119,6 +161,7 @@ export function initializeCommercialAuth(
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
           "x-client-type": "nuwax",
+          ...(ticket ? { Cookie: `ticket=${ticket}` } : {}),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         body: JSON.stringify({
