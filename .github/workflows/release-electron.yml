@@ -178,6 +178,12 @@ jobs:
           # win NSIS 快捷方式名（开始菜单/桌面）；向导标题与正文由 overlay 的
           # build/installer.nsh customHeader 宏覆写 Name（底部 BrandingText 仍为 Nuwax <ver>）
           npm pkg set build.nsis.shortcutName="女娲Nuwax"
+          # installer.nsh 的二次 Name 覆写触发 NSIS warning 6029（Name specified
+          # multiple times），electron-builder 默认 -WX 把 warning 当 error 直接炸掉
+          # makensis（v1.0.5 win 实证）。6029 仅"浪费空间"无实害，须写入真布尔
+          # false 关掉（app-builder-lib NsisTarget 是 === false 严格判断，
+          # npm pkg set 会写成字符串 "false" 不生效，故用 node 直写）
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.nsis=j.build.nsis||{};j.build.nsis.warningsAsErrors=false;fs.writeFileSync(p,JSON.stringify(j,null,2));"
           # linux 安装包内部包名（基座默认为社区标识 nuwaclaw）；desktop entry Name
           # 覆盖 productName 派生的默认显示名，包名/文件名不受影响
           npm pkg set build.deb.packageName="nuwax"
