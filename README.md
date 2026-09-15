@@ -143,7 +143,7 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 
 ### 分支模型与双轨门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`electron-v*` / `prerelease-v*`），main 不直接发布。
+**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`electron-v*` / `prerelease-v*`），main 不直接发布。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
