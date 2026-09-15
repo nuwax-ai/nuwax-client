@@ -552,6 +552,8 @@
   "Claw.About.downloadFailed": "Download failed",
   "Claw.About.getDebugInfoFailed": "Failed to retrieve debug information",
   "Claw.About.versionFound": "New version found: v{version}",
+  "Claw.About.releaseDate": "Released: {date}",
+  "Claw.About.releaseNotes": "Release notes",
   "Claw.About.goToDownloadPage": "Go to Download Page",
   "Claw.About.downloadUpdate": "Download Update",
   "Claw.About.downloading": "Downloading v{version}... {percent}%",

@@ -37,6 +37,7 @@ import type { HandlerContext } from "@shared/types/ipc";
 import { NUWAX_DEV_HOST } from "@shared/constants";
 import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
+import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 
 import {
   initializeCommercialAuth,
@@ -272,6 +273,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     }
     if (typeof safe.secondMenuCollapsed === "boolean") {
       forward.secondMenuCollapsed = safe.secondMenuCollapsed;
+    }
+    if ("titlebarDragRegions" in safe) {
+      const viewportWidth =
+        ctx.getMainWindow()?.getContentBounds().width ?? Number.MAX_SAFE_INTEGER;
+      const regions = sanitizeTitlebarDragRegions(
+        safe.titlebarDragRegions,
+        viewportWidth,
+      );
+      if (regions) forward.titlebarDragRegions = regions;
     }
     if (Object.keys(forward).length === 0) return;
     ctx.getMainWindow()?.webContents.send("nuwax:layout-changed", forward);

@@ -552,6 +552,8 @@
   "Claw.About.downloadFailed": "下载失败",
   "Claw.About.getDebugInfoFailed": "获取调试信息失败",
   "Claw.About.versionFound": "发现新版本: v{version}",
+  "Claw.About.releaseDate": "发布日期：{date}",
+  "Claw.About.releaseNotes": "版本说明",
   "Claw.About.goToDownloadPage": "前往下载页",
   "Claw.About.downloadUpdate": "下载更新",
   "Claw.About.downloading": "正在下载 v{version}... {percent}%",
