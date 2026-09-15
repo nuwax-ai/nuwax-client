@@ -110,3 +110,54 @@
 .chevronOpen {
   transform: rotate(90deg);
 }
+
+/* ========== 换域确认弹窗：改前/改后域名对照 ==========
+ * 换域会清 token、停服、强制重登，副作用大——弹窗须让用户一眼看清
+ * 「从什么域名改到什么域名」。两列网格：标签窄列 + 域名值列，
+ * 箭头独占一行跨两列居中。 */
+.switchDomainDiff {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  background: var(--color-bg-section);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.switchDomainLabel {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* 域名可能很长：允许换行而非溢出，等宽字体便于逐字核对 */
+.switchDomainValue,
+.switchDomainValueNext {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--color-text-secondary);
+}
+
+/* 新值是本次操作的结果，加重以区别于当前值 */
+.switchDomainValueNext {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.switchDomainArrow {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
+
+.switchDomainWarn {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}

@@ -158,23 +158,31 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           npm pkg set version="$VERSION"
           # 商业身份：文件名/包名一律 ASCII（productName=Nuwax → Nuwax.app /
-          # Nuwax-Setup-*.exe 等；appId 尾段与注入 identifier 一致=nuwax）；
-          # 客户端展示名同为 ASCII Nuwax（UA token=Nuwax/<ver>、设置「关于」等；
-          # 女娲Nuwax 为营销名，只出现在 README/发布文案），走
-          # CFBundleDisplayName 与运行时 APP_DISPLAY_NAME
+          # Nuwax-Setup-*.exe 等；appId 尾段与注入 identifier 一致=nuwax）。
+          # 面向用户的「显示名」与「文件名」分离：显示名走中文营销名 女娲Nuwax
+          # （mac CFBundleDisplayName / win NSIS 向导+快捷方式 / linux desktop Name），
+          # 文件名、包名、UA token、userData 目录名一律保持 ASCII Nuwax 不变。
           npm pkg set build.appId="com.nuwax-ai.nuwax"
           npm pkg set build.productName="Nuwax"
           # 顶层 productName：Electron app.getName() 优先读它——商业版更新调试信息与
-          # 打包 userData 目录名显示 Nuwax 而非内部 scoped 包名（产物命名仍以 build.productName 为准）
+          # 打包 userData 目录名显示 Nuwax 而非内部 scoped 包名（产物命名仍以 build.productName 为准）。
+          # ⚠️ 必须保持 ASCII：autoUpdater 用 app.getName() 拼「Uninstall <name>.exe」
+          # 定位 NSIS 卸载程序，与 NSIS 的 PRODUCT_FILENAME 同源，改中文会断更新链。
           npm pkg set productName="Nuwax"
           # 基座 mac.extendInfo 的 CFBundleName/DisplayName 是社区版展示名（女娲 Nuwax，
-          # 带空格），商业构建覆写为 Nuwax（与 UA/关于一致）；CFBundleIdentifier 删除以与 appId 统一
+          # 带空格）；CFBundleIdentifier 删除以与 appId 统一。
+          # CFBundleName 保持 ASCII（访达排序/兼容），CFBundleDisplayName 走中文营销名。
           npm pkg set build.mac.extendInfo.CFBundleName="Nuwax"
-          npm pkg set build.mac.extendInfo.CFBundleDisplayName="Nuwax"
+          npm pkg set build.mac.extendInfo.CFBundleDisplayName="女娲Nuwax"
           npm pkg delete build.mac.extendInfo.CFBundleIdentifier || true
-          # linux 安装包内部包名（基座默认为社区标识 nuwaclaw）
+          # win NSIS 快捷方式名（开始菜单/桌面）；向导标题与正文由 overlay 的
+          # build/installer.nsh customHeader 宏覆写 Name（底部 BrandingText 仍为 Nuwax <ver>）
+          npm pkg set build.nsis.shortcutName="女娲Nuwax"
+          # linux 安装包内部包名（基座默认为社区标识 nuwaclaw）；desktop entry Name
+          # 覆盖 productName 派生的默认显示名，包名/文件名不受影响
           npm pkg set build.deb.packageName="nuwax"
           npm pkg set build.rpm.packageName="nuwax"
+          npm pkg set build.linux.desktop.entry.Name="女娲Nuwax"
           # 前端 dist 打包来源（基座已中立化移除该条目）：壳根 nuwax/dist →
           # resources/nuwax-dist（dev 形态运行时经 NUWAX_FRONTEND_DIST env 解析）
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.from&&e.from.includes('nuwax/dist'))).concat([{from:'../../../nuwax/dist',to:'nuwax-dist'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"

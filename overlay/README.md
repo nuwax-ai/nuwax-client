@@ -19,7 +19,7 @@
 
 只放商业专属实现的整文件；基座若为商业功能开插槽（可选注册/扩展点），优先用插槽
 而不是大文件覆写，控制升级冲突面。bump 基座 pin 后必须跑 `npm run overlay:check`
-核对差异。当前覆写清单（15 文件）：
+核对差异。当前覆写清单（21 文件）：
 
 | overlay 文件（基座同路径） | 内容 |
 |---|---|
@@ -34,9 +34,29 @@
 | `public/icon.{png,icns,ico}` + `public/icon-dock.png` | **商业黑标**：zinc 黑砖 + 反白字形（2026-09-13，由基座原紫标母版反解字形重绘，圆角轮廓沿用原 alpha）。覆盖 mac bundle/dock、win 安装包、加载屏与运行时 `app.dock.setIcon`；tray 模板图为单色语义不动。基座社区版保持原紫标 |
 | `src/main/bootstrap/migrate.ts` | **有意行为性覆写（非超集）**：迁移链置空——不迁移 `.nuwaclaw`/`.nuwawork`/`.nuwax-agent`/`.nuwaxbot` 任何旧产品数据与登录态（2026-09-11 改名决策，商业版全新开始）；迁移期强制关闭历史遗留的 `guiMcpEnabled`/`sandbox_policy.enabled`（v1.0.4 起实验功能移除，防老用户幽灵开关） |
 | `src/main/bootstrap/migrate.commercial.test.ts` | migrate.ts 的配套测试：目录隔离 + 实验开关清理 + workspaceDir 前缀重写（基座版测的是基座迁移行为，随 overlay 同步须一并覆写保持同步态自洽） |
+| `build/installer.nsh` | **新增（非覆写）**：Windows NSIS 定制。`customHeader` 宏重写 `Name` 为中文营销名「女娲Nuwax」（向导标题与正文）；刻意**不重写 `BrandingText`**，底部「Nuwax \<ver\>」保持 ASCII。机制=该宏由 installer.nsi 在 common.nsh 之后插入，后写的同名指令覆盖先写的。`build/` 为 electron-builder 的 buildResources 目录，文件自动被拾取 |
+| `src/shared/locales/{en-US,zh-CN,zh-TW,zh-HK}.json` | **严格超集**：基座四语言全量 + 换域确认弹窗 3 键（`Claw.Settings.messages.switchDomain{Title,Current,Next,Warn}`）。i18nLocales.test.ts 强制四语言 key 集合与占位符一致，基座新增 key 时须同步合入全部四份 |
 
 维护规则：基座对应文件演进时，先 `overlay:check` 看 diff，把基座侧改动手工
 合入 overlay 版本（overlay 版本必须是基座版本的严格超集；两类例外——
 `migrate.ts` 及配套 commercial 测试（行为性覆写，须保留「迁移链置空」语义）、
 `SettingsPage.tsx`（独立行式重构，基座侧同文件演进须手工评估合入，不得把
 实验区块或「编辑解锁」范式带回））。
+
+## 品牌显示名与文件名分离（2026-09-15）
+
+商业身份要求**文件名/包名一律 ASCII**（`Nuwax-Setup-*.exe` / `Nuwax.app` /
+deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产物文件名，
+故中文营销名「女娲Nuwax」只能在各平台的**显示名字段**单独覆盖：
+
+| 平台 | 显示名载体 | 保持 ASCII 的部分 |
+|---|---|---|
+| Windows | overlay `build/installer.nsh`（向导）+ CI `build.nsis.shortcutName`（快捷方式） | 文件名、`BrandingText` 底部版本行、`Uninstall Nuwax.exe` |
+| macOS | CI `build.mac.extendInfo.CFBundleDisplayName` | `CFBundleName`、`Nuwax.app`、dmg 文件名 |
+| Linux | CI `build.linux.desktop.entry.Name` | `deb/rpm.packageName`、产物文件名 |
+
+⚠️ **不得**把顶层 `productName` 或 `APP_NAME_IDENTIFIER` 改成中文：前者被
+`autoUpdater` 用 `app.getName()` 拼「Uninstall \<name\>.exe」定位卸载程序
+（改中文断更新链），后者派生数据目录 `~/.nuwax` 与 UA token。userData
+（`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
+

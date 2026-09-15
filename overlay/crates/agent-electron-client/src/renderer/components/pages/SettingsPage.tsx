@@ -209,8 +209,27 @@ export default function SettingsPage() {
     const next = normalizeHost(draft);
     if (!next || next === saved) return;
     Modal.confirm({
-      title: t("Claw.Settings.messages.saveConfig"),
-      content: t("Claw.Settings.messages.saveConfigConfirm"),
+      title: t("Claw.Settings.messages.switchDomainTitle"),
+      // 换域副作用大（清 token→停服→切网关→强制重登），确认弹窗须明示改前/改后
+      // 域名与后果，避免用户误改后不知改成了什么（2026-09-15 用户反馈）
+      content: (
+        <div>
+          <div className={styles.switchDomainDiff}>
+            <span className={styles.switchDomainLabel}>
+              {t("Claw.Settings.messages.switchDomainCurrent")}
+            </span>
+            <span className={styles.switchDomainValue}>{saved || "—"}</span>
+            <span className={styles.switchDomainArrow}>↓</span>
+            <span className={styles.switchDomainLabel}>
+              {t("Claw.Settings.messages.switchDomainNext")}
+            </span>
+            <span className={styles.switchDomainValueNext}>{next}</span>
+          </div>
+          <div className={styles.switchDomainWarn}>
+            {t("Claw.Settings.messages.switchDomainWarn")}
+          </div>
+        </div>
+      ),
       okText: t("Claw.Settings.saveConfig.save"),
       cancelText: t("Claw.Settings.saveConfig.cancel"),
       onOk: async () => {
