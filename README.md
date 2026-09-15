@@ -115,7 +115,7 @@ nuwax-client/（main = 商业产品壳）
 ├── nuwa-electron-shell/   # submodule → 基座仓 main 分支（产品中立功能模块）
 ├── nuwax/                 # submodule → nuwax 前端（feat-dong.0930，dist 随仓提交）
 ├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
-├── scripts/               # in-base.js（基座内执行+商业 env 注入）+ sync-overlay.js + check-base-purity.js
+├── scripts/               # in-base.js（基座内执行+商业 env 注入）+ sync-overlay.js + check-base-purity.js + release-stable.sh（正式版发布一条龙）
 ├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
 ├── release-notes/  docs/
 └── package.json

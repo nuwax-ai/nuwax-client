@@ -44,6 +44,22 @@ npm run sign:win -- <version>
   Release 上的 unsigned 资产。
 - 排障（Release 资产名对照、gh 找不到等）见基座 windows-signing.md 同名章节。
 
+## SSH 远程代跑（2026-09-15 起，一条龙编排）
+
+签名步骤可从 mac 经 ssh 在签名机（`win-pc`）上代跑，全程编排在
+`scripts/release-stable.sh`（tag → CI → 远程签名 → stable 同步 → 验证，断点续跑），
+无需人工上机敲命令。人工前置只剩一件：**SimplySign Desktop 登录（手机 2FA）**。
+
+win-pc 一次性配置记录（已做，勿重复）：
+
+- `winget install GitHub.cli` + `gh auth login`（mac 侧 `gh auth token | ssh win-pc "bash -lc 'gh auth login --with-token'"` 管道，token 不落日志）；
+- `WINDOWS_CERTIFICATE_SHA1` 在 `~/.bashrc`；signtool 用 Windows Kits 自带（`.../Windows Kits/10/bin/*/x64/signtool.exe`）；
+- **sshd 会话 PATH 不含 MSI 装的 gh**（新开 ssh 会话拿旧环境），调用时须显式
+  `export PATH="/c/Program Files/GitHub CLI:$PATH"`——编排脚本已内置。
+
+已知取舍：v2 签名脚本默认 `SIGN_SKIP_BLOCKMAP=true`，签名版 EXE 不重生成 blockmap，
+Windows 自动更新走全量下载（非差分）；需要差分时在签名机上手动生成并补传。
+
 ## 同步 OSS（stable 须先完成上面签名）
 
 ```bash
