@@ -3,3 +3,6 @@ node_modules/
 .zcode/*
 !.zcode/config.json
 .overlay-sync.json
+
+# ZCode 本地工具缓存
+.claude/cache/
