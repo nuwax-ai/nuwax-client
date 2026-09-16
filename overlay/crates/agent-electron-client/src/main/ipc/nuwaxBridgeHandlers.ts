@@ -258,6 +258,28 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ctx.getMainWindow()?.webContents.send("nuwax:lang-changed", { lang });
   });
 
+  // ---- meta：nuwax 前端构建信息 → 壳（关于页「界面版本」展示） ----
+  // 页面启动时上报一次 { appVersion, gitHash? }；转发给壳 renderer 存态，
+  // fire-and-forget。非法载荷直接忽略。
+  ipcMain.on("nuwax:web-meta", (_event, payload: unknown) => {
+    const safe =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : null;
+    const appVersion =
+      safe && typeof safe.appVersion === "string"
+        ? safe.appVersion.trim()
+        : "";
+    if (!appVersion) return;
+    const gitHash =
+      safe && typeof safe.gitHash === "string" ? safe.gitHash.trim() : "";
+    log.info("[NuwaxBridge] web-meta", { appVersion, gitHash });
+    ctx.getMainWindow()?.webContents.send("nuwax:web-meta-changed", {
+      appVersion,
+      ...(gitHash ? { gitHash } : {}),
+    });
+  });
+
   // ---- layout：nuwax 布局状态 → 壳（工具栏收起按钮显隐/icon 态） ----
   // secondMenuAvailable：当前页是否有二级菜单（无则隐藏收起按钮）。
   // secondMenuCollapsed：二级菜单真实收起态（壳 icon 以此为准，修 reload 失同步）。
