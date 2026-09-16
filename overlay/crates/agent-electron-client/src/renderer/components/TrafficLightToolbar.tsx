@@ -33,6 +33,7 @@ import {
 } from "@ant-design/icons";
 import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import type { TitlebarDragRegion } from "@shared/types/webview";
+import { FEATURES } from "@shared/featureFlags";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
 const isMac = /mac/i.test(navigator.platform);
@@ -266,6 +267,13 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
             height: region.height,
             zIndex: 1099,
             userSelect: "none",
+            // 热区可视化（NUWAX_DEBUG_TITLEBAR_DRAG）：红=guest 上报的有效拖拽矩形，
+            // 空隙即被交互元素挖洞/未覆盖区域；生产默认关，dev/QA 构建开
+            ...(FEATURES.DEBUG_TITLEBAR_DRAG && {
+              background: "rgba(255,0,0,0.15)",
+              outline: "1px dashed rgba(255,0,0,0.5)",
+              outlineOffset: -1,
+            }),
             ...DRAG,
           }}
         />
@@ -292,6 +300,11 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           // 仅靠 guest 矩形时快速二连拖成功率低（矩形重建瞬间+回退 8px 条），
           // 行本体常驻 drag 不受 guest 上报抖动影响；双击仍走系统原生缩放。
           ...DRAG,
+          // 热区可视化（NUWAX_DEBUG_TITLEBAR_DRAG）：蓝=壳顶栏常驻拖拽行本体
+          ...(FEATURES.DEBUG_TITLEBAR_DRAG && {
+            background: "rgba(30,120,255,0.08)",
+            boxShadow: "inset 0 -1px 0 rgba(30,120,255,0.35)",
+          }),
           // 全平台透明浮层：顶行不涂底色，透出 webview 顶部避让带的页面自身
           // 背景（nuwax 顶带即页面 body 底色），与内容天然无缝、随主题自动一致；
           // 实底涂色会在页面底色与容器色有微差时形成可见断层（评审否决项）。
