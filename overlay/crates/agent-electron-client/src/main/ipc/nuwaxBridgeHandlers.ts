@@ -303,7 +303,18 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         safe.titlebarDragRegions,
         viewportWidth,
       );
-      if (regions) forward.titlebarDragRegions = regions;
+      if (regions) {
+        forward.titlebarDragRegions = regions;
+        // 观测点：拖拽失效排障需区分「guest 没上报 / 上报被裁空 / 上报正常」
+        // 三类；只记条数与首矩形，避免高频 flush 刷屏。
+        log.debug(
+          "[NuwaxBridge] layout-sync titlebar regions=" +
+            regions.length +
+            (regions.length > 0
+              ? ` first={x:${regions[0].x},y:${regions[0].y},w:${regions[0].width},h:${regions[0].height}}`
+              : ""),
+        );
+      }
     }
     if (Object.keys(forward).length === 0) return;
     ctx.getMainWindow()?.webContents.send("nuwax:layout-changed", forward);

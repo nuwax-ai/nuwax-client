@@ -287,11 +287,14 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           // Win/Linux 右上角被贴角的窗口控制三键（40×28，3 键共 120px）占据，
           // 容器留出对应右内边距，防止更新入口等流内元素被其覆盖
           paddingRight: isMac ? 8 : 128,
-          pointerEvents: "none",
+          // 整行 drag、显式子块 no-drag：行内空白间隙（按钮间/中间留白）都是
+          // 拖拽手柄，与 guest 上报矩形层（1099）叠加扩大命中面——mac 实测
+          // 仅靠 guest 矩形时快速二连拖成功率低（矩形重建瞬间+回退 8px 条），
+          // 行本体常驻 drag 不受 guest 上报抖动影响；双击仍走系统原生缩放。
+          ...DRAG,
           // 全平台透明浮层：顶行不涂底色，透出 webview 顶部避让带的页面自身
           // 背景（nuwax 顶带即页面 body 底色），与内容天然无缝、随主题自动一致；
           // 实底涂色会在页面底色与容器色有微差时形成可见断层（评审否决项）。
-          // 空白拖拽由上方矩形层承担；本容器只让显式子块恢复 pointer events。
         }}
       >
         {/* 左侧功能区（全平台同构）：侧栏开关 → 设置（可选） → 历史导航 → 服务状态，
