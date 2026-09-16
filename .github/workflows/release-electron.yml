@@ -475,7 +475,7 @@ jobs:
           rm -f "${ASSETS_DIR}"/*.yml
 
           RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,createdAt 2>/dev/null || echo '{}')
-          NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' | head -c 500)
+          NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' | head -c 2000)
           PUB_DATE=$(echo "$RELEASE_JSON" | jq -r '.createdAt // empty')
           if [ -z "$PUB_DATE" ]; then
             PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
