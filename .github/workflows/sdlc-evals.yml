@@ -3,6 +3,7 @@
 name: sdlc-evals
 on:
   pull_request:
+    branches: [main]
     paths: ['AGENTS.md', 'CLAUDE.md', '.claude/**', 'templates/**', 'REVIEW.md', 'plans/**', 'specs/**']
   push:
     branches: [main]

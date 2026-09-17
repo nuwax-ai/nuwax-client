@@ -32,7 +32,7 @@
 ### 2.2 工作分支（feat / fix / refactor / chore / docs / codex）
 
 - 从 main 切出，PR 回 main；合并即删（§5）。
-- ⚠️ **CI 触发是硬约束**：`ci.yml` 的 push 触发只挂 `main` 与 `feat/**`。`fix/*`、`codex/*`、`refactor/*` 等其他前缀 **push 不跑 CI**，开 PR 后才跑（`pull_request` 挂 main，双轨门禁全覆盖）。需要在 push 阶段就拿到 CI 反馈的分支，命名用 `feat/**`。
+- ⚠️ **CI 触发是硬约束**：`ci.yml` 的 push 触发**只挂 `main`**（2026-09-17 收窄，对齐 nuwaclaw 基座仓口径；此前曾挂 `feat/**`，工作分支每次 push 都跑 30 分钟全套门禁属纯噪音）。所有工作分支（`feat/*`、`fix/*`、`codex/*` 等）**push 一律不跑 CI**，开 PR 回 main 后由 `pull_request` 跑双轨门禁（全覆盖）。
 
 ### 2.3 release/vX.Y.x（版本线）
 
@@ -107,7 +107,7 @@
 ## 8. 速查
 
 ```bash
-# 新建工作分支（push 即触发 CI 的唯一形态是 feat/**）
+# 新建工作分支（push 不触发 CI；开 PR 回 main 才跑双轨门禁）
 git checkout -b feat/<slug> main
 
 # 切版本线

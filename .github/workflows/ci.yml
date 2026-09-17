@@ -10,9 +10,12 @@
 # overlay/ 商业版字节相同（防商业代码泄回中立基座）。
 name: CI (gates)
 
+# 触发口径与 nuwaclaw 基座仓 ci.yml 对齐：push 只挂 main；工作分支（含 feat/**）
+# push 不跑 CI，开 PR 回 main 时由 pull_request 跑双轨门禁（每次 push 全套 30 分钟
+# 门禁对研究/迭代分支是纯噪音，2026-09-17 收窄）。
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
