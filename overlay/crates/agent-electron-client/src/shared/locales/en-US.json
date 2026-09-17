@@ -649,6 +649,8 @@
   "Claw.Settings.system.title": "System",
   "Claw.Settings.system.autoLaunch": "Auto Launch",
   "Claw.Settings.system.autoLaunchDesc": "Automatically run {appName} at system startup",
+  "Claw.Settings.system.dormancy": "Dormancy",
+  "Claw.Settings.system.dormancyDesc": "Pause background syncing while the screen is locked or the window is hidden; it resumes instantly once visible",
   "Claw.Settings.system.theme": "Theme",
   "Claw.Settings.system.themeDesc": "Select interface color scheme",
   "Claw.Settings.system.themeSystem": "Follow System",

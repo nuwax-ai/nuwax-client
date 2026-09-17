@@ -119,6 +119,10 @@ export default function SettingsPage() {
   const [loopbackEnabled, setLoopbackEnabled] = useState(false);
   const [loopbackApplying, setLoopbackApplying] = useState(false);
 
+  // 休眠控制（即点即存）：锁屏/窗口隐藏时暂停 webview 后台轮询，壳侧即时生效
+  const [dormancyEnabled, setDormancyEnabled] = useState(true);
+  const [dormancyApplying, setDormancyApplying] = useState(false);
+
   // 语言
   const { lang: i18nLang } = useI18nLang();
   const [langList, setLangList] = useState<I18nLangDto[]>([]);
@@ -157,6 +161,16 @@ export default function SettingsPage() {
       setLogDir(dir || "");
     } catch (error) {
       console.error("Failed to load log directory:", error);
+    }
+    try {
+      const dormancy = (await window.electronAPI?.settings?.get(
+        "nuwax.dormancy",
+      )) as { enabled?: unknown } | null;
+      setDormancyEnabled(
+        typeof dormancy?.enabled === "boolean" ? dormancy.enabled : true,
+      );
+    } catch (error) {
+      console.error("Failed to load dormancy setting:", error);
     }
   }, []);
 
@@ -343,6 +357,22 @@ export default function SettingsPage() {
       message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
     } finally {
       setLoopbackApplying(false);
+    }
+  };
+
+  // ========== 休眠控制：开关即时生效（壳 hostActivity 按状态迁移时点读库） ==========
+  const handleDormancyChange = async (checked: boolean) => {
+    setDormancyApplying(true);
+    try {
+      await window.electronAPI?.settings?.set("nuwax.dormancy", {
+        enabled: checked,
+      });
+      setDormancyEnabled(checked);
+    } catch {
+      // 失败必须可见且状态不落定——静默会让用户误以为已生效
+      message.error(t("Claw.Settings.messages.settingFailed"));
+    } finally {
+      setDormancyApplying(false);
     }
   };
 
@@ -574,6 +604,19 @@ export default function SettingsPage() {
                 checked={loopbackEnabled}
                 onChange={handleLoopbackChange}
                 loading={loopbackApplying}
+              />
+            }
+          />
+
+          {/* 休眠控制：不可见时暂停 webview 后台轮询，恢复可见立即补拉 */}
+          <SettingsRow
+            label={t("Claw.Settings.system.dormancy")}
+            desc={t("Claw.Settings.system.dormancyDesc")}
+            control={
+              <Switch
+                checked={dormancyEnabled}
+                onChange={handleDormancyChange}
+                loading={dormancyApplying}
               />
             }
           />

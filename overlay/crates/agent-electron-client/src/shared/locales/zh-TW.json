@@ -649,6 +649,8 @@
   "Claw.Settings.system.title": "系統",
   "Claw.Settings.system.autoLaunch": "開機自動啟動",
   "Claw.Settings.system.autoLaunchDesc": "系統啟動時自動運行 {appName}",
+  "Claw.Settings.system.dormancy": "休眠控制",
+  "Claw.Settings.system.dormancyDesc": "鎖屏或視窗隱藏時暫停背景同步，恢復可見後立即同步",
   "Claw.Settings.system.theme": "主題",
   "Claw.Settings.system.themeDesc": "選擇介面配色方案",
   "Claw.Settings.system.themeSystem": "跟隨系統",
