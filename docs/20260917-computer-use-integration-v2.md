@@ -120,6 +120,14 @@ Nuwax 安装包（DMG/NSIS 单包）
 - 生命周期：登录/会话按需拉起（挂 §4.2 三处编排）；主 app 退出**不必**杀 helper（E 的额外红利：helper 可跨主 app 重启存活，会话不中断；配 launcher-pid 看门狗超时自退）；
 - TCC 交互：授权弹窗署名 = helper 名；壳 `permissions:check` 需扩展「面向 helper 的探测」（现只测主 app）；授权变更后仅 `open` 重拉 helper——主客户端不动。
 
+**配置开关与首次授权引导（2026-09-17 用户需求，P1 交互骨架）**：
+1. **开关=配置项**：settings 键 `step1_config.computerUseEnabled`（**默认关**），完全照 `guiMcpEnabled` 先例（`guiMcpLocalConfig.ts:46/82-131` 的开关→服务拉起→MCP 条目 upsert 模式）——开=装 helper（若未装）→授权检查→拉 daemon→`cua` MCP 条目注入；关=daemon shutdown（协议优先/pid 直杀兜底）+ 移除 MCP 条目。设置页开关旁挂状态灯（未装/待授权/已就绪/运行中）。
+2. **首次授权引导**（开关首次打开时，设置页内嵌三步卡片，不走独立弹窗）：
+   - ① **说明页**：为什么要两项权限（辅助功能=替你点击输入；屏幕录制=看懂屏幕）+ 隐私口径（本机执行、轨迹可审计、bounded 范围内）+「Nuwax Computer Use 将出现在系统设置的辅助功能/屏幕录制列表」预告（避免用户疑惑陌生名字）；
+   - ② **一键授权**：「开始授权」→ 壳触发 helper 的权限宿主（附录 D 已实测的正路：AX 弹窗→打开系统设置→开开关；SR 同页处理）→ 后台轮询 `check_permissions` 实时回显两项状态；
+   - ③ **完成/失败页**：双绿→自动拉起 daemon+注入 MCP+「试一试」demo 按钮（计算器示例）；拒绝/超时→重试入口+排障提示（含 doctor 集成）。授权全流程零终端、零手动找 app（正是 spike 实证的权限宿主弹窗流）。
+3. 开关与 overlay 插槽联动：基座提供开关+引导骨架（插槽），商业版默认关+引导文案走 overlay（locales 键随行）。
+
 **壳侧新增工作清单（7 项，文件级锚点，均为全新无先例）**：
 1. `prepare-cua-helper`：源码构建（cargo，锁 tag）+ 组装 .app（自写 Info.plist：bundle id 参数化 / LSUIElement / CFBundleExecutable）→ `resources/cua-helper/`；win 侧 = 独立 exe 目录（`build-sandbox-helper.js` 同款模式）；
 2. `after-sign.js`：嵌套 bundle 级签名（:255 后插入，先内后外、禁 `--deep`）+ stapleDirs 扩展 bundle 级 staple（:298-305）+ 新增 helper entitlements plist；
@@ -244,7 +252,7 @@ Renderer/webview（nuwax 前端）
 | 阶段 | 内容 | 出口标准 | v2 状态 |
 |---|---|---|---|
 | P0 预研 | 壳仓核对 + SDK 闭环 PoC + VLM 用例 + 文档落定 | 本文 + PoC 证据 | **✅ 2026-09-17 完成**（SDK 闭环 + VLM manual/auto 双模式全过，glm-5.3-flash 实测） |
-| P1 本机 MVP（**方案 E**） | 机制 spike（附录 D）→ prepare 源码构建 + helper .app 组装（§八/§3.6 项 1）→ 首用安装器 + LaunchServices 拉起 + 就绪握手（项 3/4）→ TCC 探测/授权页改造（项 5）→ MCP 条目注入 + DriverAuthorizationHost→审批浮层 + cua_step/cua_screenshot subType（与 C 共有部分，锚点见 §4.2）→ 嵌套 bundle 签名+staple+CI（项 2）→ 看门狗/自恢复（项 6）→ win/linux 打包验证 | v1 §1.2 成功标准三平台全过；嵌套 .app 签名公证流水线跑通；授权变更仅重启 helper 实测 | mac 约 8-10 人日（较 C 翻倍，打包签名链路为主）+ win/linux 2-3 人日 |
+| P1 本机 MVP（**方案 E**） | 机制 spike（附录 D）→ prepare 源码构建 + helper .app 组装（§八/§3.6 项 1）→ **配置开关 computerUseEnabled + 首次授权引导三步卡片（§3.6 交互骨架，用户 09-17 需求）** → 首用安装器 + LaunchServices 拉起 + 就绪握手（项 3/4）→ TCC 探测/授权页改造（项 5）→ MCP 条目注入 + DriverAuthorizationHost→审批浮层 + cua_step/cua_screenshot subType（与 C 共有部分，锚点见 §4.2）→ 嵌套 bundle 签名+staple+CI（项 2）→ 看门狗/自恢复（项 6）→ win/linux 打包验证 | v1 §1.2 成功标准三平台全过；嵌套 .app 签名公证流水线跑通；授权变更仅重启 helper 实测；开关/引导流程走查通过 | mac 约 8-10 人日（较 C 翻倍，打包签名链路为主）+ win/linux 2-3 人日 |
 | P2 体验收紧 | agent cursor 可视化、轨迹回放入会话 UI、能力清单管理 UI、遥测合规、doctor 集成 | 内测可用 + 安全评审 | 不变 |
 | P3 云端场景 | lanproxy 隧道 + HTTP MCP + 平台侧 VLM 编排联调 | 端到端演示 + 安全评审 | 不变 |
 
