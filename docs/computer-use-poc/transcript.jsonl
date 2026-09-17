@@ -1,0 +1,54 @@
+{
+  "round": 1,
+  "action": {
+    "thought": "显示屏残留显示 42（上次计算结果），先点全部清除归零，保证任务从干净状态开始",
+    "action": "click",
+    "element_index": 2
+  },
+  "nElements": 25
+}
+{
+  "round": 2,
+  "action": {
+    "thought": "已清零，开始输入算式：点击数字 6",
+    "action": "click",
+    "element_index": 11
+  },
+  "nElements": 25
+}
+{
+  "round": 3,
+  "action": {
+    "thought": "已输入 6，点击乘号",
+    "action": "click",
+    "element_index": 8
+  },
+  "nElements": 25
+}
+{
+  "round": 4,
+  "action": {
+    "thought": "已输入 6×，点击数字 7",
+    "action": "click",
+    "element_index": 5
+  },
+  "nElements": 25
+}
+{
+  "round": 5,
+  "action": {
+    "thought": "已输入 6×7，点击等号求值",
+    "action": "click",
+    "element_index": 20
+  },
+  "nElements": 25
+}
+{
+  "round": 6,
+  "action": {
+    "thought": "截图确认显示屏显示 6×7 = 42，任务完成",
+    "action": "done",
+    "answer": "42"
+  },
+  "nElements": 25
+}
