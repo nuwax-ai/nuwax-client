@@ -192,13 +192,14 @@ describe("commercial registration protocol", () => {
 });
 
 describe("dev 首启种值（NUWAX_SERVER_HOST 旋钮）", () => {
-  it("dev 全新库 + env → 种 serverHost（直连形态，不种 gateway）", () => {
+  it("dev 全新库 + env → 种 serverHost + 默认 gateway（直连联调走 NUWAX_WEBVIEW_ORIGIN 覆盖，优先级更高不受影响）", () => {
     mocks.isPackaged = false;
     process.env.NUWAX_SERVER_HOST = "https://testagent.xspaceagi.com";
     try {
       fixture();
-      expect(mocks.settings.get("step1_config")).toEqual({
+      expect(mocks.settings.get("step1_config")).toMatchObject({
         serverHost: "https://testagent.xspaceagi.com",
+        nuwaxLoadMode: "gateway",
       });
     } finally {
       delete process.env.NUWAX_SERVER_HOST;
@@ -208,6 +209,31 @@ describe("dev 首启种值（NUWAX_SERVER_HOST 旋钮）", () => {
     mocks.isPackaged = false;
     fixture();
     expect(mocks.settings.has("step1_config")).toBe(false);
+  });
+});
+
+describe("本地化默认开一次性迁移（2026-09-17）", () => {
+  it("存量库 direct → 迁移 gateway 并落旗标", () => {
+    mocks.settings.set("step1_config", {
+      serverHost: origin,
+      nuwaxLoadMode: "direct",
+    });
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      nuwaxLoadMode: "gateway",
+    });
+    expect(mocks.settings.get("nuwax.loadModeDefaultMigrated")).toBe(true);
+  });
+  it("旗标已存在 → 保留用户显式 direct 不再覆盖", () => {
+    mocks.settings.set("step1_config", {
+      serverHost: origin,
+      nuwaxLoadMode: "direct",
+    });
+    mocks.settings.set("nuwax.loadModeDefaultMigrated", true);
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      nuwaxLoadMode: "direct",
+    });
   });
 });
 
