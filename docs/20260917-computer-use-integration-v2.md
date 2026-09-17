@@ -17,7 +17,7 @@
    - SDK 闭环通过：`list_apps` → `list_windows` → `get_window_state`（截图落盘 + 171 元素树）→ `click`（element_token 定位 + Background 投递）× 4 → 计算器显示 `6×7 = 42`；
    - VLM 循环通过：manual 模式 6 轮（本会话 GLM+4.5v 图像理解，文件握手）；**auto 模式 glm-5.3-flash（BigModel API）4 轮全自动通过**——识别 poc1 残留状态「6×」后主动点清除，再 7→=→视觉确认 42，全程零人工；
    - **反例发现**：macOS 计算器显示屏**不在 AX 元素树里**（170 个元素全是按钮/菜单，无文本节点）——「元素树优先」必须配「截图校验兜底」，终验环节不能依赖元素树读值。
-3. **新增对比题（v1 未做）**：壳内曾有低配 computer-use——`agent-gui-server`（nut.js 截图/键鼠，HTTP MCP 60008）。**2026-09-17 用户定案：GUI agent 已废弃，不进商业版**——cua-driver 是商业版唯一 computer-use 路径，直接接班（对比表保留作能力差异的历史证据，§3.5）。
+3. **新增对比题（v1 未做）**：壳内曾有低配 computer-use——`agent-gui-server`（nut.js 截图/键鼠，HTTP MCP 60008）。**2026-09-17 用户定案：GUI agent 已废弃，不进商业版；社区本地沙箱方案（seatbelt/bwrap/ACP 约束那套）同样不进商业版（09-14 已定界：商业走 reg 远端沙箱）**——cua-driver 是商业版唯一 computer-use 路径，直接接班（对比表保留作能力差异的历史证据，§3.5）。
 4. **SDK 新事实（0.28.2 typings 实读）**：
    - 拓扑不止 v1 说的「进程内/daemon」两种，还有第三种 **`createPrivateWorker`**——直接 spawn 二进制、仅经继承 stdio 通信、无 socket 无复用端点（`PrivateWorkerOptions`），是「进程隔离 + 不对外暴露端点」的更保守形态，P1 选型时与 daemon 形态二选一；
    - **`DriverAuthorizationHost` 回调**（`createConfiguredWithAuthorizationHost`）：驱动内建的残留授权请求可经宿主回调转发到壳审批浮层——比 v1 设想的「驱动 consent ↔ 审批浮层对齐」更顺，有官方接缝；
@@ -89,7 +89,7 @@ v1 四方案（A 进程内 SDK / B 独立安装 / C 嵌入式 daemon / D 云端�
 | 依赖成本 | 已随包、已在跑（社区版） | 新增二进制分发 + 嵌套签名 + 版本三件套锁定 |
 | 许可 | 内部 | MIT（可随包分发） |
 
-**结论（2026-09-17 用户定案，替代早先「短期共存」草案）：GUI agent 已废弃，不进商业版。** cua-driver 是商业版唯一 computer-use 路径，直接接班：无 MCP 条目并存问题（只有 `cua`）、无前端入口/文档口径迁移问题；`guiMcpEnabled` 开关与 gui-agent 相关代码在商业版不出现（本节开关设计仅**引用其代码模式**作为实现参照，非保留该功能）。社区版是否保留 agent-gui-server 由社区线自行决定，与商业版无关。
+**结论（2026-09-17 用户定案，替代早先「短期共存」草案）：GUI agent 已废弃，不进商业版；本地沙箱方案（社区 seatbelt/bubblewrap/ACP 约束）亦不进商业版（09-14 定界：商业走 reg 远端沙箱）。** cua-driver 是商业版唯一 computer-use 路径，直接接班：无 MCP 条目并存问题（只有 `cua`）、无前端入口/文档口径迁移问题；`guiMcpEnabled` 开关与 gui-agent 相关代码在商业版不出现（本节开关设计仅**引用其代码模式**作为实现参照，非保留该功能）；§4.2/§七 提及的沙箱锚点（macOsStrictMcpSandbox、沙箱矩阵）均为社区版设施，商业版 MCP 条目注入不依赖它们。社区版是否保留 agent-gui-server 与本地沙箱由社区线自行决定，与商业版无关。
 
 ### 3.6 方案 E：独立 helper 应用实例（首发形态，2026-09-17 用户拍板）
 
