@@ -943,5 +943,19 @@
   "Claw.LogViewer.noLogs": "暫無日誌",
   "Claw.LogViewer.scrollToLoadMore": "向上捲動載入更早日誌",
   "Claw.LogViewer.totalLogs": "共 {0} 條日誌",
-  "Claw.LogViewer.autoScrollEnabled": "自動捲動已開啟"
+  "Claw.LogViewer.autoScrollEnabled": "自動捲動已開啟",
+  "Claw.Settings.computerUse.title": "Computer Use",
+  "Claw.Settings.computerUse.enable": "Computer Use",
+  "Claw.Settings.computerUse.desc": "允許 Agent 在本機查看螢幕並代你操作滑鼠鍵盤（獨立助手應用，授權僅影響它自身）",
+  "Claw.Settings.computerUse.permissions": "系統授權",
+  "Claw.Settings.computerUse.permAx": "輔助功能",
+  "Claw.Settings.computerUse.permSr": "螢幕錄製",
+  "Claw.Settings.computerUse.requestPerm": "去授權 / 檢查",
+  "Claw.Settings.computerUse.permGranted": "授權完成，Computer Use 已就緒",
+  "Claw.Settings.computerUse.permPending": "已彈出系統授權引導：請在系統設定中為「Nuwax Computer Use」開啟兩項權限，完成後點「去授權 / 檢查」複查",
+  "Claw.Settings.computerUse.stateRunning": "執行中",
+  "Claw.Settings.computerUse.stateIdle": "已啟用·待啟動",
+  "Claw.Settings.computerUse.stateNotInstalled": "未安裝",
+  "Claw.Settings.computerUse.errors.helper-not-installed": "未找到 Nuwax Computer Use 助手應用",
+  "Claw.Settings.computerUse.errors.generic": "操作失敗，請重試"
 }

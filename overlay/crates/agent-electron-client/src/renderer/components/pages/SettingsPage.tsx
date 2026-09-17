@@ -96,6 +96,14 @@ function SettingsRow(props: {
   );
 }
 
+// 权限状态点：true 绿✓ / false 红✗ / null 灰?（未知，尚未探测）
+function PermDot(props: { ok: boolean | null | undefined }) {
+  const { ok } = props;
+  const color = ok == null ? "#999" : ok ? "#52c41a" : "#ff4d4f";
+  const label = ok == null ? "?" : ok ? "✓" : "✗";
+  return <span style={{ color, marginLeft: 4, fontWeight: 600 }}>{label}</span>;
+}
+
 export default function SettingsPage() {
   // 主题
   const { themeMode, setThemeMode } = useTheme();
@@ -118,6 +126,18 @@ export default function SettingsPage() {
   // 本地化加速（即点即存）：映射 nuwaxLoadMode → 保存后重启生效
   const [loopbackEnabled, setLoopbackEnabled] = useState(false);
   const [loopbackApplying, setLoopbackApplying] = useState(false);
+
+  // Computer Use（cua helper；商业版 overlay 注入，旧宿主无此命名空间时整组隐藏）
+  const hasComputerUseApi = !!window.electronAPI?.computerUse;
+  const [cuaStatus, setCuaStatus] = useState<{
+    installed: boolean;
+    running: boolean;
+    enabled: boolean;
+    accessibility: boolean | null;
+    screenRecording: boolean | null;
+  } | null>(null);
+  const [cuaApplying, setCuaApplying] = useState(false);
+  const [cuaPermChecking, setCuaPermChecking] = useState(false);
 
   // 语言
   const { lang: i18nLang } = useI18nLang();
@@ -160,6 +180,76 @@ export default function SettingsPage() {
     }
   }, []);
 
+  // ========== Computer Use：状态加载 / 开关 / 授权引导 ==========
+  const loadCuaStatus = useCallback(async () => {
+    if (!hasComputerUseApi) return;
+    try {
+      const s = await window.electronAPI!.computerUse.getStatus();
+      setCuaStatus({
+        installed: !!s.installed,
+        running: !!s.running,
+        enabled: !!s.enabled,
+        accessibility: s.accessibility ?? null,
+        screenRecording: s.screenRecording ?? null,
+      });
+    } catch (error) {
+      console.error("Failed to load computer use status:", error);
+    }
+  }, [hasComputerUseApi]);
+
+  const handleCuaChange = async (checked: boolean) => {
+    setCuaApplying(true);
+    try {
+      const r = await window.electronAPI!.computerUse.setEnabled(checked);
+      if (!r.success) {
+        message.error(
+          t("Claw.Settings.computerUse.errors." + (r.error ?? "generic")),
+        );
+        return;
+      }
+      if (r.status) {
+        setCuaStatus({
+          installed: !!r.status.installed,
+          running: !!r.status.running,
+          enabled: !!r.status.enabled,
+          accessibility: r.status.accessibility ?? null,
+          screenRecording: r.status.screenRecording ?? null,
+        });
+      }
+      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+    } catch {
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    } finally {
+      setCuaApplying(false);
+    }
+  };
+
+  // 授权动作兼复查：已授权时立即返回且不再弹窗（见 services/cua/computerUse.ts 契约）
+  const handleCuaRequestPermissions = async () => {
+    setCuaPermChecking(true);
+    try {
+      const r = await window.electronAPI!.computerUse.requestPermissions();
+      setCuaStatus((prev) =>
+        prev
+          ? {
+              ...prev,
+              accessibility: r.accessibility ?? null,
+              screenRecording: r.screenRecording ?? null,
+            }
+          : prev,
+      );
+      if (r.accessibility && r.screenRecording) {
+        message.success(t("Claw.Settings.computerUse.permGranted"));
+      } else {
+        message.info(t("Claw.Settings.computerUse.permPending"));
+      }
+    } catch {
+      message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
+    } finally {
+      setCuaPermChecking(false);
+    }
+  };
+
   useEffect(() => {
     loadConfig();
     loadSystemSettings();
@@ -193,7 +283,8 @@ export default function SettingsPage() {
       }
     };
     loadLangList();
-  }, []);
+    loadCuaStatus();
+  }, [loadCuaStatus]);
 
   // ========== 服务域名：行内提交 → 确认 → configureServerHost 事务 ==========
   // 协议归一：支持带 http(s)://，未含默认补 https://
@@ -629,6 +720,64 @@ export default function SettingsPage() {
           />
         </div>
       </div>
+
+      {/* Computer Use（商业版 overlay 注入；旧宿主无此 API 时整组隐藏） */}
+      {hasComputerUseApi && (
+        <div className={styles.group}>
+          <div className={styles.groupTitle}>
+            {t("Claw.Settings.computerUse.title")}
+          </div>
+          <div className={styles.groupCard}>
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.enable")}
+              desc={
+                <span>
+                  {t("Claw.Settings.computerUse.desc")}
+                  {cuaStatus && (
+                    <span style={{ marginLeft: 8, whiteSpace: "nowrap" }}>
+                      {cuaStatus.installed
+                        ? cuaStatus.running
+                          ? `● ${t("Claw.Settings.computerUse.stateRunning")}`
+                          : `● ${t("Claw.Settings.computerUse.stateIdle")}`
+                        : `● ${t("Claw.Settings.computerUse.stateNotInstalled")}`}
+                    </span>
+                  )}
+                </span>
+              }
+              control={
+                <Switch
+                  checked={!!cuaStatus?.enabled}
+                  onChange={handleCuaChange}
+                  loading={cuaApplying}
+                  disabled={!cuaStatus?.installed}
+                />
+              }
+            />
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.permissions")}
+              desc={
+                <span>
+                  {t("Claw.Settings.computerUse.permAx")}
+                  <PermDot ok={cuaStatus?.accessibility} />
+                  {" · "}
+                  {t("Claw.Settings.computerUse.permSr")}
+                  <PermDot ok={cuaStatus?.screenRecording} />
+                </span>
+              }
+              control={
+                <Button
+                  size="small"
+                  loading={cuaPermChecking}
+                  disabled={!cuaStatus?.installed}
+                  onClick={handleCuaRequestPermissions}
+                >
+                  {t("Claw.Settings.computerUse.requestPerm")}
+                </Button>
+              }
+            />
+          </div>
+        </div>
+      )}
 
       {/* 目录 */}
       <div className={styles.group}>

@@ -38,6 +38,7 @@ import { NUWAX_DEV_HOST } from "@shared/constants";
 import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
+import * as cuaComputerUse from "../services/cua/computerUse";
 
 import {
   initializeCommercialAuth,
@@ -733,6 +734,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     log.info("[NuwaxBridge] native:openClientSettings");
     return { success: true };
   });
+
+  // ---- cua：Computer Use 配置（设置页开关/状态/授权引导；overlay 自持实现） ----
+  ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
+  ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
+    cuaComputerUse.setCuaEnabled(enabled === true),
+  );
+  ipcMain.handle("cua:requestPermissions", () =>
+    cuaComputerUse.requestCuaPermissions(),
+  );
 
   // ---- native：右键另存图片 ----
   ipcMain.handle(
