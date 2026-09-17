@@ -27,7 +27,9 @@ import { RightOutlined } from "@ant-design/icons";
 import {
   APP_DISPLAY_NAME,
   APP_DATA_DIR_NAME,
+  DEFAULT_SERVER_HOST,
   I18N_KEYS,
+  TEST_SERVER_HOST,
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
 import { setupService, type Step1Config } from "../../services/core/setup";
@@ -455,7 +457,11 @@ export default function SettingsPage() {
                 <AutoComplete
                   style={{ width: 260 }}
                   value={hostValue}
-                  options={[{ value: "https://agent.nuwax.com" }]}
+                  // 预置建议：默认域 + 测试域去重（测试期默认域即测试环境，
+                  // 恢复正式默认后两项并存，方便来回切换）
+                  options={[...new Set([DEFAULT_SERVER_HOST, TEST_SERVER_HOST])].map(
+                    (value) => ({ value }),
+                  )}
                   placeholder={t(
                     "Claw.Settings.service.serverHostPlaceholder",
                   )}
