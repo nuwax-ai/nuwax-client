@@ -15,6 +15,17 @@ import {
 
 const pexec = promisify(exec);
 const DIR = new URL('.', import.meta.url).pathname;
+// .env 自动加载：密钥只进文件不进命令行/日志（文件由人工创建，勿提交）
+{
+  const envFile = DIR + '.env';
+  if (fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
+      if (line.startsWith('#') || !line.trim()) continue;
+      const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].trim();
+    }
+  }
+}
 const RUN = DIR + 'vlm-run/';
 const MODE = process.argv[2] ?? 'manual';
 const BASE_URL = process.env.CUA_VLM_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4';
