@@ -27,7 +27,7 @@
  * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app, session } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, session, screen } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import * as fs from "fs";
 import * as path from "path";
@@ -318,6 +318,47 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     }
     if (Object.keys(forward).length === 0) return;
     ctx.getMainWindow()?.webContents.send("nuwax:layout-changed", forward);
+  });
+
+  // ---- titlebar：标题栏手势（guest 命中判定→主进程拖窗/双击缩放） ----
+  // 2026-09-17 架构切换：壳层不再渲染 app-region 拖拽矩形（旧方案挖洞遗漏即吞
+  // 页面点击，页面形态无法枚举）；guest mousedown 捕获阶段判定目标为空白后才发
+  // beginDrag，主进程 16ms 光标轮询移动窗口，guest mouseup/blur 补发 drag-end。
+  let titlebarDragTimer: NodeJS.Timeout | null = null;
+  const stopTitlebarDrag = () => {
+    if (titlebarDragTimer) {
+      clearInterval(titlebarDragTimer);
+      titlebarDragTimer = null;
+    }
+  };
+  ipcMain.on("nuwax:titlebar-drag-start", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isMinimized() || titlebarDragTimer) return;
+    const startCursor = screen.getCursorScreenPoint();
+    const [winX, winY] = win.getPosition();
+    let last = startCursor;
+    // 安全上限：guest 端 mouseup/blur/buttons 三重兜底，这里再兜 15s 防泄漏
+    const startedAt = Date.now();
+    titlebarDragTimer = setInterval(() => {
+      if (win.isDestroyed() || Date.now() - startedAt > 15_000) {
+        stopTitlebarDrag();
+        return;
+      }
+      const cursor = screen.getCursorScreenPoint();
+      if (cursor.x === last.x && cursor.y === last.y) return;
+      last = cursor;
+      win.setPosition(
+        winX + (cursor.x - startCursor.x),
+        winY + (cursor.y - startCursor.y),
+      );
+    }, 16);
+  });
+  ipcMain.on("nuwax:titlebar-drag-end", stopTitlebarDrag);
+  ipcMain.on("nuwax:titlebar-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
   });
 
   // ---- auth：登录会话 ticket cookie 同步（reg 凭据）----

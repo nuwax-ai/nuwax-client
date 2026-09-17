@@ -243,19 +243,11 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
 
   return (
     <>
-      {/* 真正的 drag region 只能存在于宿主 renderer。优先按 guest 上报的明确
-          空白矩形渲染；旧前端/导航切换尚未上报时退化为 8px 安全窄条。 */}
-      {(dragRegions.length > 0
-        ? dragRegions
-        : [
-            {
-              x: isMac ? 80 : 0,
-              y: 0,
-              width: Math.max(0, window.innerWidth - (isMac ? 80 : 0)),
-              height: 8,
-            },
-          ]
-      ).map((region, index) => (
+      {/* 2026-09-17 架构切换：不再渲染任何拖拽矩形——旧「guest 上报矩形+挖洞」
+          层盖在 webview 上，挖洞遗漏即吞页面点击（自绘控件/画布/iframe 无法枚举）。
+          现由 guest mousedown 命中判定→主进程跟随光标拖窗（nuwax:titlebar-drag-*）。
+          dragRegions 通道保留仅为兼容旧前端，无回退条（8px 保底条会吞内容区顶部）。 */}
+      {dragRegions.map((region, index) => (
         <div
           key={`${region.x}:${region.y}:${region.width}:${region.height}:${index}`}
           aria-hidden
@@ -295,12 +287,12 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           // Win/Linux 右上角被贴角的窗口控制三键（40×28，3 键共 120px）占据，
           // 容器留出对应右内边距，防止更新入口等流内元素被其覆盖
           paddingRight: isMac ? 8 : 128,
-          // 整行 drag、显式子块 no-drag：行内空白间隙（按钮间/中间留白）都是
-          // 拖拽手柄，与 guest 上报矩形层（1099）叠加扩大命中面——mac 实测
-          // 仅靠 guest 矩形时快速二连拖成功率低（矩形重建瞬间+回退 8px 条），
-          // 行本体常驻 drag 不受 guest 上报抖动影响；双击仍走系统原生缩放。
-          ...DRAG,
-          // 热区可视化（NUWAX_DEBUG_TITLEBAR_DRAG）：蓝=壳顶栏常驻拖拽行本体
+          // 2026-09-17 手势化后行容器不再整行 drag（其下是 guest 内容顶部，
+          // 整行 drag 会吞 logo 等点击）：整行穿透，按钮子块 auto+no-drag，
+          // 行内空白由显式 spacer（见下）承担原生拖拽+双击缩放。
+          pointerEvents: "none",
+          ...NO_DRAG,
+          // 热区可视化（NUWAX_DEBUG_TITLEBAR_DRAG）：蓝=壳顶栏 spacer 拖拽段
           ...(FEATURES.DEBUG_TITLEBAR_DRAG && {
             background: "rgba(30,120,255,0.08)",
             boxShadow: "inset 0 -1px 0 rgba(30,120,255,0.35)",
@@ -328,8 +320,18 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {menuBar}
         </div>
 
-        {/* 中间留白：拖拽手柄 */}
-        <div style={{ flex: 1 }} />
+        {/* 中间留白：显式原生拖拽手柄（app-region:drag；双击走系统原生缩放）。
+            容器已 pointerEvents:none，仅此 spacer 恢复事件——覆盖按钮群与右侧
+            （win 为窗口三键/更新入口）之间的全部空白，其余区域全穿透给 guest，
+            guest 侧由标题栏手势（nuwax:titlebar-drag-*）接管空白带拖拽。 */}
+        <div
+          style={{
+            flex: 1,
+            height: "100%",
+            pointerEvents: "auto",
+            ...DRAG,
+          }}
+        />
 
         {/* 右侧：更新入口（仅 Win/Linux；mac 顶行只占左侧 300px，
             更新入口单独浮在窗口右上，见下方） */}
