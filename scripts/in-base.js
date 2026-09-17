@@ -18,9 +18,6 @@
  *   NUWAX_UPDATE_FEED_BASE            → 独立更新通道 nuwax-electron
  *   NUWAX_PORT_OFFSET=1000             → 默认端口整体 +1000（19099/61002~61009/61173），
  *                                         与社区版 nuwaclaw、nuwa-cli 同机双开不冲突
- *   NUWAX_DEFAULT_SERVER_HOST          → 默认后端域（测试期指测试环境
- *                                         testagent.xspaceagi.com；恢复正式环境时
- *                                         改回/删除本注入即回落 agent.nuwax.com）
  *   NUWAX_FRONTEND_DIST                → dev 模式 nuwax 前端 dist 位置（壳根 nuwax/ 子模块）
  *   --no-env：同步 overlay 但不注入 env——测试门禁口径（test:commercial）。测试套件
  *   断言「未注入 env 时为社区缺省身份」，env 只供构建/打包；商业行为由 overlay 文件
@@ -81,9 +78,6 @@ const env = noInject || noEnv
         process.env.NUWAX_UPDATE_FEED_BASE ||
         'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',
       NUWAX_PORT_OFFSET: process.env.NUWAX_PORT_OFFSET || '1000',
-      NUWAX_DEFAULT_SERVER_HOST:
-        process.env.NUWAX_DEFAULT_SERVER_HOST ||
-        'https://testagent.xspaceagi.com',
       NUWAX_FRONTEND_DIST: process.env.NUWAX_FRONTEND_DIST || path.join(rootDir, 'nuwax', 'dist'),
     };
 

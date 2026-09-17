@@ -6,6 +6,7 @@ import {
   DEFAULT_SERVER_HOST,
   LOCAL_HOST_URL,
   DEFAULT_GUI_MCP_PORT,
+  TEST_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { getDeviceId } from "../services/system/deviceId";
@@ -107,14 +108,16 @@ export function initializeCommercialAuth(
   expired?: () => void,
 ) {
   // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
-  // dev 全新库同种种值：不种则业务域候选/注册回落 DEFAULT_SERVER_HOST（生产域），
-  // 与 dev 前端联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域，直连形态
+  // 默认域=测试环境（2026-09-17 测试期拍板，商业专属逻辑故落 overlay 种子而非
+  // 基座常量）；恢复正式环境改回 DEFAULT_SERVER_HOST 即可。dev 全新库同样
+  // 种值：不种则业务域候选/注册回落 DEFAULT_SERVER_HOST（生产域），与 dev 前端
+  // 联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域，直连形态
   // （不种 gateway——dev 走 NUWAX_WEBVIEW_ORIGIN 直连本地前端，不起网关）。
   if (!readSetting("step1_config")) {
     const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
     if (app?.isPackaged) {
       writeSetting("step1_config", {
-        serverHost: DEFAULT_SERVER_HOST,
+        serverHost: TEST_SERVER_HOST,
         nuwaxLoadMode: "gateway",
       });
     } else if (devSeedHost) {

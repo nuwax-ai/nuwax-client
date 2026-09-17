@@ -350,8 +350,6 @@ jobs:
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
           NUWAX_PORT_OFFSET: "1000"
-          # 测试期默认后端域=测试环境（首启种子与各缺省兜底整体切换；恢复正式时移除）
-          NUWAX_DEFAULT_SERVER_HOST: "https://testagent.xspaceagi.com"
         run: |
           if [ "${{ runner.os }}" = "macOS" ] && [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
             echo "No Apple certificate, building unsigned Mac package for ${{ matrix.arch }}"

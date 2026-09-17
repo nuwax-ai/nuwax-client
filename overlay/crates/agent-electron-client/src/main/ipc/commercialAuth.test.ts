@@ -58,6 +58,8 @@ describe("commercial registration protocol", () => {
   it("fresh installation selects bundled UI without importing legacy credentials", () => {
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
+      // 测试期默认域=测试环境（overlay 种子；恢复正式改回 DEFAULT_SERVER_HOST）
+      serverHost: "https://testagent.xspaceagi.com",
       nuwaxLoadMode: "gateway",
     });
     expect(mocks.settings.get("auth.saved_key")).toBeNull();
