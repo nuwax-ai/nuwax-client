@@ -293,4 +293,6 @@ Renderer/webview（nuwax 前端）
 - **TCC 手动条目 UX 差**：macOS 无 API 写 TCC，首次授权只能引导用户去系统设置（＋添加）。产品 launcher 必须做 `AXIsProcessTrustedWithOptions(prompt)` 主动弹窗 + ScreenCaptureKit direct consent（官方 grant 流程同款），把「＋添加」变成「点弹窗按钮」；
 - **effect=Unverifiable 不可信**：动作返回 ok/effect=2 不代表 UI 真变了，终验一律截图（与 §6 反例互证）。
 
-**遗留（转 P1 首项）**：最终形态（源码补丁 + 正式签名 + 授权引导）下的组合复验；授权 UX 产品化。
+**遗留（转 P1 首项）**：~~最终形态组合复验~~ **✅ 已完成（同日晚间）**；授权 UX 产品化（launcher 弹窗引导）。
+
+**终态验证（源码补丁版，2026-09-17 晚）**：cua 仓本地分支 `nuwax-helper-bundle` 两个补丁（`0001` bundle 白名单参数化：Nuwax/NuwaClaw Computer Use.app + `CUA_DRIVER_BUNDLE_DIR_NAMES` env；`0002` `app_bundle_path()` 动态取运行中 bundle——权限宿主/relaunch 不再指向官方 app）→ 重建装配 `/Applications/Nuwax Computer Use.app`（顶层直命名+客户端图标+LSUIElement）。终态全绿：**单进程（PPID=1）、零 env/零旗标、权限门双 granted（helper 自身 TCC 身份）、元素树 146、截图、Background 五连击真实生效（clear→6×乘7=等于 → 42，截图内容寻址比对）**。patch 文件归档 `docs/computer-use-poc/0001-0002-cua-nuwax-helper-bundle.patch`（CI 构建时对锁版 tag 应用）。**授权流新发现（P1 直接采用）**：权限宿主机制可直接触发 TCC 弹窗——`open -n -g <helper.app> --args __permissions-host-request --result-file "$TMPDIR/cua-driver-permissions-*.json" --probe-direct-capture`（结果文件名必须 `cua-driver-permissions-*.json` 且在 `$TMPDIR`，否则静默退出）；AX 走系统弹窗引导、SR 经 SCK direct consent 即时生效。另实证：**ad-hoc 手动添加的 app 在 TCC 列表按可执行文件名显示**（我们的 helper 显示为「CuaDriver.app」——显示名陷阱，正式 Developer ID 签名后按 bundle 名显示）。
