@@ -25,6 +25,7 @@
    - 工具面 55 个（`listToolsJson()` 实测），含 browser_* CDP 套件、`start/stop_recording` + `replay_trajectory`、`launch_app`/`kill_app`、`zoom`、`verify_state`、`escalate_session`。
 5. **授权双层结论不变**：OS 层走嵌入模式 TCC 责任链（已实测）；驱动层商业版必须 `bounded` + 能力清单，`standard` 不作默认。
 6. **分期维持 P0→P3 框架，P0 已由本次完成**（文档落定 + 双 PoC），P1 工作量下修，具体文件清单见 §10。
+7. **形态拍板（2026-09-17 下午增量，用户决策）：方案 E「独立 helper 应用实例」升为首发形态**，C（内嵌 daemon）降为回退参考——核心理由=权限身份隔离（授权/回收/重授权只重启 helper、主客户端零重启、最小权限口径）+ ZCode 市场先例实证；代价=P1 打包签名链路工作量约翻倍（mac 8-10 人日）。**TCC 身份是一次性决定，不做 C→E 中途迁移**（否则全量用户重授权）。同场拍板：helper 二进制**源码自建**（锁 tag cargo 构建，不打包 trycua release 产物）。详见 §3.6 / §八 / §十 / 附录 D。
 
 ---
 
@@ -69,11 +70,9 @@ v1 说法复认：独立 `screenshot` 工具确实已移除，规范路径 = `ge
 
 ## 三、集成形态选型（v2 修订）
 
-v1 四方案（A 进程内 SDK / B 独立安装 / C 嵌入式 daemon / D 云端隧道）结论维持：**C 为主形态**。v2 增补：
-
-- **C 的实现容器二选一**（P1 拍板项）：①`EmbeddedCuaDriverHost`（daemon，UDS socket，多客户端：壳自研循环 + 本地引擎 MCP 代理共用）；②`createPrivateWorker`（stdio-only，更保守：无本地端点可被其他进程连，但 MCP 代理形态要另想——worker 不暴露 socket，引擎侧接入需要壳进程内转发）。**推荐①**：因为「本地引擎经 MCP 接入」是场景一刚需，daemon 的 `connection.mcp` 现成支持。
-- A（纯进程内）已由 PoC 验证可行性，作为 P1 里「不启 daemon 时 SDK 也能跑」的降级路径保留。
-- B 仅历史意义；D（P3）不变。
+v1 四方案（A 进程内 SDK / B 独立安装 / C 嵌入式 daemon / D 云端隧道）原本结论为 C 为主。**2026-09-17 下午用户拍板升级为方案 E（独立 helper 应用实例，见 §3.6）**，C 降为回退参考（§四 保留其锚点——MCP/审批/模型对接与容器形态无关，两种形态通用）。仍有效的增补：
+- C 的实现容器二选一（若回退 C 时）：①`EmbeddedCuaDriverHost`（daemon，多客户端共用）；②`createPrivateWorker`（stdio-only 无端点，更保守但 MCP 代理需壳内转发）。
+- A（纯进程内）已由 PoC 验证，作为「不启 daemon 时 SDK 也能跑」的降级路径保留；B 仅历史意义；D（P3）不变。
 
 ### 3.5 新增：vs 壳内既有 `agent-gui-server` 对比
 
@@ -92,9 +91,49 @@ v1 四方案（A 进程内 SDK / B 独立安装 / C 嵌入式 daemon / D 云端�
 
 **结论：短期共存，不立即替换。** agent-gui-server 是已上线能力（且 guiMcpEnabled 缺省关、影响面小），cua-driver 引入后作为「元素树 + 后台输入 + bounded 权限 + 审计」的升级路径，两者 MCP 条目并存（`gui-agent` 与 `cua`），前端入口/文档口径在 P1 里统一；待 cua 链路稳定后再评估下线 agent-gui-server（社区版兼容性单独评估）。
 
+### 3.6 方案 E：独立 helper 应用实例（首发形态，2026-09-17 用户拍板）
+
+**决策记录**：核心理由=①权限身份隔离：辅助功能/屏幕录制授权归专用 helper，授权/回收/重授权**只重启 helper、主客户端零重启**；②最小权限口径：系统弹窗署名是专用 helper 而非主 app 持有「控制电脑」能力，商业合规更稳；③市场先例已验证可量产。代价=P1 打包签名链路工作量约翻倍、离开 cua 官方文档路径（机制以 spike 实证兜底，见附录 D）。TCC 身份一次性决定，不做 C→E 中途迁移。
+
+**市场实证（本机探查，2026-09-17）**：ZCode 的 computer-use = `ZCode Computer Use.app`（bundle id `dev.zcode.cua-helper`，LSUIElement 无图标、与主程序同团队 `8A5X4JJ39T` 签名、hardened runtime）。分发模式=随主程序捆绑（meta `bundled:zcode-app`）→**首用安装到 `~/.zcode/computer-use/`**（安装锁 + 签名/团队校验 `verificationMode:"release"`）→按需 LaunchServices 拉起（launchctl `application.dev.zcode.cua-helper.*`，PPID=1 挂 launchd，`--launcher-pid` 探活）→MCP server（stdio）经 `/tmp/zcode-cua-501/<uid>/broker-*.sock` + token 文件连 helper；TCC 归 helper。注意：**ZCode 的 helper 是自研栈（Node SEA + 自研 AX 模块），不消费 cua-driver**——我们封装模式照抄，驱动用 cua-driver。
+
+**cua 官方立场与边界（源码实证 @625118a90）**：
+- standalone daemon 是官方三种受支持 macOS 身份之一（`docs/content/docs/reference/cua-driver/process-model.mdx:60-62`），但「桌面 App 连外部独立 daemon」**无官方 how-to**；EMBEDDING.md 开篇即为其反面诉求（不随包发第二个 app、不出第二个授权弹窗）；
+- **官方 CuaDriver.app（`com.trycua.driver`，Developer ID 签名公证）不可直接随包分发**：它自带 `update --apply` 自更新，而 SDK↔daemon 是**四个契约版本精确匹配**（contract/tools_list_schema/capability/mcp_protocol，`cua-driver-sdk/src/lib.rs:350-383`）——它自行升版我们必失配拒连；
+- 故 E 的实现 = **自建 bundle + 自建二进制**（§八源码构建），版本随主包锁死，helper 无独立更新通道；
+- 通信面：daemon UDS 默认 `~/Library/Caches/cua-driver/cua-driver.sock`（0600 + SO_PEERCRED 同用户鉴权，`serve.rs:624-752`，无 token）；我们用 `--socket` 显式私有路径；HTTP MCP（loopback + 强制 bearer token，`mcp_http.rs`，env 开关无 CLI flag）作引擎/云端备选通道；多客户端共享 daemon 的官方配方 = 各客户端统一 `cua-driver mcp --socket <endpoint>` 显式下发（process-model.mdx:99-102）。
+
+**产品链路（单包集成，用户强调：一个客户端包搞定）**：
+
+```text
+Nuwax 安装包（DMG/NSIS 单包）
+ └─ Resources/cua-helper/Nuwax Computer Use.app   ← 嵌套完整 .app（自建 Info.plist + entitlements）
+     首用/版本变化 → 安装器逻辑：拷贝到 ~/.nuwax/cua-helper/（稳定路径锚定 TCC 与 LaunchServices）
+       + codesign 校验（团队 ID + bundle id + 版本 meta + 安装锁，学 ZCode verificationMode）
+     → open 拉起：serve --socket <~/.nuwax/…/cua.sock> --permission-mode bounded [--capability-manifest …]
+     → 主进程就绪握手（socket 出现 + metadata 四契约校验 + pid）
+     → CuaDriver.connect(socketPath)（壳自研 VLM 循环）
+       + 本地引擎：cua-driver mcp --socket 代理 或 HTTP MCP 条目下发
+```
+
+- 双版本 bundle id：商业 `com.nuwax-ai.nuwax-cua-helper` / 社区 `com.nuwax-ai.nuwaclaw-cua-helper`（同机双装不互抢 TCC）；
+- 生命周期：登录/会话按需拉起（挂 §4.2 三处编排）；主 app 退出**不必**杀 helper（E 的额外红利：helper 可跨主 app 重启存活，会话不中断；配 launcher-pid 看门狗超时自退）；
+- TCC 交互：授权弹窗署名 = helper 名；壳 `permissions:check` 需扩展「面向 helper 的探测」（现只测主 app）；授权变更后仅 `open` 重拉 helper——主客户端不动。
+
+**壳侧新增工作清单（7 项，文件级锚点，均为全新无先例）**：
+1. `prepare-cua-helper`：源码构建（cargo，锁 tag）+ 组装 .app（自写 Info.plist：bundle id 参数化 / LSUIElement / CFBundleExecutable）→ `resources/cua-helper/`；win 侧 = 独立 exe 目录（`build-sandbox-helper.js` 同款模式）；
+2. `after-sign.js`：嵌套 bundle 级签名（:255 后插入，先内后外、禁 `--deep`）+ stapleDirs 扩展 bundle 级 staple（:298-305）+ 新增 helper entitlements plist；
+3. LaunchServices 拉起封装（全仓零先例；`open -a <path> --args`，垫 `services/utils/spawn.ts`）+ 就绪握手（轮询模式抄 lanproxyHealth `waitForLanproxyTunnel` / serviceManager `waitForTtydGatewayHealth` 四件套 + daemon socket/metadata/pid）；
+4. 首用安装器：Resources→稳定路径拷贝 + codesign 团队校验 + 安装锁 + 版本比对升级；`binaryLocator` 新增 `getCuaHelperAppPath()` 双通道 getter（照 :373-382 范例）；
+5. TCC 探测/引导改造：`permissions:check` 扩 helper 面（受控子进程真实探测，workspaceAccessProbe 模式）+ 授权页 UX（署名说明 / 去授权 / 只重启 helper）；
+6. helper 看门狗与自恢复：launcher-pid 探活自退（主 app 强杀后）；健康巡检 + 重启上限（windowsMcp `manager.ts:233-268` 模式）；注意 `killProcessTreeGraceful` 组杀/后代杀对 launchd 下的 open 拉起进程**无效**（processTree.ts:390-439），只能 pid 直杀或 shutdown 协议；
+7. 证书/身份稳定性纪律：bundle id + Developer ID 证书跨版本不变 = TCC 授权保留（**换证书 = 全量用户重弹授权**，写决策记录）；每次更新 helper 须重公证 + staple（否则首启 syspolicyd 在线查证）。
+
+**spike 实现级补充（2026-09-17，详见附录 D）**：①源码补丁点=`bundle.rs:100-113` 的 bundle 白名单（否则 disclaim re-exec 导致动作静默失效，本日实测踩中）；②launcher 必须做 TCC 主动弹窗引导（macOS 无 API 写 TCC，手动＋添加 UX 不可接受）；③helper 二进制与 npm SDK **必须同仓锁版同包分发**（四契约精确匹配，官方 0.21 vs SDK 0.28.2 实测拒连）。
+
 ---
 
-## 四、推荐架构（方案 C 展开，v2 全部文件级锚点）
+## 四、壳内对接锚点与架构（容器形态无关；C 为回退参考）
 
 ### 4.1 组件图（沿 v1，标注实证落点）
 
@@ -144,6 +183,7 @@ Renderer/webview（nuwax 前端）
 3. 可复用先例：`src/main/services/system/workspaceAccessProbe.ts`（用受控子进程复现 TCC 拒绝来「实证」权限而非只看 API 状态）——cua-driver 拉起前可做同款真实能力探测（比如截一张图验证屏幕录制真实生效，规避 stale permission）。
 4. 授权变更后完全重启应用再重建运行时（官方契约，troubleshoot-stale-macos-permissions）；嵌入模式禁用 `cua-driver permissions grant`（独立模式命令）。
 5. Windows/Linux 结论不变（壳 win 已有代码签名；Linux Wayland 边界写发行说明）。
+6. **方案 E（首发形态）下的差异**：TCC 归 helper bundle（`com.nuwax-ai.*-cua-helper`），弹窗署名=helper 名；授权/回收/重授权后**仅需 `open` 重拉 helper，主客户端零重启**——这是 E 相对 C 的核心体验差（C 需整机重启应用，见 §5.1 第 4 条）；探测需面向 helper 身份（§3.6 工作清单第 5 项）。spike 实证见附录 D。
 
 ---
 
@@ -171,9 +211,7 @@ Renderer/webview（nuwax 前端）
 
 ## 八、打包与分发（v2：模式复制清单）
 
-1. **照抄 nuwaxcode 全链**（`scripts/prepare/prepare-nuwaxcode.js` → `binaryLocator.getNuwaxcodeBundledBinPath` → `nuwaxcodeDownloader.ts` OSS zip 兜底 → `dependencyChecker` 清单）：
-   - 构建期：新 `scripts/prepare/prepare-cua-driver.js`——产物源**首版从官方 Python wheel 按平台提取 `cua-driver` 可执行文件**（v1 结论复核仍成立：npm 不带），锁 0.28.2；SHA256 校验 + 缓存放 `resources/cua-driver/{platform}-{arch}/bin/`；extraResources 加一条；
-   - 运行期：`getCuaDriverBinPath()`（packaged→appDataDir 下载目录→bundled 双通道回退，照 :373-382）；OSS deps 通道 zip 兜底照 `nuwaxcodeDownloader.ts`（产物须上传 nuwax-electron/deps，人工上传——现状无 workflow 自动化）。
+1. **helper 二进制=源码自建（2026-09-17 用户拍板，替代「wheel 提取/release 产物」）**：CI 从锁定的 cua 源码 tag `cargo build --release -p cua-driver`（仓内先例：agent-kit 即 CI 源码构建装入）——供应链自控、版本自锁、必要时可改（如 bundle 路径判定适配我们自己的 .app 名）；本地 dev 用 `NUWAX_CUA_SOURCE_DIR` 指本地检出（同 `NUWAXCODE_DIST_DIR` 模式）。组装链照抄 nuwaxcode 全链（`prepare-nuwaxcode.js` → `binaryLocator` getter → OSS zip 兜底 → `dependencyChecker` 清单），但产物从「裸二进制目录」升级为**完整 helper .app**（§3.6 链路）；extraResources 加 `resources/cua-helper/` 一条。
 2. **mac 嵌套签名**：`after-sign.js` :255 后加 cua-driver 段（codesign + entitlements 视驱动需求）→ 主 app 重签 → stapleDirs(:298-305) 加目录。CI 证书/公证管线不动。
 3. **win**：NSIS/MSI 分发 + `afterSignWindows` signDirectory + 手签 runbook（`docs/sign-windows.md`）增补。
 4. **版本锁定**：npm 主包+平台包+可执行文件三件套同版本（0.28.2 / contract 0.8.0 / MCP 2025-06-18）；启动时 `driver.metadata()` 校验 `contractVersion`，不匹配禁用入口 fail-fast（SDK 侧 `IncompatibleDaemon` 错误类型已备）。
@@ -189,7 +227,10 @@ Renderer/webview（nuwax 前端）
 | 2 | standard=全桌面输入 | 必须 bounded | 不变；SDK 侧 `RuntimeAuthorizationOptions`（allowedModes+compatibilityMode+manifest 路径）实证存在，宿主锁定天花板是官方设计 |
 | 3 | 平台能力差异 | 声明边界 | 不变；mac 全链已 PoC，win/linux 留 P1 实测 |
 | 4 | 进程内无 agent cursor overlay | 走 daemon | 不变（daemon 形态自带，overlay 工具 `set_agent_cursor_*` 在 55 工具清单内） |
-| 5 | 可执行文件自备 | wheel 提取/源码构建 | 不变；P1 先 wheel 提取验证，必要时锁版缓存或 CI 构建 |
+| 5 | 可执行文件自备 | wheel 提取/源码构建 | **已定源码自建**（09-17 用户拍板）：锁 tag cargo 构建，供应链自控；本地 dev 用 NUWAX_CUA_SOURCE_DIR |
+| 11 | （E 增）我们的 bundle + open 拉起的 TCC 归属机制未实证 | E 形态根基 | **✅ 附录 D 已实证**（隔离/授权/动作/重启恢复全过）；剩最终形态组合复验转 P1 首项 |
+| 12 | （E 增）主 app 更新时 helper 在跑 | 安装器覆盖稳定路径副本冲突 | 更新流程先经 shutdown 协议停 helper / 等看门狗自退；spike 外 P1 设计 |
+| 13 | （E 增）helper 崩溃 | 会话中断 | 健康巡检 + 重启上限 + 代际换新端点（抄 windowsMcp manager 模式） |
 | 6 | VLM 模型差异 | P0 实测 2-3 个 | **基本完成**：glm-5.3-flash 全自动 4 轮通过（残留识别/主动清除决策正确，整任务 ~9.7k tokens）+ manual 侧管线双验证；第二家模型按需补测 |
 | 7 | 壳仓未检出、落点未实证 | P0 第一件事 | **已关闭**：§4.2 全部落定 |
 | 8 | 驱动遥测 PostHog | P1 验证 | 不变 |
@@ -203,7 +244,7 @@ Renderer/webview（nuwax 前端）
 | 阶段 | 内容 | 出口标准 | v2 状态 |
 |---|---|---|---|
 | P0 预研 | 壳仓核对 + SDK 闭环 PoC + VLM 用例 + 文档落定 | 本文 + PoC 证据 | **✅ 2026-09-17 完成**（SDK 闭环 + VLM manual/auto 双模式全过，glm-5.3-flash 实测） |
-| P1 本机 MVP | 方案 C：EmbeddedCuaDriverHost + 可执行文件随包（wheel 提取+prepare 脚本+extraResources+binaryLocator）+ macOS 权限引导（requestMacOSPermissions + 授权页）+ MCP 条目注入（照 guiMcpLocalConfig）+ bounded 默认 + DriverAuthorizationHost→审批浮层 + cua_step/cua_screenshot subType + 三处编排挂载 + win/linux 打包验证 | v1 §1.2 成功标准三平台全过；嵌套签名公证流水线跑通；契约校验 fail-fast | 工作量较 v1 下修（MCP/审批/打包三块现成），预估 4-6 人日（mac）+2-3（win/linux 打包验证） |
+| P1 本机 MVP（**方案 E**） | 机制 spike（附录 D）→ prepare 源码构建 + helper .app 组装（§八/§3.6 项 1）→ 首用安装器 + LaunchServices 拉起 + 就绪握手（项 3/4）→ TCC 探测/授权页改造（项 5）→ MCP 条目注入 + DriverAuthorizationHost→审批浮层 + cua_step/cua_screenshot subType（与 C 共有部分，锚点见 §4.2）→ 嵌套 bundle 签名+staple+CI（项 2）→ 看门狗/自恢复（项 6）→ win/linux 打包验证 | v1 §1.2 成功标准三平台全过；嵌套 .app 签名公证流水线跑通；授权变更仅重启 helper 实测 | mac 约 8-10 人日（较 C 翻倍，打包签名链路为主）+ win/linux 2-3 人日 |
 | P2 体验收紧 | agent cursor 可视化、轨迹回放入会话 UI、能力清单管理 UI、遥测合规、doctor 集成 | 内测可用 + 安全评审 | 不变 |
 | P3 云端场景 | lanproxy 隧道 + HTTP MCP + 平台侧 VLM 编排联调 | 端到端演示 + 安全评审 | 不变 |
 
@@ -232,3 +273,24 @@ Renderer/webview（nuwax 前端）
 - 7 处【待核对】全部落定（§4.2 表）。
 - 新增：§3.5 vs agent-gui-server 对比；§2.1 第三拓扑 PrivateWorker；§4.3 EmbeddedDriverHostOptions 全字段；§七 DriverAuthorizationHost/DriverActivityEvent 接缝；§6 实测记录（含三条开发坑）；风险 #9/#10；P0 完成标记与 P1 工作量下修。
 - 结论变化：可行性上调（三大设施现成）、形态推荐细化为「daemon 容器（EmbeddedCuaDriverHost）为主 + PrivateWorker 备选」。
+- **2026-09-17 下午增量：形态拍板升级为方案 E（独立 helper App，单包集成，源码自建二进制）**——§0.7 / §3.6 / §五.6 / §八.1 / 风险 #11-13 / §十 P1 改写 / 附录 D spike。
+
+## 附录 D：方案 E 机制 spike 记录（2026-09-17 实测，全记录）
+
+**方法**：本机源码构建（`~/Documents/git-workspace/cua` @625118a90 = 0.28.2，`cargo build --release -p cua-driver` 约 4 分钟）→ 组装 mini helper .app（自写 Info.plist：LSUIElement + 自定 bundle id + CFBundleExecutable=cua-driver；ad-hoc 签名）→ `open -n` 拉起 `serve --socket /tmp/cua-spike/cua.sock` → node 经 `CuaDriver.connect(socketPath)` 验证。脚本与截图归档 `docs/computer-use-poc/spike-e/`。
+
+**已实证结论（按证据强度）**：
+1. ✅ **源码构建链路**：cargo 产物 `cua-driver 0.28.2` 与 npm SDK 四契约精确匹配（metadata handshake 一次通过，embedded:false = 独立 daemon 身份）；
+2. ✅ **TCC 归属隔离（E 的核心机制）**：宿主进程链（ZCode）明明持有 AX+SR 双授权，helper 报 `permissions_pending`（错误码 75）——权限归属 helper 自身 bundle，不继承宿主链；用户授权 helper 后 `check_permissions` 双 granted，署名/条目均为 helper（「Nuwax Computer Use」+ 客户端同款黑标 icon，与 ZCode/Codex Computer Use 同款形态，同列表可见）；
+3. ✅ **经私有 socket 全功能**：list_windows/元素树（170 元素）/截图落盘/`click`（element_token + Background 后台投递）——含真实效果验证（点「清除」后截图像素哈希变化、读屏确认 42→0；6×乘7=等于 五连击 = 42）；
+4. ✅ **helper 重启即恢复**：多轮 kill→`open` 重拉后授权与功能即时恢复（含系统「退出并重新打开」路径），主进程/宿主客户端全程零感知、零重启；
+5. ✅ **单进程形态**：helper 路径含 `/CuaDriver.app/Contents/MacOS/` 子串（如 `/Applications/Nuwax Computer Use/CuaDriver.app`）时无 disclaim re-exec，daemon 即 .app 本体（PPID=1 单进程），零 env/旗标——产品可用的两种实现：**目录命名技巧（零源码改动）或源码补丁 `bundle.rs:100-113`（把 bundle 判定参数化，正解）**；
+6. ✅ **版本漂移实证**：官方 CuaDriver.app（v0.21.0）对 0.28.2 SDK 直接 `Protocol` 拒连；SDK 降到 0.21.0 后配对成功——「四契约精确锁 + 必须自建自带二进制」两个 P1 决策拿到活体证据。
+
+**实现级坑（P1 必读）**：
+- **bundle 白名单坑**：非 `CuaDriver.app` 命名的 bundle → 独立版启动时执行「责任 disclaim 重exec」（进程树双进程），干活子进程丢 .app 的 TCC 身份 → AX 读可用但**动作静默无效**（click 返回 ok、effect=Unverifiable，UI 不变）。临时解法 `open --env CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED=1`（跳过 re-exec，但该 env 会让权限门按裸二进制自检产生误报，需配合 `--no-permissions-gate`）——**产品正解=源码补丁**；
+- **ad-hoc cdhash 坑**：改 bundle 内容（哪怕只加图标）/挪动路径 → TCC 条目失效，且开关 off→on 不救、必须删条目重加。**产品用 Developer ID 签名后按「团队+bundle id」锚定，图标/版本/路径变化均不影响授权**（spike 的 ad-hoc 专属坑）；
+- **TCC 手动条目 UX 差**：macOS 无 API 写 TCC，首次授权只能引导用户去系统设置（＋添加）。产品 launcher 必须做 `AXIsProcessTrustedWithOptions(prompt)` 主动弹窗 + ScreenCaptureKit direct consent（官方 grant 流程同款），把「＋添加」变成「点弹窗按钮」；
+- **effect=Unverifiable 不可信**：动作返回 ok/effect=2 不代表 UI 真变了，终验一律截图（与 §6 反例互证）。
+
+**遗留（转 P1 首项）**：最终形态（源码补丁 + 正式签名 + 授权引导）下的组合复验；授权 UX 产品化。
