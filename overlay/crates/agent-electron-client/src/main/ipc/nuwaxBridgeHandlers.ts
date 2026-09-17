@@ -333,6 +333,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
   ipcMain.on("nuwax:titlebar-drag-start", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    log.info("[NuwaxBridge] titlebar-drag-start", { hasWin: !!win });
     if (!win || win.isMinimized() || titlebarDragTimer) return;
     const startCursor = screen.getCursorScreenPoint();
     const [winX, winY] = win.getPosition();
