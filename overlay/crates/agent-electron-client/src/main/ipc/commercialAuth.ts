@@ -101,6 +101,9 @@ export function clearRegistration(
     if (legacyUsername != null) writeSetting("auth.username", legacyUsername);
   }
 }
+/** 「本地化默认开」一次性迁移旗标（存量库 direct→gateway 只强制这一次）。 */
+const LOADMODE_DEFAULT_MIGRATED_KEY = "nuwax.loadModeDefaultMigrated";
+
 export function initializeCommercialAuth(
   start: (signal: AbortSignal) => Promise<ServiceResult>,
   stop: () => Promise<ServiceResult>,
@@ -111,8 +114,9 @@ export function initializeCommercialAuth(
   // 默认域=测试环境（2026-09-17 测试期拍板，商业专属逻辑故落 overlay 种子而非
   // 基座常量）；恢复正式环境改回 DEFAULT_SERVER_HOST 即可。dev 全新库同样
   // 种值：不种则业务域候选/注册回落 DEFAULT_SERVER_HOST（生产域），与 dev 前端
-  // 联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域，直连形态
-  // （不种 gateway——dev 走 NUWAX_WEBVIEW_ORIGIN 直连本地前端，不起网关）。
+  // 联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域；两种形态都默认
+  // 种 gateway（本地化默认开）——dev 直连联调走 NUWAX_WEBVIEW_ORIGIN，其
+  // 优先级高于 loopback，不受影响。
   if (!readSetting("step1_config")) {
     const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
     if (app?.isPackaged) {
@@ -121,9 +125,32 @@ export function initializeCommercialAuth(
         nuwaxLoadMode: "gateway",
       });
     } else if (devSeedHost) {
-      writeSetting("step1_config", { serverHost: devSeedHost });
+      writeSetting("step1_config", {
+        serverHost: devSeedHost,
+        nuwaxLoadMode: "gateway",
+      });
     }
   }
+  // 存量库一次性对齐「本地化默认开」（2026-09-17 拍板）：历史库存在未操作
+  // 也落 direct 的值（09-14 排障实证），与用户显式关闭不可区分，故以旗标
+  // 只强制这一次；此后设置页的关闭（direct）不再被覆盖。
+  const existingStep1 = readSetting("step1_config") as {
+    nuwaxLoadMode?: "direct" | "gateway";
+  } | null;
+  if (
+    existingStep1 &&
+    readSetting(LOADMODE_DEFAULT_MIGRATED_KEY) == null &&
+    existingStep1.nuwaxLoadMode !== "gateway"
+  ) {
+    writeSetting("step1_config", {
+      ...existingStep1,
+      nuwaxLoadMode: "gateway",
+    });
+    log.info(
+      "[CommercialAuth] 默认开启本地化：存量库 nuwaxLoadMode 迁移为 gateway",
+    );
+  }
+  if (existingStep1) writeSetting(LOADMODE_DEFAULT_MIGRATED_KEY, true);
   const deviceId = getDeviceId();
   if (readSetting("nuwax.registrationDeviceId") !== deviceId) {
     // 设备身份盐变更（1.0.4 起 nuwax:device:v1）/换设备时清注册派生凭据，
