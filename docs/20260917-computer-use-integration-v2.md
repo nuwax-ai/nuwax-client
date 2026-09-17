@@ -15,7 +15,7 @@
 2. **PoC 实证（macOS arm64，本机，2026-09-17）**：
    - TCC 责任链继承**实测通过**：宿主 App 直系 spawn 的 node 子进程里，`accessibility` 与 `screenRecording` 双 `true`，全程零手动授权弹窗；
    - SDK 闭环通过：`list_apps` → `list_windows` → `get_window_state`（截图落盘 + 171 元素树）→ `click`（element_token 定位 + Background 投递）× 4 → 计算器显示 `6×7 = 42`；
-   - VLM 循环通过：6 轮模型驱动（清零→6→乘→7→等号→视觉校验 done），转录见附录 A；
+   - VLM 循环通过：manual 模式 6 轮（本会话 GLM+4.5v 图像理解，文件握手）；**auto 模式 glm-5.3-flash（BigModel API）4 轮全自动通过**——识别 poc1 残留状态「6×」后主动点清除，再 7→=→视觉确认 42，全程零人工；
    - **反例发现**：macOS 计算器显示屏**不在 AX 元素树里**（170 个元素全是按钮/菜单，无文本节点）——「元素树优先」必须配「截图校验兜底」，终验环节不能依赖元素树读值。
 3. **新增对比题（v1 未做）**：壳内已有低配 computer-use——`agent-gui-server`（nut.js 截图/键鼠，HTTP MCP 60008）。v2 §3.5 给出共存/替换结论：**短期共存、cua-driver 作为升级路径引入，不立即替换**。
 4. **SDK 新事实（0.28.2 typings 实读）**：
@@ -155,7 +155,7 @@ Renderer/webview（nuwax 前端）
 2. **执行侧**：模型回 `element_index`，壳侧解析回 `elementToken` 再 `click`（token 是执行通道，index 是模型通道）——六轮全部 index 命中，无需坐标兜底；`deliveryMode: Background` 全程未动用户焦点/鼠标。
 3. **校验侧**：终验必须截图（AX 树读不到显示值，见 §2.3 反例）；`verify_state` 工具在场景里未用（计算器无文本元素可比对），复杂应用可启用。
 4. **防抖动**：脚本实现「同元素连续失败 3 次中止」，本次未触发。
-5. **模型通道**：PoC 用 manual 文件握手模式由本会话 GLM+4.5v 图像理解驱动（证据见附录 A）；**auto 模式已实现**（OpenAI 兼容 `/chat/completions` + base64 image_url，缺省 BigModel `glm-4.5v`），拿到 key 后一条命令复跑。壳内落地走 chat 请求级 `model_provider`（§4.2），不引入 Python `cua-agent` 边车（结论不变）。
+5. **模型通道（双模式均已实证）**：manual 文件握手=本会话 GLM+4.5v 图像理解驱动 6 轮；**auto 模式 = glm-5.3-flash（BigModel OpenAI 兼容端点）4 轮全自动通过**（2026-09-17）：轮次决策=残留识别→清除→7→=→done(42)，token 开销=每轮 prompt ~1.26k（截图+元素清单，很省）/ completion 含思维链（round1 达 3032），整任务约 9.7k tokens。行为观察：模型会把历史动作与截图状态结合推理（round2 thought 引用了历史而非纯截图），终验截图环节不可省。key 管理纪律：`~/Documents/git-workspace/cua-poc/.env`（600 权限，人工经剪贴板管道写入，agent 命令行/日志零密钥），脚本自动加载。壳内落地走 chat 请求级 `model_provider`（§4.2），不引入 Python `cua-agent` 边车（结论不变）。
 6. **开发坑沉淀**（P1 直接避雷）：UniFFI 生成的 tagged-union 变体是 ES class，**必须 `new ActionTarget.Window({...})`** 不能函数调用；`DriverOptions.claudeCodeCompatibility` 是必填布尔；窗口 `windowId` 是 bigint，JSON 序列化要转换。
 
 ---
@@ -190,7 +190,7 @@ Renderer/webview（nuwax 前端）
 | 3 | 平台能力差异 | 声明边界 | 不变；mac 全链已 PoC，win/linux 留 P1 实测 |
 | 4 | 进程内无 agent cursor overlay | 走 daemon | 不变（daemon 形态自带，overlay 工具 `set_agent_cursor_*` 在 55 工具清单内） |
 | 5 | 可执行文件自备 | wheel 提取/源码构建 | 不变；P1 先 wheel 提取验证，必要时锁版缓存或 CI 构建 |
-| 6 | VLM 模型差异 | P0 实测 2-3 个 | **部分完成**：管线已验证 + GLM 图像理解侧已跑通；glm-4.5v API 及第二模型待 key 后补测（auto 模式就绪） |
+| 6 | VLM 模型差异 | P0 实测 2-3 个 | **基本完成**：glm-5.3-flash 全自动 4 轮通过（残留识别/主动清除决策正确，整任务 ~9.7k tokens）+ manual 侧管线双验证；第二家模型按需补测 |
 | 7 | 壳仓未检出、落点未实证 | P0 第一件事 | **已关闭**：§4.2 全部落定 |
 | 8 | 驱动遥测 PostHog | P1 验证 | 不变 |
 | 9 | （新）与 agent-gui-server 双轨并存的口径/维护成本 | — | §3.5 共存结论；P1 里统一 MCP 条目命名与文档口径，稳定后评估下线 |
@@ -202,7 +202,7 @@ Renderer/webview（nuwax 前端）
 
 | 阶段 | 内容 | 出口标准 | v2 状态 |
 |---|---|---|---|
-| P0 预研 | 壳仓核对 + SDK 闭环 PoC + VLM 用例 + 文档落定 | 本文 + PoC 证据 | **✅ 2026-09-17 完成**（VLM 的 API 侧 glm-4.5v 待 key 复跑补测） |
+| P0 预研 | 壳仓核对 + SDK 闭环 PoC + VLM 用例 + 文档落定 | 本文 + PoC 证据 | **✅ 2026-09-17 完成**（SDK 闭环 + VLM manual/auto 双模式全过，glm-5.3-flash 实测） |
 | P1 本机 MVP | 方案 C：EmbeddedCuaDriverHost + 可执行文件随包（wheel 提取+prepare 脚本+extraResources+binaryLocator）+ macOS 权限引导（requestMacOSPermissions + 授权页）+ MCP 条目注入（照 guiMcpLocalConfig）+ bounded 默认 + DriverAuthorizationHost→审批浮层 + cua_step/cua_screenshot subType + 三处编排挂载 + win/linux 打包验证 | v1 §1.2 成功标准三平台全过；嵌套签名公证流水线跑通；契约校验 fail-fast | 工作量较 v1 下修（MCP/审批/打包三块现成），预估 4-6 人日（mac）+2-3（win/linux 打包验证） |
 | P2 体验收紧 | agent cursor 可视化、轨迹回放入会话 UI、能力清单管理 UI、遥测合规、doctor 集成 | 内测可用 + 安全评审 | 不变 |
 | P3 云端场景 | lanproxy 隧道 + HTTP MCP + 平台侧 VLM 编排联调 | 端到端演示 + 安全评审 | 不变 |
@@ -214,7 +214,8 @@ Renderer/webview（nuwax 前端）
 - 环境：`~/Documents/git-workspace/cua-poc`（npm `@trycua/cua-driver@0.28.2` + `cua-driver-darwin-arm64`）；cua 源码仓恢复检出 @ `625118a90`。
 - 脚本与产物已归档：`docs/computer-use-poc/`（本仓 worktree）——`poc1-sdk-loop.mjs`（SDK 闭环 probe/act）、`poc2-vlm-loop.mjs`（VLM 循环 auto/manual）、`transcript.jsonl`（VLM 六轮转录）、`shot-before/after.png`（SDK 闭环前后）、`round-1/6.png`（VLM 循环首末轮）。
 - SDK 闭环结果：`click 6/乘/7/等于`（element_token + Background）全部 ok；after 截图显示 `6×7 = 42`。
-- VLM 循环结果：manual 模式 6 轮 `done(answer=42)`，模型侧=本会话 GLM+4.5v 图像理解（文件握手，非 API 调用）；**auto 模式复跑命令**：`CUA_VLM_API_KEY=<key> node poc2-vlm-loop.mjs auto`（可选 `CUA_VLM_BASE_URL`/`CUA_VLM_MODEL` 覆写，缺省 BigModel glm-4.5v）。
+- VLM 循环结果：manual 模式 6 轮 `done(answer=42)`（模型侧=本会话 GLM+4.5v 图像理解，文件握手）；**auto 模式 glm-5.3-flash 4 轮全自动通过**（残留识别→清除→7→=→done(42)，token：prompt 1253/1259/1269/1281 + completion 3032/940/274/353，转录 `vlm-auto-transcript.jsonl`、截图 `vlm-auto-round{1,4}.png`/`vlm-auto-final.png`）。
+- auto 复跑：key 放 `~/Documents/git-workspace/cua-poc/.env`（`CUA_VLM_API_KEY`/`CUA_VLM_MODEL`，600 权限、人工创建），然后 `node poc2-vlm-loop.mjs auto`——命令行与日志零密钥。
 - 关键日志摘录：TCC `{accessibility:true, screenRecording:true}`；metadata `{driverVersion:0.28.2, contractVersion:0.8.0, mcpProtocolVersion:2025-06-18, embedded:true}`。
 
 ## 附录 B：Cua 侧参考索引（v2 复认，仓 @625118a90）
