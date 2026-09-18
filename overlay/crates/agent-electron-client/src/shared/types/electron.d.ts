@@ -589,8 +589,12 @@ export interface PermissionsAPI {
 export interface ComputerUseStatus {
   supported: boolean;
   installed: boolean;
+  /** 随包 Resources 有 helper 但未安装（首用安装流输入）。 */
+  installable?: boolean;
   running: boolean;
   enabled: boolean;
+  /** `cua` MCP 条目已写入 mcp_local_config（功能闭环就绪标志）。 */
+  mcpInjected?: boolean;
   socketPath?: string;
   helperPath?: string | null;
   accessibility?: boolean | null;
@@ -611,6 +615,11 @@ export interface ComputerUseAPI {
     error?: string;
     accessibility?: boolean | null;
     screenRecording?: boolean | null;
+  }>;
+  installHelper: () => Promise<{
+    success: boolean;
+    error?: string;
+    installedPath?: string | null;
   }>;
   getVlmConfig: () => Promise<{
     baseUrl: string;

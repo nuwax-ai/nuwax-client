@@ -956,7 +956,6 @@
   "Claw.Settings.computerUse.stateRunning": "Running",
   "Claw.Settings.computerUse.stateIdle": "Enabled · idle",
   "Claw.Settings.computerUse.stateNotInstalled": "Not installed",
-  "Claw.Settings.computerUse.errors.helper-not-installed": "Nuwax Computer Use helper app not found",
   "Claw.Settings.computerUse.errors.generic": "Operation failed, please retry",
   "Claw.Settings.computerUse.vlmModel": "Vision model",
   "Claw.Settings.computerUse.vlmModelDesc": "Vision model for screen understanding (e.g. glm-4.5v), OpenAI-compatible API",
@@ -969,5 +968,12 @@
   "Claw.Settings.computerUse.vlmTestBtn": "Test connection",
   "Claw.Settings.computerUse.vlmTestOk": "Connected ({{ms}}ms)",
   "Claw.Settings.computerUse.vlmTestFail": "Connection failed: {{err}}",
-  "Claw.Settings.computerUse.errors.vlm-not-configured": "Fill in the vision model name and API key first"
+  "Claw.Settings.computerUse.install": "Install helper app",
+  "Claw.Settings.computerUse.installDesc": "Install the bundled 'Nuwax Computer Use' to a stable local path (required for AI to control this computer)",
+  "Claw.Settings.computerUse.installBtn": "Install",
+  "Claw.Settings.computerUse.installOk": "Helper installed. You can now enable Computer Use.",
+  "Claw.Settings.computerUse.errors.helperNotInstalledBundled": "Install the helper app before enabling Computer Use",
+  "Claw.Settings.computerUse.errors.helperNotInstalled": "Nuwax Computer Use helper app not found",
+  "Claw.Settings.computerUse.errors.bundledNotFound": "Helper component not found in the installation package",
+  "Claw.Settings.computerUse.errors.vlmNotConfigured": "Fill in the vision model name and API key first"
 }

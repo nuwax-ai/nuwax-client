@@ -132,12 +132,14 @@ export default function SettingsPage() {
   const hasComputerUseApi = !!window.electronAPI?.computerUse;
   const [cuaStatus, setCuaStatus] = useState<{
     installed: boolean;
+    installable: boolean;
     running: boolean;
     enabled: boolean;
     accessibility: boolean | null;
     screenRecording: boolean | null;
   } | null>(null);
   const [cuaApplying, setCuaApplying] = useState(false);
+  const [cuaInstalling, setCuaInstalling] = useState(false);
   const [cuaPermChecking, setCuaPermChecking] = useState(false);
   const [cuaVlm, setCuaVlm] = useState<{
     baseUrl: string;
@@ -236,6 +238,7 @@ export default function SettingsPage() {
       const s = await window.electronAPI!.computerUse.getStatus();
       setCuaStatus({
         installed: !!s.installed,
+        installable: !!s.installable,
         running: !!s.running,
         enabled: !!s.enabled,
         accessibility: s.accessibility ?? null,
@@ -259,6 +262,7 @@ export default function SettingsPage() {
       if (r.status) {
         setCuaStatus({
           installed: !!r.status.installed,
+          installable: !!r.status.installable,
           running: !!r.status.running,
           enabled: !!r.status.enabled,
           accessibility: r.status.accessibility ?? null,
@@ -296,6 +300,26 @@ export default function SettingsPage() {
       message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
     } finally {
       setCuaPermChecking(false);
+    }
+  };
+
+  // 首用安装：Resources → 稳定路径（安装后主进程自动触发一次权限探测/引导）
+  const handleCuaInstall = async () => {
+    setCuaInstalling(true);
+    try {
+      const r = await window.electronAPI!.computerUse.installHelper();
+      if (!r.success) {
+        message.error(
+          t("Claw.Settings.computerUse.errors." + (r.error ?? "generic")),
+        );
+        return;
+      }
+      message.success(t("Claw.Settings.computerUse.installOk"));
+      await loadCuaStatus();
+    } catch {
+      message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
+    } finally {
+      setCuaInstalling(false);
     }
   };
 
@@ -802,6 +826,21 @@ export default function SettingsPage() {
                 />
               }
             />
+            {!cuaStatus?.installed && cuaStatus?.installable && (
+              <SettingsRow
+                label={t("Claw.Settings.computerUse.install")}
+                desc={t("Claw.Settings.computerUse.installDesc")}
+                control={
+                  <Button
+                    size="small"
+                    loading={cuaInstalling}
+                    onClick={handleCuaInstall}
+                  >
+                    {t("Claw.Settings.computerUse.installBtn")}
+                  </Button>
+                }
+              />
+            )}
             <SettingsRow
               label={t("Claw.Settings.computerUse.permissions")}
               desc={

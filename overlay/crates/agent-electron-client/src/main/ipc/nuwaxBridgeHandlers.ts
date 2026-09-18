@@ -145,7 +145,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         await import("../services/sandbox/serviceBootstrap");
       await startSandboxService();
       signal.throwIfAborted();
-      return restartAllServicesNow(signal);
+      const result = await restartAllServicesNow(signal);
+      // Computer Use 幂等收敛（开关开→拉 daemon+保 MCP 条目在位）；不阻塞启动主链
+      void cuaComputerUse.ensureCuaOnBoot().catch((e) =>
+        log.warn("[NuwaxBridge] Cua boot ensure failed", e),
+      );
+      return result;
     },
     stopAllServicesNow,
     (phase, error) => {
@@ -735,7 +740,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     return { success: true };
   });
 
-  // ---- cua：Computer Use 配置（设置页开关/状态/授权引导；overlay 自持实现） ----
+  // ---- cua：Computer Use 配置（设置页开关/状态/授权引导/首用安装；overlay 自持实现） ----
+  cuaComputerUse.registerCuaQuitCleanup();
   ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
   ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
     cuaComputerUse.setCuaEnabled(enabled === true),
@@ -743,6 +749,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("cua:requestPermissions", () =>
     cuaComputerUse.requestCuaPermissions(),
   );
+  ipcMain.handle("cua:installHelper", () => cuaComputerUse.installCuaHelper());
   ipcMain.handle("cua:getVlmConfig", () => cuaComputerUse.getVlmConfig());
   ipcMain.handle("cua:setVlmConfig", (_event, patch: unknown) =>
     cuaComputerUse.setVlmConfig(

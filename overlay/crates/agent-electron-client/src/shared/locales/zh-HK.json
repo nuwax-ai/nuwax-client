@@ -956,7 +956,6 @@
   "Claw.Settings.computerUse.stateRunning": "執行中",
   "Claw.Settings.computerUse.stateIdle": "已啟用·待啟動",
   "Claw.Settings.computerUse.stateNotInstalled": "未安裝",
-  "Claw.Settings.computerUse.errors.helper-not-installed": "未找到 Nuwax Computer Use 助手應用",
   "Claw.Settings.computerUse.errors.generic": "操作失敗，請重試",
   "Claw.Settings.computerUse.vlmModel": "視覺模型",
   "Claw.Settings.computerUse.vlmModelDesc": "Computer Use 螢幕理解所用視覺模型（如 glm-4.5v），OpenAI 相容介面",
@@ -969,5 +968,12 @@
   "Claw.Settings.computerUse.vlmTestBtn": "測試連線",
   "Claw.Settings.computerUse.vlmTestOk": "連線成功（{{ms}}ms）",
   "Claw.Settings.computerUse.vlmTestFail": "連線失敗：{{err}}",
-  "Claw.Settings.computerUse.errors.vlm-not-configured": "請先填寫視覺模型名與 API Key"
+  "Claw.Settings.computerUse.install": "安裝助手應用",
+  "Claw.Settings.computerUse.installDesc": "將隨包分發的「Nuwax Computer Use」安裝到本機穩定路徑（AI 操作電腦的輔助程式）",
+  "Claw.Settings.computerUse.installBtn": "安裝",
+  "Claw.Settings.computerUse.installOk": "助手應用安裝完成，現在可以開啟 Computer Use",
+  "Claw.Settings.computerUse.errors.helperNotInstalledBundled": "請先安裝助手應用，再開啟 Computer Use",
+  "Claw.Settings.computerUse.errors.helperNotInstalled": "未找到 Nuwax Computer Use 助手應用",
+  "Claw.Settings.computerUse.errors.bundledNotFound": "安裝包內未找到助手應用組件",
+  "Claw.Settings.computerUse.errors.vlmNotConfigured": "請先填寫視覺模型名與 API Key"
 }

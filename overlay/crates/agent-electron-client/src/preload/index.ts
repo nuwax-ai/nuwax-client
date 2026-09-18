@@ -562,6 +562,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke("cua:setEnabled", enabled),
     requestPermissions: () => ipcRenderer.invoke("cua:requestPermissions"),
+    installHelper: () => ipcRenderer.invoke("cua:installHelper"),
     getVlmConfig: () => ipcRenderer.invoke("cua:getVlmConfig"),
     setVlmConfig: (patch: {
       baseUrl?: string;
