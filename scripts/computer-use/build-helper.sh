@@ -48,8 +48,9 @@ else
 fi
 
 # ---------- 构建 ----------
+# 目标安装必须显式成功（CI 实证：mac x64 腿曾因静默失败走到 E0463）；瞬时下载失败重试一次
+rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
 echo "[cua-helper] cargo build --release -p cua-driver ($TARGET_TRIPLE) ..."
-rustup target add "$TARGET_TRIPLE" >/dev/null 2>&1 || true
 (cd "$SRC_DIR/libs/cua-driver/rust" && cargo build --release -p cua-driver --target "$TARGET_TRIPLE")
 
 BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
