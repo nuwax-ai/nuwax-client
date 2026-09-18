@@ -432,8 +432,19 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       return null;
     }
     const key = documentKey(event);
-    if (documents.has(key) && documents.get(key) !== authGeneration)
-      return null;
+    // 代次不匹配不再拒绝且必须重注册：换域（configureServerHost）/登出
+    // （auth:clear）都会 authGeneration++ 并硬重载 webview，重载后的新文档
+    // 复用同一 documentKey（webContents+frame 标识），按过期文档静默拒绝的
+    // 话它永远无法重新入册，persistToken 的 isCurrentDocument 守卫随之零日志
+    // 静默失败——登录态进不了壳（2026-09-18 提测：改域后登录/退出重登均
+    // 不同步）。getToken 本就是每文档一次的注册门：重注册即恢复写权；旧文档
+    // 在途请求由上方 switching 守卫与 isCurrentDocument 迟到写保护兜底。
+    if (documents.has(key) && documents.get(key) !== authGeneration) {
+      log.info("[NuwaxBridge] auth:getToken 文档代次已过期，重注册", {
+        key,
+        authGeneration,
+      });
+    }
     documents.set(key, authGeneration);
     const scope = resolveSenderOrigin(event);
     // 跨 origin 回退链（nuwaxTokenScopes 统一视图）：direct↔gateway 切换后

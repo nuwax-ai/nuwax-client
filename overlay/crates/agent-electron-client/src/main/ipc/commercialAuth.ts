@@ -117,8 +117,11 @@ export function initializeCommercialAuth(
   // 联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域；两种形态都默认
   // 种 gateway（本地化默认开）——dev 直连联调走 NUWAX_WEBVIEW_ORIGIN，其
   // 优先级高于 loopback，不受影响。
-  if (!readSetting("step1_config")) {
-    const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
+  const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
+  const seeded = readSetting("step1_config") as {
+    serverHost?: string;
+  } | null;
+  if (!seeded) {
     if (app?.isPackaged) {
       writeSetting("step1_config", {
         serverHost: TEST_SERVER_HOST,
@@ -129,6 +132,22 @@ export function initializeCommercialAuth(
         serverHost: devSeedHost,
         nuwaxLoadMode: "gateway",
       });
+    }
+  } else if (!seeded.serverHost) {
+    // serverHost backfill：真实时序里 ensureDefaultWorkspaceDir（migrate）
+    // 先写 step1_config（workspaceDir），上面的「首启种子」恒不命中——全新
+    // 安装 serverHost 缺失回落 DEFAULT_SERVER_HOST（生产域），测试期默认
+    // 测试域的拍板被架空（2026-09-18 提测实证）。凡「配置行存在但域名从未
+    // 显式落值」即补种子值（打包=测试域 / dev=NUWAX_SERVER_HOST）；改过域
+    // （configureServerHost 落值）不受影响。存量 v1.0.14 测试装机升级后同样
+    // 被 backfill。恢复正式环境时本处种子值随首启种子一并改回 DEFAULT。
+    const backfillHost = app?.isPackaged ? TEST_SERVER_HOST : devSeedHost;
+    if (backfillHost) {
+      writeSetting("step1_config", { ...seeded, serverHost: backfillHost });
+      log.info(
+        "[CommercialAuth] step1_config 存在但缺 serverHost，backfill 默认域",
+        { serverHost: backfillHost },
+      );
     }
   }
   // 存量库一次性对齐「本地化默认开」（2026-09-17 拍板）：历史库存在未操作

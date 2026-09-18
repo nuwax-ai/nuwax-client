@@ -418,4 +418,37 @@ describe("document session isolation", () => {
     expect(result.success).toBe(false);
     expect((settings.get("step1_config") as any).serverHost).toBe(HOST_ORIGIN);
   });
+  it("改域硬重载后的新文档经 getToken 重注册 → persistToken 恢复受理（登录态进壳修复 2026-09-18）", async () => {
+    // 换域 = authGeneration++ + 硬重载 webview；重载出的新文档与旧文档同
+    // documentKey（webContents+frame 标识），此前的代次守卫把它当过期文档
+    // 静默拒绝且不重注册 → persistToken 零日志失败 → 壳永远收不到登录态。
+    const result = (await handlers.get("auth:configureServerHost")!(
+      senderEvent(GW_ORIGIN),
+      "https://new.example.com",
+    )) as any;
+    expect(result.success).toBe(true);
+    // 迟到写保护不变：代次 bump 后未经 getToken 重注册的直接写仍拒绝
+    expect(
+      await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "OLD"),
+    ).toBe(false);
+    // 重载后的新文档：getInitialState 先 getToken（重注册），登录 persistToken 受理
+    const NEW_ORIGIN = "https://new.example.com";
+    await handlers.get("auth:getToken")!(senderEvent(NEW_ORIGIN));
+    expect(
+      await handlers.get("auth:persistToken")!(senderEvent(NEW_ORIGIN), "FRESH"),
+    ).toBe(true);
+    expect(
+      settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${NEW_ORIGIN}`),
+    ).toBe("FRESH");
+  });
+  it("登出（auth:clear）硬重载后的新文档同样经 getToken 重注册恢复受理", async () => {
+    await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
+    // 登出也 authGeneration++ + 硬重载：新文档 getToken 重注册 → 重登可入壳
+    await handlers.get("auth:getToken")!(senderEvent(GW_ORIGIN));
+    expect(
+      await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "RE"),
+    ).toBe(true);
+    expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${GW_ORIGIN}`)).toBe("RE");
+    expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${HOST_ORIGIN}`)).toBe("RE");
+  });
 });

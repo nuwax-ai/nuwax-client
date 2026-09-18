@@ -237,6 +237,53 @@ describe("本地化默认开一次性迁移（2026-09-17）", () => {
   });
 });
 
+describe("serverHost backfill（真实时序：ensureDefaultWorkspaceDir 先写 step1_config，首启种子恒不命中）", () => {
+  it("打包版：step1_config 已存在（仅 workspaceDir）缺 serverHost → 补测试域并保留既有字段", () => {
+    mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
+    fixture();
+    //（loadMode 一次性迁移会顺带补 gateway，故用 toMatchObject 锚定关键字段）
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      workspaceDir: "/Users/x/Nuwax",
+      serverHost: "https://testagent.xspaceagi.com",
+    });
+  });
+  it("显式配置过的域名（configureServerHost 落值）不被 backfill 覆盖", () => {
+    mocks.settings.set("step1_config", {
+      workspaceDir: "/Users/x/Nuwax",
+      serverHost: "https://enterprise.example.com",
+    });
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      serverHost: "https://enterprise.example.com",
+      workspaceDir: "/Users/x/Nuwax",
+    });
+  });
+  it("dev：缺 serverHost 且有 NUWAX_SERVER_HOST → backfill env 域", () => {
+    mocks.isPackaged = false;
+    process.env.NUWAX_SERVER_HOST = "https://testagent.xspaceagi.com";
+    try {
+      mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
+      fixture();
+      expect(mocks.settings.get("step1_config")).toMatchObject({
+        serverHost: "https://testagent.xspaceagi.com",
+        workspaceDir: "/Users/x/Nuwax",
+      });
+    } finally {
+      delete process.env.NUWAX_SERVER_HOST;
+    }
+  });
+  it("dev：缺 serverHost 且无 env → 不种值（缺省兜底语义不变）", () => {
+    mocks.isPackaged = false;
+    mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
+    fixture();
+    // serverHost 不被凭空种值（loadMode 迁移与本题无关）
+    expect(
+      (mocks.settings.get("step1_config") as Record<string, unknown>)
+        .serverHost,
+    ).toBeUndefined();
+  });
+});
+
 describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
   beforeEach(() => {
     mocks.settings.clear();

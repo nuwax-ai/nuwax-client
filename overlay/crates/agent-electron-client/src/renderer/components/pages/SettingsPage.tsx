@@ -349,7 +349,14 @@ export default function SettingsPage() {
         ...existing,
         nuwaxLoadMode: checked ? "gateway" : "direct",
       });
-      await window.electronAPI?.services?.restartAll?.();
+      // 网关随配置即时刷新（不依赖登录态）：运行时键变化会广播
+      // nuwax:loopback-changed，webview 自动重载换形态。不能走 restartAll——
+      // 商业版它被登录门禁拦在网关刷新之前，未登录时切换完全无效且失败被
+      // 静默（2026-09-18 提测：开关后 webview 不重载）。
+      const refreshed =
+        await window.electronAPI?.services?.refreshLoopbackGateway?.();
+      if (refreshed && refreshed.success === false)
+        throw new Error(refreshed.error || "refreshLoopbackGateway failed");
       setLoopbackEnabled(checked);
       message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
     } catch {
