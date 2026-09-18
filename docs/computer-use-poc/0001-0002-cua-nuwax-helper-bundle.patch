@@ -1,0 +1,126 @@
+From 3502a873ba35c549adfafc165b771f81f72213fd Mon Sep 17 00:00:00 2001
+From: dongdada29 <dongdada29@gmail.com>
+Date: Thu, 17 Sep 2026 17:23:58 +0800
+Subject: [PATCH 1/2] =?UTF-8?q?feat(nuwax):=20recognize=20host=20helper=20?=
+ =?UTF-8?q?bundles=20in=20stability=20whitelist=20=E2=80=94=20Nuwax/NuwaCl?=
+ =?UTF-8?q?aw=20Computer=20Use.app=20+=20CUA=5FDRIVER=5FBUNDLE=5FDIR=5FNAM?=
+ =?UTF-8?q?ES=20env=20extension=20(skip=20responsibility-disclaim=20re-exe?=
+ =?UTF-8?q?c=20inside=20host=20bundles)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../rust/crates/cua-driver/src/bundle.rs      | 37 +++++++++++++++++--
+ 1 file changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 75331d1..93f6acd 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -105,13 +105,42 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
+         .ok()
+         .and_then(|path| std::fs::canonicalize(path).ok())
+         .is_some_and(|path| {
+-            path.to_str().is_some_and(|path| {
+-                path.contains("/CuaDriver.app/Contents/MacOS/")
+-                    || path.contains("/CuaDriverLocal.app/Contents/MacOS/")
+-            })
++            path.to_str().is_some_and(|path| inside_stable_bundle_dir(path))
+         })
+ }
+ 
++/// Nuwax: embedding hosts ship the driver inside their own LSUIElement helper
++/// bundle (e.g. "Nuwax Computer Use.app"). Such a bundle carries the same
++/// stable TCC responsibility identity as CuaDriver.app, so the
++/// responsibility-disclaim re-exec must be skipped for it as well or actions
++/// silently lose the host bundle's TCC grants. Additional bundle directory
++/// names may be declared via `CUA_DRIVER_BUNDLE_DIR_NAMES` (comma separated,
++/// e.g. "My Helper.app,Other.app").
++#[cfg(target_os = "macos")]
++fn inside_stable_bundle_dir(path: &str) -> bool {
++    const MACOS_SUFFIX: &str = "/Contents/MacOS/";
++    const KNOWN_BUNDLE_DIRS: &[&str] = &[
++        "CuaDriver.app",
++        "CuaDriverLocal.app",
++        "Nuwax Computer Use.app",
++        "NuwaClaw Computer Use.app",
++    ];
++    let extras = std::env::var("CUA_DRIVER_BUNDLE_DIR_NAMES")
++        .map(|value| {
++            value
++                .split(',')
++                .map(|name| name.trim().to_string())
++                .filter(|name| !name.is_empty())
++                .collect::<Vec<_>>()
++        })
++        .unwrap_or_default();
++    KNOWN_BUNDLE_DIRS
++        .iter()
++        .copied()
++        .chain(extras.iter().map(|name| name.as_str()))
++        .any(|dir| path.contains(&format!("/{dir}{MACOS_SUFFIX}")))
++}
++
+ /// Returns `true` when the env var is one of `1|true|yes|on`
+ /// (case-insensitive). Anything else, including unset, is falsy.
+ #[cfg(target_os = "windows")]
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 3e739d6dfa7493287bc536a91d1c54150d42dece Mon Sep 17 00:00:00 2001
+From: dongdada29 <dongdada29@gmail.com>
+Date: Thu, 17 Sep 2026 17:38:59 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?feat(nuwax):=20resolve=20app=5Fbundle=5Fpat?=
+ =?UTF-8?q?h=20from=20the=20running=20helper=20bundle=20=E2=80=94=20permis?=
+ =?UTF-8?q?sion-host/relaunch=20flows=20must=20target=20the=20host=20bundl?=
+ =?UTF-8?q?e's=20TCC=20identity=20instead=20of=20hardcoded=20/Applications?=
+ =?UTF-8?q?/CuaDriver.app?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../rust/crates/cua-driver/src/bundle.rs      | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 93f6acd..36a6f99 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -86,9 +86,31 @@ pub fn app_name() -> &'static str {
+ }
+ 
+ pub fn app_bundle_path() -> String {
++    if let Some(path) = current_running_bundle_path() {
++        return path;
++    }
+     format!("/Applications/{}.app", app_name())
+ }
+ 
++/// Nuwax: when the driver runs inside a host helper bundle, relaunch and
++/// permission-host flows must target that bundle (its TCC identity), not the
++/// upstream CuaDriver.app in /Applications.
++#[cfg(target_os = "macos")]
++fn current_running_bundle_path() -> Option<String> {
++    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
++    let path = exe.to_str()?;
++    if !inside_stable_bundle_dir(path) {
++        return None;
++    }
++    let idx = path.find("/Contents/MacOS/")?;
++    Some(path[..idx].to_string())
++}
++
++#[cfg(not(target_os = "macos"))]
++fn current_running_bundle_path() -> Option<String> {
++    None
++}
++
+ pub fn bundle_id() -> &'static str {
+     if is_local_installation() {
+         LOCAL_BUNDLE_ID
+-- 
+2.50.1 (Apple Git-155)
+

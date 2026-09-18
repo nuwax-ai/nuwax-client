@@ -329,6 +329,39 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
           echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
 
+      # ---- Computer Use helper（cua-driver 源码自建）：mac/win 构建，Linux 不做 ----
+      # 源码锁版 + nuwax 补丁 → cargo build → 组装 .app/exe → mac 预签 Developer ID
+      # （进 extraResources 前签好；TCC 授权跨版本稳定=同 Team+同 bundle id，
+      # 见 docs/20260917-computer-use-integration-v2.md 附录 D）
+      - name: Setup Rust toolchain (Computer Use helper)
+        if: runner.os != 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Computer Use helper (cua-driver)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          case "${{ runner.os }}/${{ matrix.arch }}" in
+            macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
+            macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
+            Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
+            *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
+          esac
+          export TARGET_TRIPLE="$TRIPLE"
+          bash scripts/computer-use/build-helper.sh
+
+      # extraResources 注入（Linux 不加：目录不存在会让 electron-builder 报错）
+      - name: Inject computer-use extraResources (mac/win)
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        run: |
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.to&&e.to==='computer-use')).concat([{from:'resources/computer-use',to:'computer-use'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          test -d resources/computer-use && echo "computer-use extraResources injected: $(ls resources/computer-use)"
+
       # 若用户看到「已损坏」：请确认已配置 APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY 及公证用 APPLE_API_KEY 等，且构建日志中有签名与公证成功
       # Windows 签名已废弃，改为本地手签方案
       - name: Clean previous build artifacts

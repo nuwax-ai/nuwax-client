@@ -330,6 +330,37 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
           echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
 
+      # ---- Computer Use helper（cua-driver 源码自建）：mac/win 构建，Linux 不做 ----
+      # 与 release-electron-dev.yml 同款步骤（锁版+补丁+cargo+组装+预签 Developer ID）
+      - name: Setup Rust toolchain (Computer Use helper)
+        if: runner.os != 'Linux'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Computer Use helper (cua-driver)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          case "${{ runner.os }}/${{ matrix.arch }}" in
+            macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
+            macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
+            Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
+            *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
+          esac
+          export TARGET_TRIPLE="$TRIPLE"
+          bash scripts/computer-use/build-helper.sh
+
+      # extraResources 注入（Linux 不加：目录不存在会让 electron-builder 报错）
+      - name: Inject computer-use extraResources (mac/win)
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        run: |
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.to&&e.to==='computer-use')).concat([{from:'resources/computer-use',to:'computer-use'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          test -d resources/computer-use && echo "computer-use extraResources injected: $(ls resources/computer-use)"
+
       - name: Clean previous build artifacts
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client

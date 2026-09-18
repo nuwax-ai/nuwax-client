@@ -38,6 +38,7 @@ import { NUWAX_DEV_HOST } from "@shared/constants";
 import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
+import * as cuaComputerUse from "../services/cua/computerUse";
 
 import {
   initializeCommercialAuth,
@@ -144,7 +145,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         await import("../services/sandbox/serviceBootstrap");
       await startSandboxService();
       signal.throwIfAborted();
-      return restartAllServicesNow(signal);
+      const result = await restartAllServicesNow(signal);
+      // Computer Use 幂等收敛（开关开→拉 daemon+保 MCP 条目在位）；不阻塞启动主链
+      void cuaComputerUse.ensureCuaOnBoot().catch((e) =>
+        log.warn("[NuwaxBridge] Cua boot ensure failed", e),
+      );
+      return result;
     },
     stopAllServicesNow,
     (phase, error) => {
@@ -744,6 +750,24 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     log.info("[NuwaxBridge] native:openClientSettings");
     return { success: true };
   });
+
+  // ---- cua：Computer Use 配置（设置页开关/状态/授权引导/首用安装；overlay 自持实现） ----
+  cuaComputerUse.registerCuaQuitCleanup();
+  ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
+  ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
+    cuaComputerUse.setCuaEnabled(enabled === true),
+  );
+  ipcMain.handle("cua:requestPermissions", () =>
+    cuaComputerUse.requestCuaPermissions(),
+  );
+  ipcMain.handle("cua:installHelper", () => cuaComputerUse.installCuaHelper());
+  ipcMain.handle("cua:getVlmConfig", () => cuaComputerUse.getVlmConfig());
+  ipcMain.handle("cua:setVlmConfig", (_event, patch: unknown) =>
+    cuaComputerUse.setVlmConfig(
+      (patch ?? {}) as { baseUrl?: string; model?: string; apiKey?: string },
+    ),
+  );
+  ipcMain.handle("cua:testVlm", () => cuaComputerUse.testVlm());
 
   // ---- native：右键另存图片 ----
   ipcMain.handle(

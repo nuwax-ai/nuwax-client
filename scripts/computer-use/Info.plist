@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Nuwax Computer Use</string>
+	<key>CFBundleDisplayName</key>
+	<string>Nuwax Computer Use</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.nuwax-ai.nuwax-computer-use</string>
+	<key>CFBundleExecutable</key>
+	<string>Nuwax Computer Use</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@@CUA_VERSION@@</string>
+	<key>CFBundleVersion</key>
+	<string>@@CUA_VERSION@@</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Nuwax Computer Use 需要向 System Events 发送 AppleScript 以读取界面元素并代替你操作电脑。</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
