@@ -161,6 +161,8 @@ export default function SettingsPage() {
 
   // Computer Use（cua helper；商业版 overlay 注入，旧宿主无此命名空间时整组隐藏）
   const hasComputerUseApi = !!window.electronAPI?.computerUse;
+  // TCC 授权引导仅 mac（Windows 无辅助功能/屏幕录制 per-app 授权，UIA/截屏开箱即用）
+  const isMacPlatform = /mac/i.test(navigator.platform);
   const [cuaStatus, setCuaStatus] = useState<{
     installed: boolean;
     installable: boolean;
@@ -960,8 +962,9 @@ export default function SettingsPage() {
                 }
               />
             )}
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.permissions")}
+            {isMacPlatform && (
+              <SettingsRow
+                label={t("Claw.Settings.computerUse.permissions")}
               desc={
                 <span>
                   {t("Claw.Settings.computerUse.permAx")}
@@ -982,6 +985,7 @@ export default function SettingsPage() {
                 </Button>
               }
             />
+            )}
             <SettingsRow
               label={t("Claw.Settings.computerUse.vlmModel")}
               desc={t("Claw.Settings.computerUse.vlmModelDesc")}
