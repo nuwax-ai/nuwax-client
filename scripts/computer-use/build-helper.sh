@@ -48,10 +48,15 @@ else
 fi
 
 # ---------- 构建 ----------
-# 目标安装必须显式成功（CI 实证：mac x64 腿曾因静默失败走到 E0463）；瞬时下载失败重试一次
-rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
-echo "[cua-helper] cargo build --release -p cua-driver ($TARGET_TRIPLE) ..."
-(cd "$SRC_DIR/libs/cua-driver/rust" && cargo build --release -p cua-driver --target "$TARGET_TRIPLE")
+# cua 仓 rust-toolchain.toml 钉 1.97.1：cargo 会切到该工具链，target 必须装进它——
+# target add 须在仓内目录执行（让 rustup 解析钉住工具链；在仓外执行会装到默认 stable 上，
+# CI 实证 mac x64 交叉腿两连挂 E0463）。瞬时下载失败重试一次。
+(
+  cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
+  rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
+  echo "[cua-helper] cargo build --release -p cua-driver ($TARGET_TRIPLE) ..."
+  cargo build --release -p cua-driver --target "$TARGET_TRIPLE"
+)
 
 BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
 [ -f "$BIN" ] || { echo "::error::built binary not found: $BIN"; exit 1; }
