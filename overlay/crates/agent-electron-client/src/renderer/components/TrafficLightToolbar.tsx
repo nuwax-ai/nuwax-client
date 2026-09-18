@@ -42,8 +42,10 @@ const isMac = /mac/i.test(navigator.platform);
 const DRAG = { WebkitAppRegion: "drag" } as any;
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as any;
 
-/** Win/Linux 顶行高：40px（对齐 nuwax shellAvoid.TOP）；mac 保持 48px。 */
-const ROW_H = isMac ? 48 : 40;
+/** Win/Linux 顶行高：36px=nuwax shellAvoid.TOP（40 是前端避让收敛前旧值：行内容
+ * 居中后墨迹带 15~28px、卡片顶却已收至 CONTENT_TOP=32，上空隙比下方大一倍——
+ * 2026-09-18 用户反馈「顶栏离窗口上边 gap 太大」）；mac 保持 48px。 */
+const ROW_H = isMac ? 48 : 36;
 
 type EditAction = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
 
@@ -358,7 +360,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           left: 0,
           // mac：顶行仅占左侧 300px（图标簇+拖拽区）——mac 不默认退让后，
           // 内容区顶部必须可交互，全宽行会整条挡死；Win/Linux 仍满宽
-          //（内容区恒避让 40px 顶行，无遮挡冲突）
+          //（内容区恒避让 36px 顶行，无遮挡冲突）
           ...(isMac ? { width: 300 } : { right: 0 }),
           height: ROW_H,
           zIndex: 1100,
