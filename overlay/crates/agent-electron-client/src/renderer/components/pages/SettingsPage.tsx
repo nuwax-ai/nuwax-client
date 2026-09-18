@@ -35,6 +35,10 @@ import {
 import { FEATURES } from "@shared/featureFlags";
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
+  modifyWorkspaceDir,
+  openWorkspaceDir,
+} from "../../services/core/workspaceDir";
+import {
   t,
   setCurrentLang,
   scheduleLangMapRefreshOnNextInit,
@@ -127,6 +131,22 @@ export default function SettingsPage() {
   // 本地化加速（即点即存）：映射 nuwaxLoadMode → 保存后重启生效
   const [loopbackEnabled, setLoopbackEnabled] = useState(false);
   const [loopbackApplying, setLoopbackApplying] = useState(false);
+  // 网关运行时真值（nuwax.loopback 键）：两种模式界面同貌，用户无法感知 webview
+  // 换没换加载源（2026-09-18 提测反馈「关闭后没变化」）——把实际加载源亮出来
+  const [loopbackRuntime, setLoopbackRuntime] = useState<{
+    enabled?: boolean;
+    origin?: string | null;
+  } | null>(null);
+  const loopbackSourceText = (
+    rt: { enabled?: boolean; origin?: string | null } | null,
+  ) =>
+    rt?.enabled && rt.origin
+      ? t("Claw.Settings.service.loopbackSource.gateway", {
+          origin: rt.origin,
+        })
+      : t("Claw.Settings.service.loopbackSource.direct", {
+          host: config?.serverHost || "—",
+        });
 
   // 休眠控制（即点即存）：锁屏/窗口隐藏时暂停 webview 后台轮询，壳侧即时生效
   const [dormancyEnabled, setDormancyEnabled] = useState(true);
@@ -200,6 +220,14 @@ export default function SettingsPage() {
       );
     } catch (error) {
       console.error("Failed to load dormancy setting:", error);
+    }
+    try {
+      const rt = (await window.electronAPI?.settings?.get(
+        "nuwax.loopback",
+      )) as { enabled?: boolean; origin?: string | null } | null;
+      setLoopbackRuntime(rt ?? null);
+    } catch (error) {
+      console.error("Failed to load loopback runtime state:", error);
     }
   }, []);
 
@@ -462,46 +490,23 @@ export default function SettingsPage() {
     }
   };
 
-  // ========== 工作区目录：修改 / 打开 ==========
+  // ========== 工作区目录：修改 / 打开（动作实现收口 services/core/workspaceDir，
+  // 应用菜单「文件 → 更改/打开工作空间目录」共用同一实现） ==========
   const handleModifyWorkspace = async () => {
-    const result = await window.electronAPI?.dialog.openDirectory(
-      t("Claw.Settings.dialog.selectWorkspace"),
-    );
-    if (!result?.success || !result.path) return;
     setSaving(true);
     try {
-      const latest = await setupService.getStep1Config();
-      await setupService.saveStep1Config({
-        ...latest,
-        workspaceDir: result.path,
-      });
-      setConfig({ ...latest, workspaceDir: result.path });
-      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-      message.info(t("Claw.Settings.saveConfig.restartHint"));
-    } catch (error) {
-      console.error("Failed to save workspace dir:", error);
-      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+      const changed = await modifyWorkspaceDir();
+      if (changed) {
+        const latest = await setupService.getStep1Config();
+        setConfig(latest);
+      }
     } finally {
       setSaving(false);
     }
   };
 
   const handleOpenWorkspaceDir = async () => {
-    // 没有有效目录时直接提示，避免触发无意义 IPC 调用。
-    if (!workspaceDir) {
-      message.warning(t("Claw.Settings.messages.workspaceNotConfigured"));
-      return;
-    }
-    try {
-      const result = await window.electronAPI?.shell?.openPath(workspaceDir);
-      if (!result?.success) {
-        message.error(
-          result?.error || t("Claw.Settings.messages.openWorkspaceFailed"),
-        );
-      }
-    } catch {
-      message.error(t("Claw.Settings.messages.openWorkspaceFailed"));
-    }
+    await openWorkspaceDir();
   };
 
   // ========== 本地化加速 ==========
@@ -522,7 +527,15 @@ export default function SettingsPage() {
       if (refreshed && refreshed.success === false)
         throw new Error(refreshed.error || "refreshLoopbackGateway failed");
       setLoopbackEnabled(checked);
-      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+      // 切换结果以运行时键回读为准（而非假定 checked 落地）——webview 已随
+      // loopback-changed 重载，行文案与提示都指向实际加载源，肉眼可验
+      const rt = (await window.electronAPI?.settings?.get(
+        "nuwax.loopback",
+      )) as { enabled?: boolean; origin?: string | null } | null;
+      setLoopbackRuntime(rt ?? null);
+      message.success(
+        `${t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED)}，${loopbackSourceText(rt)}`,
+      );
     } catch {
       // 失败必须可见且状态不落定——静默会让用户误以为已生效
       message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
@@ -769,7 +782,7 @@ export default function SettingsPage() {
           {/* 本地化加速（loopback 网关同源加载；服务域名在「服务」区块） */}
           <SettingsRow
             label={t("Claw.Settings.service.loopback")}
-            desc={t("Claw.Settings.service.loopbackDesc")}
+            desc={`${t("Claw.Settings.service.loopbackDesc")} ${loopbackSourceText(loopbackRuntime)}`}
             control={
               <Switch
                 checked={loopbackEnabled}
