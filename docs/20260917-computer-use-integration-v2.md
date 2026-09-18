@@ -256,6 +256,19 @@ Renderer/webview（nuwax 前端）
 | P2 体验收紧 | agent cursor 可视化、轨迹回放入会话 UI、能力清单管理 UI、遥测合规、doctor 集成 | 内测可用 + 安全评审 | 不变 |
 | P3 云端场景 | lanproxy 隧道 + HTTP MCP + 平台侧 VLM 编排联调 | 端到端演示 + 安全评审 | 不变 |
 
+### 十.1 P1 第一轮实施记录（2026-09-18，提交 5a59f1fb）
+
+P1 主体工程当日一轮落地（mac 代码全量 + win 代码骨架，门禁全绿：商业轨 1383 / 社区轨 1332 / tsc 基线 205 / check:pin / 新增 computerUse.test.ts 9 用例）：
+
+- **MCP 功能闭环**：`setCuaEnabled` 开=拉 daemon+upsert `cua` stdio 条目（command=helper 可执行、args=`mcp --socket <私有端点>`，写 db `mcp_local_config` 并 `syncMcpConfigToProxyAndReload` 即时生效；消费链=unifiedAgent.loadLocalMcpConfig 引擎启动合并、本地优先），关=移除条目+协议停机。**B0 实测**：`mcp --socket` stdio 代理对运行中 daemon 握手通过（0.28.2/protocol 2025-06-18/tools 56 个）——官方多客户端配方坐实。启动期 `ensureCuaOnBoot` 幂等收敛挂 overlay lifecycle start（restartAllServicesNow 后、不阻塞主链）。
+- **CI 构建链**：外层仓 `scripts/computer-use/build-helper.sh`（clone trycua/cua@625118a90 → apply 0001-0002 补丁 → cargo build → mac .app/win exe 组装 → Developer ID 预签 + entitlements 免）。预签在进 extraResources **之前**（electron-builder 当数据拷贝；TCC 稳定=同 Team+同 bundle id，after-sign 基座脚本不动）。`release-electron-dev.yml`/`release-electron.yml` 各加 rust-toolchain+构建+extraResources 注入步骤（Linux 腿跳过）。**本地全链验证过**：cargo 1m04s（增量）→ bundle 31M → daemon 拉起 → MCP 握手 56 工具。
+- **首用安装流**：`installCuaHelper`（IPC `cua:installHelper`+设置页「安装」行，installable 态显示）——签名/bundle id 双校验（codesign -dv 解析，win 跳过）、`fs.cpSync`+`xattr -cr` 清 quarantine、安装后复验、lsregister -f+mdimport、`.install-lock` 溯源；装完自动 `requestCuaPermissions`（TCC 归属自校验，可安全重复）。
+- **生命周期**：停机协议优先（helper `stop --socket` 子命令）→ pkill/PowerShell 兜底；`will-quit` 清理（app 会话制 daemon 生命周期，强杀残留属可接受残余——launchd PPID=1 无内建看门狗，cua 仅有 spawn 附着形态的 `--parent-liveness-stdio`）。
+- **Windows 骨架**：`IS_WIN` 分支全就位（exe 直跑 spawn、`\\.\pipe\nuwax-computer-use` 端点、PowerShell 按命令行停机、requestCuaPermissions 返回 unsupportedPlatform）——**真机验证未做（B4 待办）**。
+- **探测收紧**：打包版只认 userData 稳定位+Resources；`/Applications` 回退仅 `!app.isPackaged`（dev 态），防同名近似条目误配（附录 D 教训）。
+- **顺带三修**：check-base-purity 改 `--porcelain -uall`（overlay 新增目录折叠成 `?? dir/` 与 manifest 文件级精确匹配失配而误报）；locale 错误码键连字符→camelCase（`errors.helperNotInstalled` 等 4 键，存量 2 键同修，i18n 键格式红线）；tokenScopes 测试 electron mock 补 `app.on`。
+- **遗留**：设置页四组交互用户目检、win-pc 真机链路（B4）、打包版 TCC 首授权全流程（须打包版才可验，Developer ID 签名身份在 CI）、合并 release 线时的 preload/electron.d.ts 整文件覆写再生成（基座 PR#16/#17 之后过期，直接合会回退 v1.0.15 的 refreshLoopbackGateway 修复）。
+
 ---
 
 ## 附录 A：PoC 证据与复现（2026-09-17，macOS arm64，本机）
