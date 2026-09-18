@@ -143,6 +143,39 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
     return () => window.removeEventListener("resize", sync);
   }, []);
 
+  // 悬浮加载源指示（2026-09-18 提测追加）：以 nuwax.loopback 运行时键为准，
+  // loopback-changed / serverHostChanged 推送即刷。两种加载形态界面同貌，当前
+  // 走本地网关还是直连域名须常显可验（与设置页「本地化加速」行同源同真值）。
+  const [loadMode, setLoadMode] = useState<{
+    enabled?: boolean;
+    origin?: string | null;
+  } | null>(null);
+  const [directHost, setDirectHost] = useState<string>("");
+  useEffect(() => {
+    const refresh = () => {
+      void window.electronAPI?.settings
+        ?.get("nuwax.loopback")
+        .then((rt) =>
+          setLoadMode(rt as { enabled?: boolean; origin?: string | null }),
+        )
+        .catch(() => undefined);
+      void window.electronAPI?.settings
+        ?.get("step1_config")
+        .then((c) =>
+          setDirectHost((c as { serverHost?: string } | null)?.serverHost || ""),
+        )
+        .catch(() => undefined);
+    };
+    refresh();
+    window.electronAPI?.on("nuwax:loopback-changed", refresh as any);
+    window.electronAPI?.on("nuwax:serverHostChanged", refresh as any);
+    return () => {
+      window.electronAPI?.off("nuwax:loopback-changed", refresh as any);
+      window.electronAPI?.off("nuwax:serverHostChanged", refresh as any);
+    };
+  }, []);
+  const accelerated = !!(loadMode?.enabled && loadMode.origin);
+
   const onMin = () => window.electronAPI?.window.minimize();
   const onMax = () => window.electronAPI?.window.maximize();
   const onClose = () => window.electronAPI?.window.close();
@@ -387,6 +420,46 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {settingsBtn}
           {historyNav}
           {statusEntry}
+          {/* 悬浮加载源指示：绿点=本地网关加速 / 灰点=直连域名，tooltip 显源 */}
+          <Tooltip
+            title={
+              accelerated
+                ? `本地加速：${loadMode?.origin}`
+                : `直连：${directHost || "未配置"}`
+            }
+            mouseEnterDelay={0.4}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "0 8px",
+                height: 24,
+                fontSize: 11,
+                lineHeight: 1,
+                opacity: 0.85,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background:
+                    loadMode == null
+                      ? "transparent"
+                      : accelerated
+                        ? "#34c759"
+                        : "#9ca3af",
+                  border:
+                    loadMode == null ? "1px solid currentColor" : "none",
+                }}
+              />
+              {loadMode == null ? "…" : accelerated ? "加速" : "直连"}
+            </div>
+          </Tooltip>
           {menuBar}
         </div>
 
