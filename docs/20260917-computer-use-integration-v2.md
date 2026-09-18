@@ -269,6 +269,14 @@ P1 主体工程当日一轮落地（mac 代码全量 + win 代码骨架，门禁
 - **顺带三修**：check-base-purity 改 `--porcelain -uall`（overlay 新增目录折叠成 `?? dir/` 与 manifest 文件级精确匹配失配而误报）；locale 错误码键连字符→camelCase（`errors.helperNotInstalled` 等 4 键，存量 2 键同修，i18n 键格式红线）；tokenScopes 测试 electron mock 补 `app.on`。
 - **遗留**：设置页四组交互用户目检、win-pc 真机链路（B4）、打包版 TCC 首授权全流程（须打包版才可验，Developer ID 签名身份在 CI）、合并 release 线时的 preload/electron.d.ts 整文件覆写再生成（基座 PR#16/#17 之后过期，直接合会回退 v1.0.15 的 refreshLoopbackGateway 修复）。
 
+### 十.2 B4 win-pc 真机验证记录（2026-09-18，核心链路全绿）
+
+win-pc（192.168.32.53，VS2022 BuildTools 14.44.35207 + Rust 1.98.1）源码构建+运行时验证：
+
+- **构建**：clone trycua/cua@625118a90 → apply 0001-0002 补丁 → `cargo build --release -p cua-driver` → 组装 `NuwaxComputerUse.exe`（增量 3m07s）。**前置坑=VS Spectre 组件**：`regorus`（cua-driver-core 策略引擎）硬依赖 `msvc_spectre_libs`（找 `MSVC\<ver>\lib\spectre\x64`，注意是 lib\spectre\arch 不是 lib\arch\spectre）。正确组件 ID=**`Microsoft.VisualStudio.Component.VC.14.44.17.14.x86.x64.Spectre`**（版本居中+小写 x86.x64 尾缀；猜 ID 会「Cannot find package in product graph」**且静默退出码 0**，用安装器目录 catalog.json 挖真 ID）。安装命令：`Installer\setup.exe modify --add <ID> --installPath "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools" --quiet`（installPath 含空格须独立数组元素+内嵌引号，整串传参会截断成 C:\Program）。GH 托管 windows runner 镜像自带 Spectre 组件（Windows2025-Readme 实查），CI 侧大概率无此坑（下个 tag 实证）。
+- **运行时**：①**serve 拒绝 Session 0**（SSH 服务会话直接 `Error: requires an interactive Windows user session`）——须 `schtasks /create /it + /run` 派到用户交互会话（与 QA 安装包同坑同方）；②命名管道 `\\.\pipe\nuwax-computer-use` 就绪，**`mcp --socket` stdio 握手通过：driver 0.28.2 / protocol 2025-06-18 / 57 工具**（比 mac 56 多 1 个 win 专属）；③协议停机 `stop --socket` 干净。**测试伪影警示**：PowerShell 管道给原进程喂 CRLF 行尾会把 initialize 行打残（服务端按 Legacy era 拒后续请求 -32602「Missing required per-request MCP metadata」）——真实 MCP 客户端发 LF 无此问题；验证脚本须用 LF 载荷文件+`cmd type` 管道。
+- **B4 剩余**：打包版全链（NSIS 内嵌 exe→客户端集成→会话侧用工具）随 B6 合并后的安装包验证。
+
 ---
 
 ## 附录 A：PoC 证据与复现（2026-09-17，macOS arm64，本机）
