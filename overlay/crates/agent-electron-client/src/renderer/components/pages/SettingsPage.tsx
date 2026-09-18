@@ -66,6 +66,9 @@ const LOCAL_LANG_OPTIONS = [
 ];
 
 type PortKey = "fileServerPort" | "agentPort" | "ttydPort";
+
+/** 「允许锁屏运行」档位（与 shared/types/electron.d.ts PowerPolicyMode 对齐） */
+type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
 const PORT_LABELS: Record<PortKey, string> = {
   fileServerPort: "Claw.Settings.saveConfig.fileServerPort",
   agentPort: "Claw.Settings.saveConfig.agentPort",
@@ -152,6 +155,10 @@ export default function SettingsPage() {
   const [dormancyEnabled, setDormancyEnabled] = useState(true);
   const [dormancyApplying, setDormancyApplying] = useState(false);
 
+  // 允许锁屏运行（即点即存）：电源保活档位，壳侧 powerSaveBlocker 即时生效
+  const [powerPolicyMode, setPowerPolicyMode] = useState<PowerPolicyMode>("off");
+  const [powerPolicyApplying, setPowerPolicyApplying] = useState(false);
+
   // Computer Use（cua helper；商业版 overlay 注入，旧宿主无此命名空间时整组隐藏）
   const hasComputerUseApi = !!window.electronAPI?.computerUse;
   const [cuaStatus, setCuaStatus] = useState<{
@@ -220,6 +227,12 @@ export default function SettingsPage() {
       );
     } catch (error) {
       console.error("Failed to load dormancy setting:", error);
+    }
+    try {
+      const mode = await window.electronAPI?.powerPolicy?.get();
+      if (mode) setPowerPolicyMode(mode);
+    } catch (error) {
+      console.error("Failed to load power policy:", error);
     }
     try {
       const rt = (await window.electronAPI?.settings?.get(
@@ -560,6 +573,20 @@ export default function SettingsPage() {
     }
   };
 
+  // ========== 允许锁屏运行：下拉即点即存（壳 powerPolicy 服务即时持有/释放断言） ==========
+  const handlePowerPolicyChange = async (mode: PowerPolicyMode) => {
+    setPowerPolicyApplying(true);
+    try {
+      await window.electronAPI?.powerPolicy?.setMode(mode);
+      setPowerPolicyMode(mode);
+    } catch {
+      // 失败必须可见且状态不落定——静默会让用户误以为已生效
+      message.error(t("Claw.Settings.messages.settingFailed"));
+    } finally {
+      setPowerPolicyApplying(false);
+    }
+  };
+
   // ========== 系统设置操作 ==========
   const handleAutolaunchChange = async (enabled: boolean) => {
     setAutolaunchLoading(true);
@@ -801,6 +828,35 @@ export default function SettingsPage() {
                 checked={dormancyEnabled}
                 onChange={handleDormancyChange}
                 loading={dormancyApplying}
+              />
+            }
+          />
+
+          {/* 允许锁屏运行：电源保活档位，保障远程控制与后台 Agent 任务持续执行 */}
+          <SettingsRow
+            label={t("Claw.Settings.system.powerPolicy")}
+            desc={t("Claw.Settings.system.powerPolicyDesc")}
+            control={
+              <Select
+                style={{ width: 140 }}
+                value={powerPolicyMode}
+                onChange={(value) =>
+                  handlePowerPolicyChange(value as PowerPolicyMode)
+                }
+                options={[
+                  {
+                    value: "off",
+                    label: t("Claw.Settings.system.powerPolicyOff"),
+                  },
+                  {
+                    value: "keepAwake",
+                    label: t("Claw.Settings.system.powerPolicyKeepAwake"),
+                  },
+                  {
+                    value: "keepDisplayOn",
+                    label: t("Claw.Settings.system.powerPolicyKeepDisplayOn"),
+                  },
+                ]}
               />
             }
           />

@@ -39,6 +39,7 @@ import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
+import * as powerPolicy from "../services/powerPolicy";
 
 import {
   initializeCommercialAuth,
@@ -753,6 +754,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
 
   // ---- cua：Computer Use 配置（设置页开关/状态/授权引导/首用安装；overlay 自持实现） ----
   cuaComputerUse.registerCuaQuitCleanup();
+  // 允许锁屏运行：读库恢复档位并持有断言（registerAllHandlers 在 app ready 且
+  // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同 ensureCuaOnBoot 先例）
+  powerPolicy.initPowerPolicy();
   ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
   ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
     cuaComputerUse.setCuaEnabled(enabled === true),
@@ -768,6 +772,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ),
   );
   ipcMain.handle("cua:testVlm", () => cuaComputerUse.testVlm());
+
+  // ---- powerPolicy：允许锁屏运行（电源保活档位；overlay 自持实现） ----
+  ipcMain.handle("powerPolicy:get", () => powerPolicy.getPowerPolicyMode());
+  ipcMain.handle("powerPolicy:setMode", (_event, mode: unknown) =>
+    powerPolicy.setPowerPolicyMode(mode),
+  );
 
   // ---- native：右键另存图片 ----
   ipcMain.handle(

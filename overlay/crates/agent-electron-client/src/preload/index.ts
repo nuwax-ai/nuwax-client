@@ -576,6 +576,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     testVlm: () => ipcRenderer.invoke("cua:testVlm"),
   },
 
+  // 允许锁屏运行（电源保活档位；商业版 overlay 注入，基座无此命名空间）
+  powerPolicy: {
+    get: () => ipcRenderer.invoke("powerPolicy:get"),
+    setMode: (mode: string) => ipcRenderer.invoke("powerPolicy:setMode", mode),
+  },
+
   // Quick Init — 读取快捷初始化配置
   quickInit: {
     getConfig: () => ipcRenderer.invoke("quickInit:getConfig"),

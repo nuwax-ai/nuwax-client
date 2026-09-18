@@ -638,6 +638,14 @@ export interface ComputerUseAPI {
   }>;
 }
 
+/** 「允许锁屏运行」电源保活档位：off=关闭；keepAwake=熄屏后保持唤醒；keepDisplayOn=保持屏幕常亮 */
+export type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
+
+export interface PowerPolicyAPI {
+  get: () => Promise<PowerPolicyMode>;
+  setMode: (mode: PowerPolicyMode) => Promise<{ mode: PowerPolicyMode }>;
+}
+
 export interface ShellAPI {
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openPath: (
@@ -866,6 +874,7 @@ export interface ElectronAPI {
   app: AppAPI;
   permissions: PermissionsAPI;
   computerUse: ComputerUseAPI;
+  powerPolicy: PowerPolicyAPI;
   quickInit: QuickInitAPI;
   perf: PerfAPI;
   on: (channel: string, callback: (...args: unknown[]) => void) => void;
