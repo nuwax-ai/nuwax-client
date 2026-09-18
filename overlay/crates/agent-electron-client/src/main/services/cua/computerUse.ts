@@ -190,3 +190,89 @@ export async function requestCuaPermissions(): Promise<CuaPermissionsResult> {
   }
   return { success: false, error: "timeout", ...lastPermissionHint };
 }
+
+// ========== 视觉模型配置（加速验证：壳侧自持的 OpenAI 兼容 VLM 通道） ==========
+
+export interface CuaVlmConfig {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+const DEFAULT_VLM: CuaVlmConfig = {
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+  model: "",
+  apiKey: "",
+};
+
+function readVlm(): CuaVlmConfig {
+  const step1 = readSetting(STEP1_KEY) as {
+    computerUseVlm?: Partial<CuaVlmConfig>;
+  } | null;
+  return { ...DEFAULT_VLM, ...(step1?.computerUseVlm ?? {}) };
+}
+
+export function getVlmConfig(): CuaVlmConfig {
+  return readVlm();
+}
+
+export function setVlmConfig(
+  patch: Partial<CuaVlmConfig>,
+): { success: boolean; error?: string } {
+  const merged: CuaVlmConfig = { ...readVlm(), ...patch };
+  merged.baseUrl = merged.baseUrl.trim().replace(/\/+$/, "");
+  merged.model = merged.model.trim();
+  const step1 = (readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
+  writeSetting(STEP1_KEY, { ...step1, computerUseVlm: merged });
+  return { success: true };
+}
+
+/**
+ * 连通性测试：对配置端点发一次最小 chat/completions（文本 ping）。
+ * apiKey 只进请求头，严禁写入日志/错误信息。
+ */
+export async function testVlm(): Promise<{
+  success: boolean;
+  error?: string;
+  latencyMs?: number;
+}> {
+  const cfg = readVlm();
+  if (!cfg.model || !cfg.apiKey) {
+    return { success: false, error: "vlm-not-configured" };
+  }
+  const started = Date.now();
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+        stream: false,
+      }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const latencyMs = Date.now() - started;
+    if (!res.ok) {
+      const text = (await res.text()).slice(0, 200);
+      return { success: false, error: `HTTP ${res.status}: ${text}`, latencyMs };
+    }
+    return { success: true, latencyMs };
+  } catch (e) {
+    const err = e as { name?: string; message?: string };
+    return {
+      success: false,
+      error:
+        err?.name === "AbortError"
+          ? "timeout"
+          : String(err?.message ?? e).slice(0, 200),
+    };
+  }
+}

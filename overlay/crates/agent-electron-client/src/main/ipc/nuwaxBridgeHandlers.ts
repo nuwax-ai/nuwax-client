@@ -743,6 +743,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("cua:requestPermissions", () =>
     cuaComputerUse.requestCuaPermissions(),
   );
+  ipcMain.handle("cua:getVlmConfig", () => cuaComputerUse.getVlmConfig());
+  ipcMain.handle("cua:setVlmConfig", (_event, patch: unknown) =>
+    cuaComputerUse.setVlmConfig(
+      (patch ?? {}) as { baseUrl?: string; model?: string; apiKey?: string },
+    ),
+  );
+  ipcMain.handle("cua:testVlm", () => cuaComputerUse.testVlm());
 
   // ---- native：右键另存图片 ----
   ipcMain.handle(

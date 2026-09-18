@@ -957,5 +957,17 @@
   "Claw.Settings.computerUse.stateIdle": "已启用·待启动",
   "Claw.Settings.computerUse.stateNotInstalled": "未安装",
   "Claw.Settings.computerUse.errors.helper-not-installed": "未找到 Nuwax Computer Use 助手应用",
-  "Claw.Settings.computerUse.errors.generic": "操作失败，请重试"
+  "Claw.Settings.computerUse.errors.generic": "操作失败，请重试",
+  "Claw.Settings.computerUse.vlmModel": "视觉模型",
+  "Claw.Settings.computerUse.vlmModelDesc": "Computer Use 屏幕理解所用视觉模型（如 glm-4.5v），OpenAI 兼容接口",
+  "Claw.Settings.computerUse.vlmBaseUrl": "接口地址",
+  "Claw.Settings.computerUse.vlmBaseUrlDesc": "缺省智谱 BigModel 端点，可换任意 OpenAI 兼容网关",
+  "Claw.Settings.computerUse.vlmApiKey": "API Key",
+  "Claw.Settings.computerUse.vlmApiKeyDesc": "仅保存在本机设置库，不上传",
+  "Claw.Settings.computerUse.vlmTest": "连通性测试",
+  "Claw.Settings.computerUse.vlmTestDesc": "对配置端点发一次最小请求验证模型与密钥可用",
+  "Claw.Settings.computerUse.vlmTestBtn": "测试连接",
+  "Claw.Settings.computerUse.vlmTestOk": "连接成功（{{ms}}ms）",
+  "Claw.Settings.computerUse.vlmTestFail": "连接失败：{{err}}",
+  "Claw.Settings.computerUse.errors.vlm-not-configured": "请先填写视觉模型名与 API Key"
 }

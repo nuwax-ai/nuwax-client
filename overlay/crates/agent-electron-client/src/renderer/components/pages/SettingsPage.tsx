@@ -16,6 +16,7 @@ import React, { useState, useEffect, useCallback, Suspense } from "react";
 import {
   AutoComplete,
   Button,
+  Input,
   InputNumber,
   Select,
   Spin,
@@ -138,6 +139,12 @@ export default function SettingsPage() {
   } | null>(null);
   const [cuaApplying, setCuaApplying] = useState(false);
   const [cuaPermChecking, setCuaPermChecking] = useState(false);
+  const [cuaVlm, setCuaVlm] = useState<{
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+  } | null>(null);
+  const [cuaVlmTesting, setCuaVlmTesting] = useState(false);
 
   // 语言
   const { lang: i18nLang } = useI18nLang();
@@ -180,10 +187,52 @@ export default function SettingsPage() {
     }
   }, []);
 
+  // 视觉模型配置：行内即点即存（与端口/域名同范式）
+  const commitVlm = async (patch: {
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+  }) => {
+    try {
+      await window.electronAPI!.computerUse.setVlmConfig(patch);
+    } catch {
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    }
+  };
+
+  const handleVlmTest = async () => {
+    // 先落当前草稿再测，避免「看起来填了但没存」的假成功
+    if (cuaVlm) await commitVlm(cuaVlm);
+    setCuaVlmTesting(true);
+    try {
+      const r = await window.electronAPI!.computerUse.testVlm();
+      if (r.success) {
+        message.success(
+          t("Claw.Settings.computerUse.vlmTestOk", { ms: r.latencyMs ?? "?" }),
+        );
+      } else {
+        message.error(
+          t("Claw.Settings.computerUse.vlmTestFail", {
+            err:
+              r.error === "vlm-not-configured"
+                ? t("Claw.Settings.computerUse.errors.vlm-not-configured")
+                : r.error ?? "unknown",
+          }),
+        );
+      }
+    } finally {
+      setCuaVlmTesting(false);
+    }
+  };
+
   // ========== Computer Use：状态加载 / 开关 / 授权引导 ==========
   const loadCuaStatus = useCallback(async () => {
     if (!hasComputerUseApi) return;
     try {
+      window.electronAPI!.computerUse
+        .getVlmConfig()
+        .then((v) => setCuaVlm(v))
+        .catch(() => undefined);
       const s = await window.electronAPI!.computerUse.getStatus();
       setCuaStatus({
         installed: !!s.installed,
@@ -772,6 +821,77 @@ export default function SettingsPage() {
                   onClick={handleCuaRequestPermissions}
                 >
                   {t("Claw.Settings.computerUse.requestPerm")}
+                </Button>
+              }
+            />
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.vlmModel")}
+              desc={t("Claw.Settings.computerUse.vlmModelDesc")}
+              control={
+                <Input
+                  style={{ width: 200 }}
+                  placeholder="glm-4.5v"
+                  value={cuaVlm?.model ?? ""}
+                  disabled={!cuaVlm}
+                  onChange={(e) =>
+                    setCuaVlm((v) =>
+                      v ? { ...v, model: e.target.value } : v,
+                    )
+                  }
+                  onBlur={() =>
+                    cuaVlm && commitVlm({ model: cuaVlm.model })
+                  }
+                />
+              }
+            />
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.vlmBaseUrl")}
+              desc={t("Claw.Settings.computerUse.vlmBaseUrlDesc")}
+              control={
+                <Input
+                  style={{ width: 280 }}
+                  value={cuaVlm?.baseUrl ?? ""}
+                  disabled={!cuaVlm}
+                  onChange={(e) =>
+                    setCuaVlm((v) =>
+                      v ? { ...v, baseUrl: e.target.value } : v,
+                    )
+                  }
+                  onBlur={() =>
+                    cuaVlm && commitVlm({ baseUrl: cuaVlm.baseUrl })
+                  }
+                />
+              }
+            />
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.vlmApiKey")}
+              desc={t("Claw.Settings.computerUse.vlmApiKeyDesc")}
+              control={
+                <Input.Password
+                  style={{ width: 280 }}
+                  value={cuaVlm?.apiKey ?? ""}
+                  disabled={!cuaVlm}
+                  onChange={(e) =>
+                    setCuaVlm((v) =>
+                      v ? { ...v, apiKey: e.target.value } : v,
+                    )
+                  }
+                  onBlur={() =>
+                    cuaVlm && commitVlm({ apiKey: cuaVlm.apiKey })
+                  }
+                />
+              }
+            />
+            <SettingsRow
+              label={t("Claw.Settings.computerUse.vlmTest")}
+              desc={t("Claw.Settings.computerUse.vlmTestDesc")}
+              control={
+                <Button
+                  size="small"
+                  loading={cuaVlmTesting}
+                  onClick={handleVlmTest}
+                >
+                  {t("Claw.Settings.computerUse.vlmTestBtn")}
                 </Button>
               }
             />

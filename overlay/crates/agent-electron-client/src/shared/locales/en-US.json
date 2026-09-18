@@ -957,5 +957,17 @@
   "Claw.Settings.computerUse.stateIdle": "Enabled · idle",
   "Claw.Settings.computerUse.stateNotInstalled": "Not installed",
   "Claw.Settings.computerUse.errors.helper-not-installed": "Nuwax Computer Use helper app not found",
-  "Claw.Settings.computerUse.errors.generic": "Operation failed, please retry"
+  "Claw.Settings.computerUse.errors.generic": "Operation failed, please retry",
+  "Claw.Settings.computerUse.vlmModel": "Vision model",
+  "Claw.Settings.computerUse.vlmModelDesc": "Vision model for screen understanding (e.g. glm-4.5v), OpenAI-compatible API",
+  "Claw.Settings.computerUse.vlmBaseUrl": "Endpoint",
+  "Claw.Settings.computerUse.vlmBaseUrlDesc": "Defaults to BigModel; any OpenAI-compatible gateway works",
+  "Claw.Settings.computerUse.vlmApiKey": "API Key",
+  "Claw.Settings.computerUse.vlmApiKeyDesc": "Stored locally only, never uploaded",
+  "Claw.Settings.computerUse.vlmTest": "Connectivity test",
+  "Claw.Settings.computerUse.vlmTestDesc": "Sends a minimal request to verify the model and key",
+  "Claw.Settings.computerUse.vlmTestBtn": "Test connection",
+  "Claw.Settings.computerUse.vlmTestOk": "Connected ({{ms}}ms)",
+  "Claw.Settings.computerUse.vlmTestFail": "Connection failed: {{err}}",
+  "Claw.Settings.computerUse.errors.vlm-not-configured": "Fill in the vision model name and API key first"
 }

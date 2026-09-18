@@ -562,6 +562,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke("cua:setEnabled", enabled),
     requestPermissions: () => ipcRenderer.invoke("cua:requestPermissions"),
+    getVlmConfig: () => ipcRenderer.invoke("cua:getVlmConfig"),
+    setVlmConfig: (patch: {
+      baseUrl?: string;
+      model?: string;
+      apiKey?: string;
+    }) => ipcRenderer.invoke("cua:setVlmConfig", patch),
+    testVlm: () => ipcRenderer.invoke("cua:testVlm"),
   },
 
   // Quick Init — 读取快捷初始化配置

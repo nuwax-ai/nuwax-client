@@ -612,6 +612,21 @@ export interface ComputerUseAPI {
     accessibility?: boolean | null;
     screenRecording?: boolean | null;
   }>;
+  getVlmConfig: () => Promise<{
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+  }>;
+  setVlmConfig: (patch: {
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  testVlm: () => Promise<{
+    success: boolean;
+    error?: string;
+    latencyMs?: number;
+  }>;
 }
 
 export interface ShellAPI {
