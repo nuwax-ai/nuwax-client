@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +6,11 @@ import path from "node:path";
 const mocks = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   proxySync: vi.fn(),
-  spawnCalls: [] as Array<{ cmd: string; args: string[] }>,
+  spawnCalls: [] as Array<{
+    cmd: string;
+    args: string[];
+    env?: NodeJS.ProcessEnv;
+  }>,
   execCalls: [] as Array<{ cmd: string; args: string[] }>,
   userDataURL: "",
 }));
@@ -53,8 +57,8 @@ vi.mock("node:child_process", () => ({
         : "";
     cb(null, { stdout: "", stderr });
   },
-  spawn: (cmd: string, args: string[]) => {
-    mocks.spawnCalls.push({ cmd, args });
+  spawn: (cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
+    mocks.spawnCalls.push({ cmd, args, env: opts?.env });
     return { unref: vi.fn() };
   },
 }));
@@ -246,5 +250,27 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
     const s = await mod.getCuaStatus();
     expect(s.supported).toBe(true);
     expect(s.installed).toBe(true);
+  });
+
+  it("setCuaEnabled(true)→spawn 注入 CUA_DRIVER_DATA_HOME（数据目录内聚 ~/.nuwax）", async () => {
+    mocks.userDataURL = fs.mkdtempSync(path.join(os.tmpdir(), "cua-test-linux-"));
+    Object.defineProperty(process, "resourcesPath", {
+      value: path.join(mocks.userDataURL, "resources"),
+      configurable: true,
+    });
+    const installedDir = path.join(mocks.userDataURL, "computer-use");
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(path.join(installedDir, "NuwaxComputerUse"), "#!/bin/sh\n");
+
+    const mod = await import("./computerUse");
+    const r = await mod.setCuaEnabled(true); // socket 探活超时后仍会走注入（约 5s）
+    expect(r.success).toBe(true);
+
+    const call = mocks.spawnCalls.find(
+      (c) => c.cmd.endsWith("NuwaxComputerUse") && c.args.includes("serve"),
+    );
+    expect(call).toBeTruthy();
+    // cuaDataHome = <home>/<APP_DATA_DIR_NAME>/computer-use（测试环境 home=mock userDataURL）
+    expect(call!.env?.CUA_DRIVER_DATA_HOME).toMatch(/computer-use$/);
   });
 });

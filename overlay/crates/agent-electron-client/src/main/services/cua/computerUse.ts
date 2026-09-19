@@ -20,6 +20,7 @@ import { promisify } from "node:util";
 import { app } from "electron";
 import log from "electron-log";
 import { getDb, readSetting, writeSetting } from "../../db";
+import { APP_DATA_DIR_NAME } from "../constants";
 
 const pexec = promisify(execFile);
 
@@ -115,13 +116,39 @@ async function waitForSocket(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
+/**
+ * 驱动自有落盘的统一宿主目录（补丁 3 的 CUA_DRIVER_DATA_HOME）：~/.nuwax/computer-use
+ * （与 nuwax.db 同源=APP_DATA_DIR_NAME 派生）——pid/telemetry·install 标记/history/
+ * 浏览器 profile/libei restore token 全部内聚于此，机器上不再出现 cua-* 外部目录。
+ */
+function cuaDataHome(): string {
+  return path.join(app.getPath("home"), APP_DATA_DIR_NAME, "computer-use");
+}
+
+/** daemon 进程环境：数据目录内聚 env（须与补丁 3 的开关同名）。 */
+function daemonEnv(): { [key: string]: string } {
+  return {
+    ...process.env,
+    CUA_DRIVER_DATA_HOME: cuaDataHome(),
+  } as { [key: string]: string };
+}
+
 /** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win/linux 直跑二进制。 */
 async function launchDaemon(helperRoot: string): Promise<void> {
   if (await isDaemonAlive()) return;
   if (IS_MAC) {
     const child = spawn(
       "open",
-      ["-n", helperRoot, "--args", "serve", "--socket", SOCKET_PATH],
+      [
+        "-n",
+        "--env",
+        `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
+        helperRoot,
+        "--args",
+        "serve",
+        "--socket",
+        SOCKET_PATH,
+      ],
       { detached: true, stdio: "ignore" },
     );
     child.unref();
@@ -133,7 +160,7 @@ async function launchDaemon(helperRoot: string): Promise<void> {
       "serve",
       "--socket",
       SOCKET_PATH,
-    ], { detached: true, stdio: "ignore" });
+    ], { detached: true, stdio: "ignore", env: daemonEnv() });
     child.unref();
     log.info("[Cua] daemon spawn dispatched:", SOCKET_PATH);
     return;

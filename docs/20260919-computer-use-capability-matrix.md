@@ -17,7 +17,7 @@
 | 逐窗 PipeWire 截屏（portal-capture） | 不涉及 | 不涉及 | **不启用**（上游截屏主瀑布未接此路径、仅 Nix 包启用；对截屏能力零影响） |
 | 浏览器 CDP 工具组（browser_* 9 个） | ✅ | ✅ | 注册面一致，真机待验 |
 | 光标叠加 / 轨迹录制 / 会话生命周期 | ✅ | ✅ | 同上 |
-| daemon 通道 | UDS `$TMPDIR/nuwax-computer-use.sock`（0600，本机同用户） | 命名管道 `\\.\pipe\nuwax-computer-use` | 同 mac UDS（容器实证 0600 建立，无 DISPLAY 可起——上游懒加载）；**三平台均无 TCP 监听端口** |
+| daemon 通道 | UDS `$TMPDIR/nuwax-computer-use.sock`（0600，本机同用户） | 命名管道 `\\.\pipe\nuwax-computer-use` | 同 mac UDS（容器实证 0600 建立，无 DISPLAY 可起——上游懒加载；pid/telemetry·install 标记/history/浏览器 profile/restore token 自 v1.0.18 全部经 CUA_DRIVER_DATA_HOME 内聚到 ~/.nuwax/computer-use，机器无 cua-* 外部目录）；**三平台均无 TCP 监听端口** |
 | Helper 授权 | 辅助功能＋屏幕录制（一次性，跨版本保留） | **零授权** | X11 零授权；Wayland 见输入/截屏两行（细节见权限矩阵文档） |
 | 设置页权限行 UI | 有（去授权/检查） | 无（v1.0.18 起不渲染，win 无 TCC 概念） | 无 |
 
@@ -25,7 +25,7 @@
 
 | feature | 状态 | 影响与说明 |
 |---|---|---|
-| `portal-input` | **v1.0.18 起构建启用**（build-helper.sh `--features portal-input`，2026-09-19 拍板，对齐上游官方 Linux 发行物） | 仅作用于 Linux 非 wlroots 合成器（GNOME 47+/KDE Plasma 6+）的输入兜底；X11/wlroots 路径不经过它；**不改变 tools/list 条目**（feature 只改行为/错误形态/健康报告）。首用弹 xdg-desktop-portal 远程控制同意框，restore token 落 `~/.config/cua-driver/`（compositor 会话级）。**构建已经 OrbStack 容器实证**（ubuntu:24.04 arm64 与 CI 腿同构，47MB 产物）；ldd 实证 `libxkbcommon.so.0` 为其真实运行时依赖（deb 默认 depends 经 libgtk-3-0 传递覆盖，AppImage 极简环境留意）；CI x64/arm64 双腿产物确认随 v1.0.18 |
+| `portal-input` | **v1.0.18 起构建启用**（build-helper.sh `--features portal-input`，2026-09-19 拍板，对齐上游官方 Linux 发行物） | 仅作用于 Linux 非 wlroots 合成器（GNOME 47+/KDE Plasma 6+）的输入兜底；X11/wlroots 路径不经过它；**不改变 tools/list 条目**（feature 只改行为/错误形态/健康报告）。首用弹 xdg-desktop-portal 远程控制同意框，restore token 落 `~/.nuwax/computer-use/libei-persistent.token`（compositor 会话级）。**构建已经 OrbStack 容器实证**（ubuntu:24.04 arm64 与 CI 腿同构，47MB 产物）；ldd 实证 `libxkbcommon.so.0` 为其真实运行时依赖（deb 默认 depends 经 libgtk-3-0 传递覆盖，AppImage 极简环境留意）；CI x64/arm64 双腿产物确认随 v1.0.18 |
 | `portal-capture` | 不启用 | 上游截屏主瀑布未接 PipeWire 逐窗路径（上游官方发行也不开，仅 Nix 包启用）；构建需 pipewire 0.8/libspa 0.8 头文件＋bindgen；对三平台截屏能力零影响 |
 | 策略引擎 yaml/rego（cua-driver-core 默认 feature） | 随构建默认启用 | PolicyEngine 可用；但当前 serve 未传 `--permission-mode`，策略面未接线（见缺口 ②） |
 | nuwax 本地补丁 ×2 | 恒应用（锁版 625118a90 ＋ `git apply`） | ① bundle 白名单参数化（含 `Nuwax Computer Use.app`，否则 driver re-exec 丢宿主 TCC、动作静默失败）；② `app_bundle_path()` 动态取运行中 bundle。均为方案 E 宿主化必需，上游无此概念（发行差异，非缺口） |
@@ -70,7 +70,7 @@
 
 - [ ] X11 会话：零授权全链路（输入 libXtst、截屏 X11 直读）
 - [ ] Wayland wlroots 系（Hyprland/Sway 等）：wlr 协议输入＋screencopy 截屏，全程无弹框
-- [ ] Wayland GNOME/KDE（须 v1.0.18+ 产物）：首用截屏 portal 授权框；首用输入远程控制同意框；同 compositor 会话内重启 daemon 不重复弹（restore token `~/.config/cua-driver/libei-persistent.token`）
+- [ ] Wayland GNOME/KDE（须 v1.0.18+ 产物）：首用截屏 portal 授权框；首用输入远程控制同意框；同 compositor 会话内重启 daemon 不重复弹（restore token `~/.nuwax/computer-use/libei-persistent.token`）
 - [ ] 构建产物确认：portal-input 已编入（x64/arm64 两腿）——源码级已经容器实证（arm64），产物级随 v1.0.18 CI
 
 **通用**

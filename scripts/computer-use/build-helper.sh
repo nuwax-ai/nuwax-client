@@ -24,7 +24,7 @@ TARGET_TRIPLE="${TARGET_TRIPLE:?TARGET_TRIPLE required}"
 OUT_DIR="${OUT_DIR:?OUT_DIR required}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PATCH_FILE="${REPO_ROOT}/docs/computer-use-poc/0001-0002-cua-nuwax-helper-bundle.patch"
+PATCH_FILE="${REPO_ROOT}/docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch"
 WORK_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cua-build-$$"
 
 case "$TARGET_TRIPLE" in
