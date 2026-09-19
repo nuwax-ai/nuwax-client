@@ -25,13 +25,21 @@ const pexec = promisify(execFile);
 
 const IS_MAC = process.platform === "darwin";
 const IS_WIN = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
 
 const HELPER_APP_NAME = "Nuwax Computer Use.app";
 const HELPER_EXEC_NAME = "Nuwax Computer Use";
 const HELPER_EXE_NAME = "NuwaxComputerUse.exe";
+const HELPER_BIN_NAME = "NuwaxComputerUse";
 const MCP_SERVER_ID = "cua";
 const STEP1_KEY = "step1_config";
 const MCP_LOCAL_CONFIG_KEY = "mcp_local_config";
+
+/** 平台对应的 helper 产物名（mac=.app bundle；win=exe；linux=裸二进制）。 */
+function helperArtifactName(): string {
+  if (IS_MAC) return HELPER_APP_NAME;
+  return IS_WIN ? HELPER_EXE_NAME : HELPER_BIN_NAME;
+}
 
 /** 私有 socket/pipe 端点（daemon 与 stdio MCP 代理共用）。 */
 export const SOCKET_PATH = IS_WIN
@@ -45,7 +53,7 @@ function stableInstallDir(): string {
 
 /** helper 候选探测：稳定安装位 → /Applications（仅 dev 态回退，spike/dev 机）→ 随包 Resources。 */
 function helperCandidates(): Array<{ kind: "installed" | "bundled"; root: string }> {
-  const stable = path.join(stableInstallDir(), IS_WIN ? HELPER_EXE_NAME : HELPER_APP_NAME);
+  const stable = path.join(stableInstallDir(), helperArtifactName());
   const list: Array<{ kind: "installed" | "bundled"; root: string }> = [];
   if (fs.existsSync(stable)) list.push({ kind: "installed", root: stable });
   // 打包版只认稳定安装位与随包 Resources；/Applications 探测仅服务 dev 检出
@@ -56,7 +64,7 @@ function helperCandidates(): Array<{ kind: "installed" | "bundled"; root: string
   const bundled = path.join(
     process.resourcesPath,
     "computer-use",
-    IS_WIN ? HELPER_EXE_NAME : HELPER_APP_NAME,
+    helperArtifactName(),
   );
   if (fs.existsSync(bundled)) list.push({ kind: "bundled", root: bundled });
   return list;
@@ -72,11 +80,12 @@ function findBundledHelper(): string | null {
   return helperCandidates().find((c) => c.kind === "bundled")?.root ?? null;
 }
 
-/** daemon serve 用的可执行文件（.app 内 macOS 可执行 / win exe 本体）。 */
+/** daemon serve 用的可执行文件（mac=.app 内可执行；win=exe 本体；linux=二进制本体）。 */
 function helperExecutable(helperRoot: string): string {
-  return IS_WIN
-    ? helperRoot
-    : path.join(helperRoot, "Contents", "MacOS", HELPER_EXEC_NAME);
+  if (IS_MAC) {
+    return path.join(helperRoot, "Contents", "MacOS", HELPER_EXEC_NAME);
+  }
+  return helperRoot;
 }
 
 function probeSocket(sockPath: string): Promise<boolean> {
@@ -106,7 +115,7 @@ async function waitForSocket(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
-/** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win 直跑 exe。 */
+/** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win/linux 直跑二进制。 */
 async function launchDaemon(helperRoot: string): Promise<void> {
   if (await isDaemonAlive()) return;
   if (IS_MAC) {
@@ -119,7 +128,7 @@ async function launchDaemon(helperRoot: string): Promise<void> {
     log.info("[Cua] daemon launch dispatched:", SOCKET_PATH);
     return;
   }
-  if (IS_WIN) {
+  if (IS_WIN || IS_LINUX) {
     const child = spawn(helperExecutable(helperRoot), [
       "serve",
       "--socket",
@@ -256,7 +265,7 @@ export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
 export async function getCuaStatus(): Promise<CuaStatus> {
   const helperPath = findHelperApp();
   return {
-    supported: IS_MAC || IS_WIN,
+    supported: IS_MAC || IS_WIN || IS_LINUX,
     installed: !!helperPath,
     installable: !helperPath && !!findBundledHelper(),
     running: await isDaemonAlive(),
@@ -372,6 +381,10 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
     fs.mkdirSync(stableInstallDir(), { recursive: true });
     fs.rmSync(dest, { recursive: true, force: true });
     fs.cpSync(bundled, dest, { recursive: true, verbatimSymlinks: true });
+    if (IS_LINUX) {
+      // 裸二进制：cpSync 保模式位，兜底显式置可执行（防打包源被剥位）
+      fs.chmodSync(dest, 0o755);
+    }
     if (IS_MAC) {
       // 清 quarantine/resource fork 残留（spike 坑④：cp 带的 xattr 会让 verify 报错）
       await pexec("xattr", ["-cr", dest]).catch(() => undefined);

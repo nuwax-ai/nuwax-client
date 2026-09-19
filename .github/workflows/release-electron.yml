@@ -330,31 +330,33 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
           echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
 
-      # ---- Computer Use helper（cua-driver 源码自建）：mac/win 构建，Linux 不做 ----
+      # ---- Computer Use helper（cua-driver 源码自建）：五平台全矩阵 ----
       # 与 release-electron-dev.yml 同款步骤（锁版+补丁+cargo+组装+预签 Developer ID）
       - name: Setup Rust toolchain (Computer Use helper)
-        if: runner.os != 'Linux'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Computer Use helper (cua-driver)
-        if: runner.os != 'Linux'
         shell: bash
         env:
           OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libxkbcommon-dev pkg-config
+          fi
           case "${{ runner.os }}/${{ matrix.arch }}" in
             macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
             macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
             Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
+            Linux/x64)   TRIPLE=x86_64-unknown-linux-gnu ;;
+            Linux/arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
             *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
           esac
           export TARGET_TRIPLE="$TRIPLE"
           bash scripts/computer-use/build-helper.sh
 
-      # extraResources 注入（Linux 不加：目录不存在会让 electron-builder 报错）
-      - name: Inject computer-use extraResources (mac/win)
-        if: runner.os != 'Linux'
+      # extraResources 注入（目录随构建产出）
+      - name: Inject computer-use extraResources
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
         run: |

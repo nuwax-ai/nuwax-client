@@ -28,9 +28,10 @@ PATCH_FILE="${REPO_ROOT}/docs/computer-use-poc/0001-0002-cua-nuwax-helper-bundle
 WORK_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cua-build-$$"
 
 case "$TARGET_TRIPLE" in
-  *-apple-darwin) PLATFORM=mac ;;
-  *-windows-*)    PLATFORM=win ;;
-  *)              PLATFORM=other ;;
+  *-apple-darwin)   PLATFORM=mac ;;
+  *-windows-*)      PLATFORM=win ;;
+  *-unknown-linux-*) PLATFORM=linux ;;
+  *)                PLATFORM=other ;;
 esac
 
 # ---------- 源码就位（clone+patch 或本地检出） ----------
@@ -93,6 +94,12 @@ if [ "$PLATFORM" = "mac" ]; then
 elif [ "$PLATFORM" = "win" ]; then
   cp "$BIN" "$OUT_DIR/NuwaxComputerUse.exe"
   echo "[cua-helper] win exe OK: $OUT_DIR/NuwaxComputerUse.exe"
+  ls -la "$OUT_DIR"
+elif [ "$PLATFORM" = "linux" ]; then
+  # 裸二进制（X11 直接可用；Wayland 走 portal/compositor 通路，见权限矩阵文档）
+  cp "$BIN" "$OUT_DIR/NuwaxComputerUse"
+  chmod 755 "$OUT_DIR/NuwaxComputerUse"
+  echo "[cua-helper] linux binary OK: $OUT_DIR/NuwaxComputerUse"
   ls -la "$OUT_DIR"
 else
   echo "::error::unsupported platform for helper: $TARGET_TRIPLE"; exit 1
