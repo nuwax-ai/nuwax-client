@@ -342,7 +342,8 @@ jobs:
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libxkbcommon-dev pkg-config
+            # 对齐上游官方 CI 构建清单（同 release-electron-dev.yml 注释）
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
           fi
           case "${{ runner.os }}/${{ matrix.arch }}" in
             macOS/arm64) TRIPLE=aarch64-apple-darwin ;;

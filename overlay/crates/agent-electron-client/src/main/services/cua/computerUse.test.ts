@@ -205,3 +205,46 @@ describe("首用安装流（Resources → userData 稳定路径）", () => {
     expect(fs.statSync(stableHelperPath()).mtimeMs).toBe(before);
   });
 });
+
+describe("Linux 语义回归（安装目标名必须与探测名同源）", () => {
+  // 真 bug：installCuaHelper 的 dest 曾用 win/mac 二元判断（IS_WIN ? exe : .app），
+  // Linux 装成 .app 名而探测找 NuwaxComputerUse → installed 恒 false、开关不可用。
+  // 此前测试零 linux 覆盖故漏网——本组用平台覆写+模块重载补上。
+  beforeAll(() => {
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+  afterAll(() => {
+    Object.defineProperty(process, "platform", {
+      value: "darwin",
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+
+  it("bundled 裸二进制→安装落 NuwaxComputerUse 且 installed 探测可达+可执行位", async () => {
+    mocks.userDataURL = fs.mkdtempSync(path.join(os.tmpdir(), "cua-test-linux-"));
+    Object.defineProperty(process, "resourcesPath", {
+      value: path.join(mocks.userDataURL, "resources"),
+      configurable: true,
+    });
+    const bundledDir = path.join(process.resourcesPath as string, "computer-use");
+    fs.mkdirSync(bundledDir, { recursive: true });
+    fs.writeFileSync(path.join(bundledDir, "NuwaxComputerUse"), "#!/bin/sh\n");
+
+    const mod = await import("./computerUse");
+    const r = await mod.installCuaHelper();
+    expect(r.success).toBe(true);
+
+    const dest = path.join(mocks.userDataURL, "computer-use", "NuwaxComputerUse");
+    expect(fs.existsSync(dest)).toBe(true);
+    expect((fs.statSync(dest).mode & 0o111) !== 0).toBe(true);
+
+    const s = await mod.getCuaStatus();
+    expect(s.supported).toBe(true);
+    expect(s.installed).toBe(true);
+  });
+});

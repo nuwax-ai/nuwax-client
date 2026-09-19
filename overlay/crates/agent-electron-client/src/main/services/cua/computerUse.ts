@@ -373,10 +373,9 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
   if (!bundled) return { success: false, error: "bundledNotFound" };
   const verify = await verifyHelperSignature(bundled);
   if (!verify.ok) return { success: false, error: verify.error };
-  const dest = path.join(
-    stableInstallDir(),
-    IS_WIN ? HELPER_EXE_NAME : HELPER_APP_NAME,
-  );
+  // 目标名必须与探测侧 helperArtifactName() 同源（linux=裸二进制 NuwaxComputerUse，
+  // 曾因 win/mac 二元判断装成 .app 名致 Linux installed 恒 false）
+  const dest = path.join(stableInstallDir(), helperArtifactName());
   try {
     fs.mkdirSync(stableInstallDir(), { recursive: true });
     fs.rmSync(dest, { recursive: true, force: true });

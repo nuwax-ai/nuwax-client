@@ -343,8 +343,10 @@ jobs:
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
-            # wayland-client/xkbcommon 经 pkg-config 链接（x11rb 纯 Rust 无需 libxcb）
-            sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libxkbcommon-dev pkg-config
+            # 对齐上游官方 CI 构建清单：x11 2.21 FFI crate 链 libX11/libXi/libXtst/libXext；
+            # wayland 栈纯 Rust backend 不需要 libwayland-dev；pipewire/libei 为
+            # portal-capture/portal-input feature 设施，默认 feature 不启用不装
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
           fi
           case "${{ runner.os }}/${{ matrix.arch }}" in
             macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
