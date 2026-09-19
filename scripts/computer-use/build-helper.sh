@@ -55,8 +55,12 @@ fi
 (
   cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
   rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
-  echo "[cua-helper] cargo build --release -p cua-driver ($TARGET_TRIPLE) ..."
-  cargo build --release -p cua-driver --target "$TARGET_TRIPLE"
+  echo "[cua-helper] cargo build --release -p cua-driver --features portal-input ($TARGET_TRIPLE) ..."
+  # portal-input=libei 输入通道（GNOME/KDE Wayland；不开则 GNOME Wayland 输入
+  # "no input backend" 无兜底）——上游官方 Linux 发行同款开启；纯 Rust 栈（reis）
+  # +libxkbcommon-dev，mac/win 为 target-gated 无影响。portal-capture 不开：
+  # 截屏主瀑布走免 feature 的 portal.Screenshot，逐窗 PipeWire 仅备用 API 未接线
+  cargo build --release -p cua-driver --features portal-input --target "$TARGET_TRIPLE"
 )
 
 BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"

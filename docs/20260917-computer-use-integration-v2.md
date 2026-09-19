@@ -329,3 +329,7 @@ win-pc（192.168.32.53，VS2022 BuildTools 14.44.35207 + Rust 1.98.1）源码构
 ### 十.3 Linux 支持加回（2026-09-18 用户改口径：三平台全做）
 
 此前「不做 Linux」口径作废。实现：`computerUse.ts` 平台三分（linux=裸二进制 `NuwaxComputerUse`，UDS 端点与 mac 同、直跑 spawn、chmod 755、无授权流）；`build-helper.sh` 增 linux 分支（x86_64/aarch64-unknown-linux-gnu，CI 腿 apt 装 libwayland-dev/libxkbcommon-dev——wayland-client 经 pkg-config 链接，x11rb 纯 Rust 零 libxcb）；双 workflow 五平台全矩阵解除 Linux 跳过。权限口径见 `docs/20260918-nuwax-permissions-matrix.md`（X11 零授权；Wayland 截屏走 portal、输入依赖 compositor/wlr 协议）。⚠️Linux 真机链路未验证（CI 构建实证随下个 prerelease）。
+
+### 十.4 portal-input 开启（2026-09-19 定案，随 v1.0.18）
+
+构建改 `cargo build --release -p cua-driver --features portal-input`（上游官方 Linux 发行同款）。决策依据：不开则 **GNOME Wayland 输入 "no input backend for this compositor" 无兜底**（wayland/mod.rs:1286-1300）；纯 Rust 栈（reis/calloop）+libxkbcommon-dev（apt 清单已有）零新增系统依赖；feature 为 Linux-only target-gated，mac/win 构建与 tools/list（56/57）零影响。**portal-capture 维持不开**：截屏主瀑布（Tier4）走免 feature 的 `org.freedesktop.portal.Screenshot`，逐窗 PipeWire 截屏仅是未接线的备用 API，且 pipewire/libspa 0.8 构建代价高、上游仅 Nix 包开启。GNOME/KDE Wayland 首用输入弹 xdg-desktop-portal 远程控制同意框，restore token 落 `~/.config/cua-driver/`（会话级持久）。原「跟随上游 cargo 默认 feature」口径作废（默认=[] 非发行配置）。

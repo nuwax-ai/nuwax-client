@@ -14,7 +14,7 @@
 | Windows | 客户端 | 无 per-app 授权概念；beta 未签名触发 SmartScreen（正式版手签后消失） | 安装时 | — |
 | Windows | Helper | **零授权**（UIA/MSAA+PrintWindow 开箱即用）；WGC 捕获首次仅弹不可拒绝系统黄条（提示非授权） | 无 | — |
 | Linux ⚠️ | 客户端 | 无 portal 必需项 | — | — |
-| Linux ⚠️ | Helper | X11 会话：**零授权**；Wayland 会话：截屏走 xdg-desktop-portal（桌面环境弹授权）、全局输入依赖 compositor 通路（wlroots/Hyprland/KWin 有 wlr 协议支持，GNOME Wayland 受限——上游边界） | 首次截屏（Wayland） | 按 portal 策略 |
+| Linux ⚠️ | Helper | X11 会话：**零授权**；Wayland 会话：截屏走 xdg-desktop-portal Screenshot（每会话首用弹授权）；输入经 libei/RemoteDesktop portal（**自 v1.0.18 构建启用 portal-input feature**——GNOME/KDE Wayland 首用弹 xdg-desktop-portal 远程控制同意框，同意后 **restore token 落 `~/.config/cua-driver/`**，同 compositor 会话内不再重复弹；未装 portal-input 的旧版在 GNOME Wayland 输入无兜底直接拒绝） | 首次截屏/首次输入（Wayland） | portal restore token（会话级） |
 
 ## 明确不需要的（常被问）
 
