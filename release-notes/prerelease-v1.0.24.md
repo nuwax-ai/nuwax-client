@@ -1,4 +1,4 @@
-# 女娲Nuwax 1.0.23（beta）
+# 女娲Nuwax 1.0.24（beta）
 
 修复 Codex 引擎会话模型请求报 403（`Country, region, or territory not supported`）的问题。
 
@@ -10,6 +10,6 @@
 
 ## 升级须知
 
-- 含 1.0.22 全部变更及此前 beta 版全部变更。
+- 含 1.0.22、1.0.23 全部变更及此前 beta 版全部变更。
 - 数据目录 `~/.nuwax`、更新通道不变，存量 beta 客户端可直接在线更新。
 - Windows beta 包为未签名构建（正式版手签）；SmartScreen 提示「未知发布者」选「仍要运行」。mac 双架构自动签名+公证。
