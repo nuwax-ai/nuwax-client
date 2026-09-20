@@ -850,6 +850,12 @@ export interface ElectronAPI {
       action: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll",
     ) => Promise<boolean>;
   };
+  /** webview 历史导航真值通道（gateway 形态 Electron canGoBack/goBack 失明的替代，
+   * 见 nuwaxBridgeHandlers 的 nuwax:webview-nav-*）。 */
+  webviewNav: {
+    state: () => Promise<{ canGoBack: boolean; canGoForward: boolean }>;
+    go: (dir: "back" | "forward") => Promise<boolean>;
+  };
   mcp: MCPAPI;
   lanproxy: LanproxyAPI;
   agentRunner: AgentRunnerAPI;

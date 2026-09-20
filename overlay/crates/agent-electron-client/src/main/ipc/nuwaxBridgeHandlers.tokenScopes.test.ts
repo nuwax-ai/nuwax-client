@@ -51,7 +51,15 @@ vi.mock("electron", () => ({
   dialog: { showSaveDialog: mocks.showSaveDialog },
   BrowserWindow: class {},
   webContents: {
-    getAllWebContents: () => [{ session: { clearStorageData: mocks.storage } }],
+    // isDestroyed/getType：注册期 webview 导航真值通道会遍历现有 webContents
+    // （nuwax:webview-nav-*，bug 2432）；browser 类型使其跳过 guest 事件挂载。
+    getAllWebContents: () => [
+      {
+        session: { clearStorageData: mocks.storage },
+        isDestroyed: () => false,
+        getType: () => "browser",
+      },
+    ],
   },
   session: { defaultSession: { cookies: { get: mocks.cookiesGet } } },
 }));

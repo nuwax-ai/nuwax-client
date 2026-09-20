@@ -34,7 +34,6 @@ import * as path from "path";
 import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
-import { NUWAX_DEV_HOST } from "@shared/constants";
 import { readSetting, writeSetting, getDb } from "../db";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
@@ -416,18 +415,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const overrideOrigin = (
       readSetting("nuwax.webviewOverride") as { origin?: string } | null
     )?.origin;
-    // dev（未打包）构建下 webview 默认加载本地前端 dev server（NuwaxHostWebview
-    // 的 NUWAX_DEV_HOST 分支）——准入名单须与该 URL 解析同源，否则 dev 前端
-    // origin 不在名单，本 handler 在打日志前静默 return null，登录态进不了壳
-    // （零日志难排障；09-12/09-14 多次复发，此前靠手工种 webviewOverride 蒙混，
-    // 键被 refreshLoopbackGateway 按 env 覆写回 null 后即复发）。
-    // 打包版不进名单（app.isPackaged 守卫），对外安全面不变。
-    const devWebviewOrigin = app.isPackaged ? null : NUWAX_DEV_HOST;
+    // webview origin 与 URL 解析（NuwaxHostWebview）恒同源：直连形态 dev 与
+    // 生产一样加载业务域（serverHost/DEFAULT，dev 已不例外指 localhost:3000），
+    // gateway 形态加载回环域，调试覆盖加载 override 域——三类准入项已全覆盖，
+    // 不需要单独的 dev 例外项（曾有的 NUWAX_DEV_HOST 准入项随该解析分支移除；
+    // 名单与解析不同源会出现登录态静默进不了壳，见 09-12/09-14 复发记录）。
     const allowedOrigins = [
       currentBusinessOrigin(),
       loopbackOrigin,
       overrideOrigin,
-      devWebviewOrigin,
     ].filter(Boolean);
     // 拒绝必须留痕：此前静默 return null 零日志，断链排障只能靠 DB+代码对拍
     // （09-12/09-14 两次复发教训）。
@@ -879,4 +875,65 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       }
     },
   );
+
+  // —— webview 历史导航真值通道（修 bug 2432 收银台进入后无法退出）——
+  // Electron 40.8.2 实证：webview guest 加载回环网关 origin（http://127.0.0.1:46800，
+  // 打包版默认形态）时，canGoBack()/goBack()/canGoForward()/goForward()（元素与主进程
+  // 两路）恒 false/空转，而同一 navigationHistory 的 getActiveIndex()/getAllEntries()/
+  // goToIndex() 正常（https 直连形态则全部正常；与 disable-http-cache 无关，已对照排除）。
+  // 收银台（pay.nuwax.com 外域）整页跳转后的「后退」依赖此能力。工具栏因此改走本通道：
+  // 主进程读真值并随导航事件推送，动作经 goToIndex 执行；旧元素方法留作无本通道时的回退。
+  const readNavState = (): { canGoBack: boolean; canGoForward: boolean } => {
+    const guest = webContents
+      .getAllWebContents()
+      .find((wc) => !wc.isDestroyed() && wc.getType() === "webview");
+    try {
+      const h = guest?.navigationHistory;
+      const entries = h?.getAllEntries?.() ?? [];
+      const active = h?.getActiveIndex?.() ?? 0;
+      return {
+        canGoBack: entries.length > 1 && active > 0,
+        canGoForward: active < entries.length - 1,
+      };
+    } catch {
+      return { canGoBack: false, canGoForward: false };
+    }
+  };
+  const pushNavState = () => {
+    const state = readNavState();
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send("nuwax:webview-nav-state", state);
+      }
+    }
+  };
+  // guest 导航即推送（did-navigate 含整页跳转如收银台；did-navigate-in-page 含 SPA 路由；
+  // dom-ready 兜首载）。商业客户端单窗单 guest，find() 取唯一 webview guest 足够。
+  const hookGuestNavEvents = (wc: Electron.WebContents) => {
+    if (wc.isDestroyed() || wc.getType() !== "webview") return;
+    wc.on("did-navigate", pushNavState);
+    wc.on("did-navigate-in-page", pushNavState);
+    wc.on("dom-ready", pushNavState);
+  };
+  app.on("web-contents-created", (_e, wc) => hookGuestNavEvents(wc));
+  for (const wc of webContents.getAllWebContents()) hookGuestNavEvents(wc);
+  ipcMain.handle("nuwax:webview-nav-state", () => readNavState());
+  ipcMain.handle("nuwax:webview-nav-go", (_event, dir: unknown) => {
+    const guest = webContents
+      .getAllWebContents()
+      .find((wc) => !wc.isDestroyed() && wc.getType() === "webview");
+    try {
+      const h = guest?.navigationHistory;
+      if (!h) return false;
+      const entries = h.getAllEntries?.() ?? [];
+      const active = h.getActiveIndex?.() ?? 0;
+      const target = dir === "back" ? active - 1 : active + 1;
+      if (target < 0 || target >= entries.length) return false;
+      h.goToIndex(target);
+      return true;
+    } catch (e) {
+      log.warn("[NuwaxBridge] webview-nav-go failed:", e);
+      return false;
+    }
+  });
 }

@@ -40,8 +40,8 @@ export function currentAccessToken(): string | null {
  * （产品拍板）：登录会话的 ticket cookie 同步进壳、reg 请求附 Cookie——后端
  * 认会话即可放行首次设备注册。
  *
- * 存储与 token 同族：按 origin 分键（直连形态在业务域、gateway 形态经 Set-Cookie
- * 规整后落在回环网关域、dev 直连在本地前端域），捕获侧（桥）双写全部候选键、
+ * 存储与 token 同族：按 origin 分键（直连形态在业务域，dev 与生产同源解析；
+ * gateway 形态经 Set-Cookie 规整后落在回环网关域），捕获侧（桥）双写全部候选键、
  * 消费侧（reg）按候选序回读。写/清在 nuwaxBridgeHandlers 的登录生命周期。
  */
 export const NUWAX_TICKET_KEY_PREFIX = "nuwax.ticket.";

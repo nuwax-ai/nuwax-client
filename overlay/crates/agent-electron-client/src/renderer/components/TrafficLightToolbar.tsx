@@ -42,10 +42,11 @@ const isMac = /mac/i.test(navigator.platform);
 const DRAG = { WebkitAppRegion: "drag" } as any;
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as any;
 
-/** Win/Linux 顶行高：36px=nuwax shellAvoid.TOP（40 是前端避让收敛前旧值：行内容
- * 居中后墨迹带 15~28px、卡片顶却已收至 CONTENT_TOP=32，上空隙比下方大一倍——
- * 2026-09-18 用户反馈「顶栏离窗口上边 gap 太大」）；mac 保持 48px。 */
-const ROW_H = isMac ? 48 : 36;
+/** Win/Linux 顶行高：28px——内容贴顶收上边距（36 居中时墨迹顶 12.3px 已与参考
+ * 产品持平但用户观感仍偏松，28 居中收至 ~6.5px；窗口三键 28px 恰满行。行透明
+ * 仅承载字形+拖拽 spacer，前端避让独立走 shellAvoid.TOP/CONTENT_TOP 不联动）；
+ * mac 保持 48px。 */
+const ROW_H = isMac ? 48 : 28;
 
 type EditAction = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
 
@@ -149,6 +150,40 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
     return () => window.removeEventListener("resize", sync);
   }, []);
 
+  // 历史导航真值（主进程 navigationHistory 读数+推送，nuwax:webview-nav-*）：
+  // gateway 形态下 webview 元素 canGoBack/goBack 失明（bug 2432 收银台无法退出，
+  // 见 nuwaxBridgeHandlers 注释），工具栏优先进此通道；无此通道（老 preload）回退
+  // App 注入的 props/回调（=元素方法，https 直连形态下正确）。
+  const [navTruth, setNavTruth] = useState<{
+    canGoBack: boolean;
+    canGoForward: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!window.electronAPI?.webviewNav) return;
+    const onPush = (state: unknown) => {
+      const s = state as { canGoBack?: boolean; canGoForward?: boolean } | null;
+      if (s && typeof s.canGoBack === "boolean")
+        setNavTruth({ canGoBack: s.canGoBack, canGoForward: !!s.canGoForward });
+    };
+    window.electronAPI.on("nuwax:webview-nav-state", onPush);
+    void window.electronAPI.webviewNav.state().then(onPush).catch(() => {});
+    return () => {
+      window.electronAPI?.off("nuwax:webview-nav-state", onPush);
+    };
+  }, []);
+  const goBackCap = navTruth ? navTruth.canGoBack : canGoBack;
+  const goForwardCap = navTruth ? navTruth.canGoForward : canGoForward;
+  const doBack = () => {
+    if (window.electronAPI?.webviewNav)
+      void window.electronAPI.webviewNav.go("back");
+    else onBack();
+  };
+  const doForward = () => {
+    if (window.electronAPI?.webviewNav)
+      void window.electronAPI.webviewNav.go("forward");
+    else onForward();
+  };
+
   const onMin = () => window.electronAPI?.window.minimize();
   const onMax = () => window.electronAPI?.window.maximize();
   const onClose = () => window.electronAPI?.window.close();
@@ -196,11 +231,11 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
     ? iconBtn("设置", false, onOpenSettings, <SettingOutlined />)
     : null;
 
-  /** 历史导航：后退/前进（能力由 webview 事件推送，不可用时置灰）。 */
+  /** 历史导航：后退/前进（能力走主进程真值通道，不可用时置灰）。 */
   const historyNav = (
     <>
-      {iconBtn("后退", !canGoBack, onBack, <LeftOutlined />)}
-      {iconBtn("前进", !canGoForward, onForward, <RightOutlined />)}
+      {iconBtn("后退", !goBackCap, doBack, <LeftOutlined />)}
+      {iconBtn("前进", !goForwardCap, doForward, <RightOutlined />)}
     </>
   );
 
@@ -294,12 +329,12 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
       <TopMenu
         label="窗口(W)"
         items={[
-          { key: "back", label: "后退", disabled: !canGoBack, onClick: onBack },
+          { key: "back", label: "后退", disabled: !goBackCap, onClick: doBack },
           {
             key: "forward",
             label: "前进",
-            disabled: !canGoForward,
-            onClick: onForward,
+            disabled: !goForwardCap,
+            onClick: doForward,
           },
           {
             key: "reload",
@@ -360,7 +395,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           left: 0,
           // mac：顶行仅占左侧 300px（图标簇+拖拽区）——mac 不默认退让后，
           // 内容区顶部必须可交互，全宽行会整条挡死；Win/Linux 仍满宽
-          //（内容区恒避让 36px 顶行，无遮挡冲突）
+          //（内容区恒避让 28px 顶行，无遮挡冲突）
           ...(isMac ? { width: 300 } : { right: 0 }),
           height: ROW_H,
           zIndex: 1100,

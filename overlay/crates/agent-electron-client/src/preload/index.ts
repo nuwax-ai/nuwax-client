@@ -32,6 +32,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ) => ipcRenderer.invoke("menu:editAction", action) as Promise<boolean>,
   },
 
+  // webview 历史导航真值（修 gateway 形态 Electron canGoBack/goBack 失明，
+  // 见 nuwaxBridgeHandlers 的 nuwax:webview-nav-* 注释）；无 guest 时全 false。
+  webviewNav: {
+    state: () =>
+      ipcRenderer.invoke("nuwax:webview-nav-state") as Promise<{
+        canGoBack: boolean;
+        canGoForward: boolean;
+      }>,
+    go: (dir: "back" | "forward") =>
+      ipcRenderer.invoke("nuwax:webview-nav-go", dir) as Promise<boolean>,
+  },
+
   // MCP Proxy management (@nuwax-ai/mcp-proxy-ts 聚合代理)
   mcp: {
     start: () => ipcRenderer.invoke("mcp:start"),
@@ -632,6 +644,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "nuwax:open-same-window",
       "nuwax:open-client-settings",
       "nuwax:loopback-changed",
+      "nuwax:webview-nav-state",
       "nuwax:login-confirmed",
       "nuwax:serverHostChanged",
       "nuwax:lang-changed",
