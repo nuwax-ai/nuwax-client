@@ -25,11 +25,39 @@ import { readSetting, writeSetting } from "../../db";
 import { DEFAULT_SERVER_HOST } from "@shared/constants";
 import { NUWAX_TOKEN_KEY_PREFIX } from "../../ipc/nuwaxBridgeHandlers";
 import { getConfiguredPorts } from "../startupPorts";
-import { startLoopbackGateway, type LoopbackGatewayHandle } from "./gateway";
+import {
+  startLoopbackGateway,
+  DEFAULT_BACKEND_PREFIXES,
+  type LoopbackGatewayHandle,
+} from "./gateway";
 
 export const DEFAULT_LOOPBACK_GATEWAY_PORT = 46800;
 
-/** dev 联调目标（与 renderer NUWAX_DEV_HOST 对齐）；可 env 覆盖。 */
+/**
+ * dist 形态额外反代的「外链菜单微应用」前缀——**临时垫片**：list-menu 下发的
+ * 消息（/instant-message）与资料库（/repo）是业务域上的独立微应用，iframe src
+ * 为后端域绝对 URL，本应直连业务域——但 dist 形态的绝对 URL 归一钩子会把
+ * 指向后端域的请求重定向回网关 origin，这些路径若不在反代前缀里会被本地
+ * dist 托管兜住：无点深链 SPA 回退成 nuwax 首页（nuwax 路由无此路由 →
+ * 前端 404 页），带点资源直接 404。生态市场是 %siteUrl%/api/eco/redirect，
+ * 落在 /api 前缀内 302 到自有域，不在此列。消息/资料库接入方案后续将大改
+ * （qiankun 微前端），届时接入形态变化须回收本清单；过渡期新增微应用用 env
+ * NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES（逗号分隔，如 "/im,/wiki"）免重建追加。
+ */
+const MICROAPP_BACKEND_PREFIXES = ["/instant-message", "/repo"];
+
+/** env 追加前缀：剥尾斜杠，仅收 `/` 开头且非裸 `/` 的路径段（组装处统一去重）。 */
+function resolveExtraBackendPrefixes(): string[] {
+  const raw = (process.env.NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((p) => p.trim().replace(/\/+$/, ""))
+    .filter((p) => p.startsWith("/") && p.length > 1);
+}
+
+/** dev（未打包）gateway 形态的页面反代目标：本地 nuwax dev server（前端 vite）；
+ * 直连形态 dev 已不加载此地址（走 serverHost，2026-09-18 起）。可 env 覆盖。 */
 const DEV_TARGET = "http://localhost:3000";
 
 /** 运行时键（renderer 读；enabled=false 时同时用于清理残留）。 */
@@ -269,6 +297,14 @@ export async function ensureLoopbackGateway(): Promise<
       targetOrigin,
       distDir: distMode ? resolveNuwaxDistDir() : undefined,
       fixedPort,
+      // 缺省三前缀 + 外链菜单微应用前缀 + env 追加（Set 去重防重叠）
+      backendPrefixes: [
+        ...new Set([
+          ...DEFAULT_BACKEND_PREFIXES,
+          ...MICROAPP_BACKEND_PREFIXES,
+          ...resolveExtraBackendPrefixes(),
+        ]),
+      ],
       getAccessToken: serverHostTokenProvider(backendOrigin),
     });
     if (distMode) {

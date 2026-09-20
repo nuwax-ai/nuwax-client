@@ -369,6 +369,38 @@ describe("loopback gateway（透明反代）", () => {
     fs.rmSync(distDir, { recursive: true, force: true });
   });
 
+  it("dist 模式自定义 backendPrefixes：外链菜单微应用前缀反代，前缀按段匹配", async () => {
+    const up = await startUpstream((req, res, cap) => {
+      cap.microPath = req.url;
+      cap.auth = req.headers.authorization;
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html>REPO-WEB</html>");
+    });
+    const distDir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-dist-"));
+    fs.writeFileSync(path.join(distDir, "index.html"), "<html>HOME</html>");
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      distDir,
+      // 传入即整体替换：编排层（index.ts）负责把缺省三前缀一并带上
+      backendPrefixes: ["/api", "/computer", "/devcomputer", "/repo"],
+      getAccessToken: () => "TK",
+      clientTypeHeader: "",
+    });
+    gateways.push(gw);
+    // 外链菜单微应用：/repo 深链与带点资源一律反代业务域（而非本地 dist 兜底）
+    const doc = await fetch(`${gw.origin}/repo/doc/abc`);
+    expect(await doc.text()).toContain("REPO-WEB");
+    expect(up.captured.microPath).toBe("/repo/doc/abc");
+    const asset = await fetch(`${gw.origin}/repo/static/app.js`);
+    expect(await asset.text()).toContain("REPO-WEB");
+    expect(up.captured.microPath).toBe("/repo/static/app.js");
+    expect(up.captured.auth).toBe("Bearer TK");
+    // 前缀按段匹配：/repository 不命中 /repo，回落本地 dist SPA
+    const notPrefix = await fetch(`${gw.origin}/repository/x`);
+    expect(await notPrefix.text()).toContain("HOME");
+    fs.rmSync(distDir, { recursive: true, force: true });
+  });
+
   it("WS 早退级联：客户端在 101 到达前断开，upstream 请求立即中止", async () => {
     // 上游刻意延迟 101（拉开早退窗口）；客户端发出握手后立刻 destroy——
     // 若 abort 监听晚挂（在 upgrade 回调内），此窗口的断开事件永久丢失。

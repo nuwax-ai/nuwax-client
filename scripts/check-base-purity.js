@@ -105,7 +105,9 @@ if (remoteRef) {
 }
 
 // 默认 worktree 模式：基座脏文件必须全部是 overlay 同步产物
-const r = git(["status", "--porcelain"]);
+// -uall：untracked 展开到文件级——overlay 新增目录（基座无同名文件，如 cua/）默认
+// 会被折叠成 "?? path/" 目录形态，与 manifest 的文件路径精确匹配失配而误报
+const r = git(["status", "--porcelain", "-uall"]);
 if (r.status !== 0) fail(`git status 失败: ${r.stderr}`);
 const dirty = r.stdout
   .toString()

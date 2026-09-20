@@ -330,6 +330,40 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
           echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
 
+      # ---- Computer Use helper（cua-driver 源码自建）：五平台全矩阵 ----
+      # 与 release-electron-dev.yml 同款步骤（锁版+补丁+cargo+组装+预签 Developer ID）
+      - name: Setup Rust toolchain (Computer Use helper)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Computer Use helper (cua-driver)
+        shell: bash
+        env:
+          OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            # 对齐上游官方 CI 构建清单（同 release-electron-dev.yml 注释）
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+          fi
+          case "${{ runner.os }}/${{ matrix.arch }}" in
+            macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
+            macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
+            Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
+            Linux/x64)   TRIPLE=x86_64-unknown-linux-gnu ;;
+            Linux/arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
+            *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
+          esac
+          export TARGET_TRIPLE="$TRIPLE"
+          bash scripts/computer-use/build-helper.sh
+
+      # extraResources 注入（目录随构建产出）
+      - name: Inject computer-use extraResources
+        shell: bash
+        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        run: |
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.to&&e.to==='computer-use')).concat([{from:'resources/computer-use',to:'computer-use'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          test -d resources/computer-use && echo "computer-use extraResources injected: $(ls resources/computer-use)"
+
       - name: Clean previous build artifacts
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client

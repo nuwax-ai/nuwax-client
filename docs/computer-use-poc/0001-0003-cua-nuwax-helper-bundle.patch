@@ -1,0 +1,300 @@
+From 3502a873ba35c549adfafc165b771f81f72213fd Mon Sep 17 00:00:00 2001
+From: dongdada29 <dongdada29@gmail.com>
+Date: Thu, 17 Sep 2026 17:23:58 +0800
+Subject: [PATCH 1/3] =?UTF-8?q?feat(nuwax):=20recognize=20host=20helper=20?=
+ =?UTF-8?q?bundles=20in=20stability=20whitelist=20=E2=80=94=20Nuwax/NuwaCl?=
+ =?UTF-8?q?aw=20Computer=20Use.app=20+=20CUA=5FDRIVER=5FBUNDLE=5FDIR=5FNAM?=
+ =?UTF-8?q?ES=20env=20extension=20(skip=20responsibility-disclaim=20re-exe?=
+ =?UTF-8?q?c=20inside=20host=20bundles)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../rust/crates/cua-driver/src/bundle.rs      | 37 +++++++++++++++++--
+ 1 file changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 75331d1..93f6acd 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -105,13 +105,42 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
+         .ok()
+         .and_then(|path| std::fs::canonicalize(path).ok())
+         .is_some_and(|path| {
+-            path.to_str().is_some_and(|path| {
+-                path.contains("/CuaDriver.app/Contents/MacOS/")
+-                    || path.contains("/CuaDriverLocal.app/Contents/MacOS/")
+-            })
++            path.to_str().is_some_and(|path| inside_stable_bundle_dir(path))
+         })
+ }
+ 
++/// Nuwax: embedding hosts ship the driver inside their own LSUIElement helper
++/// bundle (e.g. "Nuwax Computer Use.app"). Such a bundle carries the same
++/// stable TCC responsibility identity as CuaDriver.app, so the
++/// responsibility-disclaim re-exec must be skipped for it as well or actions
++/// silently lose the host bundle's TCC grants. Additional bundle directory
++/// names may be declared via `CUA_DRIVER_BUNDLE_DIR_NAMES` (comma separated,
++/// e.g. "My Helper.app,Other.app").
++#[cfg(target_os = "macos")]
++fn inside_stable_bundle_dir(path: &str) -> bool {
++    const MACOS_SUFFIX: &str = "/Contents/MacOS/";
++    const KNOWN_BUNDLE_DIRS: &[&str] = &[
++        "CuaDriver.app",
++        "CuaDriverLocal.app",
++        "Nuwax Computer Use.app",
++        "NuwaClaw Computer Use.app",
++    ];
++    let extras = std::env::var("CUA_DRIVER_BUNDLE_DIR_NAMES")
++        .map(|value| {
++            value
++                .split(',')
++                .map(|name| name.trim().to_string())
++                .filter(|name| !name.is_empty())
++                .collect::<Vec<_>>()
++        })
++        .unwrap_or_default();
++    KNOWN_BUNDLE_DIRS
++        .iter()
++        .copied()
++        .chain(extras.iter().map(|name| name.as_str()))
++        .any(|dir| path.contains(&format!("/{dir}{MACOS_SUFFIX}")))
++}
++
+ /// Returns `true` when the env var is one of `1|true|yes|on`
+ /// (case-insensitive). Anything else, including unset, is falsy.
+ #[cfg(target_os = "windows")]
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 3e739d6dfa7493287bc536a91d1c54150d42dece Mon Sep 17 00:00:00 2001
+From: dongdada29 <dongdada29@gmail.com>
+Date: Thu, 17 Sep 2026 17:38:59 +0800
+Subject: [PATCH 2/3] =?UTF-8?q?feat(nuwax):=20resolve=20app=5Fbundle=5Fpat?=
+ =?UTF-8?q?h=20from=20the=20running=20helper=20bundle=20=E2=80=94=20permis?=
+ =?UTF-8?q?sion-host/relaunch=20flows=20must=20target=20the=20host=20bundl?=
+ =?UTF-8?q?e's=20TCC=20identity=20instead=20of=20hardcoded=20/Applications?=
+ =?UTF-8?q?/CuaDriver.app?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../rust/crates/cua-driver/src/bundle.rs      | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 93f6acd..36a6f99 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -86,9 +86,31 @@ pub fn app_name() -> &'static str {
+ }
+ 
+ pub fn app_bundle_path() -> String {
++    if let Some(path) = current_running_bundle_path() {
++        return path;
++    }
+     format!("/Applications/{}.app", app_name())
+ }
+ 
++/// Nuwax: when the driver runs inside a host helper bundle, relaunch and
++/// permission-host flows must target that bundle (its TCC identity), not the
++/// upstream CuaDriver.app in /Applications.
++#[cfg(target_os = "macos")]
++fn current_running_bundle_path() -> Option<String> {
++    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
++    let path = exe.to_str()?;
++    if !inside_stable_bundle_dir(path) {
++        return None;
++    }
++    let idx = path.find("/Contents/MacOS/")?;
++    Some(path[..idx].to_string())
++}
++
++#[cfg(not(target_os = "macos"))]
++fn current_running_bundle_path() -> Option<String> {
++    None
++}
++
+ pub fn bundle_id() -> &'static str {
+     if is_local_installation() {
+         LOCAL_BUNDLE_ID
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 50b48814a6c2a6567c4d43d99bc29372eb0fa1ab Mon Sep 17 00:00:00 2001
+From: dongdada29 <dongdada29@gmail.com>
+Date: Sat, 19 Sep 2026 15:16:33 +0800
+Subject: [PATCH 3/3] =?UTF-8?q?feat(nuwax):=20CUA=5FDRIVER=5FDATA=5FHOME?=
+ =?UTF-8?q?=20=E7=BB=9F=E4=B8=80=E6=95=B0=E6=8D=AE=E7=9B=AE=E5=BD=95?=
+ =?UTF-8?q?=E8=A6=86=E7=9B=96=E2=80=94=E2=80=94=E9=A9=B1=E5=8A=A8=E5=85=A8?=
+ =?UTF-8?q?=E9=83=A8=E8=87=AA=E6=9C=89=E8=90=BD=E7=9B=98=E5=86=85=E8=81=9A?=
+ =?UTF-8?q?=E8=BF=9B=E5=AE=BF=E4=B8=BB=E7=9B=AE=E5=BD=95?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+user_home_subdirectory() 改返回 String 并支持绝对路径覆盖（调用方 home.join() 按
+Path 语义替换前缀，一处改动收编 telemetry/install 标记/version_check/release_channel
+等全部调用点）；同开关接入 serve pid 文件、platform-linux libei restore token、
+browser profile 根、history 根；telemetry 既有 ENV_TELEMETRY_HOME 与 browser 既有
+CUA_DRIVER_BROWSER_PROFILE_ROOT 保持次级优先。未设 env 时行为不变（上游兼容）。
+---
+ .../cua-driver-core/src/browser/prepare.rs    |  4 ++++
+ .../rust/crates/cua-driver/src/bundle.rs      | 16 ++++++++++++---
+ .../rust/crates/cua-driver/src/cli.rs         | 20 +++++++++++--------
+ .../crates/cua-driver/src/history_runtime.rs  |  4 ++++
+ .../rust/crates/cua-driver/src/serve.rs       |  5 +++++
+ .../rust/crates/cua-driver/src/telemetry.rs   |  4 ++++
+ .../platform-linux/src/wayland/libei.rs       |  4 ++++
+ 7 files changed, 46 insertions(+), 11 deletions(-)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
+index 1d10b31..3adf83e 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
+@@ -271,6 +271,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
+ }
+ 
+ fn profile_root() -> Result<PathBuf, BrowserRefusal> {
++    // Nuwax: 宿主统一数据目录优先——浏览器 profile 内聚进宿主目录的 browser-profiles/
++    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
++        return Ok(PathBuf::from(dir).join("browser-profiles"));
++    }
+     if let Some(root) = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT") {
+         return Ok(PathBuf::from(root));
+     }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 36a6f99..3af0df0 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -51,11 +51,21 @@ pub fn state_namespace() -> &'static str {
+     }
+ }
+ 
+-pub fn user_home_subdirectory() -> &'static str {
++/// Nuwax 宿主数据目录覆盖：设置时驱动全部自有落盘（安装/遥测标记、版本检查缓存等）
++/// 内聚进宿主目录（如 ~/.nuwax/computer-use）。返回绝对路径时，调用方的
++/// `home.join(...)` 会按 Path 语义直接替换前缀，一处改动收编全部调用点。
++pub fn data_home_override() -> Option<std::path::PathBuf> {
++    std::env::var_os("CUA_DRIVER_DATA_HOME").map(std::path::PathBuf::from)
++}
++
++pub fn user_home_subdirectory() -> String {
++    if let Some(dir) = data_home_override() {
++        return dir.to_string_lossy().into_owned();
++    }
+     if is_local_installation() {
+-        ".cua-driver-local"
++        ".cua-driver-local".to_owned()
+     } else {
+-        ".cua-driver"
++        ".cua-driver".to_owned()
+     }
+ }
+ 
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+index 46584ae..14388b9 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+@@ -4448,21 +4448,25 @@ fn diagnose_tcc_db_section() -> String {
+ 
+ fn diagnose_config_paths_section() -> String {
+     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
++    // user_home_subdirectory 已可为绝对路径（Nuwax CUA_DRIVER_DATA_HOME 覆盖），
++    // 字符串拼接会叠出双路径——按绝对与否分别显示
++    let user_data_dir = {
++        let sub = crate::bundle::user_home_subdirectory();
++        if std::path::Path::new(&sub).is_absolute() {
++            sub
++        } else {
++            format!("{home}/{sub}")
++        }
++    };
+     let paths: &[(&str, String)] = &[
+-        (
+-            "user data dir",
+-            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+-        ),
++        ("user data dir", user_data_dir.clone()),
+         (
+             "config cache",
+             format!("{home}/Library/Caches/{}", crate::bundle::state_namespace()),
+         ),
+         (
+             "telemetry id",
+-            format!(
+-                "{home}/{}/.telemetry_id",
+-                crate::bundle::user_home_subdirectory()
+-            ),
++            format!("{user_data_dir}/.telemetry_id"),
+         ),
+         (
+             "updater plist",
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
+index 0d72ffc..73fc03e 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
+@@ -422,6 +422,10 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
+ }
+ 
+ pub fn history_root() -> PathBuf {
++    // Nuwax: 宿主统一数据目录优先——history 不再落 Application Support/<namespace> 等外部目录
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return dir.join("computer-history");
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var_os("HOME")
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+index 67e123b..0ec9bb4 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+@@ -383,6 +383,11 @@ pub fn default_uia_pipe_path() -> String {
+ 
+ /// Returns the platform default PID file path.
+ pub fn default_pid_file_path() -> String {
++    // Nuwax: 宿主数据目录覆盖（与 user_home_subdirectory 同一开关）——
++    // pid 文件不再落 ~/Library/Caches/cua-driver 等外部目录
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return dir.join("cua-daemon.pid").to_string_lossy().into_owned();
++    }
+     let namespace = crate::bundle::state_namespace();
+     #[cfg(target_os = "macos")]
+     {
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+index 2453fec..c02b839 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+@@ -2194,6 +2194,10 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
+ }
+ 
+ fn telemetry_home_dir() -> Option<PathBuf> {
++    // Nuwax: 宿主统一数据目录优先（与 user_home_subdirectory 同一开关）
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return Some(dir);
++    }
+     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
+         return Some(PathBuf::from(path));
+     }
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+index a2691a0..4511c09 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+@@ -164,6 +164,10 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
+ }
+ 
+ fn restore_token_path() -> Option<PathBuf> {
++    // Nuwax: 宿主数据目录覆盖——restore token 内聚进宿主目录（如 ~/.nuwax/computer-use）
++    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
++        return Some(PathBuf::from(dir).join("libei-persistent.token"));
++    }
+     let base = dirs::config_dir()?;
+     Some(base.join("cua-driver").join("libei-persistent.token"))
+ }
+-- 
+2.50.1 (Apple Git-155)
+

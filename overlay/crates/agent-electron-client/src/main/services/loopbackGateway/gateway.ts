@@ -368,6 +368,10 @@ function isSpaFallbackCandidate(urlPath: string): boolean {
   return !last.includes(".");
 }
 
+/** dist 模式缺省后端反代前缀；编排层（index.ts）在此基础上追加外链菜单
+ *  微应用前缀后整体传入 backendPrefixes。 */
+export const DEFAULT_BACKEND_PREFIXES = ["/api", "/computer", "/devcomputer"];
+
 /** 起网关：dist 模式（本地静态托管 + 后端前缀反代）或全站透明反代。 */
 export async function startLoopbackGateway(
   opts: LoopbackGatewayOptions,
@@ -378,7 +382,6 @@ export async function startLoopbackGateway(
     // 缺省跟随构建期注入的产品标识（nuwaclaw=社区版 / nuwax=商业版，2026-09 前为 nuwawork）
     clientTypeHeader: opts.clientTypeHeader ?? APP_NAME_IDENTIFIER,
   };
-  const DEFAULT_BACKEND_PREFIXES = ["/api", "/computer", "/devcomputer"];
   const distDir = opts.distDir ? nodePath.resolve(opts.distDir) : undefined;
   const backendPrefixes = opts.backendPrefixes ?? DEFAULT_BACKEND_PREFIXES;
   if (distDir) {

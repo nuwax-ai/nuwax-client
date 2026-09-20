@@ -57,6 +57,7 @@ vi.mock("../../ipc/nuwaxBridgeHandlers", () => ({
 
 vi.mock("./gateway", () => ({
   startLoopbackGateway: mocks.startGateway,
+  DEFAULT_BACKEND_PREFIXES: ["/api", "/computer", "/devcomputer"],
 }));
 
 async function importFresh() {
@@ -102,6 +103,56 @@ describe("loopbackGateway runtime key carries backend", () => {
       origin: "http://127.0.0.1:46800",
       backend: "https://a.example.com",
     });
+  });
+
+  it("passes backend prefixes: defaults + menu microapp list without env", async () => {
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    const { ensureLoopbackGateway } = await importFresh();
+    await ensureLoopbackGateway();
+
+    expect(mocks.startGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backendPrefixes: [
+          "/api",
+          "/computer",
+          "/devcomputer",
+          "/instant-message",
+          "/repo",
+        ],
+      }),
+    );
+  });
+
+  it("appends NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES env extras (normalized, deduped)", async () => {
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    // 剥尾斜杠、剔非法段；与缺省/常量重叠的 /repo 去重
+    process.env.NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES =
+      "/im, /wiki/, /repo, junk, /";
+    try {
+      const { ensureLoopbackGateway } = await importFresh();
+      await ensureLoopbackGateway();
+      expect(mocks.startGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          backendPrefixes: [
+            "/api",
+            "/computer",
+            "/devcomputer",
+            "/instant-message",
+            "/repo",
+            "/im",
+            "/wiki",
+          ],
+        }),
+      );
+    } finally {
+      delete process.env.NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES;
+    }
   });
 
   it("syncs NUWAX_WEBVIEW_ORIGIN env into the runtime override key on refresh", async () => {
