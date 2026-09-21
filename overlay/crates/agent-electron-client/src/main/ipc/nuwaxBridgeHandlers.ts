@@ -40,6 +40,7 @@ import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
+import * as contextMenuService from "../services/contextMenu";
 
 import {
   initializeCommercialAuth,
@@ -837,105 +838,113 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     };
   });
 
-  // ---- native：右键另存图片 ----
-  ipcMain.handle(
-    "native:saveImage",
-    async (event, opts: { url: string; filename?: string }) => {
-      const generation = authGeneration;
-      const transferSignal = transfers.signal;
+  // ---- native：右键另存图片（IPC 通道与页面内右键菜单共用核心）----
+  // 核心抽为本地函数：nuwax 前端经 IPC 调（frameUrl 取 senderFrame.url），页面
+  // 右键菜单（services/contextMenu.ts，bug 2473）直接复用（frameUrl 取发射事件
+  // 的 webContents URL，归一非 http 协议/相对地址等判定两路一致）。
+  const performSaveImage = async (
+    opts: { url: string; filename?: string } | undefined,
+    frameUrl: string | undefined,
+  ): Promise<contextMenuService.ContextMenuImageSaveResult> => {
+    const generation = authGeneration;
+    const transferSignal = transfers.signal;
+    try {
+      const { url, filename } = opts || {};
+      if (typeof url !== "string" || !url) {
+        return { success: false, error: "invalid url" };
+      }
+
+      // nuwax 前端直接传 <img src> 原值，markdown 图片常见相对地址
+      // （/api/computer/static/... 或裸路径），而 net.fetch 只接受绝对 URL。
+      // 以调用方 frame 的 origin 为 base 归一；base 缺失或解析失败才判非法。
+      let target: URL;
       try {
-        const { url, filename } = opts || {};
-        if (typeof url !== "string" || !url) {
-          return { success: false, error: "invalid url" };
-        }
+        target = new URL(url, frameUrl || undefined);
+      } catch {
+        return { success: false, error: "invalid url" };
+      }
+      if (!/^https?:$/.test(target.protocol)) {
+        return { success: false, error: "unsupported protocol" };
+      }
 
-        // nuwax 前端直接传 <img src> 原值，markdown 图片常见相对地址
-        // （/api/computer/static/... 或裸路径），而 net.fetch 只接受绝对 URL。
-        // 以调用方 frame 的 origin 为 base 归一；base 缺失或解析失败才判非法。
-        let target: URL;
-        try {
-          target = new URL(url, event.senderFrame?.url || undefined);
-        } catch {
-          return { success: false, error: "invalid url" };
-        }
-        if (!/^https?:$/.test(target.protocol)) {
-          return { success: false, error: "unsupported protocol" };
-        }
+      // 默认文件名：URL 末段；非法文件名字符替换为下划线；无扩展名补 .png
+      const derived =
+        filename ||
+        decodeURIComponent(target.pathname.split("/").pop() || "") ||
+        "image";
+      const safeName = derived.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
+      const ext = path.extname(safeName) ? "" : ".png";
+      const defaultPath = `${safeName}${ext}`;
+      const extension = path
+        .extname(`${safeName}${ext}`)
+        .replace(".", "")
+        .toLowerCase();
+      const filters = extension
+        ? [
+            { name: extension.toUpperCase(), extensions: [extension] },
+            { name: "All Files", extensions: ["*"] },
+          ]
+        : undefined;
 
-        // 默认文件名：URL 末段；非法文件名字符替换为下划线；无扩展名补 .png
-        const derived =
-          filename ||
-          decodeURIComponent(target.pathname.split("/").pop() || "") ||
-          "image";
-        const safeName = derived.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
-        const ext = path.extname(safeName) ? "" : ".png";
-        const defaultPath = `${safeName}${ext}`;
-        const extension = path
-          .extname(`${safeName}${ext}`)
-          .replace(".", "")
-          .toLowerCase();
-        const filters = extension
-          ? [
-              { name: extension.toUpperCase(), extensions: [extension] },
-              { name: "All Files", extensions: ["*"] },
-            ]
-          : undefined;
+      const win = ctx.getMainWindow();
+      const res = win
+        ? await dialog.showSaveDialog(win, { defaultPath, filters })
+        : await dialog.showSaveDialog({ defaultPath, filters });
+      if (res.canceled || !res.filePath) {
+        return { success: false, canceled: true };
+      }
 
-        const win = ctx.getMainWindow();
-        const res = win
-          ? await dialog.showSaveDialog(win, { defaultPath, filters })
-          : await dialog.showSaveDialog({ defaultPath, filters });
-        if (res.canceled || !res.filePath) {
-          return { success: false, canceled: true };
-        }
-
-        const signal = AbortSignal.any([
-          transferSignal,
-          AbortSignal.timeout(120_000),
-        ]);
-        let destination = target;
-        let resp: Response | undefined;
-        for (let redirects = 0; redirects <= 5; redirects++) {
-          if (generation !== authGeneration || switching)
-            throw new Error("Session changed");
-          const token =
-            destination.origin === currentBusinessOrigin()
-              ? currentAccessToken()
-              : null;
-          // Electron net.fetch rejects manual redirects before exposing the 302.
-          // Node fetch preserves the response so every hop can recheck origin/auth.
-          resp = await globalThis.fetch(destination.toString(), {
-            method: "GET",
-            redirect: "manual",
-            signal,
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
-          });
-          if (![301, 302, 303, 307, 308].includes(resp.status)) break;
-          const location = resp.headers.get("location");
-          await resp.body?.cancel();
-          if (!location || redirects === 5)
-            throw new Error("Invalid image redirect");
-          destination = new URL(location, destination);
-          if (!/^https?:$/.test(destination.protocol))
-            throw new Error("Unsupported redirect protocol");
-        }
+      const signal = AbortSignal.any([
+        transferSignal,
+        AbortSignal.timeout(120_000),
+      ]);
+      let destination = target;
+      let resp: Response | undefined;
+      for (let redirects = 0; redirects <= 5; redirects++) {
         if (generation !== authGeneration || switching)
           throw new Error("Session changed");
-        await saveResponse(resp!, res.filePath, signal, "binary");
-        const bytes = fs.statSync(res.filePath).size;
-        log.info("[NuwaxBridge] native:saveImage saved", {
-          path: res.filePath,
-          bytes,
+        const token =
+          destination.origin === currentBusinessOrigin()
+            ? currentAccessToken()
+            : null;
+        // Electron net.fetch rejects manual redirects before exposing the 302.
+        // Node fetch preserves the response so every hop can recheck origin/auth.
+        resp = await globalThis.fetch(destination.toString(), {
+          method: "GET",
+          redirect: "manual",
+          signal,
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
-        return { success: true, path: res.filePath };
-      } catch (error) {
-        log.error("[NuwaxBridge] native:saveImage failed", error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        if (![301, 302, 303, 307, 308].includes(resp.status)) break;
+        const location = resp.headers.get("location");
+        await resp.body?.cancel();
+        if (!location || redirects === 5)
+          throw new Error("Invalid image redirect");
+        destination = new URL(location, destination);
+        if (!/^https?:$/.test(destination.protocol))
+          throw new Error("Unsupported redirect protocol");
       }
-    },
+      if (generation !== authGeneration || switching)
+        throw new Error("Session changed");
+      await saveResponse(resp!, res.filePath, signal, "binary");
+      const bytes = fs.statSync(res.filePath).size;
+      log.info("[NuwaxBridge] native:saveImage saved", {
+        path: res.filePath,
+        bytes,
+      });
+      return { success: true, path: res.filePath };
+    } catch (error) {
+      log.error("[NuwaxBridge] native:saveImage failed", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+  ipcMain.handle(
+    "native:saveImage",
+    (event, opts: { url: string; filename?: string }) =>
+      performSaveImage(opts, event.senderFrame?.url),
   );
 
   // —— webview 历史导航真值通道（修 bug 2432 收银台进入后无法退出）——
@@ -1018,4 +1027,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   app.on("web-contents-created", (_e, wc) => hookGuestFocusDismiss(wc));
   for (const wc of webContents.getAllWebContents()) hookGuestFocusDismiss(wc);
   app.on("browser-window-blur", (_e, win) => pushTopbarMenuDismiss(win));
+
+  // —— 页面内右键菜单（禅道 bug 2473：右键无菜单，无法复制/粘贴/另存图片）——
+  // Electron 不监听 webContents 的 context-menu 事件就没有任何右键菜单（全仓
+  // 此前零监听，页面右键无反应）。菜单覆盖 webview guest 与窗口主 contents
+  // （宿主页/弹窗窗），编辑命令显式作用于发射事件的 wc；图片「另存为…」复用
+  // 上面抽出的 performSaveImage（相对地址归一/Bearer 代注/重定向/保存对话框）。
+  // 前端 antd 自绘右键（会话列表等）preventDefault 掉 DOM 事件，主进程
+  // context-menu 不触发，天然无双重菜单。
+  contextMenuService.installContextMenuService({
+    saveImage: performSaveImage,
+  });
 }
