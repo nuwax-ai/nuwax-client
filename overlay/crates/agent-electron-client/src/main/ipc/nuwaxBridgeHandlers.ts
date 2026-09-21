@@ -131,6 +131,36 @@ export function nuwaxTokenScopes(senderScope: string): string[] {
 /** 桌面独立窗口注册表：持引用防 GC，closed 时清理。 */
 const shellWindows = new Set<BrowserWindow>();
 
+/**
+ * 商业版窗口最小尺寸（plans/20260921-min-window-resolution.md）：
+ * - 宽 1200 对齐 nuwax 前端多栏 html 地板（global.less / Chat 普通态），单栏下
+ *   主区不内部横滚；innerWidth 是 CSS 像素，150% 网页缩放下仍有 1200/1.5=800
+ *   > 768 移动端断点（nuwax MOBILE_BREAKPOINT=768 纯视口判定、无宿主豁免），
+ *   不会整页误切移动端布局；
+ * - 高 720 保顶栏避让 + 消息区 + 输入框可用。基座 DEFAULT_WINDOW_MIN_*（800×600，
+ *   社区版在用）不动，商业下限在此覆设。
+ */
+export const NUWAX_MAIN_WINDOW_MIN_WIDTH = 1200;
+export const NUWAX_MAIN_WINDOW_MIN_HEIGHT = 720;
+
+/**
+ * 商业下限统一补设到新建窗口（主窗口含 mac activate 重建、webview window.open
+ * 弹窗、session 独立窗口均一并抬升——Electron 40 已移除 getLastWebPreferences，
+ * 事件期读不到 webPreferences 无法按窗口分类，且弹窗承载同一前端同受 768 断点
+ * 约束；session 窗基座 600×400 下限被有意覆盖，同屏一致性优先）。
+ */
+export function applyMainWindowMinSize(win: BrowserWindow): void {
+  try {
+    if (win.isDestroyed()) return;
+    win.setMinimumSize(
+      NUWAX_MAIN_WINDOW_MIN_WIDTH,
+      NUWAX_MAIN_WINDOW_MIN_HEIGHT,
+    );
+  } catch {
+    // 非关键链路：窗口边缘态（webContents 已销毁等）忽略
+  }
+}
+
 export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   let serviceState: { phase: string; error?: string } = { phase: "stopped" };
   const lifecycle = initializeCommercialAuth(
@@ -711,6 +741,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       const win = new BrowserWindow({
         width: 1280,
         height: 832,
+        // 承载同一 nuwax 前端，同受 768 移动端断点约束，与主窗口共用下限
+        minWidth: NUWAX_MAIN_WINDOW_MIN_WIDTH,
+        minHeight: NUWAX_MAIN_WINDOW_MIN_HEIGHT,
         autoHideMenuBar: true,
         webPreferences: {
           // 与 webview guest 同一桥 preload：NuwaClawBridge 全能力（auth/theme/layout）
@@ -753,6 +786,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 允许锁屏运行：读库恢复档位并持有断言（registerAllHandlers 在 app ready 且
   // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同 ensureCuaOnBoot 先例）
   powerPolicy.initPowerPolicy();
+  // 窗口最小尺寸 1200×720：本钩子先于 createWindow 执行（main.ts app ready
+  // 序里 registerAllHandlers 在 createWindow 之前），拿不到窗口实例，挂
+  // browser-window-created 补设。注意事件在构造参数应用【之前】触发——同步
+  // setMinimumSize 会被构造参数的基座 800×600 盖回（Electron 40 真机实证），
+  // 推迟到构造完成的下一轮事件循环再设；已开的小尺寸持久化 bounds 会被
+  // Electron 就地抬升到下限（mac activate 重建主窗口同样经此事件覆盖）。
+  app.on("browser-window-created", (_event, win) => {
+    setImmediate(() => applyMainWindowMinSize(win));
+  });
   ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
   ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
     cuaComputerUse.setCuaEnabled(enabled === true),
