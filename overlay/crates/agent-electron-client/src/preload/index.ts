@@ -652,6 +652,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "nuwax:open-client-settings",
       "nuwax:loopback-changed",
       "nuwax:webview-nav-state",
+      "nuwax:dismiss-topbar-menus",
       "nuwax:login-confirmed",
       "nuwax:serverHostChanged",
       "nuwax:lang-changed",

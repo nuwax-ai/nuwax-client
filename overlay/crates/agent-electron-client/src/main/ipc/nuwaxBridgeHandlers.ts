@@ -998,4 +998,24 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       return false;
     }
   });
+
+  // —— 顶栏自绘菜单收起信号（bug 2427 Win/Linux 工具栏菜单不自动关）——
+  // 顶行菜单是宿主 renderer 的 antd Dropdown，「点外部收起」监听宿主 document
+  // 的 mousedown；webview guest 是独立文档，页面内点击不冒泡到宿主 → 菜单挂住
+  // （QA 实测：弹「编辑(E)」后点页面左侧导航不收起）。改走焦点真值：打开菜单
+  // 必经宿主点击（guest 随之失焦），用户点回页面 guest 必发 focus，焦点翻转即
+  // 收起；窗口失焦（点窗口外/任务栏）同信号，与原生菜单语义一致。
+  const pushTopbarMenuDismiss = (win?: Electron.BrowserWindow) => {
+    const targets = win ? [win] : BrowserWindow.getAllWindows();
+    for (const w of targets) {
+      if (!w.isDestroyed()) w.webContents.send("nuwax:dismiss-topbar-menus");
+    }
+  };
+  const hookGuestFocusDismiss = (wc: Electron.WebContents) => {
+    if (wc.isDestroyed() || wc.getType() !== "webview") return;
+    wc.on("focus", () => pushTopbarMenuDismiss());
+  };
+  app.on("web-contents-created", (_e, wc) => hookGuestFocusDismiss(wc));
+  for (const wc of webContents.getAllWebContents()) hookGuestFocusDismiss(wc);
+  app.on("browser-window-blur", (_e, win) => pushTopbarMenuDismiss(win));
 }

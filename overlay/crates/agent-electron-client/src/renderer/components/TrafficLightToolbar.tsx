@@ -90,22 +90,38 @@ export interface TrafficLightToolbarProps {
   dragRegions?: TitlebarDragRegion[];
 }
 
-/** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。 */
+/** 顶栏菜单收起信号（主进程推送：guest 获焦/窗口失焦，见 nuwaxBridgeHandlers）。 */
+const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
+
+/** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。
+ * 受控 open：antd 的「点外部收起」只听宿主 document，webview guest 内点击收不到
+ * （bug 2427），故订阅主进程收起信号强制闭合；宿主文档内的既有行为（点其他按钮/
+ * 再点同按钮）经 onOpenChange 原生保持。 */
 const TopMenu: React.FC<{ label: string; items: MenuProps["items"] }> = ({
   label,
   items,
-}) => (
-  <Dropdown
-    menu={{ items }}
-    trigger={["click"]}
-    // 下拉面板观感走 index.css .topbar-app-menu（Win11 原生菜单风）
-    rootClassName="topbar-app-menu"
-  >
-    <button type="button" className="topbar-menu-btn">
-      {label}
-    </button>
-  </Dropdown>
-);
+}) => {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const close = () => setOpen(false);
+    window.electronAPI?.on(DISMISS_CHANNEL, close);
+    return () => window.electronAPI?.off(DISMISS_CHANNEL, close);
+  }, []);
+  return (
+    <Dropdown
+      menu={{ items }}
+      trigger={["click"]}
+      open={open}
+      onOpenChange={setOpen}
+      // 下拉面板观感走 index.css .topbar-app-menu（Win11 原生菜单风）
+      rootClassName="topbar-app-menu"
+    >
+      <button type="button" className="topbar-menu-btn">
+        {label}
+      </button>
+    </Dropdown>
+  );
+};
 
 /** 菜单项内容：左侧文案 + 右侧快捷键提示（原生菜单标准形态；Win 无原生菜单，
  * Ctrl 组合直达 guest，提示列与 mac accelerator 显示对齐）。 */
