@@ -10,6 +10,7 @@ import {
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { getDeviceId } from "../services/system/deviceId";
+import { stopDaemon } from "../services/cua/computerUse";
 import {
   AuthLifecycle,
   setCommercialLifecycle,
@@ -273,6 +274,10 @@ export function initializeCommercialAuth(
     start,
     stop,
     changed,
+    // 退出期附加清理：CUA daemon 不随引擎树/进程注册表回收（detached/PPID=1），
+    // 由 before-quit 的 cleanupAllProcesses 经本钩子停止（will-quit 钩子在
+    // app.exit(0) 主退出路径上不触发，双触发幂等）。
+    stopExtras: () => stopDaemon(),
   });
   setCommercialLifecycle(flow);
   return flow;

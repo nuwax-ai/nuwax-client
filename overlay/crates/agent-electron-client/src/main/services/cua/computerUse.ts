@@ -168,8 +168,11 @@ async function launchDaemon(helperRoot: string): Promise<void> {
   log.warn("[Cua] unsupported platform for daemon launch:", process.platform);
 }
 
-/** 停 daemon：协议优先（`stop --socket`，官方 stop 子命令），失败兜底按端点匹配强杀。 */
-async function stopDaemon(): Promise<void> {
+/**
+ * 停 daemon：协议优先（`stop --socket`，官方 stop 子命令），失败兜底按端点匹配强杀。
+ * 导出供退出清理链消费（commercialAuth.stopExtras 与 will-quit 钩子双触发，幂等）。
+ */
+export async function stopDaemon(): Promise<void> {
   const helperPath = findHelperApp();
   if (helperPath) {
     try {
@@ -184,13 +187,15 @@ async function stopDaemon(): Promise<void> {
   }
   try {
     if (IS_WIN) {
-      // 命名管道端点无独立 pid 可 pgrep，按命令行匹配杀
+      // 命名管道端点无独立 pid 可 pgrep，按命令行匹配杀。两段通配吸收
+      // `\\.\pipe\` 前缀——单段 `*serve --socket nuwax-computer-use*` 与实际
+      // 命令行（serve --socket \\.\pipe\nuwax-computer-use）不连续，恒不匹配。
       await pexec(
         "powershell",
         [
           "-NoProfile",
           "-Command",
-          "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*serve --socket nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+          "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
         ],
       );
     } else {

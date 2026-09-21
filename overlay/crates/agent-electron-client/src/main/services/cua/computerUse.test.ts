@@ -210,6 +210,55 @@ describe("首用安装流（Resources → userData 稳定路径）", () => {
   });
 });
 
+describe("Windows 语义回归（stopDaemon 兜底通配须匹配命名管道路径）", () => {
+  // 真 bug：兜底 PowerShell 的 CommandLine -like 模式曾为单段
+  // `*serve --socket nuwax-computer-use*`，而 win 实际命令行是
+  // `serve --socket \\.\pipe\nuwax-computer-use`（pipe 前缀打断连续子串），
+  // 协议停失败时兜底恒杀不到。此处锁定两段通配的新模式。
+  const WIN_CMDLINE = "NuwaxComputerUse.exe serve --socket \\\\.\\pipe\\nuwax-computer-use";
+  const likeToRegex = (p: string) =>
+    new RegExp("^" + p.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+
+  beforeAll(() => {
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+  afterAll(() => {
+    Object.defineProperty(process, "platform", {
+      value: "darwin",
+      configurable: true,
+    });
+    vi.resetModules();
+  });
+
+  it("无 helper（协议停跳过）→ PowerShell 兜底，通配模式与实际命令行匹配", async () => {
+    mocks.userDataURL = fs.mkdtempSync(path.join(os.tmpdir(), "cua-test-win-"));
+    Object.defineProperty(process, "resourcesPath", {
+      value: path.join(mocks.userDataURL, "resources"),
+      configurable: true,
+    });
+
+    const mod = await import("./computerUse");
+    await mod.stopDaemon();
+
+    const psCall = mocks.execCalls.find((c) => c.cmd === "powershell");
+    expect(psCall).toBeTruthy();
+    const likeMatch = psCall!.args[2].match(/-like '([^']+)'/);
+    expect(likeMatch).toBeTruthy();
+    const pattern = likeMatch![1];
+    // 两段通配（吸收 \\.\pipe\ 前缀）匹配实际命令行；旧单段模式不匹配
+    expect(likeToRegex(pattern).test(WIN_CMDLINE)).toBe(true);
+    expect(
+      likeToRegex("*serve --socket nuwax-computer-use*").test(WIN_CMDLINE),
+    ).toBe(false);
+    // win 不走 pkill
+    expect(mocks.execCalls.some((c) => c.cmd === "pkill")).toBe(false);
+  });
+});
+
 describe("Linux 语义回归（安装目标名必须与探测名同源）", () => {
   // 真 bug：installCuaHelper 的 dest 曾用 win/mac 二元判断（IS_WIN ? exe : .app），
   // Linux 装成 .app 名而探测找 NuwaxComputerUse → installed 恒 false、开关不可用。
