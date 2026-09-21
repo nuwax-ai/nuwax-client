@@ -33,8 +33,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => ({
-  // app.on：registerCuaQuitCleanup（will-quit 停 daemon）在注册期挂监听
+  // app.on：registerCuaQuitCleanup（will-quit 停 daemon）与 fullDiskAccess
+  // boot 钩子（browser-window-created/focus）在注册期挂监听
   app: { isPackaged: false, on: vi.fn() },
+  powerMonitor: { on: vi.fn() },
   ipcMain: {
     handle: (
       channel: string,

@@ -594,6 +594,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     setMode: (mode: string) => ipcRenderer.invoke("powerPolicy:setMode", mode),
   },
 
+  // 全磁盘访问检测/引导（仅 mac 有意义；商业版 overlay 注入，基座无此命名空间）
+  fullDiskAccess: {
+    getStatus: () => ipcRenderer.invoke("fullDiskAccess:getStatus"),
+    openSettings: () => ipcRenderer.invoke("fullDiskAccess:openSettings"),
+    recheck: () => ipcRenderer.invoke("fullDiskAccess:recheck"),
+  },
+
   // Quick Init — 读取快捷初始化配置
   quickInit: {
     getConfig: () => ipcRenderer.invoke("quickInit:getConfig"),

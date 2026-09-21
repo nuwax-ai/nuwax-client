@@ -646,6 +646,19 @@ export interface PowerPolicyAPI {
   setMode: (mode: PowerPolicyMode) => Promise<{ mode: PowerPolicyMode }>;
 }
 
+/** 全磁盘访问（macOS FDA）状态：supported=平台是否有此机制；granted=探测真值；dismissed=用户拒绝过初始化引导 */
+export interface FullDiskAccessStatus {
+  supported: boolean;
+  granted: boolean;
+  dismissed: boolean;
+}
+
+export interface FullDiskAccessAPI {
+  getStatus: () => Promise<FullDiskAccessStatus>;
+  openSettings: () => Promise<boolean>;
+  recheck: () => Promise<{ supported: boolean; granted: boolean }>;
+}
+
 export interface ShellAPI {
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openPath: (
@@ -881,6 +894,7 @@ export interface ElectronAPI {
   permissions: PermissionsAPI;
   computerUse: ComputerUseAPI;
   powerPolicy: PowerPolicyAPI;
+  fullDiskAccess: FullDiskAccessAPI;
   quickInit: QuickInitAPI;
   perf: PerfAPI;
   on: (channel: string, callback: (...args: unknown[]) => void) => void;

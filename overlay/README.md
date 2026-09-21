@@ -19,7 +19,8 @@
 
 只放商业专属实现的整文件；基座若为商业功能开插槽（可选注册/扩展点），优先用插槽
 而不是大文件覆写，控制升级冲突面。bump 基座 pin 后必须跑 `npm run overlay:check`
-核对差异。当前覆写清单（21 文件）：
+核对差异。当前覆写清单（36 文件；下表列主干条目，图标四件套/tray 模板四件/
+preload 与类型声明等配套见 `find overlay -type f`）：
 
 | overlay 文件（基座同路径） | 内容 |
 |---|---|
@@ -36,6 +37,8 @@
 | `src/main/bootstrap/migrate.commercial.test.ts` | migrate.ts 的配套测试：目录隔离 + 实验开关清理 + workspaceDir 前缀重写（基座版测的是基座迁移行为，随 overlay 同步须一并覆写保持同步态自洽） |
 | `build/installer.nsh` | **新增（非覆写）**：Windows NSIS 定制。`customHeader` 宏重写 `Name` 为中文营销名「女娲Nuwax」（向导标题与正文）；刻意**不重写 `BrandingText`**，底部「Nuwax \<ver\>」保持 ASCII。机制=该宏由 installer.nsi 在 common.nsh 之后插入，后写的同名指令覆盖先写的。`build/` 为 electron-builder 的 buildResources 目录，文件自动被拾取 |
 | `src/shared/locales/{en-US,zh-CN,zh-TW,zh-HK}.json` | **严格超集**：基座四语言全量 + 换域确认弹窗 3 键（`Claw.Settings.messages.switchDomain{Title,Current,Next,Warn}`）。i18nLocales.test.ts 强制四语言 key 集合与占位符一致，基座新增 key 时须同步合入全部四份 |
+| `src/main/services/fullDiskAccess.ts` + `.test.ts` | **新增（非覆写）**：全磁盘访问（macOS FDA）检测 + 初始化一次性引导（2026-09-21）——探针=open 系统 TCC.db；「暂不」持久化 `nuwax.fullDiskAccessPrompt` 永不再自动弹；聚焦/解锁只静默复查；boot 钩子挂 nuwaxBridgeHandlers（powerPolicy 旁），设置页状态行（仅 mac）为拒绝后唯一再入口 |
+| `src/renderer/components/pages/PermissionsPage.tsx` | 基座超集（2026-09-21）：商业宿主存在 fullDiskAccess 命名空间时，「授权」页全磁盘访问行用 recheck 真值覆盖基座恒 unknown 的状态、前往设置走带兜底的 openSettings；社区版与基座逐字节同行为 |
 
 维护规则：基座对应文件演进时，先 `overlay:check` 看 diff，把基座侧改动手工
 合入 overlay 版本（overlay 版本必须是基座版本的严格超集；两类例外——

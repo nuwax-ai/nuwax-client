@@ -39,6 +39,7 @@ import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
 import * as powerPolicy from "../services/powerPolicy";
+import * as fullDiskAccess from "../services/fullDiskAccess";
 
 import {
   initializeCommercialAuth,
@@ -786,6 +787,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 允许锁屏运行：读库恢复档位并持有断言（registerAllHandlers 在 app ready 且
   // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同 ensureCuaOnBoot 先例）
   powerPolicy.initPowerPolicy();
+  // 全磁盘访问初始化引导（仅 darwin）：主窗口首帧检测，未授权且未拒绝过弹一次
+  // 原生引导窗，「暂不」持久化永不再弹；聚焦/解锁只静默复查（拒绝后的再入口
+  // 在设置页状态行）。内部自挂 browser-window-created，同上拿不到窗口实例。
+  fullDiskAccess.initFullDiskAccessGuard();
   // 窗口最小尺寸 1200×720：本钩子先于 createWindow 执行（main.ts app ready
   // 序里 registerAllHandlers 在 createWindow 之前），拿不到窗口实例，挂
   // browser-window-created 补设。注意事件在构造参数应用【之前】触发——同步
@@ -816,6 +821,21 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("powerPolicy:setMode", (_event, mode: unknown) =>
     powerPolicy.setPowerPolicyMode(mode),
   );
+
+  // ---- fullDiskAccess：全磁盘访问状态/引导（仅 mac 有意义；overlay 自持实现） ----
+  ipcMain.handle("fullDiskAccess:getStatus", () =>
+    fullDiskAccess.getFullDiskAccessStatus(),
+  );
+  ipcMain.handle("fullDiskAccess:openSettings", () =>
+    fullDiskAccess.openFullDiskAccessSettings(),
+  );
+  ipcMain.handle("fullDiskAccess:recheck", async () => {
+    const granted = await fullDiskAccess.checkFullDiskAccess();
+    return {
+      supported: fullDiskAccess.isFullDiskAccessSupported(),
+      granted,
+    };
+  });
 
   // ---- native：右键另存图片 ----
   ipcMain.handle(

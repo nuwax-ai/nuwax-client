@@ -53,6 +53,8 @@ vi.mock("electron", () => ({
   session: { defaultSession: { cookies: { get: vi.fn(async () => []) } } },
   screen: {},
   powerSaveBlocker: { start: vi.fn(() => 0), stop: vi.fn() },
+  // fullDiskAccess boot 钩子在注册期挂 unlock-screen/resume 监听
+  powerMonitor: { on: vi.fn() },
 }));
 
 vi.mock("electron-log", () => ({

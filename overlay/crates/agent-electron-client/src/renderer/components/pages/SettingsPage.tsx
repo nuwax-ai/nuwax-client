@@ -163,6 +163,13 @@ export default function SettingsPage() {
   const hasComputerUseApi = !!window.electronAPI?.computerUse;
   // TCC 授权引导仅 mac（Windows 无辅助功能/屏幕录制 per-app 授权，UIA/截屏开箱即用）
   const isMacPlatform = /mac/i.test(navigator.platform);
+  // 全磁盘访问（仅 mac）：检测/引导是商业版 overlay 注入，旧宿主无此命名空间
+  const hasFullDiskAccessApi = !!window.electronAPI?.fullDiskAccess;
+  const [fdaStatus, setFdaStatus] = useState<{
+    supported: boolean;
+    granted: boolean;
+  } | null>(null);
+  const [fdaChecking, setFdaChecking] = useState(false);
   const [cuaStatus, setCuaStatus] = useState<{
     installed: boolean;
     installable: boolean;
@@ -380,6 +387,39 @@ export default function SettingsPage() {
     }
   };
 
+  // ========== 全磁盘访问：状态加载 / 去开启（初始化引导被拒后的唯一再入口） ==========
+  const loadFdaStatus = useCallback(async () => {
+    if (!hasFullDiskAccessApi || !isMacPlatform) return;
+    try {
+      const s = await window.electronAPI!.fullDiskAccess.getStatus();
+      setFdaStatus({ supported: !!s.supported, granted: !!s.granted });
+    } catch (error) {
+      console.error("Failed to load full disk access status:", error);
+    }
+  }, [hasFullDiskAccessApi, isMacPlatform]);
+
+  // 去开启兼复查：打开系统设置面板后短轮询（2s×15）；TCC 授权对已运行进程
+  // 可能要重启应用才生效，轮询未翻转时状态点保持 ✗，重启后 getStatus 即 ✓
+  const handleFdaOpenSettings = async () => {
+    if (!hasFullDiskAccessApi) return;
+    setFdaChecking(true);
+    try {
+      await window.electronAPI!.fullDiskAccess.openSettings();
+      for (let i = 0; i < 15; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const s = await window.electronAPI!.fullDiskAccess.recheck();
+        setFdaStatus((prev) =>
+          prev ? { ...prev, granted: !!s.granted } : prev,
+        );
+        if (s.granted) break;
+      }
+    } catch {
+      // 打开失败主进程已兜底；轮询失败静默（状态点保持原值）
+    } finally {
+      setFdaChecking(false);
+    }
+  };
+
   useEffect(() => {
     loadConfig();
     loadSystemSettings();
@@ -414,7 +454,8 @@ export default function SettingsPage() {
     };
     loadLangList();
     loadCuaStatus();
-  }, [loadCuaStatus]);
+    loadFdaStatus();
+  }, [loadCuaStatus, loadFdaStatus]);
 
   // ========== 服务域名：行内提交 → 确认 → configureServerHost 事务 ==========
   // 协议归一：支持带 http(s)://，未含默认补 https://
@@ -862,6 +903,28 @@ export default function SettingsPage() {
               />
             }
           />
+
+          {/* 全磁盘访问（仅 mac）：智能体读写受保护目录所需；初始化引导被拒后的唯一再入口 */}
+          {isMacPlatform && hasFullDiskAccessApi && (
+            <SettingsRow
+              label={t("Claw.Settings.fullDiskAccess.label")}
+              desc={
+                <span>
+                  {t("Claw.Settings.fullDiskAccess.desc")}
+                  <PermDot ok={fdaStatus?.granted ?? null} />
+                </span>
+              }
+              control={
+                <Button
+                  size="small"
+                  loading={fdaChecking}
+                  onClick={handleFdaOpenSettings}
+                >
+                  {t("Claw.Settings.fullDiskAccess.open")}
+                </Button>
+              }
+            />
+          )}
 
           {/* 主题设置（暗黑模式经环境变量关闭时恒浅色，外观项无意义随之隐藏） */}
           {FEATURES.DARK_THEME && (
