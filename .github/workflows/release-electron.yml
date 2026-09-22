@@ -13,7 +13,8 @@
 #      并删除 extendInfo.CFBundleIdentifier 旧覆盖使 macOS bundle id 与 appId 统一
 #   5. 构建注入商业 env：NUWAX_APP_IDENTIFIER=nuwax（→ ~/.nuwax；历史目录迁移链
 #      已被 overlay 覆写 migrate.ts 阻断，全新开始）、NUWAX_APP_DISPLAY_NAME、
-#      NUWAX_UPDATE_FEED_BASE（独立更新通道 nuwax-electron）、NUWAX_PORT_OFFSET=1000
+#      NUWAX_UPDATE_FEED_BASE（独立更新通道 nuwax-electron）、NUWAX_DOWNLOAD_PAGE_URL
+#      （不支持自动更新的安装形态引导页）、NUWAX_PORT_OFFSET=1000
 #      （端口整体 +1000，与社区版/nuwa-cli 同机错开）
 #   6. Windows prepare 后显式断言沙箱 helper 产物存在（cargo 缺失时基座脚本只告警
 #      不失败，这里兜底防止静默产出无沙箱包）
@@ -383,6 +384,8 @@ jobs:
           NUWAX_APP_IDENTIFIER: nuwax
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
+          # 官网下载页（MSI 等不支持自动更新的安装形态引导；商业暂无产品页先指官网首页）
+          NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
           NUWAX_PORT_OFFSET: "1000"
         run: |
           if [ "${{ runner.os }}" = "macOS" ] && [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then

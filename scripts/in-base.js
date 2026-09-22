@@ -16,6 +16,8 @@
  *                                       UA token Nuwax/<ver>）；刻意 ASCII——
  *                                       女娲Nuwax 为营销名，只出现在 README/发布文案
  *   NUWAX_UPDATE_FEED_BASE            → 独立更新通道 nuwax-electron
+ *   NUWAX_DOWNLOAD_PAGE_URL           → 官网下载页（不支持自动更新的安装形态引导；
+ *                                       商业暂无产品页，先指官网首页）
  *   NUWAX_PORT_OFFSET=1000             → 默认端口整体 +1000（19099/61002~61009/61173），
  *                                         与社区版 nuwaclaw、nuwa-cli 同机双开不冲突
  *   NUWAX_FRONTEND_DIST                → dev 模式 nuwax 前端 dist 位置（壳根 nuwax/ 子模块）
@@ -77,6 +79,10 @@ const env = noInject || noEnv
       NUWAX_UPDATE_FEED_BASE:
         process.env.NUWAX_UPDATE_FEED_BASE ||
         'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',
+      // 商业版官网下载页（MSI 等不支持自动更新的形态引导用；商业版暂无独立
+      // 产品页先指官网首页，待上线后改正式值——社区默认 nuwaclaw.html 不适用）
+      NUWAX_DOWNLOAD_PAGE_URL:
+        process.env.NUWAX_DOWNLOAD_PAGE_URL || 'https://nuwax.com',
       NUWAX_PORT_OFFSET: process.env.NUWAX_PORT_OFFSET || '1000',
       NUWAX_FRONTEND_DIST: process.env.NUWAX_FRONTEND_DIST || path.join(rootDir, 'nuwax', 'dist'),
     };
