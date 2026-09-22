@@ -1,5 +1,7 @@
 # loopback 网关形态登录态同步调研：header vs cookie（含续期）
 
+> **2026-09-22 评审修正（正文为 09-21 历史调研）**：正式契约以 `specs/loopback-login-sync-header-channel.md` 为准，实施见同名 plan。以下旧结论不再作为实施依据：全量文档 namespace、回收微应用前缀、defaultSession 天然可信、网关剥 ticket 可覆盖 direct、reg 现读必然同批新鲜，以及“前端无 refresh = 后端无续期”。前端需新增 auth.getContext；四个 redirect 入口均需治理。生产全端点 Bearer-only、后端轮换、真实支付/文件/WS 仍待上线前取证。
+
 - 日期：2026-09-21
 - 范围：Nuwax 客户端（商业版）本地化加速（loopback gateway）形态下，登录态在「网关 origin ↔ 配置业务域」之间的同步方案
 - 边界：壳侧（overlay+基座）与 nuwax 前端可改；后端只输出协调清单，不在本批实施范围

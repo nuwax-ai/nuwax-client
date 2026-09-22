@@ -19,6 +19,11 @@ const handlers = new Map<
 // BrowserWindow 构造参数记录（openWindow 独立窗口 min 断言用）
 const winInstances: Array<{ opts: Record<string, unknown> }> = [];
 
+vi.mock("../services/sessionAuthInjection", () => ({
+  initSessionAuthInjection: vi.fn(),
+  trustInitialBusinessNavigation: vi.fn(),
+}));
+
 vi.mock("electron", () => ({
   app: { isPackaged: false, on: vi.fn() },
   ipcMain: {
@@ -86,8 +91,11 @@ import {
 
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
 
-function senderEvent(origin: string): { senderFrame: { url: string } } {
-  return { senderFrame: { url: `${origin}/home` } };
+function senderEvent(origin: string) {
+  return {
+    senderFrame: { url: `${origin}/home` },
+    sender: { getURL: () => `${origin}/home` },
+  };
 }
 
 function fakeWin(destroyed = false) {

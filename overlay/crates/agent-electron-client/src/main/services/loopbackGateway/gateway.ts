@@ -8,6 +8,7 @@
  * - 云端方向注入与 nuwaclaw 主进程 webRequest 同语义的两件事：
  *   x-client-type（FR-03：后端仅凭该头在登录响应返回 token）与缺失时的
  *   Bearer 代注（iframe 导航 / raw fetch 带不了 Authorization）。
+ *   HTTP/WS 出口始终剥 ticket；公共登录接口不代注旧 Bearer。
  *   网关发出的请求不经 Electron session，与 main.ts 的 onBeforeSendHeaders
  *   钩子（遇 localhost origin 本就跳过）天然不会重复注入。
  * - Set-Cookie 规整：剥 Domain/Secure、SameSite=None→Lax——origin 已是
@@ -21,11 +22,18 @@
  */
 import http from "node:http";
 import https from "node:https";
+import { timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as nodePath from "node:path";
 import log from "electron-log";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { isPublicAuthPath, stripTicketCookie } from "../auth/requestPolicy";
+import {
+  resolveBackendNamespace,
+  namespaceRedirectLocation,
+} from "./routingPolicy";
+import { GATEWAY_REQUEST_HEADER } from "./requestContext";
 
 /** 逐跳头：转发时剥掉，由本层连接语义自行决定。 */
 const HOP_BY_HOP = new Set([
@@ -53,6 +61,8 @@ export interface LoopbackGatewayOptions {
   /** 登录态出站注入源：页面带不了 Authorization 的请求（iframe 导航 / raw fetch）
    *  由网关代补 Bearer。返回空值则不注入。 */
   getAccessToken: () => string | null;
+  /** Main-process-only capability for trusted cross-origin redirects (opaque Origin). */
+  trustedRequestSecret?: string;
   /** 云端方向注入的客户端标识头值；空串显式关闭。缺省 "nuwaclaw"。 */
   clientTypeHeader?: string | null;
 }
@@ -69,6 +79,22 @@ export interface LoopbackGatewayHandle {
 interface ProxyContext {
   getAccessToken: () => string | null;
   clientTypeHeader: string | null;
+  gatewayOrigin?: string;
+  trustedRequestSecret?: string;
+}
+
+function hasTrustedRequestCapability(
+  req: http.IncomingMessage,
+  ctx: ProxyContext,
+): boolean {
+  const supplied = req.headers[GATEWAY_REQUEST_HEADER];
+  const secret = ctx.trustedRequestSecret;
+  return (
+    typeof supplied === "string" &&
+    !!secret &&
+    Buffer.byteLength(supplied) === Buffer.byteLength(secret) &&
+    timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))
+  );
 }
 
 /** Set-Cookie 规整：剥 Domain/Secure、SameSite=None→Lax（origin 是回环 http）。 */
@@ -104,20 +130,38 @@ function buildProxyHeaders(
   req: http.IncomingMessage,
   target: URL,
   ctx: ProxyContext,
+  upstreamPath: string,
 ): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined || HOP_BY_HOP.has(key.toLowerCase())) continue;
+    if (
+      value === undefined ||
+      HOP_BY_HOP.has(key.toLowerCase()) ||
+      key.toLowerCase() === GATEWAY_REQUEST_HEADER
+    )
+      continue;
     headers[key] = value;
   }
   headers["host"] = target.host;
+  if (typeof headers.cookie === "string") {
+    const cookie = stripTicketCookie(headers.cookie);
+    if (cookie) headers.cookie = cookie;
+    else delete headers.cookie;
+  }
   // 后端可能有 Referer/Origin 校验：统一改写为后端自身，避免把 127.0.0.1 漏过去。
   // referer 保留原路径只换 origin（页面在后站的同一路径），比指向请求自身更忠实。
   if (headers["origin"] !== undefined) headers["origin"] = target.origin;
   if (headers["referer"] !== undefined) {
     try {
       const ref = new URL(String(headers["referer"]));
-      headers["referer"] = `${target.origin}${ref.pathname}${ref.search}`;
+      const route = resolveBackendNamespace(
+        ref.pathname + ref.search,
+        target.origin,
+      );
+      if (route.kind === "forbidden") delete headers["referer"];
+      else
+        headers["referer"] =
+          `${target.origin}${route.kind === "backend" ? route.path : ref.pathname + ref.search}`;
     } catch {
       delete headers["referer"];
     }
@@ -125,7 +169,10 @@ function buildProxyHeaders(
   // 客户端标识头（FR-03 登录链路）：后端仅凭 x-client-type 才在登录响应返回 token。
   if (ctx.clientTypeHeader) headers["x-client-type"] = ctx.clientTypeHeader;
   // 登录态注入：页面自身的 Bearer 请求已带头，只在缺失时补，不覆盖。
-  if (headers["authorization"] === undefined) {
+  if (
+    headers["authorization"] === undefined &&
+    !isPublicAuthPath(upstreamPath.split("?")[0])
+  ) {
     const token = ctx.getAccessToken();
     if (token) headers["authorization"] = `Bearer ${token}`;
   }
@@ -139,8 +186,10 @@ function proxyRequest(
   res: http.ServerResponse,
   target: URL,
   ctx: ProxyContext,
+  upstreamPath: string,
+  namespaced: boolean,
 ): void {
-  const headers = buildProxyHeaders(req, target, ctx);
+  const headers = buildProxyHeaders(req, target, ctx, upstreamPath);
   const transport = target.protocol === "https:" ? https : http;
   const upstream = transport.request(
     {
@@ -148,7 +197,7 @@ function proxyRequest(
       hostname: target.hostname,
       port: target.port || (target.protocol === "https:" ? 443 : 80),
       method: req.method,
-      path: req.url,
+      path: upstreamPath,
       headers,
     },
     (upstreamRes) => {
@@ -161,6 +210,49 @@ function proxyRequest(
         outHeaders["set-cookie"] = (outHeaders["set-cookie"] as string[]).map(
           normalizeSetCookie,
         );
+      }
+      if (namespaced && typeof outHeaders.location === "string") {
+        outHeaders.location = namespaceRedirectLocation(
+          outHeaders.location,
+          upstreamPath,
+          target.origin,
+        );
+      }
+      // Chromium retains CORS checks across onBeforeRequest redirects. We sent
+      // our own backend Origin upstream, so translate its exact ACAO response
+      // back to this gateway's bound origin. An opaque redirected request needs
+      // the capability attached by trusted Electron frames. Never reflect an
+      // arbitrary caller's origin, including a bare Origin: null.
+      const trustedOpaqueRequest =
+        namespaced &&
+        req.headers.origin === "null" &&
+        hasTrustedRequestCapability(req, ctx);
+      if (
+        trustedOpaqueRequest ||
+        (ctx.gatewayOrigin &&
+          req.headers.origin === ctx.gatewayOrigin &&
+          outHeaders["access-control-allow-origin"] === target.origin)
+      ) {
+        outHeaders["access-control-allow-origin"] = trustedOpaqueRequest
+          ? "null"
+          : ctx.gatewayOrigin!;
+        if (trustedOpaqueRequest) {
+          outHeaders["access-control-allow-credentials"] = "true";
+          // Do not cache a capability-authorized opaque-origin response for a
+          // later untrusted opaque caller to reuse without the capability.
+          outHeaders["cache-control"] = "no-store";
+        }
+        const vary = String(outHeaders.vary ?? "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        if (
+          !vary.some(
+            (value) => value.toLowerCase() === "origin" || value === "*",
+          )
+        )
+          vary.push("Origin");
+        outHeaders.vary = vary.join(", ");
       }
       res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
       upstreamRes.pipe(res);
@@ -214,9 +306,10 @@ function proxyUpgrade(
   head: Buffer,
   target: URL,
   ctx: ProxyContext,
+  upstreamPath: string,
 ): void {
   socket.on("error", () => socket.destroy());
-  const headers = buildProxyHeaders(req, target, ctx);
+  const headers = buildProxyHeaders(req, target, ctx, upstreamPath);
   headers["connection"] = "Upgrade";
   headers["upgrade"] =
     (req.headers["upgrade"] as string | undefined) || "websocket";
@@ -227,7 +320,7 @@ function proxyUpgrade(
     hostname: target.hostname,
     port: target.port || (target.protocol === "https:" ? 443 : 80),
     method: "GET",
-    path: req.url,
+    path: upstreamPath,
     headers,
   });
   // 客户端在 101 到达前断开（刷新终端/noVNC 页面正踩此窗口）：升级回调内部
@@ -381,6 +474,7 @@ export async function startLoopbackGateway(
     getAccessToken: opts.getAccessToken,
     // 缺省跟随构建期注入的产品标识（nuwaclaw=社区版 / nuwax=商业版，2026-09 前为 nuwawork）
     clientTypeHeader: opts.clientTypeHeader ?? APP_NAME_IDENTIFIER,
+    trustedRequestSecret: opts.trustedRequestSecret,
   };
   const distDir = opts.distDir ? nodePath.resolve(opts.distDir) : undefined;
   const backendPrefixes = opts.backendPrefixes ?? DEFAULT_BACKEND_PREFIXES;
@@ -397,6 +491,16 @@ export async function startLoopbackGateway(
   return await new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const urlPath = req.url ?? "/";
+      const namespace = resolveBackendNamespace(urlPath, target.origin);
+      if (namespace.kind === "forbidden") {
+        res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+        res.end("forbidden backend route");
+        return;
+      }
+      if (namespace.kind === "backend") {
+        proxyRequest(req, res, target, ctx, namespace.path, true);
+        return;
+      }
       if (distDir) {
         // dist 模式：后端前缀（/api /computer /devcomputer …）反代云端，其余静态托管。
         const hitBackend = backendPrefixes.some(
@@ -438,10 +542,24 @@ export async function startLoopbackGateway(
           return;
         }
       }
-      proxyRequest(req, res, target, ctx);
+      proxyRequest(req, res, target, ctx, urlPath, false);
     });
     server.on("upgrade", (req, socket, head) => {
-      proxyUpgrade(req, socket, head, target, ctx);
+      const namespace = resolveBackendNamespace(req.url ?? "/", target.origin);
+      if (namespace.kind === "forbidden") {
+        socket.end(
+          "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        );
+        return;
+      }
+      proxyUpgrade(
+        req,
+        socket,
+        head,
+        target,
+        ctx,
+        namespace.kind === "backend" ? namespace.path : (req.url ?? "/"),
+      );
     });
 
     const fixedPort = opts.fixedPort ?? 46800;
@@ -450,6 +568,7 @@ export async function startLoopbackGateway(
         const actual =
           (server.address() as { port: number } | null)?.port ?? port;
         const origin = `http://127.0.0.1:${actual}`;
+        ctx.gatewayOrigin = origin;
         if (isFallback) {
           log.warn(
             `[LoopbackGateway] 固定端口 ${fixedPort} 被占用，回退随机端口 ${actual}——本次会话登录态不与既往续接`,

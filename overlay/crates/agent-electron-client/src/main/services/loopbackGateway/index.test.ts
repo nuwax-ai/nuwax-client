@@ -105,6 +105,31 @@ describe("loopbackGateway runtime key carries backend", () => {
     });
   });
 
+  it("rotates its capability on restart, clears it on stop and never persists it", async () => {
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    const mod = await importFresh();
+    const { getGatewayRequestContext } = await import("./requestContext");
+    await mod.ensureLoopbackGateway();
+    const first = getGatewayRequestContext();
+    expect(first).toMatchObject({ origin: "http://127.0.0.1:46800" });
+    expect(first?.requestSecret).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify([...mocks.store])).not.toContain(
+      first!.requestSecret,
+    );
+    expect(mocks.startGateway).toHaveBeenCalledWith(
+      expect.objectContaining({ trustedRequestSecret: first!.requestSecret }),
+    );
+    await mod.stopLoopbackGateway();
+    expect(getGatewayRequestContext()).toBeNull();
+    await mod.ensureLoopbackGateway();
+    expect(getGatewayRequestContext()?.requestSecret).not.toBe(
+      first!.requestSecret,
+    );
+  });
+
   it("passes backend prefixes: defaults + menu microapp list without env", async () => {
     mocks.store.set("step1_config", {
       nuwaxLoadMode: "gateway",
@@ -152,6 +177,65 @@ describe("loopbackGateway runtime key carries backend", () => {
       );
     } finally {
       delete process.env.NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES;
+    }
+  });
+
+  it("registers HTTP/WS normalization and passes the requesting frame without trusting foreign frames", async () => {
+    const { session, webContents } = await import("electron");
+    const onBeforeRequest = vi.mocked(
+      session.defaultSession.webRequest.onBeforeRequest,
+    );
+    onBeforeRequest.mockClear();
+    vi.mocked(webContents.fromId).mockReturnValue({
+      getURL: () => "http://127.0.0.1:46800/home",
+    } as Electron.WebContents);
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    process.env.NUWAX_LOOPBACK_DIST = "1";
+    try {
+      const mod = await importFresh();
+      await mod.ensureLoopbackGateway();
+      const [filter, listener] = onBeforeRequest.mock.calls.at(-1)!;
+      expect(filter).toEqual({
+        urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"],
+      });
+      if (typeof listener !== "function") throw new Error("normalizer missing");
+      const callback = vi.fn();
+      const details = {
+        webContentsId: 1,
+        url: "http://127.0.0.1:46800/assets/app.js",
+        resourceType: "script",
+        frame: {
+          url: "http://127.0.0.1:46800/repo/doc/7",
+          parent: { url: "http://127.0.0.1:46800/home" },
+        },
+      } as Parameters<typeof listener>[0];
+      listener(details, callback);
+      expect(callback).toHaveBeenLastCalledWith({
+        redirectURL:
+          "http://127.0.0.1:46800/__backend/a.example.com/assets/app.js",
+      });
+      listener(
+        {
+          ...details,
+          resourceType: "subFrame",
+          url: "https://a.example.com/repo",
+          frame: {
+            url: "https://external.example",
+            parent: { url: "http://127.0.0.1:46800/home" },
+          },
+        } as Parameters<typeof listener>[0],
+        callback,
+      );
+      expect(callback).toHaveBeenLastCalledWith({});
+      await mod.stopLoopbackGateway();
+    } finally {
+      delete process.env.NUWAX_LOOPBACK_DIST;
+      vi.mocked(webContents.fromId).mockReturnValue(
+        null as unknown as Electron.WebContents,
+      );
     }
   });
 
