@@ -192,22 +192,10 @@ jobs:
         with:
           node-version: lts/*
 
-      # 2026-09-22 由 9.15.5 升 10.27：对齐 nuwax 前端 lockfile（pnpm 9 frozen
-      # install 撞 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）。版本单一事实源=外层
-      # package.json 的 packageManager（action-setup 无 version input 时读它），
-      # 两处必须同步改，否则报 Multiple versions of pnpm specified。
-      # 壳侧依赖构建脚本白名单 pnpm.onlyBuiltDependencies 已配齐 7 项；
-      # 首跑注意日志中的 "Ignored build scripts" 警告，漏包补白名单。
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-
-      # nuwax 前端 dist 就地重建（新流程首跑 2026-09-22）：子模块强切 feat-dong.0930
-      # 尖端 + pnpm build:prod，产物留在工作区由 extraResources 打包——不再消费
-      # 前端仓已提交的 dist，nuwax 仓零回推。脚本内含 gitHash 产出自校验；
-      # 复现历史构建可传 NUWAX_FRONTEND_REF=<sha>。
-      - name: Build nuwax frontend dist (latest branch, in-workspace)
-        shell: bash
-        run: ./scripts/prepare-nuwax-dist.sh
+        with:
+          version: 9.15.5
 
       # Python 3.12+ 移除了 distutils，node-gyp（better-sqlite3 等 native 模块）依赖它；安装 setuptools 以提供 distutils
       - name: Install setuptools for node-gyp (Python 3.12+)
@@ -400,8 +388,6 @@ jobs:
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
-          # 官网下载页（MSI 等不支持自动更新的安装形态引导；商业暂无产品页先指官网首页）
-          NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
           # 端口整体 +1000（19099/61002~61009/61173），与社区版/nuwa-cli 同机错开
           NUWAX_PORT_OFFSET: "1000"
         run: |
