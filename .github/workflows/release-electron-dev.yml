@@ -192,15 +192,14 @@ jobs:
         with:
           node-version: lts/*
 
+      # 2026-09-22 由 9.15.5 升 10.27：对齐 nuwax 前端 lockfile（pnpm 9 frozen
+      # install 撞 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）。版本单一事实源=外层
+      # package.json 的 packageManager（action-setup 无 version input 时读它），
+      # 两处必须同步改，否则报 Multiple versions of pnpm specified。
+      # 壳侧依赖构建脚本白名单 pnpm.onlyBuiltDependencies 已配齐 7 项；
+      # 首跑注意日志中的 "Ignored build scripts" 警告，漏包补白名单。
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          # 2026-09-22 由 9.15.5 升 10.27：对齐 nuwax 前端 lockfile（pnpm 9 frozen
-          # install 撞 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）。版本单一事实源=外层
-          # package.json 的 packageManager（action-setup 无 version input 时读它），
-          # 两处必须同步改，否则报 Multiple versions of pnpm specified。
-          # 壳侧依赖构建脚本白名单 pnpm.onlyBuiltDependencies 已配齐 7 项；
-          # 首跑注意日志中的 "Ignored build scripts" 警告，漏包补白名单。
 
       # nuwax 前端 dist 就地重建（新流程首跑 2026-09-22）：子模块强切 feat-dong.0930
       # 尖端 + pnpm build:prod，产物留在工作区由 extraResources 打包——不再消费
