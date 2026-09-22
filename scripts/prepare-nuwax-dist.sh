@@ -66,6 +66,9 @@ esac
 $PNPM install --frozen-lockfile
 
 echo "[prepare-nuwax-dist] pnpm build:prod"
+# UMI/max build 源码量增长后默认堆（~2GB）不够：mac runner 实测 OOM
+# （Ineffective mark-compacts near heap limit），显式给到 4GB。
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=4096"
 $PNPM build:prod
 
 # 产物自校验：dist/version.json 的 gitHash 必须等于检出的源码尖（postbuild 写入）
