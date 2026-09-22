@@ -6,3 +6,5 @@ node_modules/
 
 # ZCode 本地工具缓存
 .claude/cache/
+
+debug-shots/
