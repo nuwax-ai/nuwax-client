@@ -45,10 +45,28 @@ if [ "${SKIP_NUWAX_BUILD:-0}" = "1" ]; then
 fi
 
 echo "[prepare-nuwax-dist] pnpm install --frozen-lockfile"
-pnpm install --frozen-lockfile
+
+# pnpm 大版本对齐：nuwax 的 lockfile/patchedDependencies 由其 packageManager 声明
+# 版本（pnpm@10.x）写入；宿主（如 CI 钉的 pnpm 9）frozen install 会报
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH——不符时经 corepack 按 packageManager 自动切版本。
+PNPM="pnpm"
+PM_SPEC="$(node -p "try{require('./package.json').packageManager||''}catch{''}")"
+case "$PM_SPEC" in
+  pnpm@*)
+    WANT_MAJOR="${PM_SPEC#pnpm@}"; WANT_MAJOR="${WANT_MAJOR%%.*}"
+    HAVE_MAJOR="$(pnpm --version 2>/dev/null | cut -d. -f1 || echo 0)"
+    if [ "$HAVE_MAJOR" != "$WANT_MAJOR" ]; then
+      echo "[prepare-nuwax-dist] 宿主 pnpm ${HAVE_MAJOR}x != 声明 ${WANT_MAJOR}x，corepack 切换"
+      PNPM="corepack pnpm"
+    fi
+    ;;
+esac
+
+# shellcheck disable=SC2086 —— "$PNPM" 允许按词展开（corepack pnpm 两个词）
+$PNPM install --frozen-lockfile
 
 echo "[prepare-nuwax-dist] pnpm build:prod"
-pnpm build:prod
+$PNPM build:prod
 
 # 产物自校验：dist/version.json 的 gitHash 必须等于检出的源码尖（postbuild 写入）
 STAMP="$(node -p "require('./dist/version.json').gitHash")"
