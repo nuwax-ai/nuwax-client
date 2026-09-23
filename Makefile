@@ -1,11 +1,23 @@
 # ============================================================================
 # Nuwax 客户端 · 开发启动
 # ============================================================================
-#   make dev          # 或直接 make（默认目标）
+#   make dev                            # 默认 DEV_WEBVIEW=loopback（生产同构）
+#   make dev DEV_WEBVIEW=dev            # 前端热更形态（:3000 dev server）
+#
+# 两种形态的差别只在 webview 前端来源与后端请求出口：
+#   loopback（默认） 不起 :3000、不设 NUWAX_WEBVIEW_ORIGIN；webview 加载 loopback
+#                   网关托管的 nuwax/dist（submodule 构建产物——改前端源码需先
+#                   pnpm build 提交 dist，或改用 DEV_WEBVIEW=dev）；/computer/*
+#                   经 testagent Java → lanproxy 回本机，与生产链路同构——验证
+#                   后端转发行为（service_type/cwd 透传、cId→项目 id 替换）用它。
+#   dev              webview 加载 :3000 UMI dev server（前端 src 热更，改代码
+#                   即时生效）；终端等 /computer 请求被 UMI dev proxy 抄近路
+#                   直连本机网关，不经 Java（前端离线调试用它）。
 #
 # 一条命令拉起完整服务：
 #   1) git submodule 同步     —— init + 对齐到仓库 pin 的 SHA（--init，已就绪时秒过）
 #   2) nuwax 前端 dev server  —— 后台启动，自动等待就绪，日志 logs/frontend-dev.log
+#                               （DEV_WEBVIEW=dev 时才启动）
 #   3) Electron 壳            —— 前台，壳 vite + Electron + 全部内置服务
 #   4) 主进程日志镜像         —— 后台 tail -F ~/.nuwax/logs/latest.log → logs/electron.log
 # 每次 make dev 清空 logs/ 下的 *.log，只保留本轮记录，方便对照排查。
@@ -46,8 +58,17 @@ NUWAX_LATEST  := $(NUWAX_LOG_DIR)/latest.log
 # 需要随 make dev 对齐 pin 的 submodule（与 README fresh clone 一致）
 SUBMODULES    := nuwa-electron-shell nuwax
 
-# export 使 in-base.js → make electron-dev → Electron 全链条都能读到
+# webview 形态开关（loopback | dev），默认 loopback（生产同构）；
+# 前端热更调试用 DEV_WEBVIEW=dev。用法与差别见文件头注释。
+DEV_WEBVIEW ?= loopback
+
+ifeq ($(DEV_WEBVIEW),loopback)
+# loopback 形态不注入 dev origin：webview 回落 loopback 托管的 nuwax/dist。
+# unexport 同时防御用户 shell 里的同名残留。
+unexport NUWAX_WEBVIEW_ORIGIN
+else
 export NUWAX_WEBVIEW_ORIGIN := http://localhost:$(FRONTEND_PORT)
+endif
 
 .DEFAULT_GOAL := dev
 
@@ -69,21 +90,23 @@ dev:
 	else \
 		echo ">>> 跳过 submodule 同步（SKIP_SUBMODULES=1）"; \
 	fi
-	@if curl -fsS -o /dev/null "http://localhost:$(FRONTEND_PORT)/" 2>/dev/null; then \
-		echo "!!! :$(FRONTEND_PORT) 已有服务在监听（可能是上次残留的前端 dev server）。"; \
-		echo "    先停掉它再启动；或换端口：make dev FRONTEND_PORT=3001"; \
-		exit 1; \
-	fi
-	@if [ ! -d "$(NUWAX_DIR)/node_modules" ]; then \
-		echo "!!! $(NUWAX_DIR)/node_modules 不存在，前端依赖未安装。"; \
-		echo "    先执行：cd $(NUWAX_DIR) && pnpm install"; \
-		exit 1; \
+	@if [ "$(DEV_WEBVIEW)" != "loopback" ]; then \
+		if curl -fsS -o /dev/null "http://localhost:$(FRONTEND_PORT)/" 2>/dev/null; then \
+			echo "!!! :$(FRONTEND_PORT) 已有服务在监听（可能是上次残留的前端 dev server）。"; \
+			echo "    先停掉它再启动；或换端口：make dev FRONTEND_PORT=3001"; \
+			exit 1; \
+		fi; \
+		if [ ! -d "$(NUWAX_DIR)/node_modules" ]; then \
+			echo "!!! $(NUWAX_DIR)/node_modules 不存在，前端依赖未安装。"; \
+			echo "    先执行：cd $(NUWAX_DIR) && pnpm install"; \
+			exit 1; \
+		fi; \
 	fi
 	@mkdir -p $(LOG_DIR)
 	@rm -f $(LOG_DIR)/*.log
-	@echo ">>> [1/3] 启动 nuwax 前端 dev server :$(FRONTEND_PORT)（日志 $(FRONTEND_LOG)）"
 	@# set -m：后台任务各自独立进程组，便于 Ctrl-C 时按组 TERM→KILL 整树清理
 	@set -m; \
+	if [ "$(DEV_WEBVIEW)" = "loopback" ]; then unset NUWAX_WEBVIEW_ORIGIN 2>/dev/null || true; fi; \
 	FE_PID=""; TAIL_PID=""; EL_PID=""; CLEANED=0; \
 	kill_pg_wait() { \
 		p=$$1; [ -z "$$p" ] && return 0; \
@@ -104,29 +127,40 @@ dev:
 		echo ">>> 已停止"; \
 	}; \
 	trap 'cleanup' EXIT INT TERM HUP; \
-	( cd $(NUWAX_DIR) && exec pnpm dev --port $(FRONTEND_PORT) ) > $(FRONTEND_LOG) 2>&1 & \
-	FE_PID=$$!; \
+	if [ "$(DEV_WEBVIEW)" = "loopback" ]; then \
+		echo ">>> [1/3] DEV_WEBVIEW=loopback：跳过 :$(FRONTEND_PORT) 前端 dev server（webview=loopback dist；前端热更请用 make dev DEV_WEBVIEW=dev）"; \
+	else \
+		echo ">>> [1/3] 启动 nuwax 前端 dev server :$(FRONTEND_PORT)（日志 $(FRONTEND_LOG)）"; \
+		( cd $(NUWAX_DIR) && exec pnpm dev --port $(FRONTEND_PORT) ) > $(FRONTEND_LOG) 2>&1 & \
+		FE_PID=$$!; \
+	fi; \
 	echo ">>> [2/3] 镜像主进程日志 $(NUWAX_LATEST) → $(ELECTRON_LOG)（tail -n 0 只记本轮）"; \
 	tail -n 0 -F "$(NUWAX_LATEST)" >> $(ELECTRON_LOG) 2>/dev/null & \
 	TAIL_PID=$$!; \
-	echo ">>> 等待前端就绪（最长 180s）..."; \
-	ready=0; \
-	for _ in $$(seq 1 180); do \
-		if curl -fsS -o /dev/null "http://localhost:$(FRONTEND_PORT)/" 2>/dev/null; then ready=1; break; fi; \
-		if ! kill -0 $$FE_PID 2>/dev/null; then \
-			echo "!!! 前端 dev server 启动失败，日志尾部："; \
+	if [ "$(DEV_WEBVIEW)" != "loopback" ]; then \
+		echo ">>> 等待前端就绪（最长 180s）..."; \
+		ready=0; \
+		for _ in $$(seq 1 180); do \
+			if curl -fsS -o /dev/null "http://localhost:$(FRONTEND_PORT)/" 2>/dev/null; then ready=1; break; fi; \
+			if ! kill -0 $$FE_PID 2>/dev/null; then \
+				echo "!!! 前端 dev server 启动失败，日志尾部："; \
+				tail -n 30 $(FRONTEND_LOG); \
+				exit 1; \
+			fi; \
+			sleep 1; \
+		done; \
+		if [ "$$ready" != "1" ]; then \
+			echo "!!! 等待前端超时（180s），日志尾部："; \
 			tail -n 30 $(FRONTEND_LOG); \
 			exit 1; \
 		fi; \
-		sleep 1; \
-	done; \
-	if [ "$$ready" != "1" ]; then \
-		echo "!!! 等待前端超时（180s），日志尾部："; \
-		tail -n 30 $(FRONTEND_LOG); \
-		exit 1; \
+		echo ">>> 前端已就绪 http://localhost:$(FRONTEND_PORT)"; \
 	fi; \
-	echo ">>> 前端已就绪 http://localhost:$(FRONTEND_PORT)"; \
-	echo ">>> [3/3] 启动 Electron 壳（NUWAX_WEBVIEW_ORIGIN=$(NUWAX_WEBVIEW_ORIGIN)）"; \
+	if [ "$(DEV_WEBVIEW)" = "loopback" ]; then \
+		echo ">>> [3/3] 启动 Electron 壳（DEV_WEBVIEW=loopback → webview 走 loopback 托管 nuwax/dist）"; \
+	else \
+		echo ">>> [3/3] 启动 Electron 壳（NUWAX_WEBVIEW_ORIGIN=$(NUWAX_WEBVIEW_ORIGIN)）"; \
+	fi; \
 	node scripts/in-base.js -- make electron-dev & \
 	EL_PID=$$!; \
 	wait $$EL_PID || true
