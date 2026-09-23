@@ -68,3 +68,11 @@ WS1–3 可并行，共享接口先对齐。网关和 direct ticket 治理必须
 - 待提测环境验证：真实后端 Bearer-only 与 ticket 轮换契约、真实支付回跳、macOS/Windows 安装包登录与 V1–V10 手动矩阵。自动化与临时 profile 夹具不代表这些结果。
 - 质量自查补修：网关原先只用 capability 决定 opaque CORS 回包，却仍为外站直接访问网关的请求代补 Bearer。现改为 capability 同时约束网关 HTTP/WS 的存储凭据代注；Electron 的 WS `ws:` 目标按 `http:` 网关 origin 等价匹配。商业轨复跑 **1614 通过 / 18 跳过**；真实 Electron 夹具增加外站 HTTP/WS，**27 请求 PASS**。
 - 本地 `npm run base:bundle` 已完成依赖准备与 Electron 源码构建，但 electron-builder 在完整打包时报 `.../crates/agent-electron-client not a file`；以 `--dir` 重跑可生成应用目录，但仍是基座默认的 `NuwaClaw.app` 身份。两者都不算商业 Nuwax 安装包验收；须用 CI 同款产品标识、前端 dist 注入和签名流程复验。
+
+### 2026-09-23：本机开发版界面复核（`feat-2026.9.30`）
+
+- 前端登录改动合入 `feat-2026.9.30`，源码提交 `c32881b24`；83 项定向测试通过，`pnpm run build:prod` 通过，`e5461eb0c` 提交的 `dist/version.json` 标明源码戳 `c32881b24`。外层 `release/v1.0.x` 的 gitlink 与 `.gitmodules` 指向该分支及提交。
+- 本机 Electron 40.8.2 开发版使用 `NUWAX_LOOPBACK_DIST=1` 启动；日志确认回环网关 `127.0.0.1:46800` 加载壳根 `nuwax/dist`，业务服务进入 ready。网关 `/version.json` 返回 `c32881b24`，`/home` 返回 200。
+- 已登录账户的客户端窗口实际显示 `/home`；点击“消息”后，`/instant-message/` 微应用在回环 origin 下加载会话列表；点击“资料库”后，`/repo/` 微应用在同一 origin 下加载目录和文档列表；返回主页仍保持登录态。未执行退出登录或真实支付交易。
+- 同一工作树复跑 `npm run test:commercial`：129 文件通过 / 1 跳过，1614 通过 / 18 跳过；Electron 临时 profile 的登录态 HTTP/WS 夹具 27 请求 PASS。完整重新登录、真实后端 ticket 轮换、支付回跳及商业安装包仍需独立验收。
+- 本机已有一个先前启动的 renderer Vite 进程占用 61173，新 dev 命令的 Vite 子进程报端口占用；本轮 Electron 主进程与网关为新启动，renderer 页面由同一源码目录的既有 Vite 进程提供。因此不能将本轮记录视为全新 renderer 进程的独立冷启动验收。
