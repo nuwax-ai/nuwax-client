@@ -81,7 +81,7 @@ vi.mock("./processHandlers", () => ({
   restartAllServicesNow: vi.fn(async () => ({ success: true, results: {} })),
 }));
 
-import { app } from "electron";
+import { app, ipcMain } from "electron";
 import { registerNuwaxBridgeHandlers } from "./nuwaxBridgeHandlers";
 
 /** fake webContents：记录 on 订阅，可按事件名触发 */
@@ -124,10 +124,30 @@ beforeEach(() => {
   allWebContents = [];
   windows = [];
   vi.mocked(app.on).mockClear();
+  vi.mocked(ipcMain.on).mockClear();
   registerNuwaxBridgeHandlers({ getMainWindow: () => ({ webContents: { send: vi.fn() } }) as never } as never);
 });
 
 describe("顶栏菜单收起信号（bug 2427）", () => {
+  it("guest pointerdown → 广播收起；非 webview 或已销毁 sender 不广播", () => {
+    const onPointerDown = vi.mocked(ipcMain.on).mock.calls.find(
+      ([channel]) => channel === "nuwax:guest-pointer-down",
+    )?.[1] as ((event: { sender: ReturnType<typeof fakeWC> }) => void) | undefined;
+    expect(onPointerDown).toBeTypeOf("function");
+    const win = fakeWin();
+    windows = [win];
+
+    onPointerDown?.({ sender: fakeWC("webview") });
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      "nuwax:dismiss-topbar-menus",
+    );
+
+    win.webContents.send.mockClear();
+    onPointerDown?.({ sender: fakeWC("window") });
+    onPointerDown?.({ sender: fakeWC("webview", true) });
+    expect(win.webContents.send).not.toHaveBeenCalled();
+  });
+
   it("注册期对既有 webview guest 挂 focus 收起广播", () => {
     const guest = fakeWC("webview");
     allWebContents = [guest];

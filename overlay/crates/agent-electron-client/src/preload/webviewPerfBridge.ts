@@ -1,6 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
+// guest 与宿主是独立文档：点击 webview 不会触发宿主 antd 菜单的外部点击监听。
+// 捕获阶段通知主进程收起顶栏菜单，即使 guest 原本已有焦点也能生效。
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "pointerdown",
+    () => ipcRenderer.send("nuwax:guest-pointer-down"),
+    true,
+  );
+}
+
 type PerfPayload = Record<string, unknown>;
 
 const CHAT_ROUTE_RE = /^\/home\/chat\/\d+\/\d+$/;
