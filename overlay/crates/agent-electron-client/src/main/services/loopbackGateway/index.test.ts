@@ -30,7 +30,10 @@ vi.mock("electron", () => ({
     getPath: () => "/tmp",
   },
   session: {
-    defaultSession: { webRequest: { onBeforeRequest: vi.fn() } },
+    defaultSession: {
+      webRequest: { onBeforeRequest: vi.fn() },
+      cookies: { get: vi.fn(async () => []), set: vi.fn(async () => {}), remove: vi.fn(async () => {}), on: vi.fn() },
+    },
   },
   webContents: { fromId: vi.fn(() => null) },
   BrowserWindow: {

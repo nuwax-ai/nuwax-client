@@ -9,8 +9,7 @@
  *
  * 运行时真值写 settings 键 `nuwax.loopback` = { enabled, origin }：
  * renderer（NuwaxHostWebview）免新 IPC 面直接读，enabled 时 webview 从网关
- * origin 加载 nuwax。Bearer 注入源 = serverHost origin 名下的存量 token
- * （nuwax.accessToken.<origin>，与 nuwaxBridgeHandlers 同键空间）。
+ * origin 加载 nuwax。业务请求经主进程授权后从当前业务域镜像注入 ticket。
  *
  * dist 目录来源（dev）：优先 NUWAX_FRONTEND_DIST env（in-base.js 注入 =
  * 壳根 nuwax/ 子模块 dist）；回落基座内嵌旧布局（基座独立副本联调）。
@@ -24,7 +23,7 @@ import * as path from "path";
 import { randomBytes } from "node:crypto";
 import { readSetting, writeSetting } from "../../db";
 import { DEFAULT_SERVER_HOST } from "@shared/constants";
-import { NUWAX_TOKEN_KEY_PREFIX } from "../../ipc/nuwaxBridgeHandlers";
+import { currentTicket, mirrorGatewaySetCookies, ticketEpoch, setLoopbackTicketOrigin, advanceTicketEpoch } from "../commercialTicketSession";
 import { getConfiguredPorts } from "../startupPorts";
 import {
   startLoopbackGateway,
@@ -117,7 +116,7 @@ function resolveTargetOrigin(): string {
   return resolveBackendOrigin();
 }
 
-/** 后端 origin（dist 模式的 /api 反代目标与 Bearer 源）：一律真实后端
+/** 后端 origin（dist 模式的 /api 反代目标与 cookie 会话源）：一律真实后端
  *  （serverHost / DEFAULT_SERVER_HOST，NUWAX_LOOPBACK_TARGET 可覆盖）——
  *  dev 缺省的 localhost:3000 是 nuwax dev server，不是 API 后端。 */
 function resolveBackendOrigin(): string {
@@ -157,30 +156,6 @@ function isDistModeEnabled(): boolean {
   if (process.env.NUWAX_LOOPBACK_DIST === "1") return true;
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   return step1?.nuwaxLoadMode === "gateway" && distDirAvailable();
-}
-
-/** 网关 Bearer 代注源：跨候选键取 token（backend origin 键优先，网关 origin 键
- *  兜底）——与 nuwaxBridgeHandlers 的 nuwaxTokenScopes 同一候选空间；persistToken
- *  双写后两键恒新，兜底覆盖「直连时代存量 + 网关形态新登录」的过渡期。 */
-function serverHostTokenProvider(backendOrigin: string): () => string | null {
-  return () => {
-    try {
-      const candidates = [new URL(backendOrigin).origin];
-      const loopback = readSetting(LOOPBACK_RUNTIME_KEY) as {
-        enabled?: boolean;
-        origin?: string | null;
-      } | null;
-      if (loopback?.enabled && loopback.origin)
-        candidates.push(loopback.origin);
-      for (const scope of [...new Set(candidates)]) {
-        const value = readSetting(`${NUWAX_TOKEN_KEY_PREFIX}${scope}`);
-        if (typeof value === "string" && value) return value;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
 }
 
 /** 本地目标判定：目标是本地 dev server 时无需网关（本地源不存在云端域绑定问题，
@@ -309,9 +284,21 @@ export async function ensureLoopbackGateway(): Promise<
           ...resolveExtraBackendPrefixes(),
         ]),
       ],
-      getAccessToken: serverHostTokenProvider(backendOrigin),
+      getTicket: currentTicket,
+      ticketEpoch,
+      onSetCookie: (headers, epoch, login) => {
+        // A successful login invalidates renewals from requests belonging to
+        // the previous account, even if those responses arrive afterward.
+        // A response from a login superseded by logout or another login must
+        // never advance the epoch and restore its cookie.
+        if (epoch !== ticketEpoch()) return;
+        if (login && headers.some((header) => /^\s*ticket=/i.test(header))) advanceTicketEpoch();
+        void mirrorGatewaySetCookies(headers, backendOrigin, ticketEpoch()).catch((error) =>
+          log.error("[LoopbackGateway] ticket mirror failed", error));
+      },
       trustedRequestSecret: requestSecret,
     });
+    await setLoopbackTicketOrigin(running.origin);
     setGatewayRequestContext({ origin: running.origin, requestSecret });
     if (distMode) {
       startAbsoluteUrlNormalization(running.origin, backendOrigin);
@@ -409,6 +396,7 @@ function stopAbsoluteUrlNormalization(): void {
 
 export async function stopLoopbackGateway(): Promise<void> {
   setGatewayRequestContext(null);
+  await setLoopbackTicketOrigin(null);
   if (!running) return;
   const handle = running;
   running = undefined;

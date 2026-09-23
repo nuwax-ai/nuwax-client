@@ -3,12 +3,14 @@ import * as os from "os";
 import log from "electron-log";
 import { readSetting, writeSetting, getDb } from "../db";
 import {
-  DEFAULT_SERVER_HOST,
   LOCAL_HOST_URL,
   DEFAULT_GUI_MCP_PORT,
   TEST_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
+import { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
+import { nativeTicketHeaders } from "../services/nativeTicketCapability";
+export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
 import { stopDaemon } from "../services/cua/computerUse";
 import {
@@ -17,22 +19,11 @@ import {
   type ServiceResult,
 } from "../services/auth/lifecycle";
 
-export function currentBusinessOrigin(): string {
-  const raw =
-    (readSetting("step1_config") as { serverHost?: string } | null)
-      ?.serverHost || DEFAULT_SERVER_HOST;
-  return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
-}
 /** 注册上报的电脑名（三平台）：os.hostname 通吃 macOS/Windows/Linux，
  * 仅剥 macOS Bonjour 的 .local 尾巴（DONG-MBP128.local → DONG-MBP128）。 */
 export function getComputerName(): string {
   return os.hostname().replace(/\.local$/i, "").trim();
 }
-export function currentAccessToken(): string | null {
-  const value = readSetting(`nuwax.accessToken.${currentBusinessOrigin()}`);
-  return typeof value === "string" && value ? value : null;
-}
-
 /**
  * nuwax web 登录会话 ticket cookie（服务端 Set-Cookie，内存态 session cookie）。
  *
@@ -41,29 +32,9 @@ export function currentAccessToken(): string | null {
  * （产品拍板）：登录会话的 ticket cookie 同步进壳、reg 请求附 Cookie——后端
  * 认会话即可放行首次设备注册。
  *
- * 存储与 token 同族：按 origin 分键（直连形态在业务域，dev 与生产同源解析；
- * gateway 形态经 Set-Cookie 规整后落在回环网关域），捕获侧（桥）双写全部候选键、
- * 消费侧（reg）按候选序回读。写/清在 nuwaxBridgeHandlers 的登录生命周期。
+ * 主进程按当前业务 origin 保存 cookie 镜像，直连与回环模式共用该事实源；
+ * 回环 cookie 由网关响应和镜像模块同步，注册请求从业务域镜像取值。
  */
-export const NUWAX_TICKET_KEY_PREFIX = "nuwax.ticket.";
-
-/** 按候选域序回读已同步的 ticket（reg 消费）。 */
-export function readTicketCookieValue(scopes: string[]): string | null {
-  for (const scope of scopes) {
-    const value = readSetting(`${NUWAX_TICKET_KEY_PREFIX}${scope}`);
-    if (typeof value === "string" && value) return value;
-  }
-  return null;
-}
-
-/** 双写/清全部候选键（捕获与登出清理共用；null=writeSetting 的删除语义）。 */
-export function writeTicketForScopes(
-  scopes: string[],
-  value: string | null,
-): void {
-  for (const scope of scopes)
-    writeSetting(`${NUWAX_TICKET_KEY_PREFIX}${scope}`, value);
-}
 /**
  * 清注册派生凭据（configKey/savedKey/lanproxy 指针）。
  *
@@ -95,7 +66,10 @@ export function clearRegistration(
     )
     .run();
   const lp = (readSetting("lanproxy_config") || {}) as Record<string, unknown>;
-  const { serverIp, serverPort, clientKey, ...preferences } = lp;
+  const preferences = { ...lp };
+  delete preferences.serverIp;
+  delete preferences.serverPort;
+  delete preferences.clientKey;
   writeSetting("lanproxy_config", preferences);
   if (opts?.preserveSavedKey) {
     if (legacySavedKey != null) writeSetting("auth.saved_key", legacySavedKey);
@@ -111,6 +85,14 @@ export function initializeCommercialAuth(
   changed: (phase: string, error?: string) => void,
   expired?: () => void,
 ) {
+  // Cookie auth is intentionally incompatible with legacy token-only sessions.
+  // Delete both the token and the old token-paired ticket mirror once, then
+  // require a fresh backend Set-Cookie login. Registration keys are preserved.
+  if (!readSetting("nuwax.cookieAuthMigrated")) {
+    getDb()?.prepare("DELETE FROM settings WHERE key LIKE 'nuwax.accessToken.%' OR key LIKE 'nuwax.ticket.%' OR key LIKE 'nuwax.ticketMeta.%'").run();
+    writeSetting("nuwax.cookieAuthMustRelogin", true);
+    writeSetting("nuwax.cookieAuthMigrated", true);
+  }
   // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
   // 默认域=测试环境（2026-09-17 测试期拍板，商业专属逻辑故落 overlay 种子而非
   // 基座常量）；恢复正式环境改回 DEFAULT_SERVER_HOST 即可。dev 全新库同样
@@ -181,30 +163,31 @@ export function initializeCommercialAuth(
     writeSetting("nuwax.registrationDeviceId", deviceId);
   }
   const flow = new AuthLifecycle({
-    authenticated: () => !!currentAccessToken(),
+    authenticated: () => !!readTicketCookieValue([currentBusinessOrigin()]),
     register: async (signal: AbortSignal) => {
       const origin = currentBusinessOrigin();
-      const token = currentAccessToken();
+      let ticket = readTicketCookieValue([origin]);
+      if (!ticket) throw new Error("Login required");
+      const ticketSession = await import("../services/commercialTicketSession");
+      const requestEpoch = ticketSession.ticketEpoch();
       const ports = getConfiguredPorts();
-      let username = "";
-      try {
-        username =
-          JSON.parse(Buffer.from(token!.split(".")[1], "base64url").toString())
-            .sub || "";
-      } catch {
-        /* opaque tokens are valid too */
-      }
+      const sessionResponse = await net.fetch(`${origin}/api/user/getLoginInfo`, {
+        method: "GET", redirect: "error", credentials: "omit",
+        headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      });
+      await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
+      if (sessionResponse.status === 401) expired?.();
+      ticket = readTicketCookieValue([origin]);
+      if (!ticket) throw new Error("Session expired during registration");
+      if (!sessionResponse.ok) throw new Error(`Session HTTP ${sessionResponse.status}`);
+      const sessionPayload = await sessionResponse.json();
+      const username = sessionPayload?.data?.userName;
+      if (sessionPayload?.code !== "0000" || typeof username !== "string" || !username)
+        throw new Error("Cookie session is not authenticated");
+      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
+        throw new Error("Session changed during registration");
       const savedKey = readSetting("auth.saved_key");
-      // 登录会话 ticket（桥侧捕获持久化）：后端认会话即可放行无 savedKey 的
-      // 首次设备注册（有 savedKey 时也附带，双凭据更稳）。候选=业务域+回环网关域。
-      const loopbackOrigin = (
-        readSetting("nuwax.loopback") as { origin?: string } | null
-      )?.origin;
-      const mirroredTicket = readTicketCookieValue(
-        [origin, loopbackOrigin].filter(Boolean) as string[],
-      );
-      const ticket = mirroredTicket === token ? mirroredTicket : null;
-      if (ticket) log.info("[CommercialAuth] reg with session ticket cookie");
       const response = await net.fetch(`${origin}/api/sandbox/config/reg`, {
         method: "POST",
         redirect: "error",
@@ -214,9 +197,8 @@ export function initializeCommercialAuth(
         credentials: "omit",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
           "x-client-type": "nuwax",
-          ...(ticket ? { Cookie: `ticket=${ticket}` } : {}),
+          ...nativeTicketHeaders(ticket),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         body: JSON.stringify({
@@ -238,14 +220,17 @@ export function initializeCommercialAuth(
           },
         }),
       });
-      signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || token !== currentAccessToken())
-        throw new Error("Session changed during registration");
+      await ticketSession.mirrorNativeResponseTicket(response, origin, requestEpoch);
       if (response.status === 401) expired?.();
+      ticket = readTicketCookieValue([origin]);
+      if (!ticket) throw new Error("Session expired during registration");
+      signal.throwIfAborted();
+      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
+        throw new Error("Session changed during registration");
       if (!response.ok) throw new Error(`Registration HTTP ${response.status}`);
       const payload = await response.json();
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || token !== currentAccessToken())
+      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
         throw new Error("Session changed during registration");
       if (["4010", "4011"].includes(payload.code)) expired?.();
       if (payload.code !== "0000")

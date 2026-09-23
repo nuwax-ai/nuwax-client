@@ -17,14 +17,19 @@ vi.mock("../db", () => ({
   readSetting: (k: string) => mocks.settings.get(k) ?? null,
   writeSetting: (k: string, v: unknown) => mocks.settings.set(k, v),
   getDb: () => ({
-    prepare: () => ({
+    prepare: (query: string) => ({
       run: () => {
         for (const k of mocks.settings.keys())
-          if (k.startsWith("auth.saved_keys.") || k.startsWith("auth.tokens."))
+          if (k.startsWith("auth.saved_keys.") || k.startsWith("auth.tokens.") ||
+            (query.includes("nuwax.accessToken") && (k.startsWith("nuwax.accessToken.") || k.startsWith("nuwax.ticket."))))
             mocks.settings.delete(k);
       },
     }),
   }),
+}));
+vi.mock("../services/commercialTicketSession", () => ({
+  ticketEpoch: () => 0,
+  mirrorNativeResponseTicket: vi.fn(async () => undefined),
 }));
 vi.mock("../services/startupPorts", () => ({
   getConfiguredPorts: () => ({ agent: 61006, fileServer: 61005, ttyd: 61009 }),
@@ -44,7 +49,6 @@ import {
   getComputerName,
   initializeCommercialAuth,
   readTicketCookieValue,
-  writeTicketForScopes,
 } from "./commercialAuth";
 const origin = "https://enterprise.example.com";
 function fixture() {
@@ -54,6 +58,7 @@ function fixture() {
 }
 beforeEach(() => {
   mocks.settings.clear();
+  mocks.settings.set("nuwax.cookieAuthMigrated", true);
   mocks.fetch.mockReset();
   mocks.isPackaged = true;
   delete process.env.NUWAX_SERVER_HOST;
@@ -68,9 +73,11 @@ describe("commercial registration protocol", () => {
     });
     expect(mocks.settings.get("auth.saved_key")).toBeNull();
   });
-  it("device identity upgrade clears registration but preserves web login + savedKey", () => {
+  it("legacy client upgrade clears token and ticket while preserving savedKey", () => {
+    mocks.settings.delete("nuwax.cookieAuthMigrated");
     mocks.settings.set("step1_config", { serverHost: origin });
     mocks.settings.set(`nuwax.accessToken.${origin}`, "web-token");
+    mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
     mocks.settings.set("auth.saved_key", "old-device-key");
     mocks.settings.set("auth.config_key", "old-config");
     mocks.settings.set("auth.saved_keys.old.example_user", "domain-key");
@@ -80,7 +87,9 @@ describe("commercial registration protocol", () => {
       ssl: true,
     });
     fixture();
-    expect(mocks.settings.get(`nuwax.accessToken.${origin}`)).toBe("web-token");
+    expect(mocks.settings.has(`nuwax.accessToken.${origin}`)).toBe(false);
+    expect(mocks.settings.has(`nuwax.ticket.${origin}`)).toBe(false);
+    expect(mocks.settings.get("nuwax.cookieAuthMustRelogin")).toBe(true);
     // savedKey 是唯一能重新注册的凭据（后端必查；实测接受旧 savedKey+新
     // deviceId）——盐变更迁移时保留，否则存量用户升级后永远无法注册。
     expect(mocks.settings.get("auth.saved_key")).toBe("old-device-key");
@@ -91,92 +100,61 @@ describe("commercial registration protocol", () => {
       "commercial-device",
     );
   });
-  it("registers with token and product device, commits before starting", async () => {
+  it("registers with cookie and product device after verifying the user", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "opaque-token");
-    mocks.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          code: "0000",
-          data: {
-            configKey: "new",
-            serverHost: "tunnel.example.com",
-            serverPort: 443,
-          },
-        }),
-      ),
-    );
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    mocks.fetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: {
+        configKey: "new", serverHost: "tunnel.example.com", serverPort: 443,
+      } })));
     const { flow, start } = fixture();
     expect((await flow.start()).success).toBe(true);
-    const [url, options] = mocks.fetch.mock.calls[0];
+    expect(mocks.fetch.mock.calls[0][0]).toBe(origin + "/api/user/getLoginInfo");
+    const [url, options] = mocks.fetch.mock.calls[1];
     expect(url).toBe(origin + "/api/sandbox/config/reg");
-    expect(options.headers.Authorization).toBe("Bearer opaque-token");
+    expect(options.credentials).toBe("omit");
+    expect(options.headers.Cookie).toBe("ticket=ticket-1");
+    expect(options.headers.Authorization).toBeUndefined();
     const body = JSON.parse(options.body);
+    expect(body.username).toBe("alice");
     expect(body.deviceId).toBe("commercial-device");
-    // 电脑名三平台取 os.hostname，剥 macOS .local 尾巴后上报
     expect(body.computerName).toBe("fengfei-mac-xx");
     expect(getComputerName()).toBe("fengfei-mac-xx");
     expect(body.savedKey).toBeUndefined();
     expect(body.sandboxConfigValue.fileServerPort).toBe(61005);
-    // 无已同步 ticket：不附 Cookie（存量行为回归）
-    expect(options.headers.Cookie).toBeUndefined();
     expect(mocks.settings.get("auth.config_key")).toBe("new");
     expect(start).toHaveBeenCalledTimes(1);
   });
-  it("reg 附登录会话 ticket cookie（无 savedKey 的首次设备注册凭据）", async () => {
+  it("does not register a token-only upgraded session", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "opaque-token");
-    // 网关域键命中优先级其次；此处业务域键命中即可验证候选序回读
-    mocks.settings.set(`nuwax.ticket.${origin}`, "opaque-token");
-    mocks.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          code: "0000",
-          data: { configKey: "k1", serverHost: "t.example.com", serverPort: 443 },
-        }),
-      ),
-    );
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "legacy-token");
     const { flow } = fixture();
-    expect((await flow.start()).success).toBe(true);
-    const [, options] = mocks.fetch.mock.calls[0];
-    expect(options.headers.Cookie).toBe("ticket=opaque-token");
-    expect(options.credentials).toBe("omit");
-    expect(options.headers.Authorization).toBe("Bearer opaque-token");
+    expect((await flow.start()).success).toBe(false);
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
-  it("readTicketCookieValue 按候选序回读，writeTicketForScopes 双写/清", () => {
-    writeTicketForScopes(
-      ["https://a.example.com", "http://127.0.0.1:46800"],
-      "t-1",
-    );
+  it("readTicketCookieValue 跳过过期与不兼容的候选 cookie", () => {
+    mocks.settings.set("nuwax.ticket.https://a.example.com", "t-1");
+    mocks.settings.set("nuwax.ticket.http://127.0.0.1:46800", "fallback");
     expect(readTicketCookieValue(["https://a.example.com"])).toBe("t-1");
-    // 首候选缺失时回退次候选（直连↔gateway 双形态）
+    mocks.settings.set("nuwax.ticketMeta.https://a.example.com", { expirationDate: 1 });
     expect(
-      readTicketCookieValue(["https://missing.example.com", "http://127.0.0.1:46800"]),
-    ).toBe("t-1");
+      readTicketCookieValue(["https://a.example.com", "http://127.0.0.1:46800"]),
+    ).toBe("fallback");
     expect(readTicketCookieValue(["https://missing.example.com"])).toBeNull();
-    writeTicketForScopes(
-      ["https://a.example.com", "http://127.0.0.1:46800"],
-      null,
-    );
+    mocks.settings.set("nuwax.ticketSecureHttp.https://a.example.com", true);
     expect(readTicketCookieValue(["https://a.example.com"])).toBeNull();
   });
   it("late HTTP result after logout never commits or starts", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "token");
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
     let resolve!: (r: Response) => void;
     mocks.fetch.mockReturnValue(new Promise((r) => (resolve = r)));
     const { flow, start } = fixture();
     const pending = flow.start();
     await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
     const stopped = flow.stop();
-    resolve(
-      new Response(
-        JSON.stringify({
-          code: "0000",
-          data: { configKey: "late", serverHost: "old", serverPort: 443 },
-        }),
-      ),
-    );
+    resolve(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })));
     await pending;
     await stopped;
     expect(mocks.settings.get("auth.config_key")).toBeNull();
@@ -184,12 +162,9 @@ describe("commercial registration protocol", () => {
   });
   it("does not start on incomplete or rejected registration", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "token");
-    mocks.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ code: "4000", message: "Password required" }),
-      ),
-    );
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "4000", message: "Password required" })));
     const { flow, start } = fixture();
     expect((await flow.start()).success).toBe(false);
     expect(start).not.toHaveBeenCalled();
@@ -338,49 +313,18 @@ describe("stopExtras — 退出期附加清理接线", () => {
 });
 
 
-describe("registration credential consistency", () => {
-  it("ignores late JSON expiry after a newer token has replaced the request snapshot", async () => {
+describe("registration cookie consistency", () => {
+  it("rejects a late response when the cookie rotates before user verification completes", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "old-token");
-    let resolve!: (value: unknown) => void;
-    const json = vi.fn(() => new Promise((r) => { resolve = r; }));
-    mocks.fetch.mockResolvedValue({ ok: true, status: 200, json });
-    const expired = vi.fn();
-    const flow = initializeCommercialAuth(vi.fn(async () => ({ success: true })), vi.fn(async () => ({ success: true })), vi.fn(), expired);
-    const pending = flow.start();
-    await vi.waitFor(() => expect(json).toHaveBeenCalled());
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "new-token");
-    resolve({ code: "4010" });
-    expect((await pending).success).toBe(false);
-    expect(expired).not.toHaveBeenCalled();
-  });
-
-  it("never attaches a stale ticket alongside the current Bearer", async () => {
-    mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "current-token");
-    mocks.settings.set(`nuwax.ticket.${origin}`, "stale-ticket");
-    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ code: "0000", data: { configKey: "new", serverHost: "tunnel.example", serverPort: 443 } })));
-    const { flow } = fixture();
-    await flow.start();
-    expect(mocks.fetch.mock.calls[0][1].headers).toMatchObject({ Authorization: "Bearer current-token" });
-    expect(mocks.fetch.mock.calls[0][1].headers.Cookie).toBeUndefined();
-    expect(mocks.fetch.mock.calls[0][1].credentials).toBe("omit");
-  });
-
-  it("ignores a late expired response after cancellation", async () => {
-    mocks.settings.set("step1_config", { serverHost: origin });
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "old-token");
+    mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
     let resolve!: (value: Response) => void;
     mocks.fetch.mockReturnValue(new Promise((r) => { resolve = r; }));
-    const expired = vi.fn();
-    const flow = initializeCommercialAuth(vi.fn(async () => ({ success: true })), vi.fn(async () => ({ success: true })), vi.fn(), expired);
+    const { flow, start } = fixture();
     const pending = flow.start();
     await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
-    const stopped = flow.stop();
-    mocks.settings.set(`nuwax.accessToken.${origin}`, "new-token");
-    resolve(new Response("expired", { status: 401 }));
-    await pending;
-    await stopped;
-    expect(expired).not.toHaveBeenCalled();
+    mocks.settings.set(`nuwax.ticket.${origin}`, "new-ticket");
+    resolve(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })));
+    expect((await pending).success).toBe(false);
+    expect(start).not.toHaveBeenCalled();
   });
 });

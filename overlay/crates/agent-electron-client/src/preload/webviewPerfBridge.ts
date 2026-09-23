@@ -105,6 +105,13 @@ const auth = {
   } | null> {
     return ipcRenderer.invoke("auth:getContext");
   },
+  /** Chromium has already stored Set-Cookie; ask main to validate and mirror it. */
+  syncSession(): Promise<boolean> {
+    return ipcRenderer.invoke("auth:syncSession");
+  },
+  beginLogin(): Promise<boolean> {
+    return ipcRenderer.invoke("auth:beginLogin");
+  },
   /** 读取本 origin 持久化的 nuwax ACCESS_TOKEN（重启免登）。 */
   getToken(): Promise<string | null> {
     return ipcRenderer.invoke("auth:getToken");

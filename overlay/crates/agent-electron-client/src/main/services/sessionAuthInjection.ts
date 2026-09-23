@@ -9,11 +9,11 @@ import {
   stripTicketCookie,
 } from "./auth/requestPolicy";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
+import { consumeNativeTicketCapability } from "./nativeTicketCapability";
 
 export interface SessionAuthContext {
   businessOrigin: string;
   trustedOrigins: string[];
-  accessToken: string | null;
   gateway?: { origin: string; requestSecret: string } | null;
 }
 
@@ -59,6 +59,7 @@ export function applySessionAuthHeaders(
   context: SessionAuthContext
 ): Record<string, string> {
   const headers = { ...details.requestHeaders };
+  const nativeTicketRequest = consumeNativeTicketCapability(headers);
   // The gateway capability is main-process-only. Renderer-provided copies must
   // never survive, including redirects to an unrelated destination.
   for (const key of Object.keys(headers)) {
@@ -79,9 +80,23 @@ export function applySessionAuthHeaders(
     details.webContentsId > 0 &&
     trustedRequest(details, context)
   ) {
-    // The gateway only lends the stored Bearer to requests from a trusted
+    // The gateway only lends the stored ticket to requests from a trusted
     // Electron frame. The capability also identifies opaque redirects for CORS.
     headers[GATEWAY_REQUEST_HEADER] = context.gateway.requestSecret;
+  }
+  // Cookies are host scoped, not port scoped. A ticket for our gateway would
+  // otherwise be sent to every unrelated service listening on 127.0.0.1.
+  const isLocal = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(target.hostname);
+  const trustedGateway = !!context.gateway &&
+    matchesBusinessOrigin(details.url, context.gateway.origin) &&
+    !!headers[GATEWAY_REQUEST_HEADER];
+  if (isLocal && !trustedGateway) {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() !== "cookie") continue;
+      const value = stripTicketCookie(headers[key]);
+      if (value) headers[key] = value;
+      else delete headers[key];
+    }
   }
   // Preserve main.ts's product header, while correctly recognizing bracketed IPv6.
   if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(target.hostname)) {
@@ -89,27 +104,25 @@ export function applySessionAuthHeaders(
       if (key.toLowerCase() === "x-client-type") delete headers[key];
     headers["x-client-type"] = APP_NAME_IDENTIFIER;
   }
-  if (!matchesBusinessOrigin(details.url, context.businessOrigin))
+  if (!matchesBusinessOrigin(details.url, context.businessOrigin)) {
+    if (nativeTicketRequest) {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() !== "cookie") continue;
+        const cookie = stripTicketCookie(headers[key]);
+        if (cookie) headers[key] = cookie;
+        else delete headers[key];
+      }
+    }
     return headers;
-  // net.fetch (registration) shares defaultSession but has no renderer owner. Its
-  // explicit paired credentials belong to commercialAuth, never to this policy.
-  if (!details.webContentsId || details.webContentsId < 0) return headers;
+  }
   for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() !== "cookie") continue;
+    if (key.toLowerCase() === "authorization") delete headers[key];
+    if (key.toLowerCase() !== "cookie" ||
+        (!isPublicAuthPath(target.pathname) &&
+          (nativeTicketRequest || trustedRequest(details, context)))) continue;
     const cookie = stripTicketCookie(headers[key]);
     if (cookie) headers[key] = cookie;
     else delete headers[key];
-  }
-  const hasAuthorization = Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization"
-  );
-  if (
-    !hasAuthorization &&
-    !isPublicAuthPath(target.pathname) &&
-    context.accessToken &&
-    trustedRequest(details, context)
-  ) {
-    headers.Authorization = `Bearer ${context.accessToken}`;
   }
   return headers;
 }

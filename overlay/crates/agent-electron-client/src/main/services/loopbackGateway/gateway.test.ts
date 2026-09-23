@@ -121,7 +121,7 @@ describe("loopback gateway（透明反代）", () => {
     const secret = "test-instance-capability";
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       trustedRequestSecret: secret,
       fixedPort: 0,
     });
@@ -172,7 +172,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       fixedPort: 0,
     });
     gateways.push(gw);
@@ -198,7 +198,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => "CURRENT",
+      getTicket: () => "CURRENT",
       fixedPort: 0,
     });
     gateways.push(gw);
@@ -210,7 +210,7 @@ describe("loopback gateway（透明反代）", () => {
         },
       });
       expect(up.captured.cookie).toBe("a=1; b=2");
-      expect(up.captured.auth).toBe(authorization ?? "Bearer CURRENT");
+      expect(up.captured.auth).toBeUndefined();
     }
     for (const route of [
       "/api/user/passwordLogin",
@@ -239,7 +239,7 @@ describe("loopback gateway（透明反代）", () => {
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
       distDir,
-      getAccessToken: () => "CURRENT",
+      getTicket: () => "CURRENT",
       fixedPort: 0,
     });
     gateways.push(gw);
@@ -275,7 +275,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       fixedPort: 0,
     });
     gateways.push(gw);
@@ -303,7 +303,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => "CURRENT",
+      getTicket: () => "CURRENT",
       fixedPort: 0,
     });
     gateways.push(gw);
@@ -317,7 +317,7 @@ describe("loopback gateway（透明反代）", () => {
     expect(up.captured).toMatchObject({
       path: "/socket?q=%2F",
       cookie: "a=1",
-      auth: "Bearer EXPLICIT",
+      auth: undefined,
     });
     const blocked = await wsHandshake(
       gw.port,
@@ -342,7 +342,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -365,7 +365,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -376,35 +376,35 @@ describe("loopback gateway（透明反代）", () => {
     expect(up.captured.referer).toBe(`${up.origin}/y`);
   });
 
-  it("Bearer 代注：缺失补、已有不覆盖", async () => {
+  it("untrusted callers cannot borrow ticket or inject Bearer", async () => {
     const up = await startUpstream((req, res, cap) => {
       cap.auth = req.headers.authorization;
       res.writeHead(204).end();
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => "TOKEN-A",
+      getTicket: () => "TOKEN-A",
       clientTypeHeader: "",
     });
     gateways.push(gw);
     await fetch(`${gw.origin}/a`);
-    expect(up.captured.auth).toBe("Bearer TOKEN-A");
+    expect(up.captured.auth).toBeUndefined();
     await fetch(`${gw.origin}/b`, {
       headers: { authorization: "Bearer SELF" },
     });
-    expect(up.captured.auth).toBe("Bearer SELF");
+    expect(up.captured.auth).toBeUndefined();
   });
 
-  it("does not lend the stored Bearer to an untrusted gateway caller", async () => {
+  it("lends the stored ticket only to a trusted gateway caller", async () => {
     const seen: Array<string | undefined> = [];
     const up = await startUpstream((req, res) => {
-      seen.push(req.headers.authorization);
+      seen.push(req.headers.cookie);
       res.writeHead(204).end();
     });
     const secret = "trusted-frame-secret";
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => "USER-TOKEN",
+      getTicket: () => "USER-TOKEN",
       trustedRequestSecret: secret,
       fixedPort: 0,
     });
@@ -418,7 +418,7 @@ describe("loopback gateway（透明反代）", () => {
     await fetch(`${gw.origin}/api/me`, {
       headers: { origin: gw.origin, [GATEWAY_REQUEST_HEADER]: secret },
     });
-    expect(seen).toEqual([undefined, undefined, "Bearer USER-TOKEN"]);
+    expect(seen).toEqual([undefined, undefined, "ticket=USER-TOKEN"]);
   });
 
   it("x-client-type：缺省随产品标识 APP_NAME_IDENTIFIER，空串关闭", async () => {
@@ -443,7 +443,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw1 = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
     });
     gateways.push(gw1);
     await fetchNoKeepAlive(`${gw1.origin}/a`);
@@ -453,7 +453,7 @@ describe("loopback gateway（透明反代）", () => {
 
     const gw2 = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw2);
@@ -473,7 +473,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -481,6 +481,28 @@ describe("loopback gateway（透明反代）", () => {
     const cookies = resp.headers.getSetCookie();
     expect(cookies[0]).toBe("a=1; SameSite=Lax; Path=/");
     expect(cookies[1]).toBe("b=2; HttpOnly; Path=/");
+  });
+
+  it("mirrors raw multi Set-Cookie only for trusted frames and forces loopback ticket HttpOnly", async () => {
+    const raw = [
+      "ticket=rotated; Domain=.example.com; Secure; SameSite=None; Path=/",
+      "other=1; Path=/",
+    ];
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "set-cookie": raw });
+      res.end("ok");
+    });
+    const onSetCookie = vi.fn();
+    const gw = await startLoopbackGateway({ targetOrigin: up.origin,
+      getTicket: () => "old", trustedRequestSecret: "secret", ticketEpoch: () => 4,
+      onSetCookie, fixedPort: 0 });
+    gateways.push(gw);
+    const trusted = await fetch(`${gw.origin}/api/me`, { headers: { [GATEWAY_REQUEST_HEADER]: "secret" } });
+    expect(trusted.headers.getSetCookie()).toContain("ticket=rotated; SameSite=Lax; Path=/; HttpOnly");
+    expect(onSetCookie).toHaveBeenCalledWith(raw, 4, false);
+    const untrusted = await fetch(`${gw.origin}/api/me`);
+    expect(untrusted.headers.getSetCookie()).toEqual(["other=1; Path=/"]);
+    expect(onSetCookie).toHaveBeenCalledTimes(1);
   });
 
   it("SSE 流式直通（分块到即转发，不缓冲）", async () => {
@@ -494,7 +516,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -522,7 +544,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -541,7 +563,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -556,14 +578,14 @@ describe("loopback gateway（透明反代）", () => {
     const gw1 = await startLoopbackGateway({
       targetOrigin: up.origin,
       fixedPort: 0, // 让系统随机分配一个作为「被占用」的固定口
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw1);
     const gw2 = await startLoopbackGateway({
       targetOrigin: up.origin,
       fixedPort: gw1.port,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw2);
@@ -588,7 +610,7 @@ describe("loopback gateway（透明反代）", () => {
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
       distDir,
-      getAccessToken: () => "TK",
+      getTicket: () => "TK",
       clientTypeHeader: "nuwaclaw",
     });
     gateways.push(gw);
@@ -608,7 +630,7 @@ describe("loopback gateway（透明反代）", () => {
     const api = await fetch(`${gw.origin}/api/user/info`);
     expect(await api.json()).toEqual({ code: 0 });
     expect(up.captured.apiPath).toBe("/api/user/info");
-    expect(up.captured.auth).toBe("Bearer TK");
+    expect(up.captured.auth).toBeUndefined();
     await fetch(`${gw.origin}/computer/terminal/x/ws`);
     expect(up.captured.apiPath).toBe("/computer/terminal/x/ws");
     // 路径穿越拒绝
@@ -631,7 +653,7 @@ describe("loopback gateway（透明反代）", () => {
       distDir,
       // 传入即整体替换：编排层（index.ts）负责把缺省三前缀一并带上
       backendPrefixes: ["/api", "/computer", "/devcomputer", "/repo"],
-      getAccessToken: () => "TK",
+      getTicket: () => "TK",
       clientTypeHeader: "",
     });
     gateways.push(gw);
@@ -642,7 +664,7 @@ describe("loopback gateway（透明反代）", () => {
     const asset = await fetch(`${gw.origin}/repo/static/app.js`);
     expect(await asset.text()).toContain("REPO-WEB");
     expect(up.captured.microPath).toBe("/repo/static/app.js");
-    expect(up.captured.auth).toBe("Bearer TK");
+    expect(up.captured.auth).toBeUndefined();
     // 前缀按段匹配：/repository 不命中 /repo，回落本地 dist SPA
     const notPrefix = await fetch(`${gw.origin}/repository/x`);
     expect(await notPrefix.text()).toContain("HOME");
@@ -673,7 +695,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     const gw = await startLoopbackGateway({
       targetOrigin: up.origin,
-      getAccessToken: () => null,
+      getTicket: () => null,
       clientTypeHeader: "",
     });
     gateways.push(gw);

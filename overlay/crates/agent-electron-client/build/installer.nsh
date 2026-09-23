@@ -37,12 +37,13 @@
       ${endIf}
 
       DetailPrint `Closing running "${PRODUCT_NAME}" and its child processes...`
+      System::Call 'kernel32::GetCurrentProcessId() i.R2'
 
       ; Give app-side cleanup (which can take up to 10 seconds) time to finish.
       !ifdef INSTALL_MODE_PER_ALL_USERS
-        nsExec::Exec `taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID"`
+        nsExec::Exec `taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $R2"`
       !else
-        nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID" /fi "USERNAME eq %USERNAME%"`
+        nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $R2" /fi "USERNAME eq %USERNAME%"`
       !endif
       Pop $R0
 
@@ -65,9 +66,9 @@
       StrCpy $R1 0
       customForceAppTreeLoop:
         !ifdef INSTALL_MODE_PER_ALL_USERS
-          nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID"`
+          nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $R2"`
         !else
-          nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID" /fi "USERNAME eq %USERNAME%"`
+          nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $R2" /fi "USERNAME eq %USERNAME%"`
         !endif
         Pop $R0
         Sleep 1000
@@ -83,6 +84,25 @@
         Quit
 
       customAppClosed:
+    ${endIf}
+
+    ; An older uninstaller is embedded in the existing installation. Its
+    ; atomic rename fails on Win32-incompatible names (for example `._.`),
+    ; then electron-builder misleadingly reports that the app cannot close.
+    ; Normalize those entries before uninstallOldVersion runs.
+    ${if} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
+      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+      nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -InstallDir "$INSTDIR"`
+      Pop $R0
+      Pop $R1
+      ${if} $R0 != 0
+        MessageBox MB_OK|MB_ICONSTOP "旧版本安装目录检查失败，请保留现有文件并联系支持。错误码：$R0"
+        SetErrorLevel 2
+        Quit
+      ${endIf}
+      ${if} $R1 != ""
+        DetailPrint "$R1"
+      ${endIf}
     ${endIf}
   ${endIf}
 !macroend
