@@ -16,8 +16,8 @@
  * - 图片「另存为…」复用 nuwaxBridgeHandlers 的 native:saveImage 核心（相对地址
  *   归一 / Bearer 代注 / 重定向逐跳重试 / 系统保存对话框），由注册方注入。
  * - 「复制图片」用 wc.copyImageAt(x, y)：坐标即 context-menu params 的页面坐标。
- * - popup 定位取 screen.getCursorScreenPoint()：右键弹出即鼠标位置，规避 guest
- *   页面坐标 → 屏幕坐标的换算（webview guest 的 params.x/y 不是屏幕坐标）。
+ * - popup 不显式传 x/y：交给 Electron 按当前鼠标位置弹出，避免把 guest 页面坐标
+ *   或全屏坐标误当作菜单的定位坐标。
  * - 后退/前进用 navigationHistory entries 真值判断 + goToIndex 执行——gateway
  *   origin 下 canGoBack()/goBack() 恒 false（bug 2432 实证），同 readNavState。
  *
@@ -31,7 +31,6 @@ import {
   clipboard,
   dialog,
   Menu,
-  screen,
   webContents,
 } from "electron";
 import type {
@@ -337,11 +336,8 @@ function showContextMenu(
   const template = buildContextMenuTemplate(params, readNavTruth(wc), makeActions(wc, deps));
   if (!template.length) return;
   const menu = Menu.buildFromTemplate(template);
-  const point = screen.getCursorScreenPoint();
   menu.popup({
     window: resolveOwnerWindow(wc) ?? undefined,
-    x: point.x,
-    y: point.y,
   });
 }
 

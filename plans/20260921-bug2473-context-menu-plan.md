@@ -13,7 +13,7 @@
 
 | # | 文件 | 改动 |
 | --- | --- | --- |
-| 1 | overlay `main/services/contextMenu.ts`（新） | 右键菜单服务：`app.on("web-contents-created")` + 存量补挂（同 nav 真值/顶栏收起钩子先例）；只挂 `getType()` 为 `webview`/`window`（跳过 devtools/background-page）；模板按上下文构建——图片（另存为/复制图片/复制图片地址，linkURL/选区补项）/ 链接（复制链接）/ 可编辑（撤销重做｜剪切复制粘贴删除｜全选，editFlags 守卫）/ 纯选区（复制/全选）/ 兜底（后退/前进/重新加载）；编辑命令显式作用于发射事件的 wc（裸 role 在 webview 场景不可用，同 windowHandlers 结论）；`copyImageAt(params.x, params.y)` 复制图片；popup 定位用 `screen.getCursorScreenPoint()`（guest 的 params.x/y 非屏幕坐标）；后退/前进用 navigationHistory entries 真值 + `goToIndex`（gateway origin 下 `canGoBack()` 恒 false，bug 2432 防线）；另存失败（非取消）`dialog.showErrorBox` |
+| 1 | overlay `main/services/contextMenu.ts`（新） | 右键菜单服务：`app.on("web-contents-created")` + 存量补挂（同 nav 真值/顶栏收起钩子先例）；只挂 `getType()` 为 `webview`/`window`（跳过 devtools/background-page）；模板按上下文构建——图片（另存为/复制图片/复制图片地址，linkURL/选区补项）/ 链接（复制链接）/ 可编辑（撤销重做｜剪切复制粘贴删除｜全选，editFlags 守卫）/ 纯选区（复制/全选）/ 兜底（后退/前进/重新加载）；编辑命令显式作用于发射事件的 wc（裸 role 在 webview 场景不可用，同 windowHandlers 结论）；`copyImageAt(params.x, params.y)` 复制图片；popup 不传 `x/y`，由 Electron 按当前鼠标位置定位（避免混用 guest 页面坐标与菜单定位坐标）；后退/前进用 navigationHistory entries 真值 + `goToIndex`（gateway origin 下 `canGoBack()` 恒 false，bug 2432 防线）；另存失败（非取消）`dialog.showErrorBox` |
 | 2 | overlay `main/ipc/nuwaxBridgeHandlers.ts` | `native:saveImage` handler 体抽为本地 `performSaveImage(opts, frameUrl)`（IPC 与菜单共用；token/generation/transfers 闭包原样），IPC 通道保留（老 dist 兼容）；boot 区接线 `installContextMenuService({ saveImage: performSaveImage })` |
 | 3 | overlay 4 语言文件 | `Claw.ContextMenu.*` 14 键（undo/redo/cut/copy/paste/delete/selectAll/saveImageAs/copyImage/copyImageUrl/copyLink/back/forward/reload）；基座 locales 不动（overlay-only 功能，键齐由 `i18nLocales.test.ts` 四文件一致性测试兜底） |
 | 4 | nuwax 前端 `src/components/MarkdownRenderer/OptimizedImage.tsx` | 删 `handleContextMenu`/`onContextMenu` 及 `message`/`hostBridge` import——商业宿主聊天图片右键改由主进程菜单接管（另存为/复制图片/复制图片地址），社区宿主/浏览器行为不变（原拦截本就仅商业宿主生效）；dist 重建随源码提交 |
@@ -27,7 +27,7 @@
 
 ## 测试
 
-- 新增 `contextMenu.test.ts` 15 用例：安装钩子（存量过滤 devtools/background、web-contents-created 新建、销毁跳过）；弹出与动作（选区复制作用于发射 wc、popup 用光标点、图片三动作+linkURL/选区补项、另存失败错误框/取消静默、导航真值 goToIndex）；模板构建器纯函数（可编辑满旗/零旗无悬空分隔线、链接、图片、编辑动作路由全集、兜底真值开关、canCopy=false 守卫）。
+- 新增 `contextMenu.test.ts` 15 用例：安装钩子（存量过滤 devtools/background、web-contents-created 新建、销毁跳过）；弹出与动作（选区复制作用于发射 wc、popup 使用 Electron 当前鼠标位置默认值、图片三动作+linkURL/选区补项、另存失败错误框/取消静默、导航真值 goToIndex）；模板构建器纯函数（可编辑满旗/零旗无悬空分隔线、链接、图片、编辑动作路由全集、兜底真值开关、canCopy=false 守卫）。
 - 门禁：`npm run test:commercial` 1513 passed（基线 1498 + 15）；`tsc --noEmit -p tsconfig.json` 205 条=基线，本批文件零错误（修型前 207=205+2 已修）。
 
 ## 验证与遗留

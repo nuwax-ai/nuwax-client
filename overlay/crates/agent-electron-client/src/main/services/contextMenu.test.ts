@@ -23,7 +23,6 @@ const {
   showErrorBoxSpy,
   fromWebContentsSpy,
   saveImageCoreMock,
-  cursorPoint,
 } = vi.hoisted(() => ({
   popupSpy: vi.fn(),
   buildFromTemplateMock: vi.fn(
@@ -40,7 +39,6 @@ const {
       path?: string;
     }> => ({ success: true }),
   ),
-  cursorPoint: { x: 321, y: 123 },
 }));
 
 vi.mock("electron", () => ({
@@ -53,7 +51,6 @@ vi.mock("electron", () => ({
   clipboard: { writeText: writeTextSpy },
   dialog: { showErrorBox: showErrorBoxSpy },
   Menu: { buildFromTemplate: buildFromTemplateMock },
-  screen: { getCursorScreenPoint: vi.fn(() => cursorPoint) },
   webContents: { getAllWebContents: () => allWebContents },
 }));
 
@@ -244,11 +241,9 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
       "Claw.ContextMenu.copy",
       "Claw.ContextMenu.selectAll",
     ]);
-    // popup 定位用全局光标点（webview guest 的 params.x/y 不是屏幕坐标）
+    // 不传 x/y，由 Electron 使用当前鼠标位置，避免窗口坐标与屏幕坐标混用。
     expect(popupSpy).toHaveBeenCalledWith({
       window: undefined,
-      x: cursorPoint.x,
-      y: cursorPoint.y,
     });
 
     clickItem(lastTemplate(), "Claw.ContextMenu.copy");
