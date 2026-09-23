@@ -52,6 +52,7 @@ export interface ContextMenuImageSaveResult {
 
 /** 由注册方注入的依赖：图片另存核心（含鉴权与保存对话框）。 */
 export interface ContextMenuDeps {
+  normalizeCopiedUrl?: (url: string) => string;
   saveImage: (
     opts: { url: string; filename?: string },
     frameUrl: string | undefined,
@@ -312,7 +313,7 @@ function makeActions(
         .catch((error) => log.error("[ContextMenu] saveImage failed:", error));
     },
     copyImageAt: (x, y) => wc.copyImageAt(x, y),
-    writeClipboard: (text) => clipboard.writeText(text),
+    writeClipboard: (text) => clipboard.writeText(deps.normalizeCopiedUrl?.(text) ?? text),
     edit: (action) => EDIT_COMMANDS[action](wc),
     goBack: () => goNavIndex(wc, "back"),
     goForward: () => goNavIndex(wc, "forward"),

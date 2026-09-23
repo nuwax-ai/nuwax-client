@@ -1,14 +1,12 @@
 /**
  * nuwax webview ↔ nuwaclaw 壳的桥后端。
  *
- * - auth:getToken / auth:persistToken / auth:clear
- *     nuwax 用 localStorage.ACCESS_TOKEN（Authorization header）鉴权，非 cookie。
- *     这里把 token 按 webview 来源 origin 持久化到 settings 表（键 nuwax.accessToken.<origin>），
- *     与 sandbox ticket 隔离，实现「重启免登 / 登录持久化 / 登出联动」。
- *     主进程 AuthLifecycle 串行注册与业务服务启停；失效/换域取消在途操作。
+ * - auth:beginLogin / auth:syncSession / auth:clear
+ *     webview 只通知会话节点；ticket 由 Electron cookie jar 与网关响应处理，
+ *     不经过页面脚本或 token 桥。主进程 AuthLifecycle 串行注册与服务启停。
  * - native:saveImage
  *     右键另存图片：系统保存对话框 + Node fetch。相对地址按调用方 frame origin 归一为
- *     绝对地址；鉴权依赖回环网关对目标域代注 Bearer（见 loopbackGateway/gateway.ts）。
+ *     绝对地址；当前业务域逐跳附 cookie，跨域重定向不携带。
  * - native:openWindow
  *     新开独立窗口打开 nuwax 站内页面（智能体详情/工作流/网页应用开发/我的电脑等
  *     全屏页）。带系统标题栏（零遮挡）+ 同一 webview 桥 preload；URL 追加 _shell=1
@@ -27,7 +25,7 @@
  * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app, session, screen } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, session, screen, net } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import * as fs from "fs";
 import * as path from "path";
@@ -44,19 +42,19 @@ import * as contextMenuService from "../services/contextMenu";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
+import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
+  advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
 
 import {
   initializeCommercialAuth,
-  currentAccessToken,
   currentBusinessOrigin,
   clearRegistration,
-  writeTicketForScopes,
 } from "./commercialAuth";
 
-/** nuwax ACCESS_TOKEN 存储键前缀，按来源 origin 分域，避免污染 sandbox ticket。 */
+/** 仅用于清除升级前残留的 token 键；不再读取或写入新 token。 */
 export const NUWAX_TOKEN_KEY_PREFIX = "nuwax.accessToken.";
 
-/** 从 IPC 调用方（webview guest）解析来源 origin 作为 token 存储作用域。 */
+/** 从 IPC 调用方（webview guest）解析来源 origin。 */
 function resolveSenderOrigin(event: IpcMainInvokeEvent | undefined): string {
   const url = event?.senderFrame?.url || event?.sender?.getURL?.() || "";
   try {
@@ -68,18 +66,6 @@ function resolveSenderOrigin(event: IpcMainInvokeEvent | undefined): string {
 
 function tokenKey(scope: string): string {
   return `${NUWAX_TOKEN_KEY_PREFIX}${scope}`;
-}
-
-/** 解析 JWT sub（与 reg 的 username 同源）；opaque/坏 token 返回 null。 */
-function jwtSub(token: string): string | null {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(token.split(".")[1], "base64url").toString(),
-    );
-    return typeof payload?.sub === "string" && payload.sub ? payload.sub : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -106,21 +92,11 @@ function clearShellAuthState(): void {
   }
 }
 
-/**
- * 跨 origin 候选作用域统一视图（sender → serverHost origin → 网关 origin）。
- * token 按 origin 分键存储，direct↔gateway 两形态共存期内多个键都可能被读到——
- * getToken 回退 / persistToken 双写 / clear 全清 / 网关 Bearer 代注源必须共享
- * 同一份候选集合，否则出现「写 A 读 B」的键空间分裂（网关形态新登录代注不注入、
- * 登出被回退链复活过期 token）。
- */
-export function nuwaxTokenScopes(senderScope: string): string[] {
+/** 登出与换域时清理当前业务域、网关及调用方会话。 */
+function nuwaxSessionScopes(senderScope: string): string[] {
   const scopes = [senderScope];
   try {
-    // 业务域候选无条件在列：与 reg 门禁/网关代注的读键（currentAccessToken →
-    // currentBusinessOrigin，serverHost 缺省回落 DEFAULT_SERVER_HOST）同源。
-    // 若仅在 step1_config.serverHost 存在时补列，全新安装（该字段仅打包版首启
-    // 种值，dev 为空）时 persistToken 单写 sender 键 → 门禁读业务域键为空 →
-    // 本地抛 "Login required"，reg 请求发不出（2026-09-14 dev 全新安装实证）。
+    // 业务域始终参与清理；缺省域也可能已有旧客户端凭据。
     scopes.push(currentBusinessOrigin());
     const loopback = readSetting("nuwax.loopback") as {
       enabled?: boolean;
@@ -198,10 +174,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       // token 失效 ≠ 注销设备：保留注册凭据（reg 仍要 savedKey），用户重新
       // 登录即可闭环；换账号登录由 persistToken 的账号切换检测清除。
       authGeneration++;
+      invalidateTicketSession(nuwaxSessionScopes(currentBusinessOrigin()));
       cancelTransfers();
-      const scopes = nuwaxTokenScopes(currentBusinessOrigin());
+      const scopes = nuwaxSessionScopes(currentBusinessOrigin());
       for (const scope of scopes) writeSetting(tokenKey(scope), null);
-      writeTicketForScopes(scopes, null);
       clearShellAuthState();
       clearRegistration({ preserveSavedKey: true });
       ctx
@@ -221,7 +197,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("services:syncConfig", () => lifecycle.sync());
   ipcMain.handle("services:authState", () => ({
     ...serviceState,
-    loggedIn: !!currentAccessToken(),
+    loggedIn: !!currentTicket(),
   }));
   // 每个文档第一次 getToken 绑定会话代次。换域/登出后旧文档不能写回。
   let authGeneration = 0;
@@ -403,46 +379,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     else win.maximize();
   });
 
-  // ---- auth：登录会话 ticket cookie 同步（reg 凭据）----
-  // 后端 reg 认「动态认证码或密码」不认 Bearer，全新设备无 savedKey 即 4000；
-  // 解法=登录会话的 ticket cookie 同步进壳（存储/消费语义见 commercialAuth.ts
-  // NUWAX_TICKET_KEY_PREFIX 注释）。主进程 session.cookies 可读 HttpOnly 与
-  // 内存态 cookie；webview 无 partition=默认 session。ticket 是内存态 session
-  // cookie：app 重启后 session 里即消失，持久化的 settings 值才是跨重启来源
-  // （故 getToken 的后台刷新只写不清，防误清持久值）。
-  const captureTicketCookie = async (
-    senderScope: string,
-    opts?: { clearIfAbsent?: boolean },
-  ): Promise<boolean> => {
-    const generation = authGeneration;
-    const businessOrigin = currentBusinessOrigin();
-    const token = currentAccessToken();
-    const scopes = nuwaxTokenScopes(senderScope);
-    const isCurrent = () => !switching && generation === authGeneration &&
-      businessOrigin === currentBusinessOrigin() && token === currentAccessToken();
-    if (!token || !isCurrent()) return false;
-    const ses = ctx.getMainWindow()?.webContents.session ?? session.defaultSession;
-    let found: string | null = null;
-    for (const url of scopes.filter((candidate) => /^https?:\/\//.test(candidate))) {
-      try {
-        const cookies = await ses.cookies.get({ url, name: "ticket" });
-        if (!isCurrent()) return false;
-        // Login's ticket and ACCESS_TOKEN identify the same JWT. An unrelated jar
-        // must never pair an old cookie with a new token (backend prefers cookie).
-        found = cookies.find((cookie) => cookie.value === token)?.value ?? null;
-        if (found) break;
-      } catch {
-        if (!isCurrent()) return false;
-      }
-    }
-    if (!isCurrent()) return false;
-    if (found || opts?.clearIfAbsent) writeTicketForScopes(scopes, found);
-    log.info("[NuwaxBridge] ticket cookie sync", {
-      captured: !!found, clearIfAbsent: !!opts?.clearIfAbsent, scopes,
-    });
-    return true;
-  };
-
   const trustedOrigins = (): string[] => {
     const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
     const override = readSetting("nuwax.webviewOverride") as { origin?: string } | null;
@@ -452,146 +388,106 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
 
   ipcMain.handle("auth:getContext", (event) => {
     if (switching || !trustedOrigins().includes(resolveSenderOrigin(event))) return null;
+    documents.set(documentKey(event), authGeneration);
     const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
     const gatewayOrigin = loopback?.enabled && loopback.origin ? loopback.origin : null;
     return { businessOrigin: currentBusinessOrigin(), gatewayOrigin, loadMode: gatewayOrigin ? "gateway" : "direct" };
   });
 
-  // ---- auth：ACCESS_TOKEN 双向同步 ----
-  ipcMain.handle("auth:getToken", (event) => {
-    if (switching) return null;
-    const scopeOrigin = resolveSenderOrigin(event);
-    const loopbackOrigin = (
-      readSetting("nuwax.loopback") as { origin?: string } | null
-    )?.origin;
-    const overrideOrigin = (
-      readSetting("nuwax.webviewOverride") as { origin?: string } | null
-    )?.origin;
-    // webview origin 与 URL 解析（NuwaxHostWebview）恒同源：直连形态 dev 与
-    // 生产一样加载业务域（serverHost/DEFAULT，dev 已不例外指 localhost:3000），
-    // gateway 形态加载回环域，调试覆盖加载 override 域——三类准入项已全覆盖，
-    // 不需要单独的 dev 例外项（曾有的 NUWAX_DEV_HOST 准入项随该解析分支移除；
-    // 名单与解析不同源会出现登录态静默进不了壳，见 09-12/09-14 复发记录）。
-    const allowedOrigins = [
-      currentBusinessOrigin(),
-      loopbackOrigin,
-      overrideOrigin,
-    ].filter(Boolean);
-    // 拒绝必须留痕：此前静默 return null 零日志，断链排障只能靠 DB+代码对拍
-    // （09-12/09-14 两次复发教训）。
-    if (!allowedOrigins.includes(scopeOrigin)) {
-      log.warn("[NuwaxBridge] auth:getToken origin 不在准入名单，拒绝", {
-        scope: scopeOrigin,
-        allowed: allowedOrigins,
-      });
-      return null;
-    }
-    const key = documentKey(event);
-    // 代次不匹配不再拒绝且必须重注册：换域（configureServerHost）/登出
-    // （auth:clear）都会 authGeneration++ 并硬重载 webview，重载后的新文档
-    // 复用同一 documentKey（webContents+frame 标识），按过期文档静默拒绝的
-    // 话它永远无法重新入册，persistToken 的 isCurrentDocument 守卫随之零日志
-    // 静默失败——登录态进不了壳（2026-09-18 提测：改域后登录/退出重登均
-    // 不同步）。getToken 本就是每文档一次的注册门：重注册即恢复写权；旧文档
-    // 在途请求由上方 switching 守卫与 isCurrentDocument 迟到写保护兜底。
-    if (documents.has(key) && documents.get(key) !== authGeneration) {
-      log.info("[NuwaxBridge] auth:getToken 文档代次已过期，重注册", {
-        key,
-        authGeneration,
-      });
-    }
-    documents.set(key, authGeneration);
+  // Token-only bridge calls are retired. Old clients must use the cookie-capable build.
+  ipcMain.handle("auth:getToken", () => null);
+  ipcMain.handle("auth:persistToken", () => false);
+  let restoration: Promise<void> | null = null;
+  const ensureTicketRestored = (): Promise<void> => {
+    const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
+    restoration ??= restoreTicketSession(loopback?.enabled ? loopback.origin ?? null : null);
+    return restoration;
+  };
+  ipcMain.handle("auth:beginLogin", async (event) => {
     const scope = resolveSenderOrigin(event);
-    // 跨 origin 回退链（nuwaxTokenScopes 统一视图）：direct↔gateway 切换后
-    // sender 键为空时依次回退其余候选键，命中即回写——双向切换免重登。
-    const scopes = nuwaxTokenScopes(scope);
-    let value = readSetting(tokenKey(scopes[0]));
-    if (typeof value !== "string" || !value) {
-      for (const candidate of scopes.slice(1)) {
-        const fallback = readSetting(tokenKey(candidate));
-        if (typeof fallback === "string" && fallback) {
-          value = fallback;
-          writeSetting(tokenKey(scope), fallback);
-          log.info("[NuwaxBridge] auth:getToken origin 迁移回退命中", {
-            from: candidate,
-            to: scope,
-          });
-          break;
-        }
-      }
-    }
-    const loggedIn = typeof value === "string" && !!value;
-    log.debug("[NuwaxBridge] auth:getToken", { scope, hasToken: loggedIn });
-
-    // 顶栏登录态同步（以 webview 为最优先）：nuwax 启动 getInitialState 无条件调 getToken，
-    // 是感知 webview 真实登录态最可靠的时机。
-    // - token 在（重启免登态）→ 推 loggedIn:true。
-    // - token 不在（webview 未登录）→ 推 loggedIn:false，纠正 nuwaclaw configKey 残留导致的
-    //   「伪已登录」，使原生顶栏始终跟随 webview 实际状态。
-    // （persistToken 只在 /Login 登录成功时触发，覆盖不了「启动即未登录」场景，故在此补全。）
-    ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn });
-    if (loggedIn) {
-      // Refresh must finish before registration consumes the mirror. On restart
-      // absent session cookies leave the persisted, token-matched mirror intact.
-      void captureTicketCookie(scope).then((current) => {
-        if (current) return lifecycle.start();
-      });
-      log.info(
-        "[NuwaxBridge] getToken → sync header loggedIn:true (relogin-free)",
-      );
-    } else {
-      log.info(
-        "[NuwaxBridge] getToken → sync header loggedIn:false (webview not logged in)",
-      );
-    }
-    return typeof value === "string" ? value : null;
+    if (switching || !trustedOrigins().includes(scope)) return false;
+    authGeneration++;
+    documents.set(documentKey(event), authGeneration);
+    cancelTransfers();
+    const scopes = nuwaxSessionScopes(scope);
+    invalidateTicketSession(scopes);
+    await ensureTicketRestored();
+    await clearTicketCookies(scopes);
+    await lifecycle.stop();
+    return isCurrentDocument(event);
   });
 
-  ipcMain.handle("auth:persistToken", async (event, token: unknown) => {
-    if (!isCurrentDocument(event)) return false;
-    const previous = currentAccessToken();
+  // A token is never passed over this bridge. Login and startup both validate
+  // the cookie already stored by Chromium, including direct-mode renewals.
+  ipcMain.handle("auth:syncSession", async (event) => {
     const scope = resolveSenderOrigin(event);
-    if (typeof token !== "string" || !token) return false;
-    // Revoke old registration work before the first await or credential write.
-    // Keep this document admitted for the new generation; concurrent logout/switch
-    // still invalidates the captured generation below.
-    const tokenChanged = previous !== token;
-    let stopping: ReturnType<typeof lifecycle.stop> | undefined;
-    if (tokenChanged) {
-      authGeneration++;
-      documents.set(documentKey(event), authGeneration);
-      cancelTransfers();
-      stopping = lifecycle.stop();
-      // savedKey 属于设备×账号：过期重登保留，换账号必须清除。即使此前已
-      // 登出（previous=null），仍以保留的 auth.username 识别账号切换。
-      const nextSub = jwtSub(token);
-      const lastAccount = readSetting("auth.username") || (previous ? jwtSub(previous) : null);
-      const accountSwitched = !!nextSub && !!lastAccount && nextSub !== lastAccount;
-      clearRegistration({ preserveSavedKey: !accountSwitched });
-      log.info("[NuwaxBridge] persistToken credential generation changed", { accountSwitched });
-    }
+    if (switching || !trustedOrigins().includes(scope)) return false;
+    const key = documentKey(event);
+    documents.set(key, authGeneration);
     const generation = authGeneration;
     const businessOrigin = currentBusinessOrigin();
-    const scopes = nuwaxTokenScopes(scope);
-    for (const s of scopes) writeSetting(tokenKey(s), token);
-    log.info("[NuwaxBridge] auth:persistToken saved", { scopes });
-    // Never leave an old mirror readable while the new cookie capture is pending.
-    if (tokenChanged) writeTicketForScopes(scopes, null);
-    const captured = await captureTicketCookie(scope, { clearIfAbsent: true });
-    if (!captured || generation !== authGeneration || switching ||
-        businessOrigin !== currentBusinessOrigin() || currentAccessToken() !== token) return false;
-    if (stopping) await stopping;
-    if (generation !== authGeneration || !isCurrentDocument(event) || currentAccessToken() !== token) return false;
+    await ensureTicketRestored();
+    if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin()) return false;
+    const gatewayOrigin = (readSetting("nuwax.loopback") as { origin?: string } | null)?.origin;
+    const source = scope === gatewayOrigin ? scope : businessOrigin;
+    let captured = false;
+    for (let attempt = 0; attempt < 12 && !captured; attempt++) {
+      captured = await syncTicketFromJar(source);
+      if (!captured && attempt < 11)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin()) return false;
+    }
+    if (!captured || generation !== authGeneration || !isCurrentDocument(event)) return false;
+    let ticket = currentTicket();
+    if (!ticket) return false;
+    const requestEpoch = ticketEpoch();
+    const expire = async () => {
+      if (generation !== authGeneration) return;
+      authGeneration++;
+      cancelTransfers();
+      const scopes = nuwaxSessionScopes(scope);
+      invalidateTicketSession(scopes);
+      clearShellAuthState();
+      clearRegistration({ preserveSavedKey: true });
+      ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: false });
+      await lifecycle.stop();
+      await clearSiteStorage(scopes);
+    };
+    // Query the authenticated account rather than trusting a login token or
+    // renderer-supplied identity. A different account invalidates device keys.
+    let username: string;
+    try {
+      const response = await net.fetch(`${businessOrigin}/api/user/getLoginInfo`, {
+        method: "GET", redirect: "error", credentials: "omit",
+        headers: { Cookie: `ticket=${ticket}`, "x-client-type": "nuwax" },
+      });
+      await mirrorNativeResponseTicket(response, businessOrigin, requestEpoch);
+      if (response.status === 401) { await expire(); return false; }
+      ticket = currentTicket();
+      if (!ticket) { await expire(); return false; }
+      const payload = await response.json();
+      if (!response.ok || payload?.code !== "0000" || !payload?.data?.userName) {
+        if (response.status === 401 || ["4010", "4011"].includes(payload?.code)) await expire();
+        return false;
+      }
+      username = payload.data.userName;
+    } catch (error) {
+      log.warn("[NuwaxBridge] cookie session validation failed", error);
+      return false;
+    }
+    if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin() ||
+        ticket !== currentTicket() || !isCurrentDocument(event)) return false;
+    const previousAccount = readSetting("auth.username");
+    if (previousAccount && previousAccount !== username) {
+      advanceTicketEpoch();
+      cancelTransfers();
+      await lifecycle.stop();
+      clearShellAuthState();
+      clearRegistration();
+      if (generation !== authGeneration || ticket !== currentTicket()) return false;
+    }
+    ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: true });
     void lifecycle.start();
-    log.info(
-      "[NuwaxBridge] login → renderer login-confirmed (reg+sync+restart)",
-    );
-
-    // 顶栏账号状态联动：登录成功 → 通知 renderer 顶栏切「已登录」态（跟随 nuwax token，
-    // 而非 nuwaclaw 原生 configKey）。Phase 3 configKey 退役前，顶栏以此事件为准。
-    ctx.getMainWindow()?.webContents.send("nuwax:authChanged", {
-      loggedIn: true,
-    });
     return true;
   });
 
@@ -603,9 +499,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const scope = resolveSenderOrigin(event);
     // 全清候选键：单清 sender 键时，getToken 回退链会从 serverHost/网关键把
     // 过期 token「复活」——登出/401 后陷入 复活→401→clear 死循环（键空间分裂修复）。
-    const scopes = nuwaxTokenScopes(scope);
+    const scopes = nuwaxSessionScopes(scope);
+    invalidateTicketSession(scopes);
     for (const s of scopes) writeSetting(tokenKey(s), null);
-    writeTicketForScopes(scopes, null);
     log.info("[NuwaxBridge] auth:clear", { scopes });
 
     // 登录态以 webview 为准：登出即清壳侧登录态。注册凭据族（savedKey/
@@ -666,17 +562,16 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     switching = true;
     authGeneration++;
     cancelTransfers();
-    const scopes = nuwaxTokenScopes(resolveSenderOrigin(event));
+    const scopes = nuwaxSessionScopes(resolveSenderOrigin(event));
+    invalidateTicketSession([...scopes, origin]);
     const stopping = lifecycle.stop();
     // 换域 = 账号体系变化：全清注册凭据（与 persistToken 的账号切换、auth:clear
     // 的登出保留相对——三者语义见 clearRegistration 注释）。
     clearShellAuthState();
     clearRegistration();
     for (const scope of scopes) writeSetting(tokenKey(scope), null);
-    writeTicketForScopes(scopes, null);
     // 新域历史凭据一并清理，回切也必须重新登录。
     writeSetting(tokenKey(origin), null);
-    writeTicketForScopes([origin], null);
     ctx
       .getMainWindow()
       ?.webContents.send("nuwax:authChanged", { loggedIn: false });
@@ -827,7 +722,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   initSessionAuthInjection(() => ({
     businessOrigin: currentBusinessOrigin(),
     trustedOrigins: trustedOrigins(),
-    accessToken: switching ? null : currentAccessToken(),
     gateway: switching ? null : getGatewayRequestContext(),
   }));
   powerPolicy.initPowerPolicy();
@@ -890,6 +784,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     frameUrl: string | undefined,
   ): Promise<contextMenuService.ContextMenuImageSaveResult> => {
     const generation = authGeneration;
+    const requestEpoch = ticketEpoch();
     const transferSignal = transfers.signal;
     try {
       const { url, filename } = opts || {};
@@ -909,6 +804,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (!/^https?:$/.test(target.protocol)) {
         return { success: false, error: "unsupported protocol" };
       }
+      const gateway = (readSetting("nuwax.loopback") as { origin?: string } | null)?.origin;
+      if (gateway && target.origin === gateway)
+        target = new URL(target.pathname + target.search, currentBusinessOrigin());
 
       // 默认文件名：URL 末段；非法文件名字符替换为下划线；无扩展名补 .png
       const derived =
@@ -946,9 +844,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       for (let redirects = 0; redirects <= 5; redirects++) {
         if (generation !== authGeneration || switching)
           throw new Error("Session changed");
-        const token =
+        const ticket =
           destination.origin === currentBusinessOrigin()
-            ? currentAccessToken()
+            ? currentTicket()
             : null;
         // Electron net.fetch rejects manual redirects before exposing the 302.
         // Node fetch preserves the response so every hop can recheck origin/auth.
@@ -956,8 +854,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           method: "GET",
           redirect: "manual",
           signal,
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: ticket ? { Cookie: `ticket=${ticket}` } : {},
         });
+        if (destination.origin === currentBusinessOrigin())
+          await mirrorNativeResponseTicket(resp, destination.origin, requestEpoch);
         if (![301, 302, 303, 307, 308].includes(resp.status)) break;
         const location = resp.headers.get("location");
         await resp.body?.cancel();
@@ -1086,5 +986,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // context-menu 不触发，天然无双重菜单。
   contextMenuService.installContextMenuService({
     saveImage: performSaveImage,
+    normalizeCopiedUrl: (input) => {
+      try {
+        const url = new URL(input);
+        const gateway = (readSetting("nuwax.loopback") as { origin?: string } | null)?.origin;
+        if (gateway && url.origin === gateway)
+          return new URL(url.pathname + url.search + url.hash, currentBusinessOrigin()).toString();
+      } catch { /* non-URL clipboard content */ }
+      return input;
+    },
   });
 }

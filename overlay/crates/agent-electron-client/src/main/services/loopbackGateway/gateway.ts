@@ -5,10 +5,8 @@
  * - webview 从 `http://127.0.0.1:<port>/` 加载，所有路径（静态 / /api / WS）
  *   透明反代到 step1_config.serverHost —— 页面 origin 恒为回环地址，
  *   登录态 / Cookie 不再绑定云端域，跨域类问题（文件预览、iframe 场景）从根上消失。
- * - 云端方向注入与 nuwaclaw 主进程 webRequest 同语义的两件事：
- *   x-client-type（FR-03：后端仅凭该头在登录响应返回 token）与缺失时的
- *   Bearer 代注（iframe 导航 / raw fetch 带不了 Authorization）。
- *   HTTP/WS 出口始终剥 ticket；公共登录接口不代注旧 Bearer。
+ * - 云端方向带 x-client-type（后端可能因此返回兼容旧客户端的 token）；
+ *   受信请求由主进程补 ticket cookie，页面提供的 ticket 不作为鉴权依据。
  *   网关发出的请求不经 Electron session，与 main.ts 的 onBeforeSendHeaders
  *   钩子（遇 localhost origin 本就跳过）天然不会重复注入。
  * - Set-Cookie 规整：剥 Domain/Secure、SameSite=None→Lax——origin 已是
@@ -17,8 +15,7 @@
  *   回写原始握手响应并双向 pipe，任一侧断开级联销毁对端（防半开连接）。
  *
  * 端口：默认固定 46800（与 nuwax-desktop 原型的 46801 错开，双客户端可共存）；
- * 被占用时回退随机端口并告警（origin 不稳的会话 token 仍按实际 origin 落键，
- * 仅丢失「跨会话续接」，属可接受降级）。
+ * 被占用时回退随机端口并告警，实际回环 origin 由主进程动态同步。
  */
 import http from "node:http";
 import https from "node:https";
@@ -58,9 +55,10 @@ export interface LoopbackGatewayOptions {
   backendPrefixes?: string[];
   /** 固定端口（origin 稳定的关键）；缺省 46800。占用时回退随机端口。 */
   fixedPort?: number;
-  /** 登录态出站注入源：页面带不了 Authorization 的请求（iframe 导航 / raw fetch）
-   *  由网关代补 Bearer。返回空值则不注入。 */
-  getAccessToken: () => string | null;
+  /** 主进程的 ticket 镜像；只向具备受信请求能力的业务请求注入。 */
+  getTicket: () => string | null;
+  ticketEpoch?: () => number;
+  onSetCookie?: (headers: string[], epoch: number, login: boolean) => void;
   /** Main-process-only capability for trusted cross-origin redirects (opaque Origin). */
   trustedRequestSecret?: string;
   /** 云端方向注入的客户端标识头值；空串显式关闭。缺省 "nuwaclaw"。 */
@@ -75,9 +73,11 @@ export interface LoopbackGatewayHandle {
   close(): Promise<void>;
 }
 
-/** 反代注入上下文：登录态 Bearer 与客户端标识头。 */
+/** 反代注入上下文：ticket 会话与客户端标识头。 */
 interface ProxyContext {
-  getAccessToken: () => string | null;
+  getTicket: () => string | null;
+  ticketEpoch?: () => number;
+  onSetCookie?: (headers: string[], epoch: number, login: boolean) => void;
   clientTypeHeader: string | null;
   gatewayOrigin?: string;
   trustedRequestSecret?: string;
@@ -122,10 +122,11 @@ function normalizeSetCookie(cookie: string): string {
       }
       return attr;
     });
+  if (pair.toLowerCase().startsWith("ticket=") && !kept.some((attr) => attr.toLowerCase() === "httponly")) kept.push("HttpOnly");
   return [pair, ...kept].join("; ");
 }
 
-/** 组装转发请求头：剥逐跳头、host/origin/referer 改写指向目标、按需注入 Bearer 与客户端标识。 */
+/** 组装转发请求头：剥逐跳头、改写目标 origin、按需注入 ticket 与客户端标识。 */
 function buildProxyHeaders(
   req: http.IncomingMessage,
   target: URL,
@@ -168,17 +169,12 @@ function buildProxyHeaders(
   }
   // 客户端标识头（FR-03 登录链路）：后端仅凭 x-client-type 才在登录响应返回 token。
   if (ctx.clientTypeHeader) headers["x-client-type"] = ctx.clientTypeHeader;
-  // 登录态注入：页面自身的 Bearer 请求已带头，只在缺失时补，不覆盖。
-  if (
-    headers["authorization"] === undefined &&
-    !isPublicAuthPath(upstreamPath.split("?")[0]) &&
-    // The renderer cannot supply this secret: the session hook strips forged
-    // copies and attaches a fresh one only for trusted frames. Without it an
-    // external page could use our loopback port as an authenticated proxy.
-    (!ctx.trustedRequestSecret || hasTrustedRequestCapability(req, ctx))
-  ) {
-    const token = ctx.getAccessToken();
-    if (token) headers["authorization"] = `Bearer ${token}`;
+  // The renderer never supplies the authentication fact. Only a trusted frame
+  // with the main-process capability may borrow the current ticket.
+  delete headers["authorization"];
+  if (!isPublicAuthPath(upstreamPath.split("?")[0]) && hasTrustedRequestCapability(req, ctx)) {
+    const ticket = ctx.getTicket();
+    if (ticket) headers.cookie = [headers.cookie, `ticket=${ticket}`].filter(Boolean).join("; ");
   }
   return headers;
 }
@@ -193,6 +189,7 @@ function proxyRequest(
   upstreamPath: string,
   namespaced: boolean,
 ): void {
+  const requestEpoch = ctx.ticketEpoch?.() ?? 0;
   const headers = buildProxyHeaders(req, target, ctx, upstreamPath);
   const transport = target.protocol === "https:" ? https : http;
   const upstream = transport.request(
@@ -211,9 +208,13 @@ function proxyRequest(
         outHeaders[key] = value;
       }
       if (Array.isArray(outHeaders["set-cookie"])) {
-        outHeaders["set-cookie"] = (outHeaders["set-cookie"] as string[]).map(
-          normalizeSetCookie,
-        );
+        const trusted = hasTrustedRequestCapability(req, ctx);
+        const raw = outHeaders["set-cookie"] as string[];
+        if (trusted) ctx.onSetCookie?.(raw, requestEpoch, isPublicAuthPath(upstreamPath.split("?")[0]));
+        const cookies = (trusted ? raw : raw.filter((header) => !/^\s*ticket=/i.test(header)))
+          .map(normalizeSetCookie);
+        if (cookies.length) outHeaders["set-cookie"] = cookies;
+        else delete outHeaders["set-cookie"];
       }
       if (namespaced && typeof outHeaders.location === "string") {
         outHeaders.location = namespaceRedirectLocation(
@@ -313,6 +314,7 @@ function proxyUpgrade(
   upstreamPath: string,
 ): void {
   socket.on("error", () => socket.destroy());
+  const requestEpoch = ctx.ticketEpoch?.() ?? 0;
   const headers = buildProxyHeaders(req, target, ctx, upstreamPath);
   headers["connection"] = "Upgrade";
   headers["upgrade"] =
@@ -340,9 +342,22 @@ function proxyUpgrade(
     let out = `HTTP/1.1 ${statusCode} ${statusMessage}\r\n`;
     for (const [key, value] of Object.entries(rawHeaders)) {
       if (value === undefined) continue;
-      out += `${key}: ${Array.isArray(value) ? value.join(", ") : value}\r\n`;
+      for (const item of Array.isArray(value) ? value : [value]) out += `${key}: ${item}\r\n`;
     }
     return `${out}\r\n`;
+  };
+  const clientHeaders = (raw: http.IncomingHttpHeaders): http.IncomingHttpHeaders => {
+    const outgoing = { ...raw };
+    const cookies = outgoing["set-cookie"];
+    if (Array.isArray(cookies)) {
+      const trusted = hasTrustedRequestCapability(req, ctx);
+      if (trusted) ctx.onSetCookie?.(cookies, requestEpoch, false);
+      const accepted = (trusted ? cookies : cookies.filter((header) => !/^\s*ticket=/i.test(header)))
+        .map(normalizeSetCookie);
+      if (accepted.length) outgoing["set-cookie"] = accepted;
+      else delete outgoing["set-cookie"];
+    }
+    return outgoing;
   };
   upstream.on("upgrade", (upstreamRes, upstreamSocket, upstreamHead) => {
     upstreamSocket.on("error", () => socket.destroy());
@@ -350,7 +365,7 @@ function proxyUpgrade(
       writeRawHead(
         upstreamRes.statusCode ?? 101,
         upstreamRes.statusMessage ?? "Switching Protocols",
-        upstreamRes.headers,
+        clientHeaders(upstreamRes.headers),
       ),
     );
     if (upstreamHead?.length) socket.write(upstreamHead);
@@ -373,7 +388,7 @@ function proxyUpgrade(
       writeRawHead(
         upstreamRes.statusCode ?? 502,
         upstreamRes.statusMessage ?? "",
-        upstreamRes.headers,
+        clientHeaders(upstreamRes.headers),
       ),
     );
     upstreamRes.resume();
@@ -475,7 +490,9 @@ export async function startLoopbackGateway(
 ): Promise<LoopbackGatewayHandle> {
   const target = new URL(opts.targetOrigin);
   const ctx: ProxyContext = {
-    getAccessToken: opts.getAccessToken,
+    getTicket: opts.getTicket,
+    ticketEpoch: opts.ticketEpoch,
+    onSetCookie: opts.onSetCookie,
     // 缺省跟随构建期注入的产品标识（nuwaclaw=社区版 / nuwax=商业版，2026-09 前为 nuwawork）
     clientTypeHeader: opts.clientTypeHeader ?? APP_NAME_IDENTIFIER,
     trustedRequestSecret: opts.trustedRequestSecret,
