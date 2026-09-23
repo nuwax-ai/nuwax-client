@@ -5,4 +5,4 @@
 [submodule "nuwax"]
 	path = nuwax
 	url = https://github.com/nuwax-ai/nuwax.git
-	branch = feat-dong.0930
+	branch = feat-2026.9.30
