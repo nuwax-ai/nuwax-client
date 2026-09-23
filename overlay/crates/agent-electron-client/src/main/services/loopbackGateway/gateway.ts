@@ -272,7 +272,7 @@ function proxyRequest(
     const detail =
       `${(err as NodeJS.ErrnoException)?.code ?? ""} ${err?.message ?? ""}`.trim();
     log.warn(
-      `[LoopbackGateway] upstream unreachable: ${target.origin} ${detail}`,
+      `[LoopbackGateway] upstream unreachable: ${req.method ?? "GET"} ${upstreamPath.split("?")[0]} ${target.origin} ${detail}`,
     );
     if (res.headersSent) {
       res.end();
