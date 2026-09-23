@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { SandboxPolicy } from "@shared/types/sandbox";
+import type { UpdateCheckOptions } from "@shared/types/updateTypes";
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -553,7 +554,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // App
   app: {
-    checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
+    checkUpdate: (options?: UpdateCheckOptions) =>
+      ipcRenderer.invoke("app:checkUpdate", options),
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     getSystemInfo: () => ipcRenderer.invoke("app:getSystemInfo"),
     downloadUpdate: () => ipcRenderer.invoke("app:downloadUpdate"),

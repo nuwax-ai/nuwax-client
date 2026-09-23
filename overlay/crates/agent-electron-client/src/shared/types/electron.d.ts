@@ -524,10 +524,14 @@ export interface LogAPI {
   ) => Promise<void>;
 }
 
-import type { UpdateInfo, UpdateState } from "./updateTypes";
+import type {
+  UpdateCheckOptions,
+  UpdateInfo,
+  UpdateState,
+} from "./updateTypes";
 
 export interface AppAPI {
-  checkUpdate: () => Promise<UpdateInfo>;
+  checkUpdate: (options?: UpdateCheckOptions) => Promise<UpdateInfo>;
   getVersion: () => Promise<string>;
   getSystemInfo: () => Promise<{
     clientVersion: string;
