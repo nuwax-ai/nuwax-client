@@ -70,6 +70,7 @@ const NuwaxHostWebview = forwardRef<
   const [url, setUrl] = useState("");
   const [pageUrl, setPageUrl] = useState("");
   const [ua, setUa] = useState<string | undefined>();
+  const [webviewEpoch, setWebviewEpoch] = useState(0);
   const webviewRef = useRef<HTMLElement | null>(null);
 
   // 自定义 UA：保留产品/<version> 标识，便于 nuwax 侧识别客户端环境。
@@ -116,6 +117,7 @@ const NuwaxHostWebview = forwardRef<
     const onLoopbackChanged = () => {
       setPageUrl("");
       setUrl("");
+      setWebviewEpoch((epoch) => epoch + 1);
     };
     window.electronAPI?.on("nuwax:loopback-changed", onLoopbackChanged as any);
     return () => {
@@ -133,6 +135,9 @@ const NuwaxHostWebview = forwardRef<
     const onServerHostChanged = () => {
       setPageUrl("");
       setUrl("");
+      // will-attach-webview captures the current trusted origins in preload
+      // arguments. A new domain needs a new guest, not a loadURL on the old one.
+      setWebviewEpoch((epoch) => epoch + 1);
     };
     window.electronAPI?.on(
       "nuwax:serverHostChanged",
@@ -201,7 +206,7 @@ const NuwaxHostWebview = forwardRef<
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url === ""]);
+  }, [webviewEpoch]);
 
   // 绑定 webview 导航事件，上报 canGoBack/canGoForward（供工具栏按钮启用态），
   // 并跟踪收银台整页导航；返回站内页面时撤销顶部退让。
@@ -237,7 +242,7 @@ const NuwaxHostWebview = forwardRef<
       wv.removeEventListener?.("did-stop-loading", notifyStopped);
       wv.removeEventListener?.("did-fail-load", notifyStopped);
     };
-  }, [url, onNavStateChange, onNavigationStart, onGuestLoadStateChange]);
+  }, [url, webviewEpoch, onNavStateChange, onNavigationStart, onGuestLoadStateChange]);
 
   // 外部 reloadKey 变化时重载 webview（兼容旧刷新入口）
   useEffect(() => {
@@ -254,9 +259,20 @@ const NuwaxHostWebview = forwardRef<
       canGoForward: () => !!(webviewRef.current as any)?.canGoForward?.(),
       sendHostCommand: (payload: unknown) =>
         (webviewRef.current as any)?.send?.("nuwax:host-command", payload),
-      navigate: (url: string) => (webviewRef.current as any)?.loadURL?.(url),
+      navigate: (targetUrl: string) => {
+        try {
+          const target = new URL(targetUrl);
+          const current = new URL(url);
+          if ((target.protocol === "http:" || target.protocol === "https:") &&
+              !target.username && !target.password && target.origin === current.origin) {
+            (webviewRef.current as any)?.loadURL?.(target.href);
+          }
+        } catch {
+          // No programmatic navigation while the business URL is unresolved.
+        }
+      },
     }),
-    [],
+    [url],
   );
 
   return (
@@ -274,7 +290,8 @@ const NuwaxHostWebview = forwardRef<
       {!url && <AppIconLoading />}
       {/* 收银台退让由可复用的 guest 视口容器按当前 URL 处理。 */}
       <GuestPageViewport pageUrl={pageUrl}>
-        <webview
+        {url && <webview
+          key={webviewEpoch}
           ref={webviewRef as any}
           src={url}
           useragent={ua}
@@ -286,7 +303,7 @@ const NuwaxHostWebview = forwardRef<
             height: "100%",
             border: "none",
           }}
-        />
+        />}
       </GuestPageViewport>
     </div>
   );

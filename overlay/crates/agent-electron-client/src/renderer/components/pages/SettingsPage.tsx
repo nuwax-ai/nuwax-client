@@ -33,6 +33,7 @@ import {
   TEST_SERVER_HOST,
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
+import type { ComputerUseStatus } from "@shared/types/electron";
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -112,6 +113,15 @@ function PermDot(props: { ok: boolean | null | undefined }) {
   return <span style={{ color, marginLeft: 4, fontWeight: 600 }}>{label}</span>;
 }
 
+function cuaErrorText(error?: string): string {
+  const known = new Set([
+    "permissionsRequired", "permissionHostFailed", "timeout", "daemonNotReady",
+    "bundledNotFound", "helperNotInstalled", "helperStillRunning", "databaseNotReady",
+    "disableFailed", "policyNotActive",
+  ]);
+  return t("Claw.Settings.computerUse.errors." + (error && known.has(error) ? error : "generic"));
+}
+
 export default function SettingsPage() {
   // 主题
   const { themeMode, setThemeMode } = useTheme();
@@ -168,16 +178,11 @@ export default function SettingsPage() {
   const [fdaStatus, setFdaStatus] = useState<{
     supported: boolean;
     granted: boolean;
+    probeStatus: "granted" | "denied" | "unknown";
   } | null>(null);
   const [fdaChecking, setFdaChecking] = useState(false);
-  const [cuaStatus, setCuaStatus] = useState<{
-    installed: boolean;
-    installable: boolean;
-    running: boolean;
-    enabled: boolean;
-    accessibility: boolean | null;
-    screenRecording: boolean | null;
-  } | null>(null);
+  const [cuaStatus, setCuaStatus] = useState<ComputerUseStatus | null>(null);
+  const [cuaEnablePendingPermission, setCuaEnablePendingPermission] = useState(false);
   const [cuaApplying, setCuaApplying] = useState(false);
   const [cuaInstalling, setCuaInstalling] = useState(false);
   const [cuaPermChecking, setCuaPermChecking] = useState(false);
@@ -300,39 +305,41 @@ export default function SettingsPage() {
         .then((v) => setCuaVlm(v))
         .catch(() => undefined);
       const s = await window.electronAPI!.computerUse.getStatus();
-      setCuaStatus({
-        installed: !!s.installed,
-        installable: !!s.installable,
-        running: !!s.running,
-        enabled: !!s.enabled,
-        accessibility: s.accessibility ?? null,
-        screenRecording: s.screenRecording ?? null,
-      });
+      setCuaStatus(s);
+      setCuaEnablePendingPermission(s.consentPending === true);
     } catch (error) {
       console.error("Failed to load computer use status:", error);
     }
   }, [hasComputerUseApi]);
 
   const handleCuaChange = async (checked: boolean) => {
+    if (checked && !cuaEnablePendingPermission && !cuaStatus?.consentPending) {
+      const accepted = await new Promise<boolean>((resolve) => {
+        Modal.confirm({
+          title: t("Claw.Settings.computerUse.consentTitle"),
+          content: t("Claw.Settings.computerUse.consentDescription"),
+          okText: t("Claw.Settings.computerUse.consentAccept"),
+          cancelText: t("Claw.Settings.computerUse.consentCancel"),
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!accepted) return;
+    } else if (!checked) {
+      setCuaEnablePendingPermission(false);
+    }
     setCuaApplying(true);
     try {
       const r = await window.electronAPI!.computerUse.setEnabled(checked);
+      if (r.status) {
+        setCuaStatus(r.status);
+        setCuaEnablePendingPermission(r.status.consentPending === true);
+      }
       if (!r.success) {
-        message.error(
-          t("Claw.Settings.computerUse.errors." + (r.error ?? "generic")),
-        );
+        message.error(cuaErrorText(r.error));
         return;
       }
-      if (r.status) {
-        setCuaStatus({
-          installed: !!r.status.installed,
-          installable: !!r.status.installable,
-          running: !!r.status.running,
-          enabled: !!r.status.enabled,
-          accessibility: r.status.accessibility ?? null,
-          screenRecording: r.status.screenRecording ?? null,
-        });
-      }
+      setCuaEnablePendingPermission(false);
       message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
     } catch {
       message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
@@ -355,8 +362,22 @@ export default function SettingsPage() {
             }
           : prev,
       );
-      if (r.accessibility && r.screenRecording) {
+      if (r.success && r.accessibility && r.screenRecording) {
         message.success(t("Claw.Settings.computerUse.permGranted"));
+        if (cuaEnablePendingPermission || cuaStatus?.consentPending) {
+          setCuaApplying(true);
+          const enabled = await window.electronAPI!.computerUse.setEnabled(true);
+          if (enabled.status) {
+            setCuaStatus(enabled.status);
+            setCuaEnablePendingPermission(enabled.status.consentPending === true);
+          }
+          if (enabled.success) {
+            setCuaEnablePendingPermission(false);
+            message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+          } else {
+            message.error(cuaErrorText(enabled.error));
+          }
+        }
       } else {
         message.info(t("Claw.Settings.computerUse.permPending"));
       }
@@ -364,18 +385,17 @@ export default function SettingsPage() {
       message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
     } finally {
       setCuaPermChecking(false);
+      setCuaApplying(false);
     }
   };
 
-  // 首用安装：Resources → 稳定路径（安装后主进程自动触发一次权限探测/引导）
+  // 手动安装/升级入口；开启开关时也会自动执行，安装本身不请求系统权限。
   const handleCuaInstall = async () => {
     setCuaInstalling(true);
     try {
       const r = await window.electronAPI!.computerUse.installHelper();
       if (!r.success) {
-        message.error(
-          t("Claw.Settings.computerUse.errors." + (r.error ?? "generic")),
-        );
+        message.error(cuaErrorText(r.error));
         return;
       }
       message.success(t("Claw.Settings.computerUse.installOk"));
@@ -392,7 +412,11 @@ export default function SettingsPage() {
     if (!hasFullDiskAccessApi || !isMacPlatform) return;
     try {
       const s = await window.electronAPI!.fullDiskAccess.getStatus();
-      setFdaStatus({ supported: !!s.supported, granted: !!s.granted });
+      setFdaStatus({
+        supported: !!s.supported,
+        granted: !!s.granted,
+        probeStatus: s.probeStatus ?? (s.granted ? "granted" : "denied"),
+      });
     } catch (error) {
       console.error("Failed to load full disk access status:", error);
     }
@@ -409,9 +433,13 @@ export default function SettingsPage() {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const s = await window.electronAPI!.fullDiskAccess.recheck();
         setFdaStatus((prev) =>
-          prev ? { ...prev, granted: !!s.granted } : prev,
+          prev ? {
+            ...prev,
+            granted: !!s.granted,
+            probeStatus: s.probeStatus ?? (s.granted ? "granted" : "denied"),
+          } : prev,
         );
-        if (s.granted) break;
+        if ((s.probeStatus ?? (s.granted ? "granted" : "denied")) === "granted") break;
       }
     } catch {
       // 打开失败主进程已兜底；轮询失败静默（状态点保持原值）
@@ -911,7 +939,13 @@ export default function SettingsPage() {
               desc={
                 <span>
                   {t("Claw.Settings.fullDiskAccess.desc")}
-                  <PermDot ok={fdaStatus?.granted ?? null} />
+                  <PermDot ok={fdaStatus?.probeStatus === "unknown"
+                    ? null : fdaStatus?.granted ?? null} />
+                  {fdaStatus?.probeStatus === "unknown" && (
+                    <span style={{ marginLeft: 4 }}>
+                      {t("Claw.PermissionsPage.unknown")}
+                    </span>
+                  )}
                 </span>
               }
               control={
@@ -992,7 +1026,11 @@ export default function SettingsPage() {
                   {t("Claw.Settings.computerUse.desc")}
                   {cuaStatus && (
                     <span style={{ marginLeft: 8, whiteSpace: "nowrap" }}>
-                      {cuaStatus.installed
+                      {cuaStatus.consentPending || cuaStatus.error === "permissionsRequired"
+                        ? `● ${t("Claw.Settings.computerUse.stateAwaitingPermission")}`
+                        : !cuaStatus.enabled
+                        ? `● ${t("Claw.Settings.computerUse.stateOff")}`
+                        : cuaStatus.installed
                         ? cuaStatus.running
                           ? `● ${t("Claw.Settings.computerUse.stateRunning")}`
                           : `● ${t("Claw.Settings.computerUse.stateIdle")}`
@@ -1006,7 +1044,7 @@ export default function SettingsPage() {
                   checked={!!cuaStatus?.enabled}
                   onChange={handleCuaChange}
                   loading={cuaApplying}
-                  disabled={!cuaStatus?.installed}
+                  disabled={!cuaStatus?.installed && !cuaStatus?.installable}
                 />
               }
             />

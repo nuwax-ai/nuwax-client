@@ -106,17 +106,6 @@ jobs:
           echo "==> Downloaded assets:"
           ls -lh /tmp/release-assets/
 
-      - name: Verify source identity and signed release assets
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
-        run: |
-          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq osslsigncode
-          VERSION="${RELEASE_TAG#*-v}"
-          osslsigncode verify -in "/tmp/release-assets/Nuwax.Setup.${VERSION}.exe"
-          gh release upload "$RELEASE_TAG" /tmp/release-assets/release-provenance.json --clobber --repo "$GITHUB_REPOSITORY"
-
       - name: Generate latest.json and platform yml from assets
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
@@ -265,8 +254,21 @@ jobs:
             --argjson yml "$YML_URLS" \
             '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms, yml: $yml}')
           echo "$LATEST_JSON" > /tmp/latest.json
+          cp /tmp/latest.json "${ASSETS_DIR}/latest.json"
           echo "==> Generated latest.json"
           echo "$LATEST_JSON" | jq .
+
+      - name: Verify source identity and final release metadata
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osslsigncode
+          VERSION="${RELEASE_TAG#*-v}"
+          osslsigncode verify -in "/tmp/release-assets/Nuwax.Setup.${VERSION}.exe"
+          gh release upload "$RELEASE_TAG" /tmp/release-assets/*.yml /tmp/release-assets/latest.json \
+            /tmp/release-assets/release-provenance.json --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Upload full release to MinIO S3 (installers, yml, latest.json)
         env:
@@ -284,7 +286,7 @@ jobs:
           echo "==> MinIO: (1/3) installers and other non-yml release assets"
           for file in /tmp/release-assets/*; do
             [ -f "$file" ] || continue
-            case "$(basename "$file")" in *.yml) continue ;; esac
+            case "$(basename "$file")" in *.yml|latest.json) continue ;; esac
             filename=$(basename "$file")
             echo "Uploading to S3: ${filename}"
             aws s3 cp "$file" "s3://${S3_BUCKET}/${S3_PREFIX}/${filename}" \
@@ -307,6 +309,7 @@ jobs:
 
       - name: Verify S3 upload
         run: |
+          set -euo pipefail
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
           if [ "$CHANNEL" = "beta" ]; then
@@ -320,13 +323,19 @@ jobs:
           else
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
-          for file in /tmp/release-assets/* /tmp/latest.json; do
+          for file in /tmp/release-assets/*; do
             [ -f "$file" ] || continue
             name="$(basename "$file")"
-            remote_size="$(aws s3api head-object --bucket "$S3_BUCKET" --key "${S3_PREFIX}/${name}" \
-              --endpoint-url "$S3_ENDPOINT" --query ContentLength --output text)"
-            local_size="$(stat -c%s "$file")"
-            [ "$remote_size" = "$local_size" ] || { echo "::error::S3 资产大小不一致: $name"; exit 1; }
+            case "$name" in
+              build-manifest-*.json|release-provenance.json)
+                expected="$(sha256sum "$file" | cut -d' ' -f1)" ;;
+              *)
+                expected="$(jq -r --arg name "$name" '.assets[$name] // empty' /tmp/release-assets/release-provenance.json)"
+                [ -n "$expected" ] || { echo "::error::来源清单缺少资产: $name"; exit 1; } ;;
+            esac
+            actual="$(aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/${name}" - \
+              --endpoint-url "$S3_ENDPOINT" --quiet | sha256sum | cut -d' ' -f1)"
+            [ "$actual" = "$expected" ] || { echo "::error::S3 资产 SHA256 不一致: $name"; exit 1; }
           done
           echo "==> S3 versioned assets verified"
 
@@ -364,19 +373,22 @@ jobs:
 
       - name: Verify versioned OSS metadata
         run: |
+          set -euo pipefail
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
           if [ "$CHANNEL" = "stable" ]; then
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest.json"
-            VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
+            VERIFY_PREFIX="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}"
           else
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest.json"
-            VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest-mac.yml"
+            VERIFY_PREFIX="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
           fi
-          curl -fsSL --retry 3 -o /tmp/oss-versioned-latest.json "$VERIFY_JSON_URL"
-          curl -fsSL --retry 3 -o /tmp/oss-versioned-latest-mac.yml "$VERIFY_YML_URL"
-          cmp /tmp/latest.json /tmp/oss-versioned-latest.json
-          cmp /tmp/release-assets/latest-mac.yml /tmp/oss-versioned-latest-mac.yml
+          for file in /tmp/release-assets/*.yml /tmp/release-assets/latest.json; do
+            [ -f "$file" ] || continue
+            name="$(basename "$file")"
+            expected="$(jq -r --arg name "$name" '.assets[$name] // empty' /tmp/release-assets/release-provenance.json)"
+            [ -n "$expected" ] || { echo "::error::来源清单缺少 OSS 元数据: $name"; exit 1; }
+            actual="$(curl -fsSL --retry 3 "${VERIFY_PREFIX}/${name}" | sha256sum | cut -d' ' -f1)"
+            [ "$actual" = "$expected" ] || { echo "::error::OSS 元数据 SHA256 不一致: $name"; exit 1; }
+          done
           echo "==> OSS versioned metadata verified"
 
       - name: Publish channel pointers after all checks

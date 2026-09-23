@@ -401,6 +401,8 @@ jobs:
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
+          # 新安装默认测试业务域；esbuild 静态固化，不影响已有显式域名配置。
+          NUWAX_RELEASE_CHANNEL: beta
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
           # 端口整体 +1000（19099/61002~61009/61173），与社区版/nuwa-cli 同机错开

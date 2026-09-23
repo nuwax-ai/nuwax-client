@@ -87,9 +87,8 @@ export default function PermissionsPage() {
                 item.key === "file_access"
                   ? {
                       ...item,
-                      status: fda.granted
-                        ? ("granted" as const)
-                        : ("denied" as const),
+                      status: fda.probeStatus ??
+                        (fda.granted ? ("granted" as const) : ("denied" as const)),
                     }
                   : item,
               ),

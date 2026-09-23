@@ -62,13 +62,13 @@ beforeEach(() => {
   mocks.fetch.mockReset();
   mocks.isPackaged = true;
   delete process.env.NUWAX_SERVER_HOST;
+  delete process.env.NUWAX_RELEASE_CHANNEL;
 });
 describe("commercial registration protocol", () => {
   it("fresh installation selects bundled UI without importing legacy credentials", () => {
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
-      // 测试期默认域=测试环境（overlay 种子；恢复正式改回 DEFAULT_SERVER_HOST）
-      serverHost: "https://testagent.xspaceagi.com",
+      serverHost: "https://agent.nuwax.com",
       nuwaxLoadMode: "gateway",
     });
     expect(mocks.settings.get("auth.saved_key")).toBeNull();
@@ -218,13 +218,26 @@ describe("本地化默认开一次性迁移（2026-09-17）", () => {
 });
 
 describe("serverHost backfill（真实时序：ensureDefaultWorkspaceDir 先写 step1_config，首启种子恒不命中）", () => {
-  it("打包版：step1_config 已存在（仅 workspaceDir）缺 serverHost → 补测试域并保留既有字段", () => {
+  it("稳定版：step1_config 已存在（仅 workspaceDir）缺 serverHost → 补正式域并保留既有字段", () => {
     mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
     fixture();
     //（loadMode 一次性迁移会顺带补 gateway，故用 toMatchObject 锚定关键字段）
     expect(mocks.settings.get("step1_config")).toMatchObject({
       workspaceDir: "/Users/x/Nuwax",
+      serverHost: "https://agent.nuwax.com",
+    });
+  });
+  it("Beta 新安装与缺失域名补值均使用测试域", () => {
+    process.env.NUWAX_RELEASE_CHANNEL = "beta";
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
       serverHost: "https://testagent.xspaceagi.com",
+    });
+    mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      serverHost: "https://testagent.xspaceagi.com",
+      workspaceDir: "/Users/x/Nuwax",
     });
   });
   it("显式配置过的域名（configureServerHost 落值）不被 backfill 覆盖", () => {

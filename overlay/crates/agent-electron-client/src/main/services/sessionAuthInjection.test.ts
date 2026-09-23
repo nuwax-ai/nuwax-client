@@ -55,6 +55,20 @@ describe("business cookie session boundary", () => {
       expect(result.cookie).toBe("a=1");
     }
   });
+  it("strips ticket after a redirect to a sibling or child domain", () => {
+    for (const url of [
+      "https://assets.business.example/redirected",
+      "https://other.example/redirected",
+      "wss://assets.business.example/socket",
+    ]) {
+      const result = applySessionAuthHeaders(request({
+        url,
+        resourceType: "mainFrame",
+        requestHeaders: { Cookie: "ticket=shared-domain; theme=dark" },
+      }), context);
+      expect(result.Cookie).toBe("theme=dark");
+    }
+  });
   it("does not lend a cookie to untrusted business documents", () => {
     const result = applySessionAuthHeaders(request({ webContents: { getURL: () => "https://external.example", isDestroyed: () => false }, requestHeaders: { Cookie: "ticket=new" } }), context);
     expect(result.Cookie).toBeUndefined();

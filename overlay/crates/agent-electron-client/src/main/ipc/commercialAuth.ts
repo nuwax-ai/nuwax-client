@@ -5,6 +5,7 @@ import { readSetting, writeSetting, getDb } from "../db";
 import {
   LOCAL_HOST_URL,
   DEFAULT_GUI_MCP_PORT,
+  DEFAULT_SERVER_HOST,
   TEST_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
@@ -113,20 +114,22 @@ export function initializeCommercialAuth(
     writeSetting("nuwax.cookieAuthMigrated", true);
   }
   // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
-  // 默认域=测试环境（2026-09-17 测试期拍板，商业专属逻辑故落 overlay 种子而非
-  // 基座常量）；恢复正式环境改回 DEFAULT_SERVER_HOST 即可。dev 全新库同样
-  // 种值：不种则业务域候选/注册回落 DEFAULT_SERVER_HOST（生产域），与 dev 前端
-  // 联调的测试域 token 错域。NUWAX_SERVER_HOST 指定业务域；两种形态都默认
+  // 打包渠道决定新安装默认业务域：stable=正式域，beta=测试域。渠道在
+  // build-main-esbuild.js 中静态注入，运行时环境无法将正式包切到测试域。
+  // NUWAX_SERVER_HOST 仅用于 dev；两种形态都默认
   // 种 gateway（本地化默认开）——dev 直连联调走 NUWAX_WEBVIEW_ORIGIN，其
   // 优先级高于 loopback，不受影响。
   const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
+  const packagedSeedHost = process.env.NUWAX_RELEASE_CHANNEL === "beta"
+    ? TEST_SERVER_HOST
+    : DEFAULT_SERVER_HOST;
   const seeded = readSetting("step1_config") as {
     serverHost?: string;
   } | null;
   if (!seeded) {
     if (app?.isPackaged) {
       writeSetting("step1_config", {
-        serverHost: TEST_SERVER_HOST,
+        serverHost: packagedSeedHost,
         nuwaxLoadMode: "gateway",
       });
     } else if (devSeedHost) {
@@ -138,12 +141,9 @@ export function initializeCommercialAuth(
   } else if (!seeded.serverHost) {
     // serverHost backfill：真实时序里 ensureDefaultWorkspaceDir（migrate）
     // 先写 step1_config（workspaceDir），上面的「首启种子」恒不命中——全新
-    // 安装 serverHost 缺失回落 DEFAULT_SERVER_HOST（生产域），测试期默认
-    // 测试域的拍板被架空（2026-09-18 提测实证）。凡「配置行存在但域名从未
-    // 显式落值」即补种子值（打包=测试域 / dev=NUWAX_SERVER_HOST）；改过域
-    // （configureServerHost 落值）不受影响。存量 v1.0.14 测试装机升级后同样
-    // 被 backfill。恢复正式环境时本处种子值随首启种子一并改回 DEFAULT。
-    const backfillHost = app?.isPackaged ? TEST_SERVER_HOST : devSeedHost;
+    // 凡配置行存在但域名从未显式落值，按当前渠道补默认域；显式设置的
+    // 企业域不受影响。已有测试域作为显式值也不会被升级覆盖。
+    const backfillHost = app?.isPackaged ? packagedSeedHost : devSeedHost;
     if (backfillHost) {
       writeSetting("step1_config", { ...seeded, serverHost: backfillHost });
       log.info(

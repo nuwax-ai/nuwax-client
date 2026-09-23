@@ -298,3 +298,490 @@ index a2691a0..4511c09 100644
 -- 
 2.50.1 (Apple Git-155)
 
+From f4ca0d6deccfb054cd99f1b816580e18a22ef791 Mon Sep 17 00:00:00 2001
+From: Nuwax CUA Patch <nuwax-cua@localhost>
+Date: Thu, 24 Sep 2026 00:41:33 +0800
+Subject: [PATCH 4/4] Secure Nuwax helper identity and endpoint
+
+---
+ .../rust/crates/cua-driver-core/src/daemon.rs | 121 +++++++++++++++-
+ .../crates/cua-driver/src/mcp_envelope.rs     |   6 +-
+ .../rust/crates/cua-driver/src/proxy.rs       |   6 +-
+ .../rust/crates/cua-driver/src/serve.rs       | 134 ++++++++++++++++--
+ .../src/tools/check_permissions.rs            |  38 ++++-
+ 5 files changed, 284 insertions(+), 21 deletions(-)
+
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
+index 004ece3..c8988e3 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
+@@ -7,6 +7,73 @@
+
+ use serde::{Deserialize, Serialize};
+
++/// Nuwax's standalone helper is reachable only through a per-installation
++/// private endpoint. This capability is shared with its MCP proxy through a
++/// mode-0600 file, never through the persisted MCP configuration itself.
++pub const NUWAX_TOKEN_FILE_ENV: &str = "CUA_DRIVER_NUWAX_TOKEN_FILE";
++
++pub fn nuwax_endpoint_token() -> anyhow::Result<Option<String>> {
++    let Some(file) = std::env::var_os(NUWAX_TOKEN_FILE_ENV) else {
++        return Ok(None);
++    };
++    let token = std::fs::read_to_string(file)?.trim().to_owned();
++    anyhow::ensure!(
++        token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()),
++        "invalid Nuwax endpoint capability"
++    );
++    Ok(Some(token))
++}
++
++pub fn nuwax_endpoint_proof(token: &str, nonce: &str) -> anyhow::Result<String> {
++    use hmac::{Hmac, Mac};
++    use sha2::Sha256;
++    anyhow::ensure!(
++        nonce.len() == 32 && nonce.bytes().all(|b| b.is_ascii_hexdigit()),
++        "invalid Nuwax endpoint challenge"
++    );
++    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())?;
++    mac.update(nonce.as_bytes());
++    Ok(mac
++        .finalize()
++        .into_bytes()
++        .iter()
++        .map(|b| format!("{b:02x}"))
++        .collect())
++}
++
++pub fn nuwax_request_line(request: &DaemonRequest, token: Option<&str>) -> anyhow::Result<String> {
++    let mut value = serde_json::to_value(request)?;
++    if let Some(token) = token {
++        value["nuwax_client_token"] = serde_json::Value::String(token.to_owned());
++    }
++    Ok(serde_json::to_string(&value)? + "\n")
++}
++
++fn nuwax_verify_metadata_proof(
++    response: &DaemonResponse,
++    token: &str,
++    nonce: &str,
++) -> anyhow::Result<()> {
++    let expected = nuwax_endpoint_proof(token, nonce)?;
++    let actual = response
++        .result
++        .as_ref()
++        .and_then(|value| value.get("nuwax_endpoint_proof"))
++        .and_then(serde_json::Value::as_str)
++        .unwrap_or("");
++    anyhow::ensure!(
++        response.ok
++            && actual.len() == expected.len()
++            && actual
++                .bytes()
++                .zip(expected.bytes())
++                .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
++                == 0,
++        "Nuwax daemon endpoint proof failed"
++    );
++    Ok(())
++}
++
+ /// Versioned identity returned by the daemon before an imported SDK or an MCP
+ /// proxy is allowed to treat an endpoint as ready.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+@@ -205,7 +272,7 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
+ /// deadline so slow accessibility walks and large screenshots are supported.
+ #[cfg(unix)]
+ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+-    use std::io::Read;
++    use std::io::{BufRead, Read, Write};
+     use std::os::unix::net::UnixStream;
+     use std::time::{Duration, Instant};
+
+@@ -215,7 +282,18 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
+     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+
+     let mut writer = stream.try_clone()?;
+-    let line = serde_json::to_string(request)? + "\n";
++    let token = nuwax_endpoint_token()?;
++    if let Some(token) = token.as_deref() {
++        let nonce = uuid::Uuid::new_v4().simple().to_string();
++        writer.write_all(
++            format!("{{\"method\":\"metadata\",\"args\":{{\"nuwax_nonce\":\"{nonce}\"}}}}\n")
++                .as_bytes(),
++        )?;
++        let mut proof = String::new();
++        std::io::BufReader::new(stream.try_clone()?).read_line(&mut proof)?;
++        nuwax_verify_metadata_proof(&serde_json::from_str(&proof)?, token, &nonce)?;
++    }
++    let line = nuwax_request_line(request, token.as_deref())?;
+     let write_deadline = Instant::now() + Duration::from_secs(120);
+     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
+
+@@ -276,7 +354,19 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
+         };
+
+         let mut writer = pipe.try_clone()?;
+-        writer.write_all((serde_json::to_string(request)? + "\n").as_bytes())?;
++        let token = nuwax_endpoint_token()?;
++        if let Some(token) = token.as_deref() {
++            let nonce = uuid::Uuid::new_v4().simple().to_string();
++            writer.write_all(
++                format!("{{\"method\":\"metadata\",\"args\":{{\"nuwax_nonce\":\"{nonce}\"}}}}\n")
++                    .as_bytes(),
++            )?;
++            writer.flush()?;
++            let mut proof = String::new();
++            BufReader::new(pipe.try_clone()?).read_line(&mut proof)?;
++            nuwax_verify_metadata_proof(&serde_json::from_str(&proof)?, token, &nonce)?;
++        }
++        writer.write_all(nuwax_request_line(request, token.as_deref())?.as_bytes())?;
+         writer.flush()?;
+
+         let response_line = BufReader::new(pipe)
+@@ -298,6 +388,31 @@ mod tests {
+         DaemonResponse, ToolObservationOrigin,
+     };
+
++    #[test]
++    fn nuwax_challenge_proves_server_and_action_requires_capability() {
++        let token = "a".repeat(64);
++        let nonce = "b".repeat(32);
++        let proof = super::nuwax_endpoint_proof(&token, &nonce).unwrap();
++        let response = super::DaemonResponse::ok(serde_json::json!({
++            "nuwax_endpoint_proof": proof,
++        }));
++        assert!(super::nuwax_verify_metadata_proof(&response, &token, &nonce).is_ok());
++        assert!(super::nuwax_verify_metadata_proof(&response, &"c".repeat(64), &nonce).is_err());
++        let request = super::DaemonRequest {
++            method: "call".into(),
++            name: Some("click".into()),
++            args: None,
++            session_id: None,
++            observation_origin: None,
++            client_kind: None,
++        };
++        let line = super::nuwax_request_line(&request, Some(&token)).unwrap();
++        assert_eq!(
++            serde_json::from_str::<serde_json::Value>(&line).unwrap()["nuwax_client_token"],
++            token
++        );
++    }
++
+     #[test]
+     fn socket_path_keeps_the_selected_namespace() {
+         let path = socket_path_for_namespace("cua-driver-test");
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs b/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
+index fb9d11b..6530408 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
+@@ -358,8 +358,12 @@ where
+ {
+     let (reader, mut writer) = tokio::io::split(stream);
+     let mut reader = BufReader::new(reader);
++    let mut handshake = serde_json::json!({"method": "mcp_envelope_stream"});
++    if let Some(token) = cua_driver_core::daemon::nuwax_endpoint_token()? {
++        handshake["nuwax_client_token"] = Value::String(token);
++    }
+     writer
+-        .write_all(b"{\"method\":\"mcp_envelope_stream\"}\n")
++        .write_all((serde_json::to_string(&handshake)? + "\n").as_bytes())
+         .await?;
+     writer.flush().await?;
+     let mut ack = Vec::new();
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
+index 401a09b..3d3021a 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
+@@ -463,8 +463,10 @@ async fn run_control_connection(
+         observation_origin: None,
+         client_kind: None,
+     };
+-    let line = match serde_json::to_string(&begin) {
+-        Ok(s) => s + "\n",
++    let line = match cua_driver_core::daemon::nuwax_endpoint_token()
++        .and_then(|token| cua_driver_core::daemon::nuwax_request_line(&begin, token.as_deref()))
++    {
++        Ok(s) => s,
+         Err(e) => {
+             warn!("control connection: serialize session_begin failed: {e}");
+             return;
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+index 0ec9bb4..79f50cc 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+@@ -680,11 +680,86 @@ fn permission_gate_response_for_state(
+     ))
+ }
+
+-fn daemon_metadata_response() -> DaemonResponse {
+-    DaemonResponse::ok(
+-        serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
+-            .expect("daemon metadata is serializable"),
+-    )
++fn nuwax_request_authorized(line: &str) -> bool {
++    let token = match cua_driver_core::daemon::nuwax_endpoint_token() {
++        Ok(None) => return true,
++        Ok(Some(token)) => token,
++        Err(_) => return false,
++    };
++    nuwax_request_authorized_with_token(line, &token)
++}
++
++fn nuwax_request_authorized_with_token(line: &str, token: &str) -> bool {
++    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
++        return false;
++    };
++    if value["method"] == "metadata"
++        && value["args"]["nuwax_nonce"]
++            .as_str()
++            .is_some_and(|nonce| nonce.len() == 32 && nonce.bytes().all(|b| b.is_ascii_hexdigit()))
++    {
++        return true;
++    }
++    let Some(actual) = value["nuwax_client_token"].as_str() else {
++        return false;
++    };
++    actual.len() == token.len()
++        && actual
++            .bytes()
++            .zip(token.bytes())
++            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
++            == 0
++}
++
++#[cfg(test)]
++mod nuwax_endpoint_auth_tests {
++    use super::nuwax_request_authorized_with_token;
++
++    #[test]
++    fn capability_is_required_for_actions_but_not_for_a_challenge() {
++        let token = "a".repeat(64);
++        assert!(nuwax_request_authorized_with_token(
++            &format!(
++                r#"{{"method":"metadata","args":{{"nuwax_nonce":"{}"}}}}"#,
++                "b".repeat(32)
++            ),
++            &token,
++        ));
++        assert!(!nuwax_request_authorized_with_token(
++            r#"{"method":"call","name":"click"}"#,
++            &token
++        ));
++        assert!(!nuwax_request_authorized_with_token(
++            r#"{"method":"call","nuwax_client_token":"wrong"}"#,
++            &token,
++        ));
++        assert!(nuwax_request_authorized_with_token(
++            &format!(r#"{{"method":"call","nuwax_client_token":"{token}"}}"#),
++            &token,
++        ));
++    }
++}
++
++fn daemon_metadata_response(request: &DaemonRequest) -> DaemonResponse {
++    let mut metadata = serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
++        .expect("daemon metadata is serializable");
++    if let Some(nonce) = request
++        .args
++        .as_ref()
++        .and_then(|args| args.get("nuwax_nonce"))
++        .and_then(serde_json::Value::as_str)
++    {
++        let token = match cua_driver_core::daemon::nuwax_endpoint_token() {
++            Ok(Some(token)) => token,
++            _ => return DaemonResponse::err("Nuwax endpoint capability unavailable", 77),
++        };
++        let proof = match cua_driver_core::daemon::nuwax_endpoint_proof(&token, nonce) {
++            Ok(proof) => proof,
++            Err(_) => return DaemonResponse::err("invalid Nuwax endpoint challenge", 64),
++        };
++        metadata["nuwax_endpoint_proof"] = serde_json::Value::String(proof);
++    }
++    DaemonResponse::ok(metadata)
+ }
+
+ fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
+@@ -986,7 +1061,10 @@ pub async fn run_serve(
+     let embedded = cua_driver_core::embedded_mode();
+     // Embedded endpoints are host-owned. The daemon must never unlink an
+     // arbitrary pre-existing path between the host's safety check and bind.
+-    prepare_embedded_socket_path(socket_path, embedded)?;
++    prepare_embedded_socket_path(
++        socket_path,
++        embedded || std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some(),
++    )?;
+
+     let listener =
+         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
+@@ -1020,11 +1098,20 @@ pub async fn run_serve(
+
+     // Idle-session and recording maintenance is owned by the SDK runtime so
+     // direct embedded applications and daemon-backed clients behave alike.
+-    if let Some(port) = crate::mcp_http::configured_port()? {
++    let mcp_http_port = crate::mcp_http::configured_port()?;
++    let envelope_http_port = crate::driver_service_http::configured_port()?;
++    if std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some() {
++        cua_driver_core::daemon::nuwax_endpoint_token()?;
++        anyhow::ensure!(
++            mcp_http_port.is_none() && envelope_http_port.is_none(),
++            "Nuwax helper may not expose HTTP listeners"
++        );
++    }
++    if let Some(port) = mcp_http_port {
+         crate::mcp_http::spawn(sdk.clone(), port)?;
+     }
+
+-    let _envelope_http = match crate::driver_service_http::configured_port()? {
++    let _envelope_http = match envelope_http_port {
+         Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+         None => None,
+     };
+@@ -1058,6 +1145,11 @@ pub async fn run_serve(
+                     let mut trusted_session: Option<TrustedConnectionSession> = None;
+
+                     while let Ok(Some(line)) = lines.next_line().await {
++                        if !nuwax_request_authorized(&line) {
++                            let resp = DaemonResponse::err("Nuwax endpoint capability required", 77);
++                            let _ = writer.write_all((serde_json::to_string(&resp).unwrap() + "\n").as_bytes()).await;
++                            return;
++                        }
+                         let req: DaemonRequest = match serde_json::from_str(&line) {
+                             Ok(r) => r,
+                             Err(e) => {
+@@ -1084,7 +1176,7 @@ pub async fn run_serve(
+                                 return;
+                             }
+                             "metadata" => {
+-                                let resp = daemon_metadata_response();
++                                let resp = daemon_metadata_response(&req);
+                                 let _ = writer.write_all(
+                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                 ).await;
+@@ -1743,11 +1835,20 @@ pub async fn run_serve(
+     tokio::pin!(parent_liveness);
+
+     // Idle-session and recording maintenance is owned by the SDK runtime.
+-    if let Some(port) = crate::mcp_http::configured_port()? {
++    let mcp_http_port = crate::mcp_http::configured_port()?;
++    let envelope_http_port = crate::driver_service_http::configured_port()?;
++    if std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some() {
++        cua_driver_core::daemon::nuwax_endpoint_token()?;
++        anyhow::ensure!(
++            mcp_http_port.is_none() && envelope_http_port.is_none(),
++            "Nuwax helper may not expose HTTP listeners"
++        );
++    }
++    if let Some(port) = mcp_http_port {
+         crate::mcp_http::spawn(sdk.clone(), port)?;
+     }
+
+-    let _envelope_http = match crate::driver_service_http::configured_port()? {
++    let _envelope_http = match envelope_http_port {
+         Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+         None => None,
+     };
+@@ -1756,7 +1857,9 @@ pub async fn run_serve(
+     loop {
+         // All daemons use the current-user descriptor. Embedded daemons also
+         // reserve the pipe name with their first instance.
+-        let first_pipe_instance = embedded && first_pipe;
++        let first_pipe_instance = (embedded
++            || std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some())
++            && first_pipe;
+         let server = if sec_attrs_ptr.is_null() {
+             ServerOptions::new()
+                 .first_pipe_instance(first_pipe_instance)
+@@ -1819,6 +1922,11 @@ pub async fn run_serve(
+                     let mut trusted_session: Option<TrustedConnectionSession> = None;
+
+                     while let Ok(Some(line)) = lines.next_line().await {
++                        if !nuwax_request_authorized(&line) {
++                            let resp = DaemonResponse::err("Nuwax endpoint capability required", 77);
++                            let _ = writer.write_all((serde_json::to_string(&resp).unwrap() + "\n").as_bytes()).await;
++                            return;
++                        }
+                         let req: DaemonRequest = match serde_json::from_str(&line) {
+                             Ok(r) => r,
+                             Err(e) => {
+@@ -1842,7 +1950,7 @@ pub async fn run_serve(
+                                 return;
+                             }
+                             "metadata" => {
+-                                let resp = daemon_metadata_response();
++                                let resp = daemon_metadata_response(&req);
+                                 let _ = writer.write_all(
+                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                 ).await;
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
+index 280f81c..1c04049 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
+@@ -45,6 +45,8 @@ fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
+         Some("com.trycua.driver.local")
+     } else if executable.contains("/CuaDriver.app/Contents/MacOS/") {
+         Some("com.trycua.driver")
++    } else if executable.contains("/Nuwax Computer Use.app/Contents/MacOS/") {
++        Some("com.nuwax-ai.nuwax-computer-use")
+     } else {
+         None
+     }
+@@ -70,11 +72,18 @@ fn direct_capture_evidence_store_for_identity(
+     let state_directory = match bundle_id {
+         "com.trycua.driver.local" => ".cua-driver-local",
+         "com.trycua.driver" => ".cua-driver",
++        "com.nuwax-ai.nuwax-computer-use" => ".nuwax/computer-use",
+         _ => return None,
+     };
+-    Some(DirectCaptureEvidenceStore::new(
++    let state_root = if bundle_id == "com.nuwax-ai.nuwax-computer-use" {
++        std::env::var_os("CUA_DRIVER_DATA_HOME")
++            .map(std::path::PathBuf::from)
++            .unwrap_or_else(|| home.join(state_directory))
++    } else {
+         home.join(state_directory)
+-            .join("direct-capture-verification.json"),
++    };
++    Some(DirectCaptureEvidenceStore::new(
++        state_root.join("direct-capture-verification.json"),
+         bundle_id,
+     ))
+ }
+@@ -549,12 +558,37 @@ mod tests {
+             ),
+             Some("com.trycua.driver.local")
+         );
++        assert_eq!(
++            driver_bundle_id_for_executable(
++                "/Users/test/Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use"
++            ),
++            Some("com.nuwax-ai.nuwax-computer-use")
++        );
+         assert_eq!(
+             driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),
+             None
+         );
+     }
+
++    #[test]
++    fn nuwax_direct_capture_evidence_uses_host_data_home() {
++        let _guard = env_lock();
++        let home = std::env::temp_dir().join(format!("cua-nuwax-home-{}", uuid::Uuid::new_v4()));
++        let data = home.join("host-data");
++        let original = swap_env("CUA_DRIVER_DATA_HOME", data.to_str());
++        let store = direct_capture_evidence_store_for_identity(
++            "/Applications/Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use",
++            &home,
++            Some("driver-daemon"),
++        )
++        .expect("nuwax store");
++        store.record_now().expect("record nuwax verification");
++        assert!(data.join("direct-capture-verification.json").is_file());
++        assert!(store.load().is_some());
++        restore_env("CUA_DRIVER_DATA_HOME", original);
++        std::fs::remove_dir_all(home).expect("remove test home");
++    }
++
+     #[test]
+     fn evidence_store_is_scoped_to_the_current_driver_identity() {
+         let home =

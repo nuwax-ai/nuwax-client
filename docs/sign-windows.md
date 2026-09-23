@@ -42,6 +42,10 @@ npm run sign:win -- <version>
 - 脚本流程：下载 unsigned EXE → signtool（`/sha1` 指纹 + RFC3161 时间戳）→
   `signtool verify //pa //all` → 重命名 `Nuwax.Setup.{v}.exe` → 上传并删除
   Release 上的 unsigned 资产。
+- CI 的 Windows 构建清单记录 unsigned EXE 的大小、SHA256 和签名不变 PE 字节摘要。
+  同步门禁在校验签名后，要求签名版 EXE 除 PE 校验和、证书目录及末尾新增证书外，
+  原始字节与该清单一致；即使 Release 已删 unsigned EXE，也能核对签名包来源。
+  缺少该记录的旧构建清单不能通过新同步门禁；需要重同步时须重新构建。
 - 排障（Release 资产名对照、gh 找不到等）见基座 windows-signing.md 同名章节。
 
 ## SSH 远程代跑（2026-09-15 起，一条龙编排）
@@ -49,6 +53,8 @@ npm run sign:win -- <version>
 签名步骤可从 mac 经 ssh 在签名机（`win-pc`）上代跑，全程编排在
 `scripts/release-stable.sh`（tag → CI → 远程签名 → stable 同步 → 验证，断点续跑），
 无需人工上机敲命令。人工前置只剩一件：**SimplySign Desktop 登录（手机 2FA）**。
+签名后重跑时，Release 仅有签名版 EXE 也会通过资产前置检查；`--notes` 允许
+指定说明文件尚未提交，脚本会先单独提交并推送它。
 
 win-pc 一次性配置记录（已做，勿重复）：
 

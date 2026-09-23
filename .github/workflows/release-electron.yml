@@ -383,6 +383,8 @@ jobs:
           # 商业版品牌/端口注入（构建期经 esbuild/vite define 固化）：
           NUWAX_APP_IDENTIFIER: nuwax
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
+          # 新安装默认正式业务域；esbuild 静态固化，不受安装机环境变量影响。
+          NUWAX_RELEASE_CHANNEL: stable
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
           # 官网下载页（MSI 等不支持自动更新的安装形态引导；商业暂无产品页先指官网首页）
           NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"

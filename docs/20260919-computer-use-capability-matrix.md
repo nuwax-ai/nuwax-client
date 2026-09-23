@@ -5,6 +5,7 @@
 > 链路设计与验收实录见 `20260917-computer-use-integration-v2.md`。
 > 事实来源：mac = spike + v1.0.16 载荷验证 + mac-mini 真机；win = win-pc 真机（B4）；
 > Linux = 代码落地 + **容器实证**（OrbStack ubuntu:24.04 arm64 与 CI 腿同构：portal-input 构建、无头 serve、MCP 握手、ldd 依赖）+ 上游源码（trycua/cua v0.28.2 @625118a）口径，**桌面会话真机验证待做 ⚠️**。
+> 2026-09-24 实现更新：设置页一次确认后采用 `unrestricted`（不逐次审批），仅注入审核过的工具，驱动策略和 MCP 两层禁用 `check_for_update`、`install_ffmpeg`；helper 授权、随机端点与新驱动补丁仍须正式安装包实测。
 
 ## 一、能力总表（三平台 × 能力点）
 
@@ -17,7 +18,7 @@
 | 逐窗 PipeWire 截屏（portal-capture） | 不涉及 | 不涉及 | **不启用**（上游截屏主瀑布未接此路径、仅 Nix 包启用；对截屏能力零影响） |
 | 浏览器 CDP 工具组（browser_* 9 个） | ✅ | ✅ | 注册面一致，真机待验 |
 | 光标叠加 / 轨迹录制 / 会话生命周期 | ✅ | ✅ | 同上 |
-| daemon 通道 | UDS `$TMPDIR/nuwax-computer-use.sock`（0600，本机同用户） | 命名管道 `\\.\pipe\nuwax-computer-use` | 同 mac UDS（容器实证 0600 建立，无 DISPLAY 可起——上游懒加载；pid/telemetry·install 标记/history/浏览器 profile/restore token 自 v1.0.18 全部经 CUA_DRIVER_DATA_HOME 内聚到 ~/.nuwax/computer-use，机器无 cua-* 外部目录）；**三平台均无 TCP 监听端口** |
+| daemon 通道 | `$TMPDIR/c-<随机值>/s`，目录 0700/socket 0600，能力文件与 HMAC 端点证明 | `\\.\pipe\nuwax-computer-use-<随机值>`，当前用户 SID ACL + 首实例独占 + 能力文件与 HMAC 证明 | 同 mac UDS；pid/telemetry·install 标记/history/浏览器 profile/restore token 经 CUA_DRIVER_DATA_HOME 内聚到 ~/.nuwax/computer-use；**三平台均无 TCP 监听端口** |
 | Helper 授权 | 辅助功能＋屏幕录制（一次性，跨版本保留） | **零授权** | X11 零授权；Wayland 见输入/截屏两行（细节见权限矩阵文档） |
 | 设置页权限行 UI | 有（去授权/检查） | 无（v1.0.18 起不渲染，win 无 TCC 概念） | 无 |
 
@@ -27,8 +28,8 @@
 |---|---|---|
 | `portal-input` | **v1.0.18 起构建启用**（build-helper.sh `--features portal-input`，2026-09-19 拍板，对齐上游官方 Linux 发行物） | 仅作用于 Linux 非 wlroots 合成器（GNOME 47+/KDE Plasma 6+）的输入兜底；X11/wlroots 路径不经过它；**不改变 tools/list 条目**（feature 只改行为/错误形态/健康报告）。首用弹 xdg-desktop-portal 远程控制同意框，restore token 落 `~/.nuwax/computer-use/libei-persistent.token`（compositor 会话级）。**构建已经 OrbStack 容器实证**（ubuntu:24.04 arm64 与 CI 腿同构，47MB 产物）；ldd 实证 `libxkbcommon.so.0` 为其真实运行时依赖（deb 默认 depends 经 libgtk-3-0 传递覆盖，AppImage 极简环境留意）；CI x64/arm64 双腿产物确认随 v1.0.18 |
 | `portal-capture` | 不启用 | 上游截屏主瀑布未接 PipeWire 逐窗路径（上游官方发行也不开，仅 Nix 包启用）；构建需 pipewire 0.8/libspa 0.8 头文件＋bindgen；对三平台截屏能力零影响 |
-| 策略引擎 yaml/rego（cua-driver-core 默认 feature） | 随构建默认启用 | PolicyEngine 可用；但当前 serve 未传 `--permission-mode`，策略面未接线（见缺口 ②） |
-| nuwax 本地补丁 ×2 | 恒应用（锁版 625118a90 ＋ `git apply`） | ① bundle 白名单参数化（含 `Nuwax Computer Use.app`，否则 driver re-exec 丢宿主 TCC、动作静默失败）；② `app_bundle_path()` 动态取运行中 bundle。均为方案 E 宿主化必需，上游无此概念（发行差异，非缺口） |
+| 策略引擎 yaml/rego（cua-driver-core 默认 feature） | 随构建默认启用 | 启用时明确传 `--permission-mode unrestricted --dangerously-bypass-approvals`；驱动托管 YAML 将工具限制为预审清单，MCP 条目再以 allowTools/denyTools 限制。 |
+| nuwax 本地补丁 | 恒应用（锁版 625118a90 ＋ `git apply`） | bundle 路径/数据目录、Nuwax helper 的 TCC 身份与直接捕获证据目录、随机端点能力鉴权；同 UID 程序仍可读取该用户 0600 能力文件，不能把它当作同 UID 隔离边界。 |
 
 ## 三、与原始开源方案（trycua/cua v0.28.2 @625118a）对照
 
@@ -42,8 +43,8 @@
 **已知缺口 / 偏差（按影响排序，QA 对照时注意）**
 
 1. **Linux 桌面会话真机零验证 ⚠️**：X11 回归、GNOME Wayland portal-input 首用弹框与 restore token、wlroots 场景均未真机跑过；**无头链路已容器实证**（构建/serve/UDS/握手 60 工具/ldd 依赖）；CI x64/arm64 两腿产物确认随 v1.0.18。
-2. **Bounded 权限模式 / 审批浮层未接线**：serve 未传 `--permission-mode`（上游有能力，本仓未消费）。
-3. **MCP 条目无 allowTools/denyTools**：`check_for_update` / `install_ffmpeg` 红线目前仅 QA 口径，未代码强制。
+2. **同 UID 调用边界**：私有随机端点、当前用户 ACL、能力鉴权和 HMAC 可防其他用户/未知端点伪装；同 UID 进程可以读取当前用户的能力文件，仍可能调用 helper。QA/安全评估须按此边界处理。
+3. **一次授权模式**：用户在客户端确认全范围操作后，不再出现逐次审批；macOS 的 AX/SR/SCK 系统授权、Linux Wayland portal 授权仍由系统控制。
 4. **mac 元素树无只读文本**：计算器显示屏反例（AX 不暴露）——涉值确认的用例必须以截图终验。
 5. **无人值守真门槛＝锁屏/休眠与密码框**（授权本身是一次性非障碍）；v1.0.17 起电源保活三档缓解。
 6. **win UIPI**：目标是管理员权限窗口时普通权限 helper 被挡（预期行为）；UWP 操控需 uiAccess 提升进程（后续分发项）。
@@ -53,8 +54,8 @@
 
 **macOS（v1.0.17 已实证一轮，回归用）**
 
-- [ ] 首装流：设置页 Computer Use 权限行 →「去授权」→ TCC 辅助功能＋屏幕录制两项
-- [ ] daemon：UDS socket 存在；`lsof` 抽查无 TCP 监听
+- [ ] 首装流：设置页一次确认 → helper 的辅助功能＋屏幕录制＋SCK 直接捕获同意；离开设置页再打开仍保留待授权状态
+- [ ] daemon：随机私有 UDS 端点证明通过；伪服务端 HMAC 不通过；`lsof` 抽查无 TCP 监听
 - [ ] 会话握手：56 工具（附录清单逐一对照）
 - [ ] 输入 / 截屏 / 元素树 / 剪贴板样例动作通过
 - [ ] 升级新版本后权限保留（不重弹 TCC）
@@ -97,5 +98,5 @@ set_value             set_window_frame      start_recording       start_session
 stop_recording        type_text             verify_state          zoom
 ```
 
-`*`＝治理红线工具，agent 不得调用（版本已锁死）；`debug_window_info` 仅 Windows 注册；
+`*`＝上游原始清单中的治理红线工具，产品托管策略与 MCP denyTools 均拒绝 agent 调用；`debug_window_info` 仅 Windows 注册；
 Linux＝56 ＋ 4 个 X11 专属（`mouse_button_down`、`mouse_button_up`、`mouse_drag`、`parallel_mouse_drag`，容器实测共 **60**）。

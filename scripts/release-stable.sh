@@ -66,15 +66,18 @@ ci_run_id() {
 step "Phase 0/6 前置检查"
 git fetch origin --tags --quiet
 [[ -f "$NOTES_FILE" ]] || die "缺少 $NOTES_FILE（先写正式版说明，见脚本头注前置 1）"
-[[ -z "$(git status --porcelain | grep -v 'nuwa-electron-shell' || true)" ]] \
-  || die "外层工作树有未提交改动（除基座子模块同步产物外须干净）"
-if git diff --quiet -- "$NOTES_FILE" && git ls-files --error-unmatch "$NOTES_FILE" >/dev/null 2>&1; then
+STATUS_PATHS=(. ':(exclude)nuwa-electron-shell')
+$COMMIT_NOTES && STATUS_PATHS+=(":(exclude)${NOTES_FILE}")
+[[ -z "$(git status --porcelain --untracked-files=all -- "${STATUS_PATHS[@]}")" ]] \
+  || die "外层工作树有未提交改动（除基座子模块同步产物和 --notes 指定说明外须干净）"
+if git diff --quiet -- "$NOTES_FILE" && git diff --cached --quiet -- "$NOTES_FILE" &&
+   git ls-files --error-unmatch "$NOTES_FILE" >/dev/null 2>&1; then
   echo "  说明文件已提交"
 else
   $COMMIT_NOTES || die "$NOTES_FILE 未提交——提交后重跑，或换 --notes 由脚本提交"
   step "Phase 0/6 提交说明文件"
   git add "$NOTES_FILE"
-  git commit -m "docs(release-notes): ${TAG} 正式版说明（prerelease 验证通过后转正）"
+  git commit --only -m "docs(release-notes): ${TAG} 正式版说明（prerelease 验证通过后转正）" -- "$NOTES_FILE"
   git push origin HEAD
 fi
 BRANCH="$(git branch --show-current)"
@@ -113,13 +116,16 @@ step "Phase 3/6 校验 Release 资产"
 ASSETS="$(release_assets)"
 for want in "Nuwax-${VERSION}-arm64.dmg" "Nuwax-${VERSION}.dmg" "Nuwax-${VERSION}-arm64-mac.zip" \
             "Nuwax-${VERSION}.AppImage" "Nuwax-${VERSION}-amd64.deb" "Nuwax-${VERSION}-x86_64.rpm" \
-            "$UNSIGNED_EXE" "Nuwax.${VERSION}.msi" "latest-mac.yml" "latest.yml" \
+            "Nuwax.${VERSION}.msi" "latest-mac.yml" "latest.yml" \
             "build-manifest-macos-arm64.json" "build-manifest-macos-x64.json" \
             "build-manifest-windows-x64.json" "build-manifest-linux-x64.json" \
             "build-manifest-linux-arm64.json"; do
   grep -qx "$want" <<<"$ASSETS" || die "Release 缺资产：$want"
 done
-echo "  关键资产齐（mac 双架构/linux/win unsigned/yml）"
+if ! grep -qx "$SIGNED_EXE" <<<"$ASSETS"; then
+  grep -qx "$UNSIGNED_EXE" <<<"$ASSETS" || die "Release 缺少 Windows 未签名或签名 EXE"
+fi
+echo "  关键资产齐（mac 双架构/linux/win EXE/yml）"
 
 # ---- Phase 4/6 Windows 远程手签 ----------------------------------------------
 step "Phase 4/6 Windows 手签（${SIGN_HOST}，SimplySign 云端签名，约 10-40 分钟）"
