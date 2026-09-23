@@ -123,8 +123,8 @@ jobs:
       - name: Guard scripts self-test
         run: npm run test:scripts
 
-      - name: Run commercial tests
-        run: node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
+      - name: Sync commercial overlay for static gates
+        run: npm run overlay:sync
 
       - name: Verify overlay matches the tested base worktree
         run: npm run overlay:check
@@ -138,6 +138,9 @@ jobs:
         run: |
           npm run check:pin
           npm run check:pin -- --remote origin/main
+
+      - name: Run commercial tests
+        run: node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
 
   frontend:
     name: frontend source gate
@@ -155,8 +158,10 @@ jobs:
           version: 10.27.0
           package_json_file: nuwax/package.json
       - name: Install frontend dependencies
+        id: frontend_install
         run: pnpm -C nuwax install --frozen-lockfile
-      - name: Run frontend tests and architecture check
-        run: |
-          pnpm -C nuwax exec vitest run
-          pnpm -C nuwax lint:arch
+      - name: Run frontend tests
+        run: pnpm -C nuwax exec vitest run
+      - name: Check frontend architecture
+        if: ${{ !cancelled() && steps.frontend_install.outcome == 'success' }}
+        run: pnpm -C nuwax lint:arch
