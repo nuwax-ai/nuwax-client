@@ -231,7 +231,7 @@
   "Claw.Service.admin": "Admin Service",
   "Claw.Service.adminDesc": "Admin interface service (restart/health check)",
   "Claw.Service.ttyd": "Terminal Service",
-  "Claw.Service.ttydDesc": "Local WebSocket terminal (loopback only)",
+  "Claw.Service.ttydDesc": "Local WebSocket terminal",
   "Claw.Client.domainRequired": "Please enter service domain",
   "Claw.Client.accountRequired": "Please enter your username",
   "Claw.Client.codeRequired": "Please enter a dynamic code",

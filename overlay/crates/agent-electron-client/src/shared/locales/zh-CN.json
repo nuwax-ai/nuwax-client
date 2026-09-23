@@ -231,7 +231,7 @@
   "Claw.Service.admin": "管理服务",
   "Claw.Service.adminDesc": "管理接口服务（重启/健康检查）",
   "Claw.Service.ttyd": "终端服务",
-  "Claw.Service.ttydDesc": "本地 WebSocket 终端（仅回环）",
+  "Claw.Service.ttydDesc": "本地 WebSocket 终端",
   "Claw.Client.domainRequired": "请输入服务域名",
   "Claw.Client.accountRequired": "请输入账号",
   "Claw.Client.codeRequired": "请填写动态认证码",
