@@ -183,6 +183,8 @@ describe("cookie 会话与旧 token 桥", () => {
   });
 
   it("登出清业务域和网关 ticket，并保留同账号设备注册键", async () => {
+    const sent: string[] = [];
+    mainWindowSender = (channel) => sent.push(channel);
     settings.set(`nuwax.ticket.${HOST_ORIGIN}`, "old");
     settings.set(`nuwax.ticket.${GW_ORIGIN}`, "old");
     settings.set("auth.saved_key", "sk");
@@ -192,6 +194,16 @@ describe("cookie 会话与旧 token 桥", () => {
     expect(settings.get(`nuwax.ticket.${GW_ORIGIN}`)).toBeNull();
     expect(settings.get("auth.saved_key")).toBe("sk");
     expect(settings.get("auth.username")).toBe("alice");
+    expect(sent).not.toContain("nuwax:serverHostChanged");
+    expect(mocks.storage).toHaveBeenCalledWith(expect.objectContaining({ storages: ["cookies"] }));
+  });
+
+  it("升级后无 ticket 的 401 不反复清除 webview 存储", async () => {
+    await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
+    expect(mocks.storage).not.toHaveBeenCalled();
+    handlers.get("auth:getContext")!(senderEvent(GW_ORIGIN));
+    await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
+    expect(mocks.storage).not.toHaveBeenCalled();
   });
 });
 

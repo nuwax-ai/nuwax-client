@@ -9,6 +9,7 @@ vi.mock("electron-log", () => ({ default: { info: vi.fn() } }));
 import { applySessionAuthHeaders, initSessionAuthInjection } from "./sessionAuthInjection";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
+import { nativeTicketHeaders } from "./nativeTicketCapability";
 
 const businessOrigin = "https://business.example";
 const gatewayOrigin = "http://127.0.0.1:46800";
@@ -57,6 +58,21 @@ describe("business cookie session boundary", () => {
   it("does not lend a cookie to untrusted business documents", () => {
     const result = applySessionAuthHeaders(request({ webContents: { getURL: () => "https://external.example", isDestroyed: () => false }, requestHeaders: { Cookie: "ticket=new" } }), context);
     expect(result.Cookie).toBeUndefined();
+  });
+  it("allows main-process ticket requests but consumes their private marker", () => {
+    const native = nativeTicketHeaders("new");
+    const requestWithoutFrame = { webContentsId: 0, webContents: undefined, frame: undefined };
+    const allowed = applySessionAuthHeaders(request({ ...requestWithoutFrame, requestHeaders: native }), context);
+    expect(allowed).toEqual({ Cookie: "ticket=new", "x-client-type": APP_NAME_IDENTIFIER });
+    const forged = applySessionAuthHeaders(request({ ...requestWithoutFrame, requestHeaders: {
+      Cookie: "ticket=new", "x-nuwax-native-ticket": "forged",
+    } }), context);
+    expect(forged.Cookie).toBeUndefined();
+    const redirected = applySessionAuthHeaders(request({ ...requestWithoutFrame,
+      url: "https://other.example/image", requestHeaders: nativeTicketHeaders("new"),
+    }), context);
+    expect(redirected.Cookie).toBeUndefined();
+    expect(redirected["x-nuwax-native-ticket"]).toBeUndefined();
   });
   it("installs one listener covering HTTP and WebSocket", () => {
     initSessionAuthInjection(() => context);

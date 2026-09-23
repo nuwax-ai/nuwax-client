@@ -95,6 +95,27 @@ describe("commercial ticket cookie mirror", () => {
     await vi.waitFor(() => expect(api.currentTicket()).toBe("rotated"));
   });
 
+  it("reconciles a transient unknown removal while the gateway still holds the ticket", async () => {
+    const api = await import("./commercialTicketSession");
+    const gateway = "http://127.0.0.1:46800";
+    await api.setLoopbackTicketOrigin(gateway);
+    await api.restoreTicketSession(gateway);
+    await api.mirrorGatewaySetCookies(["ticket=fresh; Path=/"], mocks.origin, api.ticketEpoch());
+    mocks.jar.delete(mocks.origin);
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "fresh" }, "unknown", true);
+    await vi.waitFor(() => expect(mocks.jar.get(mocks.origin)?.value).toBe("fresh"));
+    expect(api.currentTicket()).toBe("fresh");
+  });
+
+  it("still expires a direct session after a real cookie removal", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.restoreTicketSession(null);
+    await api.mirrorGatewaySetCookies(["ticket=fresh; Path=/"], mocks.origin, api.ticketEpoch());
+    mocks.jar.delete(mocks.origin);
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "fresh" }, "expired", true);
+    await vi.waitFor(() => expect(api.currentTicket()).toBeNull());
+  });
+
   it("clears legacy Electron cookies once on client upgrade", async () => {
     mocks.settings.set("nuwax.cookieAuthMustRelogin", true);
     mocks.jar.set(mocks.origin, { name: "ticket", value: "legacy" });

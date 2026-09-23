@@ -40,6 +40,7 @@ import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
+import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
@@ -199,8 +200,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ...serviceState,
     loggedIn: !!currentTicket(),
   }));
-  // 每个文档第一次 getToken 绑定会话代次。换域/登出后旧文档不能写回。
+  // 每个文档第一次读取会话上下文时绑定代次。换域/登出后旧文档不能写回。
   let authGeneration = 0;
+  let authClearHandled = false;
   let transfers = new AbortController();
   const cancelTransfers = () => {
     transfers.abort();
@@ -212,7 +214,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     `${event.sender?.id}:${event.senderFrame?.processId}:${event.senderFrame?.routingId}`;
   const isCurrentDocument = (event: IpcMainInvokeEvent) =>
     !switching && documents.get(documentKey(event)) === authGeneration;
-  const clearSiteStorage = async (scopes: string[]) => {
+  const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
       webContents.getAllWebContents().map((wc) => wc.session),
     );
@@ -221,13 +223,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         if (/^https?:\/\//.test(origin))
           await ses.clearStorageData({
             origin,
-            storages: [
-              "cookies",
-              "localstorage",
-              "indexdb",
-              "serviceworkers",
-              "cachestorage",
-            ],
+            storages: full
+              ? ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"]
+              : ["cookies"],
           });
       }
   };
@@ -406,6 +404,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("auth:beginLogin", async (event) => {
     const scope = resolveSenderOrigin(event);
     if (switching || !trustedOrigins().includes(scope)) return false;
+    authClearHandled = false;
     authGeneration++;
     documents.set(documentKey(event), authGeneration);
     cancelTransfers();
@@ -459,7 +458,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     try {
       const response = await net.fetch(`${businessOrigin}/api/user/getLoginInfo`, {
         method: "GET", redirect: "error", credentials: "omit",
-        headers: { Cookie: `ticket=${ticket}`, "x-client-type": "nuwax" },
+        headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
       });
       await mirrorNativeResponseTicket(response, businessOrigin, requestEpoch);
       if (response.status === 401) { await expire(); return false; }
@@ -487,42 +486,36 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (generation !== authGeneration || ticket !== currentTicket()) return false;
     }
     ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: true });
+    authClearHandled = false;
     void lifecycle.start();
     return true;
   });
 
   ipcMain.handle("auth:clear", async (event) => {
     if (!isCurrentDocument(event)) return false;
+    if (authClearHandled) return true;
+    authClearHandled = true;
+    const hadTicket = !!currentTicket();
     authGeneration++;
     cancelTransfers();
     const stopping = lifecycle.stop();
     const scope = resolveSenderOrigin(event);
-    // 全清候选键：单清 sender 键时，getToken 回退链会从 serverHost/网关键把
-    // 过期 token「复活」——登出/401 后陷入 复活→401→clear 死循环（键空间分裂修复）。
+    // 升级兼容：清除 sender、业务域和网关范围内残留的旧 token 键。
     const scopes = nuwaxSessionScopes(scope);
     invalidateTicketSession(scopes);
     for (const s of scopes) writeSetting(tokenKey(s), null);
     log.info("[NuwaxBridge] auth:clear", { scopes });
 
-    // 登录态以 webview 为准：登出即清壳侧登录态。注册凭据族（savedKey/
-    // username）保留——登出 ≠ 注销设备，后端 reg 仍要 savedKey，清掉后同设备
-    // 重登将永远无法重新注册（2026-09-14 实证）；跨账号风险由 persistToken
-    // 的账号切换检测兜底（sub ≠ 上次账号 → 全清）。
+    // 登出保留 savedKey/username，供同账号重新注册；换账号时由
+    // auth:syncSession 查询到的真实用户名触发全清。
     clearShellAuthState();
 
     clearRegistration({ preserveSavedKey: true });
     ctx
       .getMainWindow()
       ?.webContents.send("nuwax:authChanged", { loggedIn: false });
-    await clearSiteStorage(scopes);
+    if (hadTicket) await clearSiteStorage(scopes);
     const stopped = await stopping;
-    // 重新挂载 guest，丢弃旧文档和内存认证状态；登录页可建立新文档会话。
-    ctx.getMainWindow()?.webContents.send("nuwax:serverHostChanged", {});
-
-    // 顶栏账号状态联动：登出 / token 失效 → 通知 renderer 顶栏切「去登录」态。
-    ctx.getMainWindow()?.webContents.send("nuwax:authChanged", {
-      loggedIn: false,
-    });
     return stopped.success;
   });
 
@@ -531,8 +524,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 唯一事实源），清掉旧域全部派生凭据，停止全部本地服务（重新初始化语义——
   // 在跑的 lanproxy 等仍连旧域名，留着只会错乱），刷新回环网关（gateway 形态
   // 反代目标随域重指），并通知 renderer 重解析 webview URL（direct 形态即加载
-  // 新域名的 /Login）。切换后 webview 在新域无 token → 登录页；登录成功经
-  // persistToken → nuwax:login-confirmed → reg+重启服务，完成向新域的重新初始化。
+  // 新域名的 /Login）。切换后 webview 在新域无 ticket → 登录页；登录成功经
+  // auth:syncSession → reg+重启服务，完成向新域的重新初始化。
   const configureServerHost = async (
     event: IpcMainInvokeEvent,
     input: unknown,
@@ -565,7 +558,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const scopes = nuwaxSessionScopes(resolveSenderOrigin(event));
     invalidateTicketSession([...scopes, origin]);
     const stopping = lifecycle.stop();
-    // 换域 = 账号体系变化：全清注册凭据（与 persistToken 的账号切换、auth:clear
+    // 换域 = 账号体系变化：全清注册凭据（与 auth:syncSession 的账号切换、auth:clear
     // 的登出保留相对——三者语义见 clearRegistration 注释）。
     clearShellAuthState();
     clearRegistration();
@@ -582,7 +575,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     try {
       const result = await stopping;
       if (!result.success) throw new Error("Failed to stop business services");
-      await clearSiteStorage([...scopes, origin]);
+      await clearSiteStorage([...scopes, origin], true);
       const prev = readSetting("step1_config") as Record<
         string,
         unknown
@@ -596,7 +589,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         ?.webContents.send("nuwax:serverHostChanged", { serverHost: origin });
       return { success: true, serverHost: origin };
     } catch (error) {
-      // 同文档允许再次操作重试，但旧 token 仍不可写回（需重新 getToken）。
+      // 同文档允许再次操作重试，但旧会话仍不可写回（需重新读取上下文）。
       writeSetting("step1_config", previousConfig);
       ctx.getMainWindow()?.webContents.send("nuwax:serverHostChanged", {});
       return { success: false, error: String(error) };

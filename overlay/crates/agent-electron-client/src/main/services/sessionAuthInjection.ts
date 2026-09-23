@@ -9,6 +9,7 @@ import {
   stripTicketCookie,
 } from "./auth/requestPolicy";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
+import { consumeNativeTicketCapability } from "./nativeTicketCapability";
 
 export interface SessionAuthContext {
   businessOrigin: string;
@@ -58,6 +59,7 @@ export function applySessionAuthHeaders(
   context: SessionAuthContext
 ): Record<string, string> {
   const headers = { ...details.requestHeaders };
+  const nativeTicketRequest = consumeNativeTicketCapability(headers);
   // The gateway capability is main-process-only. Renderer-provided copies must
   // never survive, including redirects to an unrelated destination.
   for (const key of Object.keys(headers)) {
@@ -102,11 +104,22 @@ export function applySessionAuthHeaders(
       if (key.toLowerCase() === "x-client-type") delete headers[key];
     headers["x-client-type"] = APP_NAME_IDENTIFIER;
   }
-  if (!matchesBusinessOrigin(details.url, context.businessOrigin)) return headers;
+  if (!matchesBusinessOrigin(details.url, context.businessOrigin)) {
+    if (nativeTicketRequest) {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() !== "cookie") continue;
+        const cookie = stripTicketCookie(headers[key]);
+        if (cookie) headers[key] = cookie;
+        else delete headers[key];
+      }
+    }
+    return headers;
+  }
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === "authorization") delete headers[key];
     if (key.toLowerCase() !== "cookie" ||
-        (!isPublicAuthPath(target.pathname) && trustedRequest(details, context))) continue;
+        (!isPublicAuthPath(target.pathname) &&
+          (nativeTicketRequest || trustedRequest(details, context)))) continue;
     const cookie = stripTicketCookie(headers[key]);
     if (cookie) headers[key] = cookie;
     else delete headers[key];

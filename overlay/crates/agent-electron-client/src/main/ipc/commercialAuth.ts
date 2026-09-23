@@ -9,6 +9,7 @@ import {
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
+import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
 import { stopDaemon } from "../services/cua/computerUse";
@@ -169,7 +170,7 @@ export function initializeCommercialAuth(
       const ports = getConfiguredPorts();
       const sessionResponse = await net.fetch(`${origin}/api/user/getLoginInfo`, {
         method: "GET", redirect: "error", credentials: "omit",
-        headers: { Cookie: `ticket=${ticket}`, "x-client-type": "nuwax" },
+        headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
       await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
@@ -194,7 +195,7 @@ export function initializeCommercialAuth(
         headers: {
           "Content-Type": "application/json",
           "x-client-type": "nuwax",
-          Cookie: `ticket=${ticket}`,
+          ...nativeTicketHeaders(ticket),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         body: JSON.stringify({

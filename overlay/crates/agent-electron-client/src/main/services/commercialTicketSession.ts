@@ -7,6 +7,7 @@ type Ticket = { value: string; expirationDate?: number; secure?: boolean; httpOn
 const key = (origin: string) => `${NUWAX_TICKET_KEY_PREFIX}${origin}`;
 const metaKey = (origin: string) => `nuwax.ticketMeta.${origin}`;
 const incompatibleKey = (origin: string) => `nuwax.ticketSecureHttp.${origin}`;
+const COOKIE_REPLACEMENT_SETTLE_MS = 20;
 let epoch = 0;
 let listening = false;
 let loopbackOrigin: string | null = null;
@@ -165,8 +166,31 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
       // A replacement emits an overwrite removal followed by an insertion.
       // Explicit login/logout clearing has already invalidated the mirror.
       if (cause === "overwrite" || !currentTicket()) return;
-      invalidateTicketSession([business.origin, ...(loopbackOrigin ? [loopbackOrigin] : [])]);
-      if (loopbackOrigin) void session.defaultSession.cookies.remove(loopbackOrigin, "ticket");
+      const observedEpoch = epoch;
+      const expected = currentTicket();
+      void (async () => {
+        // Electron may report an "unknown" removal during overlapping jar
+        // writes. Let the replacement settle before treating it as logout.
+        await new Promise((resolve) => setTimeout(resolve, COOKIE_REPLACEMENT_SETTLE_MS));
+        if (observedEpoch !== epoch || expected !== currentTicket()) return;
+        const existing = (await session.defaultSession.cookies.get({ url: business.origin, name: "ticket" }))[0];
+        if (existing) {
+          await syncTicketFromJar(business.origin, observedEpoch);
+          return;
+        }
+        if (cause === "unknown" && loopbackOrigin) {
+          const gatewayCookie = (await session.defaultSession.cookies.get({ url: loopbackOrigin, name: "ticket" }))[0];
+          if (gatewayCookie?.value === expected) {
+            if (observedEpoch !== epoch || expected !== currentTicket()) return;
+            const metadata = readSetting(metaKey(business.origin)) as Ticket | null;
+            await put(session.defaultSession.cookies, business.origin, { ...(metadata ?? {}), value: expected!, httpOnly: true });
+            return;
+          }
+        }
+        if (observedEpoch !== epoch || expected !== currentTicket()) return;
+        invalidateTicketSession([business.origin, ...(loopbackOrigin ? [loopbackOrigin] : [])]);
+        if (loopbackOrigin) await session.defaultSession.cookies.remove(loopbackOrigin, "ticket");
+      })().catch((error) => log.error("[TicketSession] cookie removal reconciliation failed", error));
       return;
     }
     void syncTicketFromJar(business.origin, epoch).catch((error) => log.error("[TicketSession] direct sync failed", error));
