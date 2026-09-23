@@ -27,8 +27,7 @@
 ; First request a graceful shutdown of the app tree, then force-stop that tree if
 ; it does not exit within the app's 10-second shutdown-cleanup window.
 !macro customCheckAppRunning
-  ${GetProcessInfo} 0 $pid $1 $2 $3 $4
-  ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
+  ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
     !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
     ${if} $R0 == 0
       ${ifNot} ${isUpdated}
@@ -41,9 +40,9 @@
 
       ; Give app-side cleanup (which can take up to 10 seconds) time to finish.
       !ifdef INSTALL_MODE_PER_ALL_USERS
-        nsExec::Exec `taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"`
+        nsExec::Exec `taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID"`
       !else
-        nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid" /fi "USERNAME eq %USERNAME%"`
+        nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID" /fi "USERNAME eq %USERNAME%"`
       !endif
       Pop $R0
 
@@ -66,9 +65,9 @@
       StrCpy $R1 0
       customForceAppTreeLoop:
         !ifdef INSTALL_MODE_PER_ALL_USERS
-          nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"`
+          nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID"`
         !else
-          nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid" /fi "USERNAME eq %USERNAME%"`
+          nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $EXEPID" /fi "USERNAME eq %USERNAME%"`
         !endif
         Pop $R0
         Sleep 1000
