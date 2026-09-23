@@ -203,6 +203,9 @@ jobs:
       # pnpm 10 壳侧依赖构建脚本白名单 pnpm.onlyBuiltDependencies 已配齐 7 项。
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+          package_json_file: nuwa-electron-shell/package.json
 
       # 与正式版相同：从发布 tag 的 gitlink 构建前端，五个平台来源一致。
       - name: Build pinned nuwax frontend dist

@@ -53,6 +53,7 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
+          package_json_file: nuwa-electron-shell/package.json
 
       # Python 3.12+ 移除 distutils，node-gyp（better-sqlite3）依赖
       - name: Install setuptools for node-gyp
@@ -103,6 +104,7 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
+          package_json_file: nuwa-electron-shell/package.json
 
       - name: Install setuptools for node-gyp
         run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools
@@ -151,6 +153,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10.27.0
+          package_json_file: nuwax/package.json
       - name: Install frontend dependencies
         run: pnpm -C nuwax install --frozen-lockfile
       - name: Run frontend tests and architecture check
