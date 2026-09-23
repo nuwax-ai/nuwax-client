@@ -20,3 +20,70 @@
 !macro customHeader
   Name "女娲Nuwax"
 !macroend
+
+; electron-builder 25's default CHECK_APP_RUNNING only stops matching Nuwax.exe
+; processes. The Electron main process owns several helper trees, so a surviving
+; child can keep the install directory locked and make the stock retry loop fail.
+; First request a graceful shutdown of the app tree, then force-stop that tree if
+; it does not exit within the app's 10-second shutdown-cleanup window.
+!macro customCheckAppRunning
+  ${GetProcessInfo} 0 $pid $1 $2 $3 $4
+  ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
+    !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
+    ${if} $R0 == 0
+      ${ifNot} ${isUpdated}
+        MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK customDoStopApp
+        Quit
+        customDoStopApp:
+      ${endIf}
+
+      DetailPrint `Closing running "${PRODUCT_NAME}" and its child processes...`
+
+      ; Give app-side cleanup (which can take up to 10 seconds) time to finish.
+      !ifdef INSTALL_MODE_PER_ALL_USERS
+        nsExec::Exec `taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"`
+      !else
+        nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid" /fi "USERNAME eq %USERNAME%"`
+      !endif
+      Pop $R0
+
+      StrCpy $R1 0
+      customWaitForAppExit:
+        !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
+        ${if} $R0 != 0
+          Goto customAppClosed
+        ${endIf}
+        ${if} $R1 >= 10
+          Goto customForceAppTree
+        ${endIf}
+        Sleep 1000
+        IntOp $R1 $R1 + 1
+        Goto customWaitForAppExit
+
+      ; The app did not exit cleanly. Force-stop the process tree so helper
+      ; processes do not keep files in the installation directory open.
+      customForceAppTree:
+      StrCpy $R1 0
+      customForceAppTreeLoop:
+        !ifdef INSTALL_MODE_PER_ALL_USERS
+          nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"`
+        !else
+          nsExec::Exec `"$SYSDIR\cmd.exe" /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid" /fi "USERNAME eq %USERNAME%"`
+        !endif
+        Pop $R0
+        Sleep 1000
+        !insertmacro FIND_PROCESS "${APP_EXECUTABLE_FILENAME}" $R0
+        ${if} $R0 != 0
+          Goto customAppClosed
+        ${endIf}
+        IntOp $R1 $R1 + 1
+        ${if} $R1 < 3
+          Goto customForceAppTreeLoop
+        ${endIf}
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY customForceAppTreeLoop
+        Quit
+
+      customAppClosed:
+    ${endIf}
+  ${endIf}
+!macroend
