@@ -31,7 +31,7 @@
 # submodule 说明：
 #   - 对齐的是本仓 gitlink pin 的 SHA（可复现，与 CI/release 一致），不是远端分支尖。
 #   - 子模块工作区有未提交改动且 pin 变化时会失败退出，不会强杀本地改动；
-#     需要远端分支最新时手动：git submodule update --remote nuwa-electron-shell
+#     需要远端分支最新时：make submodules-latest（前进到分支尖并自动 bump pin）
 #   - 跳过本次同步：make dev SKIP_SUBMODULES=1
 #
 # 为什么必须带 NUWAX_WEBVIEW_ORIGIN：
@@ -72,7 +72,7 @@ endif
 
 .DEFAULT_GOAL := dev
 
-.PHONY: dev submodules
+.PHONY: dev submodules submodules-latest
 
 # 只同步 submodule 到 pin（make dev 会自动跑；也可单独执行）
 submodules:
@@ -83,6 +83,31 @@ submodules:
 		echo "    处理：进子模块提交/stash 后重试；或临时 make dev SKIP_SUBMODULES=1 跳过。"; \
 		exit 1; \
 	}
+
+# 前进 submodule 到远端分支尖（.gitmodules 的 branch 配置：基座 main / 前端 feat-dong.0930）。
+# 有变化时自动：重新 overlay:sync + 提交 pin bump（保持 submodule 状态与 pin 一致、可复现）。
+# 适用：跟进同事刚推的基座/前端提交。注意本命令不动壳仓自身——先 git pull 同步
+# 壳仓远端的 pin 变更，再跑本命令向前推进；基座依赖变化（package.json/lock）需手动重装。
+submodules-latest:
+	@echo ">>> [1/4] 清理基座 overlay 同步态（让 submodule 可以前进）..."
+	@node scripts/sync-overlay.js --clean >/dev/null || { echo "!!! overlay:clean 失败"; exit 1; }
+	@echo ">>> [2/4] submodule 前进到远端分支尖（.gitmodules branch）..."
+	@git submodule update --remote -- $(SUBMODULES) || { \
+		echo "!!! submodule 更新失败。"; \
+		echo "    常见原因：nuwax 工作区有构建戳等未提交改动（如 src/constants/version.ts）。"; \
+		echo "    处理：cd nuwax && git status 确认无需保留后 git restore .，再重试。"; \
+		exit 1; \
+	}
+	@if git diff --quiet -- $(SUBMODULES); then \
+		echo ">>> submodule 已在远端分支尖，无需 bump。"; \
+	else \
+		echo ">>> [3/4] 重新同步 overlay 到新基座..."; \
+		node scripts/sync-overlay.js >/dev/null || { echo "!!! overlay:sync 失败"; exit 1; }; \
+		echo ">>> [4/4] 提交 pin bump..."; \
+		git add $(SUBMODULES); \
+		git commit -m "chore(client): bump submodule 到远端分支尖——$$(git submodule status $(SUBMODULES) | awk '{print $$2"@"$$1}' | tr '\n' ' ')"; \
+		echo ">>> 完成。若基座依赖有变（package.json/pnpm-lock），重装：cd nuwa-electron-shell && pnpm install"; \
+	fi
 
 dev:
 	@if [ -z "$(SKIP_SUBMODULES)" ]; then \
