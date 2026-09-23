@@ -200,13 +200,18 @@ export function initializeCommercialAuth(
       const loopbackOrigin = (
         readSetting("nuwax.loopback") as { origin?: string } | null
       )?.origin;
-      const ticket = readTicketCookieValue(
+      const mirroredTicket = readTicketCookieValue(
         [origin, loopbackOrigin].filter(Boolean) as string[],
       );
+      const ticket = mirroredTicket === token ? mirroredTicket : null;
       if (ticket) log.info("[CommercialAuth] reg with session ticket cookie");
       const response = await net.fetch(`${origin}/api/sandbox/config/reg`, {
         method: "POST",
         redirect: "error",
+        // net.fetch otherwise adds defaultSession's jar cookie even when our
+        // paired mirror was rejected. Only the explicit, token-matched ticket
+        // below may authenticate registration (Electron retains it with omit).
+        credentials: "omit",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
@@ -233,9 +238,15 @@ export function initializeCommercialAuth(
           },
         }),
       });
+      signal.throwIfAborted();
+      if (origin !== currentBusinessOrigin() || token !== currentAccessToken())
+        throw new Error("Session changed during registration");
       if (response.status === 401) expired?.();
       if (!response.ok) throw new Error(`Registration HTTP ${response.status}`);
       const payload = await response.json();
+      signal.throwIfAborted();
+      if (origin !== currentBusinessOrigin() || token !== currentAccessToken())
+        throw new Error("Session changed during registration");
       if (["4010", "4011"].includes(payload.code)) expired?.();
       if (payload.code !== "0000")
         throw new Error(payload.message || `Registration ${payload.code}`);

@@ -21,6 +21,7 @@ import log from "electron-log";
 import * as fs from "fs";
 import * as net from "net";
 import * as path from "path";
+import { randomBytes } from "node:crypto";
 import { readSetting, writeSetting } from "../../db";
 import { DEFAULT_SERVER_HOST } from "@shared/constants";
 import { NUWAX_TOKEN_KEY_PREFIX } from "../../ipc/nuwaxBridgeHandlers";
@@ -30,18 +31,20 @@ import {
   DEFAULT_BACKEND_PREFIXES,
   type LoopbackGatewayHandle,
 } from "./gateway";
+import { normalizeGatewayRequestUrl } from "./routingPolicy";
+import { setGatewayRequestContext } from "./requestContext";
 
 export const DEFAULT_LOOPBACK_GATEWAY_PORT = 46800;
 
 /**
- * dist 形态额外反代的「外链菜单微应用」前缀——**临时垫片**：list-menu 下发的
+ * dist 形态额外反代的后端微应用文档根：list-menu 下发的
  * 消息（/instant-message）与资料库（/repo）是业务域上的独立微应用，iframe src
  * 为后端域绝对 URL，本应直连业务域——但 dist 形态的绝对 URL 归一钩子会把
  * 指向后端域的请求重定向回网关 origin，这些路径若不在反代前缀里会被本地
  * dist 托管兜住：无点深链 SPA 回退成 nuwax 首页（nuwax 路由无此路由 →
  * 前端 404 页），带点资源直接 404。生态市场是 %siteUrl%/api/eco/redirect，
  * 落在 /api 前缀内 302 到自有域，不在此列。消息/资料库接入方案后续将大改
- * （qiankun 微前端），届时接入形态变化须回收本清单；过渡期新增微应用用 env
+ * （qiankun 微前端），届时接入形态变化须复核本清单；新增微应用文档根用 env
  * NUWAX_GATEWAY_EXTRA_BACKEND_PREFIXES（逗号分隔，如 "/im,/wiki"）免重建追加。
  */
 const MICROAPP_BACKEND_PREFIXES = ["/instant-message", "/repo"];
@@ -293,6 +296,7 @@ export async function ensureLoopbackGateway(): Promise<
     }
   }
   try {
+    const requestSecret = randomBytes(32).toString("hex");
     running = await startLoopbackGateway({
       targetOrigin,
       distDir: distMode ? resolveNuwaxDistDir() : undefined,
@@ -306,7 +310,9 @@ export async function ensureLoopbackGateway(): Promise<
         ]),
       ],
       getAccessToken: serverHostTokenProvider(backendOrigin),
+      trustedRequestSecret: requestSecret,
     });
+    setGatewayRequestContext({ origin: running.origin, requestSecret });
     if (distMode) {
       startAbsoluteUrlNormalization(running.origin, backendOrigin);
     }
@@ -321,6 +327,7 @@ export async function ensureLoopbackGateway(): Promise<
     });
     return running;
   } catch (e) {
+    setGatewayRequestContext(null);
     log.warn("[LoopbackGateway] start failed (non-fatal):", e);
     writeSetting(LOOPBACK_RUNTIME_KEY, {
       enabled: false,
@@ -332,52 +339,55 @@ export async function ensureLoopbackGateway(): Promise<
   }
 }
 
-/** 绝对 URL 归一（dist 模式）：nuwax 返回的后端绝对地址（fileProxyUrl 等）在页面
- *  fetch 时从回环 origin 直连后端域会撞 CORS——请求层重定向回网关 origin（同源，
- *  顺带享 Bearer/x-client-type 注入）。nuwax-desktop 已实证同款方案。 */
+/** dist 模式 URL 归一：文档保持 pathname；可信微应用 frame 的后端资源进入
+ *  命名空间。跨 origin fetch 重定向仍受 CORS 检查，session 附的私有 capability
+ *  由 gateway 响应层验证；不能把 redirect 当成消除 CORS 的手段。 */
 let normalizationActive = false;
 function startAbsoluteUrlNormalization(
   gatewayOrigin: string,
   backendOrigin: string,
 ): void {
   try {
-    const backend = new URL(backendOrigin);
+    const backendPrefixes = [
+      ...DEFAULT_BACKEND_PREFIXES,
+      ...MICROAPP_BACKEND_PREFIXES,
+      ...resolveExtraBackendPrefixes(),
+    ];
     session.defaultSession.webRequest.onBeforeRequest(
-      { urls: ["http://*/*", "https://*/*"] },
+      { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
       (details, callback) => {
-        const url = details.url;
-        if (!url.startsWith(`${backend.origin}/`)) {
-          callback({});
-          return;
-        }
         // 仅 webview guest（发起页 origin = 网关 origin）的绝对 URL 归一。
         // 壳 renderer（vite origin）直连后端的 API 不归一——壳 API 域名与后端
         // 同域时全量误伤：重定向进网关后后端回 ACAO=后端域 ≠ 壳 origin，
         // preflight 直接被 CORS 拦死（i18n/sandbox reg 等全挂）。
-        let fromGuest = false;
         try {
           const wc = details.webContentsId
             ? webContents.fromId(details.webContentsId)
             : null;
-          fromGuest =
-            !!wc &&
-            typeof wc.getURL() === "string" &&
-            wc.getURL().startsWith(gatewayOrigin);
+          const redirectURL = normalizeGatewayRequestUrl(
+            {
+              url: details.url,
+              resourceType: details.resourceType,
+              webContentsUrl: wc?.getURL() ?? "",
+              frameUrl: details.frame?.url,
+              parentFrameUrl: details.frame?.parent?.url,
+              referrer: details.referrer,
+            },
+            { gatewayOrigin, backendOrigin, backendPrefixes },
+          );
+          if (redirectURL) {
+            callback({ redirectURL });
+            return;
+          }
         } catch {
           /* webContents 可能已销毁——按非 guest 放行 */
-        }
-        if (fromGuest) {
-          callback({
-            redirectURL: gatewayOrigin + url.slice(backend.origin.length),
-          });
-          return;
         }
         callback({});
       },
     );
     normalizationActive = true;
     log.info(
-      `[LoopbackGateway] 绝对 URL 归一 → ${gatewayOrigin}（${backend.origin}）`,
+      `[LoopbackGateway] 后端 URL 归一 → ${gatewayOrigin}（${backendOrigin}）`,
     );
   } catch (e) {
     log.warn("[LoopbackGateway] 绝对 URL 归一注册失败:", e);
@@ -398,6 +408,7 @@ function stopAbsoluteUrlNormalization(): void {
 }
 
 export async function stopLoopbackGateway(): Promise<void> {
+  setGatewayRequestContext(null);
   if (!running) return;
   const handle = running;
   running = undefined;

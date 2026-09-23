@@ -127,7 +127,7 @@ describe("commercial registration protocol", () => {
     mocks.settings.set("step1_config", { serverHost: origin });
     mocks.settings.set(`nuwax.accessToken.${origin}`, "opaque-token");
     // 网关域键命中优先级其次；此处业务域键命中即可验证候选序回读
-    mocks.settings.set(`nuwax.ticket.${origin}`, "session-ticket-value");
+    mocks.settings.set(`nuwax.ticket.${origin}`, "opaque-token");
     mocks.fetch.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -139,7 +139,8 @@ describe("commercial registration protocol", () => {
     const { flow } = fixture();
     expect((await flow.start()).success).toBe(true);
     const [, options] = mocks.fetch.mock.calls[0];
-    expect(options.headers.Cookie).toBe("ticket=session-ticket-value");
+    expect(options.headers.Cookie).toBe("ticket=opaque-token");
+    expect(options.credentials).toBe("omit");
     expect(options.headers.Authorization).toBe("Bearer opaque-token");
   });
   it("readTicketCookieValue 按候选序回读，writeTicketForScopes 双写/清", () => {
@@ -333,5 +334,53 @@ describe("stopExtras — 退出期附加清理接线", () => {
     await flow.stopExtras();
     const { stopDaemon } = await import("../services/cua/computerUse");
     expect(stopDaemon).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("registration credential consistency", () => {
+  it("ignores late JSON expiry after a newer token has replaced the request snapshot", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "old-token");
+    let resolve!: (value: unknown) => void;
+    const json = vi.fn(() => new Promise((r) => { resolve = r; }));
+    mocks.fetch.mockResolvedValue({ ok: true, status: 200, json });
+    const expired = vi.fn();
+    const flow = initializeCommercialAuth(vi.fn(async () => ({ success: true })), vi.fn(async () => ({ success: true })), vi.fn(), expired);
+    const pending = flow.start();
+    await vi.waitFor(() => expect(json).toHaveBeenCalled());
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "new-token");
+    resolve({ code: "4010" });
+    expect((await pending).success).toBe(false);
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it("never attaches a stale ticket alongside the current Bearer", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "current-token");
+    mocks.settings.set(`nuwax.ticket.${origin}`, "stale-ticket");
+    mocks.fetch.mockResolvedValue(new Response(JSON.stringify({ code: "0000", data: { configKey: "new", serverHost: "tunnel.example", serverPort: 443 } })));
+    const { flow } = fixture();
+    await flow.start();
+    expect(mocks.fetch.mock.calls[0][1].headers).toMatchObject({ Authorization: "Bearer current-token" });
+    expect(mocks.fetch.mock.calls[0][1].headers.Cookie).toBeUndefined();
+    expect(mocks.fetch.mock.calls[0][1].credentials).toBe("omit");
+  });
+
+  it("ignores a late expired response after cancellation", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "old-token");
+    let resolve!: (value: Response) => void;
+    mocks.fetch.mockReturnValue(new Promise((r) => { resolve = r; }));
+    const expired = vi.fn();
+    const flow = initializeCommercialAuth(vi.fn(async () => ({ success: true })), vi.fn(async () => ({ success: true })), vi.fn(), expired);
+    const pending = flow.start();
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
+    const stopped = flow.stop();
+    mocks.settings.set(`nuwax.accessToken.${origin}`, "new-token");
+    resolve(new Response("expired", { status: 401 }));
+    await pending;
+    await stopped;
+    expect(expired).not.toHaveBeenCalled();
   });
 });

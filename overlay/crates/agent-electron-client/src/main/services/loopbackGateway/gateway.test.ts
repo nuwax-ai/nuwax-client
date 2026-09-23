@@ -24,6 +24,7 @@ vi.mock("electron-log", () => ({
 
 import { startLoopbackGateway } from "./gateway";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { GATEWAY_REQUEST_HEADER } from "./requestContext";
 
 const openServers: (http.Server | net.Server)[] = [];
 
@@ -93,6 +94,7 @@ function wsHandshake(
 }
 
 const gateways: { close(): Promise<void> }[] = [];
+const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   for (const g of gateways.splice(0)) await g.close();
@@ -102,9 +104,229 @@ afterEach(async () => {
     conns?.forEach((sock) => sock.destroy());
     await new Promise<void>((d) => s.close(() => d()));
   }
+  for (const directory of temporaryDirectories.splice(0))
+    fs.rmSync(directory, { recursive: true, force: true });
 });
 
 describe("loopback gateway（透明反代）", () => {
+  it("permits opaque CORS only with the private namespace capability and never sends it upstream", async () => {
+    const up = await startUpstream((req, res, cap) => {
+      cap.privateHeader = req.headers[GATEWAY_REQUEST_HEADER];
+      res.setHeader(
+        "access-control-allow-origin",
+        req.headers.origin ?? "https://other.example",
+      );
+      res.end("OK");
+    });
+    const secret = "test-instance-capability";
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => null,
+      trustedRequestSecret: secret,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const namespace = `/__backend/${new URL(up.origin).host}/files/a`;
+    for (const supplied of [undefined, "forged", secret]) {
+      const response = await fetch(gw.origin + namespace, {
+        headers: {
+          origin: "null",
+          ...(supplied ? { [GATEWAY_REQUEST_HEADER]: supplied } : {}),
+        },
+      });
+      expect(response.headers.get("access-control-allow-origin")).toBe(
+        supplied === secret ? "null" : up.origin,
+      );
+      expect(response.headers.get(GATEWAY_REQUEST_HEADER)).toBeNull();
+      expect(up.captured.privateHeader).toBeUndefined();
+      if (supplied === secret) {
+        expect(response.headers.get("access-control-allow-credentials")).toBe(
+          "true",
+        );
+        expect(response.headers.get("cache-control")).toBe("no-store");
+      }
+    }
+    for (const [route, origin] of [
+      ["/api/me", "null"],
+      [namespace, "https://foreign.example"],
+    ]) {
+      const response = await fetch(gw.origin + route, {
+        headers: { origin, [GATEWAY_REQUEST_HEADER]: secret },
+      });
+      expect(response.headers.get("access-control-allow-origin")).toBe(
+        up.origin,
+      );
+      expect(up.captured.privateHeader).toBeUndefined();
+    }
+  });
+
+  it("translates backend CORS only for the gateway's exact bound Origin", async () => {
+    const up = await startUpstream((req, res) => {
+      res.setHeader(
+        "access-control-allow-origin",
+        req.headers.origin ?? "https://other.example",
+      );
+      res.setHeader("access-control-allow-credentials", "true");
+      res.setHeader("vary", "Accept-Encoding");
+      res.end("OK");
+    });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => null,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const url = `${gw.origin}/__backend/${new URL(up.origin).host}/files/a`;
+    const trusted = await fetch(url, { headers: { origin: gw.origin } });
+    expect(trusted.headers.get("access-control-allow-origin")).toBe(gw.origin);
+    expect(trusted.headers.get("access-control-allow-credentials")).toBe(
+      "true",
+    );
+    expect(trusted.headers.get("vary")).toBe("Accept-Encoding, Origin");
+    const foreign = await fetch(url, {
+      headers: { origin: "https://foreign.example" },
+    });
+    expect(foreign.headers.get("access-control-allow-origin")).toBe(up.origin);
+    expect(foreign.headers.get("vary")).toBe("Accept-Encoding");
+  });
+
+  it("strips only ticket with or without explicit Authorization and exempts public auth routes", async () => {
+    const up = await startUpstream((req, res, cap) => {
+      cap.cookie = req.headers.cookie;
+      cap.auth = req.headers.authorization;
+      res.writeHead(204).end();
+    });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => "CURRENT",
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    for (const authorization of [undefined, "Bearer EXPLICIT"]) {
+      await fetch(`${gw.origin}/api/me`, {
+        headers: {
+          cookie: "a=1; ticket=OLD; b=2",
+          ...(authorization ? { authorization } : {}),
+        },
+      });
+      expect(up.captured.cookie).toBe("a=1; b=2");
+      expect(up.captured.auth).toBe(authorization ?? "Bearer CURRENT");
+    }
+    for (const route of [
+      "/api/user/passwordLogin",
+      "/api/user/codeLogin",
+      "/api/user/code/send",
+    ]) {
+      for (const prefix of ["", `/__backend/${new URL(up.origin).host}`]) {
+        await fetch(`${gw.origin}${prefix}${route}?x=1`, {
+          headers: { cookie: "ticket=OLD" },
+        });
+        expect(up.captured.cookie).toBeUndefined();
+        expect(up.captured.auth).toBeUndefined();
+      }
+    }
+  });
+
+  it("routes namespace before local assets/SPA, preserves query and restores upstream referer", async () => {
+    const up = await startUpstream((req, res, cap) => {
+      cap.path = req.url;
+      cap.referer = req.headers.referer;
+      res.end("BACKEND");
+    });
+    const distDir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-ns-"));
+    temporaryDirectories.push(distDir);
+    fs.writeFileSync(path.join(distDir, "index.html"), "LOCAL SPA");
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      distDir,
+      getAccessToken: () => "CURRENT",
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const namespace = `/__backend/${new URL(up.origin).host}`;
+    for (const path of ["/asset.png", "/new-api/record?q=%2F&x=2"]) {
+      const response = await fetch(`${gw.origin}${namespace}${path}`, {
+        headers: { referer: `${gw.origin}${namespace}/repo/doc/7?x=1` },
+      });
+      expect(await response.text()).toBe("BACKEND");
+      expect(up.captured.path).toBe(path);
+      expect(up.captured.referer).toBe(`${up.origin}/repo/doc/7?x=1`);
+    }
+    for (const route of [
+      "/__backend",
+      "/__backend/evil.example/a",
+      "/__backend/127.0.0.1%3A123/a",
+      "/__backend/127.0.0.1@evil.example/a",
+    ]) {
+      expect((await fetch(gw.origin + route)).status).toBe(403);
+    }
+    expect(await (await fetch(`${gw.origin}/home/chat/7`)).text()).toBe(
+      "LOCAL SPA",
+    );
+  });
+
+  it("keeps namespaced resource redirects in the gateway and leaves external locations intact", async () => {
+    const up = await startUpstream((req, res) => {
+      if (req.url === "/assets/start")
+        res.writeHead(302, { location: "/final?q=%2F" }).end();
+      else if (req.url === "/external")
+        res.writeHead(302, { location: "https://cdn.example/a" }).end();
+      else res.end(req.url);
+    });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => null,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const namespace = `/__backend/${new URL(up.origin).host}`;
+    const first = await fetch(`${gw.origin}${namespace}/assets/start`, {
+      redirect: "manual",
+    });
+    expect(first.headers.get("location")).toBe(`${namespace}/final?q=%2F`);
+    expect(
+      await (await fetch(`${gw.origin}${namespace}/assets/start`)).text(),
+    ).toBe("/final?q=%2F");
+    const external = await fetch(`${gw.origin}${namespace}/external`, {
+      redirect: "manual",
+    });
+    expect(external.headers.get("location")).toBe("https://cdn.example/a");
+  });
+
+  it("uses the same namespace whitelist, path and cookie rules for WS upgrade", async () => {
+    const up = await startUpstream((_req, res) => res.writeHead(404).end());
+    up.server.on("upgrade", (req, socket) => {
+      up.captured.path = req.url;
+      up.captured.cookie = req.headers.cookie;
+      up.captured.auth = req.headers.authorization;
+      socket.end("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+    });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => "CURRENT",
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const handshake = await wsHandshake(
+      gw.port,
+      `/__backend/${new URL(up.origin).host}/socket?q=%2F`,
+      { Cookie: "ticket=OLD; a=1", Authorization: "Bearer EXPLICIT" },
+    );
+    expect(handshake.statusLine).toContain("401");
+    handshake.sock.destroy();
+    expect(up.captured).toMatchObject({
+      path: "/socket?q=%2F",
+      cookie: "a=1",
+      auth: "Bearer EXPLICIT",
+    });
+    const blocked = await wsHandshake(
+      gw.port,
+      "/__backend/evil.example/socket",
+    );
+    expect(blocked.statusLine).toContain("403");
+    blocked.sock.destroy();
+  });
+
   it("全站透传：方法/路径/请求体原样到达上游", async () => {
     const up = await startUpstream((req, res, cap) => {
       cap.method = req.method;
@@ -171,6 +393,32 @@ describe("loopback gateway（透明反代）", () => {
       headers: { authorization: "Bearer SELF" },
     });
     expect(up.captured.auth).toBe("Bearer SELF");
+  });
+
+  it("does not lend the stored Bearer to an untrusted gateway caller", async () => {
+    const seen: Array<string | undefined> = [];
+    const up = await startUpstream((req, res) => {
+      seen.push(req.headers.authorization);
+      res.writeHead(204).end();
+    });
+    const secret = "trusted-frame-secret";
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => "USER-TOKEN",
+      trustedRequestSecret: secret,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    await fetch(`${gw.origin}/api/me`, {
+      headers: { origin: "https://foreign.example" },
+    });
+    await fetch(`${gw.origin}/__backend/${new URL(up.origin).host}/files/me`, {
+      headers: { origin: "null", [GATEWAY_REQUEST_HEADER]: "forged" },
+    });
+    await fetch(`${gw.origin}/api/me`, {
+      headers: { origin: gw.origin, [GATEWAY_REQUEST_HEADER]: secret },
+    });
+    expect(seen).toEqual([undefined, undefined, "Bearer USER-TOKEN"]);
   });
 
   it("x-client-type：缺省随产品标识 APP_NAME_IDENTIFIER，空串关闭", async () => {

@@ -30,6 +30,12 @@ const mocks = vi.hoisted(() => ({
   storage: vi.fn(async () => undefined),
   // captureTicketCookie 的 session.cookies.get（默认查不到 ticket）
   cookiesGet: vi.fn(async () => []),
+  loadURL: vi.fn(),
+}));
+
+vi.mock("../services/sessionAuthInjection", () => ({
+  initSessionAuthInjection: vi.fn(),
+  trustInitialBusinessNavigation: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -51,7 +57,12 @@ vi.mock("electron", () => ({
     },
   },
   dialog: { showSaveDialog: mocks.showSaveDialog },
-  BrowserWindow: class {},
+  BrowserWindow: class {
+    webContents = { once: vi.fn() };
+    on = vi.fn();
+    focus = vi.fn();
+    loadURL = mocks.loadURL;
+  },
   webContents: {
     // isDestroyed/getType：注册期 webview 导航真值通道会遍历现有 webContents
     // （nuwax:webview-nav-*，bug 2432）；browser 类型使其跳过 guest 事件挂载。
@@ -117,6 +128,8 @@ function senderEvent(origin: string): { senderFrame: { url: string } } {
 beforeEach(() => {
   mocks.stop.mockResolvedValue({ success: true, results: {} });
   mocks.storage.mockClear();
+  mocks.cookiesGet.mockReset().mockResolvedValue([]);
+  mocks.loadURL.mockClear();
   settings.clear();
   handlers.clear();
   emitters.clear();
@@ -461,5 +474,101 @@ describe("document session isolation", () => {
     ).toBe(true);
     expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${GW_ORIGIN}`)).toBe("RE");
     expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${HOST_ORIGIN}`)).toBe("RE");
+  });
+});
+
+
+describe("login synchronization generation boundary", () => {
+  it.each(["same-account", "different-account"])("preserves savedKey only for the same account after logout: %s", async (account) => {
+    const payload = Buffer.from(JSON.stringify({ sub: account })).toString("base64url");
+    settings.set("auth.username", "same-account");
+    settings.set("auth.saved_key", "device-key");
+    await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), `header.${payload}.signature`);
+    expect(settings.get("auth.saved_key")).toBe(account === "same-account" ? "device-key" : null);
+  });
+
+  it("ignores a cookie from an old jar when a new token is persisted", async () => {
+    mocks.cookiesGet.mockResolvedValue([{ value: "old" }] as never);
+    await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "new");
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeNull();
+    expect(settings.get(`nuwax.ticket.${GW_ORIGIN}`)).toBeNull();
+  });
+
+  it("captures the matching cookie even when another ticket appears first", async () => {
+    mocks.cookiesGet.mockResolvedValue([{ value: "old" }, { value: "new" }] as never);
+    await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "new");
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBe("new");
+  });
+
+  it("logout during cookie capture prevents late mirror writes and login notification", async () => {
+    let resolve!: (value: never[]) => void;
+    mocks.cookiesGet.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    const notices: unknown[] = [];
+    mainWindowSender = (channel, payload) => { if (channel === "nuwax:authChanged") notices.push(payload); };
+    const pending = handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "new");
+    await vi.waitFor(() => expect(mocks.cookiesGet).toHaveBeenCalled());
+    await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
+    resolve([{ value: "new" }] as never);
+    expect(await pending).toBe(false);
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeNull();
+    expect(settings.get(`${NUWAX_TOKEN_KEY_PREFIX}${HOST_ORIGIN}`)).toBeNull();
+    expect(notices).not.toContainEqual({ loggedIn: true });
+  });
+
+  it("rejects a background capture if the business origin changes", async () => {
+    settings.set(`${NUWAX_TOKEN_KEY_PREFIX}${HOST_ORIGIN}`, "old");
+    let resolve!: (value: never[]) => void;
+    mocks.cookiesGet.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    handlers.get("auth:getToken")!(senderEvent(GW_ORIGIN));
+    await vi.waitFor(() => expect(mocks.cookiesGet).toHaveBeenCalled());
+    settings.set("step1_config", { serverHost: "https://new.example" });
+    resolve([{ value: "old" }] as never);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeUndefined();
+  });
+});
+
+describe("trusted runtime auth context and window navigation", () => {
+  const windowEvent = (frameOrigin = GW_ORIGIN, topOrigin = GW_ORIGIN) => ({
+    senderFrame: { url: `${frameOrigin}/home` },
+    sender: { getURL: () => `${topOrigin}/home` },
+  });
+
+  it("returns the runtime business/gateway origins only to admitted pages", () => {
+    expect(handlers.get("auth:getContext")!(senderEvent(GW_ORIGIN))).toEqual({
+      businessOrigin: HOST_ORIGIN, gatewayOrigin: GW_ORIGIN, loadMode: "gateway",
+    });
+    expect(handlers.get("auth:getContext")!(senderEvent("https://external.example"))).toBeNull();
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    expect(handlers.get("auth:getContext")!(senderEvent(HOST_ORIGIN))).toEqual({
+      businessOrigin: HOST_ORIGIN, gatewayOrigin: null, loadMode: "direct",
+    });
+  });
+
+  it("keeps business SPA paths while rewriting standalone windows through the gateway", () => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}/agent/detail?id=1#section` });
+    expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/agent/detail?id=1&_shell=1#section`);
+  });
+
+  it("keeps a double-slash business pathname under the gateway authority", () => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}//external.example/path?q=1#section` });
+    expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}//external.example/path?q=1&_shell=1#section`);
+    expect(new URL(mocks.loadURL.mock.calls[0][0]).origin).toBe(GW_ORIGIN);
+  });
+
+  it.each(["https://external.example/path", "http://testagent.xspaceagi.com/path", "https://username:password@testagent.xspaceagi.com/path"])("does not rewrite non-business or credentialed URLs: %s", (url) => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: url });
+    expect(mocks.loadURL).toHaveBeenCalledWith(url);
+  });
+
+  it.each([
+    ["https://external.example", "https://external.example"],
+    ["https://external.example", GW_ORIGIN],
+    [GW_ORIGIN, "https://external.example"],
+  ])("rejects external callers or frames before granting an authenticated new window: %s %s", (frameOrigin, topOrigin) => {
+    expect(handlers.get("native:openWindow")!(windowEvent(frameOrigin, topOrigin), { path: `${HOST_ORIGIN}/api/protected` }))
+      .toEqual({ success: false, error: "untrusted sender" });
+    expect(mocks.loadURL).not.toHaveBeenCalled();
   });
 });

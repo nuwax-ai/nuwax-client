@@ -1,196 +1,91 @@
-<!--
-用法：intent 接受后经 grill-with-docs 收敛为本规格；存 specs/<feature-slug>.md。
-闸门：技术评审通过后才进 Build（plan mode → plans/*-plan.md）。
--->
+# 规格：loopback 登录态 header 通道与资源路由
 
-# 规格：loopback 网关形态登录态 header 单通道收编
+- 日期：2026-09-22；对应 intent：`plans/20260922-loopback-login-sync-intent.md`。
+- 状态：代码评审后修订，用户已授权实施；自动验证、真实环境验收分别记录。
+- 基线：外层 `4562cdb4`、基座 `f59f1bbe`、前端 `df987b3b9`；分支 `codex/loopback-login-sync`。
 
-- 对应 intent：`plans/20260921-loopback-login-sync-intent.md`（设计论证与引文详见 `docs/20260921-loopback-login-sync-research.md`）
-- 对应计划：`plans/20260921-loopback-login-sync-plan.md`
-- 状态：技术评审通过（2026-09-22 对现状复核后修订，修订点见第 6 节）
+## 1. 评审修正
 
-## 1. 需求基线
+1. 网关剥 ticket 不覆盖 direct，两条出口分别治理。
+2. defaultSession 内有外站，不可直接信任；host-only 会遗漏 scheme/port。
+3. 文档加 namespace 会改变 SPA pathname；只改业务域绝对 URL 不覆盖微应用同源相对资源。
+4. 分别现读 token/ticket 不保证同批，异步 cookie 捕获必须校验代次。
+5. 前端没有现成的业务域常量，需由受信桥提供。
+6. 代码不能证明后端无静默续期，不能把生产 Web 的 Bearer 使用泛化为所有端点已验收。
 
-### 背景
+## 2. 鉴权契约
 
-Nuwax 客户端（商业版）本地化加速（loopback gateway）形态下，webview 从 `http://127.0.0.1:<port>` 加载前端产物，网关反代业务域。登录态当前有两条通道同时抵后端：页面自带的 `Authorization: Bearer` 与浏览器自动附带的 `Cookie: ticket`。后端既定行为是「有 cookie 只认 cookie」，因此「新 Bearer + 旧 ticket」组合一旦出现即 401。
+商业逻辑全部经 overlay 交付，前端在独立检出修改；基座无商业提交。
 
-今日未爆的唯一原因是 `ticket ≡ token` 同值同刻写入（登录响应同时产生两者）。任一 token 变更路径（跨 origin 迁移、重登后异 origin jar 残留、后端中途重发 Set-Cookie）都会打破该巧合。
-
-### 本期做
-
-1. 让 gateway 路径的鉴权**结构性只剩 header**：网关出口剥 `ticket` cookie，其余 cookie 原样转发。
-2. 收编/兜底六类逃逸面，使页面请求不再以「业务域直连 + 无 Bearer」形态抵达后端：
-   - ⑤ 微应用页内绝对 URL、⑥b 业务域非 `/api` 前缀的图片/文件资产 → 网关命名空间收编
-   - ① 外链菜单/微应用独立窗 → `native:openWindow` 重写
-   - ③ 结算回跳页轮询 → 前端改相对路径
-   - ④ 4011 跳转 → 前端同源映射
-   - ② 收银台 → 保持外部域现状（orderId 会话自理）
-   - ⑥a 受保护 `/api/f/`、⑥c 公开 OSS 域 → 现机制已通，列回归
-3. 未知逃逸兜底：壳 session 层 `onBeforeSendHeaders` 对「目标=业务域且缺 Authorization」的请求补 Bearer（含导航/子资源/WS upgrade）。
-4. cookie 降级为**受控镜像**：只存 settings 键（reg feedstock）与 127.0.0.1 jar（登录自然落值，出口剥离后永不抵后端）。不向任何页面可见 jar 主动种 ticket。
-
-### 本期不做
-
-- 后端改动（仅输出协调清单，见 `docs/20260921-loopback-login-sync-research.md` 第 7 节）。
-- qiankun 微前端化。
-- token 续期机制落地（依赖协调清单 #1 答复，仅预留挂点）。
-- 基座仓结构性改动（WS2 的 listener 接管在 overlay 内完成，基座仅一次注释级指向，见第 4 节）。
-- 回收 `MICROAPP_BACKEND_PREFIXES`——复核后确认其为**结构性必需**而非过渡垫片，见第 6.1 节。
-
-## 2. 方案设计
-
-### 2.1 架构落点
-
-改动全部落在 **overlay**（`overlay/crates/agent-electron-client/`，经 `scripts/sync-overlay.js` 同步进基座工作树）与 **nuwax 前端 submodule**。基座零功能改动。
-
-| 层 | 落点 | 职责 |
-|---|---|---|
-| 网关 HTTP 层 | `services/loopbackGateway/gateway.ts` | 命名空间路由（dist 模式判别分流）、出口剥 ticket |
-| 网关编排层 | `services/loopbackGateway/index.ts` | 绝对 URL 归一钩子按资源类型分流 |
-| 桥 IPC 层 | `ipc/nuwaxBridgeHandlers.ts` | `native:openWindow` 路径保持式重写 |
-| 壳 session 层 | `services/sessionAuthInjection.ts`（新增） | 未知逃逸的 Bearer 兜底注入，接管 `onBeforeSendHeaders` |
-| 前端 | `nuwax/` submodule | 结算轮询相对路径、4011 同源映射 |
-
-单向依赖保持不变：`index.ts → gateway.ts`、`ipc/nuwaxBridgeHandlers.ts → ipc/commercialAuth.ts`。新模块 `sessionAuthInjection.ts` 只读 `commercialAuth` 的取域/取 token 助手，不回写、不持状态。
-
-### 2.2 数据与契约
-
-**新增 URL 契约：`/__backend/<host>/<path>`**
-
-- `<host>` 必须命中白名单，否则 403。白名单 = 当前业务域 host（`currentBusinessOrigin()`）+ env 别名旋钮（`NUWAX_GATEWAY_BACKEND_HOSTS`，逗号分隔）。
-- **仅用于非文档子资源请求**（`resourceType` 非 `mainFrame`/`subFrame`）。理由见第 6.2 节。
-- 文档导航（`mainFrame`/`subFrame`）继续走**路径保持式**改写（`gatewayOrigin + path`），复用现有 SPA 回退语义。
-
-**`<host>` 校验（安全契约，不可简化）**
-
-必须先在**原始未 decode** 的路径段上取 host，用严格正则校验，再构造 URL 并对解析结果的 `hostname` 复核：
-
-```
-^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$   // i
-```
-
-直接写 `new URL('https://' + segment + rest)` 会被 `/__backend/agent.nuwax.com@evil.com/`（userinfo 分隔）与反斜杠（WHATWG URL 在 special scheme 下把 `\` 当 `/`）绕过白名单。转发路径须经 `new URL()` 规范化以消解 `..`。
-
-**出口剥 ticket（`buildProxyHeaders`）**
-
-从 `cookie` 头仅剥 `ticket` 名条目，其余 cookie 原样保留（后端可能另有非鉴权 cookie）。WS upgrade 路径同走 `buildProxyHeaders`，自动同规。
-
-**反代响应 `set-cookie` 预留挂点**：命中 `ticket` 且值 ≠ settings 当前镜像时记日志，协调清单 #1 答复前不动作。
-
-**settings 键空间不变**：`nuwax.accessToken.<origin>`、`nuwax.ticket.<origin>`、`step1_config`、`nuwax.loopback`。WS2 取 token 必须复用 `nuwaxTokenScopes()`（`ipc/nuwaxBridgeHandlers.ts:113-131`，已导出）而非新造候选集合，否则重现「写 A 读 B」键空间分裂。
-
-### 2.3 平台/引擎矩阵
-
-| 行为点 | gateway 形态 | direct 形态 |
-|---|---|---|
-| 页面 `/api/..` 请求 | 网关前缀反代，缺 Auth 代注，出口无 ticket → 纯 header | 同源直连，页面带 Bearer |
-| 业务域非前缀绝对 URL（子资源） | 归一钩子改写到 `/__backend/<host>/<path>` → 反代 | 同源直连，无需归一 |
-| 业务域绝对 URL（文档导航） | 归一钩子路径保持式改写 → 前缀命中反代 / SPA 回退 | 同源直连 |
-| `native:openWindow` 绝对 URL | host=业务域 → 路径保持式改写进网关 | 不重写，直开 |
-| 结算轮询 | 相对路径 → 网关反代（代注或页面自带 Bearer） | 相对路径 → 同源 cookie |
-| 4011 跳转 | 同 host → 映射到当前 origin 同路径 | 原行为 |
-| 终端 ttyd WS | 网关代注 Bearer（`/computer` 前缀内） | **session 层兜底注入**（修存量缺口） |
-| `x-client-type` | 网关 `buildProxyHeaders` 注入（目标回环跳过） | session listener 注入（目标回环跳过） |
-
-## 3. 异常与失败场景
-
-| 场景 | 期望行为 |
+| 请求 | 规则 |
 |---|---|
-| `/__backend/` 的 host 不在白名单 | 403，不反代；记日志（防本机网关沦为开放代理） |
-| `/__backend/<host>/` 的 host 段含 `@`、`\`、`/`、异常端口 | 403（严格正则拒绝） |
-| 命名空间目标不可达 | 复用 `proxyRequest` 现有 502 引导页（HTML 请求）/ JSON（API 请求） |
-| 上游不可达 + 命名空间路径 | 同上；不得泄漏 `/__backend/` 前缀进用户可见文案 |
-| 剥 ticket 后 jar 仍持续收到 `Set-Cookie: ticket=` | 正常（jar 只作 reg feedstock 与续期观测点），出口永不转发 |
-| 登录/验证码接口 | session 层注入豁免（`/api/user/passwordLogin`、验证码登录路径），避免旧 token 干扰后端凭据判定 |
-| session listener 接管失败/未挂载 | 启动日志必须显式报「已接管 onBeforeSendHeaders」；缺失即 `x-client-type` 与 Bearer 双失效，属 P0 |
-| 网关停止（`stopAbsoluteUrlNormalization`） | 只摘 `onBeforeRequest`（传 null 会摘掉该事件**全部** listener），不得影响 `onBeforeSendHeaders` |
-| `localStorage.ACCESS_TOKEN` 缺失（结算页） | 轮询 401 → 走现有错误 UI；不得静默死循环轮询 |
-| 4011 下发 URL 与配置域不同 host | 保持原跳转（外站/IdP 场景） |
-| 4011 下发 URL 为相对路径或含 `://` 的登录 redirect | 同源映射只处理「绝对 URL 且 host 与配置域相同」；其余原样 |
+| gateway HTTP/WS | 出口剥所有 ticket，保留其他 cookie；仅主进程确认的受信页面在非公共接口缺 Auth 时可补当前 Bearer。外站直接访问网关不得借用本机 token |
+| 受信 renderer 直连当前业务 origin | 无论是否已有 Auth 均剥 ticket；缺 Auth 时补当前 Bearer |
+| 登录公共路径 | 不代注旧 Bearer，不依赖旧 ticket |
+| 外站发起/非业务 origin | 不自动授予用户 token；HTTPS 不降级到 HTTP |
+| 主进程设备注册 | 保留自身显式、配对的 ticket；不按 URL 给 renderer 豁免 |
 
-## 4. WS2 listener 接管（Electron 单 listener 约束）
+公共路径：`/api/user/passwordLogin`、`/api/user/codeLogin`、`/api/user/code/send`。头名不区分大小写；cookie 名 ticket 精确匹配。
 
-Electron 官方文档明确：`webRequest` 事件「**Only the last attached listener will be used.** Passing `null` as `listener` will unsubscribe from the event.」
+一个 `onBeforeSendHeaders` listener 接管商业桥挂点，保留 x-client-type 的现有 HTTP(S) 行为，Bearer filter 显式覆盖 HTTP(S)/WS(S)。匹配完整 origin，WS 只做 ws/http、wss/https 等价映射。可信性结合 requesting frame 与顶层文档来源判断；受信页面访问网关时由主进程附临时 capability，网关仅凭此 capability 代补存储的 Bearer。无 renderer webContents 的主进程请求保留自己的显式鉴权。
 
-因此 `session.defaultSession.webRequest.onBeforeSendHeaders` 全局只有一个生效 listener。现状基座 `src/main/main.ts:773-796` 已注册 x-client-type 注入；overlay 若要加 Bearer 注入，**只能整体接管该事件**。
+## 3. ticket 与生命周期
 
-- 接管点：`registerAllHandlers`（`main.ts:860`）尾部，与 `powerPolicy.initPowerPolicy()` / `fullDiskAccess.initFullDiskAccessGuard()` 同款 boot 钩子。
-- 时序是承重墙：`main.ts:773`（基座注册）< `main.ts:860`（`registerAllHandlers`），后注册者胜，故 overlay listener 确实覆盖基座 listener。**该顺序无任何断言保护**，基座若在 860 之后新增 `onBeforeSendHeaders` 注册，Bearer 注入会被静默顶掉。
-- 新模块必须**逐字复制**基座的 x-client-type 语义（目标 host ∈ {localhost, 127.0.0.1, ::1} → 两个头都不加；否则 `x-client-type = APP_NAME_IDENTIFIER`），并在模块头注释标注镜像来源 `main.ts:764-799`。
-- Bearer 注入判定在 x-client-type 逻辑之后执行：目标 host = 业务域 host 且 `authorization` 缺失且路径不在豁免清单 → 从 `nuwaxTokenScopes()` 候选键取首个非空 token 注入。
-- 启动日志显式声明接管成功。
+不向页面 jar 主动种 ticket。登录响应自然落值允许保留，但普通出口不转发。捕获时固定 generation/businessOrigin/token；跨 await 复核，提交前再次检查。
 
-## 5. 测试计划
+仅接受实际捕获且与当前 token 匹配的 ticket，当前契约以值相等判定，不把 token 人工合成为 ticket、不取旧 jar 首个非空值。后端若非恒等，须补有版本绑定的契约后扩展，不能静默放宽。重启后 jar 空但持久镜像与当前 token 匹配仍可注册。
 
-### 单测（overlay，`vitest`，落点与现有测试同目录）
+token 替换先撤销旧生命周期，再异步捕获与启动注册；保留 savedKey 的同账号规则。迟到过期响应仅在 signal 与当前会话有效时触发登出。
 
-`services/loopbackGateway/gateway.test.ts`（现有 443 行，真 http 上游 + electron-log mock）：
-- 命名空间路由：白名单 host 正常反代（含路径与 query 保真）；非白名单 403；host 段含 `@`/`\` 403；带扩展名静态资产不落 dist 404
-- 出口剥 ticket：`cookie: a=1; ticket=T; b=2` → 上游收到 `a=1; b=2`；无 ticket 时 cookie 原样；WS upgrade 同断言
-- referer 改写：命名空间 URL 的 referer 不得泄漏 `/__backend/<host>` 前缀
-- 上游路径不得含 `/__backend/<host>` 前缀
+## 4. 网关路由
 
-`services/loopbackGateway/index.test.ts`（现有 311 行，全 mock electron + db + gateway）：
-- 归一钩子：业务域绝对 URL 且 `resourceType=xhr/image/media` → 命名空间；`resourceType=mainFrame/subFrame` → 路径保持式；非业务域不动；壳 renderer 发起不动（guest 判定）
+- 主 SPA 与已登记微应用文档保持 pathname/search/hash。
+- 保留 `/api`、`/computer`、`/devcomputer`、`/instant-message`、`/repo` 与现有受控扩展前缀。
+- `/__backend/<host>/<path>` 仅允许当前配置后端，不增加多域 token 分发；先于静态/SPA fallback。HTTP/WS 去前缀后转发，query 保真。
+- 校验 host 段及完整目标，拒绝 userinfo、反斜杠、非法编码和端口绕过；不能成为任意目标代理。
+- 业务域绝对子资源、已登记微应用 frame 的 gateway 根相对/目录相对资源归上游；主 SPA 的同名静态资源仍本地加载。
+- 同后端资源重定向和 Referer 保持上游路径语义；外站重定向不继承自动注入的业务凭据。
+- 新微应用文档根仍须登记，不承诺透明代理任意远程 SPA。CSS/module/资源相对引用须作为实测项，不能只测 xhr。
 
-`services/sessionAuthInjection.test.ts`（新增）：
-- 判定表：host 匹配/不匹配、有/无 authorization、豁免路径命中/未命中、回环目标跳过
-- x-client-type 镜像行为与基座逐字一致（回环跳过 + 非回环注入）
-- token 取键与 `nuwaxTokenScopes()` 同源
+## 5. 桥与前端
 
-`ipc/nuwaxBridgeHandlers` 侧：
-- `native:openWindow`：业务域绝对 URL 路径保持式改写；外站直开；gateway 关闭不重写
+`auth:getContext` → `NuwaClawBridge.auth.getContext()` → `hostBridge.auth.getContext()`：
 
-### 前端单测（nuwax，`vitest`，130 个现有测试文件）
+```ts
+type AuthContext = {
+  businessOrigin: string;
+  gatewayOrigin: string | null;
+  loadMode: 'gateway' | 'direct';
+};
+```
 
-- 4011 同源映射助手：同 host 映射 / 不同 host 原样 / 相对路径原样 / 坏 URL 原样
-- `fetchStatus` 基址与 Bearer 附带条件（如可测）
+只响应受信来源；旧宿主失败降级 null。密码登录 redirect、验证码登录 redirect、common 4011、userService 4011 共四处使用统一助手。仅 gateway 且 URL 完整 origin 等于 businessOrigin 时映射 gatewayOrigin，保留 path/query/hash；web/direct/外站保留原行为。
 
-### 手动/真环境（见计划 WS4 验收矩阵）
+结算始终同源请求 settlement-status；有 localStorage token 即附 Bearer，保留小程序 query/hash 回退。HTTP 401 或业务 4010/4011 立即停轮询提示重新登录，不误报支付失败。
 
-dev（mac `npm run base:dev`）过 V1-V6；打包版（prerelease tag）过 V1-V9 全量。
+## 6. 异常、验收与未决契约
 
-### 回归基线
+非法 namespace 403；上游不可达 502；迟到捕获/注册丢弃；无 token 不制造凭据；旧宿主缺桥不阻塞原导航。
 
-`npm run test:commercial` 当前基线：**124 test files passed / 1 skipped，1513 tests passed / 18 skipped**（2026-09-22 实测，exit 0）。合并主干前另跑 `npm run base:test`（隔离副本）+ `npm run check:pin`。
+| 编号 | 必须覆盖 |
+|---|---|
+| V1 | gateway/direct 独立窗首文档、SPA 二级路由、微应用路径 |
+| V2 | 微应用绝对/根相对/目录相对资源、同名 dist 静态、资源 302、未知文档根边界 |
+| V3 | 结算同源、有 token 无 cookie、401/4010/4011 停轮询；真实支付另验 |
+| V4 | 四个导航入口、企业域、query/hash、外站、旧宿主 |
+| V5 | HTTP/WS、gateway→direct→gateway、无 cookie、已有 Authorization |
+| V6 | 两出口均无 ticket、其他 cookie 保留、主进程注册例外 |
+| V7 | 新 token + 两 jar 旧 ticket、公共登录路径、同账号/换账号 |
+| V8 | 捕获/注册中登出换域再次登录、迟到 expired、重启持久镜像 |
+| V9 | blob 图标、裸 src/iframe、非 /api 资源、公开 OSS |
+| V10 | 外站窗口/iframe、HTTP 降级、不同端口、WS(S) 注入边界 |
 
-## 6. 已否决的备选方案
+网关用真实 HTTP/WS 上游夹具；Electron 运行时用临时 profile 与虚构 token。自动化、macOS/Windows 安装包、真实后端分别记录。
 
-### 6.1 回收 `MICROAPP_BACKEND_PREFIXES`（过渡垫片）——**否决，改为永久保留并重新定性**
+后端 Bearer-only、ticket 轮换、结算/文件/WS 契约是上线前验证项。CORS/preflight 需按请求形态与 Electron 40 拦截阶段实测，不因后注入 Authorization 就断言一定新增 OPTIONS；也不能仅放行固定 46800（网关会回退随机端口）。
 
-原计划把它当过渡垫片，「验收后回收」。复核发现前端**自身就用 `window.location.origin` 拼后端路径**，产出同源网关 URL，根本不经过绝对 URL 归一钩子：
+## 7. 否决项与依据
 
-- `nuwax/src/pages/SpaceProjectManage/AppProjectDetail/index.tsx:974-982`：`const domain = window.location.origin; return \`${domain}/repo/doc/...\``
-- `nuwax/src/layouts/DynamicMenusLayout/utils.ts:19-27`：`%siteUrl%` → `window.location.origin`
+否决：全部文档 namespace、回收微应用前缀、业务域主动种 ticket、仅治理网关、复制 HTTP filter 即宣称 WS 覆盖、复用旧工作树测试数字宣称本批通过。
 
-这些 URL 抵达网关后仍靠 `backendPrefixes` 命中才能反代。命名空间收编的只是「后端下发的绝对 URL」这一类。
-
-**重新定性**：`MICROAPP_BACKEND_PREFIXES` = **后端微应用文档根白名单**，与命名空间路由（子资源逃逸兜底）分工，两者都常驻。要真正回收它，必须同步改前端让这些路径也走命名空间（= 前端新增一个 `toBackendUrl()` 助手并要求业务域 host 可知），属另一批工作。
-
-### 6.2 命名空间路由用于文档导航——**否决，收窄到非文档子资源**
-
-原计划让归一钩子把业务域绝对 URL 一律改写成 `/__backend/<host>/<path>`。复核发现两类硬伤：
-
-1. **`native:openWindow` 加载的是 nuwax 自家 SPA 路由**（处理器文档注释：「智能体详情/工作流/网页应用开发/我的电脑等全屏页」）。SPA 路由读 `location.pathname`，改写后多出 `/__backend/<host>` 两段 → **每个 NewTab 二级页全挂**。
-2. **iframe 文档导航同理**：`/instant-message`、`/repo` 进前缀清单正是为了 subFrame 文档导航。微应用 router 对 pathname 敏感，改写有回归风险。
-
-**改为**：命名空间只用于 `resourceType` 非 `mainFrame`/`subFrame` 的子资源。这恰好覆盖用户实际上报的「消息/资料库菜单页面下的**内部请求**」（多为 xhr/fetch/img），且零 pathname 风险。文档导航继续走路径保持式改写 + 现有 SPA 回退语义（对 SPA 路由是正确的）。
-
-**残留缺口（明示）**：文档导航到「清单外的后端微应用新根路径」仍会被 SPA 兜底吃掉，需加前缀或用 env 旋钮。此为已知边界，非本期目标。
-
-### 6.3 命名空间的实际价值（为什么仍然需要）
-
-dist 模式的 HTTP 层（`http.createServer` 回调）**看不到 Electron 的 `resourceType`**，只能靠 `Accept`/`sec-fetch-dest` 猜。归一钩子在 Electron 层有权威的 `resourceType`，需要一个**信道**把「这是子资源、请反代」的决策传给 HTTP 层。`/__backend/<host>/<path>` 就是这个信道。这也解释了为什么不能只用「dist 文件不存在就反代」的默认放行——那会让文档导航的 SPA 深Link 也被反代掉。
-
-### 6.4 业务域种 cookie 地板（B 方案）——维持撤销
-
-靠枚举同步点维持种子新鲜：重登、后端滑动续期、跨形态切换任一遗漏即复现「新 Bearer + 旧 ticket」必炸场景。且 WS2 兜底已覆盖其全部收益面。
-
-### 6.5 基座加中立 seam（header contributor 注册表）——维持不选
-
-需基座一次 PR，且 attach 时序要与注册时序对齐；在单消费者（WS2）场景下收益不抵成本。
-
-## 7. 待确认（后端协调清单）
-
-随 `docs/20260921-loopback-login-sync-research.md` 第 7 节沟通。阻塞项：#2（ACAO 放行回环 origin，影响 WS2 兜底路径的 preflight）、#6（资产 URL 契约，决定 ⑥b 是理论风险还是现网缺陷）。#1 答复前续期挂点只记日志不动作。
+[Electron 40 WebRequest 官方文档](https://github.com/electron/electron/blob/v40.0.0/docs/api/web-request.md)规定每事件最后一个 listener 生效，提供 frame/webContents/webSocket resourceType。实现不依赖后续版本新增的 initiatorOrigin。

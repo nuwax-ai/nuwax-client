@@ -1,0 +1,316 @@
+import { contextBridge, ipcRenderer } from "electron";
+import { APP_NAME_IDENTIFIER } from "@shared/constants";
+
+type PerfPayload = Record<string, unknown>;
+
+const CHAT_ROUTE_RE = /^\/home\/chat\/\d+\/\d+$/;
+const CHAT_ROOT_SELECTOR = '[data-nuwaclaw-perf-scope="chat-root"]';
+
+function resolveRoutePath(): string {
+  const pathname = window.location.pathname || "";
+  if (CHAT_ROUTE_RE.test(pathname)) {
+    return pathname;
+  }
+
+  // 兼容 hash 路由写法：/#/home/chat/:id/:agentId
+  const hash = window.location.hash || "";
+  const hashPath = hash.startsWith("#") ? hash.slice(1) : hash;
+  return hashPath || pathname;
+}
+
+function isChatScopeEnabled(): boolean {
+  const routePath = resolveRoutePath();
+  if (!CHAT_ROUTE_RE.test(routePath)) {
+    return false;
+  }
+  return Boolean(document.querySelector(CHAT_ROOT_SELECTOR));
+}
+
+function safeStringify(data: unknown): string {
+  try {
+    return JSON.stringify(data ?? {});
+  } catch {
+    return "{}";
+  }
+}
+
+/**
+ * onceKeySet 用于 markOnce 去重，确保同一 key 只触发一次日志。
+ * 清理策略：
+ * - 当集合大小超过 ONCE_KEY_MAX_SIZE 时，直接清空（简单粗暴但有效）。
+ * - 对于单个消息的生命周期，在 stream_end 时调用 cleanupMessageOnceKeys
+ *   清理该消息相关的 key，允许同一条消息在重新加载后再次触发 markOnce。
+ *
+ * 设计说明：
+ * markOnce 的 key 格式为 `${mid}:first_chunk` 和 `${mid}:stream_end`。
+ * 当消息流结束时，我们清理这些 key，这样如果用户刷新页面或重新进入同一会话，
+ * 该消息的性能日志可以重新记录一次（而不是被 markOnce 永久跳过）。
+ */
+const onceKeySet = new Set<string>();
+const ONCE_KEY_MAX_SIZE = 5000;
+
+function maybeCompactOnceKeys(): void {
+  if (onceKeySet.size <= ONCE_KEY_MAX_SIZE) return;
+  // 简单上限保护：超过阈值时清空，避免长期运行导致集合无限增长。
+  onceKeySet.clear();
+}
+
+/**
+ * 清理指定消息的 once keys，允许该消息在下次加载时重新记录性能日志。
+ * 仅在 stream_end 阶段调用（见 markOnce 内部）。
+ */
+function cleanupMessageOnceKeys(payload: PerfPayload): void {
+  const mid = payload.mid;
+  if (typeof mid !== "string" || !mid) return;
+  onceKeySet.delete(`${mid}:first_chunk`);
+  onceKeySet.delete(`${mid}:stream_end`);
+}
+
+const perf = {
+  enabled(): boolean {
+    return isChatScopeEnabled();
+  },
+
+  mark(stage: string, payload: PerfPayload = {}): void {
+    if (!this.enabled()) return;
+    const nowTs = Date.now();
+    const routePath = resolveRoutePath();
+    const msg = `[PERF][FE] stage=${stage} route=${routePath} ts=${nowTs} extra=${safeStringify(payload)}`;
+    ipcRenderer.send("perf:log", msg);
+  },
+
+  markOnce(key: string, stage: string, payload: PerfPayload = {}): void {
+    if (onceKeySet.has(key)) return;
+    onceKeySet.add(key);
+    maybeCompactOnceKeys();
+    this.mark(stage, payload);
+    if (stage === "stream_end") {
+      cleanupMessageOnceKeys(payload);
+    }
+  },
+};
+
+/**
+ * auth 命名空间：nuwax webview ↔ nuwaclaw 壳的 ACCESS_TOKEN 双向同步。
+ * nuwax 用 localStorage.ACCESS_TOKEN 鉴权（Authorization header），非 cookie；
+ * token 由主进程按 webview 来源 origin 持久化到 settings 表，跨重启复用。
+ * 后端见 main/ipc/nuwaxBridgeHandlers.ts。
+ */
+const auth = {
+  /** 主进程提供当前业务域与加载形态；不从回环页面的 origin 推断业务域。 */
+  getContext(): Promise<{
+    businessOrigin: string;
+    gatewayOrigin: string | null;
+    loadMode: "gateway" | "direct";
+  } | null> {
+    return ipcRenderer.invoke("auth:getContext");
+  },
+  /** 读取本 origin 持久化的 nuwax ACCESS_TOKEN（重启免登）。 */
+  getToken(): Promise<string | null> {
+    return ipcRenderer.invoke("auth:getToken");
+  },
+  /** nuwax 登录成功后持久化 token（写入 settings 表）。 */
+  persistToken(token: string): Promise<boolean> {
+    return ipcRenderer.invoke("auth:persistToken", token);
+  },
+  /** nuwax 登出联动：清除本 origin 的持久化 token。 */
+  clear(): Promise<boolean> {
+    return ipcRenderer.invoke("auth:clear");
+  },
+  /**
+   * 企业登录：切换客户端后端域名并重新初始化（写业务域名配置 + 立即停全部
+   * 本地服务 + webview 重载到新域登录页）。仅壳内有效；浏览器端返回未处理。
+   */
+  configureServerHost(
+    host: string,
+  ): Promise<{ success: boolean; serverHost?: string; error?: string }> {
+    return ipcRenderer.invoke("auth:configureServerHost", host);
+  },
+};
+
+/**
+ * native 命名空间：宿主原生能力。浏览器端不存在此桥，nuwax 自行降级。
+ */
+const native = {
+  /** 右键另存图片：调用系统保存对话框并下载。 */
+  saveImage(
+    url: string,
+    filename?: string,
+  ): Promise<{ success: boolean; path?: string; error?: string }> {
+    return ipcRenderer.invoke("native:saveImage", { url, filename });
+  },
+  /**
+   * 新开独立窗口打开 nuwax 页面（智能体详情/工作流/我的电脑等全屏页）。
+   * 新窗口带系统标题栏（无沉浸式工具栏浮层，页面零遮挡），注入同一 webview
+   * 桥 preload（isNuwaClaw/主题/避让等桥能力一致）。path 为 nuwax 站内相对路径。
+   */
+  openWindow(path: string): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke("native:openWindow", { path });
+  },
+  /**
+   * 打开宿主壳的「客户端配置」设置弹窗（设置 UI 由壳 renderer 承载，webview
+   * 无法直接操作，经主进程转发 nuwax:open-client-settings 给壳 renderer 打开）。
+   * 旧版宿主无此 handler 时 invoke 会 reject，调用方（nuwax hostBridge）自行降级。
+   */
+  openClientSettings(): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke("native:openClientSettings");
+  },
+};
+
+/**
+ * localFiles 命名空间：宿主原生目录选择器。
+ * 仅返回所选目录的绝对路径；文件数据面由 nuwax 走 file-server（customTargetDir）。
+ */
+const localFiles = {
+  pickDirectory(): Promise<{ canceled: boolean; paths: string[] }> {
+    return ipcRenderer.invoke("localFiles:pickDirectory");
+  },
+};
+
+/**
+ * updater 命名空间：宿主客户端自身的更新状态与动作（nuwax 前端 logo 旁版本徽标消费）。
+ * 与壳关于页共用主进程同一 autoUpdater 单例（不会双下载）；旧宿主无此命名空间，
+ * nuwax 侧 feature-detect 后整体隐藏徽标。
+ */
+const updater = {
+  /** 当前更新状态 + 宿主客户端版本号（hostVersion）。 */
+  getState(): Promise<Record<string, unknown> | null> {
+    return ipcRenderer.invoke("updater:get-state");
+  },
+  /** 触发一次更新检查（与关于页「检查更新」同源）。 */
+  check(): Promise<Record<string, unknown> | null> {
+    return ipcRenderer.invoke("updater:check");
+  },
+  /** 下载更新（幂等：已在下载/已下载时由主进程侧守卫）。 */
+  download(): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke("updater:download");
+  },
+  /** 重启并安装（仅 downloaded 状态有意义）。 */
+  install(): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke("updater:install");
+  },
+};
+
+/**
+ * events 命名空间：宿主→nuwax 入站命令通道。
+ * nuwaclaw 工具栏等通过 <webview>.send('nuwax:host-command', payload) 下发，
+ * 此处 ipcRenderer.on 接收并转发给 nuwax 注册的回调（contextBridge 保证回调在 guest
+ * 上下文执行，从而能操作 nuwax 的 React/model 状态）。payload 协议见 nuwax 侧
+ * global.d.ts 的 HostCommand。
+ */
+let hostCommandHandler: ((payload: unknown) => void) | null = null;
+ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
+  hostCommandHandler?.(payload);
+});
+const events = {
+  /** 注册/注销宿主命令回调（传 null 注销）。 */
+  onHostCommand(cb: ((payload: unknown) => void) | null): void {
+    hostCommandHandler = cb;
+  },
+};
+
+/**
+ * theme 命名空间：nuwax → 壳的主题同步（guest→host）。
+ * 女娲主题生效/让位时 nuwax 推送 { active, 调色板 }，主进程转发给壳 renderer
+ * （nuwax:theme-changed），壳给自己的 antd tokens / CSS 变量叠加同套米白调色板，
+ * 实现原生 UI（设置弹窗等）与 nuwax 统一。fire-and-forget，不等待结果。
+ */
+const theme = {
+  /** 推送主题状态给壳。 */
+  syncTheme(payload: Record<string, unknown>): void {
+    ipcRenderer.send("nuwax:theme-sync", payload);
+  },
+};
+
+/**
+ * layout 命名空间：nuwax → 壳的布局状态同步（guest→host）。
+ * 如「当前页是否存在可收起的二级菜单」→ 主进程转发（nuwax:layout-changed）给壳
+ * renderer，工具栏据此显隐收起按钮。fire-and-forget。
+ */
+const layout = {
+  /** 告知壳当前页是否有二级菜单可收起。 */
+  setSecondMenuAvailable(available: boolean): void {
+    ipcRenderer.send("nuwax:layout-sync", { secondMenuAvailable: !!available });
+  },
+  /** 同步二级菜单真实收起态（壳工具栏 icon 以此为准，修 reload 后失同步）。 */
+  setSecondMenuCollapsed(collapsed: boolean): void {
+    ipcRenderer.send("nuwax:layout-sync", { secondMenuCollapsed: !!collapsed });
+  },
+  /** 页面只上报明确空白矩形；宿主负责校验并创建真实 drag region。 */
+  setTitlebarDragRegions(
+    regions: Array<{ x: number; y: number; width: number; height: number }>,
+  ): void {
+    ipcRenderer.send("nuwax:layout-sync", { titlebarDragRegions: regions });
+  },
+};
+
+/**
+ * titlebar 命名空间：标题栏手势（guest→host，fire-and-forget）。
+ * guest 在 mousedown 捕获阶段命中判定（目标空白且位于顶部带内）后请求主进程
+ * 跟随光标拖窗/双击切换最大化——壳层不再常驻拖拽矩形，页面点击零吞没。
+ */
+const titlebar = {
+  /** 空白处按下：开始拖拽会话（主进程 16ms 光标轮询移动窗口）。 */
+  beginDrag(): void {
+    ipcRenderer.send("nuwax:titlebar-drag-start");
+  },
+  /** 结束拖拽会话（mouseup / blur / buttons 异常时由 guest 补发）。 */
+  endDrag(): void {
+    ipcRenderer.send("nuwax:titlebar-drag-end");
+  },
+  /** 空白处双击：切换最大化/还原。 */
+  toggleMaximize(): void {
+    ipcRenderer.send("nuwax:titlebar-toggle-maximize");
+  },
+};
+
+/**
+ * i18n 命名空间：nuwax → 壳的语言同步（guest→host，fire-and-forget）。
+ * nuwax 切换多语言时推送当前语言，壳的 UI 文案与主进程语言跟随切换。
+ */
+const i18n = {
+  /** 推送当前语言给壳（如 en-US / zh-CN）。 */
+  syncLang(lang: string): void {
+    ipcRenderer.send("nuwax:lang-sync", { lang });
+  },
+};
+
+/**
+ * meta 命名空间：nuwax → 壳的页面元信息上报（guest→host，fire-and-forget）。
+ * 页面启动时上报自身构建版本，壳关于页「界面版本（nuwax pc web）」展示。
+ */
+const meta = {
+  /** 上报前端构建信息（appVersion 来自构建期生成的版本常量）。 */
+  syncWebInfo(payload: { appVersion: string; gitHash?: string }): void {
+    ipcRenderer.send("nuwax:web-meta", payload);
+  },
+};
+
+/**
+ * host 命名空间：宿主身份只读信息（host→nuwax）。
+ * nuwax 凭 getProduct() 区分宿主产品：`nuwaclaw`（社区版）/ `nuwax`（商业版，
+ * 2026-09 前为 nuwawork，存量宿主仍可能返回历史值），
+ * 用于按宿主开关桌面专属能力或降级。值由构建期 define 注入（同 4-env 注入契约），
+ * 不经 IPC、无运行时 process 访问。
+ */
+const host = {
+  /** 宿主产品标识：nuwaclaw（社区版）/ nuwax（商业版；存量宿主可能返回历史值 nuwawork）。 */
+  getProduct(): string {
+    return APP_NAME_IDENTIFIER;
+  },
+};
+
+contextBridge.exposeInMainWorld("NuwaClawBridge", {
+  perf,
+  auth,
+  native,
+  localFiles,
+  updater,
+  events,
+  theme,
+  layout,
+  titlebar,
+  i18n,
+  meta,
+  host,
+});

@@ -21,6 +21,11 @@ const handlers = new Map<
 let allWebContents: Array<Record<string, unknown>> = [];
 let windows: Array<Record<string, unknown>> = [];
 
+vi.mock("../services/sessionAuthInjection", () => ({
+  initSessionAuthInjection: vi.fn(),
+  trustInitialBusinessNavigation: vi.fn(),
+}));
+
 vi.mock("electron", () => ({
   app: { isPackaged: false, on: vi.fn() },
   ipcMain: {
