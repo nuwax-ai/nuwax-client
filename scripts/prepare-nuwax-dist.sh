@@ -9,7 +9,7 @@
 #     因此包内 dist 恒等于「构建时刻的分支尖端」，nuwax 仓不再积累 build(dist) 提交。
 #
 # 环境变量：
-#   NUWAX_FRONTEND_BRANCH  分支名（默认 feat-dong.0930）
+#   NUWAX_FRONTEND_BRANCH  分支名（默认 feat-2026.9.30）
 #   NUWAX_FRONTEND_REF     指定具体 SHA/refs 时精确检出（复现任意历史构建；优先于 BRANCH）
 #   SKIP_NUWAX_BUILD=1     只切源码不构建（调试用）
 #
@@ -20,7 +20,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUB="$ROOT/nuwax"
-BRANCH="${NUWAX_FRONTEND_BRANCH:-feat-dong.0930}"
+BRANCH="${NUWAX_FRONTEND_BRANCH:-feat-2026.9.30}"
 REF="${NUWAX_FRONTEND_REF:-}"
 
 cd "$SUB"

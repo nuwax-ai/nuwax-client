@@ -95,7 +95,7 @@
 | | **Nuwax 客户端**（＝**商业版**；本仓产品） | **nuwax 前端**（仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)，包名 `nuwax-frontend`） |
 |---|---|---|
 | 是什么 | Electron 桌面应用——「壳」 | React/UMI web 应用——业务 UI 本体 |
-| 仓库 | **本仓 nuwax-client**（基座 submodule + overlay 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（CI 打包 pin，feat-dong.0930 线）、线上部署（PC web） |
+| 仓库 | **本仓 nuwax-client**（基座 submodule + overlay 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（CI 打包 pin，feat-2026.9.30 线）、线上部署（PC web） |
 | 职责 | 窗口/webview 容器 + 桌面能力：登录态桥、本地化承载、沙箱、文件服务、引擎管理、自动更新 | 工作台/会话/资料库等全部页面逻辑 |
 | 运行形态 | 安装包分发：productName=`Nuwax`、identifier=`nuwax`、appId=`com.nuwax-ai.nuwax`、数据目录 `~/.nuwax` | ① 浏览器直接访问（PC web，无桥自动降级）；② 客户端窗口内 webview（本地伺服或直连线上） |
 | 对外身份 | 注入的 identifier `nuwax` = 宿主产品 id（`x-client-type` 头、桥 `getProduct()`） | 用 `getProduct()`/`isNuwaClaw()` 识别宿主并适配 |
@@ -113,7 +113,7 @@
 ```
 nuwax-client/（main = 商业产品壳）
 ├── nuwa-electron-shell/   # submodule → 基座仓 main 分支（产品中立功能模块）
-├── nuwax/                 # submodule → nuwax 前端（feat-dong.0930，dist 随仓提交）
+├── nuwax/                 # submodule → nuwax 前端（feat-2026.9.30，dist 随仓提交）
 ├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
 ├── scripts/               # in-base.js（基座内执行+商业 env 注入）+ sync-overlay.js + check-base-purity.js + release-stable.sh（正式版发布一条龙）
 ├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
@@ -157,7 +157,7 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 
 - **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
 - **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
-- **壳根 nuwax pin**：bump `nuwax/` gitlink 时，提交须在 `.gitmodules` 声明的 `feat-dong.0930` 分支上可达（release/smoke 的 submodule 拉取依赖可达性）；前端仓 `pin/nuwawork` / `pin/nuwa-work` 为改名遗留分支，非硬依赖，勿凭直觉快进。
+- **壳根 nuwax pin**：bump `nuwax/` gitlink 时，提交须在 `.gitmodules` 声明的 `feat-2026.9.30` 分支上可达（release/smoke 的 submodule 拉取依赖可达性）；前端仓 `pin/nuwawork` / `pin/nuwa-work` 为改名遗留分支，非硬依赖，勿凭直觉快进。
 
 ### 发版流程
 

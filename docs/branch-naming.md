@@ -69,8 +69,8 @@
 ## 4. 前端仓 nuwax（外部协作仓 · 仅消费侧规则）
 
 - 该仓默认主干为 `dev`，分支规范归对方团队；我方**不定义**其命名规范。
-- 我方团队线沿用对方仓既有惯例 `feat-<user>.<MMDD>`（无斜杠，当前 `feat-dong.0930`），**不要**擅自改成 `feat/` 斜杠格式——与仓内惯例对齐优先于本规范。
-- **硬约束**：外层 bump `nuwax/` gitlink 时，被引提交必须位于 `.gitmodules` 声明分支（当前 `feat-dong.0930`）上可达，否则 release/smoke 流程的 submodule 拉取失败。实证口径：gitlink 只须在声明分支可达，不须在默认分支。
+- 当前消费线按用户指定为 `feat-2026.9.30`；前端仓分支规范归对方团队，勿擅自改成 `feat/` 斜杠格式。
+- **硬约束**：外层 bump `nuwax/` gitlink 时，被引提交必须位于 `.gitmodules` 声明分支（当前 `feat-2026.9.30`）上可达，否则 release/smoke 流程的 submodule 拉取失败。实证口径：gitlink 只须在声明分支可达，不须在默认分支。
 - 遗留 `pin/nuwawork` / `pin/nuwa-work` 为改名遗留分支：保留勿动、勿快进（历史 gitlink 的可达性保险）。
 
 ## 5. 生命周期与清理
@@ -101,7 +101,7 @@
 | 外层 | `archive/electron-client-1.0-full`、`archive/codex-agent-workbench-0.11` | 归档 | 保留 |
 | 基座 | `main` | 主干 | 保留 |
 | 基座 | `feat/agent-work-dir-absolute` 等历史 feat 线 | 逐条 `git branch --merged origin/main` 核实后删除 | 待清理 |
-| 前端 | `feat-dong.0930` | 我方消费线（.gitmodules 声明分支） | 保留至换线，换线须同步改 `.gitmodules` |
+| 前端 | `feat-2026.9.30` | 我方消费线（.gitmodules 声明分支） | 保留至换线，换线须同步改 `.gitmodules` |
 | 前端 | `pin/nuwawork`、`pin/nuwa-work` | 改名遗留 | 保留勿动 |
 
 ## 8. 速查
