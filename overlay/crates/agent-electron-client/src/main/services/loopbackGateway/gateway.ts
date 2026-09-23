@@ -171,7 +171,11 @@ function buildProxyHeaders(
   // 登录态注入：页面自身的 Bearer 请求已带头，只在缺失时补，不覆盖。
   if (
     headers["authorization"] === undefined &&
-    !isPublicAuthPath(upstreamPath.split("?")[0])
+    !isPublicAuthPath(upstreamPath.split("?")[0]) &&
+    // The renderer cannot supply this secret: the session hook strips forged
+    // copies and attaches a fresh one only for trusted frames. Without it an
+    // external page could use our loopback port as an authenticated proxy.
+    (!ctx.trustedRequestSecret || hasTrustedRequestCapability(req, ctx))
   ) {
     const token = ctx.getAccessToken();
     if (token) headers["authorization"] = `Bearer ${token}`;

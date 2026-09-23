@@ -395,6 +395,32 @@ describe("loopback gateway（透明反代）", () => {
     expect(up.captured.auth).toBe("Bearer SELF");
   });
 
+  it("does not lend the stored Bearer to an untrusted gateway caller", async () => {
+    const seen: Array<string | undefined> = [];
+    const up = await startUpstream((req, res) => {
+      seen.push(req.headers.authorization);
+      res.writeHead(204).end();
+    });
+    const secret = "trusted-frame-secret";
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getAccessToken: () => "USER-TOKEN",
+      trustedRequestSecret: secret,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    await fetch(`${gw.origin}/api/me`, {
+      headers: { origin: "https://foreign.example" },
+    });
+    await fetch(`${gw.origin}/__backend/${new URL(up.origin).host}/files/me`, {
+      headers: { origin: "null", [GATEWAY_REQUEST_HEADER]: "forged" },
+    });
+    await fetch(`${gw.origin}/api/me`, {
+      headers: { origin: gw.origin, [GATEWAY_REQUEST_HEADER]: secret },
+    });
+    expect(seen).toEqual([undefined, undefined, "Bearer USER-TOKEN"]);
+  });
+
   it("x-client-type：缺省随产品标识 APP_NAME_IDENTIFIER，空串关闭", async () => {
     // ubuntu CI 两次在无 body 的 204 往返中出现 UND_ERR_SOCKET（响应读到一半
     // socket 被毁，34676294850 / 34678353803）。归因：fetch 默认 keep-alive 池化

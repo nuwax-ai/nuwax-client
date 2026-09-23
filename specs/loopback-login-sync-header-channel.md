@@ -19,7 +19,7 @@
 
 | 请求 | 规则 |
 |---|---|
-| gateway HTTP/WS | 出口剥所有 ticket，保留其他 cookie；非公共接口缺 Auth 时补当前 Bearer |
+| gateway HTTP/WS | 出口剥所有 ticket，保留其他 cookie；仅主进程确认的受信页面在非公共接口缺 Auth 时可补当前 Bearer。外站直接访问网关不得借用本机 token |
 | 受信 renderer 直连当前业务 origin | 无论是否已有 Auth 均剥 ticket；缺 Auth 时补当前 Bearer |
 | 登录公共路径 | 不代注旧 Bearer，不依赖旧 ticket |
 | 外站发起/非业务 origin | 不自动授予用户 token；HTTPS 不降级到 HTTP |
@@ -27,7 +27,7 @@
 
 公共路径：`/api/user/passwordLogin`、`/api/user/codeLogin`、`/api/user/code/send`。头名不区分大小写；cookie 名 ticket 精确匹配。
 
-一个 `onBeforeSendHeaders` listener 接管商业桥挂点，保留 x-client-type 的现有 HTTP(S) 行为，Bearer filter 显式覆盖 HTTP(S)/WS(S)。匹配完整 origin，WS 只做 ws/http、wss/https 等价映射。可信性结合 requesting frame 与顶层文档来源判断；无 renderer webContents 的主进程请求保留自己的显式鉴权。
+一个 `onBeforeSendHeaders` listener 接管商业桥挂点，保留 x-client-type 的现有 HTTP(S) 行为，Bearer filter 显式覆盖 HTTP(S)/WS(S)。匹配完整 origin，WS 只做 ws/http、wss/https 等价映射。可信性结合 requesting frame 与顶层文档来源判断；受信页面访问网关时由主进程附临时 capability，网关仅凭此 capability 代补存储的 Bearer。无 renderer webContents 的主进程请求保留自己的显式鉴权。
 
 ## 3. ticket 与生命周期
 

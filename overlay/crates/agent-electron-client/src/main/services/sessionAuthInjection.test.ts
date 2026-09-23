@@ -208,6 +208,22 @@ describe("trusted gateway request capability", () => {
     expect(result.Authorization).toBeUndefined();
   });
 
+  it("grants the same capability to ordinary gateway API requests", () => {
+    const result = applySessionAuthHeaders(
+      request({ url: `${gatewayOrigin}/api/info` }),
+      gatewayContext
+    );
+    expect(result[GATEWAY_REQUEST_HEADER]).toBe("test-only-capability");
+  });
+
+  it("grants the capability to the matching gateway WebSocket handshake", () => {
+    const result = applySessionAuthHeaders(
+      request({ url: `${gatewayOrigin.replace("http:", "ws:")}/computer/ws` }),
+      gatewayContext
+    );
+    expect(result[GATEWAY_REQUEST_HEADER]).toBe("test-only-capability");
+  });
+
   it.each([
     { frame: { url: "https://external.example/frame" } },
     {
@@ -237,10 +253,9 @@ describe("trusted gateway request capability", () => {
     `${businessOrigin}/api/info`,
     "https://external.example/__backend/business.example/files/icon.png",
     "http://127.0.0.1:46801/__backend/business.example/files/icon.png",
-    `${gatewayOrigin}/api/info`,
     "http://user@127.0.0.1:46800/__backend/business.example/files/icon.png",
   ])(
-    "never leaks the capability outside the exact gateway namespace: %s",
+    "never leaks the capability outside the exact gateway origin: %s",
     (url) => {
       const result = applySessionAuthHeaders(
         request({

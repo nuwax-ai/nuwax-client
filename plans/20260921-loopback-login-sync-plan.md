@@ -9,7 +9,7 @@
 
 落点 overlay loopbackGateway/gateway.ts、index.ts 与测试。
 
-1. HTTP/WS 出口剥 ticket，保留其他 cookie；公共登录路径不代注旧 Bearer。
+1. HTTP/WS 出口剥 ticket，保留其他 cookie；公共登录路径不代注旧 Bearer。存储的 Bearer 只代注给主进程确认的受信网关请求，外站直接访问本地网关不借凭据。
 2. 当前后端专用 namespace，目标严格校验；query/Referer/同后端资源重定向保持语义。
 3. 文档保持 pathname；绝对业务域资源与已登记微应用 frame 的相对资源归上游；主 SPA 静态保留本地。
 4. 保留微应用前缀，新文档根显式登记。
@@ -18,7 +18,7 @@
 
 落点 overlay sessionAuthInjection、共享规则、nuwaxBridgeHandlers/commercialAuth、preload 与测试。
 
-1. 单 listener，保留 x-client-type，显式 HTTP(S)/WS(S)，按 origin 与可信 frame 注入。
+1. 单 listener，保留 x-client-type，显式 HTTP(S)/WS(S)，按 origin 与可信 frame 注入；受信网关 HTTP/WS 请求附主进程 capability，伪造头先剥除。
 2. 普通 renderer 业务出口总剥 ticket；主进程显式注册配对 ticket 例外。
 3. token 替换先撤旧代次；cookie 捕获跨 await 核对 generation/origin/token；拒绝旧 jar 写回与迟到失效。
 4. auth:getContext/preload 契约；独立窗业务 URL 路径保持式映射 gateway。
@@ -57,3 +57,14 @@ WS1–3 可并行，共享接口先对齐。网关和 direct ticket 治理必须
 - 前端（nuwax 源码尖 93d47497b）：authNavigation/hostBridge/paymentSettlement 定向 **76 passed**；`pnpm run build:prod` 后 dist 随 `b43b8d266` 提交（version.ts APP_GIT_HASH=93d47497b，结算页测试域硬编码已清）。
 - 真实 Electron 夹具 `node scripts/acceptance/loopback-login-sync.cjs`（electron 40.8.2，临时 profile + 虚构 token，本地 HTTP/WS 上游）：direct 合同（业务头/公共登录不代注/主进程注册配对 ticket/WS/外站不注入）与 gateway 合同（HTTP/WS 代注与剥 ticket、iframe 绝对/根相对/目录相对资源、CSS/module 依赖、资源 302、`Origin: null` 能力头路径）均 **PASS**。
 - 未覆盖（发布前另行取证）：真实后端 Bearer-only/ticket 轮换契约、真实支付链路、macOS/Windows 安装包手动矩阵（规格 V1–V10）。
+
+### 2026-09-23：合并 release 后的提测复核
+
+- 外层 `codex/loopback-login-sync` 合入 `origin/release/v1.0.x@73b1ecf9`（外层合并提交 `a9552273`），基座 pin 更新至 `aa50bb78`。旧版同名 spec 的 add/add 冲突采用本分支已评审、与实现对应的版本。
+- 前端以 `8f0398e20` 为 release 基线合并登录改动：源码合并提交 `32aef9037` 同时保留 `auth.getContext` 和新版桌面预览桥；重新构建的 dist 提交 `d19a0208c`，`dist/version.json` 与 `src/constants/version.ts` 的源码戳均为 `32aef9037`。生成的 dist 不能用两边的旧 chunk 拼接。
+- 商业轨 `npm run test:commercial`：129 文件通过 / 1 跳过，**1612 通过 / 18 跳过**。社区轨在隔离副本对基座 pin `aa50bb78` 跑 `npm run base:test`：116 文件通过 / 1 跳过，**1391 通过 / 18 跳过**。
+- 前端合并点 `authNavigation`、`hostBridge`、`desktopShellPreview`、结算页四组 **83 测试通过**；`pnpm run build:prod` 通过。真实 Electron 40.8.2 临时 profile 夹具两段 PASS（direct、gateway，25 请求）。`sync-overlay --check` 仍是 48 文件一致，`check:pin` 通过。
+- 三问自查：鉴权头策略集中在 `sessionAuthInjection.ts` / `auth/requestPolicy.ts`，网关路由集中在 `loopbackGateway/routingPolicy.ts`；主进程只经 IPC/preload 暴露鉴权上下文，前端导航统一走 `authNavigation.ts`；关键边界有命名规则、文档和定向测试。新基座的 loading / 构建改动不在这 48 个 overlay 托管路径内。
+- 待提测环境验证：真实后端 Bearer-only 与 ticket 轮换契约、真实支付回跳、macOS/Windows 安装包登录与 V1–V10 手动矩阵。自动化与临时 profile 夹具不代表这些结果。
+- 质量自查补修：网关原先只用 capability 决定 opaque CORS 回包，却仍为外站直接访问网关的请求代补 Bearer。现改为 capability 同时约束网关 HTTP/WS 的存储凭据代注；Electron 的 WS `ws:` 目标按 `http:` 网关 origin 等价匹配。商业轨复跑 **1614 通过 / 18 跳过**；真实 Electron 夹具增加外站 HTTP/WS，**27 请求 PASS**。
+- 本地 `npm run base:bundle` 已完成依赖准备与 Electron 源码构建，但 electron-builder 在完整打包时报 `.../crates/agent-electron-client not a file`；以 `--dir` 重跑可生成应用目录，但仍是基座默认的 `NuwaClaw.app` 身份。两者都不算商业 Nuwax 安装包验收；须用 CI 同款产品标识、前端 dist 注入和签名流程复验。

@@ -187,6 +187,10 @@ async function run() {
     assert.equal(await main.webContents.executeJavaScript('fetch("/assets/local.txt").then(r=>r.text())'), 'local-dist');
     const proxied = await main.webContents.executeJavaScript('fetch("/api/proxied").then(r=>r.json())');
     assert.equal(proxied.authorization, `Bearer ${token}`); assert.equal(proxied.cookie, 'preference=kept');
+    await external.webContents.executeJavaScript(`fetch(${JSON.stringify(gateway.origin + '/api/untrusted-gateway')},{mode:'no-cors'}).then(()=>true)`);
+    assert.equal(last('/api/untrusted-gateway').authorization, null);
+    await wsTest(external, gateway.origin.replace('http:', 'ws:') + '/computer/ws-untrusted');
+    assert.equal(last('/computer/ws-untrusted').authorization, null);
     await wsTest(main, gateway.origin.replace('http:', 'ws:') + '/computer/ws-gateway'); checkBearer('/computer/ws-gateway');
     await wsTest(main, backendOrigin.replace('http:', 'ws:') + '/socket/absolute-ws'); checkBearer('/socket/absolute-ws');
     const documentUrl = await main.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const f=document.createElement('iframe');f.onload=()=>{try{resolve(f.contentWindow.location.href)}catch(e){reject(e)}};f.onerror=reject;f.src=${JSON.stringify(backendOrigin + '/repo/absolute-document')};document.body.appendChild(f)})`);

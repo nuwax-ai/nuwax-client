@@ -72,16 +72,15 @@ export function applySessionAuthHeaders(
   }
   if (
     context.gateway?.requestSecret &&
-    target.origin === context.gateway.origin &&
+    matchesBusinessOrigin(details.url, context.gateway.origin) &&
     !target.username &&
     !target.password &&
-    target.pathname.startsWith("/__backend/") &&
     details.webContentsId &&
     details.webContentsId > 0 &&
     trustedRequest(details, context)
   ) {
-    // A cross-origin redirect can taint Origin to null. This capability proves
-    // its trusted Electron frame without granting all opaque origins access.
+    // The gateway only lends the stored Bearer to requests from a trusted
+    // Electron frame. The capability also identifies opaque redirects for CORS.
     headers[GATEWAY_REQUEST_HEADER] = context.gateway.requestSecret;
   }
   // Preserve main.ts's product header, while correctly recognizing bracketed IPv6.
