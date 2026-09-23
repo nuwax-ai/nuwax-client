@@ -90,7 +90,7 @@ export interface TrafficLightToolbarProps {
   dragRegions?: TitlebarDragRegion[];
 }
 
-/** 顶栏菜单收起信号（主进程推送：guest 获焦/窗口失焦，见 nuwaxBridgeHandlers）。 */
+/** 顶栏菜单收起信号（主进程推送：guest 页面点击/获焦、窗口失焦）。 */
 const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
 
 /** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。

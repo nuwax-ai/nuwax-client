@@ -1011,15 +1011,21 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // —— 顶栏自绘菜单收起信号（bug 2427 Win/Linux 工具栏菜单不自动关）——
   // 顶行菜单是宿主 renderer 的 antd Dropdown，「点外部收起」监听宿主 document
   // 的 mousedown；webview guest 是独立文档，页面内点击不冒泡到宿主 → 菜单挂住
-  // （QA 实测：弹「编辑(E)」后点页面左侧导航不收起）。改走焦点真值：打开菜单
-  // 必经宿主点击（guest 随之失焦），用户点回页面 guest 必发 focus，焦点翻转即
-  // 收起；窗口失焦（点窗口外/任务栏）同信号，与原生菜单语义一致。
+  // （QA 实测：弹「编辑(E)」后点页面左侧导航不收起）。guest 捕获页面 pointerdown
+  // 即可确定用户已点回内容区；focus 事件作为辅助兜底，窗口失焦（点窗口外/任务栏）
+  // 也发相同信号，与原生菜单语义一致。
   const pushTopbarMenuDismiss = (win?: Electron.BrowserWindow) => {
     const targets = win ? [win] : BrowserWindow.getAllWindows();
     for (const w of targets) {
       if (!w.isDestroyed()) w.webContents.send("nuwax:dismiss-topbar-menus");
     }
   };
+  // guest 页面内的真实点击比 focus 状态变化更可靠：点击侧栏时 webview 可能
+  // 已经保持焦点，不会再次触发 focus；preload 捕获 pointerdown 后从这里广播收起。
+  ipcMain.on("nuwax:guest-pointer-down", (event) => {
+    if (event.sender.isDestroyed() || event.sender.getType() !== "webview") return;
+    pushTopbarMenuDismiss();
+  });
   const hookGuestFocusDismiss = (wc: Electron.WebContents) => {
     if (wc.isDestroyed() || wc.getType() !== "webview") return;
     wc.on("focus", () => pushTopbarMenuDismiss());
