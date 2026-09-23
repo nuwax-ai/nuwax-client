@@ -388,8 +388,6 @@ jobs:
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
-          # 官网下载页（MSI 等不支持自动更新的安装形态引导；商业暂无产品页先指官网首页）
-          NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
           # 端口整体 +1000（19099/61002~61009/61173），与社区版/nuwa-cli 同机错开
           NUWAX_PORT_OFFSET: "1000"
         run: |

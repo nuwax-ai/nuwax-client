@@ -6,3 +6,7 @@ node_modules/
 
 # ZCode 本地工具缓存
 .claude/cache/
+
+debug-shots/
+# 开发日志（make dev 生成，与基座 .gitignore 口径一致）
+logs/
