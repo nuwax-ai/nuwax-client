@@ -27,6 +27,7 @@
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
+import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
 import * as path from "path";
 import { saveResponse } from "../services/system/saveResponse";
@@ -146,6 +147,23 @@ export function applyMainWindowMinSize(win: BrowserWindow): void {
 }
 
 export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
+  // 主进程身份随进程固定；guest preload 可能在 dev 期间被另一次构建覆盖。
+  // 在 webview 创建前传入运行时身份，避免 preload 的静态构建值让前端误判
+  // 商业沉浸壳（logo / 菜单退让、折叠入口等随之失效）。
+  const hostProductArg = `--nuwax-host-product=${APP_NAME_IDENTIFIER}`;
+  const attachHostProduct = (contents: Electron.WebContents) => {
+    contents.on("will-attach-webview", (_event, preferences) => {
+      preferences.additionalArguments = [
+        ...(preferences.additionalArguments ?? []).filter(
+          (arg) => !arg.startsWith("--nuwax-host-product="),
+        ),
+        hostProductArg,
+      ];
+    });
+  };
+  app.on("web-contents-created", (_event, contents) => attachHostProduct(contents));
+  for (const contents of webContents.getAllWebContents()) attachHostProduct(contents);
+
   let serviceState: { phase: string; error?: string } = { phase: "stopped" };
   const emitRegistrationTrace = (event: RegistrationTrace) => {
     log.info("[NuwaxReg]", event);
@@ -703,6 +721,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
             "preload",
             "webviewPerfBridge.js",
           ),
+          additionalArguments: [hostProductArg],
         },
       });
       shellWindows.add(win);

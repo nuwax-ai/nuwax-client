@@ -307,12 +307,19 @@ const meta = {
  * host 命名空间：宿主身份只读信息（host→nuwax）。
  * nuwax 凭 getProduct() 区分宿主产品：`nuwaclaw`（社区版）/ `nuwax`（商业版，
  * 2026-09 前为 nuwawork，存量宿主仍可能返回历史值），
- * 用于按宿主开关桌面专属能力或降级。值由构建期 define 注入（同 4-env 注入契约），
- * 不经 IPC、无运行时 process 访问。
+ * 用于按宿主开关桌面专属能力或降级。主进程通过 additionalArguments 传递运行时
+ * 身份；旧宿主未传时回退到构建期 define 注入值，避免 dev 整页导航后读到被其他
+ * 构建覆盖的 preload 身份。
  */
 const host = {
-  /** 宿主产品标识：nuwaclaw（社区版）/ nuwax（商业版；存量宿主可能返回历史值 nuwawork）。 */
+  /** 宿主产品标识：优先读取运行时主进程身份，未提供时回退构建期常量。 */
   getProduct(): string {
+    // Dev 中可能在主进程未退出时重建 preload。此时构建期常量会变，
+    // 但正在运行的主进程身份不会变；优先使用主进程传给 guest 的运行时身份。
+    const runtimeProduct = process.argv
+      .find((arg) => arg.startsWith("--nuwax-host-product="))
+      ?.slice("--nuwax-host-product=".length);
+    if (runtimeProduct) return runtimeProduct;
     return APP_NAME_IDENTIFIER;
   },
 };
