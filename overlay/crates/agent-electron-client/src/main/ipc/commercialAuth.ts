@@ -66,7 +66,10 @@ export function clearRegistration(
     )
     .run();
   const lp = (readSetting("lanproxy_config") || {}) as Record<string, unknown>;
-  const { serverIp, serverPort, clientKey, ...preferences } = lp;
+  const preferences = { ...lp };
+  delete preferences.serverIp;
+  delete preferences.serverPort;
+  delete preferences.clientKey;
   writeSetting("lanproxy_config", preferences);
   if (opts?.preserveSavedKey) {
     if (legacySavedKey != null) writeSetting("auth.saved_key", legacySavedKey);

@@ -25,7 +25,7 @@
  * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app, session, screen, net } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import * as fs from "fs";
 import * as path from "path";

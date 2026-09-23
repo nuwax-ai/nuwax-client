@@ -34,8 +34,9 @@ function parseTicket(header: string): Ticket | null {
   const [pair, ...attributes] = header.split(";").map((part) => part.trim());
   const separator = pair.indexOf("=");
   if (separator < 0 || pair.slice(0, separator).toLowerCase() !== "ticket") return null;
-  if (/[\x00-\x20;,]/.test(pair.slice(separator + 1))) return null;
-  const ticket: Ticket = { value: pair.slice(separator + 1), path: "/", httpOnly: true };
+  const cookieValue = pair.slice(separator + 1);
+  if ([...cookieValue].some((char) => char.charCodeAt(0) <= 32 || char === ";" || char === ",")) return null;
+  const ticket: Ticket = { value: cookieValue, path: "/", httpOnly: true };
   for (const attribute of attributes) {
     const [rawName, ...rawValue] = attribute.split("=");
     const name = rawName.toLowerCase();
@@ -178,7 +179,7 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
           await syncTicketFromJar(business.origin, observedEpoch);
           return;
         }
-        if (cause === "unknown" && loopbackOrigin) {
+        if (String(cause) === "unknown" && loopbackOrigin) {
           const gatewayCookie = (await session.defaultSession.cookies.get({ url: loopbackOrigin, name: "ticket" }))[0];
           if (gatewayCookie?.value === expected) {
             if (observedEpoch !== epoch || expected !== currentTicket()) return;
