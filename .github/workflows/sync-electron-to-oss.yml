@@ -1,6 +1,6 @@
 # Nuwax 商业版 — 仅同步：将指定 tag 的 GitHub Release 资产同步到 MinIO S3 与阿里云 OSS。
-# MinIO：完整资产；OSS：仅元数据（*.yml + latest.json）。与 release-electron.yml 内置
-# sync-to-minio job 同逻辑；供基座内 npm run sync:oss 按 filename dispatch。
+# MinIO：完整资产；OSS：仅元数据（*.yml + latest.json）。版本目录先上传、核对，
+# 最后才更新通道指针；供基座内 npm run sync:oss 按 filename dispatch。
 # 通道：nuwax-electron/（与社区版 nuwaclaw-electron 隔离）。
 #
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
@@ -24,13 +24,16 @@ on:
           - beta
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: nuwax-update-${{ inputs.channel || 'stable' }}
+  cancel-in-progress: false
 
 jobs:
   sync-to-minio:
     name: Sync release to MinIO S3 & OSS
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       S3_ENDPOINT: "https://s3.nuwax.com:9443"
       S3_REGION: "us-east-1"
@@ -46,6 +49,22 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
     steps:
+      - name: Validate release tag and channel
+        run: |
+          if [[ "$RELEASE_TAG" =~ ^electron-v[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASE_CHANNEL" == stable ]]; then
+            exit 0
+          fi
+          if [[ "$RELEASE_TAG" =~ ^prerelease-v[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASE_CHANNEL" == beta ]]; then
+            exit 0
+          fi
+          echo "::error::electron-v* 只能发布 stable，prerelease-v* 只能发布 beta，版本须为 x.y.z"
+          exit 1
+
+      - name: Checkout release source for provenance verification
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
       - name: Ensure awscli v2 (for S3)
         run: |
           if aws --version 2>/dev/null; then
@@ -87,6 +106,17 @@ jobs:
           echo "==> Downloaded assets:"
           ls -lh /tmp/release-assets/
 
+      - name: Verify source identity and signed release assets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osslsigncode
+          VERSION="${RELEASE_TAG#*-v}"
+          osslsigncode verify -in "/tmp/release-assets/Nuwax.Setup.${VERSION}.exe"
+          gh release upload "$RELEASE_TAG" /tmp/release-assets/release-provenance.json --clobber --repo "$GITHUB_REPOSITORY"
+
       - name: Generate latest.json and platform yml from assets
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
@@ -95,13 +125,10 @@ jobs:
           CHANNEL="${RELEASE_CHANNEL}"
           if [[ "$TAG" == prerelease-v* ]]; then
             VERSION="${TAG#prerelease-v}"
-            WIN_EXE="${PRODUCT_PREFIX}-Setup-${VERSION}-unsigned.exe"
-            WIN_MSI="${PRODUCT_PREFIX}-${VERSION}-unsigned.msi"
           else
             VERSION="${TAG#electron-v}"
-            WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
-            WIN_MSI="${PRODUCT_PREFIX}.${VERSION}.msi"
           fi
+          WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
           if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
             S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
           else
@@ -157,7 +184,7 @@ jobs:
           add_platform "darwin-x86_64-zip"  "${PRODUCT_PREFIX}-${VERSION}-mac.zip"
           add_platform "windows-x86_64"      "$WIN_EXE"
           add_platform "windows-x86_64-nsis" "$WIN_EXE"
-          add_platform "windows-x86_64-msi"  "$WIN_MSI"
+          # MSI 当前未签名，不进入自动更新指针；仍可留在 Release 供内部检查。
           add_platform "linux-x86_64"          "${PRODUCT_PREFIX}-${VERSION}.AppImage"
           add_platform "linux-x86_64-appimage" "${PRODUCT_PREFIX}-${VERSION}.AppImage"
           add_platform "linux-x86_64-deb"      "${PRODUCT_PREFIX}-${VERSION}-amd64.deb"
@@ -167,30 +194,10 @@ jobs:
           add_platform "linux-aarch64-deb"      "${PRODUCT_PREFIX}-${VERSION}-arm64.deb"
           add_platform "linux-aarch64-rpm"      "${PRODUCT_PREFIX}-${VERSION}-aarch64.rpm"
 
-          if [ "$(echo "$PLATFORMS" | jq 'length')" = "0" ]; then
-            echo "::warning::No exact filename matches, falling back to fuzzy scan"
-            for file in "${ASSETS_DIR}"/*; do
-              filename=$(basename "$file")
-              case "$filename" in
-                *.dmg|*.zip|*.exe|*.msi|*.AppImage|*.deb|*.rpm)
-                  key=""
-                  case "$filename" in
-                    *arm64*mac*|*arm64*.dmg)  key="darwin-aarch64" ;;
-                    *x64*mac*|*x64*.dmg)      key="darwin-x86_64" ;;
-                    *Setup*.exe|*setup*.exe)   key="windows-x86_64" ;;
-                    *.msi)                     key="windows-x86_64-msi" ;;
-                    *arm64*.AppImage)          key="linux-aarch64" ;;
-                    *amd64*.AppImage|*x64*.AppImage|*.AppImage) key="linux-x86_64" ;;
-                    *arm64*.deb)               key="linux-aarch64-deb" ;;
-                    *amd64*.deb|*x64*.deb)     key="linux-x86_64-deb" ;;
-                    *aarch64*.rpm)             key="linux-aarch64-rpm" ;;
-                    *x86_64*.rpm|*x64*.rpm)   key="linux-x86_64-rpm" ;;
-                  esac
-                  [ -n "$key" ] && add_platform "$key" "$filename"
-                  ;;
-              esac
-            done
-          fi
+          for key in darwin-aarch64 darwin-x86_64 windows-x86_64 linux-x86_64 linux-aarch64; do
+            echo "$PLATFORMS" | jq -e --arg key "$key" '.[$key].url | strings' >/dev/null \
+              || { echo "::error::缺少精确命名的更新资产: $key"; exit 1; }
+          done
 
           blockmap_size_for() {
             local installer="$1"
@@ -294,16 +301,9 @@ jobs:
           done
           shopt -u nullglob
 
-          echo "==> MinIO: (3/3) latest.json (versioned + channel pointer)"
+          echo "==> MinIO: (3/3) versioned latest.json"
           aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${S3_PREFIX}/latest.json" \
             --endpoint-url "$S3_ENDPOINT"
-          if [ "$CHANNEL" = "stable" ]; then
-            aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${RELEASE_ROOT}/latest/latest.json" \
-              --endpoint-url "$S3_ENDPOINT"
-          else
-            aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${RELEASE_ROOT}/beta/latest.json" \
-              --endpoint-url "$S3_ENDPOINT"
-          fi
 
       - name: Verify S3 upload
         run: |
@@ -314,13 +314,21 @@ jobs:
           else
             VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
           fi
-          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$VERIFY_URL")
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "==> S3 upload verified: latest-mac.yml (HTTP ${HTTP_STATUS})"
+          curl -fsSL --retry 3 -o /dev/null "$VERIFY_URL"
+          if [ "$CHANNEL" = beta ]; then
+            S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
           else
-            echo "::error::S3 upload verification failed: latest-mac.yml (HTTP ${HTTP_STATUS})"
-            exit 1
+            S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
+          for file in /tmp/release-assets/* /tmp/latest.json; do
+            [ -f "$file" ] || continue
+            name="$(basename "$file")"
+            remote_size="$(aws s3api head-object --bucket "$S3_BUCKET" --key "${S3_PREFIX}/${name}" \
+              --endpoint-url "$S3_ENDPOINT" --query ContentLength --output text)"
+            local_size="$(stat -c%s "$file")"
+            [ "$remote_size" = "$local_size" ] || { echo "::error::S3 资产大小不一致: $name"; exit 1; }
+          done
+          echo "==> S3 versioned assets verified"
 
       - name: Upload platform yml and latest.json to Alibaba OSS
         env:
@@ -354,45 +362,89 @@ jobs:
             --access-key-id "$OSS_ACCESS_KEY_ID" \
             --access-key-secret "$OSS_ACCESS_KEY_SECRET"
 
-          if [ "$CHANNEL" = "stable" ]; then
-            ossutil cp --force /tmp/latest.json "${OSS_BUCKET}/${RELEASE_ROOT}/latest/latest.json" \
-              --endpoint "$OSS_ENDPOINT" \
-              --region "$OSS_REGION" \
-              --access-key-id "$OSS_ACCESS_KEY_ID" \
-              --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-            echo "==> Uploaded latest.json to stable pointer: latest/latest.json"
-          else
-            ossutil cp --force /tmp/latest.json "${OSS_BUCKET}/${RELEASE_ROOT}/beta/latest.json" \
-              --endpoint "$OSS_ENDPOINT" \
-              --region "$OSS_REGION" \
-              --access-key-id "$OSS_ACCESS_KEY_ID" \
-              --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-            echo "==> Uploaded latest.json to beta pointer: beta/latest.json (stable pointer untouched)"
-          fi
-
-      - name: Verify OSS upload
+      - name: Verify versioned OSS metadata
         run: |
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
           if [ "$CHANNEL" = "stable" ]; then
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/latest/latest.json"
+            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest.json"
             VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
           else
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta/latest.json"
+            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest.json"
             VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest-mac.yml"
           fi
-          HTTP_JSON=$(curl -sS -o /tmp/oss-latest.json -w "%{http_code}" "$VERIFY_JSON_URL")
-          if [ "$HTTP_JSON" = "200" ]; then
-            echo "==> latest.json (${CHANNEL} pointer): OK (HTTP ${HTTP_JSON})"
-            cat /tmp/oss-latest.json | jq .
-          else
-            echo "::error::latest.json for channel '${CHANNEL}' not found on OSS (HTTP ${HTTP_JSON})"
+          curl -fsSL --retry 3 -o /tmp/oss-versioned-latest.json "$VERIFY_JSON_URL"
+          curl -fsSL --retry 3 -o /tmp/oss-versioned-latest-mac.yml "$VERIFY_YML_URL"
+          cmp /tmp/latest.json /tmp/oss-versioned-latest.json
+          cmp /tmp/release-assets/latest-mac.yml /tmp/oss-versioned-latest-mac.yml
+          echo "==> OSS versioned metadata verified"
+
+      - name: Publish channel pointers after all checks
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          if [ "$RELEASE_CHANNEL" = stable ]; then POINTER=latest; else POINTER=beta; fi
+          S3_POINTER="s3://${S3_BUCKET}/${RELEASE_ROOT}/${POINTER}/latest.json"
+          OSS_POINTER="${OSS_BUCKET}/${RELEASE_ROOT}/${POINTER}/latest.json"
+          S3_PREVIOUS=0
+          OSS_PREVIOUS=0
+          S3_TOUCHED=0
+          OSS_TOUCHED=0
+          if aws s3 cp "$S3_POINTER" /tmp/previous-s3-pointer.json --endpoint-url "$S3_ENDPOINT" 2>/tmp/s3-backup-error; then
+            S3_PREVIOUS=1
+          elif ! grep -Eiq '404|NoSuchKey|not found' /tmp/s3-backup-error; then
+            cat /tmp/s3-backup-error >&2
             exit 1
           fi
-          HTTP_YML=$(curl -sS -o /dev/null -w "%{http_code}" "$VERIFY_YML_URL")
-          if [ "$HTTP_YML" = "200" ]; then
-            echo "==> Versioned OSS latest-mac.yml: OK (HTTP ${HTTP_YML}) [$VERIFY_YML_URL]"
-          else
-            echo "::error::OSS versioned latest-mac.yml verification failed (HTTP ${HTTP_YML}) [$VERIFY_YML_URL]"
+          if ossutil cp --force "$OSS_POINTER" /tmp/previous-oss-pointer.json \
+            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
+            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET" 2>/tmp/oss-backup-error; then
+            OSS_PREVIOUS=1
+          elif ! grep -Eiq '404|NoSuchKey|not found' /tmp/oss-backup-error; then
+            cat /tmp/oss-backup-error >&2
             exit 1
           fi
+          rollback() {
+            status=$?
+            [ "$status" -ne 0 ] || status=1
+            trap - ERR INT TERM
+            set +e
+            if [ "$S3_TOUCHED" = 1 ]; then
+              if [ "$S3_PREVIOUS" = 1 ]; then
+                aws s3 cp /tmp/previous-s3-pointer.json "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
+              else
+                aws s3 rm "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
+              fi
+            fi
+            if [ "$OSS_TOUCHED" = 1 ]; then
+              if [ "$OSS_PREVIOUS" = 1 ]; then
+                ossutil cp --force /tmp/previous-oss-pointer.json "$OSS_POINTER" \
+                  --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
+                  --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
+              else
+                ossutil rm --force "$OSS_POINTER" --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
+                  --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
+              fi
+            fi
+            exit "$status"
+          }
+          trap rollback ERR INT TERM
+          S3_TOUCHED=1
+          aws s3 cp /tmp/latest.json "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
+          OSS_TOUCHED=1
+          ossutil cp --force /tmp/latest.json "$OSS_POINTER" \
+            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
+            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
+          aws s3 cp "$S3_POINTER" /tmp/current-s3-pointer.json --endpoint-url "$S3_ENDPOINT"
+          ossutil cp --force "$OSS_POINTER" /tmp/current-oss-pointer.json \
+            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
+            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
+          cmp /tmp/latest.json /tmp/current-s3-pointer.json
+          cmp /tmp/latest.json /tmp/current-oss-pointer.json
+          if [ "$RELEASE_CHANNEL" = stable ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+          fi
+          trap - ERR INT TERM
+          echo "==> ${RELEASE_CHANNEL} pointer published to S3 and OSS"

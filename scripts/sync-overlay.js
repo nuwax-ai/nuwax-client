@@ -151,3 +151,4 @@ const summary = dryRun
     ? `同步完成：${changed} 个文件写入基座工作树`
     : "已是同步状态，无变更";
 console.log(`[sync-overlay] ${summary}${dryRun ? "（--check）" : ""}`);
+if (dryRun && changed > 0) process.exitCode = 1;

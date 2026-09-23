@@ -6,7 +6,7 @@
 # 构建/签名/上传逻辑与社区版 release-electron.yml 同构，差异集中在本文件头注：
 #   1. checkout 用 submodules: true（非 recursive）：以 github.token 拉 submodule
 #      （基座仓公开）；显式两层 init 见 Init submodules 步骤
-#   2. nuwax 前端子模块（壳根 nuwax/，dist 随仓提交；基座 f68964eb 后不再内嵌前端）
+#   2. nuwax 前端子模块（壳根 nuwax/；发布 tag 的 gitlink 源码现场重建 dist）
 #      第二层手动 init（远端公开可匿名拉取）
 #   3. 所有 crates/ 路径前缀 nuwa-electron-shell/crates/；pnpm workspace 根在 nuwa-electron-shell/
 #   4. 「Set version & commercial branding」步骤覆盖 appId/productName（npm pkg），
@@ -31,27 +31,18 @@ on:
   push:
     tags:
       - "electron-v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to sync (e.g. electron-v0.9.0)"
-        required: true
-        type: string
-      channel:
-        description: "Update channel pointer to publish (stable|beta). beta will NOT overwrite latest/latest.json"
-        required: false
-        default: stable
-        type: choice
-        options:
-          - stable
-          - beta
 
 permissions:
   contents: write
 
 jobs:
+  verify-source:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
   prepare:
     name: Prepare release
+    needs: verify-source
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
@@ -86,13 +77,16 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
-            echo "Release $TAG already exists"
+            DRAFT="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            [ "$DRAFT" = true ] || { echo "::error::已公开的 Release 不允许覆盖资产: $TAG"; exit 1; }
+            echo "Draft Release $TAG already exists"
           else
             gh release create "$TAG" \
               --title "女娲Nuwax (Electron) ${{ steps.version.outputs.version }}" \
               --notes-file release_notes.txt \
+              --draft \
               --repo "$GITHUB_REPOSITORY"
-            echo "Created release $TAG"
+            echo "Created draft release $TAG"
           fi
 
   build-electron:
@@ -143,13 +137,14 @@ jobs:
           git submodule status
           # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
           test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
-          test -d nuwax/dist || { echo "::error::nuwax dist missing (shell root)"; exit 1; }
+          test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
 
       # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
       - name: Sync overlay into base worktree
         shell: bash
         run: |
           node scripts/sync-overlay.js
+          node scripts/sync-overlay.js --check
           git -C nuwa-electron-shell status --short | head -40 || true
 
       - name: Set version & commercial branding in package.json
@@ -204,6 +199,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
+
+      - name: Build pinned nuwax frontend dist
+        shell: bash
+        run: ./scripts/prepare-nuwax-dist.sh
 
       - name: Install setuptools for node-gyp (Python 3.12+)
         shell: bash
@@ -395,6 +394,30 @@ jobs:
             npm run ${{ matrix.dist_cmd }} -- --publish never
           fi
 
+      - name: Record platform source and verify macOS signature
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+        run: |
+          case "${{ runner.os }}" in macOS) PLATFORM=macos;; Windows) PLATFORM=windows;; Linux) PLATFORM=linux;; esac
+          VERSION="${{ needs.prepare.outputs.version }}"
+          OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
+          if [ "$PLATFORM" = macos ]; then
+            for value in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
+              [ -n "${!value}" ] || { echo "::error::${value} is required for published macOS builds"; exit 1; }
+            done
+            APP_PATH="$(find "$OUT_DIR" -maxdepth 3 -type d -name Nuwax.app -print -quit)"
+            [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
+            codesign --verify --deep --strict "$APP_PATH"
+            spctl --assess --type execute --verbose "$APP_PATH"
+            compgen -G "$OUT_DIR/*.dmg" >/dev/null || { echo '::error::macOS DMG missing'; exit 1; }
+          fi
+          node scripts/release-provenance.mjs record "${{ github.ref_name }}" "$PLATFORM" "${{ matrix.arch }}" "$OUT_DIR"
+
       - name: Upload artifacts to Release
         shell: bash
         env:
@@ -413,376 +436,3 @@ jobs:
             echo "Uploading $(basename "$f") ..."
             gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
           done
-
-  # ==================== 同步到 MinIO S3（构建产物）和阿里云 OSS（latest.json） ====================
-  # 手动触发：workflow_dispatch 输入 tag（如 electron-v0.8.0）；独立入口 sync-electron-to-oss.yml
-  sync-to-minio:
-    name: Sync release to MinIO S3 & OSS
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    env:
-      S3_ENDPOINT: "https://s3.nuwax.com:9443"
-      S3_REGION: "us-east-1"
-      S3_BUCKET: "nuwaclaw"
-      S3_CDN_BASE: "https://s3.nuwax.com:9443/nuwaclaw"
-      OSS_ENDPOINT: "https://oss-rg-china-mainland.aliyuncs.com"
-      OSS_REGION: "rg-china-mainland"
-      OSS_BUCKET: "oss://nuwa-packages"
-      OSS_CDN_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com"
-      # 商业版发布通道（与客户端 NUWAX_UPDATE_FEED_BASE 对应，勿与社区版 nuwaclaw-electron 混用）
-      RELEASE_ROOT: "nuwax-electron"
-      PRODUCT_PREFIX: "Nuwax"
-      RELEASE_TAG: ${{ inputs.tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
-    steps:
-      - name: Ensure awscli v2 (for S3)
-        run: |
-          if aws --version 2>/dev/null; then
-            echo "AWS CLI already installed"
-          else
-            curl -fSL -o /tmp/awscliv2.zip \
-              "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-            unzip -q /tmp/awscliv2.zip -d /tmp
-            sudo /tmp/aws/install --bin-dir /usr/local/bin
-          fi
-          aws --version
-
-      - name: Install ossutil v2 (for latest.json)
-        run: |
-          curl -fSL -o /tmp/ossutil.zip \
-            "https://gosspublic.alicdn.com/ossutil/v2/2.2.0/ossutil-2.2.0-linux-amd64.zip"
-          unzip -q /tmp/ossutil.zip -d /tmp
-          sudo mv /tmp/ossutil-2.2.0-linux-amd64/ossutil /usr/local/bin/
-          ossutil version
-
-      - name: Configure AWS credentials for S3
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
-        run: |
-          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
-          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
-          aws configure set default.region "$S3_REGION"
-          aws configure set default.s3.addressing_style path
-          aws configure set endpoint_url "$S3_ENDPOINT"
-
-      - name: Download all release assets
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
-        run: |
-          TAG="${RELEASE_TAG}"
-          mkdir -p /tmp/release-assets
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir /tmp/release-assets
-          echo "==> Downloaded assets:"
-          ls -lh /tmp/release-assets/
-
-      - name: Generate latest.json and platform yml from assets
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
-        run: |
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          if [[ "$TAG" == prerelease-v* ]]; then
-            VERSION="${TAG#prerelease-v}"
-            WIN_EXE="${PRODUCT_PREFIX}-Setup-${VERSION}-unsigned.exe"
-            WIN_MSI="${PRODUCT_PREFIX}-${VERSION}-unsigned.msi"
-          else
-            VERSION="${TAG#electron-v}"
-            WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
-            WIN_MSI="${PRODUCT_PREFIX}.${VERSION}.msi"
-          fi
-          if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
-            S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
-          else
-            S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}"
-          fi
-          ASSETS_DIR="/tmp/release-assets"
-
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Invalid version '${VERSION}'. MVP only supports numeric x.y.z"
-            exit 1
-          fi
-
-          if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
-            echo "::error::Invalid channel '${CHANNEL}', expected stable or beta"
-            exit 1
-          fi
-
-          rm -f "${ASSETS_DIR}"/*.yml
-
-          RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,createdAt 2>/dev/null || echo '{}')
-          NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' | head -c 2000)
-          PUB_DATE=$(echo "$RELEASE_JSON" | jq -r '.createdAt // empty')
-          if [ -z "$PUB_DATE" ]; then
-            PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
-          fi
-
-          add_platform() {
-            local key="$1" file="$2"
-            local filepath="${ASSETS_DIR}/${file}"
-            if [ -f "$filepath" ]; then
-              local sig size
-              sig=$(sha512sum "$filepath" | awk '{print $1}' | xxd -r -p | base64 -w0)
-              if [ -z "$sig" ]; then
-                echo "  Skipped: ${key} -> ${file} (signature generation failed)"
-                return 0
-              fi
-              size=$(stat -c%s "$filepath" 2>/dev/null || stat -f%z "$filepath")
-              PLATFORMS=$(echo "$PLATFORMS" | jq \
-                --arg k "$key" \
-                --arg u "${S3_URL_PREFIX}/${file}" \
-                --arg s "$sig" \
-                --argjson sz "$size" \
-                '. + {($k): {"url": $u, "signature": $s, "size": $sz}}')
-              echo "  Added: ${key} -> ${file} (${size} bytes)"
-            fi
-          }
-
-          PLATFORMS="{}"
-          echo "==> Scanning release assets for platforms..."
-          add_platform "darwin-aarch64"     "${PRODUCT_PREFIX}-${VERSION}-arm64.dmg"
-          add_platform "darwin-aarch64-zip" "${PRODUCT_PREFIX}-${VERSION}-arm64-mac.zip"
-          add_platform "darwin-x86_64"      "${PRODUCT_PREFIX}-${VERSION}.dmg"
-          add_platform "darwin-x86_64-zip"  "${PRODUCT_PREFIX}-${VERSION}-mac.zip"
-          add_platform "windows-x86_64"      "$WIN_EXE"
-          add_platform "windows-x86_64-nsis" "$WIN_EXE"
-          add_platform "windows-x86_64-msi"  "$WIN_MSI"
-          add_platform "linux-x86_64"          "${PRODUCT_PREFIX}-${VERSION}.AppImage"
-          add_platform "linux-x86_64-appimage" "${PRODUCT_PREFIX}-${VERSION}.AppImage"
-          add_platform "linux-x86_64-deb"      "${PRODUCT_PREFIX}-${VERSION}-amd64.deb"
-          add_platform "linux-x86_64-rpm"      "${PRODUCT_PREFIX}-${VERSION}-x86_64.rpm"
-          add_platform "linux-aarch64"          "${PRODUCT_PREFIX}-${VERSION}-arm64.AppImage"
-          add_platform "linux-aarch64-appimage" "${PRODUCT_PREFIX}-${VERSION}-arm64.AppImage"
-          add_platform "linux-aarch64-deb"      "${PRODUCT_PREFIX}-${VERSION}-arm64.deb"
-          add_platform "linux-aarch64-rpm"      "${PRODUCT_PREFIX}-${VERSION}-aarch64.rpm"
-
-          if [ "$(echo "$PLATFORMS" | jq 'length')" = "0" ]; then
-            echo "::warning::No exact filename matches, falling back to fuzzy scan"
-            for file in "${ASSETS_DIR}"/*; do
-              filename=$(basename "$file")
-              case "$filename" in
-                *.dmg|*.zip|*.exe|*.msi|*.AppImage|*.deb|*.rpm)
-                  key=""
-                  case "$filename" in
-                    *arm64*mac*|*arm64*.dmg)  key="darwin-aarch64" ;;
-                    *x64*mac*|*x64*.dmg)      key="darwin-x86_64" ;;
-                    *Setup*.exe|*setup*.exe)   key="windows-x86_64" ;;
-                    *.msi)                     key="windows-x86_64-msi" ;;
-                    *arm64*.AppImage)          key="linux-aarch64" ;;
-                    *amd64*.AppImage|*x64*.AppImage|*.AppImage) key="linux-x86_64" ;;
-                    *arm64*.deb)               key="linux-aarch64-deb" ;;
-                    *amd64*.deb|*x64*.deb)     key="linux-x86_64-deb" ;;
-                    *aarch64*.rpm)             key="linux-aarch64-rpm" ;;
-                    *x86_64*.rpm|*x64*.rpm)   key="linux-x86_64-rpm" ;;
-                  esac
-                  [ -n "$key" ] && add_platform "$key" "$filename"
-                  ;;
-              esac
-            done
-          fi
-
-          blockmap_size_for() {
-            local installer="$1"
-            local bm="${ASSETS_DIR}/${installer}.blockmap"
-            if [ -f "$bm" ]; then
-              stat -c%s "$bm" 2>/dev/null || stat -f%z "$bm"
-            fi
-          }
-
-          gen_yml() {
-            local channel="$1"
-            local keys="$2"
-            local first_key first_file blockmap_size k fname sig size bms
-            first_key=$(echo "$PLATFORMS" | jq -r --argjson keys "$keys" 'limit(1; $keys[] as $k | select(.[$k] != null) | $k)')
-            [ -z "$first_key" ] || [ "$first_key" = "null" ] && return 0
-            first_file=$(echo "$PLATFORMS" | jq -r --arg k "$first_key" '.[$k].url' | sed 's|.*/||')
-            blockmap_size=$(blockmap_size_for "$first_file")
-            {
-              echo "version: $VERSION"
-              echo "path: $first_file"
-              echo "sha512: $(echo "$PLATFORMS" | jq -r --arg k "$first_key" '.[$k].signature')"
-              echo "releaseDate: $PUB_DATE"
-              if [ -n "$blockmap_size" ]; then
-                echo "blockMapSize: $blockmap_size"
-              fi
-              echo "files:"
-              while IFS= read -r k; do
-                fname=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].url' | sed 's|.*/||')
-                sig=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].signature')
-                size=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].size')
-                echo "  - url: $fname"
-                echo "    sha512: $sig"
-                echo "    size: $size"
-                bms=$(blockmap_size_for "$fname")
-                if [ -n "$bms" ]; then
-                  echo "    blockMapSize: $bms"
-                fi
-              done < <(echo "$PLATFORMS" | jq -r --argjson keys "$keys" '$keys[] as $k | select(.[$k] != null) | $k')
-            } > "${ASSETS_DIR}/${channel}.yml"
-            echo "  Generated ${channel}.yml (primary: $first_file)"
-          }
-          DARWIN_KEYS='["darwin-aarch64-zip","darwin-x86_64-zip","darwin-aarch64","darwin-x86_64"]'
-          LINUX_KEYS='["linux-x86_64-appimage","linux-aarch64-appimage","linux-x86_64","linux-aarch64","linux-x86_64-deb","linux-aarch64-deb","linux-x86_64-rpm","linux-aarch64-rpm"]'
-          LINUX_ARM64_KEYS='["linux-aarch64-appimage","linux-aarch64","linux-aarch64-deb","linux-aarch64-rpm"]'
-          LINUX_X64_KEYS='["linux-x86_64-appimage","linux-x86_64","linux-x86_64-deb","linux-x86_64-rpm"]'
-          WIN_KEYS='["windows-x86_64","windows-x86_64-nsis","windows-x86_64-msi"]'
-          gen_yml "latest-mac" "$DARWIN_KEYS"
-          gen_yml "latest-linux" "$LINUX_KEYS"
-          gen_yml "latest-linux-arm64" "$LINUX_ARM64_KEYS"
-          gen_yml "latest-linux-x64" "$LINUX_X64_KEYS"
-          gen_yml "latest" "$WIN_KEYS"
-          echo "==> Platform yml written to ${ASSETS_DIR}"
-
-          YML_URLS=$(jq -n \
-            --arg darwin "${S3_URL_PREFIX}/latest-mac.yml" \
-            --arg linux "${S3_URL_PREFIX}/latest-linux.yml" \
-            --arg win "${S3_URL_PREFIX}/latest.yml" \
-            '{darwin: $darwin, linux: $linux, win: $win}')
-
-          LATEST_JSON=$(jq -n \
-            --arg version "$VERSION" \
-            --arg notes "$NOTES" \
-            --arg pub_date "$PUB_DATE" \
-            --argjson platforms "$PLATFORMS" \
-            --argjson yml "$YML_URLS" \
-            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms, yml: $yml}')
-          echo "$LATEST_JSON" > /tmp/latest.json
-          echo "==> Generated latest.json"
-          echo "$LATEST_JSON" | jq .
-
-      - name: Upload full release to MinIO S3 (installers, yml, latest.json)
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
-        run: |
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
-            S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
-          else
-            S3_PREFIX="${RELEASE_ROOT}/${TAG}"
-          fi
-
-          echo "==> MinIO: (1/3) installers and other non-yml release assets"
-          for file in /tmp/release-assets/*; do
-            [ -f "$file" ] || continue
-            case "$(basename "$file")" in *.yml) continue ;; esac
-            filename=$(basename "$file")
-            echo "Uploading to S3: ${filename}"
-            aws s3 cp "$file" "s3://${S3_BUCKET}/${S3_PREFIX}/${filename}" \
-              --endpoint-url "$S3_ENDPOINT"
-          done
-
-          echo "==> MinIO: (2/3) platform yml"
-          shopt -s nullglob
-          for file in /tmp/release-assets/*.yml; do
-            filename=$(basename "$file")
-            echo "Uploading to S3: ${filename}"
-            aws s3 cp "$file" "s3://${S3_BUCKET}/${S3_PREFIX}/${filename}" \
-              --endpoint-url "$S3_ENDPOINT"
-          done
-          shopt -u nullglob
-
-          echo "==> MinIO: (3/3) latest.json (versioned + channel pointer)"
-          aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${S3_PREFIX}/latest.json" \
-            --endpoint-url "$S3_ENDPOINT"
-          if [ "$CHANNEL" = "stable" ]; then
-            aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${RELEASE_ROOT}/latest/latest.json" \
-              --endpoint-url "$S3_ENDPOINT"
-          else
-            aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${RELEASE_ROOT}/beta/latest.json" \
-              --endpoint-url "$S3_ENDPOINT"
-          fi
-
-      - name: Verify S3 upload
-        run: |
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "beta" ]; then
-            VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest-mac.yml"
-          else
-            VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
-          fi
-          HTTP_STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$VERIFY_URL")
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "==> S3 upload verified: latest-mac.yml (HTTP ${HTTP_STATUS})"
-          else
-            echo "::error::S3 upload verification failed: latest-mac.yml (HTTP ${HTTP_STATUS})"
-            exit 1
-          fi
-
-      - name: Upload platform yml and latest.json to Alibaba OSS
-        env:
-          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-        run: |
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "beta" ]; then
-            OSS_VERSION_PREFIX="${OSS_BUCKET}/${RELEASE_ROOT}/beta-build/${TAG}"
-          else
-            OSS_VERSION_PREFIX="${OSS_BUCKET}/${RELEASE_ROOT}/${TAG}"
-          fi
-          echo "==> Publishing yml + latest.json to OSS (no installers) for channel: ${CHANNEL}"
-
-          shopt -s nullglob
-          for file in /tmp/release-assets/*.yml; do
-            filename=$(basename "$file")
-            echo "Uploading to OSS: ${filename}"
-            ossutil cp --force "$file" "${OSS_VERSION_PREFIX}/${filename}" \
-              --endpoint "$OSS_ENDPOINT" \
-              --region "$OSS_REGION" \
-              --access-key-id "$OSS_ACCESS_KEY_ID" \
-              --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-          done
-          shopt -u nullglob
-
-          ossutil cp --force /tmp/latest.json "${OSS_VERSION_PREFIX}/latest.json" \
-            --endpoint "$OSS_ENDPOINT" \
-            --region "$OSS_REGION" \
-            --access-key-id "$OSS_ACCESS_KEY_ID" \
-            --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-
-          if [ "$CHANNEL" = "stable" ]; then
-            ossutil cp --force /tmp/latest.json "${OSS_BUCKET}/${RELEASE_ROOT}/latest/latest.json" \
-              --endpoint "$OSS_ENDPOINT" \
-              --region "$OSS_REGION" \
-              --access-key-id "$OSS_ACCESS_KEY_ID" \
-              --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-            echo "==> Uploaded latest.json to stable pointer: latest/latest.json"
-          else
-            ossutil cp --force /tmp/latest.json "${OSS_BUCKET}/${RELEASE_ROOT}/beta/latest.json" \
-              --endpoint "$OSS_ENDPOINT" \
-              --region "$OSS_REGION" \
-              --access-key-id "$OSS_ACCESS_KEY_ID" \
-              --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-            echo "==> Uploaded latest.json to beta pointer: beta/latest.json (stable pointer untouched)"
-          fi
-
-      - name: Verify OSS upload
-        run: |
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "stable" ]; then
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/latest/latest.json"
-            VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
-          else
-            VERIFY_JSON_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta/latest.json"
-            VERIFY_YML_URL="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest-mac.yml"
-          fi
-          HTTP_JSON=$(curl -sS -o /tmp/oss-latest.json -w "%{http_code}" "$VERIFY_JSON_URL")
-          if [ "$HTTP_JSON" = "200" ]; then
-            echo "==> latest.json (${CHANNEL} pointer): OK (HTTP ${HTTP_JSON})"
-            cat /tmp/oss-latest.json | jq .
-          else
-            echo "::error::latest.json for channel '${CHANNEL}' not found on OSS (HTTP ${HTTP_JSON})"
-            exit 1
-          fi
-          HTTP_YML=$(curl -sS -o /dev/null -w "%{http_code}" "$VERIFY_YML_URL")
-          if [ "$HTTP_YML" = "200" ]; then
-            echo "==> Versioned OSS latest-mac.yml: OK (HTTP ${HTTP_YML}) [$VERIFY_YML_URL]"
-          else
-            echo "::error::OSS versioned latest-mac.yml verification failed (HTTP ${HTTP_YML}) [$VERIFY_YML_URL]"
-            exit 1
-          fi

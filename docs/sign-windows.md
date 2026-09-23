@@ -66,15 +66,14 @@ Windows 自动更新走全量下载（非差分）；需要差分时在签名机
 cd <nuwax-client 检出>/nuwa-electron-shell/crates/agent-electron-client
 
 SYNC_OSS_REPO=nuwax-ai/nuwax-client \
-SYNC_OSS_REF=main \
+SYNC_OSS_REF=release/v1.0.x \
 npm run sync:oss -- electron-v<version> [stable|beta]
 ```
 
-- `SYNC_OSS_REF=main`：dispatch 的 workflow 定义在壳仓 main（脚本在基座目录里运行时
-  ref 解析会落到基座分支，必须显式覆盖）。
+- `SYNC_OSS_REF` 应填目标发布线分支（示例为 `release/v1.0.x`），并确认该分支含与发布 tag 相同的来源校验 workflow。脚本在基座目录运行时不可依赖其默认 ref。
 - 通道根由**壳仓 workflow 的 RELEASE_ROOT**（`nuwax-electron`）决定——脚本只负责
   dispatch，不接收通道参数，无需也无法在此覆盖。
-- beta / prerelease-v* 不要求签名，可直接 sync。
+- beta / prerelease-v* 使用外层仓 `scripts/sign-prerelease-win.sh x.y.z`：从 Draft Release 下载 unsigned EXE，复用基座 `sign:win` 的本地签名与验证，再上传签名版。独立同步 workflow 校验签名和五平台来源后才更新指针。未签名 MSI 不进入自动更新元数据。
 - 同步产物落到独立通道 `nuwax-electron/`（stable 指针
   `nuwax-electron/latest/latest.json`、beta 指针 `nuwax-electron/beta/latest.json`），
   与社区版 `nuwaclaw-electron/` 互不影响——客户端经
@@ -83,6 +82,6 @@ npm run sync:oss -- electron-v<version> [stable|beta]
 等价的手动触发方式（不依赖脚本）：
 
 ```bash
-gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref main \
+gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref release/v1.0.x \
   -f tag=electron-v<version> -f channel=stable
 ```

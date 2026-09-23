@@ -28,6 +28,7 @@
 set -euo pipefail
 
 VERSION="${1:?用法: scripts/release-stable.sh <version> [--notes]}"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "版本须为 x.y.z" >&2; exit 1; }
 shift || true
 COMMIT_NOTES=false
 [[ "${1:-}" == "--notes" ]] && COMMIT_NOTES=true
@@ -77,6 +78,10 @@ else
   git push origin HEAD
 fi
 BRANCH="$(git branch --show-current)"
+[[ -n "$BRANCH" ]] || die "须在远端可达的发布分支运行，不支持 detached HEAD"
+REMOTE_HEAD="$(git ls-remote origin "refs/heads/${BRANCH}" | awk '{print $1}')"
+[[ "$REMOTE_HEAD" == "$(git rev-parse HEAD)" ]] \
+  || die "远端分支 ${BRANCH} 未包含当前 HEAD；先推送发布提交再打 tag"
 echo "  分支=${BRANCH} HEAD=$(git rev-parse --short HEAD)"
 
 # ---- Phase 1/6 打 tag ---------------------------------------------------------
@@ -108,7 +113,10 @@ step "Phase 3/6 校验 Release 资产"
 ASSETS="$(release_assets)"
 for want in "Nuwax-${VERSION}-arm64.dmg" "Nuwax-${VERSION}.dmg" "Nuwax-${VERSION}-arm64-mac.zip" \
             "Nuwax-${VERSION}.AppImage" "Nuwax-${VERSION}-amd64.deb" "Nuwax-${VERSION}-x86_64.rpm" \
-            "$UNSIGNED_EXE" "Nuwax.${VERSION}.msi" "latest-mac.yml" "latest.yml"; do
+            "$UNSIGNED_EXE" "Nuwax.${VERSION}.msi" "latest-mac.yml" "latest.yml" \
+            "build-manifest-macos-arm64.json" "build-manifest-macos-x64.json" \
+            "build-manifest-windows-x64.json" "build-manifest-linux-x64.json" \
+            "build-manifest-linux-arm64.json"; do
   grep -qx "$want" <<<"$ASSETS" || die "Release 缺资产：$want"
 done
 echo "  关键资产齐（mac 双架构/linux/win unsigned/yml）"
@@ -134,15 +142,15 @@ STABLE_VER="$(curl -sS --max-time 15 "$STABLE_JSON" 2>/dev/null | jq -r '.versio
 if [[ "$STABLE_VER" == "$VERSION" ]]; then
   echo "  stable 指针已是 ${VERSION}，跳过 dispatch（断点续跑）"
 else
-  gh workflow run sync-electron-to-oss.yml --repo "$REPO" --ref main -f tag="$TAG" -f channel=stable
+  gh workflow run sync-electron-to-oss.yml --repo "$REPO" --ref "$BRANCH" -f tag="$TAG" -f channel=stable
   sleep 20
-  SYNC_RUN="$(gh run list --workflow=sync-electron-to-oss.yml --repo "$REPO" --limit 1 --json databaseId --jq '.[0].databaseId')"
+  SYNC_RUN="$(gh run list --workflow=sync-electron-to-oss.yml --repo "$REPO" --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')"
   for _ in $(seq 1 30); do
     S="$(gh run view "$SYNC_RUN" --repo "$REPO" --json status,conclusion --jq '.status + "/" + (.conclusion // "running")')"
     [[ "$S" == completed/* ]] && break
     sleep 20
   done
-  # 注意：sync job 带 continue-on-error，run 绿 ≠ 同步成功——真值以 Phase 6 的指针/资产验证为准
+  [[ "$S" == completed/success ]] || die "同步 workflow 未成功（${SYNC_RUN}: ${S}）"
   echo "  sync run ${SYNC_RUN}: ${S}"
 fi
 
