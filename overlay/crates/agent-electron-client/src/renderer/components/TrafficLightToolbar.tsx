@@ -33,6 +33,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
+import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
@@ -46,7 +47,7 @@ const NO_DRAG = { WebkitAppRegion: "no-drag" } as any;
  * 产品持平但用户观感仍偏松，28 居中收至 ~6.5px；窗口三键 28px 恰满行。行透明
  * 仅承载字形+拖拽 spacer，前端避让独立走 shellAvoid.TOP/CONTENT_TOP 不联动）；
  * mac 保持 48px。 */
-const ROW_H = isMac ? 48 : 28;
+const ROW_H = resolveHostToolbarHeight(navigator.platform);
 
 type EditAction = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
 
