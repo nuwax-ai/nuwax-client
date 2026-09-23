@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { SandboxPolicy } from "@shared/types/sandbox";
 import type { UpdateCheckOptions } from "@shared/types/updateTypes";
 
+// Main-process net.fetch does not appear in the shell renderer's Network tab.
+// Mirror credential-free registration checkpoints into its Console for QA.
+ipcRenderer.on("nuwax:registrationTrace", (_event, trace: unknown) => {
+  console.info("[NuwaxReg]", trace);
+});
+
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld("electronAPI", {
   // Process info (available in preload but not in renderer)

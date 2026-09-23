@@ -24,6 +24,24 @@ import {
 export function getComputerName(): string {
   return os.hostname().replace(/\.local$/i, "").trim();
 }
+
+/** Diagnostic only: never include ticket, savedKey, username, or response bodies. */
+export type RegistrationTrace = {
+  attempt?: number;
+  stage: "sync-session-start" | "sync-session-no-cookie" | "sync-session-validation-failed" |
+    "sync-session-validation-error" | "sync-session-valid" |
+    "session-check-start" | "session-check-response" | "session-check-result" | "session-check-ok" |
+    "reg-request" | "reg-response" | "reg-network-error" | "reg-result" | "reg-committed";
+  origin: string;
+  phase?: string;
+  status?: number;
+  code?: string;
+  elapsedMs?: number;
+};
+export function registrationTraceCode(value: unknown): string {
+  const code = String(value);
+  return /^[A-Za-z0-9_-]{1,16}$/.test(code) ? code : "other";
+}
 /**
  * nuwax web 登录会话 ticket cookie（服务端 Set-Cookie，内存态 session cookie）。
  *
@@ -84,6 +102,7 @@ export function initializeCommercialAuth(
   stop: () => Promise<ServiceResult>,
   changed: (phase: string, error?: string) => void,
   expired?: () => void,
+  trace?: (event: RegistrationTrace) => void,
 ) {
   // Cookie auth is intentionally incompatible with legacy token-only sessions.
   // Delete both the token and the old token-paired ticket mirror once, then
@@ -162,32 +181,45 @@ export function initializeCommercialAuth(
     clearRegistration({ preserveSavedKey: true });
     writeSetting("nuwax.registrationDeviceId", deviceId);
   }
+  let registrationAttempt = 0;
   const flow = new AuthLifecycle({
     authenticated: () => !!readTicketCookieValue([currentBusinessOrigin()]),
     register: async (signal: AbortSignal) => {
       const origin = currentBusinessOrigin();
+      const attempt = ++registrationAttempt;
+      const report = (
+        stage: RegistrationTrace["stage"],
+        details: Partial<Pick<RegistrationTrace, "status" | "code" | "elapsedMs">> = {},
+      ) => trace?.({ attempt, stage, origin, ...details });
       let ticket = readTicketCookieValue([origin]);
       if (!ticket) throw new Error("Login required");
       const ticketSession = await import("../services/commercialTicketSession");
       const requestEpoch = ticketSession.ticketEpoch();
       const ports = getConfiguredPorts();
+      const sessionStartedAt = Date.now();
+      report("session-check-start");
       const sessionResponse = await net.fetch(`${origin}/api/user/getLoginInfo`, {
         method: "GET", redirect: "error", credentials: "omit",
         headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
+      report("session-check-response", { status: sessionResponse.status, elapsedMs: Date.now() - sessionStartedAt });
       await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
       if (sessionResponse.status === 401) expired?.();
       ticket = readTicketCookieValue([origin]);
       if (!ticket) throw new Error("Session expired during registration");
       if (!sessionResponse.ok) throw new Error(`Session HTTP ${sessionResponse.status}`);
       const sessionPayload = await sessionResponse.json();
+      report("session-check-result", { status: sessionResponse.status, code: registrationTraceCode(sessionPayload?.code) });
       const username = sessionPayload?.data?.userName;
       if (sessionPayload?.code !== "0000" || typeof username !== "string" || !username)
         throw new Error("Cookie session is not authenticated");
       if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
         throw new Error("Session changed during registration");
+      report("session-check-ok");
       const savedKey = readSetting("auth.saved_key");
+      const regStartedAt = Date.now();
+      report("reg-request");
       const response = await net.fetch(`${origin}/api/sandbox/config/reg`, {
         method: "POST",
         redirect: "error",
@@ -219,7 +251,11 @@ export function initializeCommercialAuth(
             maxUsers: 1,
           },
         }),
+      }).catch((error) => {
+        report("reg-network-error", { elapsedMs: Date.now() - regStartedAt });
+        throw error;
       });
+      report("reg-response", { status: response.status, elapsedMs: Date.now() - regStartedAt });
       await ticketSession.mirrorNativeResponseTicket(response, origin, requestEpoch);
       if (response.status === 401) expired?.();
       ticket = readTicketCookieValue([origin]);
@@ -229,6 +265,11 @@ export function initializeCommercialAuth(
         throw new Error("Session changed during registration");
       if (!response.ok) throw new Error(`Registration HTTP ${response.status}`);
       const payload = await response.json();
+      report("reg-result", {
+        status: response.status,
+        code: registrationTraceCode(payload?.code),
+        elapsedMs: Date.now() - regStartedAt,
+      });
       signal.throwIfAborted();
       if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
         throw new Error("Session changed during registration");
@@ -265,6 +306,7 @@ export function initializeCommercialAuth(
         serverPort: value.serverPort,
         enabled: true,
       });
+      trace?.({ attempt: registrationAttempt, stage: "reg-committed", origin: value.origin });
       // 注册返回的 ticket 不覆盖 ACCESS_TOKEN；商业版仅由网页登录建立登录态。
     },
     start,

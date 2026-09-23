@@ -11,6 +11,7 @@ const COOKIE_REPLACEMENT_SETTLE_MS = 20;
 let epoch = 0;
 let listening = false;
 let loopbackOrigin: string | null = null;
+let mirrorQueue: Promise<void> = Promise.resolve();
 
 export function ticketEpoch(): number { return epoch; }
 export function advanceTicketEpoch(): void { epoch++; }
@@ -80,7 +81,15 @@ async function put(cookies: Cookies, origin: string, ticket: Ticket): Promise<vo
 }
 
 /** The gateway supplies raw Set-Cookie headers; JS cannot observe them. */
-export async function mirrorGatewaySetCookies(headers: string[], origin: string, requestEpoch: number): Promise<void> {
+export function mirrorGatewaySetCookies(headers: string[], origin: string, requestEpoch: number): Promise<void> {
+  // Cookie writes are asynchronous. Preserve response arrival order so a
+  // later empty ticket cannot be followed by an older write finishing late.
+  const operation = mirrorQueue.then(() => applyGatewaySetCookies(headers, origin, requestEpoch));
+  mirrorQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function applyGatewaySetCookies(headers: string[], origin: string, requestEpoch: number): Promise<void> {
   if (origin !== currentBusinessOrigin() || requestEpoch !== epoch) return;
   for (const header of headers) {
     const ticket = parseTicket(header);
@@ -88,6 +97,15 @@ export async function mirrorGatewaySetCookies(headers: string[], origin: string,
     const configuredHost = new URL(origin).hostname.toLowerCase();
     const domain = /(?:^|;)\s*domain=([^;]+)/i.exec(header)?.[1]?.trim().replace(/^\./, "").toLowerCase();
     if (domain && configuredHost !== domain && !configuredHost.endsWith(`.${domain}`)) continue;
+    if (!ticket.value || (ticket.expirationDate !== undefined && ticket.expirationDate <= Date.now() / 1000)) {
+      // A logout/expiry response must clear both jars and the persisted mirror
+      // before an older in-flight Set-Cookie can put the session back.
+      const origins = [origin, ...(loopbackOrigin ? [loopbackOrigin] : [])];
+      invalidateTicketSession(origins);
+      await clearTicketCookies(origins);
+      log.info("[TicketSession] Set-Cookie cleared ticket", { origin, loopback: !!loopbackOrigin });
+      continue;
+    }
     if (ticket.secure && new URL(origin).protocol === "http:") {
       writeSetting(incompatibleKey(origin), true);
       invalidateTicketSession([origin, ...(loopbackOrigin ? [loopbackOrigin] : [])]);
@@ -102,6 +120,8 @@ export async function mirrorGatewaySetCookies(headers: string[], origin: string,
       await put(session.defaultSession.cookies, loopbackOrigin,
         { ...ticket, secure: false, sameSite: ticket.sameSite === "no_restriction" ? "lax" : ticket.sameSite });
     }
+    if (requestEpoch === epoch)
+      log.info("[TicketSession] Set-Cookie updated ticket", { origin, loopback: !!loopbackOrigin });
   }
 }
 
@@ -120,6 +140,13 @@ export async function syncTicketFromJar(source: string, requestEpoch = epoch): P
   // 127.0.0.1 cookies are shared by every port. Trust only a value previously
   // observed in a capability-authorized gateway Set-Cookie response.
   if (source === loopbackOrigin && found.value !== currentTicket()) return false;
+  if (!found.value) {
+    const origins = [origin, ...(loopbackOrigin ? [loopbackOrigin] : [])];
+    invalidateTicketSession(origins);
+    await clearTicketCookies(origins);
+    log.info("[TicketSession] empty business cookie cleared mirror", { origin });
+    return false;
+  }
   const persisted = readSetting(metaKey(origin)) as Ticket | null;
   const matching = persisted?.value === found.value ? persisted : null;
   const ticket: Ticket = { value: found.value, path: matching?.path ?? found.path,
@@ -191,6 +218,7 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
         if (observedEpoch !== epoch || expected !== currentTicket()) return;
         invalidateTicketSession([business.origin, ...(loopbackOrigin ? [loopbackOrigin] : [])]);
         if (loopbackOrigin) await session.defaultSession.cookies.remove(loopbackOrigin, "ticket");
+        log.info("[TicketSession] direct cookie removal cleared mirror", { origin: business.origin });
       })().catch((error) => log.error("[TicketSession] cookie removal reconciliation failed", error));
       return;
     }

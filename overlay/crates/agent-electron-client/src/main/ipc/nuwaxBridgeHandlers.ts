@@ -50,6 +50,8 @@ import {
   initializeCommercialAuth,
   currentBusinessOrigin,
   clearRegistration,
+  registrationTraceCode,
+  type RegistrationTrace,
 } from "./commercialAuth";
 
 /** 仅用于清除升级前残留的 token 键；不再读取或写入新 token。 */
@@ -145,6 +147,10 @@ export function applyMainWindowMinSize(win: BrowserWindow): void {
 
 export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   let serviceState: { phase: string; error?: string } = { phase: "stopped" };
+  const emitRegistrationTrace = (event: RegistrationTrace) => {
+    log.info("[NuwaxReg]", event);
+    ctx.getMainWindow()?.webContents.send("nuwax:registrationTrace", event);
+  };
   const lifecycle = initializeCommercialAuth(
     async (signal) => {
       const { checkAllDependencies } =
@@ -194,6 +200,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           log.error("[NuwaxBridge] Expiry cleanup failed", error),
         );
     },
+    emitRegistrationTrace,
   );
   ipcMain.handle("services:syncConfig", () => lifecycle.sync());
   ipcMain.handle("services:authState", () => ({
@@ -425,6 +432,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     documents.set(key, authGeneration);
     const generation = authGeneration;
     const businessOrigin = currentBusinessOrigin();
+    emitRegistrationTrace({ stage: "sync-session-start", origin: businessOrigin, phase: serviceState.phase });
     await ensureTicketRestored();
     if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin()) return false;
     const gatewayOrigin = (readSetting("nuwax.loopback") as { origin?: string } | null)?.origin;
@@ -436,7 +444,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         await new Promise((resolve) => setTimeout(resolve, 50));
       if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin()) return false;
     }
-    if (!captured || generation !== authGeneration || !isCurrentDocument(event)) return false;
+    if (!captured || generation !== authGeneration || !isCurrentDocument(event)) {
+      if (!captured && generation === authGeneration)
+        emitRegistrationTrace({ stage: "sync-session-no-cookie", origin: businessOrigin });
+      return false;
+    }
     let ticket = currentTicket();
     if (!ticket) return false;
     const requestEpoch = ticketEpoch();
@@ -461,16 +473,27 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
       });
       await mirrorNativeResponseTicket(response, businessOrigin, requestEpoch);
-      if (response.status === 401) { await expire(); return false; }
+      if (response.status === 401) {
+        emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin, status: 401 });
+        await expire();
+        return false;
+      }
       ticket = currentTicket();
-      if (!ticket) { await expire(); return false; }
+      if (!ticket) {
+        emitRegistrationTrace({ stage: "sync-session-no-cookie", origin: businessOrigin });
+        await expire();
+        return false;
+      }
       const payload = await response.json();
       if (!response.ok || payload?.code !== "0000" || !payload?.data?.userName) {
+        emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin,
+          status: response.status, code: registrationTraceCode(payload?.code) });
         if (response.status === 401 || ["4010", "4011"].includes(payload?.code)) await expire();
         return false;
       }
       username = payload.data.userName;
     } catch (error) {
+      emitRegistrationTrace({ stage: "sync-session-validation-error", origin: businessOrigin });
       log.warn("[NuwaxBridge] cookie session validation failed", error);
       return false;
     }
@@ -487,6 +510,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     }
     ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: true });
     authClearHandled = false;
+    emitRegistrationTrace({ stage: "sync-session-valid", origin: businessOrigin, phase: serviceState.phase });
     void lifecycle.start();
     return true;
   });

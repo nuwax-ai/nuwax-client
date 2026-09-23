@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   jar: new Map<string, Record<string, unknown>>(),
   origin: "https://biz.example.com",
+  delayNextSet: null as Promise<void> | null,
   changed: null as null | ((event: unknown, cookie: Record<string, unknown>, cause: string, removed: boolean) => void),
 }));
 vi.mock("../db", () => ({
@@ -24,14 +25,19 @@ vi.mock("./commercialSessionScope", () => ({
   },
   NUWAX_TICKET_KEY_PREFIX: "nuwax.ticket.",
 }));
-vi.mock("electron-log", () => ({ default: { error: vi.fn() } }));
+vi.mock("electron-log", () => ({ default: { error: vi.fn(), info: vi.fn() } }));
 vi.mock("electron", () => ({
   session: { defaultSession: { cookies: {
     get: vi.fn(async ({ url }: { url: string }) => {
       const cookie = mocks.jar.get(url);
       return cookie ? [cookie] : [];
     }),
-    set: vi.fn(async (cookie: Record<string, unknown>) => { mocks.jar.set(cookie.url as string, cookie); }),
+    set: vi.fn(async (cookie: Record<string, unknown>) => {
+      const delay = mocks.delayNextSet;
+      mocks.delayNextSet = null;
+      if (delay) await delay;
+      mocks.jar.set(cookie.url as string, cookie);
+    }),
     remove: vi.fn(async (url: string) => { mocks.jar.delete(url); }),
     on: vi.fn((_name: string, listener: typeof mocks.changed) => { mocks.changed = listener; }),
   } } },
@@ -42,6 +48,7 @@ beforeEach(() => {
   mocks.settings.clear();
   mocks.jar.clear();
   mocks.origin = "https://biz.example.com";
+  mocks.delayNextSet = null;
   mocks.changed = null;
 });
 
@@ -75,12 +82,36 @@ describe("commercial ticket cookie mirror", () => {
 
   it("ignores late renewal after logout and handles expiry deletion", async () => {
     const api = await import("./commercialTicketSession");
+    const gateway = "http://127.0.0.1:46800";
+    await api.setLoopbackTicketOrigin(gateway);
     const old = api.ticketEpoch();
     api.invalidateTicketSession([mocks.origin]);
     await api.mirrorGatewaySetCookies(["ticket=late; Path=/"], mocks.origin, old);
     expect(api.currentTicket()).toBeNull();
     await api.mirrorGatewaySetCookies(["ticket=fresh; Path=/"], mocks.origin, api.ticketEpoch());
-    await api.mirrorGatewaySetCookies(["ticket=; Max-Age=0; Path=/"], mocks.origin, api.ticketEpoch());
+    const beforeClear = api.ticketEpoch();
+    await api.mirrorGatewaySetCookies(["ticket=; Max-Age=0; Path=/"], mocks.origin, beforeClear);
+    expect(api.currentTicket()).toBeNull();
+    expect(mocks.jar.has(mocks.origin)).toBe(false);
+    expect(mocks.jar.has(gateway)).toBe(false);
+    expect(api.ticketEpoch()).toBeGreaterThan(beforeClear);
+    await api.mirrorGatewaySetCookies(["ticket=stale; Path=/"], mocks.origin, beforeClear);
+    expect(api.currentTicket()).toBeNull();
+    await api.mirrorGatewaySetCookies(["ticket=new; Path=/"], mocks.origin, api.ticketEpoch());
+    await api.mirrorGatewaySetCookies(["ticket=; Path=/"], mocks.origin, api.ticketEpoch());
+    expect(mocks.jar.size).toBe(0);
+  });
+
+  it("serializes a delayed update before a later empty Set-Cookie", async () => {
+    const api = await import("./commercialTicketSession");
+    let release!: () => void;
+    mocks.delayNextSet = new Promise<void>((resolve) => { release = resolve; });
+    const requestEpoch = api.ticketEpoch();
+    const update = api.mirrorGatewaySetCookies(["ticket=old; Path=/"], mocks.origin, requestEpoch);
+    await vi.waitFor(() => expect(mocks.delayNextSet).toBeNull());
+    const clear = api.mirrorGatewaySetCookies(["ticket=; Path=/"], mocks.origin, requestEpoch);
+    release();
+    await Promise.all([update, clear]);
     expect(api.currentTicket()).toBeNull();
     expect(mocks.jar.has(mocks.origin)).toBe(false);
   });
@@ -111,9 +142,23 @@ describe("commercial ticket cookie mirror", () => {
     const api = await import("./commercialTicketSession");
     await api.restoreTicketSession(null);
     await api.mirrorGatewaySetCookies(["ticket=fresh; Path=/"], mocks.origin, api.ticketEpoch());
+    const beforeClear = api.ticketEpoch();
     mocks.jar.delete(mocks.origin);
     mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "fresh" }, "expired", true);
     await vi.waitFor(() => expect(api.currentTicket()).toBeNull());
+    expect(api.ticketEpoch()).toBeGreaterThan(beforeClear);
+  });
+
+  it("treats a direct Set-Cookie with an empty value as logout", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.restoreTicketSession(null);
+    await api.mirrorGatewaySetCookies(["ticket=fresh; Path=/"], mocks.origin, api.ticketEpoch());
+    const beforeClear = api.ticketEpoch();
+    mocks.jar.set(mocks.origin, { name: "ticket", domain: "biz.example.com", value: "", path: "/" });
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "" }, "explicit", false);
+    await vi.waitFor(() => expect(api.currentTicket()).toBeNull());
+    expect(mocks.jar.has(mocks.origin)).toBe(false);
+    expect(api.ticketEpoch()).toBeGreaterThan(beforeClear);
   });
 
   it("clears legacy Electron cookies once on client upgrade", async () => {
