@@ -91,7 +91,7 @@
     ; then electron-builder misleadingly reports that the app cannot close.
     ; Normalize those entries before uninstallOldVersion runs.
     ${if} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
-      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}/normalize-old-install.ps1"
+      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
       nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -InstallDir "$INSTDIR"`
       Pop $R0
       Pop $R1
