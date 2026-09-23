@@ -78,4 +78,4 @@ if [ "$STAMP" != "${TIP:0:9}" ]; then
   exit 1
 fi
 
-echo "[prepare-nuwax-dist] 完成：nuwax/dist @ $STAMP（不回推 nuwax 仓）"
+echo "[prepare-nuwax-dist] 完成：nuwax/dist @ ${STAMP}（不回推 nuwax 仓）"
