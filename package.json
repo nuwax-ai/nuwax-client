@@ -14,7 +14,8 @@
     "base:test": "node scripts/in-base.js --no-inject -- npm run test:electron",
     "base:bundle": "node scripts/in-base.js -- make electron-bundle-unsigned",
     "test:commercial": "node scripts/in-base.js --no-env -- npm run test:electron",
-    "test:scripts": "node --test scripts/check-base-purity.test.mjs",
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "diagnostics:export": "node scripts/export-diagnostics.mjs",
     "check:pin": "node scripts/check-base-purity.js"
   }
 }

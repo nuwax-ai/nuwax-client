@@ -1,9 +1,30 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
+/** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
+function mayExposeBusinessBridge(): boolean {
+  const runtimeProduct = process.argv
+    .find((arg) => arg.startsWith("--nuwax-host-product="))
+    ?.slice("--nuwax-host-product=".length);
+  const product = runtimeProduct || APP_NAME_IDENTIFIER;
+  if (product !== "nuwax") return true;
+  const encoded = process.argv
+    .find((arg) => arg.startsWith("--nuwax-trusted-origins="))
+    ?.slice("--nuwax-trusted-origins=".length);
+  if (!encoded || typeof window === "undefined") return false;
+  try {
+    const allowed: unknown = JSON.parse(decodeURIComponent(encoded));
+    return Array.isArray(allowed) && allowed.includes(window.location.origin);
+  } catch {
+    return false;
+  }
+}
+
+const bridgeAllowed = mayExposeBusinessBridge();
+
 // guest 与宿主是独立文档：点击 webview 不会触发宿主 antd 菜单的外部点击监听。
 // 捕获阶段通知主进程收起顶栏菜单，即使 guest 原本已有焦点也能生效。
-if (typeof window !== "undefined") {
+if (bridgeAllowed && typeof window !== "undefined") {
   window.addEventListener(
     "pointerdown",
     () => ipcRenderer.send("nuwax:guest-pointer-down"),
@@ -216,9 +237,11 @@ const updater = {
  * global.d.ts 的 HostCommand。
  */
 let hostCommandHandler: ((payload: unknown) => void) | null = null;
-ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
-  hostCommandHandler?.(payload);
-});
+if (bridgeAllowed) {
+  ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
+    hostCommandHandler?.(payload);
+  });
+}
 const events = {
   /** 注册/注销宿主命令回调（传 null 注销）。 */
   onHostCommand(cb: ((payload: unknown) => void) | null): void {
@@ -324,7 +347,7 @@ const host = {
   },
 };
 
-contextBridge.exposeInMainWorld("NuwaClawBridge", {
+if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   perf,
   auth,
   native,

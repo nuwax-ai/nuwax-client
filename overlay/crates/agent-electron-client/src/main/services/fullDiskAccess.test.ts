@@ -3,9 +3,9 @@
  *
  * 覆盖：
  * - checkFullDiskAccess：子进程探针 exit 0/2 → granted/denied；非 darwin 恒 true
- *   且不派生；spawn 抛错 → inconclusive 放行
+ *   且不派生；spawn 抛错 → unknown，不误报已授权
  * - 拒绝标记解析：{ dismissed: true } / 裸 true / 缺省
- * - getFullDiskAccessStatus：状态快照三字段
+ * - getFullDiskAccessStatus：状态快照区分 granted/denied/unknown
  * - openFullDiskAccessSettings：主路径成功；失败兜底打开隐私主面板；两级失败不抛错
  * - initFullDiskAccessGuard 接线：darwin 注册窗口/失焦/聚焦沿与解锁/唤醒沿，非 darwin
  *   零注册；主窗口首帧弹一次引导窗；「暂不」持久化、「去开启」打开面板且不写
@@ -57,7 +57,7 @@ vi.mock("electron-log", () => ({
 }));
 
 /** 下一次探测子进程的退出码（0=通过 / 2=被拦）；默认 0 */
-let nextProbeCode = 0;
+let nextProbeCode: number | null = 0;
 const mockSpawn = vi.fn((..._args: unknown[]) => {
   const listeners: Record<string, (...args: unknown[]) => void> = {};
   const child = {
@@ -101,6 +101,7 @@ vi.mock("./i18n", () => ({
 import {
   FULL_DISK_ACCESS_SETTING_KEY,
   checkFullDiskAccess,
+  probeFullDiskAccess,
   isFullDiskAccessPromptDismissed,
   getFullDiskAccessStatus,
   openFullDiskAccessSettings,
@@ -197,11 +198,26 @@ describe("checkFullDiskAccess", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it("spawn 同步抛错 → inconclusive 按已授权放行", async () => {
+  it("spawn 同步抛错 → unknown；旧布尔 API 仍不误弹引导", async () => {
+    mockSpawn.mockImplementationOnce(() => {
+      throw new Error("spawn boom");
+    });
+    await expect(probeFullDiskAccess()).resolves.toBe("unknown");
     mockSpawn.mockImplementationOnce(() => {
       throw new Error("spawn boom");
     });
     await expect(checkFullDiskAccess()).resolves.toBe(true);
+  });
+
+  it("子进程异常退出 → unknown，不记录未授权", async () => {
+    nextProbeCode = null;
+    await expect(probeFullDiskAccess()).resolves.toBe("unknown");
+    expect(mockDialogShow).not.toHaveBeenCalled();
+  });
+
+  it("探针目标异常而非权限拒绝 → unknown", async () => {
+    nextProbeCode = 3;
+    await expect(probeFullDiskAccess()).resolves.toBe("unknown");
   });
 });
 
@@ -228,14 +244,44 @@ describe("isFullDiskAccessPromptDismissed", () => {
 // ── getFullDiskAccessStatus ──
 
 describe("getFullDiskAccessStatus", () => {
-  it("状态快照：supported/granted/dismissed 三字段", async () => {
+  it("状态快照：明确拒绝", async () => {
     nextProbeCode = 2;
     mockSettingValue = { dismissed: true };
     await expect(getFullDiskAccessStatus()).resolves.toEqual({
       supported: true,
       granted: false,
+      probeStatus: "denied",
       dismissed: true,
     });
+  });
+
+  it("探测无法启动时状态为 unknown，不能显示已授权", async () => {
+    mockSpawn.mockImplementationOnce(() => {
+      throw new Error("spawn boom");
+    });
+    await expect(getFullDiskAccessStatus()).resolves.toEqual({
+      supported: true,
+      granted: false,
+      probeStatus: "unknown",
+      dismissed: false,
+    });
+  });
+
+  it("探测超时也显示 unknown，不冒充已授权", async () => {
+    vi.useFakeTimers();
+    const kill = vi.fn();
+    mockSpawn.mockImplementationOnce(() => ({ on: vi.fn(), kill }));
+    try {
+      const status = getFullDiskAccessStatus();
+      await vi.advanceTimersByTimeAsync(5000);
+      await expect(status).resolves.toMatchObject({
+        granted: false,
+        probeStatus: "unknown",
+      });
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("非 darwin：supported=false/granted=true", async () => {
@@ -243,6 +289,7 @@ describe("getFullDiskAccessStatus", () => {
     await expect(getFullDiskAccessStatus()).resolves.toEqual({
       supported: false,
       granted: true,
+      probeStatus: "granted",
       dismissed: false,
     });
   });
@@ -339,6 +386,22 @@ describe("initFullDiskAccessGuard", () => {
     // 探针默认 exit 0（granted）
     await fireWindowReadyToShow();
     expect(mockDialogShow).not.toHaveBeenCalled();
+  });
+
+  it("探测无法判断 → 不弹引导，也不声称已授权", async () => {
+    initFullDiskAccessGuard();
+    mockSpawn.mockImplementationOnce(() => {
+      throw new Error("spawn boom");
+    });
+    await fireWindowReadyToShow();
+    expect(mockDialogShow).not.toHaveBeenCalled();
+    mockSpawn.mockImplementationOnce(() => {
+      throw new Error("spawn boom");
+    });
+    await expect(getFullDiskAccessStatus()).resolves.toMatchObject({
+      granted: false,
+      probeStatus: "unknown",
+    });
   });
 
   it("未授权但用户拒绝过（dismissed）→ 不弹窗", async () => {

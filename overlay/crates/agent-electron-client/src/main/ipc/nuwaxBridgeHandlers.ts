@@ -8,9 +8,9 @@
  *     右键另存图片：系统保存对话框 + Node fetch。相对地址按调用方 frame origin 归一为
  *     绝对地址；当前业务域逐跳附 cookie，跨域重定向不携带。
  * - native:openWindow
- *     新开独立窗口打开 nuwax 站内页面（智能体详情/工作流/网页应用开发/我的电脑等
- *     全屏页）。带系统标题栏（零遮挡）+ 同一 webview 桥 preload；URL 追加 _shell=1
- *     让 nuwax 解除沉浸式门控。仅接受站内相对路径并校验同源。
+ *     站内相对路径按二级页设置选择同窗或独立窗口；绝对 HTTP(S) 地址开独立窗口。
+ *     受信业务域复用会话和桥，外链使用独立内存会话；独立业务窗口追加 _shell=1
+ *     让 nuwax 解除沉浸式门控。
  * - native:openClientSettings
  *     打开壳的「客户端配置」设置弹窗（nuwax web 用户区「客户端设置」按钮入口，
  *     仅 nuwax 宿主渲染）。设置弹窗是壳 renderer 的 React state，主进程无法直接
@@ -22,14 +22,15 @@
  *     nuwax 布局状态推送（{ secondMenuAvailable }）→ 转发 nuwax:layout-changed 给壳
  *     renderer，工具栏据此显隐「收起二级菜单」按钮（无二级菜单的页面按钮无意义）。
  *
- * 桥前端：preload/webviewPerfBridge.ts（注入到所有 http/https webview guest）。
+ * 桥前端：preload/webviewPerfBridge.ts（商业版只注入当前受信业务页）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
@@ -44,6 +45,8 @@ import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../ser
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
+import { configureIsolatedWebSession, destroyTrustedBusinessPopups } from "../services/system/webviewPolicy";
+import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
 
@@ -61,11 +64,17 @@ export const NUWAX_TOKEN_KEY_PREFIX = "nuwax.accessToken.";
 /** 从 IPC 调用方（webview guest）解析来源 origin。 */
 function resolveSenderOrigin(event: IpcMainInvokeEvent | undefined): string {
   const url = event?.senderFrame?.url || event?.sender?.getURL?.() || "";
-  try {
-    return url ? new URL(url).origin : "global";
-  } catch {
-    return "global";
-  }
+  return httpOrigin(url) ?? "global";
+}
+
+/** IPC 权限以调用时的 frame 和顶层文档为准，不能沿用导航前的 preload 身份。 */
+function isTrustedBusinessSender(
+  event: Electron.IpcMainEvent | IpcMainInvokeEvent,
+  origins: readonly string[],
+): boolean {
+  const frame = httpOrigin(event.senderFrame?.url);
+  const top = httpOrigin(event.sender?.getURL());
+  return !!frame && !!top && origins.includes(frame) && origins.includes(top);
 }
 
 function tokenKey(scope: string): string {
@@ -115,6 +124,7 @@ function nuwaxSessionScopes(senderScope: string): string[] {
 
 /** 桌面独立窗口注册表：持引用防 GC，closed 时清理。 */
 const shellWindows = new Set<BrowserWindow>();
+const businessShellWindows = new Set<BrowserWindow>();
 
 /**
  * 商业版窗口最小尺寸（plans/20260921-min-window-resolution.md）：
@@ -155,9 +165,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     contents.on("will-attach-webview", (_event, preferences) => {
       preferences.additionalArguments = [
         ...(preferences.additionalArguments ?? []).filter(
-          (arg) => !arg.startsWith("--nuwax-host-product="),
+          (arg) => !arg.startsWith("--nuwax-host-product=") &&
+            !arg.startsWith("--nuwax-trusted-origins="),
         ),
         hostProductArg,
+        `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(trustedOrigins()))}`,
       ];
     });
   };
@@ -220,11 +232,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     emitRegistrationTrace,
   );
-  ipcMain.handle("services:syncConfig", () => lifecycle.sync());
-  ipcMain.handle("services:authState", () => ({
+  ipcMain.handle("services:syncConfig", (event) =>
+    isHostSender(event) ? lifecycle.sync() : { success: false, error: "untrusted sender" },
+  );
+  ipcMain.handle("services:authState", (event) => isHostSender(event) ? ({
     ...serviceState,
     loggedIn: !!currentTicket(),
-  }));
+  }) : null);
   // 每个文档第一次读取会话上下文时绑定代次。换域/登出后旧文档不能写回。
   let authGeneration = 0;
   let authClearHandled = false;
@@ -238,7 +252,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   const documentKey = (event: IpcMainInvokeEvent) =>
     `${event.sender?.id}:${event.senderFrame?.processId}:${event.senderFrame?.routingId}`;
   const isCurrentDocument = (event: IpcMainInvokeEvent) =>
-    !switching && documents.get(documentKey(event)) === authGeneration;
+    !switching && isTrustedBusinessSender(event, trustedOrigins()) &&
+    documents.get(documentKey(event)) === authGeneration;
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
       webContents.getAllWebContents().map((wc) => wc.session),
@@ -258,7 +273,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // file-server（customTargetDir）HTTP 通道，主进程不做持久化与文件操作。
   // 注：当前 nuwax 前端已无调用方（「文件树选择非工作空间目录」需求回滚，
   // 见 nuwax/specs/luodong-delivery.md）。保留为对外桥面，避免前端需要时再动基座。
-  ipcMain.handle("localFiles:pickDirectory", async () => {
+  ipcMain.handle("localFiles:pickDirectory", async (event) => {
+    if (!isTrustedSender(event)) return { canceled: true, paths: [] as string[] };
     const win = ctx.getMainWindow();
     const options: OpenDialogOptions = {
       properties: ["openDirectory", "multiSelections"],
@@ -274,7 +290,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- theme：nuwax 女娲主题 → 壳原生 UI 统一 ----
   // nuwax 主题生效/让位时推送 { active, 调色板 }，转发给壳 renderer 叠加/回落
   // （antd tokens + CSS 变量）。fire-and-forget（send），无返回值语义。
-  ipcMain.on("nuwax:theme-sync", (_event, payload: unknown) => {
+  ipcMain.on("nuwax:theme-sync", (event, payload: unknown) => {
+    if (!isTrustedSender(event)) return;
     const safe =
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
@@ -287,7 +304,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // nuwax 切换多语言（登录页语言开关/设置页/登录后用户资料同步）时推送当前语言，
   // 转发给壳 renderer 走与设置页同链路的应用（setCurrentLang+预拉翻译+主进程同步），
   // 不整窗 reload（避免连带重载 webview 丢会话态）。fire-and-forget。
-  ipcMain.on("nuwax:lang-sync", (_event, payload: unknown) => {
+  ipcMain.on("nuwax:lang-sync", (event, payload: unknown) => {
+    if (!isTrustedSender(event)) return;
     const safe =
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
@@ -301,7 +319,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- meta：nuwax 前端构建信息 → 壳（关于页「界面版本」展示） ----
   // 页面启动时上报一次 { appVersion, gitHash? }；转发给壳 renderer 存态，
   // fire-and-forget。非法载荷直接忽略。
-  ipcMain.on("nuwax:web-meta", (_event, payload: unknown) => {
+  ipcMain.on("nuwax:web-meta", (event, payload: unknown) => {
+    if (!isTrustedSender(event)) return;
     const safe =
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
@@ -323,7 +342,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- layout：nuwax 布局状态 → 壳（工具栏收起按钮显隐/icon 态） ----
   // secondMenuAvailable：当前页是否有二级菜单（无则隐藏收起按钮）。
   // secondMenuCollapsed：二级菜单真实收起态（壳 icon 以此为准，修 reload 失同步）。
-  ipcMain.on("nuwax:layout-sync", (_event, payload: unknown) => {
+  ipcMain.on("nuwax:layout-sync", (event, payload: unknown) => {
+    if (!isTrustedSender(event)) return;
     const safe =
       payload && typeof payload === "object"
         ? (payload as Record<string, unknown>)
@@ -372,6 +392,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     }
   };
   ipcMain.on("nuwax:titlebar-drag-start", (event) => {
+    if (!isTrustedSender(event)) return;
     const win = BrowserWindow.fromWebContents(event.sender);
     log.info("[NuwaxBridge] titlebar-drag-start", { hasWin: !!win });
     if (!win || win.isMinimized() || titlebarDragTimer) return;
@@ -394,23 +415,47 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       );
     }, 16);
   });
-  ipcMain.on("nuwax:titlebar-drag-end", stopTitlebarDrag);
+  ipcMain.on("nuwax:titlebar-drag-end", (event) => {
+    if (isTrustedSender(event)) stopTitlebarDrag();
+  });
   ipcMain.on("nuwax:titlebar-toggle-maximize", (event) => {
+    if (!isTrustedSender(event)) return;
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
   });
 
-  const trustedOrigins = (): string[] => {
-    const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
-    const override = readSetting("nuwax.webviewOverride") as { origin?: string } | null;
-    return [currentBusinessOrigin(), loopback?.enabled ? loopback.origin : null, override?.origin]
-      .filter((origin): origin is string => !!origin);
+  const trustedOrigins = businessBridgeOrigins;
+
+  const isTrustedSender = (event: Electron.IpcMainEvent | IpcMainInvokeEvent) =>
+    !switching && isTrustedBusinessSender(event, trustedOrigins());
+  const isTrustedMenuSource = (
+    frameUrl: string | undefined,
+    source: Electron.WebContents,
+  ) => {
+    if (!frameUrl || source.isDestroyed() || source.session !== session.defaultSession) return false;
+    const origins = trustedOrigins();
+    const frame = httpOrigin(frameUrl);
+    const top = httpOrigin(source.getURL());
+    return !!frame && !!top && origins.includes(frame) && origins.includes(top);
+  };
+  const isHostSender = (event: Electron.IpcMainEvent | IpcMainInvokeEvent) => {
+    const contents = ctx.getMainWindow()?.webContents;
+    if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame)
+      return false;
+    try {
+      const url = new URL(contents.getURL());
+      return url.protocol === "file:" || url.protocol === "app:" ||
+        (!app.isPackaged && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+          ["http:", "https:"].includes(url.protocol));
+    } catch {
+      return false;
+    }
   };
 
   ipcMain.handle("auth:getContext", (event) => {
-    if (switching || !trustedOrigins().includes(resolveSenderOrigin(event))) return null;
+    if (!isTrustedSender(event)) return null;
     documents.set(documentKey(event), authGeneration);
     const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
     const gatewayOrigin = loopback?.enabled && loopback.origin ? loopback.origin : null;
@@ -428,7 +473,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
   ipcMain.handle("auth:beginLogin", async (event) => {
     const scope = resolveSenderOrigin(event);
-    if (switching || !trustedOrigins().includes(scope)) return false;
+    if (!isTrustedSender(event)) return false;
     authClearHandled = false;
     authGeneration++;
     documents.set(documentKey(event), authGeneration);
@@ -445,7 +490,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // the cookie already stored by Chromium, including direct-mode renewals.
   ipcMain.handle("auth:syncSession", async (event) => {
     const scope = resolveSenderOrigin(event);
-    if (switching || !trustedOrigins().includes(scope)) return false;
+    if (!isTrustedSender(event)) return false;
     const key = documentKey(event);
     documents.set(key, authGeneration);
     const generation = authGeneration;
@@ -534,7 +579,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   });
 
   ipcMain.handle("auth:clear", async (event) => {
-    if (!isCurrentDocument(event)) return false;
+    if (!isTrustedSender(event) || !isCurrentDocument(event)) return false;
     if (authClearHandled) return true;
     authClearHandled = true;
     const hadTicket = !!currentTicket();
@@ -572,6 +617,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     event: IpcMainInvokeEvent,
     input: unknown,
   ) => {
+    if (switching) return { success: false, error: "Domain switch already in progress" };
     const raw =
       typeof input === "string" ? input.trim().replace(/\/+$/, "") : "";
     if (!raw) return { success: false, error: "empty domain" };
@@ -589,16 +635,22 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       return { success: false, error: "invalid domain" };
     }
 
-    if (
-      !isCurrentDocument(event) &&
-      event.sender !== ctx.getMainWindow()?.webContents
-    )
+    if (!(isTrustedSender(event) && isCurrentDocument(event)) && !isHostSender(event))
       return { success: false, error: "Stale document" };
     switching = true;
     authGeneration++;
     cancelTransfers();
     const scopes = nuwaxSessionScopes(resolveSenderOrigin(event));
     invalidateTicketSession([...scopes, origin]);
+    // Existing secondary pages retain the trusted-origin list captured in their
+    // preload arguments. Close them before changing domains so a stale bridge
+    // cannot be reused with the next account's origin.
+    for (const win of [...businessShellWindows]) {
+      // A page can cancel close() in beforeunload; account boundaries cannot.
+      if (!win.isDestroyed()) win.destroy();
+    }
+    businessShellWindows.clear();
+    destroyTrustedBusinessPopups();
     const stopping = lifecycle.stop();
     // 换域 = 账号体系变化：全清注册凭据（与 auth:syncSession 的账号切换、auth:clear
     // 的登出保留相对——三者语义见 clearRegistration 注释）。
@@ -614,6 +666,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       string,
       unknown
     > | null;
+    let changedGatewayTarget = false;
     try {
       const result = await stopping;
       if (!result.success) throw new Error("Failed to stop business services");
@@ -623,6 +676,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         unknown
       > | null;
       writeSetting("step1_config", { ...prev, serverHost: origin });
+      changedGatewayTarget = true;
       const { refreshLoopbackGateway } =
         await import("../services/loopbackGateway");
       await refreshLoopbackGateway();
@@ -633,8 +687,28 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     } catch (error) {
       // 同文档允许再次操作重试，但旧会话仍不可写回（需重新读取上下文）。
       writeSetting("step1_config", previousConfig);
-      ctx.getMainWindow()?.webContents.send("nuwax:serverHostChanged", {});
-      return { success: false, error: String(error) };
+      let rollbackError: unknown = null;
+      if (changedGatewayTarget) {
+        try {
+          const { refreshLoopbackGateway } = await import("../services/loopbackGateway");
+          await refreshLoopbackGateway();
+        } catch (restoreError) {
+          rollbackError = restoreError;
+          log.error("[NuwaxBridge] previous gateway restore failed", restoreError);
+        }
+      }
+      ctx.getMainWindow()?.webContents.send("nuwax:serverHostChanged", {
+        serverHost: currentBusinessOrigin(),
+        loginRequired: true,
+      });
+      return {
+        success: false,
+        error: rollbackError
+          ? `Domain switch failed: ${String(error)}; previous gateway restore failed: ${String(rollbackError)}`
+          : changedGatewayTarget
+            ? `Domain switch failed; previous gateway restored: ${String(error)}. Please sign in again.`
+            : `Domain switch failed: ${String(error)}. Please sign in again.`,
+      };
     } finally {
       switching = false;
     }
@@ -645,21 +719,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- native：新开独立窗口打开 nuwax 页面 ----
   // 智能体详情/工作流/网页应用开发/我的电脑等全屏页在主窗口会被沉浸式工具栏遮挡
   //（fixed 头部/画布类布局也无法内嵌避让），改为独立窗口承载：带系统标题栏零遮挡，
-  // 注入同一 webview 桥 preload（isNuwaClaw/主题等桥能力一致），URL 追加 _shell=1
-  // 标记让 nuwax 解除沉浸式专属门控（菜单避让/隐藏 logo）。
+  // 站内页带桥 preload 并追加 _shell=1；外链用无桥、独立内存会话窗口。
   ipcMain.handle("native:openWindow", (event, opts: { path?: unknown }) => {
     try {
-      // External windows receive the preload too. They must not turn an arbitrary
-      // target into an authenticated first navigation or a gateway request.
-      const allowed = trustedOrigins();
-      const frameOrigin = resolveSenderOrigin(event);
-      let topOrigin: string;
-      try {
-        topOrigin = new URL(event.sender.getURL()).origin;
-      } catch {
-        return { success: false, error: "untrusted sender" };
-      }
-      if (!event.senderFrame?.url || !allowed.includes(frameOrigin) || !allowed.includes(topOrigin)) {
+      if (!isTrustedSender(event)) {
         return { success: false, error: "untrusted sender" };
       }
       const raw = opts?.path;
@@ -700,6 +763,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       }
 
       const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
+      const businessWindow = !target.username && !target.password &&
+        trustedOrigins().includes(target.origin);
+      // Absolute same-origin links also open a standalone window. Its frontend
+      // must use the standalone layout, regardless of the secondary-page setting.
+      if (businessWindow) target.searchParams.set("_shell", "1");
+      const isolatedPartition = businessWindow ? null : `temp:nuwax-external-${randomUUID()}`;
+      if (isolatedPartition) configureIsolatedWebSession(isolatedPartition);
       if (loopback?.enabled && loopback.origin && matchesBusinessOrigin(target.href, currentBusinessOrigin())) {
         // Concatenate the fixed origin explicitly: a pathname beginning with //
         // must remain a path, never become a scheme-relative external authority.
@@ -713,20 +783,31 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         minWidth: NUWAX_MAIN_WINDOW_MIN_WIDTH,
         minHeight: NUWAX_MAIN_WINDOW_MIN_HEIGHT,
         autoHideMenuBar: true,
-        webPreferences: {
-          // 与 webview guest 同一桥 preload：NuwaClawBridge 全能力（auth/theme/layout）
-          preload: path.join(
-            __dirname,
-            "..",
-            "preload",
-            "webviewPerfBridge.js",
-          ),
-          additionalArguments: [hostProductArg],
-        },
+        webPreferences: businessWindow
+          ? {
+              preload: path.join(__dirname, "..", "preload", "webviewPerfBridge.js"),
+              additionalArguments: [
+                hostProductArg,
+                `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(trustedOrigins()))}`,
+              ],
+              contextIsolation: true,
+              nodeIntegration: false,
+            }
+          : {
+              // 外部网站只留在客户端窗口；独立内存会话不携带业务 cookie。
+              partition: isolatedPartition!,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+            },
       });
       shellWindows.add(win);
-      win.on("closed", () => shellWindows.delete(win));
-      if (matchesBusinessOrigin(target.href, currentBusinessOrigin())) trustInitialBusinessNavigation(win.webContents, target.href);
+      if (businessWindow) businessShellWindows.add(win);
+      win.on("closed", () => {
+        shellWindows.delete(win);
+        businessShellWindows.delete(win);
+      });
+      if (businessWindow) trustInitialBusinessNavigation(win.webContents, target.href);
       void win.loadURL(target.href);
       win.focus();
       log.info("[NuwaxBridge] native:openWindow", { path: raw });
@@ -745,7 +826,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 在 nuwax 宿主下移除）。设置弹窗是壳 renderer 的 React state（webview 之上的
   // antd Modal），主进程无法直接打开，转发 nuwax:open-client-settings 给壳
   // renderer（同 open-same-window 模式；壳 preload on() 白名单已含该 channel）。
-  ipcMain.handle("native:openClientSettings", () => {
+  ipcMain.handle("native:openClientSettings", (event) => {
+    if (!isTrustedSender(event)) return { success: false, error: "untrusted sender" };
     ctx.getMainWindow()?.webContents.send("nuwax:open-client-settings", {});
     log.info("[NuwaxBridge] native:openClientSettings");
     return { success: true };
@@ -774,50 +856,58 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   app.on("browser-window-created", (_event, win) => {
     setImmediate(() => applyMainWindowMinSize(win));
   });
-  ipcMain.handle("cua:getStatus", () => cuaComputerUse.getCuaStatus());
-  ipcMain.handle("cua:setEnabled", (_event, enabled: boolean) =>
-    cuaComputerUse.setCuaEnabled(enabled === true),
+  ipcMain.handle("cua:getStatus", (event) =>
+    isHostSender(event) ? cuaComputerUse.getCuaStatus() : null,
   );
-  ipcMain.handle("cua:requestPermissions", () =>
-    cuaComputerUse.requestCuaPermissions(),
+  ipcMain.handle("cua:setEnabled", (event, enabled: boolean) =>
+    isHostSender(event) ? cuaComputerUse.setCuaEnabled(enabled === true) : { success: false, error: "untrusted sender" },
   );
-  ipcMain.handle("cua:installHelper", () => cuaComputerUse.installCuaHelper());
-  ipcMain.handle("cua:getVlmConfig", () => cuaComputerUse.getVlmConfig());
-  ipcMain.handle("cua:setVlmConfig", (_event, patch: unknown) =>
-    cuaComputerUse.setVlmConfig(
+  ipcMain.handle("cua:requestPermissions", (event) =>
+    isHostSender(event) ? cuaComputerUse.requestCuaPermissions() : null,
+  );
+  ipcMain.handle("cua:installHelper", (event) =>
+    isHostSender(event) ? cuaComputerUse.installCuaHelper() : { success: false, error: "untrusted sender" },
+  );
+  ipcMain.handle("cua:getVlmConfig", (event) =>
+    isHostSender(event) ? cuaComputerUse.getVlmConfig() : null,
+  );
+  ipcMain.handle("cua:setVlmConfig", (event, patch: unknown) =>
+    isHostSender(event) ? cuaComputerUse.setVlmConfig(
       (patch ?? {}) as { baseUrl?: string; model?: string; apiKey?: string },
-    ),
+    ) : { success: false, error: "untrusted sender" },
   );
-  ipcMain.handle("cua:testVlm", () => cuaComputerUse.testVlm());
+  ipcMain.handle("cua:testVlm", (event) =>
+    isHostSender(event) ? cuaComputerUse.testVlm() : { success: false, error: "untrusted sender" },
+  );
 
   // ---- powerPolicy：允许锁屏运行（电源保活档位；overlay 自持实现） ----
-  ipcMain.handle("powerPolicy:get", () => powerPolicy.getPowerPolicyMode());
-  ipcMain.handle("powerPolicy:setMode", (_event, mode: unknown) =>
-    powerPolicy.setPowerPolicyMode(mode),
+  ipcMain.handle("powerPolicy:get", (event) =>
+    isHostSender(event) ? powerPolicy.getPowerPolicyMode() : null,
+  );
+  ipcMain.handle("powerPolicy:setMode", (event, mode: unknown) =>
+    isHostSender(event) ? powerPolicy.setPowerPolicyMode(mode) : null,
   );
 
   // ---- fullDiskAccess：全磁盘访问状态/引导（仅 mac 有意义；overlay 自持实现） ----
-  ipcMain.handle("fullDiskAccess:getStatus", () =>
-    fullDiskAccess.getFullDiskAccessStatus(),
+  ipcMain.handle("fullDiskAccess:getStatus", (event) =>
+    isHostSender(event) ? fullDiskAccess.getFullDiskAccessStatus() : null,
   );
-  ipcMain.handle("fullDiskAccess:openSettings", () =>
-    fullDiskAccess.openFullDiskAccessSettings(),
+  ipcMain.handle("fullDiskAccess:openSettings", (event) =>
+    isHostSender(event) ? fullDiskAccess.openFullDiskAccessSettings() : null,
   );
-  ipcMain.handle("fullDiskAccess:recheck", async () => {
-    const granted = await fullDiskAccess.checkFullDiskAccess();
-    return {
-      supported: fullDiskAccess.isFullDiskAccessSupported(),
-      granted,
-    };
-  });
+  ipcMain.handle("fullDiskAccess:recheck", (event) =>
+    isHostSender(event) ? fullDiskAccess.getFullDiskAccessStatus() : null,
+  );
 
   // ---- native：右键另存图片（IPC 通道与页面内右键菜单共用核心）----
   // 核心抽为本地函数：nuwax 前端经 IPC 调（frameUrl 取 senderFrame.url），页面
-  // 右键菜单（services/contextMenu.ts，bug 2473）直接复用（frameUrl 取发射事件
-  // 的 webContents URL，归一非 http 协议/相对地址等判定两路一致）。
+  // 右键菜单（services/contextMenu.ts，bug 2473）直接复用（frameUrl 取右键
+  // 所在 frameURL，并单独核对顶层 URL，避免外链窗口借此代注业务 ticket）。
   const performSaveImage = async (
     opts: { url: string; filename?: string } | undefined,
     frameUrl: string | undefined,
+    stillTrusted: () => boolean = () => true,
+    allowBusinessCredentials = true,
   ): Promise<contextMenuService.ContextMenuImageSaveResult> => {
     const generation = authGeneration;
     const requestEpoch = ticketEpoch();
@@ -841,6 +931,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         return { success: false, error: "unsupported protocol" };
       }
       const gateway = (readSetting("nuwax.loopback") as { origin?: string } | null)?.origin;
+      if (gateway && target.origin === gateway && !allowBusinessCredentials)
+        return { success: false, error: "untrusted source" };
       if (gateway && target.origin === gateway)
         target = new URL(target.pathname + target.search, currentBusinessOrigin());
 
@@ -870,6 +962,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (res.canceled || !res.filePath) {
         return { success: false, canceled: true };
       }
+      if (!stillTrusted()) return { success: false, error: "untrusted sender" };
 
       const signal = AbortSignal.any([
         transferSignal,
@@ -878,10 +971,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       let destination = target;
       let resp: Response | undefined;
       for (let redirects = 0; redirects <= 5; redirects++) {
-        if (generation !== authGeneration || switching)
+        if (generation !== authGeneration || switching || !stillTrusted())
           throw new Error("Session changed");
         const ticket =
-          destination.origin === currentBusinessOrigin()
+          allowBusinessCredentials && destination.origin === currentBusinessOrigin()
             ? currentTicket()
             : null;
         // Electron net.fetch rejects manual redirects before exposing the 302.
@@ -892,7 +985,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           signal,
           headers: ticket ? { Cookie: `ticket=${ticket}` } : {},
         });
-        if (destination.origin === currentBusinessOrigin())
+        if (allowBusinessCredentials && destination.origin === currentBusinessOrigin())
           await mirrorNativeResponseTicket(resp, destination.origin, requestEpoch);
         if (![301, 302, 303, 307, 308].includes(resp.status)) break;
         const location = resp.headers.get("location");
@@ -903,7 +996,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         if (!/^https?:$/.test(destination.protocol))
           throw new Error("Unsupported redirect protocol");
       }
-      if (generation !== authGeneration || switching)
+      if (generation !== authGeneration || switching || !stillTrusted())
         throw new Error("Session changed");
       await saveResponse(resp!, res.filePath, signal, "binary");
       const bytes = fs.statSync(res.filePath).size;
@@ -923,7 +1016,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle(
     "native:saveImage",
     (event, opts: { url: string; filename?: string }) =>
-      performSaveImage(opts, event.senderFrame?.url),
+      isTrustedSender(event)
+        ? performSaveImage(opts, event.senderFrame?.url, () => isTrustedSender(event))
+        : { success: false, error: "untrusted sender" },
   );
 
   // —— webview 历史导航真值通道（修 bug 2432 收银台进入后无法退出）——
@@ -967,8 +1062,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
   app.on("web-contents-created", (_e, wc) => hookGuestNavEvents(wc));
   for (const wc of webContents.getAllWebContents()) hookGuestNavEvents(wc);
-  ipcMain.handle("nuwax:webview-nav-state", () => readNavState());
-  ipcMain.handle("nuwax:webview-nav-go", (_event, dir: unknown) => {
+  ipcMain.handle("nuwax:webview-nav-state", (event) =>
+    isHostSender(event) ? readNavState() : { canGoBack: false, canGoForward: false },
+  );
+  ipcMain.handle("nuwax:webview-nav-go", (event, dir: unknown) => {
+    if (!isHostSender(event)) return false;
     const guest = webContents
       .getAllWebContents()
       .find((wc) => !wc.isDestroyed() && wc.getType() === "webview");
@@ -1021,7 +1119,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 前端 antd 自绘右键（会话列表等）preventDefault 掉 DOM 事件，主进程
   // context-menu 不触发，天然无双重菜单。
   contextMenuService.installContextMenuService({
-    saveImage: performSaveImage,
+    saveImage: (opts, frameUrl, source) => {
+      const trustedAtClick = isTrustedMenuSource(frameUrl, source);
+      return performSaveImage(
+        opts,
+        frameUrl,
+        trustedAtClick ? () => isTrustedMenuSource(frameUrl, source) : () => true,
+        trustedAtClick,
+      );
+    },
     normalizeCopiedUrl: (input) => {
       try {
         const url = new URL(input);

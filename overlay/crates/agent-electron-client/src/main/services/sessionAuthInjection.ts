@@ -84,13 +84,17 @@ export function applySessionAuthHeaders(
     // Electron frame. The capability also identifies opaque redirects for CORS.
     headers[GATEWAY_REQUEST_HEADER] = context.gateway.requestSecret;
   }
-  // Cookies are host scoped, not port scoped. A ticket for our gateway would
-  // otherwise be sent to every unrelated service listening on 127.0.0.1.
+  // Chromium cookies can be scoped to a parent domain as well as a host. A
+  // redirect to another subdomain (or loopback port) must not carry our ticket.
   const isLocal = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(target.hostname);
   const trustedGateway = !!context.gateway &&
     matchesBusinessOrigin(details.url, context.gateway.origin) &&
     !!headers[GATEWAY_REQUEST_HEADER];
-  if (isLocal && !trustedGateway) {
+  const businessTarget = matchesBusinessOrigin(details.url, context.businessOrigin);
+  const ticketAllowed = trustedGateway ||
+    (businessTarget && !isPublicAuthPath(target.pathname) &&
+      (nativeTicketRequest || trustedRequest(details, context)));
+  if (!ticketAllowed) {
     for (const key of Object.keys(headers)) {
       if (key.toLowerCase() !== "cookie") continue;
       const value = stripTicketCookie(headers[key]);
@@ -99,30 +103,14 @@ export function applySessionAuthHeaders(
     }
   }
   // Preserve main.ts's product header, while correctly recognizing bracketed IPv6.
-  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(target.hostname)) {
+  if (!isLocal) {
     for (const key of Object.keys(headers))
       if (key.toLowerCase() === "x-client-type") delete headers[key];
     headers["x-client-type"] = APP_NAME_IDENTIFIER;
   }
-  if (!matchesBusinessOrigin(details.url, context.businessOrigin)) {
-    if (nativeTicketRequest) {
-      for (const key of Object.keys(headers)) {
-        if (key.toLowerCase() !== "cookie") continue;
-        const cookie = stripTicketCookie(headers[key]);
-        if (cookie) headers[key] = cookie;
-        else delete headers[key];
-      }
-    }
-    return headers;
-  }
+  if (!businessTarget) return headers;
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === "authorization") delete headers[key];
-    if (key.toLowerCase() !== "cookie" ||
-        (!isPublicAuthPath(target.pathname) &&
-          (nativeTicketRequest || trustedRequest(details, context)))) continue;
-    const cookie = stripTicketCookie(headers[key]);
-    if (cookie) headers[key] = cookie;
-    else delete headers[key];
   }
   return headers;
 }

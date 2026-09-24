@@ -42,6 +42,10 @@ npm run sign:win -- <version>
 - 脚本流程：下载 unsigned EXE → signtool（`/sha1` 指纹 + RFC3161 时间戳）→
   `signtool verify //pa //all` → 重命名 `Nuwax.Setup.{v}.exe` → 上传并删除
   Release 上的 unsigned 资产。
+- CI 的 Windows 构建清单记录 unsigned EXE 的大小、SHA256 和签名不变 PE 字节摘要。
+  同步门禁在校验签名后，要求签名版 EXE 除 PE 校验和、证书目录及末尾新增证书外，
+  原始字节与该清单一致；即使 Release 已删 unsigned EXE，也能核对签名包来源。
+  缺少该记录的旧构建清单不能通过新同步门禁；需要重同步时须重新构建。
 - 排障（Release 资产名对照、gh 找不到等）见基座 windows-signing.md 同名章节。
 
 ## SSH 远程代跑（2026-09-15 起，一条龙编排）
@@ -49,6 +53,8 @@ npm run sign:win -- <version>
 签名步骤可从 mac 经 ssh 在签名机（`win-pc`）上代跑，全程编排在
 `scripts/release-stable.sh`（tag → CI → 远程签名 → stable 同步 → 验证，断点续跑），
 无需人工上机敲命令。人工前置只剩一件：**SimplySign Desktop 登录（手机 2FA）**。
+签名后重跑时，Release 仅有签名版 EXE 也会通过资产前置检查；`--notes` 允许
+指定说明文件尚未提交，脚本会先单独提交并推送它。
 
 win-pc 一次性配置记录（已做，勿重复）：
 
@@ -66,15 +72,14 @@ Windows 自动更新走全量下载（非差分）；需要差分时在签名机
 cd <nuwax-client 检出>/nuwa-electron-shell/crates/agent-electron-client
 
 SYNC_OSS_REPO=nuwax-ai/nuwax-client \
-SYNC_OSS_REF=main \
+SYNC_OSS_REF=release/v1.0.x \
 npm run sync:oss -- electron-v<version> [stable|beta]
 ```
 
-- `SYNC_OSS_REF=main`：dispatch 的 workflow 定义在壳仓 main（脚本在基座目录里运行时
-  ref 解析会落到基座分支，必须显式覆盖）。
+- `SYNC_OSS_REF` 应填目标发布线分支（示例为 `release/v1.0.x`），并确认该分支含与发布 tag 相同的来源校验 workflow。脚本在基座目录运行时不可依赖其默认 ref。
 - 通道根由**壳仓 workflow 的 RELEASE_ROOT**（`nuwax-electron`）决定——脚本只负责
   dispatch，不接收通道参数，无需也无法在此覆盖。
-- beta / prerelease-v* 不要求签名，可直接 sync。
+- beta / prerelease-v* 使用外层仓 `scripts/sign-prerelease-win.sh x.y.z`：从 Draft Release 下载 unsigned EXE，复用基座 `sign:win` 的本地签名与验证，再上传签名版。独立同步 workflow 校验签名和五平台来源后才更新指针。未签名 MSI 不进入自动更新元数据。
 - 同步产物落到独立通道 `nuwax-electron/`（stable 指针
   `nuwax-electron/latest/latest.json`、beta 指针 `nuwax-electron/beta/latest.json`），
   与社区版 `nuwaclaw-electron/` 互不影响——客户端经
@@ -83,6 +88,6 @@ npm run sync:oss -- electron-v<version> [stable|beta]
 等价的手动触发方式（不依赖脚本）：
 
 ```bash
-gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref main \
+gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref release/v1.0.x \
   -f tag=electron-v<version> -f channel=stable
 ```

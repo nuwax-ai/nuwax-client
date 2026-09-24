@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { session } from "electron";
 
 const settings = new Map<string, unknown>();
 const handlers = new Map<
@@ -12,10 +13,17 @@ const handlers = new Map<
 >();
 const emitters = new Map<string, ((...args: unknown[]) => void)[]>();
 let mainWindowSender: ((channel: string, payload: unknown) => void) | undefined;
+const mainFrame = { url: "file:///app/index.html" };
+const mainWindowContents = {
+  mainFrame,
+  getURL: () => mainFrame.url,
+  send: (channel: string, payload: unknown) => mainWindowSender?.(channel, payload),
+};
 
 // vi.mock 工厂被提升，共享 mock 需经 vi.hoisted 提前创建
 const mocks = vi.hoisted(() => ({
   showSaveDialog: vi.fn(),
+  showOpenDialog: vi.fn(),
   netFetch: vi.fn(),
   stop: vi.fn(async () => ({ success: true, results: {} })),
   storage: vi.fn(async () => undefined),
@@ -25,11 +33,27 @@ const mocks = vi.hoisted(() => ({
   cookiesRemove: vi.fn(async () => undefined),
   cookiesOn: vi.fn(),
   loadURL: vi.fn(),
+  windowOptions: vi.fn(),
+  destroyWindow: vi.fn(),
+  refreshGateway: vi.fn(async () => undefined),
+  partitionSessions: new Map<string, {
+    setPermissionRequestHandler: ReturnType<typeof vi.fn>;
+    setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+  }>(),
+  installContextMenu: vi.fn(),
+}));
+
+vi.mock("../services/loopbackGateway", () => ({
+  refreshLoopbackGateway: mocks.refreshGateway,
 }));
 
 vi.mock("../services/sessionAuthInjection", () => ({
   initSessionAuthInjection: vi.fn(),
   trustInitialBusinessNavigation: vi.fn(),
+}));
+
+vi.mock("../services/contextMenu", () => ({
+  installContextMenuService: mocks.installContextMenu,
 }));
 
 vi.mock("electron", () => ({
@@ -50,13 +74,24 @@ vi.mock("electron", () => ({
       emitters.set(channel, list);
     },
   },
-  dialog: { showSaveDialog: mocks.showSaveDialog },
+  dialog: { showSaveDialog: mocks.showSaveDialog, showOpenDialog: mocks.showOpenDialog },
   net: { fetch: mocks.netFetch },
   BrowserWindow: class {
+    constructor(options: unknown) { mocks.windowOptions(options); }
     webContents = { once: vi.fn() };
-    on = vi.fn();
+    private closed: (() => void) | null = null;
+    private destroyed = false;
+    on = vi.fn((name: string, callback: () => void) => {
+      if (name === "closed") this.closed = callback;
+    });
     focus = vi.fn();
     loadURL = mocks.loadURL;
+    isDestroyed = () => this.destroyed;
+    destroy = () => {
+      this.destroyed = true;
+      mocks.destroyWindow();
+      this.closed?.();
+    };
   },
   webContents: {
     // isDestroyed/getType：注册期 webview 导航真值通道会遍历现有 webContents
@@ -66,11 +101,23 @@ vi.mock("electron", () => ({
         session: { clearStorageData: mocks.storage },
         isDestroyed: () => false,
         getType: () => "browser",
+        on: vi.fn(),
       },
     ],
   },
-  session: { defaultSession: { cookies: { get: mocks.cookiesGet, set: mocks.cookiesSet,
-    remove: mocks.cookiesRemove, on: mocks.cookiesOn } } },
+  session: {
+    defaultSession: { cookies: { get: mocks.cookiesGet, set: mocks.cookiesSet,
+      remove: mocks.cookiesRemove, on: mocks.cookiesOn } },
+    fromPartition: (partition: string) => {
+      const ses = {
+        setPermissionRequestHandler: vi.fn(),
+        setPermissionCheckHandler: vi.fn(),
+        setSpellCheckerEnabled: vi.fn(),
+      };
+      mocks.partitionSessions.set(partition, ses);
+      return ses;
+    },
+  },
 }));
 
 vi.mock("electron-log", () => ({
@@ -117,8 +164,15 @@ const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
 const DEV_ORIGIN = "http://localhost:3000";
 
-function senderEvent(origin: string): { senderFrame: { url: string } } {
-  return { senderFrame: { url: `${origin}/home` } };
+function senderEvent(origin: string) {
+  return {
+    senderFrame: { url: `${origin}/home` },
+    sender: { getURL: () => `${origin}/home` },
+  };
+}
+
+function hostEvent() {
+  return { senderFrame: mainFrame, sender: mainWindowContents };
 }
 
 beforeEach(() => {
@@ -129,6 +183,13 @@ beforeEach(() => {
   mocks.cookiesRemove.mockReset().mockResolvedValue(undefined);
   mocks.cookiesOn.mockClear();
   mocks.loadURL.mockClear();
+  mocks.showSaveDialog.mockClear();
+  mocks.showOpenDialog.mockClear();
+  mocks.windowOptions.mockClear();
+  mocks.destroyWindow.mockClear();
+  mocks.partitionSessions.clear();
+  mocks.refreshGateway.mockReset().mockResolvedValue(undefined);
+  mocks.installContextMenu.mockClear();
   settings.clear();
   settings.set("nuwax.cookieAuthMigrated", true);
   handlers.clear();
@@ -137,9 +198,7 @@ beforeEach(() => {
   registerNuwaxBridgeHandlers({
     getMainWindow: () =>
       ({
-        webContents: {
-          send: (c: string, p: unknown) => mainWindowSender?.(c, p),
-        },
+        webContents: mainWindowContents,
       }) as never,
   } as never);
   settings.set("step1_config", { serverHost: HOST_ORIGIN });
@@ -148,6 +207,17 @@ beforeEach(() => {
 });
 
 describe("cookie 会话与旧 token 桥", () => {
+  it("开发覆盖地址带路径时，桥信任仍按 origin 判断", () => {
+    settings.set("nuwax.webviewOverride", { origin: `${DEV_ORIGIN}/app/` });
+    expect(handlers.get("auth:getContext")!(senderEvent(DEV_ORIGIN)))
+      .toMatchObject({ businessOrigin: HOST_ORIGIN });
+  });
+
+  it("带 userinfo 的 URL 不能借相同 origin 调用业务桥", () => {
+    expect(handlers.get("auth:getContext")!(
+      senderEvent("https://user:pass@testagent.xspaceagi.com"),
+    )).toBeNull();
+  });
   it("direct WebView cookie 同步到主进程并触发首次设备注册", async () => {
     settings.set("nuwax.loopback", { enabled: false, origin: null });
     mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "direct-new", path: "/", secure: true,
@@ -208,6 +278,34 @@ describe("cookie 会话与旧 token 桥", () => {
 });
 
 describe("configureServerHost（企业登录切换域名）", () => {
+  it("拒绝宿主在前一次切域未完成时再次切域", async () => {
+    let finishStop!: (value: { success: boolean; results: Record<string, never> }) => void;
+    mocks.stop.mockImplementationOnce(() => new Promise((resolve) => { finishStop = resolve; }));
+    const priorStops = mocks.stop.mock.calls.length;
+    const first = handlers.get("auth:configureServerHost")!(senderEvent(GW_ORIGIN), "first.example.com");
+    const second = await handlers.get("services:configureServerHost")!(hostEvent(), "second.example.com") as {
+      success: boolean; error?: string;
+    };
+    expect(second).toEqual({ success: false, error: "Domain switch already in progress" });
+    expect(mocks.stop).toHaveBeenCalledTimes(priorStops + 1);
+    finishStop({ success: true, results: {} });
+    expect((await first as { success: boolean }).success).toBe(true);
+    expect((settings.get("step1_config") as { serverHost: string }).serverHost)
+      .toBe("https://first.example.com");
+  });
+  it("closes existing business secondary windows before changing the trusted origin", async () => {
+    expect(handlers.get("native:openWindow")!(senderEvent(GW_ORIGIN), {
+      path: `${HOST_ORIGIN}/agent/detail`,
+    })).toEqual({ success: true });
+    expect(mocks.destroyWindow).not.toHaveBeenCalled();
+
+    const result = await handlers.get("auth:configureServerHost")!(
+      senderEvent(GW_ORIGIN), "biz.example.com",
+    ) as { success: boolean };
+    expect(result.success).toBe(true);
+    expect(mocks.destroyWindow).toHaveBeenCalledTimes(1);
+  });
+
   it("合法域名 → 写 step1_config.serverHost（保留其余字段）并广播重载事件", async () => {
     const sent: [string, unknown][] = [];
     mainWindowSender = (c, p) => sent.push([c, p]);
@@ -276,6 +374,19 @@ describe("configureServerHost（企业登录切换域名）", () => {
     // 业务域本身照旧写入新域
     const step1 = settings.get("step1_config") as Record<string, unknown>;
     expect(step1.serverHost).toBe("https://biz.example.com");
+  });
+
+  it("新域网关刷新失败时恢复旧配置和旧网关，登录态仍清除", async () => {
+    settings.set("auth.saved_key", "OLD-SK");
+    mocks.refreshGateway.mockRejectedValueOnce(new Error("new gateway failed"));
+    const result = (await handlers.get("auth:configureServerHost")!(
+      senderEvent(GW_ORIGIN), "other.example.com",
+    )) as { success: boolean; error: string };
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("previous gateway restored");
+    expect(mocks.refreshGateway).toHaveBeenCalledTimes(2);
+    expect((settings.get("step1_config") as { serverHost: string }).serverHost).toBe(HOST_ORIGIN);
+    expect(settings.get("auth.saved_key")).toBeNull();
   });
 });
 
@@ -352,7 +463,7 @@ describe("native:saveImage（另存图片）", () => {
     )) as { success: boolean; error?: string };
 
     expect(res.success).toBe(false);
-    expect(res.error).toBe("invalid url");
+    expect(res.error).toBe("untrusted sender");
     expect(mocks.netFetch).not.toHaveBeenCalled();
   });
 
@@ -367,6 +478,67 @@ describe("native:saveImage（另存图片）", () => {
     expect(res.canceled).toBe(true);
     expect(mocks.netFetch).not.toHaveBeenCalled();
   });
+
+  it("外链窗口右键保存业务域图片不代注 ticket，站内右键仍可代注", async () => {
+    settings.set(`nuwax.ticket.${HOST_ORIGIN}`, "private-ticket");
+    mocks.netFetch.mockImplementation(async () =>
+      new Response(new Uint8Array([1]), { status: 200 }),
+    );
+    const saveFromMenu = (mocks.installContextMenu.mock.lastCall?.[0] as {
+      saveImage: (
+        opts: { url: string },
+        frameUrl: string,
+        source: { isDestroyed: () => boolean; getURL: () => string; session: unknown },
+      ) => Promise<{ success: boolean }>;
+    }).saveImage;
+    const source = (origin: string, isolated = false) => ({
+      isDestroyed: () => false,
+      getURL: () => `${origin}/home`,
+      session: isolated ? {} : session.defaultSession,
+    });
+
+    const external = await saveFromMenu(
+      { url: `${HOST_ORIGIN}/private.png` },
+      "https://external.example/page",
+      source("https://external.example"),
+    );
+    expect(external.success).toBe(true);
+    expect(mocks.netFetch.mock.calls[0][1].headers).toEqual({});
+
+    const externalFrame = await saveFromMenu(
+      { url: `${HOST_ORIGIN}/private.png` },
+      "https://external.example/embedded",
+      source(GW_ORIGIN),
+    );
+    expect(externalFrame.success).toBe(true);
+    expect(mocks.netFetch.mock.calls[1][1].headers).toEqual({});
+
+    const loopback = await saveFromMenu(
+      { url: `${GW_ORIGIN}/private.png` },
+      "https://external.example/page",
+      source("https://external.example"),
+    );
+    expect(loopback).toEqual({ success: false, error: "untrusted source" });
+    expect(mocks.netFetch).toHaveBeenCalledTimes(2);
+
+    const internal = await saveFromMenu(
+      { url: `${HOST_ORIGIN}/private.png` },
+      `${GW_ORIGIN}/home`,
+      source(GW_ORIGIN),
+    );
+    expect(internal.success).toBe(true);
+    expect(mocks.netFetch.mock.calls[2][1].headers).toEqual({
+      Cookie: "ticket=private-ticket",
+    });
+
+    const isolatedOnBusinessOrigin = await saveFromMenu(
+      { url: `${HOST_ORIGIN}/private.png` },
+      `${GW_ORIGIN}/home`,
+      source(GW_ORIGIN, true),
+    );
+    expect(isolatedOnBusinessOrigin.success).toBe(true);
+    expect(mocks.netFetch.mock.calls[3][1].headers).toEqual({});
+  });
 });
 
 describe("语言同步（webview 多语言 → 壳）", () => {
@@ -376,7 +548,7 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 
     const emit = emitters.get("nuwax:lang-sync")?.[0];
     expect(emit).toBeDefined();
-    emit!(undefined, { lang: "en-US" });
+    emit!(senderEvent(GW_ORIGIN), { lang: "en-US" });
 
     const changed = sent.find(([c]) => c === "nuwax:lang-changed");
     expect(changed).toBeDefined();
@@ -388,9 +560,9 @@ describe("语言同步（webview 多语言 → 壳）", () => {
     mainWindowSender = (c, p) => sent.push([c, p]);
 
     const emit = emitters.get("nuwax:lang-sync")?.[0];
-    emit!(undefined, { lang: "   " });
-    emit!(undefined, { lang: 123 });
-    emit!(undefined, null);
+    emit!(senderEvent(GW_ORIGIN), { lang: "   " });
+    emit!(senderEvent(GW_ORIGIN), { lang: 123 });
+    emit!(senderEvent(GW_ORIGIN), null);
 
     expect(sent.some(([c]) => c === "nuwax:lang-changed")).toBe(false);
   });
@@ -418,6 +590,14 @@ describe("trusted runtime auth context and window navigation", () => {
     expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/agent/detail?id=1&_shell=1#section`);
   });
 
+  it("marks an absolute same-origin popup as a standalone window in direct mode", () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    expect(handlers.get("native:openWindow")!(windowEvent(HOST_ORIGIN, HOST_ORIGIN), {
+      path: `${HOST_ORIGIN}/agent/detail?id=1`,
+    })).toEqual({ success: true });
+    expect(mocks.loadURL).toHaveBeenCalledWith(`${HOST_ORIGIN}/agent/detail?id=1&_shell=1`);
+  });
+
   it("keeps a double-slash business pathname under the gateway authority", () => {
     handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}//external.example/path?q=1#section` });
     expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}//external.example/path?q=1&_shell=1#section`);
@@ -427,6 +607,16 @@ describe("trusted runtime auth context and window navigation", () => {
   it.each(["https://external.example/path", "http://testagent.xspaceagi.com/path", "https://username:password@testagent.xspaceagi.com/path"])("does not rewrite non-business or credentialed URLs: %s", (url) => {
     handlers.get("native:openWindow")!(windowEvent(), { path: url });
     expect(mocks.loadURL).toHaveBeenCalledWith(url);
+    const preferences = (mocks.windowOptions.mock.lastCall?.[0] as { webPreferences: Record<string, unknown> }).webPreferences;
+    expect(preferences.preload).toBeUndefined();
+    expect(preferences.partition).toMatch(/^temp:nuwax-external-/);
+    const isolated = mocks.partitionSessions.get(preferences.partition as string);
+    expect(isolated?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
+    expect(isolated?.setPermissionCheckHandler).toHaveBeenCalledTimes(1);
+    const check = isolated?.setPermissionCheckHandler.mock.lastCall?.[0] as (
+      contents: unknown, permission: string,
+    ) => boolean;
+    expect(check(null, "media")).toBe(false);
   });
 
   it.each([
@@ -437,5 +627,18 @@ describe("trusted runtime auth context and window navigation", () => {
     expect(handlers.get("native:openWindow")!(windowEvent(frameOrigin, topOrigin), { path: `${HOST_ORIGIN}/api/protected` }))
       .toEqual({ success: false, error: "untrusted sender" });
     expect(mocks.loadURL).not.toHaveBeenCalled();
+  });
+
+  it("跨域导航后旧 preload 无法触发目录选择、另存、设置或更新主进程状态", async () => {
+    const navigated = windowEvent(GW_ORIGIN, "https://external.example");
+    expect(handlers.get("auth:getContext")!(navigated)).toBeNull();
+    expect(await handlers.get("localFiles:pickDirectory")!(navigated))
+      .toEqual({ canceled: true, paths: [] });
+    expect(await handlers.get("native:saveImage")!(navigated, { url: `${HOST_ORIGIN}/a.png` }))
+      .toEqual({ success: false, error: "untrusted sender" });
+    expect(handlers.get("native:openClientSettings")!(navigated))
+      .toEqual({ success: false, error: "untrusted sender" });
+    expect(mocks.showOpenDialog).not.toHaveBeenCalled();
+    expect(mocks.showSaveDialog).not.toHaveBeenCalled();
   });
 });

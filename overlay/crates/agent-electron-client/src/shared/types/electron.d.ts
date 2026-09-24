@@ -597,12 +597,15 @@ export interface ComputerUseStatus {
   installable?: boolean;
   running: boolean;
   enabled: boolean;
+  /** 一次性确认已接受，待系统授权后可在设置页继续。 */
+  consentPending?: boolean;
   /** `cua` MCP 条目已写入 mcp_local_config（功能闭环就绪标志）。 */
   mcpInjected?: boolean;
   socketPath?: string;
   helperPath?: string | null;
   accessibility?: boolean | null;
   screenRecording?: boolean | null;
+  error?: string | null;
 }
 
 export interface ComputerUseAPI {
@@ -654,13 +657,18 @@ export interface PowerPolicyAPI {
 export interface FullDiskAccessStatus {
   supported: boolean;
   granted: boolean;
+  probeStatus?: "granted" | "denied" | "unknown";
   dismissed: boolean;
 }
 
 export interface FullDiskAccessAPI {
   getStatus: () => Promise<FullDiskAccessStatus>;
   openSettings: () => Promise<boolean>;
-  recheck: () => Promise<{ supported: boolean; granted: boolean }>;
+  recheck: () => Promise<{
+    supported: boolean;
+    granted: boolean;
+    probeStatus?: "granted" | "denied" | "unknown";
+  }>;
 }
 
 export interface ShellAPI {

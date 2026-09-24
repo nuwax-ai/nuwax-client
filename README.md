@@ -52,7 +52,7 @@
 | 平台 | 产物 | 说明 |
 |---|---|---|
 | macOS（Apple Silicon / Intel） | `dmg` / `zip` | CI 自动签名 + 公证（1.0.3 起） |
-| Windows（x64） | `exe`（NSIS）/ `msi` | 代码签名（1.0.4 起） |
+| Windows（x64） | `exe`（NSIS）/ `msi` | NSIS EXE 人工代码签名；MSI 暂未签名，不进自动更新指针 |
 | Linux（x64 / arm64） | `AppImage` / `deb` / `rpm` | 随通道分发 |
 
 - **stable 通道**：正式版（`electron-v*` 发版）。
@@ -95,7 +95,7 @@
 | | **Nuwax 客户端**（＝**商业版**；本仓产品） | **nuwax 前端**（仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)，包名 `nuwax-frontend`） |
 |---|---|---|
 | 是什么 | Electron 桌面应用——「壳」 | React/UMI web 应用——业务 UI 本体 |
-| 仓库 | **本仓 nuwax-client**（基座 submodule + overlay 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（CI 打包 pin，feat-2026.9.30 线）、线上部署（PC web） |
+| 仓库 | **本仓 nuwax-client**（基座 submodule + overlay 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（发布 tag 锁定源码并重建 dist）、线上部署（PC web） |
 | 职责 | 窗口/webview 容器 + 桌面能力：登录态桥、本地化承载、沙箱、文件服务、引擎管理、自动更新 | 工作台/会话/资料库等全部页面逻辑 |
 | 运行形态 | 安装包分发：productName=`Nuwax`、identifier=`nuwax`、appId=`com.nuwax-ai.nuwax`、数据目录 `~/.nuwax` | ① 浏览器直接访问（PC web，无桥自动降级）；② 客户端窗口内 webview（本地伺服或直连线上） |
 | 对外身份 | 注入的 identifier `nuwax` = 宿主产品 id（`x-client-type` 头、桥 `getProduct()`） | 用 `getProduct()`/`isNuwaClaw()` 识别宿主并适配 |
@@ -113,7 +113,7 @@
 ```
 nuwax-client/（main = 商业产品壳）
 ├── nuwa-electron-shell/   # submodule → 基座仓 main 分支（产品中立功能模块）
-├── nuwax/                 # submodule → nuwax 前端（feat-2026.9.30，dist 随仓提交）
+├── nuwax/                 # submodule → nuwax 前端；发布时从 tag 内 gitlink 源码重建 dist
 ├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
 ├── scripts/               # in-base.js（基座内执行+商业 env 注入）+ sync-overlay.js + check-base-purity.js + release-stable.sh（正式版发布一条龙）
 ├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
@@ -143,13 +143,14 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 
 ### 分支模型与双轨门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`electron-v*` / `prerelease-v*`），main 不直接发布。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`electron-v*` / `prerelease-v*`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
 | 社区基线 | `npm run base:test` | `--no-inject`：干净基座 + 社区默认值（会还原工作树 overlay） | ci.yml · community job |
 | 商业门禁 | `npm run test:commercial` | `--no-env`：同步 overlay、不注 env，全量 vitest | ci.yml · commercial job |
-| 守卫自测 | `npm run test:scripts` | check-base-purity 用例 | ci.yml · commercial job |
+| 守卫自测 | `npm run test:scripts` | pin、overlay、来源清单及本地诊断用例 | ci.yml · commercial job |
+| 前端源码 | `pnpm -C nuwax exec vitest run`、`pnpm -C nuwax lint:arch` | tag 锁定的前端源码 | ci.yml · frontend job |
 
 ⚠️ `base:test` 会把 overlay 产物清出基座工作树，本地跑完记得 `npm run overlay:sync` 还原商业态。
 
@@ -157,16 +158,18 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 
 - **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
 - **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
-- **壳根 nuwax pin**：bump `nuwax/` gitlink 时，提交须在 `.gitmodules` 声明的 `feat-2026.9.30` 分支上可达（release/smoke 的 submodule 拉取依赖可达性）；前端仓 `pin/nuwawork` / `pin/nuwa-work` 为改名遗留分支，非硬依赖，勿凭直觉快进。
+- **壳根 nuwax pin**：正式版与 beta 都从 tag 内的 `nuwax/` gitlink 重建前端 dist；构建脚本验证源码 SHA 和 `dist/version.json`。升级前端须先 bump gitlink，且提交须在 `.gitmodules` 声明的分支上可达。工作区内现有 `dist` 不代表发布包内容。
 
 ### 发版流程
 
 1. `release-notes/electron-v{x.y.z}.md`（缺省用默认文案）。
-2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：checkout 壳 + 两层 submodule init，注入商业品牌与端口；macOS 自动签名+公证，Windows 出 unsigned 包（CI 校验沙箱 helper 产物存在）。
+2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：先跑双轨与前端门禁，再从锁定的 gitlink 构建前端和五平台安装包，产物先留在 Draft Release；每个平台上传源码与产物摘要清单。macOS 必须签名、公证并完成运行时验证，Windows 初始产出 unsigned 包。
 3. Windows 人工签名：[docs/sign-windows.md](./docs/sign-windows.md)（Certum SimplySign + 基座内 `npm run sign:win`）。
-4. 同步 OSS：`npm run sync:oss`（stable 强校验已签名 EXE）。
+4. 调用独立的 `sync-electron-to-oss.yml`：先核对五平台清单和签名版 Windows EXE，再同步资产、更新 stable 指针并公开 Release；失败以红灯呈现。`scripts/release-stable.sh` 编排上述步骤。
 
-beta 通道：`prerelease-v{x.y.z}` tag（Draft Release，unsigned Windows 包可直接同步 beta 指针）。
+beta 通道：`prerelease-v{x.y.z}` tag 只生成 Draft Release；在 Windows 签名机运行 `scripts/sign-prerelease-win.sh x.y.z` 后，手动触发 `sync-electron-to-oss.yml` 的 beta 通道。未签名包不会进入更新指针。验收字段见 [发布验收模板](./docs/release-acceptance-template.md)，维护规则见 [工程维护](./docs/maintenance.md)。
+
+维护人员可在故障机器上运行 `npm run diagnostics:export -- --output <path>` 导出本地诊断 JSON。它只记录日志级别、组件和错误码统计，以及固定端口连通性；不包含日志正文、凭据或远程上报。
 
 ### 首次启用清单（人工操作）
 

@@ -17,7 +17,7 @@ SDLC Stage 5 · PR 评审清单（agent 与人共用）。Passes 2–4 的领域
    - 契约双同步：改动涉及对外契约（API/协议/文档/工具描述）时，所有登记过的同步位置是否一起动了。
 4. **架构原则**
    - 落点符合本仓分层与包边界；依赖方向单向；组合根唯一。
-   - （安装后按 docs/architecture.md 补充本仓具体分层清单）
+   - 具体分层与改动落点见 `docs/architecture.md`；商业代码只通过外层 overlay 注入。
 5. **Tests & Evidence**
    - 测试落位与层级匹配；bug 修复须可见"失败测试先于修复"的提交序列。
    - PR 描述附 npm run base:test 最近一次结论数字；红灯注明归属（在途 vs 主干）。

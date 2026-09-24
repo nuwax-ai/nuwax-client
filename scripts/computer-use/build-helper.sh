@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 构建 Computer Use helper（cua-driver 源码自建路线，2026-09-17 拍板）：
-#   锁版 clone cua 仓 → apply nuwax 补丁（bundle 白名单/app_bundle_path）→ cargo build
+#   锁版 clone cua 仓 → apply nuwax 补丁（bundle 身份/私有端点鉴权）→ cargo build
 #   → 组装 helper（mac .app / win exe）→ mac 预签 Developer ID（进 extraResources 前签好，
 #   electron-builder 按 TCC 稳定性要求：同 Team + 同 bundle id 跨版本保授权）。
 #
@@ -48,6 +48,17 @@ else
   SRC_DIR="$WORK_DIR/cua"
 fi
 
+# 本地源码逃逸路径也必须具备同一安全补丁；否则会产出永远无法通过
+# Nuwax helper TCC 身份校验、或没有端点能力鉴权的二进制。
+grep -q 'com.nuwax-ai.nuwax-computer-use' \
+  "$SRC_DIR/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs" || {
+  echo "::error::Nuwax helper TCC identity patch missing"; exit 1;
+}
+grep -q 'NUWAX_TOKEN_FILE_ENV' \
+  "$SRC_DIR/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs" || {
+  echo "::error::Nuwax endpoint authentication patch missing"; exit 1;
+}
+
 # ---------- 构建 ----------
 # cua 仓 rust-toolchain.toml 钉 1.97.1：cargo 会切到该工具链，target 必须装进它——
 # target add 须在仓内目录执行（让 rustup 解析钉住工具链；在仓外执行会装到默认 stable 上，
@@ -64,6 +75,7 @@ fi
 )
 
 BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
+[ "$PLATFORM" = "win" ] && BIN="${BIN}.exe"
 [ -f "$BIN" ] || { echo "::error::built binary not found: $BIN"; exit 1; }
 BIN_MD5="$(md5 -q "$BIN" 2>/dev/null || md5sum "$BIN" | cut -d' ' -f1)"
 echo "[cua-helper] binary md5: $BIN_MD5"

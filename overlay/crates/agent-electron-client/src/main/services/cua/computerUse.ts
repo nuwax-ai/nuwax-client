@@ -12,6 +12,7 @@
  *    /Applications 为 spike/dev 态兼容探测位。
  */
 import { execFile, spawn } from "node:child_process";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -35,6 +36,23 @@ const HELPER_BIN_NAME = "NuwaxComputerUse";
 const MCP_SERVER_ID = "cua";
 const STEP1_KEY = "step1_config";
 const MCP_LOCAL_CONFIG_KEY = "mcp_local_config";
+const HELPER_TEAM_ID = "89GQ2RJVW7";
+const CUA_DENIED_TOOLS = ["check_for_update", "install_ffmpeg"];
+// 仅暴露已审过的 driver 工具；driver 升级新增的工具须显式审核后加入。
+const CUA_ALLOWED_TOOLS = [
+  "bring_to_front", "browser_click", "browser_dialog", "browser_download",
+  "browser_navigate", "browser_pointer", "browser_prepare", "browser_set_input_files",
+  "browser_type", "check_permissions", "click", "clipboard_read", "clipboard_write",
+  "debug_window_info", "double_click", "drag", "end_session", "escalate_session",
+  "get_accessibility_tree", "get_agent_cursor_state", "get_browser_state", "get_config",
+  "get_cursor_position", "get_desktop_state", "get_recording_state", "get_screen_size",
+  "get_session", "get_session_state", "get_window_state", "health_report", "hotkey",
+  "invoke_menu", "kill_app", "launch_app", "list_apps", "list_sessions",
+  "list_windows", "move_cursor", "page", "press_key", "replay_trajectory",
+  "right_click", "scroll", "set_agent_cursor_enabled", "set_agent_cursor_motion",
+  "set_agent_cursor_theme", "set_config", "set_value", "set_window_frame",
+  "start_recording", "start_session", "stop_recording", "type_text", "verify_state", "zoom",
+];
 
 /** 平台对应的 helper 产物名（mac=.app bundle；win=exe；linux=裸二进制）。 */
 function helperArtifactName(): string {
@@ -42,10 +60,73 @@ function helperArtifactName(): string {
   return IS_WIN ? HELPER_EXE_NAME : HELPER_BIN_NAME;
 }
 
-/** 私有 socket/pipe 端点（daemon 与 stdio MCP 代理共用）。 */
-export const SOCKET_PATH = IS_WIN
+const LEGACY_SOCKET_PATH = IS_WIN
   ? "\\\\.\\pipe\\nuwax-computer-use"
   : path.join(os.tmpdir(), "nuwax-computer-use.sock");
+const ENDPOINT_TOKEN_ENV = "CUA_DRIVER_NUWAX_TOKEN_FILE";
+type CuaEndpoint = { root: string; socketPath: string; tokenFile: string; token: string };
+let endpointCache: CuaEndpoint | null = null;
+
+/** 随安装保留的随机端点和能力文件；Unix 目录 0700，token 文件 0600。 */
+function endpoint(): CuaEndpoint {
+  const root = stableInstallDir();
+  if (endpointCache?.root === root) return endpointCache;
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() ||
+      (process.getuid && rootStat.uid !== process.getuid())) {
+    throw new Error("endpointDirectoryUntrusted");
+  }
+  if (!IS_WIN) fs.chmodSync(root, 0o700);
+  const manifest = path.join(root, "endpoint.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifest, "utf8")) as {
+      socketPath?: string; tokenFile?: string;
+    };
+    const socketPath = parsed.socketPath ?? "";
+    const privateDir = IS_WIN ? root : path.dirname(socketPath);
+    const dirStat = fs.lstatSync(privateDir);
+    const winPipePrefix = "\\\\.\\pipe\\nuwax-computer-use-";
+    const id = IS_WIN
+      ? socketPath.slice(winPipePrefix.length)
+      : path.basename(privateDir).slice(2);
+    const trusted = IS_WIN
+      ? socketPath.startsWith(winPipePrefix) &&
+        /^[0-9a-f]{32}$/.test(id)
+      : path.dirname(privateDir) === os.tmpdir() &&
+        /^c-[0-9a-f]{32}$/.test(path.basename(privateDir)) &&
+        path.basename(socketPath) === "s" &&
+        dirStat.isDirectory() && !dirStat.isSymbolicLink() &&
+        (!process.getuid || dirStat.uid === process.getuid()) &&
+        (dirStat.mode & 0o077) === 0;
+    const tokenFile = path.join(root, `endpoint-token-${id}`);
+    if (!trusted || parsed.tokenFile !== tokenFile) throw new Error("endpointManifestUntrusted");
+    const tokenStat = fs.lstatSync(tokenFile);
+    const token = fs.readFileSync(tokenFile, "utf8").trim();
+    if (tokenStat.isFile() && !tokenStat.isSymbolicLink() &&
+        (!process.getuid || tokenStat.uid === process.getuid()) &&
+        (IS_WIN || (tokenStat.mode & 0o077) === 0) &&
+        /^[0-9a-f]{64}$/.test(token)) {
+      endpointCache = { root, socketPath, tokenFile, token };
+      return endpointCache;
+    }
+  } catch { /* 首次安装或端点目录已由系统清理；重新生成 */ }
+  const id = randomBytes(16).toString("hex");
+  const privateDir = path.join(os.tmpdir(), `c-${id}`);
+  if (!IS_WIN) fs.mkdirSync(privateDir, { mode: 0o700 });
+  const socketPath = IS_WIN
+    ? `\\\\.\\pipe\\nuwax-computer-use-${id}`
+    : path.join(privateDir, "s");
+  const token = randomBytes(32).toString("hex");
+  const tokenFile = path.join(root, `endpoint-token-${id}`);
+  fs.writeFileSync(tokenFile, token, { flag: "wx", mode: 0o600 });
+  if (!IS_WIN) fs.chmodSync(tokenFile, 0o600);
+  const staged = `${manifest}.${randomUUID()}.stage`;
+  fs.writeFileSync(staged, JSON.stringify({ socketPath, tokenFile }), { flag: "wx", mode: 0o600 });
+  fs.renameSync(staged, manifest);
+  endpointCache = { root, socketPath, tokenFile, token };
+  return endpointCache;
+}
 
 /** helper 安装的稳定路径（首用安装流目标；学 ZCode：数据目录 + 安装锁）。 */
 function stableInstallDir(): string {
@@ -89,21 +170,105 @@ function helperExecutable(helperRoot: string): string {
   return helperRoot;
 }
 
-function probeSocket(sockPath: string): Promise<boolean> {
+async function isDaemonAlive(): Promise<boolean> {
+  const reply = await requestDaemon("metadata");
+  return reply?.ok === true && typeof reply.result?.driver_version === "string";
+}
+
+interface DaemonReply {
+  ok?: boolean;
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+async function requestDaemon(method: string, name?: string, args?: Record<string, unknown>): Promise<DaemonReply | null> {
   return new Promise((resolve) => {
-    const s = net.connect(sockPath);
-    const done = (ok: boolean) => {
-      s.destroy();
-      resolve(ok);
+    let selected: CuaEndpoint;
+    try { selected = endpoint(); }
+    catch { resolve(null); return; }
+    const socket = net.connect(selected.socketPath);
+    let settled = false;
+    let response = "";
+    let proofAccepted = false;
+    const nonce = randomBytes(16).toString("hex");
+    const finish = (result: DaemonReply | null = null) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
     };
-    s.setTimeout(500, () => done(false));
-    s.on("connect", () => done(true));
-    s.on("error", () => done(false));
+    socket.setTimeout(3000, () => finish());
+    socket.on("error", () => finish());
+    socket.on("close", () => finish());
+    socket.on("end", () => finish());
+    socket.on("connect", () => {
+      socket.write(`${JSON.stringify({ method: "metadata", args: { nuwax_nonce: nonce } })}\n`);
+    });
+    socket.on("data", (chunk: Buffer) => {
+      response += chunk.toString("utf8");
+      if (response.length > 65536) return finish();
+      while (response.includes("\n")) {
+        const lineEnd = response.indexOf("\n");
+        const line = response.slice(0, lineEnd);
+        response = response.slice(lineEnd + 1);
+        try {
+          const reply = JSON.parse(line) as DaemonReply;
+          if (!proofAccepted) {
+            const actual = reply.result?.nuwax_endpoint_proof;
+            const expected = createHmac("sha256", selected.token).update(nonce).digest("hex");
+            if (reply.ok !== true || typeof actual !== "string" ||
+                actual.length !== expected.length ||
+                !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) return finish();
+            proofAccepted = true;
+            socket.write(`${JSON.stringify({
+              method, name, args,
+              observation_origin: "direct", client_kind: "cli",
+              nuwax_client_token: selected.token,
+            })}\n`);
+          } else {
+            return finish(reply);
+          }
+        } catch {
+          return finish();
+        }
+      }
+    });
   });
 }
 
-async function isDaemonAlive(): Promise<boolean> {
-  return fs.existsSync(SOCKET_PATH) && (await probeSocket(SOCKET_PATH));
+/** 通过 helper 自己的 daemon 查询 TCC；不从主客户端进程推断授权，也不触发系统弹窗。 */
+async function probeDaemonPermissions(): Promise<{
+  accessibility: boolean | null;
+  screenRecording: boolean | null;
+}> {
+  const unknown = { accessibility: null, screenRecording: null };
+  if (!IS_MAC) return unknown;
+  const reply = await requestDaemon("call", "check_permissions", { prompt: false });
+  const sc = reply?.result?.structuredContent as Record<string, unknown> | undefined;
+  const source = sc?.source as { attribution?: unknown } | undefined;
+  if (!reply?.ok || source?.attribution !== "driver-daemon" ||
+      (source as { bundle_id?: unknown }).bundle_id !== HELPER_BUNDLE_ID) return unknown;
+  return {
+    accessibility: typeof sc?.accessibility === "boolean" ? sc.accessibility : null,
+    screenRecording: typeof sc?.screen_recording === "boolean" ? sc.screen_recording : null,
+  };
+}
+
+/** 初启 gate 会短暂返回 permissions_pending；在上限内复查，超时保持关闭。 */
+async function waitForDaemonPermissions(timeoutMs: number): Promise<{
+  accessibility: boolean | null; screenRecording: boolean | null;
+}> {
+  const deadline = Date.now() + timeoutMs;
+  let latest = { accessibility: null, screenRecording: null } as {
+    accessibility: boolean | null; screenRecording: boolean | null;
+  };
+  do {
+    latest = await probeDaemonPermissions();
+    if (latest.accessibility === true && latest.screenRecording === true) return latest;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  } while (true);
+  return latest;
 }
 
 /** 等待 daemon 就绪（open 拉起为异步，socket 文件出现即可握手）。 */
@@ -116,6 +281,15 @@ async function waitForSocket(timeoutMs: number): Promise<boolean> {
   return false;
 }
 
+async function waitForDaemonStopped(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isDaemonAlive())) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return !(await isDaemonAlive());
+}
+
 /**
  * 驱动自有落盘的统一宿主目录（补丁 3 的 CUA_DRIVER_DATA_HOME）：~/.nuwax/computer-use
  * （与 nuwax.db 同源=APP_DATA_DIR_NAME 派生）——pid/telemetry·install 标记/history/
@@ -126,16 +300,83 @@ function cuaDataHome(): string {
 }
 
 /** daemon 进程环境：数据目录内聚 env（须与补丁 3 的开关同名）。 */
-function daemonEnv(): { [key: string]: string } {
+function daemonEnv(policyPath: string): { [key: string]: string } {
+  const inherited = { ...process.env };
+  delete inherited.CUA_DRIVER_RS_MCP_HTTP_PORT;
+  delete inherited.CUA_DRIVER_RS_MCP_HTTP_TOKEN;
+  delete inherited.CUA_DRIVER_ENVELOPE_HTTP_PORT;
+  delete inherited.CUA_DRIVER_ENVELOPE_PERMISSION_MODE;
   return {
-    ...process.env,
+    ...inherited,
     CUA_DRIVER_DATA_HOME: cuaDataHome(),
+    CUA_DRIVER_MANAGED_POLICY_FILE: policyPath,
+    [ENDPOINT_TOKEN_ENV]: endpoint().tokenFile,
   } as { [key: string]: string };
 }
 
+function policyDigest(filename: string, contents: Buffer): string {
+  const hash = createHash("sha256");
+  const length = (value: number) => {
+    const bytes = Buffer.alloc(8);
+    bytes.writeBigUInt64BE(BigInt(value));
+    return bytes;
+  };
+  hash.update("cua-driver-policy-v1\0");
+  hash.update(length(Buffer.byteLength(filename)));
+  hash.update(filename);
+  hash.update(length(contents.length));
+  hash.update(contents);
+  return hash.digest("hex");
+}
+
+/** 主进程托管的驱动策略同时覆盖 MCP 与同用户私有 socket 直连。 */
+function prepareCuaPolicy(): { path: string; sha256: string } {
+  const dir = cuaDataHome();
+  const filename = "nuwax-capabilities.yaml";
+  const target = path.join(dir, filename);
+  const contents = Buffer.from([
+    "allow:", "  tools:",
+    ...CUA_ALLOWED_TOOLS.map((tool) => `    - ${tool}`),
+    "deny:", "  tools:",
+    ...CUA_DENIED_TOOLS.map((tool) => `    - ${tool}`),
+    "",
+  ].join("\n"));
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(target) || !fs.readFileSync(target).equals(contents)) {
+    const stage = path.join(dir, `.${filename}.${randomUUID()}.stage`);
+    try {
+      fs.writeFileSync(stage, contents, { mode: 0o600 });
+      fs.renameSync(stage, target);
+    } finally {
+      fs.rmSync(stage, { force: true });
+    }
+  }
+  return { path: target, sha256: policyDigest(filename, contents) };
+}
+
+async function verifyDaemonAuthorization(expectedSha256: string): Promise<boolean> {
+  const reply = await requestDaemon("authorization_status");
+  const status = reply?.result;
+  return reply?.ok === true &&
+    status?.permission_mode === "unrestricted" &&
+    status?.permission_mode_valid === true &&
+    status?.managed_policy_active === true &&
+    status?.managed_policy_valid === true &&
+    status?.managed_policy_sha256 === expectedSha256;
+}
+
+/** 用户在设置页一次性确认全范围操作后，daemon 固定用无需逐次审批的模式启动。 */
+function daemonServeArgs(): string[] {
+  return [
+    "serve", "--socket", endpoint().socketPath,
+    "--permission-mode", "unrestricted", "--dangerously-bypass-approvals",
+  ];
+}
+
 /** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win/linux 直跑二进制。 */
-async function launchDaemon(helperRoot: string): Promise<void> {
-  if (await isDaemonAlive()) return;
+async function launchDaemon(helperRoot: string): Promise<string> {
+  const policy = prepareCuaPolicy();
+  if (await isDaemonAlive()) return policy.sha256;
   if (IS_MAC) {
     const child = spawn(
       "open",
@@ -143,29 +384,29 @@ async function launchDaemon(helperRoot: string): Promise<void> {
         "-n",
         "--env",
         `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
+        "--env",
+        `CUA_DRIVER_MANAGED_POLICY_FILE=${policy.path}`,
+        "--env",
+        `${ENDPOINT_TOKEN_ENV}=${endpoint().tokenFile}`,
         helperRoot,
         "--args",
-        "serve",
-        "--socket",
-        SOCKET_PATH,
+        ...daemonServeArgs(),
       ],
-      { detached: true, stdio: "ignore" },
+      { detached: true, stdio: "ignore", env: daemonEnv(policy.path) },
     );
     child.unref();
-    log.info("[Cua] daemon launch dispatched:", SOCKET_PATH);
-    return;
+    log.info("[Cua] daemon launch dispatched:", endpoint().socketPath);
+    return policy.sha256;
   }
   if (IS_WIN || IS_LINUX) {
-    const child = spawn(helperExecutable(helperRoot), [
-      "serve",
-      "--socket",
-      SOCKET_PATH,
-    ], { detached: true, stdio: "ignore", env: daemonEnv() });
+    const child = spawn(helperExecutable(helperRoot), daemonServeArgs(), {
+      detached: true, stdio: "ignore", env: daemonEnv(policy.path),
+    });
     child.unref();
-    log.info("[Cua] daemon spawn dispatched:", SOCKET_PATH);
-    return;
+    log.info("[Cua] daemon spawn dispatched:", endpoint().socketPath);
+    return policy.sha256;
   }
-  log.warn("[Cua] unsupported platform for daemon launch:", process.platform);
+  throw new Error(`unsupportedPlatform:${process.platform}`);
 }
 
 /**
@@ -174,35 +415,49 @@ async function launchDaemon(helperRoot: string): Promise<void> {
  */
 export async function stopDaemon(): Promise<void> {
   const helperPath = findHelperApp();
+  let stopped = false;
   if (helperPath) {
     try {
-      await pexec(helperExecutable(helperPath), ["stop", "--socket", SOCKET_PATH], {
+      await pexec(helperExecutable(helperPath), ["stop", "--socket", endpoint().socketPath], {
         timeout: 4000,
+        env: { ...process.env, [ENDPOINT_TOKEN_ENV]: endpoint().tokenFile },
       });
       log.info("[Cua] daemon stopped via protocol");
-      return;
+      stopped = true;
     } catch {
       // 协议停失败（未运行/超时）→ 回退强杀
     }
   }
   try {
-    if (IS_WIN) {
-      // 命名管道端点无独立 pid 可 pgrep，按命令行匹配杀。两段通配吸收
-      // `\\.\pipe\` 前缀——单段 `*serve --socket nuwax-computer-use*` 与实际
-      // 命令行（serve --socket \\.\pipe\nuwax-computer-use）不连续，恒不匹配。
-      await pexec(
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-        ],
-      );
-    } else {
-      await pexec("pkill", ["-f", `serve --socket ${SOCKET_PATH}`]);
+    if (stopped) return;
+    if (!IS_WIN) {
+      await pexec("pkill", ["-f", `serve --socket ${endpoint().socketPath}`]);
     }
   } catch {
     // 未在运行，无需清理
+  } finally {
+    // 升级前固定端点上的旧 unrestricted daemon 也必须收掉。
+    if (helperPath) {
+      const legacyEnv = { ...process.env };
+      delete legacyEnv[ENDPOINT_TOKEN_ENV];
+      await pexec(helperExecutable(helperPath), ["stop", "--socket", LEGACY_SOCKET_PATH], {
+        timeout: 4000, env: legacyEnv,
+      }).catch(() => undefined);
+    }
+    if (IS_WIN) {
+      // 包含升级前固定 pipe 与新的随机 pipe；按同产品 serve 命令线兜底清理。
+      await pexec("powershell", [
+        "-NoProfile", "-Command",
+        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+      ]).catch(() => undefined);
+    } else {
+      await pexec("pkill", ["-f", `serve --socket ${LEGACY_SOCKET_PATH}`]).catch(() => undefined);
+      // token/manifest 丢失时无法恢复旧随机端点；按产品 helper 名清理孤儿 daemon。
+      const helperPattern = IS_MAC
+        ? "Nuwax Computer Use.*serve --socket"
+        : "NuwaxComputerUse.*serve --socket";
+      await pexec("pkill", ["-f", helperPattern]).catch(() => undefined);
+    }
   }
 }
 
@@ -216,6 +471,16 @@ function readEnabled(): boolean {
 function persistEnabled(enabled: boolean) {
   const step1 = (readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
   writeSetting(STEP1_KEY, { ...step1, computerUseEnabled: enabled });
+}
+
+function consentPending(): boolean {
+  const step1 = readSetting(STEP1_KEY) as { computerUseConsentPending?: boolean } | null;
+  return step1?.computerUseConsentPending === true;
+}
+
+function persistConsentPending(pending: boolean): void {
+  const step1 = (readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
+  writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
 }
 
 // ========== MCP 条目注入（照 guiMcpLocalConfig.syncGuiAgentLocalMcpConfig 先例） ==========
@@ -256,7 +521,8 @@ function isMcpInjected(): boolean {
 export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
   const db = getDb();
   if (!db) {
-    log.warn("[Cua] Database not ready, skip MCP sync");
+    if (enabled) throw new Error("databaseNotReady");
+    log.warn("[Cua] Database not ready, skip MCP removal");
     return;
   }
   const config = readMcpLocalConfig();
@@ -268,8 +534,11 @@ export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
     } else {
       servers[MCP_SERVER_ID] = {
         command: helperExecutable(helperRoot),
-        args: ["mcp", "--socket", SOCKET_PATH],
+        args: ["mcp", "--socket", endpoint().socketPath],
+        env: { [ENDPOINT_TOKEN_ENV]: endpoint().tokenFile },
         enabled: true,
+        allowTools: CUA_ALLOWED_TOOLS,
+        denyTools: CUA_DENIED_TOOLS,
       };
     }
   } else {
@@ -296,17 +565,83 @@ export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
 
 export async function getCuaStatus(): Promise<CuaStatus> {
   const helperPath = findHelperApp();
+  let running = await isDaemonAlive();
+  const permissions = running && IS_MAC
+    ? await probeDaemonPermissions()
+    : lastPermissionHint;
+  if (running && IS_MAC) lastPermissionHint = permissions;
+  let policyValid = true;
+  if (running && readEnabled()) {
+    try { policyValid = await verifyDaemonAuthorization(prepareCuaPolicy().sha256); }
+    catch { policyValid = false; }
+  }
+  // 启动期尚未跑 ensureCuaOnBoot 时 monitor 不存在，不能把“尚未拉起”误判为掉线。
+  if (readEnabled() && !cuaBootReconciling && !cuaLifecycleBusy &&
+      ((!running && cuaMonitor !== null) ||
+       (running && (!policyValid ||
+        (IS_MAC && (!permissions.accessibility || !permissions.screenRecording)))))) {
+    lastCuaError = !running ? "daemonNotReady" :
+      !policyValid ? "policyNotActive" : "permissionsRequired";
+    await serializeCua(async () => {
+      if (readEnabled()) await disableCua();
+    }).catch((e) => log.warn("[Cua] status cleanup failed", e));
+    running = await isDaemonAlive();
+  }
   return {
     supported: IS_MAC || IS_WIN || IS_LINUX,
     installed: !!helperPath,
     installable: !helperPath && !!findBundledHelper(),
-    running: await isDaemonAlive(),
+    running,
     enabled: readEnabled(),
+    consentPending: consentPending(),
     mcpInjected: isMcpInjected(),
-    socketPath: SOCKET_PATH,
+    socketPath: endpoint().socketPath,
     helperPath,
-    ...lastPermissionHint,
+    ...permissions,
+    error: lastCuaError,
   };
+}
+
+let lastCuaError: string | null = null;
+let cuaBootReconciling = false;
+let cuaMonitor: NodeJS.Timeout | null = null;
+let cuaLifecycle: Promise<void> = Promise.resolve();
+let cuaLifecycleBusy = false;
+let cuaDisableEpoch = 0;
+
+function serializeCua<T>(action: () => Promise<T>): Promise<T> {
+  const next = cuaLifecycle.then(async () => {
+    cuaLifecycleBusy = true;
+    try { return await action(); }
+    finally { cuaLifecycleBusy = false; }
+  });
+  cuaLifecycle = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+function stopCuaMonitor(): void {
+  if (cuaMonitor) clearInterval(cuaMonitor);
+  cuaMonitor = null;
+}
+
+function startCuaMonitor(): void {
+  stopCuaMonitor();
+  cuaMonitor = setInterval(() => {
+    void getCuaStatus().catch((e) => log.warn("[Cua] status monitor failed", e));
+  }, 30_000);
+  cuaMonitor.unref();
+}
+
+async function disableCua(): Promise<void> {
+  stopCuaMonitor();
+  persistEnabled(false);
+  persistConsentPending(false);
+  try {
+    await syncCuaMcpConfig(false);
+  } finally {
+    await stopDaemon();
+    if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+  }
 }
 
 export async function setCuaEnabled(enabled: boolean): Promise<{
@@ -314,25 +649,73 @@ export async function setCuaEnabled(enabled: boolean): Promise<{
   error?: string;
   status: CuaStatus;
 }> {
-  const helperPath = findHelperApp();
-  if (enabled && !helperPath) {
-    return {
-      success: false,
-      error: findBundledHelper() ? "helperNotInstalledBundled" : "helperNotInstalled",
-      status: await getCuaStatus(),
-    };
+  if (!enabled) cuaDisableEpoch++;
+  const epoch = cuaDisableEpoch;
+  return serializeCua(() => setCuaEnabledUnlocked(enabled, epoch));
+}
+
+async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
+  success: boolean; error?: string; status: CuaStatus;
+}> {
+  if (!enabled) {
+    try {
+      await disableCua();
+      lastPermissionHint = { accessibility: null, screenRecording: null };
+      lastCuaError = null;
+      return { success: true, status: await getCuaStatus() };
+    } catch (e) {
+      lastCuaError = "disableFailed";
+      log.warn("[Cua] disable failed", e);
+      return { success: false, error: lastCuaError, status: await getCuaStatus() };
+    }
   }
-  persistEnabled(enabled);
-  if (enabled) {
-    await launchDaemon(helperPath!);
-    const ready = await waitForSocket(5000);
-    if (!ready) log.warn("[Cua] daemon not ready in 5s, MCP entry injected anyway");
-    await syncCuaMcpConfig(true);
-  } else {
+  try {
+    // 此调用只在用户接受一次性全范围确认后发出；系统授权未完成时保留待办。
+    persistConsentPending(true);
+    // 任何旧条目先撤销；直到安装、系统授权和 daemon 双重探测全部通过才持久启用。
+    persistEnabled(false);
     await syncCuaMcpConfig(false);
+    const installed = await installCuaHelper();
+    if (!installed.success || !installed.installedPath) {
+      throw new Error(installed.error ?? "helperNotInstalled");
+    }
+    if (IS_MAC) {
+      const permission = await requestCuaPermissions();
+      if (!permission.success || !permission.accessibility || !permission.screenRecording) {
+        throw new Error(permission.error ?? "permissionsRequired");
+      }
+    }
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     await stopDaemon();
+    if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+    const policySha256 = await launchDaemon(installed.installedPath);
+    if (!(await waitForSocket(8000))) throw new Error("daemonNotReady");
+    if (!(await verifyDaemonAuthorization(policySha256))) throw new Error("policyNotActive");
+    if (IS_MAC) {
+      const confirmed = await waitForDaemonPermissions(8000);
+      lastPermissionHint = confirmed;
+      if (!confirmed.accessibility || !confirmed.screenRecording) {
+        throw new Error("permissionsRequired");
+      }
+    }
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
+    await syncCuaMcpConfig(true);
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
+    persistEnabled(true);
+    persistConsentPending(false);
+    lastCuaError = null;
+    startCuaMonitor();
+    return { success: true, status: await getCuaStatus() };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    lastCuaError = reason;
+    log.warn("[Cua] enable rejected", reason);
+    await disableCua().catch((cleanupError) =>
+      log.warn("[Cua] enable cleanup failed", cleanupError),
+    );
+    if (reason === "permissionsRequired" || reason === "timeout") persistConsentPending(true);
+    return { success: false, error: reason, status: await getCuaStatus() };
   }
-  return { success: true, status: await getCuaStatus() };
 }
 
 /**
@@ -341,20 +724,48 @@ export async function setCuaEnabled(enabled: boolean): Promise<{
  * lifecycle start 回调（restartAllServicesNow 之后，不阻塞启动主链）。
  */
 export async function ensureCuaOnBoot(): Promise<void> {
-  if (!readEnabled()) return;
-  const helperPath = findHelperApp();
-  if (!helperPath) {
-    await syncCuaMcpConfig(false);
+  const epoch = cuaDisableEpoch;
+  return serializeCua(() => ensureCuaOnBootUnlocked(epoch));
+}
+
+async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
+  if (!readEnabled()) {
+    if (isMcpInjected()) await syncCuaMcpConfig(false);
     return;
   }
+  cuaBootReconciling = true;
   try {
-    await launchDaemon(helperPath);
-    const ready = await waitForSocket(8000);
-    if (!ready) log.warn("[Cua] boot: daemon not ready in 8s");
+    const installed = await installCuaHelper();
+    if (!installed.success || !installed.installedPath) {
+      throw new Error(installed.error ?? "helperNotInstalled");
+    }
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
+    await stopDaemon();
+    if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+    const policySha256 = await launchDaemon(installed.installedPath);
+    if (!(await waitForSocket(8000))) throw new Error("daemonNotReady");
+    if (!(await verifyDaemonAuthorization(policySha256))) throw new Error("policyNotActive");
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
+    if (IS_MAC) {
+      const confirmed = await waitForDaemonPermissions(8000);
+      lastPermissionHint = confirmed;
+      if (!confirmed.accessibility || !confirmed.screenRecording) {
+        throw new Error("permissionsRequired");
+      }
+    }
+    await syncCuaMcpConfig(true);
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
+    lastCuaError = null;
+    startCuaMonitor();
   } catch (e) {
     log.warn("[Cua] boot: daemon launch failed", e);
+    lastCuaError = e instanceof Error ? e.message : String(e);
+    await disableCua().catch((cleanupError) =>
+      log.warn("[Cua] boot cleanup failed", cleanupError),
+    );
+  } finally {
+    cuaBootReconciling = false;
   }
-  await syncCuaMcpConfig(true);
 }
 
 // ========== 首用安装流（Resources → userData 稳定路径；学 ZCode：签名/bundle id 校验+安装锁） ==========
@@ -369,12 +780,13 @@ export interface CuaInstallResult {
   installedPath?: string | null;
 }
 
-/** 校验 helper 签名与 bundle id（防同名近似条目/被篡改的 bundled 源；win 无签名校验）。 */
+/** 校验 helper 签名与 bundle id（防同名近似条目/被篡改的 bundled 源）。 */
 async function verifyHelperSignature(
   appPath: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!IS_MAC) return { ok: true };
   try {
+    await pexec("codesign", ["--verify", "--strict", appPath]);
     // codesign -dv 的详细信息输出在 stderr
     const r = await pexec("codesign", ["-dv", "--verbose=2", appPath]);
     const out = `${r.stderr ?? ""}\n${r.stdout ?? ""}`;
@@ -383,9 +795,8 @@ async function verifyHelperSignature(
     if (id !== HELPER_BUNDLE_ID) {
       return { ok: false, error: `bundle-id-mismatch:${id ?? "none"}` };
     }
-    if (!team || team === "not set") {
-      // ad-hoc（无 Team）只可能出现在 dev；产品 CI 产线必须 Developer ID 正签
-      log.warn("[Cua] helper has no TeamIdentifier (ad-hoc? dev tolerance)");
+    if (app.isPackaged && team !== HELPER_TEAM_ID) {
+      return { ok: false, error: `team-id-mismatch:${team ?? "none"}` };
     }
     return { ok: true };
   } catch (e) {
@@ -393,52 +804,119 @@ async function verifyHelperSignature(
   }
 }
 
+/** 以路径、类型和文件内容生成稳定校验值，避免仅凭“文件存在”跳过 helper 升级。 */
+function helperDigest(root: string): string {
+  const hash = createHash("sha256");
+  const visit = (target: string, relative: string) => {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) {
+      hash.update(`L:${relative}:${fs.readlinkSync(target)}\n`);
+    } else if (stat.isDirectory()) {
+      hash.update(`D:${relative}\n`);
+      for (const name of fs.readdirSync(target).sort()) {
+        visit(path.join(target, name), path.join(relative, name));
+      }
+    } else if (stat.isFile()) {
+      hash.update(`F:${relative}:${stat.size}\n`);
+      hash.update(fs.readFileSync(target));
+    } else {
+      throw new Error(`unsupported helper entry: ${relative}`);
+    }
+  };
+  visit(root, "");
+  return hash.digest("hex");
+}
+
+function recoverInterruptedHelperInstall(): void {
+  const dest = path.join(stableInstallDir(), helperArtifactName());
+  if (fs.existsSync(dest) || !fs.existsSync(stableInstallDir())) return;
+  const prefix = IS_MAC
+    ? `${helperArtifactName().slice(0, -4)}.backup-`
+    : `${helperArtifactName()}.backup-`;
+  const backups = fs.readdirSync(stableInstallDir())
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => path.join(stableInstallDir(), name))
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  if (backups[0]) fs.renameSync(backups[0], dest);
+}
+
 /**
  * 首用透明安装：随包 Resources 的 helper → userData/computer-use 稳定路径。
- * 安装后自动触发一次权限探测（已授权静默返回；未授权弹系统引导窗=TCC 归属自校验）。
- * 幂等：已安装直接返回成功。
+ * 校验 bundled → 临时副本 → 原子替换稳定路径；失败恢复旧版本。
+ * 系统授权仅在用户显式开启时请求，安装本身不弹权限窗。
  */
 export async function installCuaHelper(): Promise<CuaInstallResult> {
-  const existing = findHelperApp();
-  if (existing) return { success: true, installedPath: existing };
+  try {
+    recoverInterruptedHelperInstall();
+  } catch (e) {
+    return { success: false, error: `install-recovery:${String(e).slice(0, 120)}` };
+  }
   const bundled = findBundledHelper();
-  if (!bundled) return { success: false, error: "bundledNotFound" };
+  const existing = findHelperApp();
+  if (!bundled) {
+    if (existing && !app.isPackaged) return { success: true, installedPath: existing };
+    return { success: false, error: "bundledNotFound" };
+  }
   const verify = await verifyHelperSignature(bundled);
   if (!verify.ok) return { success: false, error: verify.error };
-  // 目标名必须与探测侧 helperArtifactName() 同源（linux=裸二进制 NuwaxComputerUse，
-  // 曾因 win/mac 二元判断装成 .app 名致 Linux installed 恒 false）
   const dest = path.join(stableInstallDir(), helperArtifactName());
+  const suffix = `${process.pid}-${randomUUID()}`;
+  const staged = IS_MAC ? `${dest.slice(0, -4)}.stage-${suffix}.app` : `${dest}.stage-${suffix}`;
+  const backup = IS_MAC ? `${dest.slice(0, -4)}.backup-${suffix}.app` : `${dest}.backup-${suffix}`;
+  const lock = path.join(stableInstallDir(), ".install-lock");
+  const lockTemp = `${lock}.stage-${suffix}`;
+  let movedOld = false;
+  let movedNew = false;
   try {
     fs.mkdirSync(stableInstallDir(), { recursive: true });
-    fs.rmSync(dest, { recursive: true, force: true });
-    fs.cpSync(bundled, dest, { recursive: true, verbatimSymlinks: true });
+    const sourceDigest = helperDigest(bundled);
+    if (fs.existsSync(dest) && helperDigest(dest) === sourceDigest) {
+      const installedVerify = await verifyHelperSignature(dest);
+      if (installedVerify.ok) return { success: true, installedPath: dest };
+    }
+    fs.cpSync(bundled, staged, { recursive: true, verbatimSymlinks: true });
     if (IS_LINUX) {
-      // 裸二进制：cpSync 保模式位，兜底显式置可执行（防打包源被剥位）
-      fs.chmodSync(dest, 0o755);
+      fs.chmodSync(staged, 0o755);
     }
     if (IS_MAC) {
-      // 清 quarantine/resource fork 残留（spike 坑④：cp 带的 xattr 会让 verify 报错）
-      await pexec("xattr", ["-cr", dest]).catch(() => undefined);
-      const v2 = await verifyHelperSignature(dest);
+      await pexec("xattr", ["-cr", staged]).catch(() => undefined);
+      const v2 = await verifyHelperSignature(staged);
       if (!v2.ok) return { success: false, error: `install-verify:${v2.error}` };
-      // 路径搬迁会留脏 LS 记录/Spotlight 未索引（spike 配方：lsregister -f + mdimport）
+    }
+    if (helperDigest(staged) !== sourceDigest) throw new Error("helperCopyMismatch");
+    if (fs.existsSync(dest)) {
+      await stopDaemon();
+      if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+      fs.renameSync(dest, backup);
+      movedOld = true;
+    }
+    fs.renameSync(staged, dest);
+    movedNew = true;
+    fs.writeFileSync(lockTemp, JSON.stringify({
+      installedAt: new Date().toISOString(), source: bundled, sha256: sourceDigest,
+    }));
+    fs.renameSync(lockTemp, lock);
+    if (IS_MAC) {
       await pexec(LSREGISTER, ["-f", dest]).catch(() => undefined);
       await pexec("mdimport", [dest]).catch(() => undefined);
     }
-    // 安装锁：溯源标记（安装时间+来源），兼作并发安装的完成信号
-    fs.writeFileSync(
-      path.join(stableInstallDir(), ".install-lock"),
-      JSON.stringify(
-        { installedAt: new Date().toISOString(), source: bundled },
-        null,
-        1,
-      ),
-    );
+    if (movedOld) {
+      try { fs.rmSync(backup, { recursive: true, force: true }); }
+      catch (e) { log.warn("[Cua] stale helper backup cleanup failed", e); }
+    }
   } catch (e) {
+    try {
+      if (movedNew) fs.rmSync(dest, { recursive: true, force: true });
+      if (movedOld) fs.renameSync(backup, dest);
+    } catch (rollbackError) {
+      return { success: false, error: `install-rollback:${String(rollbackError).slice(0, 120)}` };
+    }
     return { success: false, error: String(e).slice(0, 200) };
+  } finally {
+    try { fs.rmSync(staged, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { fs.rmSync(lockTemp, { force: true }); } catch { /* best effort */ }
   }
   log.info("[Cua] helper installed to", dest);
-  void requestCuaPermissions().catch(() => undefined);
   return { success: true, installedPath: dest };
 }
 
@@ -458,11 +936,15 @@ export interface CuaStatus {
   installable: boolean;
   running: boolean;
   enabled: boolean;
+  /** 已接受一次性确认、仍待系统授权；仅显式重试可继续启用。 */
+  consentPending: boolean;
   mcpInjected: boolean;
   socketPath: string;
   helperPath: string | null;
   accessibility: boolean | null;
   screenRecording: boolean | null;
+  /** 最近一次启用或运行时检查失败原因；禁用/重试成功后清除。 */
+  error: string | null;
 }
 
 export interface CuaPermissionsResult {
@@ -495,31 +977,38 @@ export async function requestCuaPermissions(): Promise<CuaPermissionsResult> {
   }
   const resultFile = path.join(
     os.tmpdir(),
-    `cua-driver-permissions-${process.pid}.json`,
+    `cua-driver-permissions-${process.pid}-${randomUUID()}.json`,
   );
+  lastPermissionHint = { accessibility: null, screenRecording: null };
   try {
     fs.rmSync(resultFile, { force: true });
     fs.writeFileSync(resultFile, "", { mode: 0o600 });
   } catch {
     // 结果文件写不进去时宿主自身会以安全码退出，此处不拦截
   }
-  const child = spawn(
-    "open",
-    [
-      "-n",
-      "-g",
-      helperPath,
-      "--args",
-      "__permissions-host-request",
-      "--result-file",
-      resultFile,
-      "--probe-direct-capture",
-    ],
-    { detached: true, stdio: "ignore" },
-  );
-  child.unref();
+  let spawnFailed = false;
+  try {
+    const child = spawn(
+      "open",
+      [
+        "-n", "-g", "--env", `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
+        helperPath, "--args", "__permissions-host-request",
+        "--result-file", resultFile, "--probe-direct-capture",
+      ],
+      { detached: true, stdio: "ignore" },
+    );
+    child.on("error", () => { spawnFailed = true; });
+    child.unref();
+  } catch {
+    fs.rmSync(resultFile, { force: true });
+    return { success: false, error: "permissionHostFailed", ...lastPermissionHint };
+  }
   // 权限宿主完成探测即退出并写结果；等待上限 20s
   for (let i = 0; i < 40; i++) {
+    if (spawnFailed) {
+      fs.rmSync(resultFile, { force: true });
+      return { success: false, error: "permissionHostFailed", ...lastPermissionHint };
+    }
     await new Promise((r) => setTimeout(r, 500));
     try {
       const raw = fs.readFileSync(resultFile, "utf-8");
@@ -527,17 +1016,31 @@ export async function requestCuaPermissions(): Promise<CuaPermissionsResult> {
         const sc = (JSON.parse(raw).structuredContent ?? {}) as {
           accessibility?: boolean;
           screen_recording?: boolean;
+          screen_recording_capturable?: boolean;
+          direct_capture_verification_error?: unknown;
+          direct_capture_verification?: { bundle_id?: string };
+          source?: { attribution?: string; bundle_id?: string };
         };
         lastPermissionHint = {
-          accessibility: sc.accessibility ?? null,
-          screenRecording: sc.screen_recording ?? null,
+          accessibility: typeof sc.accessibility === "boolean" ? sc.accessibility : null,
+          screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
         };
+        fs.rmSync(resultFile, { force: true });
+        if (!sc.accessibility || !sc.screen_recording ||
+            sc.screen_recording_capturable !== true ||
+            sc.direct_capture_verification_error != null ||
+            sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID ||
+            sc.source?.attribution !== "driver-daemon" ||
+            sc.source.bundle_id !== HELPER_BUNDLE_ID) {
+          return { success: false, error: "permissionsRequired", ...lastPermissionHint };
+        }
         return { success: true, ...lastPermissionHint };
       }
     } catch {
       // 尚未写完，继续轮询
     }
   }
+  fs.rmSync(resultFile, { force: true });
   return { success: false, error: "timeout", ...lastPermissionHint };
 }
 

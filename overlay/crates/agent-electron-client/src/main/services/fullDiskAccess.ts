@@ -39,9 +39,9 @@ export const FULL_DISK_ACCESS_SETTING_KEY = "nuwax.fullDiskAccessPrompt";
  */
 const FDA_PROBE_PATH = "/Library/Application Support/com.apple.TCC/TCC.db";
 
-/** 子进程探测脚本：open TCC.db 成功 → exit 0；被拦（EPERM 等）→ exit 2。 */
+/** 子进程探测脚本：open TCC.db 成功 → exit 0；权限被拦 → exit 2；其他错误 → exit 3。 */
 const FDA_PROBE_SCRIPT =
-  'try{const fs=require("fs");const fd=fs.openSync(process.argv[1],"r");fs.closeSync(fd);process.exit(0)}catch(e){process.exit(2)}';
+  'try{const fs=require("fs");const fd=fs.openSync(process.argv[1],"r");fs.closeSync(fd);process.exit(0)}catch(e){process.exit(e&&["EACCES","EPERM"].includes(e.code)?2:3)}';
 
 /** 探测超时(ms)。正常 <100ms，给 5s 余量应对系统繁忙。 */
 const PROBE_TIMEOUT_MS = 5000;
@@ -58,11 +58,15 @@ const SETTINGS_RETURN_GRACE_MS = 500;
 export interface FullDiskAccessStatus {
   /** 当前平台是否存在 FDA 机制（仅 darwin） */
   supported: boolean;
-  /** 探测真值；非 darwin 恒 true（无此机制即无拦截） */
+  /** 仅 granted 时为 true；非 darwin 恒 true（无此机制即无拦截） */
   granted: boolean;
+  /** 探测失败不能冒充已授权；非 darwin 视为 granted。 */
+  probeStatus: FullDiskAccessProbeStatus;
   /** 用户是否拒绝过初始化引导（拒绝后不再自动弹窗） */
   dismissed: boolean;
 }
+
+export type FullDiskAccessProbeStatus = "granted" | "denied" | "unknown";
 
 // ==================== 运行态 ====================
 
@@ -98,12 +102,12 @@ export function isFullDiskAccessSupported(): boolean {
  * ELECTRON_RUN_AS_NODE，与 file-server 完全同一派生形态——TCC 身份=本应用，
  * 正是消费链路的代表。
  *
- * 成功结果不缓存（授权可能被撤销）；探测无法完成（超时/spawn 失败）视为
- * inconclusive 按已授权放行（不误弹引导，设置页状态行仍是人工复查入口）。
+ * 成功结果不缓存（授权可能被撤销）；探测无法完成（超时/spawn 失败）返回
+ * unknown，初始化引导仅在明确 denied 时出现。
  */
-export async function checkFullDiskAccess(): Promise<boolean> {
-  if (!isFullDiskAccessSupported()) return true;
-  return new Promise<boolean>((resolve) => {
+export async function probeFullDiskAccess(): Promise<FullDiskAccessProbeStatus> {
+  if (!isFullDiskAccessSupported()) return "granted";
+  return new Promise<FullDiskAccessProbeStatus>((resolve) => {
     let child;
     try {
       child = spawn(process.execPath, ["-e", FDA_PROBE_SCRIPT, FDA_PROBE_PATH], {
@@ -112,7 +116,7 @@ export async function checkFullDiskAccess(): Promise<boolean> {
       });
     } catch (e) {
       log.warn("[FullDiskAccess] probe spawn failed (inconclusive):", e);
-      resolve(true);
+      resolve("unknown");
       return;
     }
     // settled 守卫：超时/error/close 可能交错，保证只 resolve 一次
@@ -128,7 +132,7 @@ export async function checkFullDiskAccess(): Promise<boolean> {
       log.warn(
         `[FullDiskAccess] probe timed out after ${PROBE_TIMEOUT_MS}ms (inconclusive)`,
       );
-      resolve(true);
+      resolve("unknown");
     }, PROBE_TIMEOUT_MS);
     timer.unref?.();
     child.on("error", (err) => {
@@ -138,14 +142,13 @@ export async function checkFullDiskAccess(): Promise<boolean> {
       log.warn(
         `[FullDiskAccess] probe spawn error (inconclusive): ${err.message}`,
       );
-      resolve(true);
+      resolve("unknown");
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      const granted = code === 0;
-      if (granted) {
+      if (code === 0) {
         if (lastGranted === false) {
           log.info("[FullDiskAccess] granted (child probe passed)");
         }
@@ -161,7 +164,8 @@ export async function checkFullDiskAccess(): Promise<boolean> {
             log.error("[FullDiskAccess] restart dialog failed:", e),
           );
         }
-      } else {
+        resolve("granted");
+      } else if (code === 2) {
         if (lastGranted !== false) {
           log.info(
             `[FullDiskAccess] not granted (child probe blocked, exit=${code})`,
@@ -169,10 +173,18 @@ export async function checkFullDiskAccess(): Promise<boolean> {
         }
         lastGranted = false;
         sawNotGranted = true;
+        resolve("denied");
+      } else {
+        log.warn(`[FullDiskAccess] probe exited without result (exit=${code})`);
+        resolve("unknown");
       }
-      resolve(granted);
     });
   });
+}
+
+/** 兼容旧调用方：unknown 不触发主动引导；状态展示必须使用三态探测。 */
+export async function checkFullDiskAccess(): Promise<boolean> {
+  return (await probeFullDiskAccess()) !== "denied";
 }
 
 /** 解析持久化的拒绝标记（兼容对象形态 { dismissed } 与历史裸布尔） */
@@ -194,10 +206,11 @@ function markPromptDismissed(): void {
 
 /** IPC：状态快照（设置页状态行数据源） */
 export async function getFullDiskAccessStatus(): Promise<FullDiskAccessStatus> {
-  const granted = await checkFullDiskAccess();
+  const probeStatus = await probeFullDiskAccess();
   return {
     supported: isFullDiskAccessSupported(),
-    granted,
+    granted: probeStatus === "granted",
+    probeStatus,
     dismissed: isFullDiskAccessPromptDismissed(),
   };
 }
@@ -284,9 +297,9 @@ async function runInitPromptOnce(): Promise<void> {
   if (initPromptDone) return;
   initPromptDone = true;
   try {
-    const granted = await checkFullDiskAccess();
-    if (granted) {
-      log.info("[FullDiskAccess] init check: granted");
+    const probeStatus = await probeFullDiskAccess();
+    if (probeStatus !== "denied") {
+      log.info(`[FullDiskAccess] init check: ${probeStatus}`);
       return;
     }
     if (isFullDiskAccessPromptDismissed()) {
@@ -305,7 +318,7 @@ function silentRecheck(): void {
   const now = Date.now();
   if (now - lastSilentRecheckAt < SILENT_RECHECK_INTERVAL_MS) return;
   lastSilentRecheckAt = now;
-  void checkFullDiskAccess().catch(() => undefined);
+  void probeFullDiskAccess().catch(() => undefined);
 }
 
 /**

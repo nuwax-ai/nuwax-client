@@ -139,6 +139,7 @@ function params(patch: Record<string, unknown> = {}): ContextMenuParams {
     isEditable: false,
     linkURL: "",
     srcURL: "",
+    frameURL: "https://agent.nuwax.com/chat",
     selectionText: "",
     editFlags: {
       canUndo: false,
@@ -260,6 +261,7 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
       params({
         mediaType: "image",
         srcURL: "https://agent.nuwax.com/api/file/a.png",
+        frameURL: "https://agent.nuwax.com/embedded-frame",
         linkURL: "https://agent.nuwax.com/some/page",
         selectionText: "选中",
         editFlags: { canCopy: true },
@@ -285,7 +287,8 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
     clickItem(lastTemplate(), "Claw.ContextMenu.saveImageAs");
     expect(saveImageCoreMock).toHaveBeenCalledWith(
       { url: "https://agent.nuwax.com/api/file/a.png" },
-      "https://agent.nuwax.com/chat",
+      "https://agent.nuwax.com/embedded-frame",
+      guest,
     );
   });
 

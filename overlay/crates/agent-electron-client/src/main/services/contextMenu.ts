@@ -55,6 +55,7 @@ export interface ContextMenuDeps {
   saveImage: (
     opts: { url: string; filename?: string },
     frameUrl: string | undefined,
+    source: WebContents,
   ) => Promise<ContextMenuImageSaveResult>;
 }
 
@@ -296,12 +297,13 @@ function resolveOwnerWindow(wc: WebContents): BrowserWindow | null {
 
 function makeActions(
   wc: WebContents,
+  params: ContextMenuParams,
   deps: ContextMenuDeps,
 ): ContextMenuActions {
   return {
     saveImage: (url) => {
       void deps
-        .saveImage({ url }, safeGetURL(wc))
+        .saveImage({ url }, params.frameURL || undefined, wc)
         .then((result) => {
           // 取消静默；真实失败（如非 http 协议/会话切换/网络错误）用系统错误框
           // 告知——IPC 路径由前端 message.error 兜底，菜单路径没有页面 UI 可用。
@@ -333,7 +335,7 @@ function showContextMenu(
   params: ContextMenuParams,
   deps: ContextMenuDeps,
 ): void {
-  const template = buildContextMenuTemplate(params, readNavTruth(wc), makeActions(wc, deps));
+  const template = buildContextMenuTemplate(params, readNavTruth(wc), makeActions(wc, params, deps));
   if (!template.length) return;
   const menu = Menu.buildFromTemplate(template);
   menu.popup({
