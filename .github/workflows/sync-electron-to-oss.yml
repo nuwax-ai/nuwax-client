@@ -423,17 +423,20 @@ jobs:
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
           for i in 1 2 3 4 5 6; do
-            if aws s3api head-object \
+            # 错误原样透传（不吞 stderr）：诊断 MinIO IAM/寻址差异——v1.0.36
+            # dispatch 实证同凭据同前缀 upload(cp) 全成功而 head-object 6 连败。
+            if HEAD_OUT="$(aws s3api head-object \
               --bucket "${S3_BUCKET}" --key "${S3_PREFIX}/latest-mac.yml" \
-              --endpoint-url "$S3_ENDPOINT" >/dev/null 2>&1; then
+              --endpoint-url "$S3_ENDPOINT" 2>&1)"; then
               echo "==> S3 对象就绪（第 $i 次尝试）"
               break
             fi
             if [ "$i" = "6" ]; then
               echo "::error::S3 对象持续不可读: ${S3_PREFIX}/latest-mac.yml"
+              echo "head-object 输出: ${HEAD_OUT}"
               exit 1
             fi
-            echo "Attempt $i: 对象暂不可读，5s 后重试"
+            echo "Attempt $i: 对象暂不可读（${HEAD_OUT}），5s 后重试"
             sleep 5
           done
           for file in /tmp/release-assets/*; do
