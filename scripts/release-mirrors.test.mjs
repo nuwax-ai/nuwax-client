@@ -50,6 +50,15 @@ function fixture() {
     copyFileSync(join(assets, name), join(oss, name));
   }
   writeFileSync(join(bin, 'aws'), `#!/bin/sh
+case " $* " in *" --no-sign-request "*) ;; *) echo 'signed S3 read forbidden' >&2; exit 23 ;; esac
+if [ "$1" = s3api ] && [ "$2" = head-object ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --key ]; then name=$(basename "$2"); break; fi
+    shift
+  done
+  [ -f "$MOCK_S3_DIR/$name" ] || exit 44
+  exit 0
+fi
 [ "$1" = s3 ] && [ "$2" = cp ] && [ "$4" = - ] || exit 2
 name=$(basename "$3")
 cat "$MOCK_S3_DIR/$name" || exit

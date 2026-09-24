@@ -413,21 +413,17 @@ jobs:
           set -euo pipefail
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          # 可达性检查走 S3 API（与 upload 同通道）——v1.0.36 三次实证：upload
-          # 经 aws CLI 全成功而公网 curl 到 ${S3_CDN_BASE}（自建 MinIO 9443 非
-          # 标准端口）在 runner 上连接层瞬死（2.4s 内静默 exit 1），重试亦秒耗尽；
-          # 公网可达性改由下方逐资产 sha256 对拍覆盖，此处只确认对象存在。
+          # 发布对象公开可读。v1.0.36 的带签名 HeadObject 在 runner 上稳定
+          # 返回 403，匿名读取正常；用客户实际可访问的匿名路径校验。
           if [ "$CHANNEL" = beta ]; then
             S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
           else
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
           for i in 1 2 3 4 5 6; do
-            # 错误原样透传（不吞 stderr）：诊断 MinIO IAM/寻址差异——v1.0.36
-            # dispatch 实证同凭据同前缀 upload(cp) 全成功而 head-object 6 连败。
             if HEAD_OUT="$(aws s3api head-object \
               --bucket "${S3_BUCKET}" --key "${S3_PREFIX}/latest-mac.yml" \
-              --endpoint-url "$S3_ENDPOINT" 2>&1)"; then
+              --endpoint-url "$S3_ENDPOINT" --no-sign-request 2>&1)"; then
               echo "==> S3 对象就绪（第 $i 次尝试）"
               break
             fi
@@ -450,7 +446,7 @@ jobs:
                 [ -n "$expected" ] || { echo "::error::来源清单缺少资产: $name"; exit 1; } ;;
             esac
             actual="$(aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/${name}" - \
-              --endpoint-url "$S3_ENDPOINT" --quiet | sha256sum | cut -d' ' -f1)" \
+              --endpoint-url "$S3_ENDPOINT" --no-sign-request --quiet | sha256sum | cut -d' ' -f1)" \
               || { echo "::error::S3 读取失败: $name"; exit 1; }
             [ "$actual" = "$expected" ] || { echo "::error::S3 资产 SHA256 不一致: $name"; exit 1; }
           done
@@ -521,7 +517,7 @@ jobs:
           OSS_PREVIOUS=0
           S3_TOUCHED=0
           OSS_TOUCHED=0
-          if aws s3 cp "$S3_POINTER" /tmp/previous-s3-pointer.json --endpoint-url "$S3_ENDPOINT" 2>/tmp/s3-backup-error; then
+          if aws s3 cp "$S3_POINTER" /tmp/previous-s3-pointer.json --endpoint-url "$S3_ENDPOINT" --no-sign-request 2>/tmp/s3-backup-error; then
             S3_PREVIOUS=1
           elif ! grep -Eiq '404|NoSuchKey|not found' /tmp/s3-backup-error; then
             cat /tmp/s3-backup-error >&2
@@ -566,7 +562,7 @@ jobs:
           ossutil cp --force /tmp/latest.json "$OSS_POINTER" \
             --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
             --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-          aws s3 cp "$S3_POINTER" /tmp/current-s3-pointer.json --endpoint-url "$S3_ENDPOINT"
+          aws s3 cp "$S3_POINTER" /tmp/current-s3-pointer.json --endpoint-url "$S3_ENDPOINT" --no-sign-request
           ossutil cp --force "$OSS_POINTER" /tmp/current-oss-pointer.json \
             --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
             --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
