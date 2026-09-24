@@ -1,5 +1,7 @@
 # 规格：loopback 登录态 header 通道与资源路由
 
+> **历史方案（2026-09-24 标记）**：本文记录 1.0.32 之前的 Bearer/header 方案，已不再描述当前客户端鉴权实现。当前版本以 `release-notes/prerelease-v1.0.32.md` 所述的 ticket cookie 镜像，以及 `overlay/crates/agent-electron-client/src/main/services/commercialTicketSession.ts`、`sessionAuthInjection.ts` 为准；真实 Electron 回归见 `scripts/acceptance/loopback-login-sync.cjs`。原评审和验证记录保留用于追溯。
+
 - 日期：2026-09-22；对应 intent：`plans/20260922-loopback-login-sync-intent.md`。
 - 状态：代码评审后修订，用户已授权实施；自动验证、真实环境验收分别记录。
 - 基线：外层 `4562cdb4`、基座 `f59f1bbe`、前端 `df987b3b9`；分支 `codex/loopback-login-sync`。

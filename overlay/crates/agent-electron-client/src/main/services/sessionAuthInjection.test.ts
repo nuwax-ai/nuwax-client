@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OnBeforeSendHeadersListenerDetails } from "electron";
-const mocks = vi.hoisted(() => ({ install: vi.fn() }));
+const mocks = vi.hoisted(() => ({ install: vi.fn(), currentTicket: vi.fn<() => string | null>(() => null) }));
 vi.mock("electron", () => ({
   session: { defaultSession: { webRequest: { onBeforeSendHeaders: mocks.install } } },
   webContents: { fromId: vi.fn() },
 }));
 vi.mock("electron-log", () => ({ default: { info: vi.fn() } }));
+vi.mock("./commercialTicketSession", () => ({ currentTicket: mocks.currentTicket }));
 import { applySessionAuthHeaders, initSessionAuthInjection } from "./sessionAuthInjection";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
@@ -29,7 +30,7 @@ function request(overrides: Record<string, unknown> = {}): OnBeforeSendHeadersLi
     ...overrides,
   } as never;
 }
-beforeEach(() => mocks.install.mockClear());
+beforeEach(() => { mocks.install.mockClear(); mocks.currentTicket.mockReturnValue(null); });
 describe("business cookie session boundary", () => {
   it("keeps ticket on trusted business requests and removes legacy Bearer", () => {
     expect(applySessionAuthHeaders(request({ requestHeaders: {
@@ -68,6 +69,24 @@ describe("business cookie session boundary", () => {
       }), context);
       expect(result.Cookie).toBe("theme=dark");
     }
+  });
+  it("lends the current ticket to an absolute business WebSocket from a trusted loopback frame", () => {
+    mocks.currentTicket.mockReturnValue("current");
+    const result = applySessionAuthHeaders(request({
+      url: "wss://business.example/socket/absolute", resourceType: "webSocket",
+      requestHeaders: { Cookie: "preference=kept; ticket=stale", Authorization: "Bearer obsolete" },
+    }), context);
+    expect(result.Cookie).toBe("preference=kept; ticket=current");
+    expect(result.Authorization).toBeUndefined();
+  });
+  it("does not lend a ticket to untrusted, unrelated or unauthenticated WebSockets", () => {
+    mocks.currentTicket.mockReturnValue("current");
+    const ws = { url: "wss://business.example/socket/absolute", resourceType: "webSocket" };
+    expect(applySessionAuthHeaders(request({ ...ws, frame: { url: "https://external.example/embed" } }), context).Cookie).toBeUndefined();
+    expect(applySessionAuthHeaders(request({ ...ws, url: "wss://other.example/socket/absolute" }), context).Cookie).toBeUndefined();
+    expect(applySessionAuthHeaders(request({ ...ws, url: "ws://127.0.0.1:61006/socket/absolute" }), context).Cookie).toBeUndefined();
+    mocks.currentTicket.mockReturnValue(null);
+    expect(applySessionAuthHeaders(request(ws), context).Cookie).toBeUndefined();
   });
   it("does not lend a cookie to untrusted business documents", () => {
     const result = applySessionAuthHeaders(request({ webContents: { getURL: () => "https://external.example", isDestroyed: () => false }, requestHeaders: { Cookie: "ticket=new" } }), context);

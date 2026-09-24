@@ -110,7 +110,7 @@ export function normalizeGatewayRequestUrl(
   config: GatewayRoutingConfig,
 ): string | null {
   // Electron/Chromium does not redirect WebSocket handshakes. Gateway WS URLs
-  // already proxy every path; direct backend WS uses session header injection.
+  // already proxy every path; trusted direct backend WS uses ticket cookie injection.
   if (request.resourceType === "webSocket" || /^wss?:/i.test(request.url))
     return null;
   const url = httpUrl(request.url);

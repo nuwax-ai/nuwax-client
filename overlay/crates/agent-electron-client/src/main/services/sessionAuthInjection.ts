@@ -8,6 +8,7 @@ import {
   matchesBusinessOrigin,
   stripTicketCookie,
 } from "./auth/requestPolicy";
+import { currentTicket } from "./commercialTicketSession";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
 import { consumeNativeTicketCapability } from "./nativeTicketCapability";
 
@@ -111,6 +112,24 @@ export function applySessionAuthHeaders(
   if (!businessTarget) return headers;
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === "authorization") delete headers[key];
+  }
+  // Loopback documents are cross-site to an absolute business WebSocket, so
+  // Chromium omits the SameSite=Lax ticket on the handshake. Only a trusted
+  // frame may borrow the current ticket for this exact business origin.
+  if (details.resourceType === "webSocket" &&
+      (target.protocol === "ws:" || target.protocol === "wss:") &&
+      !isPublicAuthPath(target.pathname) && trustedRequest(details, context)) {
+    const ticket = currentTicket();
+    if (ticket) {
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() !== "cookie") continue;
+        const cookie = stripTicketCookie(headers[key]);
+        if (cookie) headers[key] = cookie;
+        else delete headers[key];
+      }
+      const cookieKey = Object.keys(headers).find((key) => key.toLowerCase() === "cookie") ?? "Cookie";
+      headers[cookieKey] = [headers[cookieKey], `ticket=${ticket}`].filter(Boolean).join("; ");
+    }
   }
   return headers;
 }
