@@ -167,7 +167,7 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 3. Windows 人工签名：[docs/sign-windows.md](./docs/sign-windows.md)（Certum SimplySign + 基座内 `npm run sign:win`）。
 4. 调用独立的 `sync-electron-to-oss.yml`：先核对五平台清单和签名版 Windows EXE，再同步资产、更新 stable 指针并公开 Release；失败以红灯呈现。`scripts/release-stable.sh` 编排上述步骤。
 
-beta 通道：`prerelease-v{x.y.z}` tag 只生成 Draft Release；在 Windows 签名机运行 `scripts/sign-prerelease-win.sh x.y.z` 完成手签后，脚本等待对应 tag 的五平台构建成功，自动触发 `sync-electron-to-oss.yml` 的 beta 通道并核对 S3/OSS 指针。正式版由 `scripts/release-stable.sh` 独立触发 stable 通道。未签名包不会进入更新指针。验收字段见 [发布验收模板](./docs/release-acceptance-template.md)，维护规则见 [工程维护](./docs/maintenance.md)。
+beta 通道：`prerelease-v{x.y.z}` tag 的五平台构建全部成功后，`release-electron-dev.yml` 自动调用同步工作流，以 CI 原产未签名 Windows EXE 生成 beta 更新元数据，校验来源和哈希，更新 S3/OSS beta 指针，并公开 GitHub prerelease。用户可直接下载安装；客户端是否接收 beta 只由更新通道设置决定。正式版由 `scripts/release-stable.sh` 人工签名后独立同步 stable，beta 不改 stable 指针。验收字段见 [发布验收模板](./docs/release-acceptance-template.md)，维护规则见 [工程维护](./docs/maintenance.md)。
 
 维护人员可在故障机器上运行 `npm run diagnostics:export -- --output <path>` 导出本地诊断 JSON。它只记录日志级别、组件和错误码统计，以及固定端口连通性；不包含日志正文、凭据或远程上报。
 

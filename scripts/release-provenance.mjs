@@ -157,8 +157,10 @@ function record([tag, platform, arch, outDir]) {
   console.log(`[release-provenance] ${filename}: ${manifest.source.client.slice(0, 9)} / ${shell.slice(0, 9)} / ${frontend.slice(0, 9)}`);
 }
 
-function verify([tag, assetsDir]) {
-  if (!tag || !assetsDir) fail('用法: verify <tag> <downloaded-release-assets-dir>');
+function verify([tag, assetsDir, channel = 'stable']) {
+  if (!tag || !assetsDir || !['beta', 'stable'].includes(channel)) {
+    fail('用法: verify <tag> <downloaded-release-assets-dir> [beta|stable]');
+  }
   const dir = resolve(assetsDir);
   const manifests = platforms.map((key) => {
     const path = join(dir, `build-manifest-${key}.json`);
@@ -183,7 +185,7 @@ function verify([tag, assetsDir]) {
     for (const [file, digest] of Object.entries(value.artifacts)) {
       if (basename(file) !== file || !/^[0-9a-f]{64}$/.test(digest)) fail(`${basename(path)} 的资产条目无效`);
       const asset = join(dir, file);
-      if (!existsFile(asset) && key === 'windows-x64' && file.endsWith('-unsigned.exe')) continue;
+      if (channel === 'stable' && !existsFile(asset) && key === 'windows-x64' && file.endsWith('-unsigned.exe')) continue;
       if (!existsFile(asset) || sha256File(asset) !== digest) fail(`${file} 与平台构建记录不一致`);
     }
     return value;
@@ -200,9 +202,13 @@ function verify([tag, assetsDir]) {
     }
   }
   const version = tag.replace(/^(electron|prerelease)-v/, '');
-  for (const filename of [`Nuwax-${version}-arm64.dmg`, `Nuwax-${version}.dmg`, `Nuwax.Setup.${version}.exe`]) {
-    try { if (!statSync(join(dir, filename)).isFile()) fail(`缺少已签名资产 ${filename}`); }
-    catch { fail(`缺少已签名资产 ${filename}`); }
+  const windowsExe = channel === 'beta'
+    ? `Nuwax-Setup-${version}-unsigned.exe`
+    : `Nuwax.Setup.${version}.exe`;
+  const missingAssetMessage = channel === 'stable' ? '缺少已签名资产' : '缺少发布资产';
+  for (const filename of [`Nuwax-${version}-arm64.dmg`, `Nuwax-${version}.dmg`, windowsExe]) {
+    try { if (!statSync(join(dir, filename)).isFile()) fail(`${missingAssetMessage} ${filename}`); }
+    catch { fail(`${missingAssetMessage} ${filename}`); }
   }
   const windowsSigning = manifests.find((value) => value.platform === 'windows').windowsSigning;
   if (!Number.isSafeInteger(windowsSigning?.unsignedSize) || windowsSigning.unsignedSize <= 0 ||
@@ -217,10 +223,12 @@ function verify([tag, assetsDir]) {
       fail('Release 未签名 EXE 与 Windows 构建记录不一致');
     }
   }
-  const signedExe = join(dir, `Nuwax.Setup.${version}.exe`);
-  if (peSigningIdentity(signedExe, windowsSigning.unsignedSize).signingIdentitySha256 !==
-      windowsSigning.signingIdentitySha256) {
-    fail('签名版 EXE 的原始 PE 字节与 CI 未签名构建不一致');
+  if (channel === 'stable') {
+    const signedExe = join(dir, `Nuwax.Setup.${version}.exe`);
+    if (peSigningIdentity(signedExe, windowsSigning.unsignedSize).signingIdentitySha256 !==
+        windowsSigning.signingIdentitySha256) {
+      fail('签名版 EXE 的原始 PE 字节与 CI 未签名构建不一致');
+    }
   }
   for (const filename of ['latest.json', 'latest.yml', 'latest-mac.yml',
     'latest-linux.yml', 'latest-linux-arm64.yml', 'latest-linux-x64.yml']) {

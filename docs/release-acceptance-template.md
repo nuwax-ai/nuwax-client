@@ -10,7 +10,7 @@
 | 五平台 `build-manifest-*.json` 来源一致 | |
 | `release-provenance.json` 与安装包 SHA256 | |
 | macOS 签名、公证和 Gatekeeper 结果 | |
-| Windows EXE 签名验证结果 | |
+| Windows EXE 校验：beta 未签名包来源哈希 / stable 签名与来源 | |
 | S3/OSS 同步 run、beta/stable 指针版本 | |
 
 ## 安装包验收
@@ -18,7 +18,7 @@
 | 场景 | macOS arm64 | macOS x64 | Windows x64 | Linux x64/arm64 | 证据 |
 |---|---|---|---|---|---|
 | 干净安装、启动与登录页 | | | | | |
-| 正式版默认生产环境、beta 默认测试环境；设置切域后无旧域会话 | | | | | |
+| 正式版和 beta 默认生产环境；更新通道独立可切换；设置切域后无旧域会话 | | | | | |
 | 登录、设备注册、服务启动；登出停服 | | | | | |
 | 企业域 A→B→A，旧会话与服务失效 | | | | | |
 | 外部网页无法调用宿主桥，受信任页面的桥能力正常 | | | | | |

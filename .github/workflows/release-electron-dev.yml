@@ -1,22 +1,22 @@
-# Nuwax 商业版 — beta 预发布（prerelease-v* 触发，Draft Release）
+# Nuwax 商业版 — beta 预发布（prerelease-v* 触发，构建成功后公开 Release）
 # 商业产品壳（基座仓 nuwax-ai/nuwa-electron-shell main 分支承载业务）：
 # 路径前缀 nuwa-electron-shell/、checkout 后以 github.token 拉基座 submodule、pnpm 显式版本、
 # 沙箱 helper 断言。通道 nuwax-electron/；品牌/端口注入与 release-electron.yml 一致。
 
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 prerelease-v* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
-# 构建后保留 Draft Release；签名与来源核验通过后由独立同步 workflow 更新 beta 指针。
+# 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/prerelease-v{x.y.z}.md
 #   3. git tag prerelease-v{x.y.z} && git push origin prerelease-v{x.y.z}
-#   → 源码门禁 → 构建 Draft Release → Windows 手签 → 自动校验同步 beta 指针
+#   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
 #   - macOS arm64（macos-latest）
 #   - macOS x64（macos-latest, cross-compile）
-#   - Windows x64（NSIS EXE + MSI；EXE 后续在签名机签署）
+#   - Windows x64（NSIS EXE + MSI；beta 使用 CI 原产未签名 EXE）
 #   - Linux x64（AppImage + deb）
 #   - Linux arm64（AppImage + deb）
 #
@@ -25,8 +25,8 @@
 #   - macOS 签名/公证（未配置时 Mac 构建无法通过发布门禁）：
 #     - APPLE_TEAM_ID / APPLE_SIGNING_IDENTITY / APPLE_CERTIFICATE（.p12 Base64）/ APPLE_CERTIFICATE_PASSWORD
 #     - 公证：APPLE_API_KEY（.p8 Base64）/ APPLE_API_KEY_ID / APPLE_ISSUER_ID
-#   - Windows：本 workflow 仅构建产物，不在 CI 内签名；签名在本地 Windows（SimplySign）手动完成
-#   - S3/OSS 凭据仅供独立的 sync-electron-to-oss.yml 使用；此处只构建 Draft Release
+#   - Windows：beta 不签名；stable 在正式版流程中使用 SimplySign 签名
+#   - S3/OSS 凭据供复用的 sync-electron-to-oss.yml 使用
 #
 # 产物目录：nuwa-electron-shell/crates/agent-electron-client/release/${version}/（由 package.json directories.output 决定）
 
@@ -38,6 +38,7 @@ on:
       - "prerelease-v*"
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -401,7 +402,7 @@ jobs:
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
           NUWAX_APP_DISPLAY_NAME: "Nuwax"
-          # 新安装默认测试业务域；esbuild 静态固化，不影响已有显式域名配置。
+          # 新安装且未显式设置更新通道时默认 beta；业务服务域与更新通道独立。
           NUWAX_RELEASE_CHANNEL: beta
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
@@ -464,3 +465,12 @@ jobs:
             echo "Uploading $(basename "$f") ..."
             gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
           done
+
+  publish-beta:
+    name: Publish beta after five platform builds
+    needs: build-electron
+    uses: ./.github/workflows/sync-electron-to-oss.yml
+    with:
+      tag: ${{ github.ref_name }}
+      channel: beta
+    secrets: inherit

@@ -227,16 +227,16 @@ describe("serverHost backfill（真实时序：ensureDefaultWorkspaceDir 先写 
       serverHost: "https://agent.nuwax.com",
     });
   });
-  it("Beta 新安装与缺失域名补值均使用测试域", () => {
+  it("Beta 新安装与缺失域名补值均使用正式域", () => {
     process.env.NUWAX_RELEASE_CHANNEL = "beta";
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
-      serverHost: "https://testagent.xspaceagi.com",
+      serverHost: "https://agent.nuwax.com",
     });
     mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
-      serverHost: "https://testagent.xspaceagi.com",
+      serverHost: "https://agent.nuwax.com",
       workspaceDir: "/Users/x/Nuwax",
     });
   });

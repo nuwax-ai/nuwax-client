@@ -6,7 +6,6 @@ import {
   LOCAL_HOST_URL,
   DEFAULT_GUI_MCP_PORT,
   DEFAULT_SERVER_HOST,
-  TEST_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
@@ -114,15 +113,13 @@ export function initializeCommercialAuth(
     writeSetting("nuwax.cookieAuthMigrated", true);
   }
   // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
-  // 打包渠道决定新安装默认业务域：stable=正式域，beta=测试域。渠道在
-  // build-main-esbuild.js 中静态注入，运行时环境无法将正式包切到测试域。
+  // 安装包始终使用正式业务域。beta/stable 仅控制更新订阅；用户显式配置的
+  // 企业域或测试域继续保留，不因客户端版本升级而被覆盖。
   // NUWAX_SERVER_HOST 仅用于 dev；两种形态都默认
   // 种 gateway（本地化默认开）——dev 直连联调走 NUWAX_WEBVIEW_ORIGIN，其
   // 优先级高于 loopback，不受影响。
   const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
-  const packagedSeedHost = process.env.NUWAX_RELEASE_CHANNEL === "beta"
-    ? TEST_SERVER_HOST
-    : DEFAULT_SERVER_HOST;
+  const packagedSeedHost = DEFAULT_SERVER_HOST;
   const seeded = readSetting("step1_config") as {
     serverHost?: string;
   } | null;
@@ -141,7 +138,7 @@ export function initializeCommercialAuth(
   } else if (!seeded.serverHost) {
     // serverHost backfill：真实时序里 ensureDefaultWorkspaceDir（migrate）
     // 先写 step1_config（workspaceDir），上面的「首启种子」恒不命中——全新
-    // 凡配置行存在但域名从未显式落值，按当前渠道补默认域；显式设置的
+    // 凡配置行存在但域名从未显式落值，补正式默认域；显式设置的
     // 企业域不受影响。已有测试域作为显式值也不会被升级覆盖。
     const backfillHost = app?.isPackaged ? packagedSeedHost : devSeedHost;
     if (backfillHost) {
@@ -151,6 +148,12 @@ export function initializeCommercialAuth(
         { serverHost: backfillHost },
       );
     }
+  }
+  // 首次安装 beta 包默认订阅 beta 更新；更新通道与业务域互不影响。
+  // 存量用户在「关于」页显式选择的 stable/beta 值始终保留。
+  if (app?.isPackaged && process.env.NUWAX_RELEASE_CHANNEL === "beta" &&
+      readSetting("update_channel") == null) {
+    writeSetting("update_channel", "beta");
   }
   // 存量库一次性对齐「本地化默认开」（2026-09-17 拍板）：历史库存在未操作
   // 也落 direct 的值（09-14 排障实证），与用户显式关闭不可区分，故以旗标

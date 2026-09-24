@@ -1,6 +1,7 @@
 # Nuwax 商业版 — 仅同步：将指定 tag 的 GitHub Release 资产同步到 MinIO S3 与阿里云 OSS。
 # MinIO：完整资产；OSS：仅元数据（*.yml + latest.json）。版本目录先上传、核对，
-# 最后才更新通道指针；由签名完成后的 beta/stable 发布脚本 dispatch，亦可手动重试。
+# 最后才更新通道指针：beta 在五平台构建成功后通过 workflow_call 自动执行，
+# stable 在正式版 Windows 签名后单独 dispatch；两者均可手动重试。
 # 通道：nuwax-electron/（与社区版 nuwaclaw-electron 隔离）。
 #
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
@@ -9,6 +10,25 @@ name: Sync Electron Release to MinIO S3 & OSS (Nuwax)
 run-name: Sync ${{ inputs.channel }} ${{ inputs.tag }}
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+    secrets:
+      GH_PAT:
+        required: false
+      MINIO_ACCESS_KEY_ID:
+        required: true
+      MINIO_SECRET_ACCESS_KEY:
+        required: true
+      OSS_ACCESS_KEY_ID:
+        required: true
+      OSS_ACCESS_KEY_SECRET:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -76,26 +96,59 @@ jobs:
             --json tagName,isDraft,isPrerelease)"
           echo "$RELEASE_JSON" | jq -e --arg tag "$RELEASE_TAG" --arg channel "$RELEASE_CHANNEL" '
             .tagName == $tag and
-            (if $channel == "beta" then .isDraft == true and .isPrerelease == true
+            (if $channel == "beta" then .isPrerelease == true
              else .isPrerelease == false end)
           ' >/dev/null || {
             echo "::error::${RELEASE_TAG} 的 Release 状态不匹配 ${RELEASE_CHANNEL} 通道"
             exit 1
           }
-          if [ "$RELEASE_CHANNEL" = beta ]; then
-            BUILD_WORKFLOW=release-electron-dev.yml
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # workflow_call 保留调用方的 push/tag 上下文。调用方 publish-beta
+            # 明确 needs: build-electron；此时整条 run 尚未 completed。
+            [ "$RELEASE_CHANNEL" = beta ] &&
+              [ "$GITHUB_REF" = "refs/tags/${RELEASE_TAG}" ] &&
+              [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ] || {
+                echo "::error::自动 beta 同步必须来自相同 tag/SHA 的构建工作流"
+                exit 1
+              }
           else
-            BUILD_WORKFLOW=release-electron.yml
+            # workflow_dispatch 重试没有 needs 依赖，必须查成功完成的构建 run。
+            if [ "$RELEASE_CHANNEL" = beta ]; then
+              BUILD_WORKFLOW=release-electron-dev.yml
+            else
+              BUILD_WORKFLOW=release-electron.yml
+            fi
+            BUILD_RUNS="$(gh run list --workflow "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --limit 100 \
+              --json databaseId,headBranch,headSha,event,status,conclusion)"
+            if [ "$RELEASE_CHANNEL" = beta ]; then
+              # 自动同步失败会使整个 prerelease run 标红；手动重试只要求
+              # 前置源码门禁及五个平台 build job 都成功（矩阵 job 依赖 prepare/verify-source）。
+              BUILD_RUN_ID="$(echo "$BUILD_RUNS" | jq -r --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
+                first(.[] | select(.headBranch == $tag and .headSha == $sha and .event == "push") | .databaseId) // empty')"
+              [ -n "$BUILD_RUN_ID" ] || { echo "::error::${RELEASE_TAG} 没有对应的构建 run"; exit 1; }
+              gh run view "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs | jq -e '
+                .jobs as $jobs |
+                ["Build Electron (macos-latest arm64)",
+                 "Build Electron (macos-latest x64)",
+                 "Build Electron (windows-latest x64)",
+                 "Build Electron (ubuntu-24.04 x64)",
+                 "Build Electron (ubuntu-24.04-arm arm64)"] |
+                all(.[]; . as $name | any($jobs[]; .name == $name and
+                  .status == "completed" and .conclusion == "success"))
+              ' >/dev/null || {
+                echo "::error::${RELEASE_TAG} 的五个平台构建没有全部成功（run ${BUILD_RUN_ID}）"
+                exit 1
+              }
+            else
+              echo "$BUILD_RUNS" | jq -e --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
+                any(.[]; .headBranch == $tag and .headSha == $sha and .event == "push" and
+                  .status == "completed" and .conclusion == "success")
+              ' >/dev/null || {
+                echo "::error::${RELEASE_TAG} 没有同一源码提交的成功正式版构建"
+                exit 1
+              }
+            fi
           fi
-          BUILD_RUNS="$(gh run list --workflow "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json headBranch,headSha,event,status,conclusion)"
-          echo "$BUILD_RUNS" | jq -e --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
-            any(.[]; .headBranch == $tag and .headSha == $sha and .event == "push" and
-              .status == "completed" and .conclusion == "success")
-          ' >/dev/null || {
-            echo "::error::${RELEASE_TAG} 没有同一源码提交的成功五平台构建"
-            exit 1
-          }
 
       - name: Ensure awscli v2 (for S3)
         run: |
@@ -149,7 +202,11 @@ jobs:
           else
             VERSION="${TAG#electron-v}"
           fi
-          WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
+          if [ "$CHANNEL" = beta ]; then
+            WIN_EXE="${PRODUCT_PREFIX}-Setup-${VERSION}-unsigned.exe"
+          else
+            WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
+          fi
           if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
             S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
           else
@@ -294,11 +351,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
-          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq osslsigncode
+          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets "$RELEASE_CHANNEL"
           VERSION="${RELEASE_TAG#*-v}"
-          osslsigncode verify -in "/tmp/release-assets/Nuwax.Setup.${VERSION}.exe"
+          if [ "$RELEASE_CHANNEL" = stable ]; then
+            EXPECTED_WIN="Nuwax.Setup.${VERSION}.exe"
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq osslsigncode
+            osslsigncode verify -in "/tmp/release-assets/${EXPECTED_WIN}"
+          else
+            EXPECTED_WIN="Nuwax-Setup-${VERSION}-unsigned.exe"
+          fi
+          jq -e --arg filename "$EXPECTED_WIN" \
+            '.platforms["windows-x86_64"].url | endswith("/" + $filename)' \
+            /tmp/release-assets/latest.json >/dev/null
+          grep -Fx "path: ${EXPECTED_WIN}" /tmp/release-assets/latest.yml >/dev/null || {
+            echo "::error::Windows 更新元数据未指向 ${RELEASE_CHANNEL} 安装包 ${EXPECTED_WIN}"
+            exit 1
+          }
           gh release upload "$RELEASE_TAG" /tmp/release-assets/*.yml /tmp/release-assets/latest.json \
             /tmp/release-assets/release-provenance.json --clobber --repo "$GITHUB_REPOSITORY"
 
@@ -487,7 +556,9 @@ jobs:
             --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
           cmp /tmp/latest.json /tmp/current-s3-pointer.json
           cmp /tmp/latest.json /tmp/current-oss-pointer.json
-          if [ "$RELEASE_CHANNEL" = stable ]; then
+          if [ "$RELEASE_CHANNEL" = beta ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --repo "$GITHUB_REPOSITORY"
+          else
             gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
           fi
           trap - ERR INT TERM
