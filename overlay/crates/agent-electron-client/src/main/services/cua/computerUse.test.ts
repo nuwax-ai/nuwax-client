@@ -156,13 +156,29 @@ vi.mock("../packages/mcp", () => ({
   syncMcpConfigToProxyAndReload: mocks.proxySync,
 }));
 
-import {
-  ensureCuaOnBoot,
-  getCuaStatus,
-  installCuaHelper,
-  setCuaEnabled,
-  syncCuaMcpConfig,
-} from "./computerUse";
+type CuaModule = typeof import("./computerUse");
+let cuaModule: CuaModule;
+const ensureCuaOnBoot = (...args: Parameters<CuaModule["ensureCuaOnBoot"]>) =>
+  cuaModule.ensureCuaOnBoot(...args);
+const getCuaStatus = (...args: Parameters<CuaModule["getCuaStatus"]>) =>
+  cuaModule.getCuaStatus(...args);
+const installCuaHelper = (...args: Parameters<CuaModule["installCuaHelper"]>) =>
+  cuaModule.installCuaHelper(...args);
+const setCuaEnabled = (...args: Parameters<CuaModule["setCuaEnabled"]>) =>
+  cuaModule.setCuaEnabled(...args);
+const syncCuaMcpConfig = (...args: Parameters<CuaModule["syncCuaMcpConfig"]>) =>
+  cuaModule.syncCuaMcpConfig(...args);
+
+const originalPlatform = process.platform;
+beforeAll(async () => {
+  // The main suite exercises the macOS helper app and TCC flow on every runner.
+  // Windows and Linux behavior is covered by the isolated platform suites below.
+  Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+  cuaModule = await import("./computerUse");
+});
+afterAll(() => {
+  Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+});
 
 const HELPER_APP = "Nuwax Computer Use.app";
 
