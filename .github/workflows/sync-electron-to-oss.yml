@@ -418,7 +418,20 @@ jobs:
           else
             VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
           fi
-          curl -fsSL --retry 3 -o /dev/null "$VERIFY_URL"
+          # MinIO 刚写入的对象可能短暂不可读（v1.0.36 首跑实证：curl -f 静默
+          # exit 1 致整步失败且无任何错误输出），带重试循环 + 显式报错。
+          for i in 1 2 3 4 5 6; do
+            if curl -fsSL -o /dev/null "$VERIFY_URL"; then
+              echo "==> Verify URL 可达（第 $i 次尝试）"
+              break
+            fi
+            if [ "$i" = "6" ]; then
+              echo "::error::Verify URL 持续不可达: $VERIFY_URL"
+              exit 1
+            fi
+            echo "Attempt $i: Verify URL 暂不可达，5s 后重试"
+            sleep 5
+          done
           if [ "$CHANNEL" = beta ]; then
             S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
           else
@@ -435,7 +448,8 @@ jobs:
                 [ -n "$expected" ] || { echo "::error::来源清单缺少资产: $name"; exit 1; } ;;
             esac
             actual="$(aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/${name}" - \
-              --endpoint-url "$S3_ENDPOINT" --quiet | sha256sum | cut -d' ' -f1)"
+              --endpoint-url "$S3_ENDPOINT" --quiet | sha256sum | cut -d' ' -f1)" \
+              || { echo "::error::S3 读取失败: $name"; exit 1; }
             [ "$actual" = "$expected" ] || { echo "::error::S3 资产 SHA256 不一致: $name"; exit 1; }
           done
           echo "==> S3 versioned assets verified"
