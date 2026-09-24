@@ -421,7 +421,7 @@ jobs:
           # MinIO 刚写入的对象可能短暂不可读（v1.0.36 首跑实证：curl -f 静默
           # exit 1 致整步失败且无任何错误输出），带重试循环 + 显式报错。
           for i in 1 2 3 4 5 6; do
-            if curl -fsSL -o /dev/null "$VERIFY_URL"; then
+            if curl -fsSL --connect-timeout 10 -o /dev/null "$VERIFY_URL"; then
               echo "==> Verify URL 可达（第 $i 次尝试）"
               break
             fi
