@@ -413,30 +413,29 @@ jobs:
           set -euo pipefail
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "beta" ]; then
-            VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}/latest-mac.yml"
-          else
-            VERIFY_URL="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}/latest-mac.yml"
-          fi
-          # MinIO 刚写入的对象可能短暂不可读（v1.0.36 首跑实证：curl -f 静默
-          # exit 1 致整步失败且无任何错误输出），带重试循环 + 显式报错。
-          for i in 1 2 3 4 5 6; do
-            if curl -fsSL --connect-timeout 10 -o /dev/null "$VERIFY_URL"; then
-              echo "==> Verify URL 可达（第 $i 次尝试）"
-              break
-            fi
-            if [ "$i" = "6" ]; then
-              echo "::error::Verify URL 持续不可达: $VERIFY_URL"
-              exit 1
-            fi
-            echo "Attempt $i: Verify URL 暂不可达，5s 后重试"
-            sleep 5
-          done
+          # 可达性检查走 S3 API（与 upload 同通道）——v1.0.36 三次实证：upload
+          # 经 aws CLI 全成功而公网 curl 到 ${S3_CDN_BASE}（自建 MinIO 9443 非
+          # 标准端口）在 runner 上连接层瞬死（2.4s 内静默 exit 1），重试亦秒耗尽；
+          # 公网可达性改由下方逐资产 sha256 对拍覆盖，此处只确认对象存在。
           if [ "$CHANNEL" = beta ]; then
             S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
           else
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
+          for i in 1 2 3 4 5 6; do
+            if aws s3api head-object \
+              --bucket "${S3_BUCKET}" --key "${S3_PREFIX}/latest-mac.yml" \
+              --endpoint-url "$S3_ENDPOINT" >/dev/null 2>&1; then
+              echo "==> S3 对象就绪（第 $i 次尝试）"
+              break
+            fi
+            if [ "$i" = "6" ]; then
+              echo "::error::S3 对象持续不可读: ${S3_PREFIX}/latest-mac.yml"
+              exit 1
+            fi
+            echo "Attempt $i: 对象暂不可读，5s 后重试"
+            sleep 5
+          done
           for file in /tmp/release-assets/*; do
             [ -f "$file" ] || continue
             name="$(basename "$file")"
