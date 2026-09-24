@@ -44,7 +44,11 @@ else
   git clone --quiet https://github.com/trycua/cua.git "$WORK_DIR/cua"
   git -C "$WORK_DIR/cua" checkout --quiet "$CUA_COMMIT"
   echo "[cua-helper] applying nuwax patch ..."
-  git -C "$WORK_DIR/cua" apply "$PATCH_FILE"
+  # Windows checkout with core.autocrlf may turn this tracked patch into CRLF;
+  # Git Bash's git apply rejects that form, so feed it a normalized copy.
+  APPLY_PATCH="$WORK_DIR/nuwax-cua-helper.patch"
+  tr -d '\r' < "$PATCH_FILE" > "$APPLY_PATCH"
+  git -C "$WORK_DIR/cua" apply "$APPLY_PATCH"
   SRC_DIR="$WORK_DIR/cua"
 fi
 
