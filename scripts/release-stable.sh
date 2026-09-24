@@ -42,6 +42,7 @@ SIGN_GH_PATH="${SIGN_GH_PATH:-/c/Program Files/GitHub CLI}"
 
 S3_BASE="https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron"
 STABLE_JSON="${S3_BASE}/latest/latest.json"
+OSS_STABLE_JSON="https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/latest/latest.json"
 SIGNED_EXE="Nuwax.Setup.${VERSION}.exe"
 UNSIGNED_EXE="Nuwax-Setup-${VERSION}-unsigned.exe"
 
@@ -143,18 +144,34 @@ grep -qx "${SIGNED_EXE}.blockmap" <<<"$ASSETS" \
 echo "  ${SIGNED_EXE} 已上 Release"
 
 # ---- Phase 5/6 stable 同步 ----------------------------------------------------
-step "Phase 5/6 同步 stable（sync-electron-to-oss.yml，stable 路径历史上无自动触发）"
+step "Phase 5/6 同步 stable（sync-electron-to-oss.yml）"
 STABLE_VER="$(curl -sS --max-time 15 "$STABLE_JSON" 2>/dev/null | jq -r '.version // empty' || true)"
-if [[ "$STABLE_VER" == "$VERSION" ]]; then
-  echo "  stable 指针已是 ${VERSION}，跳过 dispatch（断点续跑）"
+OSS_STABLE_VER="$(curl -sS --max-time 15 "$OSS_STABLE_JSON" 2>/dev/null | jq -r '.version // empty' || true)"
+STABLE_WIN="$(curl -sS --max-time 15 "$STABLE_JSON" 2>/dev/null | jq -r '.platforms["windows-x86_64"].url // empty' || true)"
+OSS_STABLE_WIN="$(curl -sS --max-time 15 "$OSS_STABLE_JSON" 2>/dev/null | jq -r '.platforms["windows-x86_64"].url // empty' || true)"
+if [[ "$STABLE_VER" == "$VERSION" && "$OSS_STABLE_VER" == "$VERSION" &&
+      "$STABLE_WIN" == *"$SIGNED_EXE" && "$OSS_STABLE_WIN" == "$STABLE_WIN" ]]; then
+  echo "  stable 的 S3/OSS 指针均已是 ${VERSION}，跳过 dispatch（断点续跑）"
 else
+  SYNC_TITLE="Sync stable ${TAG}"
+  PREVIOUS_SYNC_RUN="$(gh run list --workflow=sync-electron-to-oss.yml --repo "$REPO" --limit 100 \
+    --json databaseId,headBranch,displayTitle \
+    --jq "limit(1; .[] | select(.headBranch == \"${BRANCH}\" and .displayTitle == \"${SYNC_TITLE}\") | .databaseId)")"
   gh workflow run sync-electron-to-oss.yml --repo "$REPO" --ref "$BRANCH" -f tag="$TAG" -f channel=stable
-  sleep 20
-  SYNC_RUN="$(gh run list --workflow=sync-electron-to-oss.yml --repo "$REPO" --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')"
+  SYNC_RUN=""
   for _ in $(seq 1 30); do
+    SYNC_RUN="$(gh run list --workflow=sync-electron-to-oss.yml --repo "$REPO" --limit 100 \
+      --json databaseId,headBranch,displayTitle \
+      --jq "limit(1; .[] | select(.headBranch == \"${BRANCH}\" and .displayTitle == \"${SYNC_TITLE}\") | .databaseId)")"
+    [[ -n "$SYNC_RUN" && "$SYNC_RUN" != "$PREVIOUS_SYNC_RUN" ]] && break
+    sleep 5
+  done
+  [[ -n "$SYNC_RUN" && "$SYNC_RUN" != "$PREVIOUS_SYNC_RUN" ]] \
+    || die "未找到新启动的 stable 同步 run：${SYNC_TITLE}"
+  for _ in $(seq 1 180); do
     S="$(gh run view "$SYNC_RUN" --repo "$REPO" --json status,conclusion --jq '.status + "/" + (.conclusion // "running")')"
     [[ "$S" == completed/* ]] && break
-    sleep 20
+    sleep 30
   done
   [[ "$S" == completed/success ]] || die "同步 workflow 未成功（${SYNC_RUN}: ${S}）"
   echo "  sync run ${SYNC_RUN}: ${S}"
@@ -164,8 +181,12 @@ fi
 step "Phase 6/6 stable 验证"
 STABLE_VER="$(curl -sS --max-time 15 "$STABLE_JSON" | jq -r '.version // empty')"
 [[ "$STABLE_VER" == "$VERSION" ]] || die "stable 指针版本=${STABLE_VER:-空}，期望 ${VERSION}"
+OSS_STABLE_VER="$(curl -sS --max-time 15 "$OSS_STABLE_JSON" | jq -r '.version // empty')"
+[[ "$OSS_STABLE_VER" == "$VERSION" ]] || die "OSS stable 指针版本=${OSS_STABLE_VER:-空}，期望 ${VERSION}"
 WIN_URL="$(curl -sS "$STABLE_JSON" | jq -r '.platforms["windows-x86_64"].url // empty')"
 [[ "$WIN_URL" == *"$SIGNED_EXE" ]] || die "stable windows URL 未指向签名产物：${WIN_URL:-空}"
+OSS_WIN_URL="$(curl -sS "$OSS_STABLE_JSON" | jq -r '.platforms["windows-x86_64"].url // empty')"
+[[ "$OSS_WIN_URL" == "$WIN_URL" ]] || die "OSS stable windows URL 与 S3 不一致：${OSS_WIN_URL:-空}"
 MAC_URL="$(curl -sS "$STABLE_JSON" | jq -r '.platforms["darwin-aarch64-zip"].url // empty')"
 MAC_FILE="${MAC_URL##*/}"
 GH_SIZE="$(gh release view "$TAG" --repo "$REPO" --json assets --jq ".assets[] | select(.name == \"${MAC_FILE}\") | .size")"

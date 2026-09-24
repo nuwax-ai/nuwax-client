@@ -1,11 +1,12 @@
 # Nuwax 商业版 — 仅同步：将指定 tag 的 GitHub Release 资产同步到 MinIO S3 与阿里云 OSS。
 # MinIO：完整资产；OSS：仅元数据（*.yml + latest.json）。版本目录先上传、核对，
-# 最后才更新通道指针；供基座内 npm run sync:oss 按 filename dispatch。
+# 最后才更新通道指针；由签名完成后的 beta/stable 发布脚本 dispatch，亦可手动重试。
 # 通道：nuwax-electron/（与社区版 nuwaclaw-electron 隔离）。
 #
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
 
 name: Sync Electron Release to MinIO S3 & OSS (Nuwax)
+run-name: Sync ${{ inputs.channel }} ${{ inputs.tag }}
 
 on:
   workflow_dispatch:
@@ -24,6 +25,7 @@ on:
           - beta
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -64,6 +66,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
+
+      - name: Verify release state and successful build
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease)"
+          echo "$RELEASE_JSON" | jq -e --arg tag "$RELEASE_TAG" --arg channel "$RELEASE_CHANNEL" '
+            .tagName == $tag and
+            (if $channel == "beta" then .isDraft == true and .isPrerelease == true
+             else .isPrerelease == false end)
+          ' >/dev/null || {
+            echo "::error::${RELEASE_TAG} 的 Release 状态不匹配 ${RELEASE_CHANNEL} 通道"
+            exit 1
+          }
+          if [ "$RELEASE_CHANNEL" = beta ]; then
+            BUILD_WORKFLOW=release-electron-dev.yml
+          else
+            BUILD_WORKFLOW=release-electron.yml
+          fi
+          BUILD_RUNS="$(gh run list --workflow "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json headBranch,headSha,event,status,conclusion)"
+          echo "$BUILD_RUNS" | jq -e --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
+            any(.[]; .headBranch == $tag and .headSha == $sha and .event == "push" and
+              .status == "completed" and .conclusion == "success")
+          ' >/dev/null || {
+            echo "::error::${RELEASE_TAG} 没有同一源码提交的成功五平台构建"
+            exit 1
+          }
 
       - name: Ensure awscli v2 (for S3)
         run: |

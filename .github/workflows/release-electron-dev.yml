@@ -8,10 +8,10 @@
 # 构建后保留 Draft Release；签名与来源核验通过后由独立同步 workflow 更新 beta 指针。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
-#   1. 确认 nuwaxcode GitHub Release 已就绪（如 v1.2.1）
+#   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/prerelease-v{x.y.z}.md
 #   3. git tag prerelease-v{x.y.z} && git push origin prerelease-v{x.y.z}
-#   → 源码门禁 → 构建 Draft Release → Windows 签名 → 手动核验同步 beta 指针
+#   → 源码门禁 → 构建 Draft Release → Windows 手签 → 自动校验同步 beta 指针
 #
 # 支持平台：
 #   - macOS arm64（macos-latest）
@@ -26,7 +26,7 @@
 #     - APPLE_TEAM_ID / APPLE_SIGNING_IDENTITY / APPLE_CERTIFICATE（.p12 Base64）/ APPLE_CERTIFICATE_PASSWORD
 #     - 公证：APPLE_API_KEY（.p8 Base64）/ APPLE_API_KEY_ID / APPLE_ISSUER_ID
 #   - Windows：本 workflow 仅构建产物，不在 CI 内签名；签名在本地 Windows（SimplySign）手动完成
-#   - OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET：上传到阿里云 OSS
+#   - S3/OSS 凭据仅供独立的 sync-electron-to-oss.yml 使用；此处只构建 Draft Release
 #
 # 产物目录：nuwa-electron-shell/crates/agent-electron-client/release/${version}/（由 package.json directories.output 决定）
 
@@ -270,8 +270,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
-          # 前缀含 1.2.1：避免命中旧版 1.1.x 缓存；hashFiles 随 prepare-nuwaxcode.js 变更失效
-          key: bundled-nuwaxcode-1.2.1-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
+          # 版本前缀隔离旧缓存；prepare 脚本内容变化也会令缓存失效
+          key: bundled-nuwaxcode-1.17.11-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
 
       - name: Cache ripgrep
         uses: actions/cache@v4

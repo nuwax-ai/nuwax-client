@@ -22,7 +22,7 @@
 # Secrets（与社区版同值，共用证书）：
 #   GH_PAT（可选）；APPLE_TEAM_ID / APPLE_SIGNING_IDENTITY / APPLE_CERTIFICATE /
 #   APPLE_CERTIFICATE_PASSWORD / APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_ISSUER_ID；
-#   MINIO_ACCESS_KEY_ID / MINIO_SECRET_ACCESS_KEY；OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET
+#   S3/OSS 凭据仅供独立的 sync-electron-to-oss.yml 使用
 # Windows 签名不在 CI：本地 SimplySign 手签，见 docs/sign-windows.md
 
 name: Release Electron App (Nuwax)
@@ -258,7 +258,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
-          key: bundled-nuwaxcode-v1-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
+          key: bundled-nuwaxcode-1.17.11-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
 
       - name: Cache ripgrep
         uses: actions/cache@v4
