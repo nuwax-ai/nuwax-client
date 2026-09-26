@@ -427,6 +427,45 @@ describe("native:saveImage（另存图片）", () => {
     expect(fs.readFileSync(tmpFile)).toEqual(Buffer.from([1, 2, 3]));
   });
 
+  it.each([
+    ["report.json", "application/json", '{"title":"真实产物"}'],
+    ["report.html", "text/html; charset=utf-8", "<!doctype html><h1>真实产物</h1>"],
+  ])("通用文件保存 %s 的真实字节", async (filename, contentType, payload) => {
+    mocks.netFetch.mockResolvedValue(new Response(payload, { headers: { "content-type": contentType } }));
+    const result = await handlers.get("native:saveFile")!(senderEvent(GW_ORIGIN), {
+      url: `/api/computer/static/123/${filename}`, filename,
+    });
+    expect(result.success).toBe(true);
+    expect(fs.readFileSync(tmpFile, "utf8")).toBe(payload);
+  });
+
+  it.each([
+    ["/api/export-project", "report.json", "application/json"],
+    ["/api/computer/static/123/project.zip", "project.zip", "application/json"],
+    ["/api/computer/static/123/report.json", "report.json", "text/html"],
+  ])("通用下载拒绝接口/类型不符的错误正文 %s", async (url, filename, contentType) => {
+    fs.writeFileSync(tmpFile, "original file");
+    mocks.netFetch.mockResolvedValue(new Response("error page", { headers: { "content-type": contentType } }));
+    const result = await handlers.get("native:saveFile")!(senderEvent(GW_ORIGIN), { url, filename });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/error page/);
+    expect(fs.readFileSync(tmpFile, "utf8")).toBe("original file");
+  });
+
+  it("图片另存继续拒绝 HTML 即使源路径以 html 结尾", async () => {
+    mocks.netFetch.mockResolvedValue(new Response("<!doctype html>", { headers: { "content-type": "text/html" } }));
+    const result = await handlers.get("native:saveImage")!(senderEvent(GW_ORIGIN), { url: "/report.html", filename: "report.html" });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/error page/);
+  });
+
+  it("通用文件保存仍拒绝非受信调用", async () => {
+    const result = await handlers.get("native:saveFile")!({ senderFrame: { url: "https://external.example" } }, { url: `${HOST_ORIGIN}/report.json` });
+    expect(result).toEqual({ success: false, error: "untrusted sender" });
+    expect(mocks.showSaveDialog).not.toHaveBeenCalled();
+    expect(mocks.netFetch).not.toHaveBeenCalled();
+  });
+
   it("绝对地址 → 原样取图", async () => {
     mocks.netFetch.mockResolvedValue(
       new Response(new Uint8Array([9]), { status: 200 }),
