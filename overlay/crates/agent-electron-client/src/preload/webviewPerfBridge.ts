@@ -177,6 +177,13 @@ const native = {
   ): Promise<{ success: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke("native:saveImage", { url, filename });
   },
+  /** 产物文件另存：允许源扩展与 MIME 对应的 HTML/JSON 文档。 */
+  saveFile(
+    url: string,
+    filename?: string,
+  ): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> {
+    return ipcRenderer.invoke("native:saveFile", { url, filename });
+  },
   /**
    * 新开独立窗口打开 nuwax 页面（智能体详情/工作流/我的电脑等全屏页）。
    * 新窗口带系统标题栏（无沉浸式工具栏浮层，页面零遮挡），注入同一 webview

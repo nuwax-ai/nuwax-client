@@ -4,8 +4,8 @@
  * - auth:beginLogin / auth:syncSession / auth:clear
  *     webview 只通知会话节点；ticket 由 Electron cookie jar 与网关响应处理，
  *     不经过页面脚本或 token 桥。主进程 AuthLifecycle 串行注册与服务启停。
- * - native:saveImage
- *     右键另存图片：系统保存对话框 + Node fetch。相对地址按调用方 frame origin 归一为
+ * - native:saveImage / native:saveFile
+ *     图片与产物保存：系统保存对话框 + Node fetch。相对地址按调用方 frame origin 归一为
  *     绝对地址；当前业务域逐跳附 cookie，跨域重定向不携带。
  * - native:openWindow
  *     站内相对路径按二级页设置选择同窗或独立窗口；绝对 HTTP(S) 地址开独立窗口。
@@ -912,11 +912,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 核心抽为本地函数：nuwax 前端经 IPC 调（frameUrl 取 senderFrame.url），页面
   // 右键菜单（services/contextMenu.ts，bug 2473）直接复用（frameUrl 取右键
   // 所在 frameURL，并单独核对顶层 URL，避免外链窗口借此代注业务 ticket）。
-  const performSaveImage = async (
+  const performSaveDownload = async (
     opts: { url: string; filename?: string } | undefined,
     frameUrl: string | undefined,
     stillTrusted: () => boolean = () => true,
     allowBusinessCredentials = true,
+    fileDownload = false,
   ): Promise<contextMenuService.ContextMenuImageSaveResult> => {
     const generation = authGeneration;
     const requestEpoch = ticketEpoch();
@@ -945,13 +946,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (gateway && target.origin === gateway)
         target = new URL(target.pathname + target.search, currentBusinessOrigin());
 
-      // 默认文件名：URL 末段；非法文件名字符替换为下划线；无扩展名补 .png
+      // 默认文件名取 URL 末段并去除非法字符；无扩展名的图片补 .png、产物补 .bin
       const derived =
         filename ||
         decodeURIComponent(target.pathname.split("/").pop() || "") ||
-        "image";
+        (fileDownload ? "download" : "image");
       const safeName = derived.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
-      const ext = path.extname(safeName) ? "" : ".png";
+      const ext = path.extname(safeName) ? "" : fileDownload ? ".bin" : ".png";
       const defaultPath = `${safeName}${ext}`;
       const extension = path
         .extname(`${safeName}${ext}`)
@@ -1007,15 +1008,26 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       }
       if (generation !== authGeneration || switching || !stillTrusted())
         throw new Error("Session changed");
-      await saveResponse(resp!, res.filePath, signal, "binary");
+      // 文件树产物可为 HTML/JSON。只有源地址（含最终重定向）本身声明
+      // 相应扩展时允许文档正文；用户改保存名不能把 ZIP/接口错误页放过。
+      const sourceExtension = (source: URL): string => {
+        try { return path.extname(decodeURIComponent(source.pathname)).toLowerCase(); }
+        catch { return ""; }
+      };
+      const contentType = resp!.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+      const documentExtensions = contentType === "text/html" ? [".html", ".htm"]
+        : ["application/json", "text/json"].includes(contentType || "") ? [".json"] : [];
+      const documentFile = fileDownload && documentExtensions.includes(sourceExtension(target)) &&
+        documentExtensions.includes(sourceExtension(destination));
+      await saveResponse(resp!, res.filePath, signal, documentFile ? undefined : "binary");
       const bytes = fs.statSync(res.filePath).size;
-      log.info("[NuwaxBridge] native:saveImage saved", {
+      log.info(`[NuwaxBridge] native:${fileDownload ? "saveFile" : "saveImage"} saved`, {
         path: res.filePath,
         bytes,
       });
       return { success: true, path: res.filePath };
     } catch (error) {
-      log.error("[NuwaxBridge] native:saveImage failed", error);
+      log.error(`[NuwaxBridge] native:${fileDownload ? "saveFile" : "saveImage"} failed`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -1026,7 +1038,16 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     "native:saveImage",
     (event, opts: { url: string; filename?: string }) =>
       isTrustedSender(event)
-        ? performSaveImage(opts, event.senderFrame?.url, () => isTrustedSender(event))
+        ? performSaveDownload(opts, event.senderFrame?.url, () => isTrustedSender(event))
+        : { success: false, error: "untrusted sender" },
+  );
+
+  // 产物下载独立能力；图片另存及旧壳兼容接口保持原来的错误页保护。
+  ipcMain.handle(
+    "native:saveFile",
+    (event, opts: { url: string; filename?: string }) =>
+      isTrustedSender(event)
+        ? performSaveDownload(opts, event.senderFrame?.url, () => isTrustedSender(event), true, true)
         : { success: false, error: "untrusted sender" },
   );
 
@@ -1124,13 +1145,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // Electron 不监听 webContents 的 context-menu 事件就没有任何右键菜单（全仓
   // 此前零监听，页面右键无反应）。菜单覆盖 webview guest 与窗口主 contents
   // （宿主页/弹窗窗），编辑命令显式作用于发射事件的 wc；图片「另存为…」复用
-  // 上面抽出的 performSaveImage（相对地址归一/Bearer 代注/重定向/保存对话框）。
+  // 上面抽出的 performSaveDownload（相对地址归一/cookie 代注/重定向/保存对话框）。
   // 前端 antd 自绘右键（会话列表等）preventDefault 掉 DOM 事件，主进程
   // context-menu 不触发，天然无双重菜单。
   contextMenuService.installContextMenuService({
     saveImage: (opts, frameUrl, source) => {
       const trustedAtClick = isTrustedMenuSource(frameUrl, source);
-      return performSaveImage(
+      return performSaveDownload(
         opts,
         frameUrl,
         trustedAtClick ? () => isTrustedMenuSource(frameUrl, source) : () => true,
