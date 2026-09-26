@@ -35,6 +35,9 @@ import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
 import { readSetting, writeSetting, getDb } from "../db";
+import { getMainLang, setMainLang } from "../services/i18n";
+import { getTrayManager } from "../window/trayManager";
+import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
@@ -302,8 +305,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
 
   // ---- i18n：nuwax 语言变化 → 壳（UI 文案/主进程语言跟随） ----
   // nuwax 切换多语言（登录页语言开关/设置页/登录后用户资料同步）时推送当前语言，
-  // 转发给壳 renderer 走与设置页同链路的应用（setCurrentLang+预拉翻译+主进程同步），
-  // 不整窗 reload（避免连带重载 webview 丢会话态）。fire-and-forget。
+  // 主进程直接跟随 guest，再通知壳 renderer 更新文案。不能经 i18n:setLang
+  // 回传 set-lang 给 guest，否则 guest 自己切语言后会被宿主重复重载。
   ipcMain.on("nuwax:lang-sync", (event, payload: unknown) => {
     if (!isTrustedSender(event)) return;
     const safe =
@@ -311,9 +314,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         ? (payload as Record<string, unknown>)
         : null;
     const lang = safe && typeof safe.lang === "string" ? safe.lang.trim() : "";
-    if (!lang) return;
+    if (!/^[a-z]{2,8}(?:-[a-z0-9]{2,8})*$/i.test(lang)) return;
+    const shellLang = resolveShellLang(lang);
     log.info("[NuwaxBridge] lang-sync", { lang });
-    ctx.getMainWindow()?.webContents.send("nuwax:lang-changed", { lang });
+    writeSetting(NUWAX_WEBVIEW_LANG_KEY, lang.toLowerCase());
+    if (getMainLang() !== shellLang) {
+      setMainLang(shellLang);
+      getTrayManager()?.refresh();
+    }
+    ctx.getMainWindow()?.webContents.send("nuwax:lang-changed", { lang: shellLang });
   });
 
   // ---- meta：nuwax 前端构建信息 → 壳（关于页「界面版本」展示） ----

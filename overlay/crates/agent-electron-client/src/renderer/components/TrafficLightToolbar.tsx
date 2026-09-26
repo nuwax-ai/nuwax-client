@@ -20,7 +20,7 @@
  * 后退/前进/刷新不占顶行：Win/Linux 收进「窗口(W)」菜单；mac 收进系统菜单
  * 「窗口」（role back/forward/reload）。
  *
- * tooltip 暂用中文面量（桌面端次要 UI）；后续如需多语言可统一抽 i18n key。
+ * 文案经壳 i18n，随 webview 当前语言更新。
  */
 import React, { useEffect, useState } from "react";
 import { Button, Dropdown, Tooltip } from "antd";
@@ -35,6 +35,8 @@ import {
 import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
+import { I18N_KEYS } from "@shared/constants";
+import { t } from "../services/core/i18n";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
 const isMac = /mac/i.test(navigator.platform);
@@ -98,31 +100,27 @@ const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
  * 受控 open：antd 的「点外部收起」只听宿主 document，webview guest 内点击收不到
  * （bug 2427），故订阅主进程收起信号强制闭合；宿主文档内的既有行为（点其他按钮/
  * 再点同按钮）经 onOpenChange 原生保持。 */
-const TopMenu: React.FC<{ label: string; items: MenuProps["items"] }> = ({
-  label,
-  items,
-}) => {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const close = () => setOpen(false);
-    window.electronAPI?.on(DISMISS_CHANNEL, close);
-    return () => window.electronAPI?.off(DISMISS_CHANNEL, close);
-  }, []);
-  return (
-    <Dropdown
-      menu={{ items }}
-      trigger={["click"]}
-      open={open}
-      onOpenChange={setOpen}
-      // 下拉面板观感走 index.css .topbar-app-menu（Win11 原生菜单风）
-      rootClassName="topbar-app-menu"
-    >
-      <button type="button" className="topbar-menu-btn">
-        {label}
-      </button>
-    </Dropdown>
-  );
-};
+const TopMenu: React.FC<{
+  menuId: string;
+  label: string;
+  items: MenuProps["items"];
+  activeMenu: string | null;
+  onActiveMenuChange: (label: string | null) => void;
+}> = ({ menuId, label, items, activeMenu, onActiveMenuChange }) => (
+  <Dropdown
+    menu={{ items, onClick: () => onActiveMenuChange(null) }}
+    trigger={["click"]}
+    open={activeMenu === menuId}
+    onOpenChange={(open) => {
+      // 旧菜单迟到的关闭事件不得关掉刚打开的新菜单。
+      if (open) onActiveMenuChange(menuId);
+      else if (activeMenu === menuId) onActiveMenuChange(null);
+    }}
+    rootClassName="topbar-app-menu"
+  >
+    <button type="button" className="topbar-menu-btn">{label}</button>
+  </Dropdown>
+);
 
 /** 菜单项内容：左侧文案 + 右侧快捷键提示（原生菜单标准形态；Win 无原生菜单，
  * Ctrl 组合直达 guest，提示列与 mac accelerator 显示对齐）。 */
@@ -153,6 +151,16 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   updateEntry,
   dragRegions = [],
 }) => {
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  useEffect(() => {
+    const close = () => setActiveMenu(null);
+    window.electronAPI?.on(DISMISS_CHANNEL, close);
+    return () => window.electronAPI?.off(DISMISS_CHANNEL, close);
+  }, []);
+  // app-region:drag 不派发 DOM 点击。菜单展开时临时作为点击区域，
+  // 首次按下收起菜单；收起后恢复原生拖拽与双击最大化。
+  const dragStyle = activeMenu ? NO_DRAG : DRAG;
+
   // Win/Linux 最大化状态（自绘按钮图标）；mac 用原生红绿灯不渲染按钮
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
@@ -236,7 +244,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
    * 违背常驻开关的定位）。
    */
   const sidebarToggle = iconBtn(
-    menuCollapsed ? "展开侧栏" : "收起侧栏",
+    menuCollapsed ? t(I18N_KEYS.Toolbar.EXPANDSIDEBAR) : t(I18N_KEYS.Toolbar.COLLAPSESIDEBAR),
     false,
     onToggleMenu,
     menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />,
@@ -245,14 +253,14 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   // 设置按钮：宿主未注入 onOpenSettings 时不渲染（nuwax 宿主入口已迁至
   // web 用户区「客户端设置」按钮，经 nuwax:open-client-settings 链路回开本弹窗）
   const settingsBtn = onOpenSettings
-    ? iconBtn("设置", false, onOpenSettings, <SettingOutlined />)
+    ? iconBtn(t("Claw.Menu.settings"), false, onOpenSettings, <SettingOutlined />)
     : null;
 
   /** 历史导航：后退/前进（能力走主进程真值通道，不可用时置灰）。 */
   const historyNav = (
     <>
-      {iconBtn("后退", !goBackCap, doBack, <LeftOutlined />)}
-      {iconBtn("前进", !goForwardCap, doForward, <RightOutlined />)}
+      {iconBtn(t("Claw.ContextMenu.back"), !goBackCap, doBack, <LeftOutlined />)}
+      {iconBtn(t("Claw.ContextMenu.forward"), !goForwardCap, doForward, <RightOutlined />)}
     </>
   );
 
@@ -268,12 +276,15 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
       }}
     >
       <TopMenu
-        label="关于(A)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="about"
+        label={t(I18N_KEYS.Toolbar.ABOUT)}
         items={[
-          { key: "about", label: menuRow("关于与检查更新"), onClick: onOpenAbout },
+          { key: "about", label: menuRow(t(I18N_KEYS.Toolbar.ABOUTUPDATE)), onClick: onOpenAbout },
           { type: "divider" },
           // 设置项与 mac 应用菜单「设置…」对齐；商业版 web 用户区入口并存不冲突
-          { key: "settings", label: menuRow("设置"), onClick: onOpenSettingsMenu },
+          { key: "settings", label: menuRow(t("Claw.Menu.settings")), onClick: onOpenSettingsMenu },
         ]}
       />
       {/*
@@ -282,98 +293,110 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         动作实现收口在 App.tsx（与 menu:workspace 通道共用 services/core/workspaceDir）
       */}
       <TopMenu
-        label="文件(F)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="file"
+        label={t(I18N_KEYS.Toolbar.FILE)}
         items={[
           {
             key: "newTask",
-            label: menuRow("新建任务", "Ctrl+N"),
+            label: menuRow(t(I18N_KEYS.Toolbar.NEWTASK), "Ctrl+N"),
             onClick: onNewTask,
           },
           {
             key: "search",
-            label: menuRow("搜索", "Ctrl+K"),
+            label: menuRow(t(I18N_KEYS.Toolbar.SEARCH), "Ctrl+K"),
             onClick: onOpenSearch,
           },
           { type: "divider" },
           {
             key: "modifyWorkspace",
-            label: menuRow("更改工作空间目录…"),
+            label: menuRow(t(I18N_KEYS.Toolbar.MODIFYWORKSPACE)),
             onClick: onModifyWorkspace,
           },
           {
             key: "openWorkspace",
-            label: menuRow("打开工作空间目录"),
+            label: menuRow(t(I18N_KEYS.Toolbar.OPENWORKSPACE)),
             onClick: onOpenWorkspace,
           },
         ]}
       />
       <TopMenu
-        label="编辑(E)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="edit"
+        label={t(I18N_KEYS.Toolbar.EDIT)}
         items={[
           {
             key: "undo",
-            label: menuRow("撤销", "Ctrl+Z"),
+            label: menuRow(t("Claw.ContextMenu.undo"), "Ctrl+Z"),
             onClick: () => editAction("undo"),
           },
           {
             key: "redo",
-            label: menuRow("重做", "Shift+Ctrl+Z"),
+            label: menuRow(t("Claw.ContextMenu.redo"), "Shift+Ctrl+Z"),
             onClick: () => editAction("redo"),
           },
           { type: "divider" },
           {
             key: "cut",
-            label: menuRow("剪切", "Ctrl+X"),
+            label: menuRow(t("Claw.ContextMenu.cut"), "Ctrl+X"),
             onClick: () => editAction("cut"),
           },
           {
             key: "copy",
-            label: menuRow("复制", "Ctrl+C"),
+            label: menuRow(t("Claw.ContextMenu.copy"), "Ctrl+C"),
             onClick: () => editAction("copy"),
           },
           {
             key: "paste",
-            label: menuRow("粘贴", "Ctrl+V"),
+            label: menuRow(t("Claw.ContextMenu.paste"), "Ctrl+V"),
             onClick: () => editAction("paste"),
           },
           {
             key: "selectAll",
-            label: menuRow("全选", "Ctrl+A"),
+            label: menuRow(t("Claw.ContextMenu.selectAll"), "Ctrl+A"),
             onClick: () => editAction("selectAll"),
           },
         ]}
       />
       <TopMenu
-        label="窗口(W)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="window"
+        label={t(I18N_KEYS.Toolbar.WINDOW)}
         items={[
-          { key: "back", label: "后退", disabled: !goBackCap, onClick: doBack },
+          { key: "back", label: t("Claw.ContextMenu.back"), disabled: !goBackCap, onClick: doBack },
           {
             key: "forward",
-            label: "前进",
+            label: t("Claw.ContextMenu.forward"),
             disabled: !goForwardCap,
             onClick: doForward,
           },
           {
             key: "reload",
-            label: menuRow("刷新页面", "Ctrl+R"),
+            label: menuRow(t("Claw.ContextMenu.reload"), "Ctrl+R"),
             onClick: onReload,
           },
           { type: "divider" },
-          { key: "minimize", label: "最小化", onClick: onMin },
+          { key: "minimize", label: t(I18N_KEYS.Toolbar.MINIMIZE), onClick: onMin },
           {
             key: "maximize",
-            label: maximized ? "还原" : "最大化",
+            label: maximized ? t(I18N_KEYS.Toolbar.RESTORE) : t(I18N_KEYS.Toolbar.MAXIMIZE),
             onClick: onMax,
           },
-          { key: "close", label: "关闭", onClick: onClose },
+          { key: "close", label: t("Claw.Common.close"), onClick: onClose },
         ]}
       />
       <TopMenu
-        label="帮助(H)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="help"
+        label={t(I18N_KEYS.Toolbar.HELP)}
         items={[
           {
             key: "logs",
-            label: "打开日志目录",
+            label: t(I18N_KEYS.Toolbar.OPENLOGS),
             onClick: () => {
               void window.electronAPI?.log?.openDir?.();
             },
@@ -393,6 +416,8 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         <div
           key={`${region.x}:${region.y}:${region.width}:${region.height}:${index}`}
           aria-hidden
+          onPointerDown={() => setActiveMenu(null)}
+          onClick={() => setActiveMenu(null)}
           style={{
             position: "fixed",
             left: region.x,
@@ -401,7 +426,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
             height: region.height,
             zIndex: 1099,
             userSelect: "none",
-            ...DRAG,
+            ...dragStyle,
           }}
         />
       ))}
@@ -456,11 +481,14 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
             （win 为窗口三键/更新入口）之间的全部空白，其余区域全穿透给 guest，
             guest 侧由标题栏手势（nuwax:titlebar-drag-*）接管空白带拖拽。 */}
         <div
+          data-testid="topbar-drag-spacer"
+          onPointerDown={() => setActiveMenu(null)}
+          onClick={() => setActiveMenu(null)}
           style={{
             flex: 1,
             height: "100%",
             pointerEvents: "auto",
-            ...DRAG,
+            ...dragStyle,
           }}
         />
 
@@ -497,13 +525,13 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
               ...NO_DRAG,
             }}
           >
-            <CtrlButton title="最小化" onClick={onMin}>
+            <CtrlButton title={t(I18N_KEYS.Toolbar.MINIMIZE)} onClick={onMin}>
               <MinGlyph />
             </CtrlButton>
-            <CtrlButton title={maximized ? "还原" : "最大化"} onClick={onMax}>
+            <CtrlButton title={maximized ? t(I18N_KEYS.Toolbar.RESTORE) : t(I18N_KEYS.Toolbar.MAXIMIZE)} onClick={onMax}>
               {maximized ? <RestoreGlyph /> : <MaxGlyph />}
             </CtrlButton>
-            <CtrlButton title="关闭" danger onClick={onClose}>
+            <CtrlButton title={t("Claw.Common.close")} danger onClick={onClose}>
               <CloseGlyph />
             </CtrlButton>
           </div>

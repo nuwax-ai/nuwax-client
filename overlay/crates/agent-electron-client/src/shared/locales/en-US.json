@@ -1023,5 +1023,21 @@
   "Claw.Settings.computerUse.errors.helperNotInstalledBundled": "Install the helper app before enabling Computer Use",
   "Claw.Settings.computerUse.errors.helperNotInstalled": "Nuwax Computer Use helper app not found",
   "Claw.Settings.computerUse.errors.bundledNotFound": "Helper component not found in the installation package",
-  "Claw.Settings.computerUse.errors.vlmNotConfigured": "Fill in the vision model name and API key first"
+  "Claw.Settings.computerUse.errors.vlmNotConfigured": "Fill in the vision model name and API key first",
+  "Claw.Toolbar.about": "About(A)",
+  "Claw.Toolbar.file": "File(F)",
+  "Claw.Toolbar.edit": "Edit(E)",
+  "Claw.Toolbar.window": "Window(W)",
+  "Claw.Toolbar.help": "Help(H)",
+  "Claw.Toolbar.aboutUpdate": "About and Check for Updates",
+  "Claw.Toolbar.newTask": "New Task",
+  "Claw.Toolbar.search": "Search",
+  "Claw.Toolbar.modifyWorkspace": "Change Workspace Directory…",
+  "Claw.Toolbar.openWorkspace": "Open Workspace Directory",
+  "Claw.Toolbar.minimize": "Minimize",
+  "Claw.Toolbar.maximize": "Maximize",
+  "Claw.Toolbar.restore": "Restore",
+  "Claw.Toolbar.openLogs": "Open Logs Directory",
+  "Claw.Toolbar.expandSidebar": "Expand Sidebar",
+  "Claw.Toolbar.collapseSidebar": "Collapse Sidebar"
 }

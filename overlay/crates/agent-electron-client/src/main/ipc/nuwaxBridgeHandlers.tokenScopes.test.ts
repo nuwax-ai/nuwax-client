@@ -59,7 +59,7 @@ vi.mock("../services/contextMenu", () => ({
 vi.mock("electron", () => ({
   // app.on：registerCuaQuitCleanup（will-quit 停 daemon）与 fullDiskAccess
   // boot 钩子（browser-window-created/focus）在注册期挂监听
-  app: { isPackaged: false, on: vi.fn() },
+  app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
   ipcMain: {
     handle: (
@@ -159,6 +159,7 @@ import {
   NUWAX_TOKEN_KEY_PREFIX,
 } from "./nuwaxBridgeHandlers";
 import { DEFAULT_SERVER_HOST } from "../../shared/constants";
+import { getMainLang, setMainLang } from "../services/i18n";
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
@@ -552,7 +553,7 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 
     const changed = sent.find(([c]) => c === "nuwax:lang-changed");
     expect(changed).toBeDefined();
-    expect(changed![1]).toEqual({ lang: "en-US" });
+    expect(changed![1]).toEqual({ lang: "en-us" });
   });
 
   it("非法/空语言 → 不转发", () => {
@@ -640,5 +641,29 @@ describe("trusted runtime auth context and window navigation", () => {
       .toEqual({ success: false, error: "untrusted sender" });
     expect(mocks.showOpenDialog).not.toHaveBeenCalled();
     expect(mocks.showSaveDialog).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("webview is the shell language source", () => {
+  it("trusted language sync persists raw language, updates main and never reloads guest", () => {
+    setMainLang("zh-cn");
+    const handler = emitters.get("nuwax:lang-sync")![0];
+    handler(senderEvent(HOST_ORIGIN), { lang: "en-US" });
+    expect(settings.get("nuwax.webview_lang")).toBe("en-us");
+    expect(getMainLang()).toBe("en-us");
+    expect(mocks.loadURL).not.toHaveBeenCalled();
+  });
+  it("unsupported guest language falls back only in shell", () => {
+    emitters.get("nuwax:lang-sync")![0](senderEvent(HOST_ORIGIN), { lang: "ja-JP" });
+    expect(settings.get("nuwax.webview_lang")).toBe("ja-jp");
+    expect(getMainLang()).toBe("zh-cn");
+    expect(mocks.loadURL).not.toHaveBeenCalled();
+  });
+  it("untrusted or malformed language cannot overwrite mirror", () => {
+    const handler = emitters.get("nuwax:lang-sync")![0];
+    handler(senderEvent("https://untrusted.example"), { lang: "en-US" });
+    handler(senderEvent(HOST_ORIGIN), { lang: "../../en-US" });
+    expect(settings.has("nuwax.webview_lang")).toBe(false);
   });
 });

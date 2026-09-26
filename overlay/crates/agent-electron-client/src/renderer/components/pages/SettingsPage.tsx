@@ -4,7 +4,7 @@
  * 功能：
  * - 服务（服务域名、工作区目录）
  * - 高级（端口，默认折叠）
- * - 系统（开机自启、本地化加速、主题、语言）
+ * - 系统（开机自启、本地化加速、主题）
  * - 目录（应用数据、日志）
  *
  * 交互语义（与旧「表单编辑解锁」版对齐，仅范式变化）：
@@ -39,32 +39,16 @@ import {
   modifyWorkspaceDir,
   openWorkspaceDir,
 } from "../../services/core/workspaceDir";
-import {
-  t,
-  setCurrentLang,
-  scheduleLangMapRefreshOnNextInit,
-  fetchI18nLangList,
-  prefetchLangMap,
-  type I18nLangDto,
-} from "../../services/core/i18n";
+import { t } from "../../services/core/i18n";
 
 import styles from "../../styles/components/SettingsPage.module.css";
-import { useTheme, useI18nLang, type ThemeMode } from "../../App";
+import { useTheme, type ThemeMode } from "../../App";
 
 // Dev tools: 仅开发模式加载
 const IS_DEV = import.meta.env.DEV;
 const DevToolsPanel = IS_DEV
   ? React.lazy(() => import("../dev/DevToolsPanel"))
   : null;
-
-// 本地支持的语言选项（兜底用）
-// 使用与后端一致的完整语言码格式（如 zh-cn），与 i18nLang 格式对齐
-const LOCAL_LANG_OPTIONS = [
-  { value: "en-us", label: t("Claw.Settings.system.langEnglish") },
-  { value: "zh-cn", label: t("Claw.Settings.system.langChinese") },
-  { value: "zh-tw", label: t("Claw.Settings.system.langChineseTW") },
-  { value: "zh-hk", label: t("Claw.Settings.system.langChineseHK") },
-];
 
 type PortKey = "fileServerPort" | "agentPort" | "ttydPort";
 
@@ -192,13 +176,6 @@ export default function SettingsPage() {
     apiKey: string;
   } | null>(null);
   const [cuaVlmTesting, setCuaVlmTesting] = useState(false);
-
-  // 语言
-  const { lang: i18nLang } = useI18nLang();
-  const [langList, setLangList] = useState<I18nLangDto[]>([]);
-  const [langConfirmModalVisible, setLangConfirmModalVisible] = useState(false);
-  const [langConfirmLoading, setLangConfirmLoading] = useState(false);
-  const [pendingLang, setPendingLang] = useState("");
 
   // 工作区目录行展示源：保存后即时跟随
   const workspaceDir = config?.workspaceDir ?? "";
@@ -468,19 +445,7 @@ export default function SettingsPage() {
     };
   }, [loadConfig, loadSystemSettings]);
 
-  // ========== 加载语言列表 ==========
   useEffect(() => {
-    const loadLangList = async () => {
-      try {
-        const list = await fetchI18nLangList();
-        if (list && list.length > 0) {
-          setLangList(list);
-        }
-      } catch {
-        // 失败时保持空，使用本地兜底
-      }
-    };
-    loadLangList();
     loadCuaStatus();
     loadFdaStatus();
   }, [loadCuaStatus, loadFdaStatus]);
@@ -688,53 +653,6 @@ export default function SettingsPage() {
     } catch {
       message.error(t(I18N_KEYS.Toast.ERROR.OPEN_LOGS_FAILED));
     }
-  };
-
-  // ========== 语言切换 ==========
-  const handleLanguageChange = async (lang: string) => {
-    setPendingLang(lang);
-    setLangConfirmModalVisible(true);
-  };
-
-  const handleLangConfirm = async () => {
-    const lang = pendingLang;
-    if (!lang) return;
-    setLangConfirmLoading(true);
-
-    // 确保 loading 最少展示 500ms，避免闪烁
-    const minLoadingDelay = new Promise((resolve) => setTimeout(resolve, 500));
-
-    try {
-      // 1. 立即切换本地语言
-      await setCurrentLang(lang);
-
-      // 2. 预拉取目标语言翻译并缓存到 DB（与 loading 并行，不阻塞超过 500ms）
-      //    失败时 reload 后后台仍会重试
-      await Promise.allSettled([prefetchLangMap(lang), minLoadingDelay]);
-
-      // 3. 标记下次初始化时强制 no-store 刷新翻译
-      await scheduleLangMapRefreshOnNextInit(lang);
-
-      // 4. 同步到主进程（检查返回值，失败则抛出）
-      const result = await window.electronAPI?.i18n?.setLang(lang);
-      if (result && !result.success) {
-        throw new Error(result.error || "Main process language change failed");
-      }
-
-      // 5. 刷新页面
-      window.location.reload();
-    } catch (error) {
-      console.error("Language change failed:", error);
-      message.error(t("Claw.Settings.messages.languageChangeFailed"));
-      setLangConfirmModalVisible(false);
-    } finally {
-      setLangConfirmLoading(false);
-    }
-  };
-
-  const handleLangCancel = () => {
-    setLangConfirmModalVisible(false);
-    setPendingLang("");
   };
 
   if (loading) {
@@ -988,27 +906,6 @@ export default function SettingsPage() {
               }
             />
           )}
-
-          {/* 语言设置 */}
-          <SettingsRow
-            label={t("Claw.Settings.system.language")}
-            desc={t("Claw.Settings.system.languageDesc")}
-            control={
-              <Select
-                style={{ width: 160 }}
-                value={i18nLang}
-                onChange={handleLanguageChange}
-                options={
-                  langList.length > 0
-                    ? langList.map((item) => ({
-                        value: item.lang.toLowerCase(),
-                        label: item.name,
-                      }))
-                    : LOCAL_LANG_OPTIONS
-                }
-              />
-            }
-          />
         </div>
       </div>
 
@@ -1196,28 +1093,6 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
-
-      {/* 语言切换确认弹窗 */}
-      <Modal
-        open={langConfirmModalVisible}
-        title={t("Claw.Settings.languageConfirm.title")}
-        onCancel={handleLangCancel}
-        footer={[
-          <Button key="cancel" onClick={handleLangCancel}>
-            {t("Claw.Settings.languageConfirm.cancel")}
-          </Button>,
-          <Button
-            key="confirm"
-            type="primary"
-            loading={langConfirmLoading}
-            onClick={handleLangConfirm}
-          >
-            {t("Claw.Settings.languageConfirm.ok")}
-          </Button>,
-        ]}
-      >
-        <p>{t("Claw.Settings.languageConfirm.content")}</p>
-      </Modal>
     </div>
   );
 }
