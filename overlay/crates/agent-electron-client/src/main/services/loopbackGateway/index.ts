@@ -23,7 +23,7 @@ import * as path from "path";
 import { randomBytes } from "node:crypto";
 import { readSetting, writeSetting } from "../../db";
 import { DEFAULT_SERVER_HOST } from "@shared/constants";
-import { currentTicket, mirrorGatewaySetCookies, ticketEpoch, setLoopbackTicketOrigin, advanceTicketEpoch } from "../commercialTicketSession";
+import { currentTicket, mirrorGatewaySetCookies, ticketEpoch, setLoopbackTicketOrigin, advanceTicketEpoch, abortGatewayTicketMirror } from "../commercialTicketSession";
 import { getConfiguredPorts } from "../startupPorts";
 import {
   startLoopbackGateway,
@@ -32,6 +32,7 @@ import {
 } from "./gateway";
 import { normalizeGatewayRequestUrl } from "./routingPolicy";
 import { setGatewayRequestContext } from "./requestContext";
+import { parseTicketSetCookie } from "../ticketCookiePolicy";
 
 export const DEFAULT_LOOPBACK_GATEWAY_PORT = 46800;
 
@@ -286,15 +287,29 @@ export async function ensureLoopbackGateway(): Promise<
       ],
       getTicket: currentTicket,
       ticketEpoch,
-      onSetCookie: (headers, epoch, login) => {
+      onSetCookie: async (headers, epoch, login) => {
         // A successful login invalidates renewals from requests belonging to
         // the previous account, even if those responses arrive afterward.
         // A response from a login superseded by logout or another login must
         // never advance the epoch and restore its cookie.
-        if (epoch !== ticketEpoch()) return;
-        if (login && headers.some((header) => /^\s*ticket=/i.test(header))) advanceTicketEpoch();
-        void mirrorGatewaySetCookies(headers, backendOrigin, ticketEpoch()).catch((error) =>
-          log.error("[LoopbackGateway] ticket mirror failed", error));
+        if (epoch !== ticketEpoch()) return false;
+        if (login && headers.some((header) => parseTicketSetCookie(header, backendOrigin).kind === "valid")) advanceTicketEpoch();
+        const mirrorEpoch = ticketEpoch();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            mirrorGatewaySetCookies(headers, backendOrigin, mirrorEpoch),
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error("ticket mirror timed out")), 3000);
+            }),
+          ]);
+        } catch (error) {
+          if (ticketEpoch() === mirrorEpoch) abortGatewayTicketMirror(backendOrigin);
+          log.error("[LoopbackGateway] ticket mirror failed", error);
+          throw error;
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
       },
       trustedRequestSecret: requestSecret,
     });

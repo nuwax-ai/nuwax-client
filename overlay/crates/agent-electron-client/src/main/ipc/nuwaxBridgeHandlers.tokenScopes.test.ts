@@ -36,6 +36,9 @@ const mocks = vi.hoisted(() => ({
   windowOptions: vi.fn(),
   destroyWindow: vi.fn(),
   refreshGateway: vi.fn(async () => undefined),
+  mainLang: "zh-cn",
+  setMainLang: vi.fn(),
+  trayRefresh: vi.fn(),
   partitionSessions: new Map<string, {
     setPermissionRequestHandler: ReturnType<typeof vi.fn>;
     setPermissionCheckHandler: ReturnType<typeof vi.fn>;
@@ -54,6 +57,18 @@ vi.mock("../services/sessionAuthInjection", () => ({
 
 vi.mock("../services/contextMenu", () => ({
   installContextMenuService: mocks.installContextMenu,
+}));
+
+vi.mock("../services/i18n", () => ({
+  getMainLang: () => mocks.mainLang,
+  setMainLang: (lang: string) => {
+    mocks.mainLang = lang.toLowerCase();
+    mocks.setMainLang(lang);
+  },
+}));
+
+vi.mock("../window/trayManager", () => ({
+  getTrayManager: () => ({ refresh: mocks.trayRefresh }),
 }));
 
 vi.mock("electron", () => ({
@@ -175,7 +190,15 @@ function hostEvent() {
   return { senderFrame: mainFrame, sender: mainWindowContents };
 }
 
+async function seedTicket(value: string): Promise<void> {
+  const ticket = await import("../services/commercialTicketSession");
+  await ticket.mirrorGatewaySetCookies([`ticket=${value}; Path=/; Secure`], HOST_ORIGIN, ticket.ticketEpoch());
+}
+
 beforeEach(() => {
+  mocks.mainLang = "zh-cn";
+  mocks.setMainLang.mockClear();
+  mocks.trayRefresh.mockClear();
   mocks.stop.mockResolvedValue({ success: true, results: {} });
   mocks.storage.mockClear();
   mocks.cookiesGet.mockReset().mockResolvedValue([]);
@@ -246,17 +269,29 @@ describe("cookie 会话与旧 token 桥", () => {
 
   it("开始新登录前清除业务域和网关旧 cookie", async () => {
     settings.set(`nuwax.ticket.${HOST_ORIGIN}`, "old");
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "old", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
     await handlers.get("auth:beginLogin")!(senderEvent(GW_ORIGIN));
     expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeNull();
     expect(mocks.cookiesRemove).toHaveBeenCalledWith(HOST_ORIGIN, "ticket");
     expect(mocks.cookiesRemove).toHaveBeenCalledWith(GW_ORIGIN, "ticket");
   });
 
+  it("恢复期间被新登录取代的 beginLogin 不再清理新一代会话", async () => {
+    let finishRead!: (cookies: unknown[]) => void;
+    mocks.cookiesGet.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }) as never);
+    const first = handlers.get("auth:beginLogin")!(senderEvent(GW_ORIGIN));
+    const second = handlers.get("auth:beginLogin")!(senderEvent(GW_ORIGIN));
+    finishRead([]);
+    expect(await first).toBe(false);
+    expect(await second).toBe(true);
+    expect(mocks.cookiesRemove).toHaveBeenCalledTimes(2);
+  });
+
   it("登出清业务域和网关 ticket，并保留同账号设备注册键", async () => {
     const sent: string[] = [];
     mainWindowSender = (channel) => sent.push(channel);
-    settings.set(`nuwax.ticket.${HOST_ORIGIN}`, "old");
-    settings.set(`nuwax.ticket.${GW_ORIGIN}`, "old");
+    await seedTicket("old");
     settings.set("auth.saved_key", "sk");
     settings.set("auth.username", "alice");
     await handlers.get("auth:clear")!(senderEvent(GW_ORIGIN));
@@ -480,7 +515,7 @@ describe("native:saveImage（另存图片）", () => {
   });
 
   it("外链窗口右键保存业务域图片不代注 ticket，站内右键仍可代注", async () => {
-    settings.set(`nuwax.ticket.${HOST_ORIGIN}`, "private-ticket");
+    await seedTicket("private-ticket");
     mocks.netFetch.mockImplementation(async () =>
       new Response(new Uint8Array([1]), { status: 200 }),
     );
@@ -542,7 +577,7 @@ describe("native:saveImage（另存图片）", () => {
 });
 
 describe("语言同步（webview 多语言 → 壳）", () => {
-  it("nuwax:lang-sync → 转发 nuwax:lang-changed 给壳 renderer", () => {
+  it("nuwax:lang-sync → 持久化 webview 语言，更新主进程和 renderer", () => {
     const sent: [string, unknown][] = [];
     mainWindowSender = (c, p) => sent.push([c, p]);
 
@@ -552,7 +587,22 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 
     const changed = sent.find(([c]) => c === "nuwax:lang-changed");
     expect(changed).toBeDefined();
-    expect(changed![1]).toEqual({ lang: "en-US" });
+    expect(changed![1]).toEqual({ lang: "en-us" });
+    expect(settings.get("nuwax.webview_lang")).toBe("en-us");
+    expect(mocks.setMainLang).toHaveBeenCalledOnce();
+    expect(mocks.setMainLang).toHaveBeenCalledWith("en-us");
+    expect(mocks.trayRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("壳不支持的语种仅壳回退简体中文，保留 webview 原语言", () => {
+    const sent: [string, unknown][] = [];
+    mainWindowSender = (c, p) => sent.push([c, p]);
+    emitters.get("nuwax:lang-sync")?.[0](senderEvent(GW_ORIGIN), { lang: "ja-JP" });
+
+    expect(settings.get("nuwax.webview_lang")).toBe("ja-jp");
+    expect(sent).toContainEqual(["nuwax:lang-changed", { lang: "zh-cn" }]);
+    expect(mocks.setMainLang).not.toHaveBeenCalled();
+    expect(mocks.trayRefresh).not.toHaveBeenCalled();
   });
 
   it("非法/空语言 → 不转发", () => {
@@ -563,8 +613,10 @@ describe("语言同步（webview 多语言 → 壳）", () => {
     emit!(senderEvent(GW_ORIGIN), { lang: "   " });
     emit!(senderEvent(GW_ORIGIN), { lang: 123 });
     emit!(senderEvent(GW_ORIGIN), null);
+    emit!(senderEvent(GW_ORIGIN), { lang: "../../en-US" });
 
     expect(sent.some(([c]) => c === "nuwax:lang-changed")).toBe(false);
+    expect(settings.has("nuwax.webview_lang")).toBe(false);
   });
 });
 

@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   fetch: vi.fn(),
   isPackaged: true,
+  ticketUsable: true,
 }));
 vi.mock("electron", () => ({
   // getter 双向绑定：dev 种值分支测试可按用例切 isPackaged
@@ -28,6 +29,11 @@ vi.mock("../db", () => ({
   }),
 }));
 vi.mock("../services/commercialTicketSession", () => ({
+  currentTicket: () => {
+    if (!mocks.ticketUsable) return null;
+    const config = mocks.settings.get("step1_config") as { serverHost?: string } | undefined;
+    return mocks.settings.get(`nuwax.ticket.${config?.serverHost || "https://agent.nuwax.com"}`) ?? null;
+  },
   ticketEpoch: () => 0,
   mirrorNativeResponseTicket: vi.fn(async () => undefined),
 }));
@@ -61,6 +67,7 @@ beforeEach(() => {
   mocks.settings.set("nuwax.cookieAuthMigrated", true);
   mocks.fetch.mockReset();
   mocks.isPackaged = true;
+  mocks.ticketUsable = true;
   delete process.env.NUWAX_SERVER_HOST;
   delete process.env.NUWAX_RELEASE_CHANNEL;
 });
@@ -132,6 +139,26 @@ describe("commercial registration protocol", () => {
     const { flow } = fixture();
     expect((await flow.start()).success).toBe(false);
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("does not authenticate a rejected mirror even if its old DB key remains", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
+    mocks.ticketUsable = false;
+    const { flow } = fixture();
+    expect((await flow.start()).success).toBe(false);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("stops before registration if the mirror becomes unusable during session validation", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
+    mocks.fetch.mockImplementationOnce(async () => {
+      mocks.ticketUsable = false;
+      return new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } }));
+    });
+    const { flow, start } = fixture();
+    expect((await flow.start()).success).toBe(false);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
   });
   it("readTicketCookieValue 跳过过期与不兼容的候选 cookie", () => {
     mocks.settings.set("nuwax.ticket.https://a.example.com", "t-1");
@@ -331,13 +358,17 @@ describe("registration cookie consistency", () => {
     mocks.settings.set("step1_config", { serverHost: origin });
     mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
     let resolve!: (value: Response) => void;
-    mocks.fetch.mockReturnValue(new Promise((r) => { resolve = r; }));
+    mocks.fetch.mockReturnValueOnce(new Promise((r) => { resolve = r; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: {
+        configKey: "wrong-session", serverHost: "tunnel.example.com", serverPort: 443,
+      } })));
     const { flow, start } = fixture();
     const pending = flow.start();
     await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled());
     mocks.settings.set(`nuwax.ticket.${origin}`, "new-ticket");
     resolve(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })));
     expect((await pending).success).toBe(false);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(start).not.toHaveBeenCalled();
   });
 });

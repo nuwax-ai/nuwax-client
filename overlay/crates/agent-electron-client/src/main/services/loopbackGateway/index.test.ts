@@ -7,7 +7,9 @@
  * 导致 renderer 永远收不到 nuwax:loopback-changed。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+afterEach(() => vi.useRealTimers());
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, unknown>();
@@ -367,6 +369,64 @@ describe("loopbackGateway runtime key carries backend", () => {
       enabled: false,
       backend: "https://a.example.com",
     });
+  });
+
+  it("times out a ticket mirror after 3 seconds and clears a late jar write", async () => {
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    await mod.ensureLoopbackGateway();
+    const options = mocks.startGateway.mock.calls[0][0];
+    const { session } = await import("electron");
+    const cookies = session.defaultSession.cookies;
+    vi.mocked(cookies.remove).mockClear();
+    let releaseSet!: () => void;
+    vi.mocked(cookies.set).mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSet = resolve; }));
+    mocks.store.set("nuwax.ticket.https://a.example.com", "old");
+
+    vi.useFakeTimers();
+    const epoch = options.ticketEpoch();
+    const attempt = options.onSetCookie(["ticket=new; Path=/"], epoch, false);
+    let settled = false;
+    void attempt.then(() => { settled = true; }, () => { settled = true; });
+    const rejected = expect(attempt).rejects.toThrow("ticket mirror timed out");
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(options.getTicket()).toBeNull();
+    expect(options.ticketEpoch()).toBeGreaterThan(epoch);
+
+    releaseSet();
+    vi.useRealTimers();
+    await vi.waitFor(() => {
+      expect(cookies.remove).toHaveBeenCalledWith("https://a.example.com", "ticket");
+      expect(cookies.remove).toHaveBeenCalledWith("http://127.0.0.1:46800", "ticket");
+    });
+    expect(options.getTicket()).toBeNull();
+  });
+
+  it("does not revive a login response from an older epoch", async () => {
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    await mod.ensureLoopbackGateway();
+    const options = mocks.startGateway.mock.calls[0][0];
+    const epoch = options.ticketEpoch();
+    const ticket = await import("../commercialTicketSession");
+    ticket.advanceTicketEpoch();
+    expect(await options.onSetCookie(["ticket=stale; Path=/"], epoch, true)).toBe(false);
+    expect(options.getTicket()).toBeNull();
+    expect(options.ticketEpoch()).toBe(epoch + 1);
+  });
+
+  it("does not advance a login epoch for an unsupported ticket", async () => {
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    await mod.ensureLoopbackGateway();
+    const options = mocks.startGateway.mock.calls[0][0];
+    const epoch = options.ticketEpoch();
+    expect(await options.onSetCookie(["ticket=new; Partitioned; Secure"], epoch, true)).toBe(false);
+    expect(options.ticketEpoch()).toBe(epoch);
+    expect(options.getTicket()).toBeNull();
   });
 });
 

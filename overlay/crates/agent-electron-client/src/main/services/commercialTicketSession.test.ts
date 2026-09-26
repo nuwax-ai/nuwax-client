@@ -5,11 +5,25 @@ const mocks = vi.hoisted(() => ({
   jar: new Map<string, Record<string, unknown>>(),
   origin: "https://biz.example.com",
   delayNextSet: null as Promise<void> | null,
+  delayNextGet: null as Promise<void> | null,
+  writeFailures: 0,
+  writeFailureMode: "false" as "false" | "throw",
+  alwaysFailWrite: false,
+  writes: [] as { key: string; value: unknown }[],
   changed: null as null | ((event: unknown, cookie: Record<string, unknown>, cause: string, removed: boolean) => void),
 }));
 vi.mock("../db", () => ({
   readSetting: (key: string) => mocks.settings.get(key) ?? null,
-  writeSetting: (key: string, value: unknown) => mocks.settings.set(key, value),
+  writeSetting: (key: string, value: unknown) => {
+    if (mocks.alwaysFailWrite || mocks.writeFailures > 0) {
+      mocks.writeFailures = Math.max(0, mocks.writeFailures - 1);
+      if (mocks.writeFailureMode === "throw") throw new Error("settings unavailable");
+      return false;
+    }
+    mocks.settings.set(key, value);
+    mocks.writes.push({ key, value });
+    return true;
+  },
 }));
 vi.mock("./commercialSessionScope", () => ({
   currentBusinessOrigin: () => mocks.origin,
@@ -25,11 +39,14 @@ vi.mock("./commercialSessionScope", () => ({
   },
   NUWAX_TICKET_KEY_PREFIX: "nuwax.ticket.",
 }));
-vi.mock("electron-log", () => ({ default: { error: vi.fn(), info: vi.fn() } }));
+vi.mock("electron-log", () => ({ default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
 vi.mock("electron", () => ({
   session: { defaultSession: { cookies: {
     get: vi.fn(async ({ url }: { url: string }) => {
       const cookie = mocks.jar.get(url);
+      const delay = mocks.delayNextGet;
+      mocks.delayNextGet = null;
+      if (delay) await delay;
       return cookie ? [cookie] : [];
     }),
     set: vi.fn(async (cookie: Record<string, unknown>) => {
@@ -49,6 +66,11 @@ beforeEach(() => {
   mocks.jar.clear();
   mocks.origin = "https://biz.example.com";
   mocks.delayNextSet = null;
+  mocks.delayNextGet = null;
+  mocks.writeFailures = 0;
+  mocks.alwaysFailWrite = false;
+  mocks.writeFailureMode = "false";
+  mocks.writes = [];
   mocks.changed = null;
 });
 
@@ -116,6 +138,48 @@ describe("commercial ticket cookie mirror", () => {
     expect(mocks.jar.has(mocks.origin)).toBe(false);
   });
 
+  it("uses the last valid ticket in a response for both explicit jars", async () => {
+    const api = await import("./commercialTicketSession");
+    const gateway = "http://127.0.0.1:46800";
+    await api.setLoopbackTicketOrigin(gateway);
+    expect(await api.mirrorGatewaySetCookies([
+      "ticket=; Max-Age=0; Path=/",
+      "ticket=last; Secure; SameSite=None; Path=/",
+      "ticket=foreign; Domain=foreign.example; Path=/",
+    ], mocks.origin, api.ticketEpoch())).toBe(true);
+    expect(api.currentTicket()).toBe("last");
+    expect(mocks.jar.get(gateway)?.value).toBe("last");
+  });
+
+  it("does not persist a late cookie write after mirror abort and clears its jar", async () => {
+    const api = await import("./commercialTicketSession");
+    const gateway = "http://127.0.0.1:46800";
+    await api.setLoopbackTicketOrigin(gateway);
+    let release!: () => void;
+    mocks.delayNextSet = new Promise<void>((resolve) => { release = resolve; });
+    const mirror = api.mirrorGatewaySetCookies(["ticket=late; Path=/"], mocks.origin, api.ticketEpoch());
+    await vi.waitFor(() => expect(mocks.delayNextSet).toBeNull());
+    api.abortGatewayTicketMirror(mocks.origin);
+    expect(api.currentTicket()).toBeNull();
+    release();
+    expect(await mirror).toBe(false);
+    await vi.waitFor(() => expect(mocks.jar.size).toBe(0));
+    expect(mocks.settings.get(`nuwax.ticket.${mocks.origin}`)).toBeNull();
+  });
+
+  it("rejects failed gateway settings writes and queues jar cleanup even if DB deletes fail", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.mirrorGatewaySetCookies(["ticket=old; Path=/"], mocks.origin, api.ticketEpoch());
+    mocks.alwaysFailWrite = true;
+    mocks.writeFailureMode = "throw";
+    await expect(api.mirrorGatewaySetCookies(["ticket=new; Path=/"], mocks.origin, api.ticketEpoch())).rejects.toThrow();
+    expect(mocks.settings.get(`nuwax.ticket.${mocks.origin}`)).toBe("old");
+    expect(api.currentTicket()).toBeNull();
+    expect(() => api.abortGatewayTicketMirror(mocks.origin)).not.toThrow();
+    await vi.waitFor(() => expect(mocks.jar.size).toBe(0));
+    expect(api.currentTicket()).toBeNull();
+  });
+
   it("restores a persisted session and records direct-mode cookie rotation", async () => {
     mocks.settings.set(`nuwax.ticket.${mocks.origin}`, "stored");
     const api = await import("./commercialTicketSession");
@@ -124,6 +188,60 @@ describe("commercial ticket cookie mirror", () => {
     mocks.jar.set(mocks.origin, { name: "ticket", domain: "biz.example.com", value: "rotated", path: "/", secure: true });
     mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "rotated" }, "explicit", false);
     await vi.waitFor(() => expect(api.currentTicket()).toBe("rotated"));
+  });
+
+  it("drops a stale direct read when another changed event arrives during cookies.get", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.restoreTicketSession(null);
+    let release!: () => void;
+    mocks.delayNextGet = new Promise<void>((resolve) => { release = resolve; });
+    mocks.jar.set(mocks.origin, { name: "ticket", value: "first", path: "/", secure: true });
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "first" }, "explicit", false);
+    await vi.waitFor(() => expect(mocks.delayNextGet).toBeNull());
+    mocks.jar.set(mocks.origin, { name: "ticket", value: "last", path: "/", secure: true });
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "last" }, "explicit", false);
+    release();
+    await vi.waitFor(() => expect(api.currentTicket()).toBe("last"));
+    expect(mocks.writes.some(({ key, value }) => key === `nuwax.ticket.${mocks.origin}` && value === "first")).toBe(false);
+  });
+
+  it("keeps the mirror during a slow unknown removal-to-insertion replacement", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.restoreTicketSession(null);
+    await api.mirrorGatewaySetCookies(["ticket=old; Path=/"], mocks.origin, api.ticketEpoch());
+    const before = api.ticketEpoch();
+    mocks.jar.delete(mocks.origin);
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "old" }, "unknown", true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(api.currentTicket()).toBe("old");
+    expect(api.ticketEpoch()).toBe(before);
+    mocks.jar.set(mocks.origin, { name: "ticket", value: "new", path: "/", secure: true });
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "new" }, "explicit", false);
+    await vi.waitFor(() => expect(api.currentTicket()).toBe("new"));
+    expect(api.ticketEpoch()).toBe(before);
+  });
+
+  it("returns false for DB boolean failure and retries background direct synchronization", async () => {
+    const api = await import("./commercialTicketSession");
+    await api.restoreTicketSession(null);
+    mocks.jar.set(mocks.origin, { name: "ticket", value: "new", path: "/", secure: true });
+    mocks.writeFailures = 1;
+    expect(await api.syncTicketFromJar(mocks.origin)).toBe(false);
+    expect(api.currentTicket()).toBeNull();
+    mocks.writeFailures = 1;
+    mocks.changed?.({}, { name: "ticket", domain: "biz.example.com", value: "new" }, "explicit", false);
+    await vi.waitFor(() => expect(api.currentTicket()).toBe("new"));
+  });
+
+  it("blocks an old DB mirror when both update and cleanup writes throw", async () => {
+    const api = await import("./commercialTicketSession");
+    mocks.settings.set(`nuwax.ticket.${mocks.origin}`, "old");
+    mocks.jar.set(mocks.origin, { name: "ticket", value: "new", path: "/", secure: true });
+    mocks.alwaysFailWrite = true;
+    mocks.writeFailureMode = "throw";
+    expect(await api.syncTicketFromJar(mocks.origin)).toBe(false);
+    expect(mocks.settings.get(`nuwax.ticket.${mocks.origin}`)).toBe("old");
+    expect(api.currentTicket()).toBeNull();
   });
 
   it("reconciles a transient unknown removal while the gateway still holds the ticket", async () => {

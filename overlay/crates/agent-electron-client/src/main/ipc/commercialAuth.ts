@@ -8,7 +8,8 @@ import {
   DEFAULT_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
-import { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
+import { currentBusinessOrigin } from "../services/commercialSessionScope";
+import { currentTicket } from "../services/commercialTicketSession";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
@@ -186,7 +187,7 @@ export function initializeCommercialAuth(
   }
   let registrationAttempt = 0;
   const flow = new AuthLifecycle({
-    authenticated: () => !!readTicketCookieValue([currentBusinessOrigin()]),
+    authenticated: () => !!currentTicket(),
     register: async (signal: AbortSignal) => {
       const origin = currentBusinessOrigin();
       const attempt = ++registrationAttempt;
@@ -194,7 +195,7 @@ export function initializeCommercialAuth(
         stage: RegistrationTrace["stage"],
         details: Partial<Pick<RegistrationTrace, "status" | "code" | "elapsedMs">> = {},
       ) => trace?.({ attempt, stage, origin, ...details });
-      let ticket = readTicketCookieValue([origin]);
+      let ticket = currentTicket();
       if (!ticket) throw new Error("Login required");
       const ticketSession = await import("../services/commercialTicketSession");
       const requestEpoch = ticketSession.ticketEpoch();
@@ -207,9 +208,11 @@ export function initializeCommercialAuth(
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
       report("session-check-response", { status: sessionResponse.status, elapsedMs: Date.now() - sessionStartedAt });
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+        throw new Error("Session changed during registration");
       await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
       if (sessionResponse.status === 401) expired?.();
-      ticket = readTicketCookieValue([origin]);
+      ticket = currentTicket();
       if (!ticket) throw new Error("Session expired during registration");
       if (!sessionResponse.ok) throw new Error(`Session HTTP ${sessionResponse.status}`);
       const sessionPayload = await sessionResponse.json();
@@ -217,7 +220,7 @@ export function initializeCommercialAuth(
       const username = sessionPayload?.data?.userName;
       if (sessionPayload?.code !== "0000" || typeof username !== "string" || !username)
         throw new Error("Cookie session is not authenticated");
-      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
         throw new Error("Session changed during registration");
       report("session-check-ok");
       const savedKey = readSetting("auth.saved_key");
@@ -259,12 +262,14 @@ export function initializeCommercialAuth(
         throw error;
       });
       report("reg-response", { status: response.status, elapsedMs: Date.now() - regStartedAt });
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+        throw new Error("Session changed during registration");
       await ticketSession.mirrorNativeResponseTicket(response, origin, requestEpoch);
       if (response.status === 401) expired?.();
-      ticket = readTicketCookieValue([origin]);
+      ticket = currentTicket();
       if (!ticket) throw new Error("Session expired during registration");
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
         throw new Error("Session changed during registration");
       if (!response.ok) throw new Error(`Registration HTTP ${response.status}`);
       const payload = await response.json();
@@ -274,7 +279,7 @@ export function initializeCommercialAuth(
         elapsedMs: Date.now() - regStartedAt,
       });
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || ticket !== readTicketCookieValue([origin]))
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
         throw new Error("Session changed during registration");
       if (["4010", "4011"].includes(payload.code)) expired?.();
       if (payload.code !== "0000")

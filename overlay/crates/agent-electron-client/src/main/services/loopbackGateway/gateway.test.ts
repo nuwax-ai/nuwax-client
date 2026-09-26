@@ -28,6 +28,14 @@ import { GATEWAY_REQUEST_HEADER } from "./requestContext";
 
 const openServers: (http.Server | net.Server)[] = [];
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 /** 起一个回显上游：记录收到的请求，按 route 回应；跟踪底层连接防 close 挂起。 */
 function startUpstream(
   handler: (
@@ -485,7 +493,7 @@ describe("loopback gateway（透明反代）", () => {
 
   it("mirrors raw multi Set-Cookie only for trusted frames and forces loopback ticket HttpOnly", async () => {
     const raw = [
-      "ticket=rotated; Domain=.example.com; Secure; SameSite=None; Path=/",
+      "ticket=rotated; Domain=127.0.0.1; SameSite=None; Path=/",
       "other=1; Path=/",
     ];
     const up = await startUpstream((_req, res) => {
@@ -493,16 +501,166 @@ describe("loopback gateway（透明反代）", () => {
       res.end("ok");
     });
     const onSetCookie = vi.fn();
-    const gw = await startLoopbackGateway({ targetOrigin: up.origin,
-      getTicket: () => "old", trustedRequestSecret: "secret", ticketEpoch: () => 4,
-      onSetCookie, fixedPort: 0 });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => "old",
+      trustedRequestSecret: "secret",
+      ticketEpoch: () => 4,
+      onSetCookie,
+      fixedPort: 0,
+    });
     gateways.push(gw);
-    const trusted = await fetch(`${gw.origin}/api/me`, { headers: { [GATEWAY_REQUEST_HEADER]: "secret" } });
-    expect(trusted.headers.getSetCookie()).toContain("ticket=rotated; SameSite=Lax; Path=/; HttpOnly");
+    const trusted = await fetch(`${gw.origin}/api/me`, {
+      headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
+    });
+    expect(trusted.headers.getSetCookie()).toContain(
+      "ticket=rotated; Path=/; SameSite=Lax; HttpOnly",
+    );
     expect(onSetCookie).toHaveBeenCalledWith(raw, 4, false);
     const untrusted = await fetch(`${gw.origin}/api/me`);
     expect(untrusted.headers.getSetCookie()).toEqual(["other=1; Path=/"]);
     expect(onSetCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds HTTP response headers and login body until the ticket mirror completes", async () => {
+    const raw = ["ticket=logged-in; Path=/; SameSite=None", "lang=zh-CN; Path=/"];
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "set-cookie": raw });
+      res.end('{"code":0}');
+    });
+    const entered = deferred<void>();
+    const mirror = deferred<boolean>();
+    const onSetCookie = vi.fn(() => {
+      entered.resolve();
+      return mirror.promise;
+    });
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => null,
+      ticketEpoch: () => 7,
+      trustedRequestSecret: "secret",
+      onSetCookie,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    let headersReceived = false;
+    const pendingResponse = fetch(`${gw.origin}/api/user/passwordLogin`, {
+      headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
+    }).then((response) => {
+      headersReceived = true;
+      return response;
+    });
+    await entered.promise;
+    try {
+      // Keep the mirror unresolved across an actual network turn. A gateway
+      // that fires the callback without awaiting it sends headers in this gap.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(headersReceived).toBe(false);
+      expect(onSetCookie).toHaveBeenCalledWith(raw, 7, true);
+    } finally {
+      mirror.resolve(true);
+    }
+    const response = await pendingResponse;
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual([
+      "ticket=logged-in; Path=/; SameSite=Lax; HttpOnly",
+      "lang=zh-CN; Path=/",
+    ]);
+    expect(await response.json()).toEqual({ code: 0 });
+  });
+
+  it("sends only the last valid ticket from a multi-ticket response to Chromium", async () => {
+    const raw = [
+      "ticket=; Max-Age=0; Path=/",
+      "other=1; Path=/",
+      "ticket=rotated; Domain=127.0.0.1; Path=/; SameSite=Strict",
+      "ticket=foreign; Domain=foreign.example; Path=/",
+      "lang=zh-CN; Path=/",
+    ];
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "set-cookie": raw });
+      res.end("ok");
+    });
+    const onSetCookie = vi.fn(async () => true);
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => null,
+      trustedRequestSecret: "secret",
+      ticketEpoch: () => 8,
+      onSetCookie,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const response = await fetch(`${gw.origin}/api/me`, {
+      headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
+    });
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.filter((cookie) => cookie.startsWith("ticket="))).toEqual([
+      "ticket=rotated; Path=/; SameSite=Strict; HttpOnly",
+    ]);
+    expect(cookies.filter((cookie) => !cookie.startsWith("ticket="))).toEqual([
+      "other=1; Path=/",
+      "lang=zh-CN; Path=/",
+    ]);
+    expect(onSetCookie).toHaveBeenCalledWith(raw, 8, false);
+  });
+
+  it.each(["rejected", "stale"] as const)(
+    "returns 502 without a browser ticket or successful login body when the mirror is %s",
+    async (failure) => {
+      const up = await startUpstream((_req, res) => {
+        res.writeHead(200, { "set-cookie": "ticket=new-session; Path=/" });
+        res.end('{"code":0}');
+      });
+      const onSetCookie = vi.fn(async () => {
+        if (failure === "rejected") throw new Error("mirror write failed");
+        return false;
+      });
+      const gw = await startLoopbackGateway({
+        targetOrigin: up.origin,
+        getTicket: () => null,
+        trustedRequestSecret: "secret",
+        onSetCookie,
+        fixedPort: 0,
+      });
+      gateways.push(gw);
+      const response = await fetch(`${gw.origin}/api/user/passwordLogin`, {
+        headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
+      });
+      expect(response.status).toBe(502);
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ error: "ticket mirror failed" });
+      expect(onSetCookie).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    "ticket=foreign; Domain=foreign.example; Path=/",
+    "ticket=secure; Secure; Path=/",
+    "ticket=partitioned; Partitioned; Path=/",
+  ])("does not give Chromium an incompatible backend ticket: %s", async (ticket) => {
+    const raw = [ticket, "other=1; Path=/"];
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "set-cookie": raw });
+      res.end("ok");
+    });
+    const onSetCookie = vi.fn(async () => true);
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => null,
+      trustedRequestSecret: "secret",
+      ticketEpoch: () => 9,
+      onSetCookie,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const response = await fetch(`${gw.origin}/api/me`, {
+      headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual(["other=1; Path=/"]);
+    expect(onSetCookie).toHaveBeenCalledWith(raw, 9, false);
   });
 
   it("SSE 流式直通（分块到即转发，不缓冲）", async () => {
@@ -555,6 +713,68 @@ describe("loopback gateway（透明反代）", () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(upstreamClosed).toBe(true);
   });
+
+  it.each(["applied", "stale", "rejected"] as const)(
+    "waits for the ticket mirror before completing WS 101, outcome %s",
+    async (outcome) => {
+      const raw = "ticket=ws-session; Path=/; SameSite=None";
+      const up = await startUpstream((_req, res) => res.writeHead(404).end());
+      up.server.on("upgrade", (_req, socket) => {
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+            "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n" +
+            `Set-Cookie: ${raw}\r\n\r\n`,
+        );
+      });
+      const entered = deferred<void>();
+      const release = deferred<void>();
+      const onSetCookie = vi.fn(async () => {
+        entered.resolve();
+        await release.promise;
+        if (outcome === "rejected") throw new Error("mirror write failed");
+        return outcome === "applied";
+      });
+      const gw = await startLoopbackGateway({
+        targetOrigin: up.origin,
+        getTicket: () => null,
+        trustedRequestSecret: "secret",
+        ticketEpoch: () => 11,
+        onSetCookie,
+        fixedPort: 0,
+      });
+      gateways.push(gw);
+      let handshakeReceived = false;
+      const pendingHandshake = wsHandshake(gw.port, "/ws-ticket", {
+        [GATEWAY_REQUEST_HEADER]: "secret",
+      }).then((handshake) => {
+        handshakeReceived = true;
+        return handshake;
+      });
+      await entered.promise;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        expect(handshakeReceived).toBe(false);
+        expect(onSetCookie).toHaveBeenCalledWith([raw], 11, false);
+      } finally {
+        release.resolve();
+      }
+      const handshake = await pendingHandshake;
+      try {
+        expect(handshake.statusLine).toContain(outcome === "applied" ? "101" : "502");
+        if (outcome === "applied") {
+          expect(handshake.responseHeaders).toContain(
+            "set-cookie: ticket=ws-session; Path=/; SameSite=Lax; HttpOnly",
+          );
+        } else {
+          expect(handshake.responseHeaders.toLowerCase()).not.toContain("set-cookie:");
+          expect(handshake.responseHeaders.toLowerCase()).toContain("cache-control: no-store");
+        }
+      } finally {
+        handshake.sock.destroy();
+      }
+    },
+  );
 
   it("上游拒绝升级：回写真实状态码", async () => {
     const up = await startUpstream(() => undefined);

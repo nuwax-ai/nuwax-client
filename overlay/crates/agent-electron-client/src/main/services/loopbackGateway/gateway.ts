@@ -31,6 +31,7 @@ import {
   namespaceRedirectLocation,
 } from "./routingPolicy";
 import { GATEWAY_REQUEST_HEADER } from "./requestContext";
+import { parseTicketSetCookie, isTicketSetCookie } from "../ticketCookiePolicy";
 
 /** 逐跳头：转发时剥掉，由本层连接语义自行决定。 */
 const HOP_BY_HOP = new Set([
@@ -58,7 +59,7 @@ export interface LoopbackGatewayOptions {
   /** 主进程的 ticket 镜像；只向具备受信请求能力的业务请求注入。 */
   getTicket: () => string | null;
   ticketEpoch?: () => number;
-  onSetCookie?: (headers: string[], epoch: number, login: boolean) => void;
+  onSetCookie?: (headers: string[], epoch: number, login: boolean) => boolean | void | Promise<boolean | void>;
   /** Main-process-only capability for trusted cross-origin redirects (opaque Origin). */
   trustedRequestSecret?: string;
   /** 云端方向注入的客户端标识头值；空串显式关闭。缺省 "nuwaclaw"。 */
@@ -77,7 +78,7 @@ export interface LoopbackGatewayHandle {
 interface ProxyContext {
   getTicket: () => string | null;
   ticketEpoch?: () => number;
-  onSetCookie?: (headers: string[], epoch: number, login: boolean) => void;
+  onSetCookie?: (headers: string[], epoch: number, login: boolean) => boolean | void | Promise<boolean | void>;
   clientTypeHeader: string | null;
   gatewayOrigin?: string;
   trustedRequestSecret?: string;
@@ -122,8 +123,41 @@ function normalizeSetCookie(cookie: string): string {
       }
       return attr;
     });
-  if (pair.toLowerCase().startsWith("ticket=") && !kept.some((attr) => attr.toLowerCase() === "httponly")) kept.push("HttpOnly");
   return [pair, ...kept].join("; ");
+}
+
+function prepareSetCookies(raw: string[], businessOrigin: string, trusted: boolean) {
+  const entries: { header: string; ticket: boolean }[] = [];
+  const mirrorHeaders: string[] = [];
+  for (const header of raw) {
+    if (!isTicketSetCookie(header)) {
+      entries.push({ header: normalizeSetCookie(header), ticket: false });
+      mirrorHeaders.push(header);
+      continue;
+    }
+    if (!trusted) continue;
+    const parsed = parseTicketSetCookie(header, businessOrigin);
+    if (parsed.kind !== "valid") {
+      log.warn("[LoopbackGateway] rejected backend ticket Set-Cookie", {
+        reason: parsed.kind === "invalid" ? parsed.reason : "invalid ticket",
+      });
+      // The commercial mirror must still invalidate an incompatible Secure
+      // cookie for an HTTP backend. Never send an invalid ticket to Chromium.
+      mirrorHeaders.push(header);
+      continue;
+    }
+    // Chromium uses the last applicable Set-Cookie for the same name/path.
+    // Mirror and emit that same ticket rather than applying conflicting writes.
+    const previousTicket = entries.findIndex((entry) => entry.ticket);
+    if (previousTicket >= 0) entries.splice(previousTicket, 1);
+    entries.push({ header: parsed.loopbackHeader, ticket: true });
+    mirrorHeaders.push(header);
+  }
+  return {
+    mirrorHeaders,
+    hasTicket: trusted && raw.some(isTicketSetCookie),
+    headers: (includeTicket: boolean) => entries.filter((entry) => includeTicket || !entry.ticket).map((entry) => entry.header),
+  };
 }
 
 /** 组装转发请求头：剥逐跳头、改写目标 origin、按需注入 ticket 与客户端标识。 */
@@ -201,7 +235,8 @@ function proxyRequest(
       path: upstreamPath,
       headers,
     },
-    (upstreamRes) => {
+    async (upstreamRes) => {
+      try {
       const outHeaders: Record<string, string | string[]> = {};
       for (const [key, value] of Object.entries(upstreamRes.headers)) {
         if (value === undefined || HOP_BY_HOP.has(key.toLowerCase())) continue;
@@ -210,9 +245,13 @@ function proxyRequest(
       if (Array.isArray(outHeaders["set-cookie"])) {
         const trusted = hasTrustedRequestCapability(req, ctx);
         const raw = outHeaders["set-cookie"] as string[];
-        if (trusted) ctx.onSetCookie?.(raw, requestEpoch, isPublicAuthPath(upstreamPath.split("?")[0]));
-        const cookies = (trusted ? raw : raw.filter((header) => !/^\s*ticket=/i.test(header)))
-          .map(normalizeSetCookie);
+        const prepared = prepareSetCookies(raw, target.origin, trusted);
+        if (trusted && prepared.hasTicket && ctx.onSetCookie) {
+          const applied = await ctx.onSetCookie(prepared.mirrorHeaders, requestEpoch,
+            isPublicAuthPath(upstreamPath.split("?")[0]));
+          if (applied === false) throw new Error("ticket mirror became stale");
+        }
+        const cookies = prepared.headers(true);
         if (cookies.length) outHeaders["set-cookie"] = cookies;
         else delete outHeaders["set-cookie"];
       }
@@ -259,9 +298,18 @@ function proxyRequest(
           vary.push("Origin");
         outHeaders.vary = vary.join(", ");
       }
+      if (res.destroyed) { upstreamRes.destroy(); return; }
       res.writeHead(upstreamRes.statusCode ?? 502, outHeaders);
       upstreamRes.pipe(res);
       res.on("close", () => upstreamRes.destroy());
+      } catch (error) {
+        log.error("[LoopbackGateway] ticket mirror prevented response", error);
+        upstreamRes.destroy();
+        if (!res.headersSent && !res.destroyed) {
+          res.writeHead(502, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          res.end(JSON.stringify({ error: "ticket mirror failed" }));
+        }
+      }
     },
   );
   // 客户端在响应到达前断开：立即中止未完成的 upstream 请求（destroy ClientRequest
@@ -346,26 +394,38 @@ function proxyUpgrade(
     }
     return `${out}\r\n`;
   };
-  const clientHeaders = (raw: http.IncomingHttpHeaders): http.IncomingHttpHeaders => {
+  const clientHeaders = async (raw: http.IncomingHttpHeaders): Promise<http.IncomingHttpHeaders> => {
     const outgoing = { ...raw };
     const cookies = outgoing["set-cookie"];
     if (Array.isArray(cookies)) {
       const trusted = hasTrustedRequestCapability(req, ctx);
-      if (trusted) ctx.onSetCookie?.(cookies, requestEpoch, false);
-      const accepted = (trusted ? cookies : cookies.filter((header) => !/^\s*ticket=/i.test(header)))
-        .map(normalizeSetCookie);
+      const prepared = prepareSetCookies(cookies, target.origin, trusted);
+      if (trusted && prepared.hasTicket && ctx.onSetCookie) {
+        const applied = await ctx.onSetCookie(prepared.mirrorHeaders, requestEpoch, false);
+        if (applied === false) throw new Error("ticket mirror became stale");
+      }
+      const accepted = prepared.headers(true);
       if (accepted.length) outgoing["set-cookie"] = accepted;
       else delete outgoing["set-cookie"];
     }
     return outgoing;
   };
-  upstream.on("upgrade", (upstreamRes, upstreamSocket, upstreamHead) => {
+  upstream.on("upgrade", async (upstreamRes, upstreamSocket, upstreamHead) => {
     upstreamSocket.on("error", () => socket.destroy());
+    let outgoing: http.IncomingHttpHeaders;
+    try { outgoing = await clientHeaders(upstreamRes.headers); }
+    catch (error) {
+      log.error("[LoopbackGateway] ticket mirror prevented WS upgrade", error);
+      upstreamSocket.destroy();
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nCache-Control: no-store\r\n\r\n");
+      return;
+    }
+    if (socket.destroyed) { upstreamSocket.destroy(); return; }
     socket.write(
       writeRawHead(
         upstreamRes.statusCode ?? 101,
         upstreamRes.statusMessage ?? "Switching Protocols",
-        clientHeaders(upstreamRes.headers),
+        outgoing,
       ),
     );
     if (upstreamHead?.length) socket.write(upstreamHead);
@@ -382,13 +442,21 @@ function proxyUpgrade(
     upstreamSocket.on("end", killClient);
     upstreamSocket.on("close", killClient);
   });
-  upstream.on("response", (upstreamRes) => {
+  upstream.on("response", async (upstreamRes) => {
     // 上游拒绝升级：回写拒绝响应（浏览器 WS 报握手失败时可见真实状态码）。
+    let outgoing: http.IncomingHttpHeaders;
+    try { outgoing = await clientHeaders(upstreamRes.headers); }
+    catch (error) {
+      log.error("[LoopbackGateway] ticket mirror prevented WS response", error);
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nCache-Control: no-store\r\n\r\n");
+      upstreamRes.destroy();
+      return;
+    }
     socket.end(
       writeRawHead(
         upstreamRes.statusCode ?? 502,
         upstreamRes.statusMessage ?? "",
-        clientHeaders(upstreamRes.headers),
+        outgoing,
       ),
     );
     upstreamRes.resume();

@@ -1,0 +1,2232 @@
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+  createContext,
+  useContext,
+} from "react";
+import {
+  ConfigProvider,
+  Badge,
+  Button,
+  Modal,
+  Tooltip,
+  notification,
+  message,
+} from "antd";
+import type { PresetStatusColorType } from "antd/es/_util/colors";
+import {
+  SettingOutlined,
+  DashboardOutlined,
+  FolderOutlined,
+  InfoCircleOutlined,
+  SafetyOutlined,
+  FileTextOutlined,
+  TeamOutlined,
+  ReloadOutlined,
+  ApiOutlined,
+  DownloadOutlined,
+  LoadingOutlined,
+  RocketOutlined,
+  CloseOutlined,
+} from "@ant-design/icons";
+import {
+  setupService,
+  authService,
+  Step1Config,
+  DEFAULT_STEP1_CONFIG,
+} from "./services/core/setup";
+import {
+  modifyWorkspaceDir,
+  openWorkspaceDir,
+} from "./services/core/workspaceDir";
+import { syncConfigToServer, normalizeServerHost } from "./services/core/auth";
+import {
+  APP_DISPLAY_NAME,
+  AUTH_KEYS,
+  BOOT_PROBE_TIMEOUT,
+  DEFAULT_FILE_SERVER_PORT,
+  DEFAULT_SERVER_HOST,
+  APP_NAME_IDENTIFIER,
+  MIN_SPLASH_MS,
+  normalizeAgentEngine,
+} from "@shared/constants";
+import {
+  useSplashFloor,
+  useLoadingCover,
+  type GuestLoadPhase,
+} from "./bootTiming";
+import type { QuickInitConfig } from "@shared/types/quickInit";
+import type { UpdateState } from "@shared/types/updateTypes";
+import type { TitlebarDragRegion } from "@shared/types/webview";
+import {
+  t,
+  getCurrentLang,
+  setCurrentLang,
+  prefetchLangMap,
+} from "./services/core/i18n";
+import { getNuwaxAccessTokenKey } from "@shared/utils/domain";
+import { TITLEBAR_EMPTY_GRACE_MS } from "@shared/utils/titlebarDragRegions";
+import SetupDependencies from "./components/setup/SetupDependencies";
+import { AppIconLoading } from "./components/AppIconLoading";
+import ClientPage from "./components/pages/ClientPage";
+import SettingsPage from "./components/pages/SettingsPage";
+import DependenciesPage from "./components/pages/DependenciesPage";
+import AboutPage from "./components/pages/AboutPage";
+import LogViewer from "./components/pages/LogViewer";
+import PermissionsPage from "./components/pages/PermissionsPage";
+import SessionsPage from "./components/pages/SessionsPage";
+import { type BrowserTarget } from "./components/pages/BrowserHomePage";
+import NuwaxHostWebview, {
+  type NuwaxHostWebviewHandle,
+} from "./components/pages/NuwaxHostWebview";
+import TrafficLightToolbar from "./components/TrafficLightToolbar";
+import MCPSettings from "./components/settings/MCPSettings";
+import { ModeNavIcon } from "./components/icons/ModeNavIcon";
+import { createLogger } from "./services/utils/rendererLog";
+import styles from "./styles/components/App.module.css";
+import {
+  lightTheme,
+  darkTheme,
+  applyShellTheme,
+  type ShellThemePayload,
+} from "./styles/theme";
+import { FEATURES } from "@shared/featureFlags";
+import {
+  shouldShowServiceAttention,
+  type CommercialServicePhase,
+} from "./services/serviceAttention";
+
+// 主题类型
+export type ThemeMode = "light" | "dark" | "system";
+
+// 主题 Context
+interface ThemeContextValue {
+  themeMode: ThemeMode;
+  isDarkMode: boolean;
+  setThemeMode: (mode: ThemeMode) => void;
+}
+
+export const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+// Hook to use theme context
+export function useTheme(): ThemeContextValue {
+  const context = useContext(ThemeContext);
+  if (!context) {
+    throw new Error("useTheme must be used within App component");
+  }
+  return context;
+}
+
+// i18n 语言 Context
+interface I18nContextValue {
+  lang: string;
+  updateLang: (lang: string) => void;
+}
+
+export const I18nContext = createContext<I18nContextValue | null>(null);
+
+export function useI18nLang(): I18nContextValue {
+  const context = useContext(I18nContext);
+  if (!context) {
+    throw new Error("useI18nLang must be used within App component");
+  }
+  return context;
+}
+
+// Tab 类型定义（对齐 Tauri 客户端）
+type TabKey =
+  | "client"
+  | "sessions"
+  | "mcp"
+  | "settings"
+  | "dependencies"
+  | "permissions"
+  | "logs"
+  | "about"
+  | "model";
+
+/** 主视图模式：浏览器（默认 home）或配置（原侧边栏管理界面） */
+type MainViewMode = "browser" | "config";
+
+// 状态配置（对齐 Tauri 客户端）
+// 就绪、繁忙使用橙色（warning）、小点展示
+const STATUS_CONFIG: Record<
+  string,
+  { status: PresetStatusColorType; textKey: string }
+> = {
+  idle: { status: "warning", textKey: "Claw.Agent.Status.idle" },
+  starting: { status: "processing", textKey: "Claw.Agent.Status.starting" },
+  running: { status: "success", textKey: "Claw.Agent.Status.running" },
+  busy: { status: "warning", textKey: "Claw.Agent.Status.busy" },
+  stopped: { status: "default", textKey: "Claw.Agent.Status.stopped" },
+  error: { status: "error", textKey: "Claw.Agent.Status.error" },
+};
+
+// 服务状态接口（与 ClientPage 共享）
+export interface ServiceItem {
+  key: string;
+  label: string;
+  description: string;
+  running: boolean;
+  pid?: number;
+  port?: number;
+  error?: string;
+}
+
+/**
+ * 将 quick init 配置静默写入 DB（覆盖旧值）
+ * 用于 setup 已完成时，每次启动优先使用配置文件/环境变量中的值
+ */
+async function applyQuickInitToDb(config: QuickInitConfig): Promise<void> {
+  // 商业版域名由企业登录配置，不能被旧 quickInit 凭据在每次启动时覆盖。
+  if (APP_NAME_IDENTIFIER === "nuwax") return;
+  // 1. 更新 step1 配置
+  const step1: Step1Config = {
+    ...DEFAULT_STEP1_CONFIG,
+    serverHost: normalizeServerHost(config.serverHost),
+    agentPort: config.agentPort,
+    fileServerPort: config.fileServerPort,
+    workspaceDir: config.workspaceDir,
+  };
+  await setupService.saveStep1Config(step1);
+
+  // 2. 更新 savedKey（无界面部署种子凭证；reg 由 AutoReconnect 以
+  //    token-or-savedKey 判定统一触发，不再在此静默注册）
+  const domain = normalizeServerHost(config.serverHost);
+  await window.electronAPI?.settings.set(AUTH_KEYS.SAVED_KEY, config.savedKey);
+  if (config.username) {
+    try {
+      const domainKey = `${AUTH_KEYS.SAVED_KEYS_PREFIX}${new URL(domain).hostname}_${config.username}`;
+      await window.electronAPI?.settings.set(domainKey, config.savedKey);
+    } catch {
+      // domain 解析失败时跳过域名级 savedKey 存储
+    }
+  }
+}
+
+/** 启动探询超时必须进入可重试错误态，不能伪装成初始化成功。 */
+function withTimeout<T>(
+  promise: Promise<T> | undefined,
+  _fallback: T,
+  label: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (!promise) {
+      reject(new Error(`${label} unavailable`));
+      return;
+    }
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out`)),
+      BOOT_PROBE_TIMEOUT,
+    );
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
+function App() {
+  // ============================================
+  // 初始化向导状态
+  // ============================================
+  const [isSetupComplete, setIsSetupComplete] = useState<boolean | null>(null);
+  // 启动 loading 最少展示时长（跨分支累计，见 useSplashFloor）
+  const splashFloorMet = useSplashFloor();
+  const [bootError, setBootError] = useState<string | null>(null);
+  // 启动服务门禁：null=等待中（大 loading）；ok:false=失败屏（可重试）；ok:true 才挂 webview
+  const [servicesGate, setServicesGate] = useState<{
+    ok: boolean;
+    detail?: string[];
+    elapsedMs?: number;
+  } | null>(null);
+
+  // ============================================
+  // 主题状态
+  // ============================================
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [systemIsDark, setSystemIsDark] = useState(false);
+
+  // 计算实际使用的主题。
+  // 暗黑模式经环境变量关闭（FEATURES.DARK_THEME，默认 false）：恒浅色，
+  // 与 nuwax 女娲主题（亮色体系）保持统一基调，外观设置项随之隐藏。
+  const isDarkMode = useMemo(() => {
+    if (!FEATURES.DARK_THEME) return false;
+    if (themeMode === "system") {
+      return systemIsDark;
+    }
+    return themeMode === "dark";
+  }, [themeMode, systemIsDark]);
+
+  // ============================================
+  // nuwax 女娲主题 → 壳原生 UI 统一
+  // ============================================
+  // nuwax 是主题唯一真实源：女娲主题生效/让位时经桥推送（nuwax:theme-sync →
+  // main 转发 nuwax:theme-changed）。active 时壳给自己的 antd tokens 叠加同套
+  // 米白调色板（设置弹窗等原生 UI 与 webview 统一），并同步 CSS 变量供
+  // index.css 侧（.app-sider/.app-content/body 底色）消费；让位即整体回落。
+  const [shellTheme, setShellTheme] = useState<ShellThemePayload | null>(null);
+
+  useEffect(() => {
+    const onNuwaxThemeChanged = (payload: unknown) => {
+      if (payload && typeof payload === "object" && "active" in payload) {
+        setShellTheme(payload as ShellThemePayload);
+      }
+    };
+    window.electronAPI?.on("nuwax:theme-changed", onNuwaxThemeChanged as any);
+    return () => {
+      window.electronAPI?.off(
+        "nuwax:theme-changed",
+        onNuwaxThemeChanged as any,
+      );
+    };
+  }, []);
+
+  // 启动服务门禁：核心服务 ready 前停在启动 loading（不挂 webview，杜绝页面
+  // 首屏 API 抢跑的「服务连接失败」弹窗）。先读缓存（事件可能早于 renderer
+  // 挂载已发），再监听后续推送；失败屏的重试经 waitForReady 重跑门禁。
+  useEffect(() => {
+    void window.electronAPI?.services
+      ?.readyState()
+      .then((s) => {
+        if (s) setServicesGate(s as { ok: boolean; detail?: string[] });
+      })
+      .catch(() => {});
+    const onServicesReady = (payload: unknown) => {
+      if (payload && typeof payload === "object" && "ok" in payload) {
+        setServicesGate(payload as { ok: boolean; detail?: string[] });
+      }
+    };
+    window.electronAPI?.on("services:ready", onServicesReady as any);
+    return () => {
+      window.electronAPI?.off("services:ready", onServicesReady as any);
+    };
+  }, []);
+
+  // 二级页同窗承载（默认形态）：nuwax 经 native:openWindow 请求打开的站内页
+  //（智能体编排/工作流详情/网页应用开发详情等）由主 webview 原地导航——沉浸式
+  // 避让生效（header-area/page-container 退让），不再新开独立窗口。
+  useEffect(() => {
+    const onOpenSameWindow = (payload: unknown) => {
+      const url = (payload as { url?: string } | null)?.url;
+      if (typeof url === "string" && url) {
+        webviewRef.current?.navigate(url);
+      }
+    };
+    window.electronAPI?.on("nuwax:open-same-window", onOpenSameWindow as any);
+    return () => {
+      window.electronAPI?.off(
+        "nuwax:open-same-window",
+        onOpenSameWindow as any,
+      );
+    };
+  }, []);
+
+  // nuwax 设置入口（web 用户区「客户端设置」按钮，仅 nuwax 宿主渲染）→ 打开壳
+  // 设置弹窗并落到 settings tab（与 menu:settings 同链路；壳顶行设置按钮在
+  // nuwax 宿主下移除，入口由 web 承担）。
+  useEffect(() => {
+    const onOpenClientSettings = () => {
+      setActiveTab("settings");
+      setSettingsModalOpen(true);
+    };
+    window.electronAPI?.on(
+      "nuwax:open-client-settings",
+      onOpenClientSettings as any,
+    );
+    return () => {
+      window.electronAPI?.off(
+        "nuwax:open-client-settings",
+        onOpenClientSettings as any,
+      );
+    };
+  }, []);
+
+  // nuwax 布局状态 → 工具栏收起按钮显隐：当前页无二级菜单时按钮无意义，隐藏。
+  // 默认 false（隐藏）——nuwax 布局挂载后推送真实值；/Login 等无布局页不推或推 false。
+  const [secondMenuAvailable, setSecondMenuAvailable] = useState(false);
+  const [titlebarDragRegions, setTitlebarDragRegions] = useState<
+    TitlebarDragRegion[]
+  >([]);
+
+  // CSS 变量叠加（inline 优先级高于 index.css 的亮/暗定义，removeProperty 即回落）。
+  // 与 antd tokens 同步加暗色守卫：壳深色时不叠加，避免米白变量染坏暗色 UI。
+  useEffect(() => {
+    const root = document.documentElement;
+    const active = shellTheme?.active === true && !isDarkMode;
+    const vars: Array<[string, string | undefined]> = [
+      ["--color-primary", active ? shellTheme?.primary : undefined],
+      ["--color-bg-layout", active ? shellTheme?.bgContent : undefined],
+      ["--color-bg-container", active ? shellTheme?.bgContent : undefined],
+      ["--color-bg-elevated", active ? shellTheme?.bgContent : undefined],
+      ["--color-bg-sider", active ? shellTheme?.bgMenu : undefined],
+      ["--color-bg-section", active ? shellTheme?.bgContent : undefined],
+      [
+        "--color-bg-section-header",
+        active ? shellTheme?.bgElevated : undefined,
+      ],
+      ["--color-border", active ? shellTheme?.border : undefined],
+      [
+        "--color-border-secondary",
+        active ? shellTheme?.borderSecondary : undefined,
+      ],
+      ["--color-bg-hover", active ? shellTheme?.bgItemHover : undefined],
+      ["--color-divider", active ? shellTheme?.borderSecondary : undefined],
+    ];
+    vars.forEach(([name, value]) => {
+      if (value) root.style.setProperty(name, value);
+      else root.style.removeProperty(name);
+    });
+  }, [shellTheme, isDarkMode]);
+
+  const currentTheme = useMemo(() => {
+    const base = isDarkMode ? darkTheme : lightTheme;
+    // 女娲主题是亮色体系：仅在壳非深色且 nuwax 报告 active 时叠加
+    return !isDarkMode && shellTheme?.active
+      ? applyShellTheme(base, shellTheme)
+      : base;
+  }, [isDarkMode, shellTheme]);
+
+  // ============================================
+  // i18n 语言状态（响应式，供 Context 下发）
+  // ============================================
+  const [i18nLang, setI18nLang] = useState(getCurrentLang());
+  const handleI18nLangChange = useCallback((lang: string) => {
+    setI18nLang(lang);
+  }, []);
+
+  // 监听系统主题变化
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    setSystemIsDark(mediaQuery.matches);
+
+    const handler = (e: MediaQueryListEvent) => setSystemIsDark(e.matches);
+    mediaQuery.addEventListener("change", handler);
+    return () => mediaQuery.removeEventListener("change", handler);
+  }, []);
+
+  // 加载保存的主题设置
+  useEffect(() => {
+    const loadThemeSetting = async () => {
+      try {
+        const saved = (await window.electronAPI?.settings.get(
+          "theme_mode",
+        )) as ThemeMode | null;
+        if (saved && ["light", "dark", "system"].includes(saved)) {
+          setThemeMode(saved);
+        }
+      } catch (e) {
+        console.warn("[App] Failed to load theme settings:", e);
+      }
+    };
+    loadThemeSetting();
+  }, []);
+
+  // 保存主题设置
+  const handleSetThemeMode = useCallback(async (mode: ThemeMode) => {
+    setThemeMode(mode);
+    try {
+      await window.electronAPI?.settings.set("theme_mode", mode);
+    } catch (e) {
+      console.warn("[App] Failed to save theme settings:", e);
+    }
+  }, []);
+
+  // 应用主题到 body
+  useEffect(() => {
+    document.body.setAttribute("data-theme", isDarkMode ? "dark" : "light");
+  }, [isDarkMode]);
+
+  /**
+   * 主界面下「必需依赖未完全安装」时是否强制进入依赖安装流程。
+   * - null: 进入主界面后尚未完成检查
+   * - true: 存在 missing/error 的必需依赖，全屏显示依赖安装，完成后回到主界面
+   * - false: 必需依赖均已安装（含 outdated，以当前真实安装版本为准，不强制重装）
+   */
+  const [needsRequiredDepsReinstall, setNeedsRequiredDepsReinstall] = useState<
+    boolean | null
+  >(null);
+  /** 主进程初始化依赖同步是否仍在进行（客户端升级后后台安装新版本依赖） */
+  const [depsSyncInProgress, setDepsSyncInProgress] = useState<boolean>(false);
+
+  // webview 首载覆盖层：图标动效盖住 guest 白屏/页内 loading，加载停止后再盖
+  // WEBVIEW_COVER_GRACE_MS 宽限（尽量盖住前端 authWithLoading 尾段），超
+  // MAX_LOADING_OVERLAY_MS 硬上限兜底掀开。
+  const [guestLoadPhase, setGuestLoadPhase] =
+    useState<GuestLoadPhase>("resolving");
+  // 主界面成立条件与下方各早退分支互补——仅主界面期间计时，避免启动 splash
+  // 阶段吃掉上限额度。
+  const mainUiActive =
+    !bootError &&
+    splashFloorMet &&
+    isSetupComplete !== null &&
+    (!isSetupComplete || needsRequiredDepsReinstall !== null) &&
+    needsRequiredDepsReinstall !== true &&
+    servicesGate?.ok === true;
+  const loadingCovered = useLoadingCover(mainUiActive, guestLoadPhase);
+
+  // 启动日志：便于快速确认渲染进程 feature flags 是否生效
+  useEffect(() => {
+    console.info("[FeatureFlags][renderer]", FEATURES);
+    window.electronAPI?.log
+      .write("info", "[FeatureFlags][renderer]", FEATURES)
+      .catch(() => {});
+  }, []);
+
+  // webview 登录态镜像：restartAllServices 为空依赖 callback（经 ref 供事件
+  // 监听调用），内部判断 reg 失败是否需要提示时读 ref，避免闭包过期。
+  const isAuthLoggedInRef = useRef(false);
+
+  /**
+   * 重启所有服务（使新安装的依赖/二进制生效）。
+   * restartAll 内部已包含停止逻辑，无需额外调用 stopAll。
+   *
+   * 重启前先调 reg 接口，将本次返回的最新 serverHost/serverPort 写入配置，
+   * 确保 lanproxy 使用最新服务端地址，而不是 SQLite 里的旧缓存值。
+   */
+  const restartAllServices = useCallback(async () => {
+    if (APP_NAME_IDENTIFIER === "nuwax") {
+      const result = await window.electronAPI!.services.restartAll();
+      if (!result.success) message.error(t("Claw.App.RestartFailed"));
+      else message.success(t("Claw.App.RestartSuccess"));
+      return;
+    }
+    try {
+      // 先 reg 拿最新 serverHost/serverPort 写入配置，成功后再重启服务。
+      // reg 失败（网络不通/token 过期）时中止重启，并弹出通知让用户手动重试。
+      // 注意 syncConfigToServer 内部已 catch 返回 null 不抛错：webview 已登录
+      // 但注册未完成（如首登注册被后端拦截）时在此明示，避免静默失败。
+      const regResult = await syncConfigToServer({ suppressToast: true });
+      if (!regResult && isAuthLoggedInRef.current) {
+        message.warning(t("Claw.Client.regSyncFailed"));
+      }
+    } catch (e) {
+      console.error("[App] Reg sync failed, aborting service restart:", e);
+      const notifKey = "restartRegFailed";
+      notification.error({
+        key: notifKey,
+        message: t("Claw.App.ConfigSyncFailed"),
+        description: t("Claw.App.ConfigSyncFailedDetail"),
+        duration: 0,
+        placement: "bottomRight",
+        btn: (
+          <Button
+            type="primary"
+            size="small"
+            onClick={() => {
+              notification.destroy(notifKey);
+              restartAllServices();
+            }}
+          >
+            {t("Claw.App.Retry")}
+          </Button>
+        ),
+      });
+      return;
+    }
+
+    try {
+      message.loading({
+        content: t("Claw.App.RestartingServices"),
+        key: "restart-services",
+      });
+      await window.electronAPI?.services.restartAll();
+      message.success({
+        content: t("Claw.App.RestartSuccess"),
+        key: "restart-services",
+      });
+    } catch (e) {
+      console.error("[App] Failed to restart services:", e);
+      message.error({
+        content: t("Claw.App.RestartFailed"),
+        key: "restart-services",
+      });
+    }
+  }, []);
+
+  // 稳定引用：供事件监听器调用 restartAllServices，避免监听器闭包过期
+  const restartAllServicesRef = useRef(restartAllServices);
+  useEffect(() => {
+    restartAllServicesRef.current = restartAllServices;
+  }, [restartAllServices]);
+
+  // ============================================
+  // 核心状态
+  // ============================================
+  const [activeTab, setActiveTab] = useState<TabKey>("client");
+  // 默认进入沉浸式 nuwax 主视图；配置外壳经浮动「设置」入口可达
+  const [mainViewMode, setMainViewMode] = useState<MainViewMode>("browser");
+  const [browserTarget, setBrowserTarget] = useState<BrowserTarget>({
+    type: "home",
+  });
+  const [browserOpenKey, setBrowserOpenKey] = useState(0);
+  const browserReloadRef = useRef<(() => void) | null>(null);
+  // 沉浸式工具栏所需状态
+  const webviewRef = useRef<NuwaxHostWebviewHandle>(null);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  // 二级菜单收起态（与 nuwax setIsSecondMenuCollapsed 同步；桌面端唯一触发源是工具栏）
+  const [secondMenuCollapsed, setSecondMenuCollapsed] = useState(false);
+
+  // nuwax 布局状态监听：secondMenuAvailable（按钮显隐）+ secondMenuCollapsed
+  //（真实收起态，推送为准）：webview reload 后本地态不重置、reload 瞬间的
+  // toggle 命令也可能丢失，nuwax 推送值校正失同步。
+  // 空热区宽限：guest 在 antd 过渡/侧栏动画期间会瞬时上报 []，立即清空会把
+  // 36px 条带打回 8px 保底条、期间按下即拖不动（mac 实测「成功拖一次后紧接着
+  // 再拖成功率低」的来源之一）。空数组延迟 TITLEBAR_EMPTY_GRACE_MS 落地，
+  // 宽限内来了非空即取消；导航开始的主动清空仍立即生效。
+  const titlebarEmptyGraceTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  useEffect(() => {
+    const onNuwaxLayoutChanged = (payload: {
+      secondMenuAvailable?: boolean;
+      secondMenuCollapsed?: boolean;
+      titlebarDragRegions?: TitlebarDragRegion[];
+    }) => {
+      if (payload?.secondMenuAvailable !== undefined) {
+        setSecondMenuAvailable(payload.secondMenuAvailable === true);
+      }
+      if (payload?.secondMenuCollapsed !== undefined) {
+        setSecondMenuCollapsed(payload.secondMenuCollapsed === true);
+      }
+      if (Array.isArray(payload?.titlebarDragRegions)) {
+        const regions = payload.titlebarDragRegions;
+        if (titlebarEmptyGraceTimerRef.current) {
+          clearTimeout(titlebarEmptyGraceTimerRef.current);
+          titlebarEmptyGraceTimerRef.current = null;
+        }
+        if (regions.length > 0) {
+          setTitlebarDragRegions(regions);
+        } else {
+          titlebarEmptyGraceTimerRef.current = setTimeout(() => {
+            titlebarEmptyGraceTimerRef.current = null;
+            setTitlebarDragRegions([]);
+          }, TITLEBAR_EMPTY_GRACE_MS);
+        }
+      }
+    };
+    window.electronAPI?.on("nuwax:layout-changed", onNuwaxLayoutChanged as any);
+    return () => {
+      window.electronAPI?.off(
+        "nuwax:layout-changed",
+        onNuwaxLayoutChanged as any,
+      );
+      if (titlebarEmptyGraceTimerRef.current) {
+        clearTimeout(titlebarEmptyGraceTimerRef.current);
+        titlebarEmptyGraceTimerRef.current = null;
+      }
+    };
+  }, []);
+  // 系统配置浮层（替代原 mainViewMode=config 整页切换，沉浸式下不打断 webview）
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
+  const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
+  // 保持 isAuthLoggedInRef 与 state 同步（restartAllServices 空依赖闭包读 ref）
+  useEffect(() => {
+    isAuthLoggedInRef.current = isAuthLoggedIn;
+  }, [isAuthLoggedIn]);
+  const [username, setUsername] = useState<string>("");
+  // 本机电脑名（主机名）。登录统一到 nuwax webview 后，nuwaclaw 侧 username（来自 configKey）
+  // 常拿不到，顶栏已登录态用它替代抽象的「已登录」文案，作为这台设备的标识。
+  const [computerName, setComputerName] = useState<string>("");
+  const [onlineStatus, setOnlineStatus] = useState<boolean | null>(null);
+  const [agentStatus, setAgentStatus] = useState<string>("idle");
+  const [services, setServices] = useState<ServiceItem[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(true);
+  const [guiMcpEnabled, setGuiMcpEnabled] = useState(false);
+  const [pollFailCount, setPollFailCount] = useState(0);
+  const [serviceLifecyclePhase, setServiceLifecyclePhase] =
+    useState<CommercialServicePhase>("stopped");
+  const [serviceUnhealthyStreak, setServiceUnhealthyStreak] = useState(0);
+  const [startingServices, setStartingServices] = useState<Set<string>>(
+    new Set(),
+  );
+  const servicesPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * 上一次同步给托盘的整体服务状态（true=有服务在跑 / false=全部停止）。
+   * 避免每 5 秒轮询都向主进程发一次 tray:updateServicesStatus IPC。
+   * UI 入口（services:restartAll/stopAll 等）走主进程同步，本 ref 仅兜底
+   * 渲染端通过逐个 IPC 启动服务（startServicesSequentially）的场景。
+   */
+  const lastSyncedTrayRunning = useRef<boolean | null>(null);
+  /** 递增后通知 ClientPage 刷新账号状态（用户名等），与 reg 返回保持一致 */
+  const [authRefreshTrigger, setAuthRefreshTrigger] = useState(0);
+  const [updateState, setUpdateState] = useState<UpdateState>({
+    status: "idle",
+  });
+  const statusExpectedKeys = useMemo(() => {
+    const keys = ["mcpProxy", "agent", "fileServer", "lanproxy", "ttyd"];
+    if (FEATURES.ENABLE_GUI_AGENT_SERVER && guiMcpEnabled) {
+      keys.splice(3, 0, "guiServer");
+    }
+    return keys;
+  }, [guiMcpEnabled]);
+  const getStartupServiceKeys = useCallback(async (): Promise<string[]> => {
+    const keys = ["mcpProxy", "agent", "fileServer", "lanproxy", "ttyd"];
+    if (!FEATURES.ENABLE_GUI_AGENT_SERVER) return keys;
+    try {
+      const guiEnabledRes = await window.electronAPI?.guiServer?.isEnabled();
+      if (guiEnabledRes?.enabled) {
+        keys.splice(3, 0, "guiServer");
+      }
+    } catch (e) {
+      console.warn("[App] Failed to read GUI MCP enabled status:", e);
+    }
+    return keys;
+  }, []);
+
+  // ============================================
+  // 检查初始化向导状态（每次启动优先读取 quick init 配置）
+  // ============================================
+  useEffect(() => {
+    const log = createLogger("SetupCheck");
+    const checkSetup = async () => {
+      try {
+        // 探询超时兜底：setup 门控已旁路（首屏一律进 webview），
+        // 因此探不到时按「已完成」继续，避免首屏永久停在 loading。
+        const completed = await withTimeout(
+          setupService.isSetupCompleted(),
+          true,
+          "setupService.isSetupCompleted",
+        );
+
+        // 每次启动优先读取 quick init 配置
+        // 注意：quickInit 仍含 step1 serverHost/端口写入（NuwaxHostWebview 路由依赖）
+        // 与旧 savedKey/reg 链路；后者随 Phase 3 登录统一到 nuwax webview 一并移除。
+        if (completed && APP_NAME_IDENTIFIER !== "nuwax") {
+          try {
+            const qiConfig = await withTimeout(
+              window.electronAPI?.quickInit.getConfig(),
+              null,
+              "quickInit.getConfig",
+            );
+            if (qiConfig) {
+              log.info("Applying quick init config");
+              await applyQuickInitToDb(qiConfig);
+            }
+          } catch (error) {
+            log.warn("Failed to read quick init config:", error);
+          }
+        }
+
+        // 登录流程已统一到 nuwax webview /Login：外壳不再以 SetupWizard 作为首屏门控，
+        // 无论 setup_state 如何，首屏一律展示 nuwax webview（/Login 或已登录业务页）。
+        log.info("Setup gate bypassed: login unified to nuwax webview /Login");
+        setIsSetupComplete(true);
+      } catch (error) {
+        log.error("Failed to check setup status:", error);
+        setBootError(String(error));
+      }
+    };
+    checkSetup();
+  }, []);
+
+  // ============================================
+  // 读取本机主机名（顶栏已登录态设备标识，替代「已登录」文案）
+  // ============================================
+  useEffect(() => {
+    window.electronAPI?.app
+      ?.getHostname?.()
+      .then((name) => {
+        if (name) setComputerName(name);
+      })
+      .catch(() => {
+        /* 读取失败忽略，顶栏回退到默认文案 */
+      });
+  }, []);
+
+  // ============================================
+  // 登录态同步（控制平台 Tab 是否展示）
+  // ============================================
+  const refreshAuthState = useCallback(async () => {
+    // webview 登录态为唯一事实源（isAuthLoggedIn，由 main 推送的
+    // nuwax:authChanged 驱动，见下方监听器）。壳侧 configKey 判定已退役——
+    // 残留 configKey 不再让顶栏显示「伪已登录」。
+    const loggedIn = isAuthLoggedIn;
+
+    if (!loggedIn) {
+      setUsername("");
+      // 沉浸式 nuwax 为主视图，鉴权交给 nuwax 自身 /Login 页，
+      // 不因未注册而强制回到 config 外壳
+      setActiveTab("client");
+      return;
+    }
+
+    const user = await authService.getAuthUser();
+    if (user) {
+      setUsername(
+        user.displayName || user.username || t("Claw.App.defaultUsername"),
+      );
+    }
+  }, [isAuthLoggedIn]);
+
+  // ============================================
+  // 初始化主界面（setup 完成后执行）
+  // ============================================
+  useEffect(() => {
+    if (isSetupComplete !== true) return;
+
+    const init = async () => {
+      await refreshAuthState();
+
+      // 加载在线状态
+      const online =
+        await window.electronAPI?.settings.get("auth.online_status");
+      setOnlineStatus(online as boolean | null);
+    };
+
+    init();
+  }, [isSetupComplete, refreshAuthState]);
+
+  // reg / 登录后刷新登录态
+  useEffect(() => {
+    if (isSetupComplete !== true) return;
+    void refreshAuthState();
+  }, [isSetupComplete, authRefreshTrigger, refreshAuthState]);
+
+  // 顶栏账号状态跟随 nuwax token：监听 main 推送的 nuwax:authChanged 事件
+  // （bridge auth:persistToken=登录 / auth:clear=登出·401失效），使顶栏登录态与
+  // nuwax webview 一致——未登录时 headerRight 显示「去登录」。Phase 3 configKey 退役前，
+  // 该事件优先级高于 refreshAuthState（基于 configKey）的判定。
+  useEffect(() => {
+    const onNuwaxAuthChanged = (payload: { loggedIn: boolean }) => {
+      setIsAuthLoggedIn(payload.loggedIn);
+      if (!payload.loggedIn) {
+        setUsername("");
+        setServiceUnhealthyStreak(0);
+      }
+    };
+    window.electronAPI?.on("nuwax:authChanged", onNuwaxAuthChanged as any);
+    return () => {
+      window.electronAPI?.off("nuwax:authChanged", onNuwaxAuthChanged as any);
+    };
+  }, []);
+
+  // 登录成功联动（main 桥 persistToken → nuwax:login-confirmed，仅 /Login 登录
+  // 成功时触发，token 刷新不走）：走「reg 同步 → 重启全部服务」链路（与设置页
+  // 重启同一条 restartAllServices 路径）。webview 登录态为唯一事实源——首登/
+  // 重登后由这里完成壳侧注册刷新（Bearer 注入 + savedKey 兼容）与服务拉起。
+  useEffect(() => {
+    if (APP_NAME_IDENTIFIER === "nuwax") return;
+    const log = createLogger("LoginConfirmed");
+    const onLoginConfirmed = () => {
+      log.info("login-confirmed → reg sync + restart services");
+      restartAllServicesRef
+        .current()
+        .then(() => log.info("reg+restart done"))
+        .catch((e) => {
+          log.error("reg+restart failed:", e);
+        });
+    };
+    window.electronAPI?.on("nuwax:login-confirmed", onLoginConfirmed as any);
+    return () => {
+      window.electronAPI?.off("nuwax:login-confirmed", onLoginConfirmed as any);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (APP_NAME_IDENTIFIER !== "nuwax") return;
+    const onState = (state: {
+      phase: string;
+      error?: string;
+      loggedIn?: boolean;
+    }) => {
+      setServiceLifecyclePhase(state.phase);
+      if (typeof state.loggedIn === "boolean") {
+        setIsAuthLoggedIn(state.loggedIn);
+      }
+      const key = "commercial-service-state";
+      if (
+        ["registration-failed", "service-failed", "stop-failed"].includes(
+          state.phase,
+        )
+      ) {
+        // 未登录时的 registration-failed 是正常的登录前门禁态，不是故障：
+        // AuthLifecycle.check() 在未登录时本地抛 "Login required"（reg 请求
+        // 根本没发出），渲染成红色「配置同步失败 + 裸错误串」会让全新安装的
+        // 用户以为出了问题。此处降级为蓝色信息提示并引导登录，登录成功后
+        // phase 转 ready 会自动 destroy 该通知。
+        // 判据用 error 串而非 isAuthLoggedIn state：挂载时 authState() 先于
+        // nuwax:authChanged 到达，此时 state 尚为初始 false，用它会把「已登录
+        // 但注册真失败」误判成未登录。error 串由 lifecycle 直接产出，无时序依赖。
+        const loginRequired =
+          state.phase === "registration-failed" &&
+          /Login required/i.test(state.error ?? "");
+        if (loginRequired) {
+          notification.info({
+            key,
+            message: t("Claw.Toast.Warning.loginFirst"),
+            description: t("Claw.App.browserLoginRequired"),
+            duration: 0,
+          });
+          return;
+        }
+        notification.error({
+          key,
+          message: t(
+            state.phase === "registration-failed"
+              ? "Claw.App.ConfigSyncFailed"
+              : "Claw.App.RestartFailed",
+          ),
+          description: state.error,
+          duration: 0,
+          btn: (
+            <Button
+              onClick={() => {
+                notification.destroy(key);
+                void (state.phase === "stop-failed"
+                  ? window.electronAPI!.services.stopAll()
+                  : window.electronAPI!.services.restartAll());
+              }}
+            >
+              {t("Claw.App.Retry")}
+            </Button>
+          ),
+        });
+      } else if (["ready", "stopped"].includes(state.phase))
+        notification.destroy(key);
+    };
+    window.electronAPI?.on("nuwax:serviceState", onState as any);
+    void window.electronAPI?.services.authState().then(onState);
+    return () => window.electronAPI?.off("nuwax:serviceState", onState as any);
+  }, []);
+
+  // webview 多语言同步（main 转发 nuwax:lang-changed，来源 nuwax 语言开关/设置/
+  // 登录后用户资料同步）：主进程已在桥接时更新语言，renderer 只更新自身
+  // 文案和词典。不能再走 i18n:setLang，以免反向下发 set-lang 重载 guest。
+  useEffect(() => {
+    const log = createLogger("LangSync");
+    const onLangChanged = (payload: { lang?: string }) => {
+      const lang = typeof payload?.lang === "string" ? payload.lang : "";
+      if (!lang || lang.toLowerCase() === getCurrentLang()) return;
+      log.info("webview lang →", lang);
+      void (async () => {
+        try {
+          await setCurrentLang(lang);
+          setI18nLang(getCurrentLang());
+          void prefetchLangMap(lang).catch(() => {});
+        } catch (e) {
+          log.error("apply failed:", e);
+        }
+      })();
+    };
+    window.electronAPI?.on("nuwax:lang-changed", onLangChanged as any);
+    return () => {
+      window.electronAPI?.off("nuwax:lang-changed", onLangChanged as any);
+    };
+  }, []);
+
+  // webview 前端构建信息上报（main 转发 nuwax:web-meta-changed，来源页面启动时
+  // meta.syncWebInfo）：关于页「界面版本（nuwax pc web）」展示。未上报显示未知。
+  const [webMeta, setWebMeta] = useState<{
+    appVersion?: string;
+    gitHash?: string;
+  }>({});
+  useEffect(() => {
+    const onWebMeta = (payload: { appVersion?: string; gitHash?: string }) => {
+      if (typeof payload?.appVersion === "string" && payload.appVersion) {
+        setWebMeta({
+          appVersion: payload.appVersion,
+          gitHash:
+            typeof payload.gitHash === "string" ? payload.gitHash : undefined,
+        });
+      }
+    };
+    window.electronAPI?.on("nuwax:web-meta-changed", onWebMeta as any);
+    return () => {
+      window.electronAPI?.off("nuwax:web-meta-changed", onWebMeta as any);
+    };
+  }, []);
+
+  // ============================================
+  // 浏览器模式导航
+  // ============================================
+  const openInBrowser = useCallback((target: BrowserTarget) => {
+    setBrowserTarget(target);
+    setBrowserOpenKey((k) => k + 1);
+    setMainViewMode("browser");
+  }, []);
+
+  const openBrowserHome = useCallback(() => {
+    openInBrowser({ type: "home" });
+  }, [openInBrowser]);
+
+  const openStartSession = useCallback(() => {
+    openInBrowser({ type: "startSession" });
+  }, [openInBrowser]);
+
+  const handleBrowserReloadReady = useCallback(
+    (reload: (() => void) | null) => {
+      browserReloadRef.current = reload;
+    },
+    [],
+  );
+
+  // 刷新 nuwax webview：递增 browserOpenKey → NuwaxHostWebview 的 reloadKey effect → webview.reload()。
+  // （旧 browserReloadRef/handleBrowserReloadReady 链路随旧 browser 组件废弃而失效，改走 reloadKey 机制。）
+  const handleBrowserRefresh = useCallback(() => {
+    setBrowserOpenKey((k) => k + 1);
+  }, []);
+
+  // webview 导航能力变化上报（供工具栏后退/前进按钮启用态）
+  const handleNavStateChange = useCallback(
+    (state: { canGoBack: boolean; canGoForward: boolean }) => {
+      setCanGoBack(state.canGoBack);
+      setCanGoForward(state.canGoForward);
+    },
+    [],
+  );
+  // 工具栏：收起/展开二级菜单（翻转本地态 + 下发命令到 nuwax）
+  const handleToggleMenu = useCallback(() => {
+    setSecondMenuCollapsed((prev) => {
+      const next = !prev;
+      webviewRef.current?.sendHostCommand({
+        type: "toggle-second-menu",
+        collapsed: next,
+      });
+      return next;
+    });
+  }, []);
+  // 应用菜单「文件」动作（Win/Linux 自绘菜单栏 props 注入；mac 走主进程菜单
+  // 直发 guest）：新建任务/打开搜索 = nuwax 前端已有快捷键能力的宿主命令，
+  // 工作空间目录 = 壳侧目录选择器/文件管理器
+  const handleMenuNewTask = useCallback(() => {
+    webviewRef.current?.sendHostCommand({ type: "new-task" });
+  }, []);
+  const handleMenuOpenSearch = useCallback(() => {
+    webviewRef.current?.sendHostCommand({ type: "open-search" });
+  }, []);
+  const handleMenuModifyWorkspace = useCallback(() => {
+    void modifyWorkspaceDir();
+  }, []);
+  const handleMenuOpenWorkspace = useCallback(() => {
+    void openWorkspaceDir();
+  }, []);
+  const handleToolbarBack = useCallback(() => webviewRef.current?.goBack(), []);
+  const handleToolbarForward = useCallback(
+    () => webviewRef.current?.goForward(),
+    [],
+  );
+  const handleToolbarReload = useCallback(
+    () => webviewRef.current?.reload(),
+    [],
+  );
+  const handleGuestNavigationStart = useCallback(
+    () => setTitlebarDragRegions([]),
+    [],
+  );
+  const handleOpenSettings = useCallback(() => setSettingsModalOpen(true), []);
+  const handleOpenAbout = useCallback(() => {
+    setActiveTab("about");
+    setSettingsModalOpen(true);
+  }, []);
+
+  // ============================================
+  // 子组件登录/注销后刷新顶部栏用户名与平台 Tab
+  // ============================================
+  const handleAuthChange = useCallback(async () => {
+    await refreshAuthState();
+  }, [refreshAuthState]);
+
+  // ============================================
+  // 主界面下必需依赖检查：仅当存在「未安装」或「错误」时进入依赖安装
+  // 版本以当前真实安装为准，outdated 不触发（用户可在依赖 Tab 手动升级）
+  // 同时检测主进程初始化依赖同步状态，避免服务启动时依赖尚未安装完成
+  // ============================================
+  useEffect(() => {
+    if (isSetupComplete !== true) return;
+    const log = createLogger("DepsCheck");
+    let cancelled = false;
+
+    // 先注册事件监听，再做 checkAll，避免事件在 checkAll 返回前触发而丢失
+    const handleDepsSyncCompleted = () => {
+      log.info("syncCompleted");
+      setDepsSyncInProgress(false);
+    };
+    window.electronAPI?.on(
+      "deps:syncCompleted",
+      handleDepsSyncCompleted as any,
+    );
+
+    const checkRequiredDeps = async () => {
+      try {
+        // 探询超时兜底：超时返回 null，走与下方 catch 相同的降级
+        // （needsRequiredDepsReinstall=false，不阻塞进入主界面）。
+        const result = await withTimeout(
+          window.electronAPI?.dependencies.checkAll(),
+          null,
+          "dependencies.checkAll",
+        );
+        if (cancelled) return;
+
+        if (!result?.success || !result.results)
+          throw new Error("Dependency probe failed");
+        const deps = result.results;
+        const hasMissingOrError = deps.some(
+          (d: { status: string }) =>
+            d.status === "missing" || d.status === "error",
+        );
+        const missingDeps = deps
+          .filter(
+            (d: { status: string }) =>
+              d.status === "missing" || d.status === "error",
+          )
+          .map((d: { name: string; status: string }) => d.name);
+
+        log.info("result:", {
+          hasMissingOrError,
+          missingDeps: missingDeps.length > 0 ? missingDeps : undefined,
+          syncInProgress: result?.syncInProgress,
+        });
+
+        setNeedsRequiredDepsReinstall(hasMissingOrError);
+
+        // 记录主进程初始化依赖同步状态
+        if (result?.syncInProgress) {
+          setDepsSyncInProgress(true);
+          // 防竞态：checkAll 返回 syncInProgress=true 但事件可能已经在 checkAll IPC 期间触发过了，
+          // 再次确认主进程当前真实状态，避免 depsSyncInProgress 永远卡在 true
+          const recheck = await withTimeout(
+            window.electronAPI?.dependencies.checkAll(),
+            null,
+            "dependencies.checkAll (recheck)",
+          );
+          if (cancelled) return;
+          if (!recheck?.syncInProgress) {
+            setDepsSyncInProgress(false);
+          }
+        }
+      } catch (error) {
+        log.error("failed:", error);
+        if (!cancelled) {
+          setBootError(String(error));
+        }
+      }
+    };
+
+    checkRequiredDeps();
+
+    return () => {
+      cancelled = true;
+      window.electronAPI?.off(
+        "deps:syncCompleted",
+        handleDepsSyncCompleted as any,
+      );
+    };
+  }, [isSetupComplete]);
+
+  // ============================================
+  // 服务状态轮询
+  // ============================================
+  const pollServicesStatus = useCallback(async () => {
+    try {
+      const items: ServiceItem[] = [];
+      // 任一 status() 抛错不应阻塞其他服务的轮询；用 allSettled 单点隔离。
+      // 渲染端 status 不会 reject（handlers 返回 {success, error}），但 IPC 通道缺失等
+      // 边缘场景仍可能 reject，统一处理避免冻结尾页 services 列表。
+      const settled = await Promise.allSettled([
+        window.electronAPI?.fileServer.status(),
+        window.electronAPI?.lanproxy.status(),
+        window.electronAPI?.agent.serviceStatus(),
+        window.electronAPI?.mcp.status(),
+        window.electronAPI?.computerServer.status(),
+        window.electronAPI?.guiServer?.status(),
+        window.electronAPI?.guiServer?.isEnabled(),
+        window.electronAPI?.ttyd.status(),
+      ]);
+      const unwrap = <T,>(r: PromiseSettledResult<T>, fallback: T): T =>
+        r.status === "fulfilled" ? (r.value ?? fallback) : fallback;
+      const fsStatus = unwrap(settled[0], { running: false });
+      const lpStatus = unwrap(settled[1], { running: false });
+      const agentSvcStatus = unwrap(settled[2], { running: false });
+      const mcpStatus = unwrap(settled[3], { running: false });
+      const csStatus = unwrap(settled[4], { running: false });
+      const guiStatus = unwrap(settled[5], undefined);
+      const guiEnabledRes = unwrap(settled[6], undefined);
+      const ttydStatus = unwrap(settled[7], { running: false });
+      const isGuiEnabled =
+        FEATURES.ENABLE_GUI_AGENT_SERVER && (guiEnabledRes?.enabled ?? false);
+      setGuiMcpEnabled(isGuiEnabled);
+      items.push({
+        key: "mcpProxy",
+        label: t("Claw.Service.mcp"),
+        description: t("Claw.Service.mcpDesc"),
+        running: mcpStatus?.running ?? false,
+        error: mcpStatus?.error,
+      });
+
+      // ComputerServer 是 Agent 的 HTTP 接口，仅当 Agent 本身在运行时才检查其状态
+      const agentRunning = agentSvcStatus?.running ?? false;
+      const csRunning = csStatus?.running ?? false;
+      let agentError: string | undefined;
+      if (agentRunning && !csRunning) {
+        agentError = csStatus?.error
+          ? t("Claw.App.agentInterfaceFailed", csStatus.error)
+          : t("Claw.App.agentInterfaceNotRunning");
+      }
+      items.push({
+        key: "agent",
+        label: t("Claw.Service.agent"),
+        description: t("Claw.Service.agentDesc"),
+        running: agentRunning && csRunning,
+        error: agentError,
+      });
+
+      items.push({
+        key: "fileServer",
+        label: t("Claw.Service.file"),
+        description: t("Claw.Service.fileDesc"),
+        running: fsStatus?.running ?? false,
+        pid: fsStatus?.pid,
+        error: fsStatus?.error,
+      });
+      if (isGuiEnabled) {
+        items.push({
+          key: "guiServer",
+          label: t("Claw.Service.guiMcp"),
+          description: t("Claw.Service.guiMcpDesc"),
+          running: guiStatus?.running ?? false,
+          pid: guiStatus?.pid,
+          error: guiStatus?.error,
+        });
+      }
+      items.push({
+        key: "lanproxy",
+        label: t("Claw.Service.proxy"),
+        description: t("Claw.Service.proxyDesc"),
+        running: lpStatus?.running ?? false,
+        pid: lpStatus?.pid,
+        error: lpStatus?.error,
+      });
+      items.push({
+        key: "ttyd",
+        label: t("Claw.Service.ttyd"),
+        description: t("Claw.Service.ttydDesc"),
+        running: ttydStatus?.running ?? false,
+        pid: ttydStatus?.pid,
+        error: ttydStatus?.error,
+      });
+      setServices(items);
+      setPollFailCount(0);
+
+      // 兜底同步托盘：任一服务在跑 → running；全部停止 → stopped。
+      // 仅在状态发生变化时发 IPC，避免每 5 秒重复调用。
+      // 这里覆盖了 startServicesSequentially 逐个 IPC 启动服务的场景；
+      // services:restartAll/stopAll 等批量路径由主进程 processHandlers 直接同步。
+      const anyRunning = items.some((s) => s.running);
+      if (lastSyncedTrayRunning.current !== anyRunning) {
+        lastSyncedTrayRunning.current = anyRunning;
+        window.electronAPI?.tray
+          .updateServicesStatus(anyRunning)
+          .catch((e) => console.warn("[App] Failed to sync tray status:", e));
+      }
+    } catch (error) {
+      console.error("[App] pollServicesStatus failed:", error);
+      setPollFailCount((count) => count + 1);
+    } finally {
+      setServicesLoading(false);
+    }
+  }, []);
+
+  // ============================================
+  // 逐个启动服务（实时更新状态）
+  // ============================================
+  const startServicesSequentially = useCallback(
+    async (serviceKeys: string[]) => {
+      const log = createLogger("StartServices");
+      for (const key of serviceKeys) {
+        setStartingServices((prev) => new Set(prev).add(key));
+        try {
+          let result: { success: boolean; error?: string } | undefined;
+
+          if (key === "agent") {
+            const agentConfig = (await window.electronAPI?.settings.get(
+              "agent_config",
+            )) as any;
+            const step1 = (await window.electronAPI?.settings.get(
+              "step1_config",
+            )) as { workspaceDir?: string } | null;
+            result = await window.electronAPI?.agent.init({
+              engine: normalizeAgentEngine(agentConfig?.type),
+              apiKey: agentConfig?.apiKey,
+              baseUrl: agentConfig?.apiBaseUrl,
+              model: agentConfig?.model,
+              workspaceDir: step1?.workspaceDir || "",
+            });
+            log.info(
+              `agent: ${result?.success ? "ok" : "failed"}`,
+              result?.error,
+            );
+            // ComputerServer 是 Agent 的 HTTP 接口，随 Agent 一起启动
+            await window.electronAPI?.computerServer
+              .start()
+              .catch(() => undefined);
+          } else if (key === "fileServer") {
+            const step1 = (await window.electronAPI?.settings.get(
+              "step1_config",
+            )) as { fileServerPort?: number } | null;
+            // 回退值必须用聚合配置默认端口（60005+NUWAX_PORT_OFFSET），与 serviceManager /
+            // ClientPage 保持一致；此前写死 60000（社区版默认）会让商业版起在错误端口，
+            // 前端按 61005 找 file-server 时上传失败。
+            const port = step1?.fileServerPort ?? DEFAULT_FILE_SERVER_PORT;
+            result = await window.electronAPI?.fileServer.start(port);
+            log.info(
+              `fileServer: ${result?.success ? "ok" : "failed"}`,
+              result?.error,
+            );
+          } else if (key === "guiServer") {
+            result = await window.electronAPI?.guiServer?.start();
+          } else if (key === "lanproxy") {
+            const clientKey = (await window.electronAPI?.settings.get(
+              "auth.saved_key",
+            )) as string | null;
+            const lpConfig = (await window.electronAPI?.settings.get(
+              "lanproxy_config",
+            )) as any;
+            const serverIp =
+              lpConfig?.serverIp ||
+              (
+                (await window.electronAPI?.settings.get(
+                  "lanproxy.server_host",
+                )) as string
+              )?.replace(/^https?:\/\//, "");
+            const serverPort =
+              lpConfig?.serverPort ||
+              (await window.electronAPI?.settings.get("lanproxy.server_port"));
+            if (serverIp && clientKey && serverPort) {
+              result = await window.electronAPI?.lanproxy.start({
+                serverIp,
+                serverPort,
+                clientKey,
+                ssl: lpConfig?.ssl,
+              });
+              log.info(
+                `lanproxy: ${result?.success ? "ok" : "failed"}`,
+                result?.error,
+              );
+            } else {
+              log.warn("lanproxy: skipped (missing config)");
+            }
+          } else if (key === "mcpProxy") {
+            result = await window.electronAPI?.mcp.start();
+            log.info(
+              `mcpProxy: ${result?.success ? "ok" : "failed"}`,
+              result?.error,
+            );
+          } else if (key === "ttyd") {
+            result = await window.electronAPI?.ttyd.start();
+            log.info(
+              `ttyd: ${result?.success ? "ok" : "failed"}`,
+              result?.error,
+            );
+          }
+
+          await pollServicesStatus();
+        } catch (e) {
+          log.error(`${key} failed:`, e);
+        } finally {
+          setStartingServices((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+        }
+      }
+      log.info("completed");
+    },
+    [pollServicesStatus],
+  );
+
+  // ============================================
+  // 自动重连（等待依赖检查及同步完成后再执行，避免竞态）
+  // ============================================
+  useEffect(() => {
+    if (isSetupComplete !== true) return;
+    if (needsRequiredDepsReinstall !== false) return;
+    if (depsSyncInProgress) return;
+
+    if (APP_NAME_IDENTIFIER === "nuwax") return;
+    const log = createLogger("AutoReconnect");
+    const autoReconnect = async () => {
+      try {
+        // webview 登录态为唯一事实源：token（serverHost 域桥键）存在即视为已登录，
+        // reg 走 Bearer 注入；savedKey 兜底（quickInit 无界面部署种子场景）。
+        const step1 = (await window.electronAPI?.settings.get(
+          "step1_config",
+        )) as { serverHost?: string } | null;
+        const domain = normalizeServerHost(
+          step1?.serverHost || DEFAULT_SERVER_HOST,
+        );
+        const tokenKey = getNuwaxAccessTokenKey(domain);
+        const token = tokenKey
+          ? ((await window.electronAPI?.settings.get(tokenKey)) as
+              | string
+              | null)
+          : null;
+        const savedKey =
+          await window.electronAPI?.settings.get("auth.saved_key");
+
+        if (token) {
+          // webview 登录态为唯一事实源：token 在即已登录——含「登出后重登」
+          // （configKey 属 reg 派生缓存，登出被清，不能作已登录判定）。
+          const result = await syncConfigToServer({ suppressToast: true });
+
+          if (result) {
+            log.info("reg ok, starting services");
+            setOnlineStatus(result.online);
+            const user = await authService.getAuthUser();
+            if (user) {
+              setUsername(
+                user.displayName ||
+                  user.username ||
+                  t("Claw.App.defaultUsername"),
+              );
+            }
+            setAuthRefreshTrigger((v) => v + 1);
+            await startServicesSequentially(await getStartupServiceKeys());
+            openBrowserHome();
+          } else {
+            // reg 失败（如后端未放开 token 鉴权且无存量 savedKey）：reg 是登录
+            // 联动的职责，这里不再兜底起服务，等待 login-confirmed 或后端就绪。
+            log.warn("reg failed (token path), waiting for backend/login flow");
+          }
+        } else if (savedKey) {
+          // savedKey 兜底（quickInit 无界面部署）：configKey 在=未登出，才重连
+          const configKey =
+            await window.electronAPI?.settings.get("auth.config_key");
+          if (!configKey) {
+            log.info("skipped (logged out)");
+            return;
+          }
+
+          const result = await syncConfigToServer({ suppressToast: true });
+
+          if (result) {
+            log.info("reg ok (savedKey path), starting services");
+            setOnlineStatus(result.online);
+            setAuthRefreshTrigger((v) => v + 1);
+            await startServicesSequentially(await getStartupServiceKeys());
+            openBrowserHome();
+          } else {
+            log.warn("reg failed (savedKey path), using local config");
+            notification.info({
+              message: t("Claw.App.AutoReconnectFailed"),
+              description: t("Claw.App.AutoReconnectFailedDetail"),
+              duration: 8,
+              placement: "bottomRight",
+            });
+            await startServicesSequentially(await getStartupServiceKeys());
+            openBrowserHome();
+          }
+        } else {
+          log.info("skipped (no webview token & no savedKey)");
+        }
+      } catch (error) {
+        log.error("failed:", error);
+      }
+    };
+
+    autoReconnect();
+  }, [
+    isSetupComplete,
+    needsRequiredDepsReinstall,
+    depsSyncInProgress,
+    startServicesSequentially,
+    getStartupServiceKeys,
+    openBrowserHome,
+  ]);
+
+  // ============================================
+  // 根据服务状态计算 Agent 状态
+  // ============================================
+  // 根据服务状态计算 Agent 状态（对齐 Tauri 客户端逻辑）
+  useEffect(() => {
+    // 如果正在加载，保持当前状态不变（避免初始加载时的闪烁）
+    if (servicesLoading) {
+      return;
+    }
+
+    if (statusExpectedKeys.length === 0) {
+      setAgentStatus("idle");
+      return;
+    }
+
+    const serviceMap = new Map(services.map((s) => [s.key, s]));
+    const trackedServices = statusExpectedKeys.map((key) =>
+      serviceMap.get(key),
+    );
+    const runningCount = trackedServices.filter((s) => s?.running).length;
+    const totalCount = statusExpectedKeys.length;
+    const hasErrors = trackedServices.some((s) => !!s?.error);
+    const hasStartingServices = Array.from(startingServices).some((key) =>
+      statusExpectedKeys.includes(key),
+    );
+    const hasStaleServiceStatus = pollFailCount >= 2;
+
+    if (hasStaleServiceStatus) {
+      // 连续轮询失败时，避免继续展示可能过期的 running 状态。
+      setAgentStatus("busy");
+    } else if (hasErrors) {
+      setAgentStatus("error");
+    } else if (hasStartingServices) {
+      setAgentStatus("starting");
+    } else if (runningCount === totalCount && runningCount > 0) {
+      setAgentStatus("running");
+    } else if (runningCount > 0 && runningCount < totalCount) {
+      setAgentStatus("busy");
+    } else if (runningCount === 0) {
+      setAgentStatus("stopped");
+    } else {
+      setAgentStatus("idle");
+    }
+  }, [
+    services,
+    servicesLoading,
+    startingServices,
+    statusExpectedKeys,
+    pollFailCount,
+  ]);
+
+  // 全局圆点只消费“ready 后连续健康异常”。生命周期尚未 ready、未登录、
+  // 主动停止或单轮抖动都清零，不再把一般的 stopped/starting 误报成故障。
+  useEffect(() => {
+    if (
+      !isAuthLoggedIn ||
+      serviceLifecyclePhase !== "ready" ||
+      servicesLoading
+    ) {
+      setServiceUnhealthyStreak(0);
+      return;
+    }
+    const serviceMap = new Map(
+      services.map((service) => [service.key, service]),
+    );
+    const unhealthy =
+      pollFailCount >= 2 ||
+      statusExpectedKeys.some((key) => {
+        const service = serviceMap.get(key);
+        return !service || !service.running || !!service.error;
+      });
+    setServiceUnhealthyStreak((previous) => (unhealthy ? previous + 1 : 0));
+  }, [
+    isAuthLoggedIn,
+    serviceLifecyclePhase,
+    servicesLoading,
+    services,
+    pollFailCount,
+    statusExpectedKeys,
+  ]);
+
+  const showServiceAttention = shouldShowServiceAttention({
+    loggedIn: isAuthLoggedIn,
+    phase: serviceLifecyclePhase,
+    unhealthyStreak: serviceUnhealthyStreak,
+  });
+
+  // 启动服务状态轮询
+  useEffect(() => {
+    if (isSetupComplete !== true) return;
+
+    // 立即执行一次
+    pollServicesStatus();
+
+    // 每 5 秒轮询一次
+    servicesPollTimer.current = setInterval(pollServicesStatus, 5000);
+
+    return () => {
+      if (servicesPollTimer.current) {
+        clearInterval(servicesPollTimer.current);
+      }
+    };
+  }, [isSetupComplete]);
+
+  // ============================================
+  // 监听更新状态（header tag 展示）
+  // ============================================
+  useEffect(() => {
+    const handler = (state: UpdateState) => {
+      if (state) setUpdateState(state);
+    };
+    window.electronAPI?.on("update:status", handler as any);
+    window.electronAPI?.app?.getUpdateState?.()?.then((state) => {
+      if (state) setUpdateState(state);
+    });
+    return () => {
+      window.electronAPI?.off("update:status", handler as any);
+    };
+  }, []);
+
+  // ============================================
+  // 监听托盘/菜单事件
+  // ============================================
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    const cleanupHandlers: (() => void)[] = [];
+
+    // 监听设置菜单
+    const handleSettings = () => {
+      console.log("[App] Received menu:settings event");
+      setActiveTab("settings");
+      setSettingsModalOpen(true);
+    };
+    window.electronAPI.on("menu:settings", handleSettings);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:settings", handleSettings),
+    );
+
+    // 监听关于菜单（mac 应用菜单「关于」）：落设置弹窗 about tab
+    const handleAbout = () => {
+      console.log("[App] Received menu:about event");
+      setActiveTab("about");
+      setSettingsModalOpen(true);
+    };
+    window.electronAPI.on("menu:about", handleAbout);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:about", handleAbout),
+    );
+
+    // 监听工作空间目录菜单（mac 应用菜单「文件 → 更改/打开工作空间目录」）
+    const handleWorkspace = (payload: unknown) => {
+      const action = (payload as { action?: string } | undefined)?.action;
+      console.log("[App] Received menu:workspace event", action);
+      if (action === "modify") {
+        void modifyWorkspaceDir();
+      } else if (action === "open") {
+        void openWorkspaceDir();
+      }
+    };
+    window.electronAPI.on("menu:workspace", handleWorkspace);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:workspace", handleWorkspace),
+    );
+
+    // 监听依赖管理菜单
+    const handleDependencies = () => {
+      console.log("[App] Received menu:dependencies event");
+      setActiveTab("dependencies");
+      setSettingsModalOpen(true);
+    };
+    window.electronAPI.on("menu:dependencies", handleDependencies);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:dependencies", handleDependencies),
+    );
+
+    // 监听 MCP 设置菜单
+    const handleMcpSettings = () => {
+      console.log("[App] Received menu:mcp-settings event");
+      setActiveTab("settings");
+      setSettingsModalOpen(true);
+    };
+    window.electronAPI.on("menu:mcp-settings", handleMcpSettings);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:mcp-settings", handleMcpSettings),
+    );
+
+    // 监听新建会话菜单
+    const handleNewSession = () => {
+      console.log("[App] Received menu:new-session event");
+      openInBrowser({ type: "newSession" });
+    };
+    window.electronAPI.on("menu:new-session", handleNewSession);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off("menu:new-session", handleNewSession),
+    );
+
+    // 监听 Admin Server 服务正在重启
+    const handleServicesRestarting = () => {
+      console.log("[App] Received admin:servicesRestarting event");
+      message.loading({
+        content: t("Claw.App.ServicesRestarting"),
+        key: "admin-restart",
+        duration: 0,
+      });
+    };
+    window.electronAPI.on("admin:servicesRestarting", handleServicesRestarting);
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off(
+        "admin:servicesRestarting",
+        handleServicesRestarting,
+      ),
+    );
+
+    // 监听 Admin Server 服务重启完成
+    const handleServicesRestarted = (data: {
+      success: boolean;
+      results: Record<string, { success: boolean; error?: string }>;
+    }) => {
+      console.log("[App] Received admin:servicesRestarted event", data);
+      if (data.success) {
+        message.success({
+          content: t("Claw.App.ServicesRestartSuccess"),
+          key: "admin-restart",
+          duration: 3,
+        });
+      } else {
+        const failed = Object.entries(data.results)
+          .filter(([, v]) => !v.success)
+          .map(([k]) => k)
+          .join(", ");
+        message.error({
+          content: t("Claw.App.serviceRestartFailed", failed),
+          key: "admin-restart",
+          duration: 5,
+        });
+      }
+    };
+    window.electronAPI.on(
+      "admin:servicesRestarted",
+      handleServicesRestarted as any,
+    );
+    cleanupHandlers.push(() =>
+      window.electronAPI?.off(
+        "admin:servicesRestarted",
+        handleServicesRestarted as any,
+      ),
+    );
+
+    return () => {
+      cleanupHandlers.forEach((fn) => fn());
+    };
+  }, [openInBrowser]);
+
+  // ============================================
+  // 状态 Badge
+  // ============================================
+  const badge = STATUS_CONFIG[agentStatus] || STATUS_CONFIG.idle;
+
+  // ============================================
+  // 平台检测
+  // ============================================
+  const isMacOS = navigator.platform.toUpperCase().includes("MAC");
+
+  // ============================================
+  // 菜单配置（对齐 Tauri 客户端）
+  // ============================================
+  const menuItems = useMemo(() => {
+    const items = [
+      {
+        key: "client",
+        icon: <DashboardOutlined />,
+        label: t("Claw.Menu.client"),
+      },
+      {
+        key: "sessions",
+        icon: <TeamOutlined />,
+        label: t("Claw.Menu.session"),
+      },
+      {
+        key: "mcp",
+        icon: <ApiOutlined />,
+        label: t("Claw.Menu.mcp"),
+      },
+      {
+        key: "settings",
+        icon: <SettingOutlined />,
+        label: t("Claw.Menu.settings"),
+      },
+      {
+        key: "dependencies",
+        icon: <FolderOutlined />,
+        label: t("Claw.Menu.dependencies"),
+      },
+    ];
+    if (isMacOS) {
+      items.push({
+        key: "permissions",
+        icon: <SafetyOutlined />,
+        label: t("Claw.Menu.authorization"),
+      });
+    }
+    items.push(
+      { key: "logs", icon: <FileTextOutlined />, label: t("Claw.Menu.logs") },
+      {
+        key: "about",
+        icon: <InfoCircleOutlined />,
+        label: t("Claw.Menu.about"),
+      },
+    );
+    return items;
+  }, [isMacOS, i18nLang]);
+
+  // ============================================
+  // i18n Context value
+  // ============================================
+  const i18nContextValue = useMemo(
+    () => ({ lang: i18nLang, updateLang: handleI18nLangChange }),
+    [i18nLang, handleI18nLangChange],
+  );
+
+  // ============================================
+  // 渲染：加载中（含等待依赖检查完成）
+  // 事件就绪但未达最少展示时长时继续显示 loading，避免启动动画一闪而过。
+  // ============================================
+  if (bootError) {
+    return (
+      <div className="app-loading" role="alert">
+        <div className="app-loading-text">{t("Claw.App.RestartFailed")}</div>
+        <div>{bootError}</div>
+        <Button onClick={() => window.location.reload()}>
+          {t("Claw.App.Retry")}
+        </Button>
+      </div>
+    );
+  }
+  if (
+    !splashFloorMet ||
+    isSetupComplete === null ||
+    (isSetupComplete && needsRequiredDepsReinstall === null)
+  ) {
+    return (
+      <I18nContext.Provider value={i18nContextValue}>
+        <ConfigProvider theme={currentTheme}>
+          {/* 等待态不出文案：加载语义由图标扫光动效表达 */}
+          <AppIconLoading />
+        </ConfigProvider>
+      </I18nContext.Provider>
+    );
+  }
+
+  // ============================================
+  // 渲染：主界面
+  // 登录已统一到 nuwax webview /Login（登录态以 webview 为唯一事实源），
+  // 外壳首屏直接进 webview；SetupWizard 已随旧原生登录流一并移除。
+  // ============================================
+
+  // ============================================
+  // 渲染：主界面下必需依赖未满足 → 全屏依赖安装，完成后重启服务回到主界面
+  // ============================================
+  if (needsRequiredDepsReinstall === true) {
+    return (
+      <I18nContext.Provider value={i18nContextValue}>
+        <ConfigProvider theme={currentTheme}>
+          <SetupDependencies
+            onComplete={async () => {
+              // 先回到主界面，再在后台重启服务（使新安装的依赖生效）
+              setNeedsRequiredDepsReinstall(false);
+              await restartAllServices();
+            }}
+          />
+        </ConfigProvider>
+      </I18nContext.Provider>
+    );
+  }
+
+  // ============================================
+  // 渲染：启动服务门禁——核心服务 ready 前不挂 nuwax webview
+  // 失败态优先短路（错误提示立即出现，不受最少展示时长影响）；
+  // 等待态同样并入最少展示时长。
+  // ============================================
+  const servicesGateFailed = !!servicesGate && !servicesGate.ok;
+  if (servicesGateFailed || !servicesGate || !splashFloorMet) {
+    return (
+      <I18nContext.Provider value={i18nContextValue}>
+        <ConfigProvider theme={currentTheme}>
+          {/* 等待态不出文案：加载语义由图标扫光动效表达，启动瞬间只见品牌图标。
+              失败态静止图标 + 标题/未就绪明细/重试按钮。 */}
+          <AppIconLoading animated={!servicesGateFailed}>
+            {servicesGateFailed ? (
+              <>
+                <div
+                  className="app-loading-text"
+                  style={{ fontSize: 16, fontWeight: 600 }}
+                >
+                  本地服务启动失败
+                </div>
+                <div
+                  className="app-loading-text"
+                  style={{ maxWidth: 420, textAlign: "center", marginTop: 8 }}
+                >
+                  未就绪：{(servicesGate.detail ?? []).join("、")}
+                </div>
+                <Button
+                  type="primary"
+                  style={{ marginTop: 16 }}
+                  onClick={() => {
+                    setServicesGate(null);
+                    void window.electronAPI?.services?.waitForReady();
+                  }}
+                >
+                  重试
+                </Button>
+              </>
+            ) : null}
+          </AppIconLoading>
+        </ConfigProvider>
+      </I18nContext.Provider>
+    );
+  }
+
+  // ============================================
+  // 渲染：主界面
+  // ============================================
+  return (
+    <ConfigProvider theme={currentTheme}>
+      <I18nContext.Provider value={i18nContextValue}>
+        <ThemeContext.Provider
+          value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
+        >
+          <div className="app-container">
+            {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
+                加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
+            {loadingCovered && <AppIconLoading overlay />}
+            {/* 顶部栏：Logo + 模式切换 + 浏览器刷新 + 用户状态 + 升级提示 */}
+            {/* 顶栏撤除：沉浸式 webview 顶到窗口上沿。原顶栏的 Segmented 模式切换与账号登录态
+                移除；新版本更新入口迁入工具栏 updateEntry（Agent 运行状态不再展示）；
+                后退/前进/刷新/收起二级菜单/设置由工具栏承载（见 TrafficLightToolbar，浮于 webview 之上）。 */}
+            <TrafficLightToolbar
+              menuCollapsed={secondMenuCollapsed}
+              menuAvailable={secondMenuAvailable}
+              canGoBack={canGoBack}
+              canGoForward={canGoForward}
+              onToggleMenu={handleToggleMenu}
+              onBack={handleToolbarBack}
+              onForward={handleToolbarForward}
+              onReload={handleToolbarReload}
+              onOpenSettings={
+                // nuwax 宿主：设置入口迁至 web 用户区「客户端设置」按钮
+                //（nuwax:open-client-settings 链路），顶行不再渲染设置按钮；
+                // 社区壳（nuwaclaw）保留顶行入口不变。
+                APP_NAME_IDENTIFIER === "nuwax" ? undefined : handleOpenSettings
+              }
+              onOpenAbout={handleOpenAbout}
+              onOpenSettingsMenu={() => {
+                // 与 menu:settings 通道同款行为：落 settings tab（顶行按钮
+                // handleOpenSettings 只开弹窗保持上次 tab，语义不同）
+                setActiveTab("settings");
+                setSettingsModalOpen(true);
+              }}
+              onNewTask={handleMenuNewTask}
+              onOpenSearch={handleMenuOpenSearch}
+              onModifyWorkspace={handleMenuModifyWorkspace}
+              onOpenWorkspace={handleMenuOpenWorkspace}
+              statusEntry={
+                // 单一语义：仅已登录后的确定终态故障显示红点。未登录、启动中、
+                // 主动停止、单轮探测抖动与正常运行均不渲染。
+                showServiceAttention ? (
+                  <Tooltip
+                    title={
+                      computerName
+                        ? `${computerName} · 服务状态异常，点击查看`
+                        : "服务状态异常，点击查看"
+                    }
+                    mouseEnterDelay={0.7}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label="服务状态"
+                      onClick={() => {
+                        setActiveTab("client");
+                        setSettingsModalOpen(true);
+                      }}
+                      style={{ ...({ WebkitAppRegion: "no-drag" } as any) }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          display: "inline-block",
+                          background: "#EF4444",
+                        }}
+                      />
+                    </Button>
+                  </Tooltip>
+                ) : undefined
+              }
+              updateEntry={
+                // 商业版（nuwax）更新提醒由 nuwax web 单栏 logo 旁版本徽标承担，
+                // 壳顶栏右上入口仅社区版保留（社区 web 无徽标）；动作统一在 about 页。
+                APP_NAME_IDENTIFIER ===
+                "nuwax" ? undefined : updateState.status === "available" ? ( // 顶栏只做提醒与导航，所有下载/安装动作统一在 about 页确认。
+                  <Tooltip
+                    title={t("Claw.App.UpdateTag.update")}
+                    mouseEnterDelay={0.7}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label={t("Claw.App.UpdateTag.update")}
+                      onClick={handleOpenAbout}
+                      style={{
+                        // 绿底白 icon：表示有新版本；点击进入关于页查看详情。
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 26,
+                        height: 26,
+                        padding: 0,
+                        borderRadius: 13,
+                        background: "#52c41a",
+                        color: "#fff",
+                        fontSize: 13,
+                      }}
+                    >
+                      <DownloadOutlined />
+                    </Button>
+                  </Tooltip>
+                ) : updateState.status === "downloaded" ? (
+                  <Tooltip
+                    title={t("Claw.About.installUpdate")}
+                    mouseEnterDelay={0.7}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label={t("Claw.About.installUpdate")}
+                      onClick={handleOpenAbout}
+                      style={{
+                        // 橙底安装 icon：点击进入关于页确认重启安装。
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 26,
+                        height: 26,
+                        padding: 0,
+                        borderRadius: 13,
+                        background: "#fa8c16",
+                        color: "#fff",
+                        fontSize: 13,
+                      }}
+                    >
+                      <RocketOutlined />
+                    </Button>
+                  </Tooltip>
+                ) : updateState.status === "error" && updateState.version ? (
+                  <Tooltip
+                    title={t("Claw.About.updateError")}
+                    mouseEnterDelay={0.7}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      aria-label={t("Claw.About.updateError")}
+                      onClick={handleOpenAbout}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 26,
+                        height: 26,
+                        padding: 0,
+                        borderRadius: 13,
+                        background: "#EF4444",
+                        color: "#fff",
+                        fontSize: 13,
+                      }}
+                    >
+                      <InfoCircleOutlined />
+                    </Button>
+                  </Tooltip>
+                ) : undefined
+              }
+              dragRegions={titlebarDragRegions}
+            />
+
+            {/* 主体部分：平台 webview 常驻挂载，切换时仅隐藏不重载 */}
+            <div className="app-body">
+              <div
+                className={`app-content app-content-fullwidth ${styles.platformPane}`}
+                style={{
+                  display: "flex",
+                  // 沉浸式：撤除顶栏后 webview 顶到窗口上沿（top:0）整窗满屏；
+                  // 工具栏（TrafficLightToolbar）作为独立浮层覆盖顶部，不占文档流。
+                  // z-index 1000（高于设置 Modal 同级层）；工具栏 z-index 1100 更高。
+                  // （app-container/app-body 无 transform，fixed 定位不被祖先捕获。）
+                  position: "fixed",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 1000,
+                }}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  <NuwaxHostWebview
+                    ref={webviewRef}
+                    reloadKey={browserOpenKey}
+                    onNavStateChange={handleNavStateChange}
+                    onNavigationStart={handleGuestNavigationStart}
+                    onGuestLoadStateChange={setGuestLoadPhase}
+                  />
+                </div>
+              </div>
+
+              {/* 系统配置浮层：原 configPane 整页切换 → antd Modal，沉浸式下不打断 webview。
+                  无顶栏标题（样式对齐参考设计）：页标题移到右栏顶部行、关闭钮随行右上角；
+                  左栏为自绘导航（caption + 图标项，「关于」经分隔线钉底）。 */}
+              <Modal
+                open={settingsModalOpen}
+                onCancel={() => setSettingsModalOpen(false)}
+                footer={null}
+                centered
+                width={1000}
+                closable={false}
+                styles={{
+                  // 弹窗整体灰底：让页面内白色卡片在灰底上浮出
+                  content: {
+                    padding: "0",
+                    borderRadius: "12px",
+                    overflow: "hidden",
+                    background: "var(--color-bg-layout)",
+                  },
+                  // 固定尺寸 1000×640：外壳不滚，左菜单/右内容在固定高度容器内各自滚动
+                  body: {
+                    height: 640,
+                    boxSizing: "border-box",
+                    overflow: "hidden",
+                  },
+                  // 遮罩：玻璃模糊（低不透明度，透出背景）
+                  mask: {
+                    background: "rgba(0, 0, 0, 0.3)",
+                    backdropFilter: "blur(10px)",
+                    WebkitBackdropFilter: "blur(10px)",
+                  },
+                }}
+                destroyOnHidden
+              >
+                <div
+                  className={styles.configPane}
+                  style={{
+                    display: "flex",
+                    height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
+                  }}
+                >
+                  <div
+                    className={
+                      i18nLang.toLowerCase().startsWith("en")
+                        ? "app-sider app-sider-en"
+                        : "app-sider"
+                    }
+                  >
+                    <div className="app-sider-caption">{APP_DISPLAY_NAME}</div>
+                    <nav className="app-sider-nav">
+                      {menuItems
+                        .filter((item) => item.key !== "about")
+                        .map((item) => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            className={`app-sider-item${
+                              activeTab === item.key
+                                ? " app-sider-item-active"
+                                : ""
+                            }`}
+                            onClick={() => setActiveTab(item.key as TabKey)}
+                          >
+                            <span className="app-sider-item-icon">
+                              {item.icon}
+                            </span>
+                            <span className="app-sider-item-label">
+                              {item.label}
+                            </span>
+                          </button>
+                        ))}
+                    </nav>
+                    {/* 关于钉底：弹性占位 + 分隔线，推到左栏底部 */}
+                    <div className="app-sider-spacer" />
+                    <div className="app-sider-divider" />
+                    {menuItems
+                      .filter((item) => item.key === "about")
+                      .map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          className={`app-sider-item${
+                            activeTab === item.key
+                              ? " app-sider-item-active"
+                              : ""
+                          }`}
+                          onClick={() => setActiveTab(item.key as TabKey)}
+                        >
+                          <span className="app-sider-item-icon">
+                            {item.icon}
+                          </span>
+                          <span className="app-sider-item-label">
+                            {item.label}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                  <div className="app-content">
+                    <div className="app-content-titlebar">
+                      <span className="app-content-title">
+                        {menuItems.find((item) => item.key === activeTab)
+                          ?.label ?? ""}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label={t("Claw.Common.close")}
+                        onClick={() => setSettingsModalOpen(false)}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          padding: 0,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 13,
+                          // 右移补偿：让 icon 视觉中心对齐标题行右内边距
+                          marginInlineEnd: -4,
+                          color: "var(--color-text-tertiary)",
+                        }}
+                      >
+                        <CloseOutlined />
+                      </Button>
+                    </div>
+                    <div className="app-content-body">
+                      {activeTab === "client" && (
+                        <ClientPage
+                          onNavigate={(tab) => setActiveTab(tab as TabKey)}
+                          isWebviewLoggedIn={isAuthLoggedIn}
+                          services={services}
+                          servicesLoading={servicesLoading}
+                          startingServices={startingServices}
+                          setStartingServices={setStartingServices}
+                          onRefreshServices={pollServicesStatus}
+                          authRefreshTrigger={authRefreshTrigger}
+                          onAuthChange={handleAuthChange}
+                          onLoginComplete={openBrowserHome}
+                          onStartSession={openStartSession}
+                          onGotoLogin={() => setMainViewMode("browser")}
+                        />
+                      )}
+                      {activeTab === "sessions" && (
+                        <SessionsPage onOpenInBrowser={openInBrowser} />
+                      )}
+                      <div
+                        style={{
+                          display: activeTab === "mcp" ? "contents" : "none",
+                        }}
+                      >
+                        <MCPSettings isOpen={activeTab === "mcp"} />
+                      </div>
+                      {activeTab === "settings" && <SettingsPage />}
+                      {activeTab === "dependencies" && <DependenciesPage />}
+                      {activeTab === "permissions" && <PermissionsPage />}
+                      {activeTab === "logs" && <LogViewer />}
+                      {activeTab === "about" && <AboutPage webMeta={webMeta} />}
+                    </div>
+                  </div>
+                </div>
+              </Modal>
+            </div>
+          </div>
+        </ThemeContext.Provider>
+      </I18nContext.Provider>
+    </ConfigProvider>
+  );
+}
+
+export default App;
