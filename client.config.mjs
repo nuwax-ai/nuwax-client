@@ -9,7 +9,14 @@ export default Object.freeze({
     downloadUrl: 'https://nuwax.com',
     portOffset: 1000,
   }),
-  frontend: Object.freeze({ port: 3000 }),
+  frontend: Object.freeze({
+    mode: 'dist',
+    port: 3000,
+    gatewayPort: 46800,
+    buildNodeOptions: '--max-old-space-size=4096',
+    devNodeOptions: '--max-old-space-size=8192',
+  }),
+  pack: Object.freeze({ outputDir: 'release', dir: false }),
   release: Object.freeze({
     repo: 'nuwax-ai/nuwax-client',
     signHost: 'win-pc',

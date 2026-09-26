@@ -79,13 +79,14 @@ async function cleanScratch(tools, dir) {
 }
 
 async function fetch(tools, dir) {
-  await tools.git(dir, ['fetch', '--prune', '--tags', 'origin']);
+  // Refresh every origin head, including refs added outside a single-branch clone's refspec.
+  await tools.git(dir, ['fetch', '--filter=blob:none', '--prune', '--tags', 'origin', '+refs/heads/*:refs/remotes/origin/*']);
 }
 
 async function completeHistory(tools, dir) {
   if (await tools.git(dir, ['rev-parse', '--is-shallow-repository']) !== 'true') return false;
   message(`${path.basename(dir)} 为浅克隆，补齐历史后核对可达性`);
-  await tools.git(dir, ['fetch', '--unshallow', '--prune', '--tags', 'origin']);
+  await tools.git(dir, ['fetch', '--filter=blob:none', '--unshallow', '--prune', '--tags', 'origin', '+refs/heads/*:refs/remotes/origin/*']);
   return true;
 }
 
@@ -111,7 +112,7 @@ async function resolveTarget(tools, module, explicit) {
   const head = await tools.git(dir, ['rev-parse', 'HEAD']);
   const branchRef = `refs/remotes/origin/${branch}`;
   if ((await attempt(tools, dir, ['rev-parse', '--verify', `${branchRef}^{commit}`])).status !== 0) {
-    await tools.git(dir, ['fetch', 'origin', `+refs/heads/${branch}:${branchRef}`]);
+    await tools.git(dir, ['fetch', '--filter=blob:none', 'origin', `+refs/heads/${branch}:${branchRef}`]);
   }
   let remote = await tools.git(dir, ['rev-parse', `${branchRef}^{commit}`]);
   if (!explicit) {
@@ -139,10 +140,10 @@ async function resolveTarget(tools, module, explicit) {
   if (!target) {
     const remoteBranch = await tools.git(dir, ['ls-remote', '--heads', 'origin', `refs/heads/${explicit}`]);
     if (remoteBranch) {
-      await tools.git(dir, ['fetch', 'origin', `+refs/heads/${explicit}:refs/remotes/origin/${explicit}`]);
+      await tools.git(dir, ['fetch', '--filter=blob:none', 'origin', `+refs/heads/${explicit}:refs/remotes/origin/${explicit}`]);
       target = await tools.git(dir, ['rev-parse', `refs/remotes/origin/${explicit}^{commit}`]);
     } else if (/^[0-9a-f]{40,64}$/i.test(explicit)) {
-      const retrieved = await attempt(tools, dir, ['fetch', 'origin', explicit]);
+      const retrieved = await attempt(tools, dir, ['fetch', '--filter=blob:none', 'origin', explicit]);
       if (retrieved.status === 0) target = await tools.git(dir, ['rev-parse', `${explicit}^{commit}`]);
     } else if (/^[0-9a-f]{7,39}$/i.test(explicit) && await completeHistory(tools, dir)) {
       const abbreviated = await attempt(tools, dir, ['rev-parse', '--verify', `${explicit}^{commit}`]);
@@ -211,7 +212,7 @@ async function pushRoot(tools, root, modules) {
   const advertised = await tools.git(root, ['ls-remote', '--heads', 'origin', `refs/heads/${branch}`]);
   const remoteSha = advertised.split(/\s+/)[0];
   if (remoteSha) {
-    await tools.git(root, ['fetch', 'origin', `refs/heads/${branch}`]);
+    await tools.git(root, ['fetch', '--filter=blob:none', 'origin', `refs/heads/${branch}`]);
     const fetched = await tools.git(root, ['rev-parse', 'FETCH_HEAD']);
     if (fetched !== remoteSha) throw new Error(`外层 origin/${branch} 正在变化；请 fetch 后重新运行 --push`);
     if (!await ancestor(tools, root, remoteSha, 'HEAD')) throw new Error(`外层 origin/${branch} 被更新；请整合远端再推送，不会强推`);

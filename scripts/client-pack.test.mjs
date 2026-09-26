@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import { builderConfig, pack, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
 
@@ -25,6 +26,7 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.equal(result.publish, null);
   assert.equal(result.deb.packageName, 'nuwax');
   assert.equal(result.win.signAndEditExecutable, true);
+  assert.equal(result.npmRebuild, false);
   assert.throws(() => builderConfig(pkg, { version: 'bad' }), /semver/);
 });
 
@@ -97,4 +99,35 @@ test('source pack builds fresh frontend before builder and does not edit base pa
   });
   assert.deepEqual(events, ['prepare', 'frontend', 'helper', 'build', 'builder']);
   assert.equal(fs.readFileSync(packageFile, 'utf8'), packageText);
+});
+
+test('default pack consumes configured frontend pin and creates complete packages in the configured directory', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-pack-default-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const p = core.paths(root);
+  fs.mkdirSync(p.client, { recursive: true });
+  fs.writeFileSync(path.join(p.client, 'package.json'), JSON.stringify({ build: {} }));
+  fs.mkdirSync(p.dist, { recursive: true });
+  fs.writeFileSync(path.join(p.dist, 'index.html'), 'pinned frontend');
+  const tools = { ...core,
+    npmRun: async () => ({ status: 0 }),
+    pnpmRun: async (dir, args) => {
+      assert.equal(args.includes('--dir'), config.pack.dir);
+      const generated = core.readJson(args[args.indexOf('--config') + 1]);
+      assert.equal(generated.directories.output, path.join(root, config.pack.outputDir, '1.2.3'));
+      assert.equal(generated.extraResources.find((entry) => entry.to === 'nuwax-dist').from, p.dist);
+      fs.mkdirSync(generated.directories.output, { recursive: true });
+      fs.writeFileSync(path.join(generated.directories.output, 'Nuwax.dmg'), 'fixture complete package');
+      return { status: 0 };
+    },
+  };
+  const result = await pack(root, { tools, platform: 'darwin', version: '1.2.3',
+    prepare: async (dir, options) => {
+      assert.equal(options.frontend, config.frontend.mode);
+      return { frontend: { distDir: p.dist, stamp: 'abcdefghi' } };
+    },
+    buildFrontend: async () => { assert.fail('default pack must consume its prepared pin'); },
+    prepareComputerUse: async () => path.join(p.client, 'resources/computer-use'),
+  });
+  assert.equal(result.output, path.join(root, config.pack.outputDir, '1.2.3'));
 });

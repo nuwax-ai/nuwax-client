@@ -30,4 +30,8 @@ test:scripts；独立副本 test:commercial；前端 index/version；双 gitlink
 
 ## 偏离记录
 
-实施中补记验证限制或必要调整。
+- 两台 Windows 主机 SSH 关闭连接，原生 Windows 准备、构建、开发和安装包交互验收待恢复连接后执行。
+- 已有开发任务占用默认端口，保持该任务运行，暂时停止/恢复的用户确认仍待回复；新入口能安全报告占用，但 GUI/HMR 启动验收尚未完成。
+- macOS arm64 完成真实前端构建、完整更新双 pin、准备缓存、默认无签名 DMG/ZIP 和源码修改载荷验证。
+- 正式发布仅执行只读 dry-run 与状态机测试；首次具体版本授权和 SimplySign 手机认证后再验收线上链。
+- 为避免下载源码仓历史 dist，更新器 Git fetch 使用 blob filter；Computer Use 固定同一源提交，只检出 Rust 构建工作区。

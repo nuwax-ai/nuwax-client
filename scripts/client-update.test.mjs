@@ -175,6 +175,39 @@ test('explicit branch outside single-branch clone is fetched without changing us
   assert.equal(git(dir, 'rev-parse', 'main'), git(seed, 'rev-parse', 'main'));
 });
 
+for (const change of ['deleted', 'rewritten']) {
+  test(`single-branch cached ref ${change} on origin cannot authorize --push`, async () => {
+    const f = fixture(), seed = f.seeds.nuwax;
+    git(seed, 'checkout', '-b', 'feature');
+    const original = commit(seed, 'feature.txt', 'original feature\n');
+    git(seed, 'push', 'origin', 'feature'); git(seed, 'checkout', 'main');
+    const source = makeShallow(f, 'nuwax');
+    await update(f.root, { nuwax: 'feature', push: true }, { buildFrontend: f.buildFrontend });
+    assert.equal(git(source, 'config', '--get-all', 'remote.origin.fetch'), '+refs/heads/main:refs/remotes/origin/main');
+    assert.equal(git(source, 'rev-parse', 'refs/remotes/origin/feature'), original);
+    const publishedClient = git(f.outerRemote, 'rev-parse', 'main');
+    commit(f.root, 'notes.txt', 'next client commit must not publish an unreachable source pin\n');
+    let replacement;
+    if (change === 'deleted') {
+      git(seed, 'push', 'origin', '--delete', 'feature');
+    } else {
+      git(seed, 'checkout', '-b', 'replacement', 'main');
+      replacement = commit(seed, 'feature.txt', 'replacement history\n');
+      git(seed, 'push', 'origin', 'replacement');
+      // Simulate a server-side rewrite without any force push in the updater.
+      git(f.remotes.nuwax, 'update-ref', 'refs/heads/feature', replacement);
+      git(f.remotes.nuwax, 'update-ref', '-d', 'refs/heads/replacement');
+    }
+    // The clone still has the previously accepted tracking ref before this update.
+    assert.equal(git(source, 'rev-parse', 'refs/remotes/origin/feature'), original);
+    await assert.rejects(update(f.root, { push: true }, { buildFrontend: f.buildFrontend }), /nuwax pin .* 尚不可从 origin 获取/);
+    assert.equal(git(f.outerRemote, 'rev-parse', 'main'), publishedClient);
+    assert.equal(git(source, 'rev-parse', 'HEAD'), original);
+    if (replacement) assert.equal(git(source, 'rev-parse', 'refs/remotes/origin/feature'), replacement);
+    else assert.equal(spawnSync('git', ['-C', source, 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/feature']).status, 1);
+  });
+}
+
 test('--no-commit prevents all commits and pushes while leaving reviewable artifacts', async () => {
   const f = fixture(), before = git(f.root, 'rev-parse', 'HEAD'), distBefore = git(f.remotes['nuwax-dist'], 'rev-parse', 'main'); f.advance();
   await update(f.root, { noCommit: true }, { buildFrontend: f.buildFrontend, run(command, args, options) { assert.ok(!args.includes('push'), 'no remote push allowed'); return core.run(command, args, options); } });

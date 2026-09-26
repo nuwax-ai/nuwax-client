@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 
 export async function cleanFrontendDist(root, options = {}) {
@@ -42,7 +43,7 @@ export async function buildFrontend(root, options = {}) {
       await tools.atomicJson(marker, { key });
     } else console.log('[frontend] dependencies cached');
     await tools.pnpmRun(frontend, ['build:prod'], { env: {
-      NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-old-space-size=4096'].filter(Boolean).join(' '),
+      NODE_OPTIONS: process.env.NODE_OPTIONS ?? config.frontend.buildNodeOptions,
     } });
     if (!fs.existsSync(path.join(distDir, 'index.html')) || !fs.statSync(path.join(distDir, 'index.html')).isFile() || !fs.statSync(path.join(distDir, 'index.html')).size)
       throw new Error('frontend build did not produce index.html');

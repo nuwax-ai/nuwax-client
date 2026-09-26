@@ -57,6 +57,9 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.productName = product.name;
   result.afterSign = undefined;
   result.publish = null;
+  // prepare already probes SQLite under this Electron ABI. Rebuilding it again
+  // here would discard the validated native cache on every local package.
+  result.npmRebuild = false;
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
   result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use'].includes(entry.to));
@@ -111,11 +114,11 @@ export async function pack(root, options = {}) {
   const p = tools.paths(root);
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
-  const frontendMode = options.frontend ?? 'dist';
+  const frontendMode = options.frontend ?? config.frontend.mode;
   if (!['darwin', 'win32', 'linux'].includes(platform)) throw new Error(`[pack] 不支持的平台 ${platform}`);
   const version = options.version ?? await localVersion(root, tools);
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
-  const output = validateOutput(root, path.resolve(root, options.output ?? path.join('release', version)), tools);
+  const output = validateOutput(root, path.resolve(root, options.output ?? path.join(config.pack.outputDir, version)), tools);
   const prepared = await (options.prepare ?? prepare)(root, { ...options, frontend: frontendMode });
   if (options.dryRun) {
     console.log(`[pack] dry-run: ${platform}-${arch}，前端=${frontendMode}，无签名，不发布`);
@@ -132,7 +135,7 @@ export async function pack(root, options = {}) {
   const env = unsignedEnv(root);
   await tools.npmRun(p.client, 'build', [], { env });
   const target = platform === 'darwin' ? '--mac' : platform === 'win32' ? '--win' : '--linux';
-  await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...(options.dir ? ['--dir'] : [])], { env });
+  await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...((options.dir ?? config.pack.dir) ? ['--dir'] : [])], { env });
   if (!fs.existsSync(output) || fs.readdirSync(output).length === 0) throw new Error(`[pack] 打包完成但输出目录为空: ${output}`);
   console.log(`[pack] Nuwax 无签名包: ${output}；前端 ${frontend.stamp ?? frontend.sourceSha} (${frontendMode})`);
   return { output, configFile, frontend, platform, arch, version };

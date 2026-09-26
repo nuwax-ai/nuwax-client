@@ -152,6 +152,8 @@ npm run pack -- --frontend source
 | `npm run release -- --channel stable --version X.Y.Z` | 编排 CI、Windows 签名机和正式发布；支持 `--channel beta` |
 | `npm run doctor -- --json` | 只读报告环境、依赖、资源和 pin 就绪状态 |
 
+`client.config.mjs` 集中定义商业身份、前端模式与端口、前端构建/热更新的 Node 内存参数，以及打包输出目录和是否只生成解包应用。默认前端模式为 `dist`，构建/热更新分别使用 4096/8192 MB 堆内存，完整安装包输出到 `release/<version>/`；已有 `NODE_OPTIONS` 环境变量会原样优先使用，命令行参数可覆盖模式与打包选项。
+
 缓存位于 `.cache/client-toolchain/`，按锁文件、包管理器、agent-kit 内容、Electron ABI、平台及架构失效。再次开发会复用有效依赖、原生模块和运行资源，保留 Vite 缓存。`dev`、`pack`、`frontend:build` 支持 `--dry-run`；`dev`、`pack` 支持 `--refresh-resources`，显式刷新源码型资源来源。工具链在自有缓存中构建这些资源，保留基座 `sources/` 中的开发改动。
 
 首次接入时，若 `resources/nuwax-file-server` 或 `resources/claude-code-acp-ts` 已存在普通旧产物，脚本会在新资源构建成功后将原目录移到 `.cache/client-toolchain/legacy-resources/<name>-<UUID>/` 并报告备份路径。资源目录中的 Git 检出、工具链产物中的本地修改仍会阻止覆盖；后续只更新归属明确且内容未被修改的产物。

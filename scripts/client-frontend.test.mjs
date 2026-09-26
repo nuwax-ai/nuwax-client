@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import { buildFrontend, preparePinnedFrontend } from './client/frontend.mjs';
 
@@ -40,7 +41,7 @@ function fixture(t, { initialized = true, versionExists = true } = {}) {
       if (args[0] === 'status') return state.status;
       return '';
     },
-    pnpmRun(dir, args) {
+    pnpmRun(dir, args, options = {}) {
       calls.push(['pnpm', dir, ...args]);
       assert.equal(dir, p.frontend);
       if (args[0] === 'install') {
@@ -50,6 +51,7 @@ function fixture(t, { initialized = true, versionExists = true } = {}) {
         return;
       }
       assert.deepEqual(args, ['build:prod']);
+      state.buildEnv = options.env;
       state.buildCalls++;
       write(generated, 'generated build version\n');
       if (state.buildFailure) throw new Error('fixture build failed');
@@ -85,6 +87,21 @@ test('dependency cache reuses install but rebuilds source and reinstalls after l
   fs.rmSync(path.join(f.p.frontend, 'node_modules/.modules.yaml'));
   await f.run();
   assert.equal(f.state.installs, 3);
+});
+
+test('frontend build uses configured memory only when the user has not supplied NODE_OPTIONS', async (t) => {
+  const f = fixture(t);
+  const previous = process.env.NODE_OPTIONS;
+  t.after(() => { if (previous === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previous; });
+  delete process.env.NODE_OPTIONS;
+  await f.run();
+  assert.equal(f.state.buildEnv.NODE_OPTIONS, config.frontend.buildNodeOptions);
+  process.env.NODE_OPTIONS = '--max-old-space-size=2048 --trace-warnings';
+  await f.run();
+  assert.equal(f.state.buildEnv.NODE_OPTIONS, '--max-old-space-size=2048 --trace-warnings');
+  process.env.NODE_OPTIONS = '';
+  await f.run();
+  assert.equal(f.state.buildEnv.NODE_OPTIONS, '', 'an explicitly empty user value also suppresses the default');
 });
 
 test('corrupt install cache is repaired without failing the build', async (t) => {

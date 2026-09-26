@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { paths, run, git, readJson } from './core.mjs';
-import { resourceSpecs, fileReady, electronBinary, packageReady, runtimeDependenciesReady, sourceNames } from './prepare.mjs';
+import { resourceSpecs, fileReady, electronBinary, sourcePayloadReady, sourceNames } from './prepare.mjs';
 
 export function doctor(root, options = {}) {
   const p = paths(root), issues = [];
@@ -38,7 +38,7 @@ export function doctor(root, options = {}) {
   }));
   for (const name of sourceNames) {
     const directory = path.join(p.client, 'resources', name);
-    resources.push({ name, optional: false, ready: packageReady(directory) && runtimeDependenciesReady(directory) });
+    resources.push({ name, optional: false, ready: sourcePayloadReady(name, directory) });
   }
   const helper = path.join(p.client, 'resources/computer-use', process.platform === 'darwin' ? 'Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use' : process.platform === 'win32' ? 'NuwaxComputerUse.exe' : 'NuwaxComputerUse');
   for (const item of resources.filter(item => !item.ready && !item.optional)) issues.push('Prepare resource: ' + item.name);

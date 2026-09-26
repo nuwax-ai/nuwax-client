@@ -68,7 +68,7 @@ export function launch(command, args, { cwd, env, log, name, platform = process.
 export async function dev(root, options = {}) {
   const tools = options.tools ?? core;
   const p = tools.paths(root);
-  const mode = options.frontend ?? 'dist';
+  const mode = options.frontend ?? config.frontend.mode;
   const frontendPort = options.frontendPort ?? options.port ?? config.frontend.port;
   const rendererPort = 60173 + Number(config.product.portOffset);
   const gatewayPort = config.frontend.gatewayPort ?? 46800;
@@ -104,7 +104,7 @@ export async function dev(root, options = {}) {
   const check = (file) => { if (!fileReady(file)) throw new Error(`[dev] 缺少执行入口 ${file}`); return file; };
   try {
     if (mode === 'source') {
-      const frontend = start('frontend', process.execPath, [check(path.join(p.frontend, 'node_modules/@umijs/max/bin/max.js')), 'dev', '--port', String(frontendPort)], p.frontend, { ...env, UMI_ENV: 'development', PORT: String(frontendPort), NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=8192`.trim() });
+      const frontend = start('frontend', process.execPath, [check(path.join(p.frontend, 'node_modules/@umijs/max/bin/max.js')), 'dev', '--port', String(frontendPort)], p.frontend, { ...env, UMI_ENV: 'development', PORT: String(frontendPort), NODE_OPTIONS: process.env.NODE_OPTIONS ?? config.frontend.devNodeOptions });
       await waitForHttp(`http://127.0.0.1:${frontendPort}/`, { alive: frontend.alive });
     }
     const vite = start('vite', process.execPath, [check(path.join(p.client, 'node_modules/vite/bin/vite.js')), '--host', '127.0.0.1', '--port', String(rendererPort), '--strictPort'], p.client);

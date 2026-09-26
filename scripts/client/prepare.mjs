@@ -52,7 +52,10 @@ function safeJson(file) {
 export function packageReady(dir) {
   const pkg = safeJson(path.join(dir, 'package.json'));
   if (!pkg) return false;
-  const entries = [pkg.main, ...Object.values(typeof pkg.bin === 'object' ? pkg.bin : pkg.bin ? { bin: pkg.bin } : {})].filter(Boolean);
+  const binaries = Object.values(typeof pkg.bin === 'object' && pkg.bin ? pkg.bin : pkg.bin ? { bin: pkg.bin } : {}).filter(Boolean);
+  // CLI resources are launched through bin. Some published CLI metadata retains
+  // a stale main that is not part of its distributable payload.
+  const entries = binaries.length ? binaries : [pkg.main].filter(Boolean);
   if (entries.length) return entries.every((entry) => fileReady(path.join(dir, entry)));
   try { return fs.readdirSync(path.join(dir, 'dist')).some((name) => /\.(?:c?js|mjs)$/.test(name)); } catch { return false; }
 }
@@ -60,6 +63,11 @@ export function packageReady(dir) {
 export function runtimeDependenciesReady(dir) {
   const pkg = safeJson(path.join(dir, 'package.json'));
   return Boolean(pkg && Object.keys(pkg.dependencies ?? {}).every((name) => fileReady(path.join(dir, 'node_modules', name, 'package.json'))));
+}
+
+export function sourcePayloadReady(name, dir) {
+  return packageReady(dir) && runtimeDependenciesReady(dir) &&
+    (name !== 'nuwax-file-server' || fileReady(path.join(dir, 'dist/server.js')));
 }
 
 export function resourceSpecs(client, platform = process.platform, arch = process.arch) {
@@ -199,7 +207,7 @@ async function prepareSource(p, name, source, options, tools, state, save) {
   if (!fs.existsSync(path.join(cacheDir, '.git'))) {
     if (fs.existsSync(cacheDir)) throw new Error(`[prepare] 非工具链源码缓存占用了 ${cacheDir}，请先移走`);
     fs.mkdirSync(path.dirname(cacheDir), { recursive: true });
-    await tools.run('git', ['clone', '--branch', source.branch, '--', source.url, cacheDir], { cwd: p.root });
+    await tools.run('git', ['clone', '--depth', '1', '--branch', source.branch, '--', source.url, cacheDir], { cwd: p.root });
     tools.atomicJson(marker, { url: source.url, branch: source.branch });
   }
   const owner = safeJson(marker);
@@ -211,7 +219,7 @@ async function prepareSource(p, name, source, options, tools, state, save) {
   }
   const sha = await tools.git(cacheDir, ['rev-parse', 'HEAD']);
   const key = tools.fingerprint([sha, options.platform, options.arch, process.versions.node, inputDigest([path.join(cacheDir, 'package.json'), path.join(cacheDir, 'package-lock.json')])]);
-  if (!legacyPayload && state.sources?.[name]?.key === key && state.sources?.[name]?.artifact === artifact() && packageReady(destination) && runtimeDependenciesReady(destination) && fs.existsSync(path.join(destination, 'node_modules'))) {
+  if (!legacyPayload && state.sources?.[name]?.key === key && state.sources?.[name]?.artifact === artifact() && sourcePayloadReady(name, destination) && fs.existsSync(path.join(destination, 'node_modules'))) {
     console.log(`[prepare] 复用 ${name} @ ${sha.slice(0, 9)}`);
     return;
   }
@@ -220,7 +228,7 @@ async function prepareSource(p, name, source, options, tools, state, save) {
   const sourcePackage = tools.readJson(path.join(cacheDir, 'package.json'));
   if (sourcePackage.scripts?.build) await tools.npmRun(cacheDir, 'build');
   else await tools.run('npm', ['exec', '--no', '--', 'tsc'], { cwd: cacheDir });
-  if (!packageReady(cacheDir)) throw new Error(`[prepare] ${name} 构建没有生成 package.json 声明的入口`);
+  if (!sourcePayloadReady(name, cacheDir)) throw new Error(`[prepare] ${name} 构建没有生成完整的 CLI/服务入口及运行依赖`);
   if (legacyPayload) {
     const backup = path.join(p.cache, 'legacy-resources', `${name}-${randomUUID()}`);
     fs.mkdirSync(path.dirname(backup), { recursive: true });
@@ -248,7 +256,7 @@ async function prepareSource(p, name, source, options, tools, state, save) {
 export async function prepare(root, options = {}) {
   const tools = options.tools ?? core;
   const p = tools.paths(root);
-  const opt = { frontend: 'dist', platform: process.platform, arch: process.arch, ...options };
+  const opt = { frontend: config.frontend.mode, platform: process.platform, arch: process.arch, ...options };
   if (!['dist', 'source'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist 或 source');
   await ensureSubmodules(root, opt, tools);
   const plan = ['overlay', 'agent-kit', 'workspace', 'native', 'resources'];
@@ -271,7 +279,7 @@ export async function prepare(root, options = {}) {
     const kitLockTracked = Boolean(await tools.git(p.base, ['ls-files', '--error-unmatch', '--', 'crates/agent-kit/pnpm-lock.yaml'], { allowFailure: true }));
     const kitKey = tools.fingerprint([opt.platform, opt.arch, process.versions.node, inputDigest([kit], { excludeNames: kitLockTracked ? [] : ['pnpm-lock.yaml'] })]);
     if (state.kit !== kitKey || !['index.js', 'index.cjs', 'index.d.ts'].every((name) => fileReady(path.join(kit, 'dist', name)))) {
-      await tools.pnpmRun(kit, ['install', '--ignore-workspace', kitLockTracked && fileReady(path.join(kit, 'pnpm-lock.yaml')) ? '--frozen-lockfile' : '--lockfile=false', '--prod=false'], { env: { ...env, CI: 'true' } });
+      await tools.pnpmRun(kit, ['install', '--ignore-workspace', kitLockTracked && fileReady(path.join(kit, 'pnpm-lock.yaml')) ? '--frozen-lockfile' : '--no-frozen-lockfile', '--prod=false'], { env: { ...env, CI: 'true' } });
       await tools.pnpmRun(kit, ['run', 'build'], { env });
       if (!['index.js', 'index.cjs', 'index.d.ts'].every((name) => fileReady(path.join(kit, 'dist', name)))) throw new Error('[prepare] agent-kit 构建入口缺失');
       state.kit = kitKey;

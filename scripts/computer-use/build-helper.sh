@@ -18,7 +18,7 @@
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
 set -euo pipefail
 
-CUA_COMMIT="${CUA_COMMIT:-625118a90}"
+CUA_COMMIT="${CUA_COMMIT:-625118a9076e51da2f57b6a5d475972030197443}"
 CUA_VERSION="${CUA_VERSION:-0.28.2}"
 TARGET_TRIPLE="${TARGET_TRIPLE:?TARGET_TRIPLE required}"
 OUT_DIR="${OUT_DIR:?OUT_DIR required}"
@@ -41,7 +41,16 @@ if [ -n "${NUWAX_CUA_SOURCE_DIR:-}" ]; then
 else
   [ -f "$PATCH_FILE" ] || { echo "::error::patch not found: $PATCH_FILE"; exit 1; }
   echo "[cua-helper] cloning trycua/cua @ $CUA_COMMIT ..."
-  git clone --quiet https://github.com/trycua/cua.git "$WORK_DIR/cua"
+  # The helper only uses this Rust workspace. Avoid fetching the upstream's
+  # documentation/media history on every new developer machine.
+  if [[ "$CUA_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    git init --quiet "$WORK_DIR/cua"
+    git -C "$WORK_DIR/cua" remote add origin https://github.com/trycua/cua.git
+    git -C "$WORK_DIR/cua" fetch --quiet --depth 1 --filter=blob:none origin "$CUA_COMMIT"
+  else
+    git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua.git "$WORK_DIR/cua"
+  fi
+  git -C "$WORK_DIR/cua" sparse-checkout set libs/cua-driver/rust
   git -C "$WORK_DIR/cua" checkout --quiet "$CUA_COMMIT"
   echo "[cua-helper] applying nuwax patch ..."
   # Windows checkout with core.autocrlf may turn this tracked patch into CRLF;
