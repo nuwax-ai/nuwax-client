@@ -1023,5 +1023,21 @@
   "Claw.Settings.computerUse.errors.helperNotInstalledBundled": "请先安装助手应用，再开启 Computer Use",
   "Claw.Settings.computerUse.errors.helperNotInstalled": "未找到 Nuwax Computer Use 助手应用",
   "Claw.Settings.computerUse.errors.bundledNotFound": "安装包内未找到助手应用组件",
-  "Claw.Settings.computerUse.errors.vlmNotConfigured": "请先填写视觉模型名与 API Key"
+  "Claw.Settings.computerUse.errors.vlmNotConfigured": "请先填写视觉模型名与 API Key",
+  "Claw.Toolbar.about": "关于(A)",
+  "Claw.Toolbar.file": "文件(F)",
+  "Claw.Toolbar.edit": "编辑(E)",
+  "Claw.Toolbar.window": "窗口(W)",
+  "Claw.Toolbar.help": "帮助(H)",
+  "Claw.Toolbar.aboutUpdate": "关于与检查更新",
+  "Claw.Toolbar.newTask": "新建任务",
+  "Claw.Toolbar.search": "搜索",
+  "Claw.Toolbar.modifyWorkspace": "更改工作空间目录…",
+  "Claw.Toolbar.openWorkspace": "打开工作空间目录",
+  "Claw.Toolbar.minimize": "最小化",
+  "Claw.Toolbar.maximize": "最大化",
+  "Claw.Toolbar.restore": "还原",
+  "Claw.Toolbar.openLogs": "打开日志目录",
+  "Claw.Toolbar.expandSidebar": "展开侧栏",
+  "Claw.Toolbar.collapseSidebar": "收起侧栏"
 }

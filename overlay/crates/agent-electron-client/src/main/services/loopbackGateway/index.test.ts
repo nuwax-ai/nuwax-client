@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as path from "node:path";
 
 afterEach(() => vi.useRealTimers());
 
@@ -18,6 +19,11 @@ const mocks = vi.hoisted(() => {
     store,
     sendSpy,
     startGateway: vi.fn(),
+    app: {
+      isPackaged: true,
+      getAppPath: vi.fn(() => "/app"),
+      getPath: () => "/tmp",
+    },
     readSetting: (key: string) => store.get(key) ?? null,
     writeSetting: (key: string, value: unknown) => {
       store.set(key, value);
@@ -26,11 +32,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
-  app: {
-    isPackaged: true,
-    getAppPath: () => "/app",
-    getPath: () => "/tmp",
-  },
+  app: mocks.app,
   session: {
     defaultSession: {
       webRequest: { onBeforeRequest: vi.fn() },
@@ -78,6 +80,57 @@ function fakeHandle() {
     close: vi.fn(async () => {}),
   };
 }
+
+describe("loopbackGateway resolves frontend assets", () => {
+  const clientRoot = path.resolve("toolchain-fixture", "nuwax-client");
+  let previousResources: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    previousResources = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+    mocks.app.isPackaged = false;
+    mocks.app.getAppPath.mockReturnValue(
+      path.join(clientRoot, "nuwa-electron-shell", "crates", "agent-electron-client"),
+    );
+    vi.stubEnv("NUWAX_FRONTEND_DIST", undefined);
+  });
+
+  afterEach(() => {
+    mocks.app.isPackaged = true;
+    mocks.app.getAppPath.mockReturnValue("/app");
+    vi.unstubAllEnvs();
+    if (previousResources) {
+      Object.defineProperty(process, "resourcesPath", previousResources);
+    } else {
+      delete (process as unknown as { resourcesPath?: string }).resourcesPath;
+    }
+  });
+
+  it("uses the outer nuwax-dist submodule for development", async () => {
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(clientRoot, "nuwax-dist"));
+  });
+
+  it("resolves a trimmed environment override for local source builds", async () => {
+    vi.stubEnv("NUWAX_FRONTEND_DIST", "  ./local-frontend/dist  ");
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.resolve("local-frontend", "dist"));
+  });
+
+  it("treats a blank environment override as the development default", async () => {
+    vi.stubEnv("NUWAX_FRONTEND_DIST", "   ");
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(clientRoot, "nuwax-dist"));
+  });
+
+  it("always loads the packaged resource directory", async () => {
+    const resources = path.join(clientRoot, "resources");
+    Object.defineProperty(process, "resourcesPath", { value: resources, configurable: true });
+    mocks.app.isPackaged = true;
+    vi.stubEnv("NUWAX_FRONTEND_DIST", path.join(clientRoot, "unpackaged-assets"));
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(resources, "nuwax-dist"));
+  });
+});
 
 describe("loopbackGateway runtime key carries backend", () => {
   beforeEach(() => {
@@ -332,6 +385,56 @@ describe("loopbackGateway runtime key carries backend", () => {
       enabled: false,
       backend: "https://b.example.com",
     });
+  });
+
+  it("rapid on/off does not let a late gateway start overwrite DIRECT", async () => {
+    let finishStart!: (handle: ReturnType<typeof fakeHandle>) => void;
+    mocks.startGateway.mockImplementationOnce(() => new Promise((resolve) => { finishStart = resolve; }));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    const turningOn = mod.refreshLoopbackGateway();
+    await vi.waitFor(() => expect(mocks.startGateway).toHaveBeenCalledTimes(1));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "direct", serverHost: "https://a.example.com" });
+    const turningOff = mod.refreshLoopbackGateway();
+    await Promise.resolve();
+    const lateHandle = fakeHandle();
+    finishStart(lateHandle);
+    await Promise.all([turningOn, turningOff]);
+    expect(mod.loopbackGatewayStatus().running).toBe(false);
+    expect(mocks.store.get("nuwax.loopback")).toMatchObject({ enabled: false, origin: null });
+    expect(lateHandle.close).toHaveBeenCalledTimes(1);
+    const { getGatewayRequestContext } = await import("./requestContext");
+    expect(getGatewayRequestContext()).toBeNull();
+  });
+
+  it("concurrent ensures share one live handle and a queued stop closes it", async () => {
+    let finishStart!: (handle: ReturnType<typeof fakeHandle>) => void;
+    mocks.startGateway.mockImplementationOnce(() => new Promise((resolve) => { finishStart = resolve; }));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    const first = mod.ensureLoopbackGateway();
+    await vi.waitFor(() => expect(mocks.startGateway).toHaveBeenCalledTimes(1));
+    const second = mod.ensureLoopbackGateway();
+    const stopping = mod.stopLoopbackGateway();
+    const handle = fakeHandle();
+    finishStart(handle);
+    expect(await first).toBe(handle);
+    expect(await second).toBe(handle);
+    await stopping;
+    expect(mocks.startGateway).toHaveBeenCalledTimes(1);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+    expect(mod.loopbackGatewayStatus().running).toBe(false);
+  });
+
+  it("a failed refresh does not poison the next lifecycle operation", async () => {
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    mocks.startGateway.mockRejectedValueOnce(new Error("EADDRINUSE"));
+    const mod = await importFresh();
+    await expect(mod.refreshLoopbackGateway()).rejects.toThrow("Loopback gateway failed to start");
+    await mod.refreshLoopbackGateway();
+    expect(mod.loopbackGatewayStatus().running).toBe(true);
+    expect(mocks.store.get("nuwax.loopback")).toMatchObject({ enabled: true });
+    await mod.stopLoopbackGateway();
   });
 
   it("notifies renderer when the loopback toggle flips (direct ↔ gateway, same domain)", async () => {

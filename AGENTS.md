@@ -23,8 +23,16 @@
 ## 术语速记：Nuwax 客户端 vs nuwax 前端（同名不同物）
 
 - **Nuwax 客户端**（文档/对话中也称**商业版**，相对社区版 NuwaClaw）= 本仓（nuwax-client）产出的 Electron 桌面壳产品：productName=Nuwax、identifier=nuwax、数据目录 `~/.nuwax`、通道 nuwax-electron。
-- **nuwax 前端** = 仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)（包名 `nuwax-frontend`）：线上 PC web 与客户端 webview 内嵌 UI **同源**；本仓以壳根 `nuwax/` submodule 引用（feat-2026.9.30 线 pin、dist 随仓提交），mac dev 另有独立检出 `~/workspace/nuwax`。
+- **nuwax 前端** = 仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)（包名 `nuwax-frontend`）：线上 PC web 与客户端 webview 内嵌 UI **同源**；本仓以壳根 `nuwax/` submodule 引用源码（feat-2026.9.30 线 pin），`nuwax-dist/` submodule 固定对应产物仓 `main`。`nuwax/dist` 仅作本地构建暂存，永不提交源码仓；mac dev 另有独立检出 `~/workspace/nuwax`。
 - 判别口径：代码/请求里作为**宿主标识**出现的 `nuwax`（`x-client-type` 头、桥 `getProduct()`/HostProductId）指「Nuwax 客户端宿主」，与前端仓名同字不同义；作为仓库名/包名/路径/分支出现则指前端项目。详见 README「术语区分」一节。
+
+## Agent / 开发者脚本入口
+
+- 从壳根运行 `npm run doctor -- --json` 检查环境；`npm run dev` 自动准备并消费产物 pin，前端开发用 `npm run dev -- --frontend source`。
+- `npm run frontend:build` 单独生成并保留 `nuwax/dist`；`npm run pack` 生成当前平台无签名商业包，`--frontend source` 将当前源码改动构建入包。Windows 原生命令行可直接运行 npm 入口。
+- `npm run sub:update` 拉源码、构建、提交并默认推送产物仓、提交双 pin；`--push` 才推外层当前分支。`--no-commit` 全链不提交推送，不得配 `--push`。所有推送不强推，保留无关 WIP。
+- 非敏感配置集中在 `client.config.mjs`；缓存按输入与 ABI/平台/架构校验，自有源码资源缓存不覆盖开发者 `sources/`。`--refresh-resources` 显式刷新资源，开发保留 Vite 缓存。
+- `npm run release -- --channel stable --version X.Y.Z --dry-run` 先预检（beta 改为 `--channel beta`）；正式入口可续跑，SimplySign 手机认证保留人工操作。phase 1 CI 仍从源码 pin 构建 `nuwax/dist`，尚不消费 `nuwax-dist` pin；产物仓不得重写仍被引用的提交历史。
 
 ## 商业版登录与服务边界
 

@@ -100,6 +100,7 @@ let isCurrentLangSupported_ = true;
 let zhBaseMap: SystemLangMap = { ...(zhCN as SystemLangMap) };
 let zhValueToKeyMap: Record<string, string> = {};
 let initPromise: Promise<void> | null = null;
+let languageRevision = 0;
 const warnedLegacyKeys = new Set<string>();
 const warnedInvalidKeys = new Set<string>();
 const warnedMissingKeys = new Set<string>();
@@ -332,11 +333,14 @@ export const setCurrentLang = async (lang?: string | null): Promise<void> => {
     APP_NAME_IDENTIFIER === "nuwax"
       ? resolveShellLang(lang)
       : normalizeLang(lang || getDefaultLang());
+  const revision = ++languageRevision;
   currentLang = resolvedLang;
   isCurrentLangSupported_ = isLocaleSupported(resolvedLang);
 
   langMap = { ...getLocalBaseMap(resolvedLang) };
   await writeToSettings(I18N_STORAGE_KEYS.ACTIVE_LANG, resolvedLang);
+  // 快速连续切换时，迟到的设置写入回调不能把 i18next 改回旧语言。
+  if (revision !== languageRevision) return;
   // main.tsx 通过 i18next 的 languageChanged 更新 antd locale 和 HTML lang。
   await i18n.changeLanguage(resolvedLang);
 };

@@ -74,7 +74,7 @@ vi.mock("../window/trayManager", () => ({
 vi.mock("electron", () => ({
   // app.on：registerCuaQuitCleanup（will-quit 停 daemon）与 fullDiskAccess
   // boot 钩子（browser-window-created/focus）在注册期挂监听
-  app: { isPackaged: false, on: vi.fn() },
+  app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
   ipcMain: {
     handle: (
@@ -174,6 +174,7 @@ import {
   NUWAX_TOKEN_KEY_PREFIX,
 } from "./nuwaxBridgeHandlers";
 import { DEFAULT_SERVER_HOST } from "../../shared/constants";
+import { getMainLang, setMainLang } from "../services/i18n";
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
@@ -461,6 +462,45 @@ describe("native:saveImage（另存图片）", () => {
     expect(fs.readFileSync(tmpFile)).toEqual(Buffer.from([1, 2, 3]));
   });
 
+  it.each([
+    ["report.json", "application/json", '{"title":"真实产物"}'],
+    ["report.html", "text/html; charset=utf-8", "<!doctype html><h1>真实产物</h1>"],
+  ])("通用文件保存 %s 的真实字节", async (filename, contentType, payload) => {
+    mocks.netFetch.mockResolvedValue(new Response(payload, { headers: { "content-type": contentType } }));
+    const result = await handlers.get("native:saveFile")!(senderEvent(GW_ORIGIN), {
+      url: `/api/computer/static/123/${filename}`, filename,
+    });
+    expect(result.success).toBe(true);
+    expect(fs.readFileSync(tmpFile, "utf8")).toBe(payload);
+  });
+
+  it.each([
+    ["/api/export-project", "report.json", "application/json"],
+    ["/api/computer/static/123/project.zip", "project.zip", "application/json"],
+    ["/api/computer/static/123/report.json", "report.json", "text/html"],
+  ])("通用下载拒绝接口/类型不符的错误正文 %s", async (url, filename, contentType) => {
+    fs.writeFileSync(tmpFile, "original file");
+    mocks.netFetch.mockResolvedValue(new Response("error page", { headers: { "content-type": contentType } }));
+    const result = await handlers.get("native:saveFile")!(senderEvent(GW_ORIGIN), { url, filename });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/error page/);
+    expect(fs.readFileSync(tmpFile, "utf8")).toBe("original file");
+  });
+
+  it("图片另存继续拒绝 HTML 即使源路径以 html 结尾", async () => {
+    mocks.netFetch.mockResolvedValue(new Response("<!doctype html>", { headers: { "content-type": "text/html" } }));
+    const result = await handlers.get("native:saveImage")!(senderEvent(GW_ORIGIN), { url: "/report.html", filename: "report.html" });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/error page/);
+  });
+
+  it("通用文件保存仍拒绝非受信调用", async () => {
+    const result = await handlers.get("native:saveFile")!({ senderFrame: { url: "https://external.example" } }, { url: `${HOST_ORIGIN}/report.json` });
+    expect(result).toEqual({ success: false, error: "untrusted sender" });
+    expect(mocks.showSaveDialog).not.toHaveBeenCalled();
+    expect(mocks.netFetch).not.toHaveBeenCalled();
+  });
+
   it("绝对地址 → 原样取图", async () => {
     mocks.netFetch.mockResolvedValue(
       new Response(new Uint8Array([9]), { status: 200 }),
@@ -692,5 +732,29 @@ describe("trusted runtime auth context and window navigation", () => {
       .toEqual({ success: false, error: "untrusted sender" });
     expect(mocks.showOpenDialog).not.toHaveBeenCalled();
     expect(mocks.showSaveDialog).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("webview is the shell language source", () => {
+  it("trusted language sync persists raw language, updates main and never reloads guest", () => {
+    setMainLang("zh-cn");
+    const handler = emitters.get("nuwax:lang-sync")![0];
+    handler(senderEvent(HOST_ORIGIN), { lang: "en-US" });
+    expect(settings.get("nuwax.webview_lang")).toBe("en-us");
+    expect(getMainLang()).toBe("en-us");
+    expect(mocks.loadURL).not.toHaveBeenCalled();
+  });
+  it("unsupported guest language falls back only in shell", () => {
+    emitters.get("nuwax:lang-sync")![0](senderEvent(HOST_ORIGIN), { lang: "ja-JP" });
+    expect(settings.get("nuwax.webview_lang")).toBe("ja-jp");
+    expect(getMainLang()).toBe("zh-cn");
+    expect(mocks.loadURL).not.toHaveBeenCalled();
+  });
+  it("untrusted or malformed language cannot overwrite mirror", () => {
+    const handler = emitters.get("nuwax:lang-sync")![0];
+    handler(senderEvent("https://untrusted.example"), { lang: "en-US" });
+    handler(senderEvent(HOST_ORIGIN), { lang: "../../en-US" });
+    expect(settings.has("nuwax.webview_lang")).toBe(false);
   });
 });

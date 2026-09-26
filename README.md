@@ -108,14 +108,16 @@
 
 ### 仓库结构
 
-功能模块在基座仓 [nuwa-electron-shell](https://github.com/nuwax-ai/nuwa-electron-shell)，本仓注入商业身份并发布；本身是干净的 Electron 项目格式（无 Rust / 无 monorepo 包装）：
+功能模块在基座仓 [nuwa-electron-shell](https://github.com/nuwax-ai/nuwa-electron-shell)，本仓注入商业身份并编排开发、构建和发布。前端源码与客户端资源分别固定版本：
 
 ```
 nuwax-client/（main = 商业产品壳）
 ├── nuwa-electron-shell/   # submodule → 基座仓 main 分支（产品中立功能模块）
 ├── nuwax/                 # submodule → nuwax 前端；发布时从 tag 内 gitlink 源码重建 dist
+├── nuwax-dist/            # submodule → public 产物仓 main；本地开发/打包默认消费
 ├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
-├── scripts/               # in-base.js（基座内执行+商业 env 注入）+ sync-overlay.js + check-base-purity.js + release-stable.sh（正式版发布一条龙）
+├── scripts/client/        # 跨平台统一 CLI：自动准备、前端构建、开发、打包、更新、发布和诊断
+├── client.config.mjs      # 非敏感产品身份、端口和发布目标；凭据来自主机登录态/env
 ├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
 ├── release-notes/  docs/
 └── package.json
@@ -123,23 +125,60 @@ nuwax-client/（main = 商业产品壳）
 
 商业开发线 = 基座仓 main 分支（产品中立，服务 nuwa-cli / nuwaclaw / Nuwax 三方）；本仓差异 = 4 个构建期注入 env（`NUWAX_APP_IDENTIFIER/DISPLAY_NAME/UPDATE_FEED_BASE/PORT_OFFSET`，机制在基座 `constants.ts`，不注入=社区版行为）+ `overlay/` 商业自有代码 + 商业前端 pin。
 
-### 本地开发（fresh clone）
+### 一键开发、前端构建与本地打包
+
+前置安装 Git、Node.js 22 或更新版本，启用 Corepack（或安装对应仓库 `packageManager` 指定的 pnpm）。准备引擎会初始化缺失子模块、同步 overlay，先构建 agent-kit 再安装工作区依赖，重建 Electron 原生模块并准备运行资源。
 
 ```bash
 git clone https://github.com/nuwax-ai/nuwax-client.git && cd nuwax-client
-git submodule update --init nuwa-electron-shell          # 基座仓 main 分支（公开）
-git submodule update --init nuwax                        # 壳根 nuwax 前端（dist 随仓提交，无需构建）
-npm run base:install   # 基座内 pnpm install --filter（自动构建 agent-kit + 前置 overlay 同步）
-npm run base:dev       # 基座 make electron-dev（前置 overlay 同步 + 注入商业 env）
-npm run base:test      # 社区基线（--no-inject：干净基座源码，exit=0）
-npm run test:commercial # 商业门禁（--no-env：同步 overlay、不注 env，全量 vitest）
-
-# 测试/运行前还需准备型资源（gitignore，fresh clone 必做）：
-cd nuwa-electron-shell/crates/agent-electron-client && npm run prepare:mcp-proxy
-# 完整资源（node/git/uv/nuwaxcode/ripgrep 等）用基座根 Makefile：make electron-prepare
+npm run doctor -- --json
+npm run dev
+# 前端改动即时生效：
+npm run dev -- --frontend source --port 3000
+# 单独生成前端生产资源，保留在 nuwax/dist：
+npm run frontend:build
+# 当前平台无签名商业安装包；源码模式将当前前端改动打入包：
+npm run pack
+npm run pack -- --frontend source
 ```
 
-Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由基座 `prepare:all` 在 Windows 宿主 cargo 构建；本壳不携带任何 Rust。
+| 命令 | 行为 |
+|---|---|
+| `npm run frontend:build` | 安装前端依赖并运行 `build:prod`，输出 `nuwax/dist`，报告源码 SHA 与版本戳 |
+| `npm run dev` | 自动准备并启动客户端，loopback 网关默认使用 `nuwax-dist` pin |
+| `npm run dev -- --frontend source` | 自动准备前端依赖，启动 UMI 热更新、壳 Vite 和 Electron |
+| `npm run pack` | 默认使用产物 pin，生成当前平台无签名 Nuwax 包；`--frontend source` 先构建当前前端源码 |
+| `npm run sub:update` | 更新源码、构建、提交并推送产物仓、提交外层双 pin |
+| `npm run release -- --channel stable --version X.Y.Z` | 编排 CI、Windows 签名机和正式发布；支持 `--channel beta` |
+| `npm run doctor -- --json` | 只读报告环境、依赖、资源和 pin 就绪状态 |
+
+`client.config.mjs` 集中定义商业身份、前端模式与端口、前端构建/热更新的 Node 内存参数，以及打包输出目录和是否只生成解包应用。默认前端模式为 `dist`，构建/热更新分别使用 4096/8192 MB 堆内存，完整安装包输出到 `release/<version>/`；已有 `NODE_OPTIONS` 环境变量会原样优先使用，命令行参数可覆盖模式与打包选项。
+
+缓存位于 `.cache/client-toolchain/`，按锁文件、包管理器、agent-kit 内容、Electron ABI、平台及架构失效。再次开发会复用有效依赖、原生模块和运行资源，保留 Vite 缓存。`dev`、`pack`、`frontend:build` 支持 `--dry-run`；`dev`、`pack` 支持 `--refresh-resources`，显式刷新源码型资源来源。工具链在自有缓存中构建这些资源，保留基座 `sources/` 中的开发改动。
+
+首次接入时，若 `resources/nuwax-file-server` 或 `resources/claude-code-acp-ts` 已存在普通旧产物，脚本会在新资源构建成功后将原目录移到 `.cache/client-toolchain/legacy-resources/<name>-<UUID>/` 并报告备份路径。资源目录中的 Git 检出、工具链产物中的本地修改仍会阻止覆盖；后续只更新归属明确且内容未被修改的产物。
+
+开发会检查占用端口、等待 HTTP 就绪，记录 `logs/frontend-dev.log`（源码模式）、`logs/vite-dev.log` 和 `logs/electron-dev.log`，退出时清理本轮启动的进程树。本机服务与主进程的完整日志仍在 `~/.nuwax/logs/`。已有前端源码改动请用 `--frontend source`；默认 dist 模式要求当前源码、产物 HEAD 与已提交双 pin 一致。
+
+本地打包使用独立商业配置，输出到 `release/<version>/`；默认版本来自最近可达的发布 tag 并加 `-dev`，无 tag 时用 `0.0.0-dev`。可用 `--version X.Y.Z`、`--output <目录>` 覆盖，`--dir` 只生成解包应用目录；输出目标不得占用仓库根、源码/子模块目录或工具链缓存，符号链接也会核对真实目标。配置不改基座 `package.json`，包含商业品牌、前端载荷及 Computer Use helper，不发布资产。
+
+Windows 可以在 PowerShell 或 cmd 中直接运行以上 npm 命令，无需 make。准备 Windows 沙箱 helper 需要 Rust/Cargo 与 MSVC 构建工具；Electron 原生模块需要相应的 Python/C++ 构建环境。打包 Computer Use helper 还需要 Rust/rustup（Windows 使用已准备的 Git Bash；Linux 需平台构建依赖）。缺失工具或真实资源时脚本会退出并报告原因。
+
+旧入口 `base:dev`、`base:bundle` 转发到统一 CLI。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将三个子模块对齐已提交 pin；普通开发只初始化缺失子模块。
+
+### 子模块一键更新
+
+```bash
+npm run sub:update
+npm run sub:update -- --nuwax feat-2026.9.30
+npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
+```
+
+完整链为：拉取源码 → 构建 `nuwax/dist` → 校验版本戳 → 刷新 [nuwax-ai/nuwax-dist](https://github.com/nuwax-ai/nuwax-dist) → 提交并推送产物 `main` → 提交外层 `nuwax`、`nuwax-dist` 双 gitlink（以及有变化的基座 pin）。产物仓根 README 保留，所有仍被客户端 pin 引用的提交保留历史。
+
+`nuwax/dist` 是本地暂存，不提交进前端源码仓。独立 `frontend:build` 会保留它；更新器完成或失败后清理本轮构建暂存和生成版本文件。源码改动、已有待推产物提交和无关暂存文件都会受到保护。
+
+更新参数：`--no-build` 仅复用与目标源码 SHA 匹配的产物；`--force-build` 强制构建；`--with-test` 增加商业测试；`--no-commit` 全链跳过提交与推送，不能搭配 `--push`；`--no-push-dist` 留本地产物提交；`--push` 推送外层当前分支。`--force` 只放宽外层无关 WIP 检查，不绕过覆盖或远端可达性保护。推送不强推；产物远端竞争最多重做一次，其他情况失败后按提示处理再重跑。
 
 ### 分支模型与双轨门禁
 
@@ -152,17 +191,27 @@ Windows 沙箱 helper（基座内唯一 Rust 工程 windows-sandbox-helper）由
 | 守卫自测 | `npm run test:scripts` | pin、overlay、来源清单及本地诊断用例 | ci.yml · commercial job |
 | 前端源码 | `pnpm -C nuwax exec vitest run`、`pnpm -C nuwax lint:arch` | tag 锁定的前端源码 | ci.yml · frontend job |
 
-⚠️ `base:test` 会把 overlay 产物清出基座工作树，本地跑完记得 `npm run overlay:sync` 还原商业态。
+`base:test` 会把 overlay 产物清出基座工作树，须在隔离副本运行；商业门禁另行同步 overlay 执行。脚本测试、商业测试和真实安装包验收分别报告。
 
 ### 与基座 / 社区版 / 前端的同步
 
 - **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
 - **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
-- **壳根 nuwax pin**：正式版与 beta 都从 tag 内的 `nuwax/` gitlink 重建前端 dist；构建脚本验证源码 SHA 和 `dist/version.json`。升级前端须先 bump gitlink，且提交须在 `.gitmodules` 声明的分支上可达。工作区内现有 `dist` 不代表发布包内容。
+- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应机器生成资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。phase 1 的正式版与 beta CI 保持从 tag 内 `nuwax/` gitlink 现场重建、校验 `dist/version.json`，再将 `nuwax/dist` 打入安装包；CI 尚不消费产物 pin，来源清单仍读取现场构建目录。工作区已有 dist 不代表发布包内容。
 
 ### 发版流程
 
-1. `release-notes/electron-v{x.y.z}.md`（缺省用默认文案）。
+先运行只读预检，再用同一入口发布或续跑：
+
+```bash
+npm run release -- --channel stable --version X.Y.Z --dry-run
+npm run release -- --channel stable --version X.Y.Z
+npm run release -- --channel beta --version X.Y.Z --dry-run
+```
+
+发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
+
+1. 提交 `release-notes/electron-v{x.y.z}.md`（beta 使用 `release-notes/prerelease-v{x.y.z}.md`）。
 2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：先跑双轨与前端门禁，再从锁定的 gitlink 构建前端和五平台安装包，产物先留在 Draft Release；每个平台上传源码与产物摘要清单。macOS 必须签名、公证并完成运行时验证，Windows 初始产出 unsigned 包。
 3. Windows 人工签名：[docs/sign-windows.md](./docs/sign-windows.md)（Certum SimplySign + 基座内 `npm run sign:win`）。
 4. 调用独立的 `sync-electron-to-oss.yml`：先核对五平台清单和签名版 Windows EXE，再同步资产、更新 stable 指针并公开 Release；失败以红灯呈现。`scripts/release-stable.sh` 编排上述步骤。
@@ -180,4 +229,4 @@ beta 通道：`prerelease-v{x.y.z}` tag 的五平台构建全部成功后，`rel
 
 ### overlay/ —— 商业自有代码（文件覆写机制）
 
-商业专属实现不进基座（基座产品中立，服务三方），放在 `overlay/` 下按基座相对路径组织，构建/开发前由 `scripts/sync-overlay.js` 整文件覆写进基座工作树（`base:*` 与 CI 已自动前置同步；`--check` 干跑核对、`--clean` 还原）。机制与纪律详见 [overlay/README.md](./overlay/README.md)。
+商业专属实现不进基座（基座产品中立，服务三方），放在 `overlay/` 下按基座相对路径组织，构建/开发前由 `scripts/sync-overlay.js` 整文件覆写进基座工作树（统一 CLI 与 CI 已自动前置同步；`--check` 干跑核对、`--clean` 还原）。准备引擎拒绝覆盖未被本轮工具链管理的基座本地改动。机制与纪律详见 [overlay/README.md](./overlay/README.md)。

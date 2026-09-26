@@ -7,7 +7,8 @@
   → 同步后覆写 `nuwa-electron-shell/crates/agent-electron-client/src/...` 同名文件。
 - `overlay/README.md` 为机制说明，**不参与同步**。
 - 同步：`node scripts/sync-overlay.js`（`--check` 干跑看差异，`--clean` 还原基座工作树）。
-  `npm run base:*`（in-base.js）已自动前置同步；CI 构建同样先 sync 再 build。
+  统一开发/打包 CLI 和 `in-base.js` 已自动前置同步；CI 构建同样先 sync 再 build。
+  准备引擎拒绝覆盖基座中未被工具链管理的本地改动。
 - 已同步文件清单在根目录 `.overlay-sync.json`（gitignore）；overlay 删除文件时
   联动还原/清理基座工作树对应文件。
 - bump 基座 pin 后请跑 `--check` 人工核对覆写文件与新版基座的差异，防止基座侧
@@ -28,7 +29,7 @@ preload 与类型声明等配套见 `find overlay -type f`）：
 | `src/main/ipc/commercialAuth.test.ts` | commercialAuth 的注册/清理用例 |
 | `src/main/ipc/nuwaxBridgeHandlers.ts` | 基座中立桥的**超集**：auth 命名空间（token 按 origin 持久化 `nuwax.accessToken.<origin>`）+ 登录态驱动的服务编排（AuthLifecycle 接线、未登录业务 IPC 门禁）+ 换域事务（阻止旧任务→清认证→停服→切网关→载新域，会话代次拒绝迟到写回）+ saveImage 相对地址归一与原子落盘 |
 | `src/main/ipc/nuwaxBridgeHandlers.tokenScopes.test.ts` | token 键空间 + 换域凭据清理 + saveImage 用例 |
-| `src/main/services/loopbackGateway/index.ts` | 本地化承载编排（覆写基座 no-op 桩插槽；dist 解析优先 `NUWAX_FRONTEND_DIST` env=壳根 nuwax/dist，回落基座旧布局，打包=resources/nuwax-dist）；运行时键携带 backend，域名变更经 refreshLoopbackGateway 通知 renderer 重载 webview |
+| `src/main/services/loopbackGateway/index.ts` | 本地化承载编排（覆写基座 no-op 桩插槽；dist 解析优先 `NUWAX_FRONTEND_DIST` env=壳根 nuwax-dist，开发回落同一产物子模块，打包=resources/nuwax-dist）；运行时键携带 backend，域名变更经 refreshLoopbackGateway 通知 renderer 重载 webview |
 | `src/main/services/loopbackGateway/gateway.ts` | 回环网关本体（dist 托管 + 后端反代 + Bearer/x-client-type 代注） |
 | `src/main/services/loopbackGateway/{gateway,index}.test.ts` | 配套测试（随 sync 进基座工作树随全量跑） |
 | `src/renderer/components/pages/SettingsPage.tsx` | **独立行式重构（非超集）**：商业版设置页自持实现——分组行列表 + 行内即点即存（2026-09-13 重构，不再跟随基座表单版）；无「实验功能」区块与 `guiMcpPort`；配套私有样式 `src/renderer/styles/components/SettingsPage.module.css` |
@@ -62,4 +63,3 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 `autoUpdater` 用 `app.getName()` 拼「Uninstall \<name\>.exe」定位卸载程序
 （改中文断更新链），后者派生数据目录 `~/.nuwax` 与 UA token。userData
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
-
