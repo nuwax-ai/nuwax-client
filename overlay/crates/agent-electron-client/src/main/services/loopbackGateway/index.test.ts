@@ -7,7 +7,8 @@
  * 导致 renderer 永远收不到 nuwax:loopback-changed。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as path from "node:path";
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, unknown>();
@@ -16,6 +17,11 @@ const mocks = vi.hoisted(() => {
     store,
     sendSpy,
     startGateway: vi.fn(),
+    app: {
+      isPackaged: true,
+      getAppPath: vi.fn(() => "/app"),
+      getPath: () => "/tmp",
+    },
     readSetting: (key: string) => store.get(key) ?? null,
     writeSetting: (key: string, value: unknown) => {
       store.set(key, value);
@@ -24,11 +30,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
-  app: {
-    isPackaged: true,
-    getAppPath: () => "/app",
-    getPath: () => "/tmp",
-  },
+  app: mocks.app,
   session: {
     defaultSession: {
       webRequest: { onBeforeRequest: vi.fn() },
@@ -76,6 +78,57 @@ function fakeHandle() {
     close: vi.fn(async () => {}),
   };
 }
+
+describe("loopbackGateway resolves frontend assets", () => {
+  const clientRoot = path.resolve("toolchain-fixture", "nuwax-client");
+  let previousResources: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    previousResources = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+    mocks.app.isPackaged = false;
+    mocks.app.getAppPath.mockReturnValue(
+      path.join(clientRoot, "nuwa-electron-shell", "crates", "agent-electron-client"),
+    );
+    vi.stubEnv("NUWAX_FRONTEND_DIST", undefined);
+  });
+
+  afterEach(() => {
+    mocks.app.isPackaged = true;
+    mocks.app.getAppPath.mockReturnValue("/app");
+    vi.unstubAllEnvs();
+    if (previousResources) {
+      Object.defineProperty(process, "resourcesPath", previousResources);
+    } else {
+      delete (process as unknown as { resourcesPath?: string }).resourcesPath;
+    }
+  });
+
+  it("uses the outer nuwax-dist submodule for development", async () => {
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(clientRoot, "nuwax-dist"));
+  });
+
+  it("resolves a trimmed environment override for local source builds", async () => {
+    vi.stubEnv("NUWAX_FRONTEND_DIST", "  ./local-frontend/dist  ");
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.resolve("local-frontend", "dist"));
+  });
+
+  it("treats a blank environment override as the development default", async () => {
+    vi.stubEnv("NUWAX_FRONTEND_DIST", "   ");
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(clientRoot, "nuwax-dist"));
+  });
+
+  it("always loads the packaged resource directory", async () => {
+    const resources = path.join(clientRoot, "resources");
+    Object.defineProperty(process, "resourcesPath", { value: resources, configurable: true });
+    mocks.app.isPackaged = true;
+    vi.stubEnv("NUWAX_FRONTEND_DIST", path.join(clientRoot, "unpackaged-assets"));
+    const { resolveNuwaxDistDir } = await importFresh();
+    expect(resolveNuwaxDistDir()).toBe(path.join(resources, "nuwax-dist"));
+  });
+});
 
 describe("loopbackGateway runtime key carries backend", () => {
   beforeEach(() => {

@@ -9,13 +9,20 @@
     "overlay:sync": "node scripts/sync-overlay.js",
     "overlay:check": "node scripts/sync-overlay.js --check",
     "overlay:clean": "node scripts/sync-overlay.js --clean",
-    "base:install": "node scripts/in-base.js -- pnpm install --filter @nuwax-ai/nuwaclaw...",
-    "base:dev": "node scripts/in-base.js -- make electron-dev",
+    "base:install": "node scripts/client/cli.mjs setup",
+    "base:dev": "node scripts/client/cli.mjs dev",
     "base:test": "node scripts/in-base.js --no-inject -- npm run test:electron",
-    "base:bundle": "node scripts/in-base.js -- make electron-bundle-unsigned",
+    "base:bundle": "node scripts/client/cli.mjs pack",
     "test:commercial": "node scripts/in-base.js --no-env -- npm run test:electron",
     "test:scripts": "node --test scripts/*.test.mjs",
     "diagnostics:export": "node scripts/export-diagnostics.mjs",
-    "check:pin": "node scripts/check-base-purity.js"
+    "check:pin": "node scripts/check-base-purity.js",
+    "frontend:build": "node scripts/client/cli.mjs frontend:build",
+    "dev": "node scripts/client/cli.mjs dev",
+    "pack": "node scripts/client/cli.mjs pack",
+    "sub:update": "node scripts/client/cli.mjs sub:update",
+    "release": "node scripts/client/cli.mjs release",
+    "doctor": "node scripts/client/cli.mjs doctor",
+    "setup": "node scripts/client/cli.mjs setup"
   }
 }

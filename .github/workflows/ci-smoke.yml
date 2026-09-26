@@ -33,5 +33,5 @@ jobs:
       - name: Assert
         run: |
           test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
-          test -d nuwax/dist || { echo "::error::nuwax dist missing (shell root)"; exit 1; }
+          test -f nuwax/package.json || { echo "::error::nuwax source missing (shell root)"; exit 1; }
           echo "submodule topology OK (shell-base@$(git -C nuwa-electron-shell rev-parse --short HEAD), root-nuwax@$(git -C nuwax rev-parse --short HEAD))"
