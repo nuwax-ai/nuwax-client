@@ -98,6 +98,13 @@ interface Step1GatewayFields {
 }
 
 let running: LoopbackGatewayHandle | undefined;
+// 起停、设置刷新共用队列，迟到 start 不能越过 stop；失败不阻塞下一轮。
+let lifecycleQueue: Promise<unknown> = Promise.resolve();
+function enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+  const result = lifecycleQueue.then(operation);
+  lifecycleQueue = result.catch(() => undefined);
+  return result;
+}
 
 /** 网关是否处于启用态（step1 配置或 env 强制）。 */
 export function isLoopbackGatewayEnabled(): boolean {
@@ -199,7 +206,7 @@ function isOriginReachable(origin: string, timeoutMs = 600): Promise<boolean> {
  *  形态优先级（dev 语义）：nuwax dev server 在线 → webview 直连（原始 dev 体验）；
  *  不在线且 dist 就绪 → dist 形态（子模块本地 nuwax，make electron-dev 随时可见
  *  完整客户端）；远程目标 → 透明反代。 */
-export async function ensureLoopbackGateway(): Promise<
+async function ensureLoopbackGatewayNow(): Promise<
   LoopbackGatewayHandle | undefined
 > {
   if (running) return running;
@@ -299,6 +306,16 @@ export async function ensureLoopbackGateway(): Promise<
       trustedRequestSecret: requestSecret,
     });
     await setLoopbackTicketOrigin(running.origin);
+    // Cookie 镜像也是 await；关闭意图可能在 start 或镜像期间到达。
+    if (!isLoopbackGatewayEnabled()) {
+      await stopLoopbackGatewayNow();
+      writeSetting(LOOPBACK_RUNTIME_KEY, {
+        enabled: false,
+        origin: null,
+        backend: resolveBackendOrigin(),
+      });
+      return undefined;
+    }
     setGatewayRequestContext({ origin: running.origin, requestSecret });
     if (distMode) {
       startAbsoluteUrlNormalization(running.origin, backendOrigin);
@@ -394,7 +411,7 @@ function stopAbsoluteUrlNormalization(): void {
   normalizationActive = false;
 }
 
-export async function stopLoopbackGateway(): Promise<void> {
+async function stopLoopbackGatewayNow(): Promise<void> {
   setGatewayRequestContext(null);
   await setLoopbackTicketOrigin(null);
   if (!running) return;
@@ -423,15 +440,15 @@ export function loopbackGatewayStatus(): {
  * 无变化不广播：webview 收到后会 setUrl("") 硬重载——闪白且丢失页面内状态，
  * 登录成功等场景（direct→direct 域名未变）不应触发。
  */
-export async function refreshLoopbackGateway(): Promise<void> {
+async function refreshLoopbackGatewayNow(): Promise<void> {
   // env 调试旋钮接线：每次 refresh（启动 + 配置变更）把 NUWAX_WEBVIEW_ORIGIN
   // 同步进运行时键（renderer 关 nodeIntegration 读不到 env，经键传递）。
   // 未设置写 {origin:null}——env 是权威源，顺带清掉手动种的残留 override。
   // 此前 syncWebviewOverrideFromEnv 无任何调用方，旋钮自 f68964eb 起失效。
   syncWebviewOverrideFromEnv();
   const before = JSON.stringify(readSetting(LOOPBACK_RUNTIME_KEY) ?? null);
-  await stopLoopbackGateway();
-  await ensureLoopbackGateway();
+  await stopLoopbackGatewayNow();
+  await ensureLoopbackGatewayNow();
   const state = readSetting(LOOPBACK_RUNTIME_KEY) as {
     enabled?: boolean;
     error?: string;
@@ -449,4 +466,16 @@ export async function refreshLoopbackGateway(): Promise<void> {
   } catch {
     /* 窗口不存在时忽略 */
   }
+}
+
+export function ensureLoopbackGateway(): Promise<LoopbackGatewayHandle | undefined> {
+  return enqueueLifecycle(ensureLoopbackGatewayNow);
+}
+
+export function stopLoopbackGateway(): Promise<void> {
+  return enqueueLifecycle(stopLoopbackGatewayNow);
+}
+
+export function refreshLoopbackGateway(): Promise<void> {
+  return enqueueLifecycle(refreshLoopbackGatewayNow);
 }

@@ -385,6 +385,56 @@ describe("loopbackGateway runtime key carries backend", () => {
     });
   });
 
+  it("rapid on/off does not let a late gateway start overwrite DIRECT", async () => {
+    let finishStart!: (handle: ReturnType<typeof fakeHandle>) => void;
+    mocks.startGateway.mockImplementationOnce(() => new Promise((resolve) => { finishStart = resolve; }));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    const turningOn = mod.refreshLoopbackGateway();
+    await vi.waitFor(() => expect(mocks.startGateway).toHaveBeenCalledTimes(1));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "direct", serverHost: "https://a.example.com" });
+    const turningOff = mod.refreshLoopbackGateway();
+    await Promise.resolve();
+    const lateHandle = fakeHandle();
+    finishStart(lateHandle);
+    await Promise.all([turningOn, turningOff]);
+    expect(mod.loopbackGatewayStatus().running).toBe(false);
+    expect(mocks.store.get("nuwax.loopback")).toMatchObject({ enabled: false, origin: null });
+    expect(lateHandle.close).toHaveBeenCalledTimes(1);
+    const { getGatewayRequestContext } = await import("./requestContext");
+    expect(getGatewayRequestContext()).toBeNull();
+  });
+
+  it("concurrent ensures share one live handle and a queued stop closes it", async () => {
+    let finishStart!: (handle: ReturnType<typeof fakeHandle>) => void;
+    mocks.startGateway.mockImplementationOnce(() => new Promise((resolve) => { finishStart = resolve; }));
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    const mod = await importFresh();
+    const first = mod.ensureLoopbackGateway();
+    await vi.waitFor(() => expect(mocks.startGateway).toHaveBeenCalledTimes(1));
+    const second = mod.ensureLoopbackGateway();
+    const stopping = mod.stopLoopbackGateway();
+    const handle = fakeHandle();
+    finishStart(handle);
+    expect(await first).toBe(handle);
+    expect(await second).toBe(handle);
+    await stopping;
+    expect(mocks.startGateway).toHaveBeenCalledTimes(1);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+    expect(mod.loopbackGatewayStatus().running).toBe(false);
+  });
+
+  it("a failed refresh does not poison the next lifecycle operation", async () => {
+    mocks.store.set("step1_config", { nuwaxLoadMode: "gateway", serverHost: "https://a.example.com" });
+    mocks.startGateway.mockRejectedValueOnce(new Error("EADDRINUSE"));
+    const mod = await importFresh();
+    await expect(mod.refreshLoopbackGateway()).rejects.toThrow("Loopback gateway failed to start");
+    await mod.refreshLoopbackGateway();
+    expect(mod.loopbackGatewayStatus().running).toBe(true);
+    expect(mocks.store.get("nuwax.loopback")).toMatchObject({ enabled: true });
+    await mod.stopLoopbackGateway();
+  });
+
   it("notifies renderer when the loopback toggle flips (direct ↔ gateway, same domain)", async () => {
     // 开关切换：域名不变但 enabled/origin 翻转——键必变 → 通知 → webview 重载
     mocks.store.set("step1_config", {
