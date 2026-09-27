@@ -303,9 +303,9 @@ async function run() {
     assert.equal(cookieValue(auto.cookie, 'preference'), 'kept');
     const explicit = await direct.webContents.executeJavaScript('fetch("/api/explicit",{headers:{Authorization:"Bearer page-token"}}).then(r=>r.json())');
     assert.equal(explicit.authorization, null); assert.equal(cookieValue(explicit.cookie, 'ticket'), firstTicket);
-    const registration = await net.fetch(backendOrigin + '/api/sandbox/config/reg', { credentials: 'omit', headers: nativeTicketHeaders(firstTicket) }).then((r) => r.json());
+    const registration = await net.fetch(backendOrigin + '/api/sandbox/config/reg/v2', { credentials: 'omit', headers: nativeTicketHeaders(firstTicket) }).then((r) => r.json());
     assert.equal(registration.authorization, null); assert.equal(registration.cookie, `ticket=${firstTicket}`);
-    const withoutCapability = await net.fetch(backendOrigin + '/api/sandbox/config/reg', { credentials: 'omit', headers: { Cookie: `ticket=${firstTicket}`, 'x-nuwax-native-ticket': 'forged' } }).then((r) => r.json());
+    const withoutCapability = await net.fetch(backendOrigin + '/api/sandbox/config/reg/v2', { credentials: 'omit', headers: { Cookie: `ticket=${firstTicket}`, 'x-nuwax-native-ticket': 'forged' } }).then((r) => r.json());
     assert.equal(withoutCapability.authorization, null); assert.equal(withoutCapability.cookie, null);
 
     const wsTest = (win, url) => win.webContents.executeJavaScript(`new Promise((resolve,reject)=>{const w=new WebSocket(${JSON.stringify(url)});const timer=setTimeout(()=>{w.close();reject(new Error('WS timeout'));},5000);w.onopen=()=>{clearTimeout(timer);w.close();resolve(true)};w.onerror=()=>{clearTimeout(timer);reject(new Error('WS failed'))}})`);
@@ -419,7 +419,7 @@ async function run() {
     assert.equal(devUserInfo.code, '0000');
     checkTicket('/api/user/getLoginInfo');
     assert.equal(last('/api/user/getLoginInfo').fetchSite, null, 'trusted proxy must use metadata for its own backend hop');
-    const devRegistration = await net.fetch(backendOrigin + '/api/sandbox/config/reg', { credentials: 'omit', headers: nativeTicketHeaders(currentTicket()) }).then(r => r.json());
+    const devRegistration = await net.fetch(backendOrigin + '/api/sandbox/config/reg/v2', { credentials: 'omit', headers: nativeTicketHeaders(currentTicket()) }).then(r => r.json());
     assert.equal(cookieValue(devRegistration.cookie, 'ticket'), firstTicket);
     await external.webContents.executeJavaScript(`fetch(${JSON.stringify(backendOrigin + '/api/untrusted-dev')},{credentials:'include'}).then(r=>r.json())`);
     assert.equal(cookieValue(last('/api/untrusted-dev').cookie, 'ticket'), null);

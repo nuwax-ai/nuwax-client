@@ -25,7 +25,9 @@ preload 与类型声明等配套见 `find overlay -type f`）：
 
 | overlay 文件（基座同路径） | 内容 |
 |---|---|
-| `src/main/ipc/commercialAuth.ts` | 商业注册编排：`initializeCommercialAuth()` 以 ACCESS_TOKEN 为登录事实源（Bearer + 商业独立 deviceId 调 `/api/sandbox/config/reg`），401/4010/4011 判登录失效并回调主进程清理；换域/设备变更时 `clearRegistration()` 清注册派生凭据 |
+| `src/main/ipc/commercialAuth.ts` | 商业注册编排：`initializeCommercialAuth()` 以 ticket cookie 为登录事实源，核验用户后携带商业独立 deviceId 调 `/api/sandbox/config/reg/v2`；换域/设备变更时 `clearRegistration()` 清注册派生凭据，保留既有会话代次隔离 |
+| `src/main/services/system/deviceId.ts`、`.test.ts` | 基座超集：商业产品调用硬件身份模块，社区版保留原 machine-id 算法与行为 |
+| `src/main/services/system/commercialDeviceId.ts`、`.test.ts` | 商业稳定身份：macOS IOPlatformUUID、Windows SMBIOS UUID、Linux DMI UUID，哈希固定保存到 `~/.nuwax/device-id`；不可读时固定系统安装 ID 或随机备用 ID，不依赖电脑名，不随换账号/换域清除 |
 | `src/main/ipc/commercialAuth.test.ts` | commercialAuth 的注册/清理用例 |
 | `src/main/ipc/nuwaxBridgeHandlers.ts` | 基座中立桥的**超集**：auth 命名空间（token 按 origin 持久化 `nuwax.accessToken.<origin>`）+ 登录态驱动的服务编排（AuthLifecycle 接线、未登录业务 IPC 门禁）+ 换域事务（阻止旧任务→清认证→停服→切网关→载新域，会话代次拒绝迟到写回）+ saveImage 相对地址归一与原子落盘 |
 | `src/main/ipc/nuwaxBridgeHandlers.tokenScopes.test.ts` | token 键空间 + 换域凭据清理 + saveImage 用例 |
