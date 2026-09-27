@@ -429,6 +429,65 @@ describe("loopback gateway（透明反代）", () => {
     expect(seen).toEqual([undefined, undefined, "ticket=USER-TOKEN"]);
   });
 
+  it("does not forward the browser-to-loopback fetch metadata on capability-authorized backend requests", async () => {
+    const seen: http.IncomingHttpHeaders[] = [];
+    const up = await startUpstream((req, res) => {
+      seen.push(req.headers);
+      // Reproduce the real backend guard: an authenticated native request is
+      // accepted, but stale browser-to-loopback cross-site metadata is denied.
+      const code = req.headers["sec-fetch-site"] === "cross-site" ? "4030"
+        : req.headers.cookie === "a=1; ticket=CURRENT" ? "0000" : "4010";
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ code, success: code === "0000" }));
+    });
+    const secret = "trusted-frame-secret";
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => "CURRENT",
+      trustedRequestSecret: secret,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const endpoint = "/api/user/getLoginInfo";
+    const get = (url: string, headers: Record<string, string>) =>
+      new Promise<{ code: string; success: boolean }>((resolve, reject) => {
+        const request = http.get(url, { headers }, (response) => {
+          let body = "";
+          response.on("data", (chunk) => { body += chunk.toString(); });
+          response.on("end", () => resolve(JSON.parse(body)));
+          response.on("error", reject);
+        });
+        request.on("error", reject);
+      });
+    expect(await get(up.origin + endpoint, { cookie: "a=1; ticket=CURRENT" }))
+      .toEqual({ code: "0000", success: true });
+    const browserHeaders = {
+      origin: "null",
+      cookie: "a=1; ticket=PAGE-TICKET",
+      "sec-fetch-site": "cross-site",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-user": "?1",
+      "sec-fetch-storage-access": "active",
+    };
+    const namespace = `/__backend/${new URL(up.origin).host}`;
+    for (const supplied of [undefined, "forged"]) {
+      const headers = { ...browserHeaders, ...(supplied ? { [GATEWAY_REQUEST_HEADER]: supplied } : {}) };
+      expect(await get(gw.origin + namespace + endpoint, headers))
+        .toEqual({ code: "4030", success: false });
+      expect(seen.at(-1)).toMatchObject({ cookie: "a=1", "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" });
+    }
+    for (const prefix of ["", namespace]) {
+      expect(await get(gw.origin + prefix + endpoint, { ...browserHeaders, [GATEWAY_REQUEST_HEADER]: secret }))
+        .toEqual({ code: "0000", success: true });
+      const forwarded = seen.at(-1)!;
+      expect(forwarded.cookie).toBe("a=1; ticket=CURRENT");
+      expect(forwarded.origin).toBe(up.origin);
+      expect(Object.keys(forwarded).filter((key) => key.startsWith("sec-fetch-"))).toEqual([]);
+      expect(forwarded[GATEWAY_REQUEST_HEADER]).toBeUndefined();
+    }
+  });
+
   it("x-client-type：缺省随产品标识 APP_NAME_IDENTIFIER，空串关闭", async () => {
     // ubuntu CI 两次在无 body 的 204 往返中出现 UND_ERR_SOCKET（响应读到一半
     // socket 被毁，34676294850 / 34678353803）。归因：fetch 默认 keep-alive 池化

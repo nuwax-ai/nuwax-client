@@ -4,6 +4,7 @@ import {
   normalizeGatewayRequestUrl,
   resolveBackendNamespace,
   namespaceRedirectLocation,
+  type GatewayRoutingConfig,
 } from "./routingPolicy";
 
 const backendOrigin = "https://business.example:8443";
@@ -21,6 +22,82 @@ const main = {
 };
 
 describe("backend URL routing", () => {
+  const devFrontendOrigin = "http://localhost:3099";
+  const devConfig: GatewayRoutingConfig = { ...config, devFrontendOrigin };
+  const devPage = {
+    resourceType: "xhr",
+    webContentsUrl: `${devFrontendOrigin}/home`,
+    frameUrl: `${devFrontendOrigin}/home`,
+  };
+
+  it("routes absolute business XHR from the explicitly configured development frontend", () => {
+    expect(
+      normalizeGatewayRequestUrl(
+        { ...devPage, url: `${backendOrigin}/api/user/login?mode=password` },
+        devConfig,
+      ),
+    ).toBe(`${namespace}/api/user/login?mode=password`);
+    expect(
+      normalizeGatewayRequestUrl(
+        { ...devPage, url: `${backendOrigin}/api/user/me` },
+        config,
+      ),
+    ).toBeNull();
+  });
+
+  it("requires the exact development page and frame origins", () => {
+    for (const page of [
+      "http://localhost:3000/home",
+      "http://127.0.0.1:3099/home",
+      "https://localhost:3099/home",
+      "https://foreign.example/home",
+    ]) {
+      expect(
+        normalizeGatewayRequestUrl(
+          { ...devPage, webContentsUrl: page, frameUrl: page, url: `${backendOrigin}/api/user/me` },
+          devConfig,
+        ),
+      ).toBeNull();
+    }
+    for (const frameUrl of [
+      undefined,
+      `${gatewayOrigin}/home`,
+      "http://localhost:3000/home",
+      "https://foreign.example/frame",
+    ]) {
+      expect(
+        normalizeGatewayRequestUrl(
+          { ...devPage, frameUrl, parentFrameUrl: devPage.webContentsUrl, url: `${backendOrigin}/api/user/me` },
+          devConfig,
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("preserves development navigation, frontend assets, HMR and foreign requests", () => {
+    for (const resourceType of ["mainFrame", "subFrame", "script", "stylesheet", "image"]) {
+      expect(
+        normalizeGatewayRequestUrl(
+          { ...devPage, resourceType, url: `${backendOrigin}/repo/page` },
+          devConfig,
+        ),
+      ).toBeNull();
+    }
+    for (const url of [
+      `${devFrontendOrigin}/api/local`,
+      `${devFrontendOrigin}/assets/main.js`,
+      `${devFrontendOrigin}/@vite/client`,
+      "ws://localhost:3099/?token=hmr",
+      `${gatewayOrigin}/assets/main.js`,
+      "https://cdn.example/api/user/me",
+      "http://business.example:8443/api/user/me",
+      "https://business.example/api/user/me",
+      `${namespace}/api/user/me`,
+    ]) {
+      expect(normalizeGatewayRequestUrl({ ...devPage, url }, devConfig)).toBeNull();
+    }
+  });
+
   it("preserves document pathname and redirects absolute subresources", () => {
     for (const resourceType of ["mainFrame", "subFrame"]) {
       expect(

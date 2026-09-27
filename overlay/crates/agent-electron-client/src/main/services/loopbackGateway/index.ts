@@ -33,6 +33,7 @@ import {
 import { normalizeGatewayRequestUrl } from "./routingPolicy";
 import { setGatewayRequestContext } from "./requestContext";
 import { parseTicketSetCookie } from "../ticketCookiePolicy";
+import { httpOrigin } from "../auth/businessOrigins";
 
 export const DEFAULT_LOOPBACK_GATEWAY_PORT = 46800;
 
@@ -74,16 +75,21 @@ export const LOOPBACK_RUNTIME_KEY = "nuwax.loopback";
  */
 export const WEBVIEW_OVERRIDE_KEY = "nuwax.webviewOverride";
 
-export function syncWebviewOverrideFromEnv(): void {
+function resolveWebviewOverrideFromEnv(): string | null {
   const raw = (process.env.NUWAX_WEBVIEW_ORIGIN || "")
     .trim()
     .replace(/\/+$/, "");
-  const origin =
+  return (
     raw && /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
       ? raw
       : raw
         ? `https://${raw}`
-        : null;
+        : null
+  );
+}
+
+export function syncWebviewOverrideFromEnv(): void {
+  const origin = resolveWebviewOverrideFromEnv();
   writeSetting(WEBVIEW_OVERRIDE_KEY, { origin });
   if (origin) {
     log.info(
@@ -372,13 +378,14 @@ function startAbsoluteUrlNormalization(
       ...MICROAPP_BACKEND_PREFIXES,
       ...resolveExtraBackendPrefixes(),
     ];
+    const devFrontendOrigin = app.isPackaged
+      ? undefined
+      : httpOrigin(resolveWebviewOverrideFromEnv()) ?? undefined;
     session.defaultSession.webRequest.onBeforeRequest(
       { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
       (details, callback) => {
-        // 仅 webview guest（发起页 origin = 网关 origin）的绝对 URL 归一。
-        // 壳 renderer（vite origin）直连后端的 API 不归一——壳 API 域名与后端
-        // 同域时全量误伤：重定向进网关后后端回 ACAO=后端域 ≠ 壳 origin，
-        // preflight 直接被 CORS 拦死（i18n/sandbox reg 等全挂）。
+        // 网关 guest 和未打包客户端显式指定的前端源参与归一；策略层验证
+        // page/frame origin。其它页面（包括壳 renderer）不获取业务请求权限。
         try {
           const wc = details.webContentsId
             ? webContents.fromId(details.webContentsId)
@@ -392,7 +399,7 @@ function startAbsoluteUrlNormalization(
               parentFrameUrl: details.frame?.parent?.url,
               referrer: details.referrer,
             },
-            { gatewayOrigin, backendOrigin, backendPrefixes },
+            { gatewayOrigin, backendOrigin, backendPrefixes, devFrontendOrigin },
           );
           if (redirectURL) {
             callback({ redirectURL });

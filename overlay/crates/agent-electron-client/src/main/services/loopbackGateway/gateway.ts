@@ -168,11 +168,15 @@ function buildProxyHeaders(
   upstreamPath: string,
 ): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
+  const trusted = hasTrustedRequestCapability(req, ctx);
   for (const [key, value] of Object.entries(req.headers)) {
     if (
       value === undefined ||
       HOP_BY_HOP.has(key.toLowerCase()) ||
-      key.toLowerCase() === GATEWAY_REQUEST_HEADER
+      key.toLowerCase() === GATEWAY_REQUEST_HEADER ||
+      // Fetch metadata describes Chromium's hop to loopback, not this native
+      // hop to the backend. Only the private main capability authorizes removal.
+      (trusted && key.toLowerCase().startsWith("sec-fetch-"))
     )
       continue;
     headers[key] = value;
@@ -206,7 +210,7 @@ function buildProxyHeaders(
   // The renderer never supplies the authentication fact. Only a trusted frame
   // with the main-process capability may borrow the current ticket.
   delete headers["authorization"];
-  if (!isPublicAuthPath(upstreamPath.split("?")[0]) && hasTrustedRequestCapability(req, ctx)) {
+  if (!isPublicAuthPath(upstreamPath.split("?")[0]) && trusted) {
     const ticket = ctx.getTicket();
     if (ticket) headers.cookie = [headers.cookie, `ticket=${ticket}`].filter(Boolean).join("; ");
   }

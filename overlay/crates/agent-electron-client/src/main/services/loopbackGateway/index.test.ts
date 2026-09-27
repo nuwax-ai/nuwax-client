@@ -297,6 +297,50 @@ describe("loopbackGateway runtime key carries backend", () => {
     }
   });
 
+  it.each([
+    { packaged: false, override: "http://localhost:3099/app/", redirect: true },
+    { packaged: true, override: "http://localhost:3099/app/", redirect: false },
+    { packaged: false, override: "file:///app", redirect: false },
+    { packaged: false, override: "http://user:pass@localhost:3099", redirect: false },
+  ])("uses a valid explicit frontend override only when unpackaged ($packaged, $override)", async ({ packaged, override, redirect }) => {
+    const { app, session, webContents } = await import("electron");
+    const onBeforeRequest = vi.mocked(session.defaultSession.webRequest.onBeforeRequest);
+    onBeforeRequest.mockClear();
+    const appState = app as { isPackaged: boolean };
+    const wasPackaged = appState.isPackaged;
+    appState.isPackaged = packaged;
+    vi.mocked(webContents.fromId).mockReturnValue({
+      getURL: () => "http://localhost:3099/home",
+    } as Electron.WebContents);
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    vi.stubEnv("NUWAX_LOOPBACK_DIST", "1");
+    vi.stubEnv("NUWAX_WEBVIEW_ORIGIN", override);
+    const mod = await importFresh();
+    try {
+      await mod.ensureLoopbackGateway();
+      const [, listener] = onBeforeRequest.mock.calls.at(-1)!;
+      if (typeof listener !== "function") throw new Error("normalizer missing");
+      const callback = vi.fn();
+      listener({
+        webContentsId: 1,
+        resourceType: "xhr",
+        url: "https://a.example.com/api/user/login",
+        frame: { url: "http://localhost:3099/home" },
+      } as Parameters<typeof listener>[0], callback);
+      expect(callback).toHaveBeenCalledWith(redirect ? {
+        redirectURL: "http://127.0.0.1:46800/__backend/a.example.com/api/user/login",
+      } : {});
+    } finally {
+      await mod.stopLoopbackGateway();
+      appState.isPackaged = wasPackaged;
+      vi.unstubAllEnvs();
+      vi.mocked(webContents.fromId).mockReturnValue(null as unknown as Electron.WebContents);
+    }
+  });
+
   it("syncs NUWAX_WEBVIEW_ORIGIN env into the runtime override key on refresh", async () => {
     mocks.store.set("step1_config", {
       nuwaxLoadMode: "gateway",

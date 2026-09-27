@@ -97,6 +97,8 @@ export interface GatewayRoutingConfig {
   gatewayOrigin: string;
   backendOrigin: string;
   backendPrefixes: readonly string[];
+  /** Explicit frontend override, supplied only by an unpackaged host. */
+  devFrontendOrigin?: string;
 }
 
 /**
@@ -117,8 +119,13 @@ export function normalizeGatewayRequestUrl(
   const gateway = httpUrl(config.gatewayOrigin);
   const backend = httpUrl(config.backendOrigin);
   const page = httpUrl(request.webContentsUrl);
-  if (!url || !gateway || !backend || !page || page.origin !== gateway.origin)
-    return null;
+  if (!url || !gateway || !backend || !page) return null;
+  const devFrontend = config.devFrontendOrigin
+    ? httpUrl(config.devFrontendOrigin)
+    : null;
+  const devPage =
+    page.origin !== gateway.origin && page.origin === devFrontend?.origin;
+  if (page.origin !== gateway.origin && !devPage) return null;
   const document =
     request.resourceType === "mainFrame" || request.resourceType === "subFrame";
   let frame = request.frameUrl ? httpUrl(request.frameUrl) : null;
@@ -132,7 +139,14 @@ export function normalizeGatewayRequestUrl(
     frame = request.parentFrameUrl ? httpUrl(request.parentFrameUrl) : null;
   // A foreign/missing frame is untrusted even for document navigation. Otherwise
   // a foreign iframe could navigate to our backend and acquire gateway credentials.
-  if (frame?.origin !== gateway.origin) return null;
+  if (frame?.origin !== page.origin) return null;
+  // Electron reports both XMLHttpRequest and fetch as xhr. The explicit source
+  // frontend keeps its documents/assets/HMR; only business API requests enter
+  // the existing capability-authorized gateway namespace.
+  if (devPage)
+    return request.resourceType === "xhr" && url.origin === backend.origin
+      ? backendNamespaceUrl(request.url, backend.origin, gateway.origin)
+      : null;
   if (url.origin === backend.origin) {
     if (document)
       return `${gateway.origin}${url.pathname}${url.search}${url.hash}`;
