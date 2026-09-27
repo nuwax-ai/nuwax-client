@@ -119,7 +119,7 @@ describe("commercial registration protocol", () => {
     expect((await flow.start()).success).toBe(true);
     expect(mocks.fetch.mock.calls[0][0]).toBe(origin + "/api/user/getLoginInfo");
     const [url, options] = mocks.fetch.mock.calls[1];
-    expect(url).toBe(origin + "/api/sandbox/config/reg");
+    expect(url).toBe(origin + "/api/sandbox/config/reg/v2");
     expect(options.credentials).toBe("omit");
     expect(options.headers.Cookie).toBe("ticket=ticket-1");
     expect(options.headers.Authorization).toBeUndefined();

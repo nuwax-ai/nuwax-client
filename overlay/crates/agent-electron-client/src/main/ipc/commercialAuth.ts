@@ -178,7 +178,7 @@ export function initializeCommercialAuth(
   if (existingStep1) writeSetting(LOADMODE_DEFAULT_MIGRATED_KEY, true);
   const deviceId = getDeviceId();
   if (readSetting("nuwax.registrationDeviceId") !== deviceId) {
-    // 设备身份盐变更（1.0.4 起 nuwax:device:v1）/换设备时清注册派生凭据，
+    // 设备身份算法升级（安装 ID → 硬件 ID）/盐变更/换设备时清注册派生凭据，
     // 但保留 savedKey：现行后端注册必须携带 savedKey（首登 Bearer-only 返回
     // 4000），且实测接受「旧 savedKey + 新 deviceId」重注册——若一并清掉，
     // 1.0.3 存量用户升级后将永远无法重新注册（savedKey 无处再获取）。
@@ -226,7 +226,7 @@ export function initializeCommercialAuth(
       const savedKey = readSetting("auth.saved_key");
       const regStartedAt = Date.now();
       report("reg-request");
-      const response = await net.fetch(`${origin}/api/sandbox/config/reg`, {
+      const response = await net.fetch(`${origin}/api/sandbox/config/reg/v2`, {
         method: "POST",
         redirect: "error",
         // net.fetch otherwise adds defaultSession's jar cookie even when our
