@@ -9,7 +9,7 @@
  * - native:openWindow 独立窗口构造参数自带同款 min（事件之外的双保险）。
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const settings = new Map<string, unknown>();
 const handlers = new Map<
@@ -38,12 +38,26 @@ vi.mock("electron", () => ({
   dialog: { showSaveDialog: vi.fn() },
   BrowserWindow: class {
     opts: Record<string, unknown>;
+    // 窗口实际构造时已有 WebContents，活动桥在 loadURL 前登记生命周期监听。
+    webContents = {
+      isDestroyed: () => false,
+      on: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      send: vi.fn(),
+    };
     constructor(opts: Record<string, unknown>) {
       this.opts = opts;
       winInstances.push({ opts: this.opts });
     }
     on() {
       return this;
+    }
+    removeListener() {
+      return this;
+    }
+    isVisible() {
+      return true;
     }
     loadURL() {
       return undefined;
@@ -82,6 +96,7 @@ vi.mock("./processHandlers", () => ({
 }));
 
 import { app } from "electron";
+import { _resetHostActivityForTest } from "../services/hostActivity";
 import {
   registerNuwaxBridgeHandlers,
   applyMainWindowMinSize,
@@ -116,6 +131,7 @@ function getCreatedListener(): (...args: unknown[]) => void {
 }
 
 beforeEach(() => {
+  _resetHostActivityForTest();
   settings.clear();
   handlers.clear();
   winInstances.length = 0;
@@ -124,6 +140,10 @@ beforeEach(() => {
     getMainWindow: () =>
       ({ webContents: { send: vi.fn() } }) as never,
   } as never);
+});
+
+afterEach(() => {
+  _resetHostActivityForTest();
 });
 
 describe("主窗口最小尺寸（browser-window-created 补设）", () => {

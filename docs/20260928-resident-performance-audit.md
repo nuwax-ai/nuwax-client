@@ -63,14 +63,31 @@
 | Web 生命周期/终端/预览定向整合 | 11 文件 / 61 通过 | 使用真实 HTTP SSE、React/ahooks/Umi；认证及业务 API 部分为 mock。 |
 | 独立只读 Web 验证 | 10 文件 / 65 通过 | 独立 agent 未修改文件；覆盖尾包、迟到响应、缓存/预览和终端顺序。 |
 | 独立只读基座验证 | 5 文件 / 47 通过 | 真实 HTTP Socket 与临时文件树；确认消息顺序与归档保护。 |
+| checkpoint 合并后独立客户端验证 | 8 文件 / 135 通过，0 失败/跳过 | 窗口 policy、新任务 gate、最小尺寸、IPC 信任范围、活动桥/休眠设置与单飞查询；未修改任何文件。 |
 | 最后 lint 等价收敛回归 | 4 文件 / 37 通过 | SSE/通知、projection/胶囊；提交 hook 已通过，无绕过。 |
-| 客户端定向 | 12 文件 / 160 通过 | gateway、主/二级窗口、受信 popup、桥、信任范围、UI 查询及休眠开关即时同步；后续 checkpoint 合并还须跑完整双轨。 |
+| 客户端定向 | 12 文件 / 160 通过 | gateway、主/二级窗口、受信 popup、桥、信任范围、UI 查询及休眠开关即时同步。 |
+| 商业版完整门禁 | 156 文件通过，1 文件跳过；1906 项通过，18 项跳过，0 失败 | 合并 checkpoint 后运行，覆盖原有业务回归及本次修复。 |
+| 社区版完整门禁 | 124 文件通过，1 文件跳过；1497 项通过，18 项跳过，0 失败 | 仅在隔离检出清除 overlay 后运行；中性源码保留，随后重新同步商业版。 |
 | ComputerServer 分域 | 14 文件 / 106 通过，1 跳过 | 正常/慢写 wire、离线缓存和关闭监听回收。 |
 | MCP 日志 | 3 文件 / 26 通过 | 真实临时目录；定向主进程 TypeScript 与生产文件 ESLint 通过。 |
 | Web 分层 | 通过，0 新违规 | 97 条既有 baseline 违规被忽略，不称全库无历史违规。 |
-| 生产构建 | Web、客户端 main/preload 与 renderer 已通过 | 最终客户端双轨及重同步构建结果在收尾后回填。 |
+| 生产构建 | Web、客户端 main/preload 与 renderer 已通过 | 最终客户端在双轨完成并重同步商业 overlay 后再次构建；产物存在于隔离工作区 dist。 |
+| overlay/pin 纯度 | 104 文件一致、0 待同步；check:pin 通过 | 基座全部 dirty 均为商业注入，未把 overlay 托管路径提交进基座。 |
 | 类型检查 | 全库 tsc 仍非绿；本次生产源码无新增诊断 | 历史错误与任务新增错误分别核对，不能把存量失败写成全绿。 |
 | 真实包/长稳 | 未完成 | 不把源码测试或开发工具 RSS 当作安装包的长期稳定结论。 |
+
+最终双轨命令（隔离检出）：
+
+```sh
+npm run base:test -- -- -- --maxWorkers=2 --minWorkers=1
+npm run test:commercial -- -- -- --maxWorkers=2 --minWorkers=1
+node scripts/in-base.js -- npm --prefix crates/agent-electron-client run build:main
+node scripts/in-base.js -- npm --prefix crates/agent-electron-client run build:renderer
+node scripts/sync-overlay.js --check
+npm run check:pin
+```
+
+日志：`/tmp/nuwax-resident-community-full.log`、`/tmp/nuwax-resident-commercial-full.log`、`/tmp/nuwax-resident-client-main-final.log`、`/tmp/nuwax-resident-client-renderer-final.log`。商业首跑因隔离目录缺 MCP 资源缓存，以及旧最小尺寸窗口 mock 未提供 activity 所需的实际窗口接口失败；链接已有缓存并补齐 mock 后完整重跑通过，未删减原有成功/尺寸断言。
 
 ## 质量三问
 
@@ -78,7 +95,7 @@
 2. **分层**：商业实现只经 overlay 注入；ComputerServer/日志中性源码独立提交并通过 staged pin 守卫；PC Web 沿页面→组件→hooks/services/utils 接入，分层检查无新违规。
 3. **可维护**：资源建立与清理配对，具名水位/归档预算，旧宿主/浏览器兜底；真实依赖与生命周期回归覆盖竞态。修正 active 翻转兼容边界，保留必要业务尾包和保活。
 
-结论：本轮源码改动可进行本地集成验证；尚不能宣称全部资源预算已达标或已通过发行包长期验收。
+结论：本轮源码修复已完成双轨及生产构建验证，可本地集成；尚不能宣称全部资源预算已达标或已通过发行包长期验收。
 
 ## 后续长期验收
 
