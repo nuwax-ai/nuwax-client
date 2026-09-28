@@ -51,6 +51,8 @@
 
 实现位于 `/Users/apple/.codex/worktrees/resident-lifecycle/nuwax-client` 的 `codex/resident-lifecycle` 分支；客户端实现提交 `beb8ad3c`。PC Web 在独立 `/Users/apple/workspace/nuwax` 检出提交，并在隔离客户端中更新源码 pin。基座中性修复分支 `codex/resident-lifecycle-base`，实现提交 `42ef6136`；Web 实现提交 `367a6b732e`，客户端源码 pin `2936f6a70` 另保留原有两份恢复计划。产物仓 pin 未冒充更新，没有推送/发版。
 
+完成验证后，已将源码集成提交 `5c428f3f` fast-forward 回 `/Users/apple/workspace/nuwax-client` 的本地 `release/v1.0.x`，更新两个源码子模块并同步商业 overlay。早期重复的任务文件先保存到 scoped stash，并由 `codex/resident-early-copies-20260928` 保护；没有覆盖独立 Web 检出的并行滚动交互 WIP，产物仓仍是原 pin。
+
 共享客户端 checkout 在本次实施期间被外部流程回退到 `9db49113`；此前保存的提交仍由 `codex/local-checkpoint-20260928 @ f34e803e` 保护。集成前逐文件核对共享 root/base，确认其仍保留 checkpoint 的业务恢复输出；隔离分支合并该 checkpoint，保留已有菜单语言、新任务可用性、窗口权限及前端恢复计划，然后统一验证。Web 测试提交 `2c55c5fb06` 同时包含共享索引中另一流程加入的计划文档删除；后续提交使用明确文件列表隔离。
 
 ## 验证记录
@@ -63,7 +65,7 @@
 | Web 生命周期/终端/预览定向整合 | 11 文件 / 61 通过 | 使用真实 HTTP SSE、React/ahooks/Umi；认证及业务 API 部分为 mock。 |
 | 独立只读 Web 验证 | 10 文件 / 65 通过 | 独立 agent 未修改文件；覆盖尾包、迟到响应、缓存/预览和终端顺序。 |
 | 独立只读基座验证 | 5 文件 / 47 通过 | 真实 HTTP Socket 与临时文件树；确认消息顺序与归档保护。 |
-| checkpoint 合并后独立客户端验证 | 8 文件 / 135 通过，0 失败/跳过 | 窗口 policy、新任务 gate、最小尺寸、IPC 信任范围、活动桥/休眠设置与单飞查询；未修改任何文件。 |
+| checkpoint 合并后独立客户端验证 | 9 文件 / 138 通过，0 失败/跳过 | 窗口 policy、新任务 gate、最小尺寸、IPC 信任范围、活动桥/休眠设置与单飞查询；未修改任何文件。 |
 | 最后 lint 等价收敛回归 | 4 文件 / 37 通过 | SSE/通知、projection/胶囊；提交 hook 已通过，无绕过。 |
 | 客户端定向 | 12 文件 / 160 通过 | gateway、主/二级窗口、受信 popup、桥、信任范围、UI 查询及休眠开关即时同步。 |
 | 商业版完整门禁 | 156 文件通过，1 文件跳过；1906 项通过，18 项跳过，0 失败 | 合并 checkpoint 后运行，覆盖原有业务回归及本次修复。 |
@@ -95,7 +97,7 @@ npm run check:pin
 2. **分层**：商业实现只经 overlay 注入；ComputerServer/日志中性源码独立提交并通过 staged pin 守卫；PC Web 沿页面→组件→hooks/services/utils 接入，分层检查无新违规。
 3. **可维护**：资源建立与清理配对，具名水位/归档预算，旧宿主/浏览器兜底；真实依赖与生命周期回归覆盖竞态。修正 active 翻转兼容边界，保留必要业务尾包和保活。
 
-结论：本轮源码修复已完成双轨及生产构建验证，可本地集成；尚不能宣称全部资源预算已达标或已通过发行包长期验收。
+结论：本轮源码修复已完成双轨、生产构建和本地集成；尚不能宣称全部资源预算已达标或已通过发行包长期验收。
 
 ## 后续长期验收
 
