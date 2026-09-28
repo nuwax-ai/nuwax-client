@@ -21,6 +21,7 @@ import {
 } from "@shared/constants";
 import { businessBridgeOrigins } from "../auth/businessOrigins";
 import { attachHostActivityBusinessWindow } from "../hostActivity";
+import { isGuestNewTaskAvailable } from "../newTaskAvailability";
 
 // ---------- 权限白名单 ----------
 
@@ -321,7 +322,9 @@ function setupWindowOpen(): void {
           input.key.toLowerCase() === "n"
         ) {
           event.preventDefault();
-          webContents.send("nuwax:host-command", { type: "new-task" });
+          if (isGuestNewTaskAvailable(webContents)) {
+            webContents.send("nuwax:host-command", { type: "new-task" });
+          }
           return;
         }
         if (

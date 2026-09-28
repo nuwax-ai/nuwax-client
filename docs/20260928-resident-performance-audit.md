@@ -28,7 +28,7 @@
 | R06 | 缓存未变消息的词法解析，校验相同对象的 text 变化；胶囊与 renderer 各自持有投影器，保持 active 切换触发原有投影行为。 | **部分优化。** 整体分组/投影仍遍历历史，DOM 未改为虚拟列表；单个长会话没有固定容量上限。 |
 | R07 | Embedded 终端按未解析 UTF-8 字节发送 ttyd PAUSE/RESUME，1,000,000/400,000 字节高低水位；write 回调释放预算，断连先 RESUME，旧回调不污染新连接。保留原尺寸握手及 plain 协议。 | **前端控制已接入，服务端配合未验收。** 构建默认 ttyd 1.7.7 的暂停实现存在疑点，当前包是否有补丁待核对；不声称在途数据/单帧已有绝对硬上界。 |
 | R08 | 普通预览只观察标题，不序列化正文；失活/宿主隐藏暂停标题观察，恢复不重挂/重载 iframe。重复 load 释放旧文档观察器；导航 timer/尾沿 timer 卸载清理。 | navigate 业务正文上报在隐藏时继续，保持完整 HTML/Markdown、requestId、Nginx 特殊反馈和 500 ms 合批行为。 |
-| R09 | AppDevPro tasks/logs UI 查询接宿主可见性；壳的 8 组 IPC 状态查询串行，手动刷新排动作后新查询，恢复补查、隐藏停自动查询，卸载拒绝迟到更新。native:openWindow 与受信 window.open 弹窗独立管理可见性，不进入主窗动作广播。 | 必要服务、任务和容器保活不暂停；失焦不等于隐藏；休眠开关关闭时保留原有活跃语义。 |
+| R09 | AppDevPro tasks/logs UI 查询接宿主可见性；壳的 8 组 IPC 状态查询串行，手动刷新排动作后新查询，恢复补查、隐藏停自动查询，卸载拒绝迟到更新。native:openWindow 与受信 window.open 弹窗独立管理可见性，不进入主窗动作广播。休眠设置成功保存后立即刷新所有窗口。 | 必要服务、任务和容器保活不暂停；失焦不等于隐藏；休眠关闭时全部恢复活跃，开启时按各窗口可见性与锁屏状态决定。设置失败及返回值沿用原逻辑。 |
 | R10 | 订阅既有 UserService 登录保存/失效事实，匿名/登录页不启动通知 collect；注销/卸载的迟到 clear 响应不能复活旧轮询。 | 只增加只读订阅，认证存储和导航逻辑不变；真实账号登出重登未操作。 |
 | R11 | preload 仅缓存并重播最新 host-activity；动作不重播。guest 订阅前事件、新文档同步与 did-finish-load 均覆盖；壳先订阅再快照，迟到快照不能覆盖新事件。 | 真实 Electron 隐藏加载/重载、锁屏/唤醒仍需实机；已锁屏状态下冷启动的系统查询能力仍有限。 |
 | R12 | 主进程启动和每小时异步清理全部 MCP 项目日归档，覆盖已停止项目；30/7 天 TTL，256 MiB 冷归档预算，24 小时 mtime 活跃保护；扫描不重叠，保护 latest/硬链接/非日志/符号链接目标。 | **归档已收敛，活跃日志仍无大小轮转。** installed mcp-proxy-ts 1.5.4 无现成 rotation 开关；不截断仍在写的文件，预算不等于整个日志目录上界。 |
@@ -49,9 +49,9 @@
 
 ## 源码与本地保存边界
 
-实现位于 `/Users/apple/.codex/worktrees/resident-lifecycle/nuwax-client` 的 `codex/resident-lifecycle` 分支；PC Web 在独立 `/Users/apple/workspace/nuwax` 检出提交，并在隔离客户端中更新源码 pin。基座中性修复分支 `codex/resident-lifecycle-base`，实现提交 `42ef6136`；Web 实现提交 `367a6b732e`。产物仓 pin 未冒充更新，没有推送/发版。
+实现位于 `/Users/apple/.codex/worktrees/resident-lifecycle/nuwax-client` 的 `codex/resident-lifecycle` 分支；客户端实现提交 `beb8ad3c`。PC Web 在独立 `/Users/apple/workspace/nuwax` 检出提交，并在隔离客户端中更新源码 pin。基座中性修复分支 `codex/resident-lifecycle-base`，实现提交 `42ef6136`；Web 实现提交 `367a6b732e`，客户端源码 pin `2936f6a70` 另保留原有两份恢复计划。产物仓 pin 未冒充更新，没有推送/发版。
 
-共享客户端 checkout 在本次实施期间被外部流程回退到 `9db49113`；此前保存的提交仍由 `codex/local-checkpoint-20260928 @ f34e803e` 保护。客户端修复移入隔离 checkout，避免覆盖并行工作。Web 测试提交 `2c55c5fb06` 同时包含共享索引中另一流程加入的计划文档删除；后续提交使用明确文件列表隔离。
+共享客户端 checkout 在本次实施期间被外部流程回退到 `9db49113`；此前保存的提交仍由 `codex/local-checkpoint-20260928 @ f34e803e` 保护。集成前逐文件核对共享 root/base，确认其仍保留 checkpoint 的业务恢复输出；隔离分支合并该 checkpoint，保留已有菜单语言、新任务可用性、窗口权限及前端恢复计划，然后统一验证。Web 测试提交 `2c55c5fb06` 同时包含共享索引中另一流程加入的计划文档删除；后续提交使用明确文件列表隔离。
 
 ## 验证记录
 
@@ -64,7 +64,7 @@
 | 独立只读 Web 验证 | 10 文件 / 65 通过 | 独立 agent 未修改文件；覆盖尾包、迟到响应、缓存/预览和终端顺序。 |
 | 独立只读基座验证 | 5 文件 / 47 通过 | 真实 HTTP Socket 与临时文件树；确认消息顺序与归档保护。 |
 | 最后 lint 等价收敛回归 | 4 文件 / 37 通过 | SSE/通知、projection/胶囊；提交 hook 已通过，无绕过。 |
-| 客户端定向 | 11 文件 / 152 通过 | gateway、主/二级窗口、受信 popup、桥、信任范围与 UI 查询；开关即时同步的最后回归另记录。 |
+| 客户端定向 | 12 文件 / 160 通过 | gateway、主/二级窗口、受信 popup、桥、信任范围、UI 查询及休眠开关即时同步；后续 checkpoint 合并还须跑完整双轨。 |
 | ComputerServer 分域 | 14 文件 / 106 通过，1 跳过 | 正常/慢写 wire、离线缓存和关闭监听回收。 |
 | MCP 日志 | 3 文件 / 26 通过 | 真实临时目录；定向主进程 TypeScript 与生产文件 ESLint 通过。 |
 | Web 分层 | 通过，0 新违规 | 97 条既有 baseline 违规被忽略，不称全库无历史违规。 |

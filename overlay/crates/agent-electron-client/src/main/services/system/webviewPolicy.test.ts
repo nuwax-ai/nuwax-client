@@ -343,3 +343,60 @@ describe("defaultSession permission origin boundary", () => {
     expect(check(top, "media", business, { isMainFrame: true })).toBe(false);
   });
 });
+
+describe("new task keyboard availability", () => {
+  const input = (overrides: Record<string, unknown> = {}) => ({
+    type: "keyDown", key: "n", control: true, meta: false, shift: false, alt: false,
+    ...overrides,
+  });
+  const keyboard = (guest: ReturnType<typeof fakeContents>) =>
+    guest.on.mock.calls.find(([name]) => name === "before-input-event")?.[1] as
+      (event: { preventDefault: ReturnType<typeof vi.fn> }, input: unknown) => void;
+
+  it.each([
+    { control: true, meta: false, key: "n" },
+    { control: false, meta: true, key: "N" },
+  ])("reserves Ctrl/Cmd+N and forwards only when the guest menu is available", async (modifiers) => {
+    const guest = attachedWebview(await setup(), `${business}/home`);
+    const onInput = keyboard(guest);
+    const event = { preventDefault: vi.fn() };
+    onInput(event, input(modifiers));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(guest.send).not.toHaveBeenCalled();
+    const { setGuestNewTaskAvailable } = await import("../newTaskAvailability");
+    setGuestNewTaskAvailable(guest as never, true);
+    onInput(event, input(modifiers));
+    expect(guest.send).toHaveBeenCalledWith("nuwax:host-command", { type: "new-task" });
+    setGuestNewTaskAvailable(guest as never, false);
+    onInput(event, input(modifiers));
+    expect(guest.send).toHaveBeenCalledOnce();
+    expect(event.preventDefault).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves modifier filtering and DevTools shortcuts", async () => {
+    const guest = attachedWebview(await setup(), `${business}/home`);
+    const onInput = keyboard(guest);
+    const { setGuestNewTaskAvailable } = await import("../newTaskAvailability");
+    setGuestNewTaskAvailable(guest as never, true);
+    const event = { preventDefault: vi.fn() };
+    for (const overrides of [
+      { type: "keyUp" }, { shift: true }, { alt: true },
+      { control: false }, { key: "m" },
+    ]) onInput(event, input(overrides));
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(guest.send).not.toHaveBeenCalled();
+    setGuestNewTaskAvailable(guest as never, false);
+    onInput(event, input({ key: "I", shift: true }));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(guest.openDevTools).toHaveBeenCalledOnce();
+    expect(guest.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the community shortcut enabled by default", async () => {
+    const guest = attachedWebview(await setup("nuwaclaw"), `${business}/home`);
+    const event = { preventDefault: vi.fn() };
+    keyboard(guest)(event, input());
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(guest.send).toHaveBeenCalledWith("nuwax:host-command", { type: "new-task" });
+  });
+});

@@ -288,6 +288,10 @@ const theme = {
  * renderer，工具栏据此显隐收起按钮。fire-and-forget。
  */
 const layout = {
+  /** 新建任务是否由后台菜单启用，宿主菜单和快捷键使用同一状态。 */
+  setNewTaskAvailable(available: boolean): void {
+    ipcRenderer.send("nuwax:layout-sync", { newTaskAvailable: available === true });
+  },
   /** 告知壳当前页是否有二级菜单可收起。 */
   setSecondMenuAvailable(available: boolean): void {
     ipcRenderer.send("nuwax:layout-sync", { secondMenuAvailable: !!available });

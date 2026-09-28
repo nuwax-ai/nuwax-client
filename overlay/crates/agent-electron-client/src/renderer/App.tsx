@@ -346,6 +346,10 @@ function App() {
   // nuwax 布局状态 → 工具栏收起按钮显隐：当前页无二级菜单时按钮无意义，隐藏。
   // 默认 false（隐藏）——nuwax 布局挂载后推送真实值；/Login 等无布局页不推或推 false。
   const [secondMenuAvailable, setSecondMenuAvailable] = useState(false);
+  // 商业版等待后台菜单状态；社区版保留原有的新建任务入口。
+  const [newTaskAvailable, setNewTaskAvailable] = useState(
+    APP_NAME_IDENTIFIER !== "nuwax",
+  );
   const [titlebarDragRegions, setTitlebarDragRegions] = useState<
     TitlebarDragRegion[]
   >([]);
@@ -583,6 +587,7 @@ function App() {
     const onNuwaxLayoutChanged = (payload: {
       secondMenuAvailable?: boolean;
       secondMenuCollapsed?: boolean;
+      newTaskAvailable?: boolean;
       titlebarDragRegions?: TitlebarDragRegion[];
     }) => {
       if (payload?.secondMenuAvailable !== undefined) {
@@ -590,6 +595,9 @@ function App() {
       }
       if (payload?.secondMenuCollapsed !== undefined) {
         setSecondMenuCollapsed(payload.secondMenuCollapsed === true);
+      }
+      if (typeof payload?.newTaskAvailable === "boolean") {
+        setNewTaskAvailable(payload.newTaskAvailable);
       }
       if (Array.isArray(payload?.titlebarDragRegions)) {
         const regions = payload.titlebarDragRegions;
@@ -992,8 +1000,9 @@ function App() {
   // 直发 guest）：新建任务/打开搜索 = nuwax 前端已有快捷键能力的宿主命令，
   // 工作空间目录 = 壳侧目录选择器/文件管理器
   const handleMenuNewTask = useCallback(() => {
+    if (!newTaskAvailable) return;
     webviewRef.current?.sendHostCommand({ type: "new-task" });
-  }, []);
+  }, [newTaskAvailable]);
   const handleMenuOpenSearch = useCallback(() => {
     webviewRef.current?.sendHostCommand({ type: "open-search" });
   }, []);
@@ -1013,7 +1022,12 @@ function App() {
     [],
   );
   const handleGuestNavigationStart = useCallback(
-    () => setTitlebarDragRegions([]),
+    (event?: { isInPlace?: boolean }) => {
+      setTitlebarDragRegions([]);
+      if (!event?.isInPlace) {
+        setNewTaskAvailable(APP_NAME_IDENTIFIER !== "nuwax");
+      }
+    },
     [],
   );
   const handleOpenSettings = useCallback(() => setSettingsModalOpen(true), []);
@@ -1888,6 +1902,7 @@ function App() {
             <TrafficLightToolbar
               menuCollapsed={secondMenuCollapsed}
               menuAvailable={secondMenuAvailable}
+              newTaskAvailable={newTaskAvailable}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
               onToggleMenu={handleToggleMenu}

@@ -40,6 +40,7 @@ import {
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
 import { buildMacApplicationMenu } from "./window/applicationMenu";
+import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createServiceManager } from "./window/serviceManager";
@@ -364,7 +365,11 @@ function createMenu() {
       settings: () => {
         mainWindow?.webContents.send("menu:settings");
       },
-      newTask: hostCommand({ type: "new-task" }),
+      newTask: () => {
+        if (isMainNewTaskAvailable()) {
+          sendHostCommandToMainWindowGuests({ type: "new-task" });
+        }
+      },
       search: hostCommand({ type: "open-search" }),
       modifyWorkspace: () => {
         mainWindow?.webContents.send("menu:workspace", { action: "modify" });
@@ -407,7 +412,7 @@ function createMenu() {
       openLogs: () => {
         void openLogDirectory();
       },
-    });
+    }, { newTaskAvailable: isMainNewTaskAvailable() });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   } else {
     // Windows/Linux: 去掉菜单栏，功能由界面（自绘顶行菜单栏）和系统托盘提供
@@ -726,7 +731,10 @@ app.whenReady().then(async () => {
   initHostActivity();
 
   // 主进程只订阅一次；guest 上报和壳 IPC 均经 setMainLang 更新原生菜单。
-  if (process.platform === "darwin") onMainLangChanged(createMenu);
+  if (process.platform === "darwin") {
+    onMainLangChanged(createMenu);
+    onMainNewTaskAvailabilityChanged(createMenu);
+  }
 
   createWindow();
   // 启动服务门禁：核心服务 ready 前壳层停在 loading（renderer 监听 services:ready）。

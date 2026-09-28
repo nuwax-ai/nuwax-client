@@ -29,6 +29,7 @@ vi.mock("electron", () => ({
 
 import "./webviewPerfBridge";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { ipcRenderer } from "electron";
 
 describe("NuwaClawBridge host 命名空间", () => {
   it("桥上暴露 host.getProduct()，值与 APP_NAME_IDENTIFIER 一致", () => {
@@ -55,5 +56,18 @@ describe("NuwaClawBridge host 命名空间", () => {
     } finally {
       process.argv.pop();
     }
+  });
+});
+
+describe("NuwaClawBridge 新建任务菜单状态", () => {
+  it("启用和隐藏状态沿现有布局通道上报", () => {
+    const bridge = exposed.get("NuwaClawBridge") as {
+      layout: { setNewTaskAvailable(available: boolean): void };
+    };
+    vi.mocked(ipcRenderer.send).mockClear();
+    bridge.layout.setNewTaskAvailable(true);
+    bridge.layout.setNewTaskAvailable(false);
+    expect(ipcRenderer.send).toHaveBeenNthCalledWith(1, "nuwax:layout-sync", { newTaskAvailable: true });
+    expect(ipcRenderer.send).toHaveBeenNthCalledWith(2, "nuwax:layout-sync", { newTaskAvailable: false });
   });
 });
