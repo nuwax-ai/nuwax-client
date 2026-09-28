@@ -12,3 +12,9 @@ debug-shots/
 logs/
 .cache/
 release/
+
+# 本地发行候选包体积很大；保留同目录 source.patch 和 provenance 供复核
+artifacts/*/mac-*/
+artifacts/*/win-*/
+artifacts/*/linux-*/
+artifacts/*/builder-debug.yml
