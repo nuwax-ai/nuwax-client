@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     maximize: () => ipcRenderer.invoke("window:maximize"),
     isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+    getHostActivity: () => ipcRenderer.invoke("window:getHostActivity") as Promise<{ visible: boolean } | null>,
     close: () => ipcRenderer.invoke("window:close"),
   },
 
@@ -654,6 +655,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "intervention:updated",
       "nuwax:authChanged",
       "nuwax:serviceState",
+      "nuwax:host-activity-changed",
       "nuwax:theme-changed",
       "nuwax:layout-changed",
       "nuwax:open-same-window",

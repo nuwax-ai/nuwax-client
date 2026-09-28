@@ -19,6 +19,7 @@
  */
 import http from "node:http";
 import https from "node:https";
+import type { Duplex } from "node:stream";
 import { timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -82,6 +83,11 @@ interface ProxyContext {
   clientTypeHeader: string | null;
   gatewayOrigin?: string;
   trustedRequestSecret?: string;
+}
+
+interface UpgradeLifetime {
+  trackSocket(socket: Duplex): void;
+  trackRequest(request: http.ClientRequest): void;
 }
 
 function hasTrustedRequestCapability(
@@ -359,11 +365,12 @@ function proxyRequest(
  */
 function proxyUpgrade(
   req: http.IncomingMessage,
-  socket: import("node:stream").Duplex,
+  socket: Duplex,
   head: Buffer,
   target: URL,
   ctx: ProxyContext,
   upstreamPath: string,
+  lifetime: UpgradeLifetime,
 ): void {
   socket.on("error", () => socket.destroy());
   const requestEpoch = ctx.ticketEpoch?.() ?? 0;
@@ -381,6 +388,7 @@ function proxyUpgrade(
     path: upstreamPath,
     headers,
   });
+  lifetime.trackRequest(upstream);
   // 客户端在 101 到达前断开（刷新终端/noVNC 页面正踩此窗口）：升级回调内部
   // 再挂监听已错过事件——这里创建后立即挂才能覆盖早退时序。
   const abortUpstream = () => upstream.destroy();
@@ -415,6 +423,8 @@ function proxyUpgrade(
     return outgoing;
   };
   upstream.on("upgrade", async (upstreamRes, upstreamSocket, upstreamHead) => {
+    // 101 后 socket 脱离 ClientRequest/HTTP server；在任何异步镜像之前登记归属。
+    lifetime.trackSocket(upstreamSocket);
     upstreamSocket.on("error", () => socket.destroy());
     let outgoing: http.IncomingHttpHeaders;
     try { outgoing = await clientHeaders(upstreamRes.headers); }
@@ -556,6 +566,8 @@ function isSpaFallbackCandidate(urlPath: string): boolean {
  *  微应用前缀后整体传入 backendPrefixes。 */
 export const DEFAULT_BACKEND_PREFIXES = ["/api", "/computer", "/devcomputer"];
 
+const GATEWAY_CLOSE_DEADLINE_MS = 1000;
+
 /** 起网关：dist 模式（本地静态托管 + 后端前缀反代）或全站透明反代。 */
 export async function startLoopbackGateway(
   opts: LoopbackGatewayOptions,
@@ -582,6 +594,28 @@ export async function startLoopbackGateway(
   }
 
   return await new Promise((resolve) => {
+    const connections = new Set<Duplex>();
+    const upgradeSockets = new Set<Duplex>();
+    const upgradeRequests = new Set<http.ClientRequest>();
+    let closing = false;
+    let closePromise: Promise<void> | null = null;
+    const lifetime: UpgradeLifetime = {
+      trackSocket(socket) {
+        upgradeSockets.add(socket);
+        socket.once("close", () => upgradeSockets.delete(socket));
+        if (closing) socket.destroy();
+      },
+      trackRequest(request) {
+        upgradeRequests.add(request);
+        request.once("close", () => upgradeRequests.delete(request));
+        if (closing) request.destroy();
+      },
+    };
+    const destroyConnections = () => {
+      for (const request of upgradeRequests) request.destroy();
+      for (const socket of upgradeSockets) socket.destroy();
+      for (const socket of connections) socket.destroy();
+    };
     const server = http.createServer((req, res) => {
       const urlPath = req.url ?? "/";
       const namespace = resolveBackendNamespace(urlPath, target.origin);
@@ -637,7 +671,17 @@ export async function startLoopbackGateway(
       }
       proxyRequest(req, res, target, ctx, urlPath, false);
     });
+    server.on("connection", (socket) => {
+      connections.add(socket);
+      socket.once("close", () => connections.delete(socket));
+      if (closing) socket.destroy();
+    });
     server.on("upgrade", (req, socket, head) => {
+      if (closing) {
+        socket.destroy();
+        return;
+      }
+      lifetime.trackSocket(socket);
       const namespace = resolveBackendNamespace(req.url ?? "/", target.origin);
       if (namespace.kind === "forbidden") {
         socket.end(
@@ -652,6 +696,7 @@ export async function startLoopbackGateway(
         target,
         ctx,
         namespace.kind === "backend" ? namespace.path : (req.url ?? "/"),
+        lifetime,
       );
     });
 
@@ -674,15 +719,34 @@ export async function startLoopbackGateway(
           port: actual,
           origin,
           mode: distDir ? "dist" : "proxy",
-          close: () =>
-            new Promise<void>((done) => {
-              server.close(() => done());
+          close: () => {
+            if (closePromise) return closePromise;
+            closing = true;
+            closePromise = new Promise<void>((done) => {
+              let finished = false;
+              const finish = () => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(deadline);
+                done();
+              };
+              // Deadline 覆盖 server.close 的等待本身，退出和刷新均不会挂在升级连接上。
+              const deadline = setTimeout(() => {
+                log.warn("[LoopbackGateway] close deadline reached; destroying owned connections");
+                destroyConnections();
+                finish();
+              }, GATEWAY_CLOSE_DEADLINE_MS);
+              server.close(finish);
               server.closeAllConnections?.();
-            }),
+              destroyConnections();
+            });
+            return closePromise;
+          },
         });
       });
     };
     server.on("error", (err: NodeJS.ErrnoException) => {
+      if (closing) return;
       if (err.code === "EADDRINUSE" && !server.listening) {
         listen(0, true);
         return;

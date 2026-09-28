@@ -244,8 +244,16 @@ const updater = {
  * global.d.ts 的 HostCommand。
  */
 let hostCommandHandler: ((payload: unknown) => void) | null = null;
+let latestHostActivity: { type: "host-activity"; visible: boolean } | null = null;
 if (bridgeAllowed) {
   ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
+    // 状态允许迟订阅同步；动作命令只在到达时分发，不能重放新建任务等业务动作。
+    if (payload && typeof payload === "object") {
+      const activity = payload as { type?: unknown; visible?: unknown };
+      if (activity.type === "host-activity" && typeof activity.visible === "boolean") {
+        latestHostActivity = { type: "host-activity", visible: activity.visible };
+      }
+    }
     hostCommandHandler?.(payload);
   });
 }
@@ -253,6 +261,11 @@ const events = {
   /** 注册/注销宿主命令回调（传 null 注销）。 */
   onHostCommand(cb: ((payload: unknown) => void) | null): void {
     hostCommandHandler = cb;
+    if (cb) {
+      // 新文档没有旧 preload 的缓存，向宿主请求当前态补齐重载/冷启动时序。
+      ipcRenderer.send("nuwax:host-activity-sync");
+      if (latestHostActivity) cb({ ...latestHostActivity });
+    }
   },
 };
 

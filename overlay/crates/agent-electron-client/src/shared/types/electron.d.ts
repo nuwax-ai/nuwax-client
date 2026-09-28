@@ -868,6 +868,7 @@ export interface ElectronAPI {
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
+    getHostActivity?: () => Promise<{ visible: boolean } | null>;
     close: () => Promise<void>;
   };
   menu: {

@@ -44,6 +44,7 @@ import * as cuaComputerUse from "../services/cua/computerUse";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
+import { attachHostActivityBusinessWindow, getHostActivitySnapshot, syncHostActivityGuest } from "../services/hostActivity";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
@@ -439,6 +440,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
 
   const isTrustedSender = (event: Electron.IpcMainEvent | IpcMainInvokeEvent) =>
     !switching && isTrustedBusinessSender(event, trustedOrigins());
+
+  ipcMain.on("nuwax:host-activity-sync", (event) => {
+    if (!isTrustedSender(event) || event.senderFrame !== event.sender.mainFrame) return;
+    syncHostActivityGuest(event.sender);
+  });
+  ipcMain.handle("window:getHostActivity", (event) => {
+    return isHostSender(event) ? getHostActivitySnapshot() : null;
+  });
   const isTrustedMenuSource = (
     frameUrl: string | undefined,
     source: Electron.WebContents,
@@ -820,7 +829,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         shellWindows.delete(win);
         businessShellWindows.delete(win);
       });
-      if (businessWindow) trustInitialBusinessNavigation(win.webContents, target.href);
+      if (businessWindow) {
+        trustInitialBusinessNavigation(win.webContents, target.href);
+        attachHostActivityBusinessWindow(win);
+      }
       void win.loadURL(target.href);
       win.focus();
       log.info("[NuwaxBridge] native:openWindow", { path: raw });

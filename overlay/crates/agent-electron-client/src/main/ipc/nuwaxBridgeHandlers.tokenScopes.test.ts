@@ -22,6 +22,9 @@ const mainWindowContents = {
 
 // vi.mock 工厂被提升，共享 mock 需经 vi.hoisted 提前创建
 const mocks = vi.hoisted(() => ({
+  hostActivitySnapshot: vi.fn(() => ({ visible: false })),
+  syncHostActivityGuest: vi.fn(),
+  attachHostActivityBusinessWindow: vi.fn(),
   showSaveDialog: vi.fn(),
   showOpenDialog: vi.fn(),
   netFetch: vi.fn(),
@@ -44,6 +47,12 @@ const mocks = vi.hoisted(() => ({
     setPermissionCheckHandler: ReturnType<typeof vi.fn>;
   }>(),
   installContextMenu: vi.fn(),
+}));
+
+vi.mock("../services/hostActivity", () => ({
+  getHostActivitySnapshot: mocks.hostActivitySnapshot,
+  syncHostActivityGuest: mocks.syncHostActivityGuest,
+  attachHostActivityBusinessWindow: mocks.attachHostActivityBusinessWindow,
 }));
 
 vi.mock("../services/loopbackGateway", () => ({
@@ -197,6 +206,9 @@ async function seedTicket(value: string): Promise<void> {
 }
 
 beforeEach(() => {
+  mocks.hostActivitySnapshot.mockClear();
+  mocks.syncHostActivityGuest.mockClear();
+  mocks.attachHostActivityBusinessWindow.mockClear();
   mocks.mainLang = "zh-cn";
   mocks.setMainLang.mockClear();
   mocks.trayRefresh.mockClear();
@@ -228,6 +240,38 @@ beforeEach(() => {
   settings.set("step1_config", { serverHost: HOST_ORIGIN });
   settings.set("nuwax.loopback", { enabled: true, origin: GW_ORIGIN });
   handlers.get("auth:getContext")!(senderEvent(GW_ORIGIN));
+});
+
+describe("host activity read-only IPC", () => {
+  it("当前壳主文档读取快照，业务 guest、外域导航和壳子 frame 均不获得快照", () => {
+    const read = handlers.get("window:getHostActivity")!;
+    expect(read(hostEvent())).toEqual({ visible: false });
+    expect(read(senderEvent(GW_ORIGIN))).toBeNull();
+    expect(read({ sender: mainWindowContents, senderFrame: { ...mainFrame } })).toBeNull();
+    const previous = mainFrame.url;
+    try {
+      mainFrame.url = "https://external.example/home";
+      expect(read(hostEvent())).toBeNull();
+    } finally {
+      mainFrame.url = previous;
+    }
+    expect(mocks.hostActivitySnapshot).toHaveBeenCalledOnce();
+  });
+
+  it("只有受信 guest 的主文档可以请求活动态同步", () => {
+    const receive = emitters.get("nuwax:host-activity-sync")![0];
+    const frame = { url: `${GW_ORIGIN}/home` };
+    const guest = { mainFrame: frame, getURL: () => frame.url };
+    const event = { sender: guest, senderFrame: frame };
+    receive(event);
+    expect(mocks.syncHostActivityGuest).toHaveBeenCalledWith(guest);
+    mocks.syncHostActivityGuest.mockClear();
+    receive({ ...event, senderFrame: { ...frame } });
+    receive({ ...event, senderFrame: { url: "https://external.example/home" } });
+    const foreign = { mainFrame: frame, getURL: () => "https://external.example/home" };
+    receive({ sender: foreign, senderFrame: frame });
+    expect(mocks.syncHostActivityGuest).not.toHaveBeenCalled();
+  });
 });
 
 describe("cookie 会话与旧 token 桥", () => {
@@ -680,6 +724,17 @@ describe("trusted runtime auth context and window navigation", () => {
   it("keeps business SPA paths while rewriting standalone windows through the gateway", () => {
     handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}/agent/detail?id=1#section` });
     expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/agent/detail?id=1&_shell=1#section`);
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledOnce();
+    expect(mocks.attachHostActivityBusinessWindow.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.loadURL.mock.invocationCallOrder[0]);
+  });
+
+  it("relative new-window business pages also attach their own activity bridge", () => {
+    settings.set("step1_config", { serverHost: HOST_ORIGIN, secondaryPages: "new-window" });
+    expect(handlers.get("native:openWindow")!(windowEvent(), { path: "/agent/detail?id=1" }))
+      .toEqual({ success: true });
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledOnce();
+    expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/agent/detail?id=1&_shell=1`);
   });
 
   it("marks an absolute same-origin popup as a standalone window in direct mode", () => {
@@ -688,6 +743,7 @@ describe("trusted runtime auth context and window navigation", () => {
       path: `${HOST_ORIGIN}/agent/detail?id=1`,
     })).toEqual({ success: true });
     expect(mocks.loadURL).toHaveBeenCalledWith(`${HOST_ORIGIN}/agent/detail?id=1&_shell=1`);
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledOnce();
   });
 
   it("keeps a double-slash business pathname under the gateway authority", () => {
@@ -709,6 +765,7 @@ describe("trusted runtime auth context and window navigation", () => {
       contents: unknown, permission: string,
     ) => boolean;
     expect(check(null, "media")).toBe(false);
+    expect(mocks.attachHostActivityBusinessWindow).not.toHaveBeenCalled();
   });
 
   it.each([

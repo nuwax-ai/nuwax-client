@@ -98,6 +98,7 @@ import {
   shouldShowServiceAttention,
   type CommercialServicePhase,
 } from "./services/serviceAttention";
+import { bindUiStatusActivity, createUiStatusPoller } from "./services/uiStatusPoller";
 
 // 主题类型
 export type ThemeMode = "light" | "dark" | "system";
@@ -642,7 +643,6 @@ function App() {
   const [startingServices, setStartingServices] = useState<Set<string>>(
     new Set(),
   );
-  const servicesPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * 上一次同步给托盘的整体服务状态（true=有服务在跑 / false=全部停止）。
    * 避免每 5 秒轮询都向主进程发一次 tray:updateServicesStatus IPC。
@@ -1119,7 +1119,7 @@ function App() {
   // ============================================
   // 服务状态轮询
   // ============================================
-  const pollServicesStatus = useCallback(async () => {
+  const loadServicesStatus = useCallback(async (isCurrent: () => boolean) => {
     try {
       const items: ServiceItem[] = [];
       // 任一 status() 抛错不应阻塞其他服务的轮询；用 allSettled 单点隔离。
@@ -1135,6 +1135,7 @@ function App() {
         window.electronAPI?.guiServer?.isEnabled(),
         window.electronAPI?.ttyd.status(),
       ]);
+      if (!isCurrent()) return;
       const unwrap = <T,>(r: PromiseSettledResult<T>, fallback: T): T =>
         r.status === "fulfilled" ? (r.value ?? fallback) : fallback;
       const fsStatus = unwrap(settled[0], { running: false });
@@ -1223,11 +1224,24 @@ function App() {
       }
     } catch (error) {
       console.error("[App] pollServicesStatus failed:", error);
-      setPollFailCount((count) => count + 1);
+      if (isCurrent()) setPollFailCount((count) => count + 1);
     } finally {
-      setServicesLoading(false);
+      if (isCurrent()) setServicesLoading(false);
     }
   }, []);
+
+  const servicesPoller = useMemo(
+    () => createUiStatusPoller(loadServicesStatus),
+    [loadServicesStatus],
+  );
+  const pollServicesStatus = useCallback(
+    () => servicesPoller.refresh(),
+    [servicesPoller],
+  );
+  useEffect(() => {
+    servicesPoller.resume();
+    return () => servicesPoller.dispose();
+  }, [servicesPoller]);
 
   // ============================================
   // 逐个启动服务（实时更新状态）
@@ -1527,19 +1541,15 @@ function App() {
   // 启动服务状态轮询
   useEffect(() => {
     if (isSetupComplete !== true) return;
-
-    // 立即执行一次
-    pollServicesStatus();
-
-    // 每 5 秒轮询一次
-    servicesPollTimer.current = setInterval(pollServicesStatus, 5000);
-
-    return () => {
-      if (servicesPollTimer.current) {
-        clearInterval(servicesPollTimer.current);
-      }
-    };
-  }, [isSetupComplete]);
+    const api = window.electronAPI;
+    return bindUiStatusActivity(servicesPoller, {
+      getSnapshot: api?.window?.getHostActivity,
+      subscribe(listener) {
+        api?.on("nuwax:host-activity-changed", listener);
+        return () => api?.off("nuwax:host-activity-changed", listener);
+      },
+    }, document);
+  }, [isSetupComplete, servicesPoller]);
 
   // ============================================
   // 监听更新状态（header tag 展示）
