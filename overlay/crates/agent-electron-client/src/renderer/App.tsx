@@ -345,8 +345,10 @@ function App() {
   // nuwax 布局状态 → 工具栏收起按钮显隐：当前页无二级菜单时按钮无意义，隐藏。
   // 默认 false（隐藏）——nuwax 布局挂载后推送真实值；/Login 等无布局页不推或推 false。
   const [secondMenuAvailable, setSecondMenuAvailable] = useState(false);
-  // 后台菜单状态就绪前不开放新建任务，避免登录/刷新期间保留旧权限。
-  const [newTaskAvailable, setNewTaskAvailable] = useState(false);
+  // 商业版等待后台菜单状态；社区版保留原有的新建任务入口。
+  const [newTaskAvailable, setNewTaskAvailable] = useState(
+    APP_NAME_IDENTIFIER !== "nuwax",
+  );
   const [titlebarDragRegions, setTitlebarDragRegions] = useState<
     TitlebarDragRegion[]
   >([]);
@@ -1022,7 +1024,9 @@ function App() {
   const handleGuestNavigationStart = useCallback(
     (event?: { isInPlace?: boolean }) => {
       setTitlebarDragRegions([]);
-      if (!event?.isInPlace) setNewTaskAvailable(false);
+      if (!event?.isInPlace) {
+        setNewTaskAvailable(APP_NAME_IDENTIFIER !== "nuwax");
+      }
     },
     [],
   );
