@@ -62,6 +62,8 @@ export interface TrafficLightToolbarProps {
   menuCollapsed: boolean;
   /** 当前页是否存在可收起的二级菜单（nuwax 经桥推送；无则隐藏收起按钮）。 */
   menuAvailable: boolean;
+  /** 后台菜单允许新建任务时展示文件菜单入口；宿主按布局推送更新。 */
+  newTaskAvailable?: boolean;
   /** webview 后退能力（false 时禁用后退项）。 */
   canGoBack: boolean;
   /** webview 前进能力（false 时禁用前进项）。 */
@@ -134,6 +136,7 @@ const menuRow = (text: string, shortcut?: string): React.ReactNode => (
 const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   menuCollapsed,
   menuAvailable,
+  newTaskAvailable = true,
   canGoBack,
   canGoForward,
   onToggleMenu,
@@ -298,11 +301,13 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         menuId="file"
         label={t(I18N_KEYS.Toolbar.FILE)}
         items={[
-          {
-            key: "newTask",
-            label: menuRow(t(I18N_KEYS.Toolbar.NEWTASK), "Ctrl+N"),
-            onClick: onNewTask,
-          },
+          ...(newTaskAvailable
+            ? [{
+                key: "newTask",
+                label: menuRow(t(I18N_KEYS.Toolbar.NEWTASK), "Ctrl+N"),
+                onClick: onNewTask,
+              }]
+            : []),
           {
             key: "search",
             label: menuRow(t(I18N_KEYS.Toolbar.SEARCH), "Ctrl+K"),

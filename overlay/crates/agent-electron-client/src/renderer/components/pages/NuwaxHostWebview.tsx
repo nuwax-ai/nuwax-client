@@ -57,7 +57,7 @@ export interface NuwaxHostWebviewProps {
     canGoForward: boolean;
   }) => void;
   /** guest 顶层导航开始时清除旧页面上报的拖拽矩形。 */
-  onNavigationStart?: () => void;
+  onNavigationStart?: (event?: { isInPlace?: boolean }) => void;
   /** guest 加载阶段上报（resolving/loading/stopped），供 App 首载覆盖层计时。 */
   onGuestLoadStateChange?: (phase: GuestLoadPhase) => void;
 }
@@ -239,10 +239,10 @@ const NuwaxHostWebview = forwardRef<
         canGoForward: !!wv.canGoForward?.(),
       });
     };
-    const clearTitlebarRegions = (event: { isMainFrame?: boolean }) => {
+    const clearTitlebarRegions = (event: { isMainFrame?: boolean; isInPlace?: boolean }) => {
       if (event.isMainFrame !== true) return;
       setFailure(null);
-      onNavigationStart?.();
+      onNavigationStart?.({ isInPlace: event.isInPlace });
     };
     const notifyFailed = (event: Parameters<typeof mainDocumentFailure>[0]) => {
       const next = mainDocumentFailure(event);

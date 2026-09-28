@@ -73,6 +73,36 @@ describe("macOS 原生菜单语言与动作", () => {
     ]);
   });
 
+  it.each([undefined, true])("新建任务可用状态 %s 保留菜单和快捷键", (newTaskAvailable) => {
+    const actions = makeActions();
+    const template = buildMacApplicationMenu(t, "Nuwax", actions, { newTaskAvailable });
+    const newTask = children(template[1])[0];
+    expect(newTask.label).toBe("新建任务");
+    expect(newTask.accelerator).toBe("CmdOrCtrl+N");
+    newTask.click?.({} as never, {} as never, {} as never);
+    expect(actions.newTask).toHaveBeenCalledOnce();
+  });
+
+  it("新建任务隐藏时移除菜单及 accelerator，其他菜单和动作不变", () => {
+    const actions = makeActions();
+    const visible = buildMacApplicationMenu(t, "Nuwax", actions, { newTaskAvailable: true });
+    const hidden = buildMacApplicationMenu(t, "Nuwax", actions, { newTaskAvailable: false });
+    const file = children(hidden[1]);
+    expect(file).toEqual(children(visible[1]).slice(1));
+    expect(labels(hidden)).not.toContain("新建任务");
+    expect(hidden.flatMap(children).some((item) => item.accelerator === "CmdOrCtrl+N")).toBe(false);
+    for (const index of [0, 2, 3, 4, 5]) {
+      expect(JSON.parse(JSON.stringify(hidden[index])))
+        .toEqual(JSON.parse(JSON.stringify(visible[index])));
+    }
+    file.filter((item) => item.type !== "separator")
+      .forEach((item) => item.click?.({} as never, {} as never, {} as never));
+    expect(actions.search).toHaveBeenCalledOnce();
+    expect(actions.modifyWorkspace).toHaveBeenCalledOnce();
+    expect(actions.openWorkspace).toHaveBeenCalledOnce();
+    expect(actions.newTask).not.toHaveBeenCalled();
+  });
+
   it("语言切换即时重建菜单，同语种同步不重建、不调用动作", () => {
     const actions = makeActions();
     const rendered: MenuItemConstructorOptions[][] = [];

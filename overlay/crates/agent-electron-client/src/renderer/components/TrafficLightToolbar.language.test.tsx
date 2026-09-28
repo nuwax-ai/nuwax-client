@@ -2,9 +2,10 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiRequest, changeLanguage } = vi.hoisted(() => ({
+const { apiRequest, changeLanguage, renderedMenuItems } = vi.hoisted(() => ({
   apiRequest: vi.fn(async () => ({ code: "0000", data: [] })),
   changeLanguage: vi.fn(async () => undefined),
+  renderedMenuItems: [] as Array<{ key?: string; onClick?: () => void }>,
 }));
 
 vi.mock("../services/core/api", () => ({ apiRequest }));
@@ -26,17 +27,20 @@ vi.mock("antd", async () => {
     ),
     Dropdown: ({ children, menu }: {
       children: React.ReactNode;
-      menu: { items: Array<{ key?: string; type?: string; label?: React.ReactNode }> };
-    }) => (
-      <div>
-        {children}
-        <ul>
-          {menu.items.filter((item) => item.type !== "divider").map((item) => (
-            <li key={item.key} data-menu-key={item.key}>{item.label}</li>
-          ))}
-        </ul>
-      </div>
-    ),
+      menu: { items: Array<{ key?: string; type?: string; label?: React.ReactNode; onClick?: () => void }> };
+    }) => {
+      renderedMenuItems.push(...menu.items);
+      return (
+        <div>
+          {children}
+          <ul>
+            {menu.items.filter((item) => item.type !== "divider").map((item) => (
+              <li key={item.key} data-menu-key={item.key}>{item.label}</li>
+            ))}
+          </ul>
+        </div>
+      );
+    },
   };
 });
 vi.mock("@ant-design/icons", async () => {
@@ -59,6 +63,7 @@ vi.mock("./captionGlyphs", async () => {
 beforeEach(() => {
   vi.resetModules();
   changeLanguage.mockClear();
+  renderedMenuItems.length = 0;
   vi.stubGlobal("navigator", { platform: "Win32" });
   vi.stubGlobal("window", {
     electronAPI: {
@@ -121,12 +126,48 @@ const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
 describe("Windows toolbar language", () => {
+  it.each(["Win32", "Linux x86_64"])("%s 按可用状态显隐新建任务，其他菜单与动作不变", async (platform) => {
+    vi.stubGlobal("navigator", { platform });
+    const { setCurrentLang } = await import("../services/core/i18n");
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    await setCurrentLang("zh-cn");
+    const props = {
+      menuCollapsed: false,
+      menuAvailable: true,
+      canGoBack: true,
+      canGoForward: true,
+      onToggleMenu: vi.fn(),
+      onBack: vi.fn(),
+      onForward: vi.fn(),
+      onReload: vi.fn(),
+      onNewTask: vi.fn(),
+      onOpenSearch: vi.fn(),
+      onModifyWorkspace: vi.fn(),
+      onOpenWorkspace: vi.fn(),
+    };
+    const visible = renderToStaticMarkup(<TrafficLightToolbar {...props} newTaskAvailable />);
+    expect(renderedMenuItems.find((item) => item.key === "newTask")?.onClick).toBe(props.onNewTask);
+    renderedMenuItems.length = 0;
+    const hidden = renderToStaticMarkup(<TrafficLightToolbar {...props} newTaskAvailable={false} />);
+    expect(hidden).toBe(visible.replace(/<li data-menu-key="newTask">.*?<\/li>/, ""));
+    expect(hidden).not.toContain("Ctrl+N");
+    expect(renderedMenuItems.some((item) => item.key === "newTask")).toBe(false);
+    for (const key of ["search", "modifyWorkspace", "openWorkspace"]) {
+      renderedMenuItems.find((item) => item.key === key)?.onClick?.();
+    }
+    expect(props.onNewTask).not.toHaveBeenCalled();
+    expect(props.onOpenSearch).toHaveBeenCalledOnce();
+    expect(props.onModifyWorkspace).toHaveBeenCalledOnce();
+    expect(props.onOpenWorkspace).toHaveBeenCalledOnce();
+  });
+
   it("renders headings, dropdown items and tooltips in each selected language and switches back", async () => {
     const { setCurrentLang } = await import("../services/core/i18n");
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     const props = {
       menuCollapsed: false,
       menuAvailable: true,
+      newTaskAvailable: true,
       canGoBack: true,
       canGoForward: true,
       onToggleMenu: vi.fn(),

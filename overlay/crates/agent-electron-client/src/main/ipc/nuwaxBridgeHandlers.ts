@@ -44,6 +44,7 @@ import * as cuaComputerUse from "../services/cua/computerUse";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
+import { setGuestNewTaskAvailable } from "../services/newTaskAvailability";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
@@ -351,6 +352,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- layout：nuwax 布局状态 → 壳（工具栏收起按钮显隐/icon 态） ----
   // secondMenuAvailable：当前页是否有二级菜单（无则隐藏收起按钮）。
   // secondMenuCollapsed：二级菜单真实收起态（壳 icon 以此为准，修 reload 失同步）。
+  // newTaskAvailable：后台菜单控制新建任务；主菜单状态由主窗口 guest 独立同步。
   ipcMain.on("nuwax:layout-sync", (event, payload: unknown) => {
     if (!isTrustedSender(event)) return;
     const safe =
@@ -359,6 +361,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         : null;
     if (!safe) return;
     const forward: Record<string, unknown> = {};
+    if (typeof safe.newTaskAvailable === "boolean" && event.senderFrame === event.sender.mainFrame) {
+      setGuestNewTaskAvailable(
+        event.sender,
+        safe.newTaskAvailable,
+        ctx.getMainWindow()?.webContents,
+      );
+    }
     if (typeof safe.secondMenuAvailable === "boolean") {
       forward.secondMenuAvailable = safe.secondMenuAvailable;
     }

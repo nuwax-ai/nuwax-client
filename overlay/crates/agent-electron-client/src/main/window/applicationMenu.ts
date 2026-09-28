@@ -24,6 +24,7 @@ export function buildMacApplicationMenu(
   t: TranslateMenu,
   appName: string,
   actions: ApplicationMenuActions,
+  options: { newTaskAvailable?: boolean } = {},
 ): MenuItemConstructorOptions[] {
   const keys = I18N_KEYS.NativeMenu;
   const editItem = (
@@ -56,7 +57,9 @@ export function buildMacApplicationMenu(
     {
       label: t(keys.FILE),
       submenu: [
-        { label: t(keys.NEWTASK), accelerator: "CmdOrCtrl+N", click: actions.newTask },
+        ...(options.newTaskAvailable !== false
+          ? [{ label: t(keys.NEWTASK), accelerator: "CmdOrCtrl+N", click: actions.newTask }]
+          : []),
         { label: t(keys.SEARCH), accelerator: "CmdOrCtrl+K", click: actions.search },
         { type: "separator" },
         { label: t(keys.MODIFYWORKSPACE), click: actions.modifyWorkspace },
