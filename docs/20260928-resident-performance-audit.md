@@ -4,9 +4,9 @@
 
 ## 当前处理范围（复评与业务优先级调整）
 
-用户明确 AppDev 不是当前核心业务，后续会重构，因此 AppDev 专属问题暂缓修复，保留为重构验收项。R04 的 AppDevPro 环境保活、R09 中 AppDevPro 的任务/日志轮询，以及 R01 的 AppDev 专属 controller 接线不纳入当前修复批次。
+当前审计与修复范围包括商业客户端、PC Web 核心会话以及 AppDev / AppDevPro。R04 的 AppDevPro 环境保活、R09 中 AppDevPro 的任务/日志轮询，以及 R01 的 AppDev 专属 controller 接线均纳入当前范围。后续重构不作为暂缓这些生命周期问题的理由。
 
-共享实现仍按核心业务入口评估：通用 SSE 还用于智能体优化和工作流试运行；EmbeddedConsoleTerminal 还用于 Chat、ConversationAgent 和 EditAgent；PagePreviewIframe 还用于 Chat、应用标签和智能体详情。不能因这些组件也被 AppDev 使用而整体暂缓。同名日志 hook 需按路径区分，ConversationAgent/hooks 版本不属于 AppDevPro 专属范围。
+共享实现统一评估并验证各入口：通用 SSE 用于智能体优化、工作流试运行和 AppDev；EmbeddedConsoleTerminal 用于 Chat、ConversationAgent、EditAgent 和 AppDevPro；PagePreviewIframe 用于 Chat、应用标签、智能体详情和开发预览。同名日志 hook 按路径分别检查 AppDevPro/hooks 与 ConversationAgent/hooks，避免遗漏独立生命周期。
 
 复评确认 R01、R02 和 R04 的具体生命周期缺陷，但当前处理优先级以本节为准。R03 是慢消费者负载下的缓冲风险；R06、R08、R09 和 R12 需结合实测确定优化投入。现有缓存有数量限制，终端有队列阈值，不能将整份清单统称为正常空闲时的持续内存泄漏。
 
@@ -27,12 +27,12 @@ P1 表示优先修复的资源或退出可靠性问题；P2 表示常驻开销�
 | R01 | P1 | 旧通用 SSE 的关闭没有实际 abort；并发连接互相清除超时监控 | 受控模拟复现 |
 | R02 | P1 | gateway 未销毁升级后的 WebSocket，关闭可永久等待 | 临时隔离连接复现 |
 | R03 | P1 | ComputerServer SSE 忽略写入背压，慢客户端使主进程缓冲持续增长 | 停滞 Writable 模拟复现 |
-| R04 | 暂缓，留待 AppDev 重构 | IDE 环境初始化迟到响应在页面卸载后重新启动保活 | 生命周期复现；不纳入当前修复批次 |
+| R04 | P2，确定缺陷 | IDE 环境初始化迟到响应在页面卸载后重新启动保活 | 生命周期复现；纳入当前修复批次 |
 | R05 | P2 | 思考耗时 Map 脱离页面回收，SPA 生命周期内持续累计 | 投影模拟复现 |
 | R06 | P2 | 长会话反复全文投影，历史内容和 DOM 无窗口上界 | 源码与合成耗时实验 |
 | R07 | P2 | 当前底部终端缺少背压，输入队列积压后可丢输出 | 源码与 xterm 队列模拟 |
 | R08 | P2 | 隐藏的同源预览仍观察全文并序列化 HTML | 源码因果链 |
-| R09 | 待测；AppDev 部分暂缓 | 壳状态查询和二级窗口保留评估，IDE 专属轮询留待重构 | 源码因果链 |
+| R09 | 待测，策略项 | IDE 任务/日志轮询、壳状态查询和二级窗口均保留评估 | 源码因果链；后台任务保活单独决策 |
 | R10 | P2 | 通知轮询没有登录门，登录页仍持续请求 | 源码因果链 |
 | R11 | P2 | 隐藏时新建/重载 guest 的休眠初态可能被桥丢弃 | 跨层源码时序；待真机补验 |
 | R12 | P2 | MCP 项目日志缺少跨项目 TTL、单文件及目录总量预算 | 当前随包实现与主进程清理源码 |
@@ -43,7 +43,7 @@ P1 表示优先修复的资源或退出可靠性问题；P2 表示常驻开销�
 
 模拟完成事件并推进 500 ms：`onClose=1`、`signal.aborted=false`、取消句柄 Promise 仍 pending，后续消息依然分发。两条流并发并静默 60 秒：只有第二条被中止，第一条的 watchdog 已被清掉。异常路径已有真正 abort，不能覆盖完成/取消路径。
 
-建议同步提供每连接取消句柄，显式取消应实际 abort 网络，每连接独立 watchdog；完成事件的断流时机需保留协议尾部消息。共享入口保留修复范围，AppDev 两阶段请求的专属 controller 接线暂缓。主会话使用的 `fetchEventSourceConversationInfo.ts` 已有独立实现，可参考。
+建议同步提供每连接取消句柄，显式取消应实际 abort 网络，每连接独立 watchdog；完成事件的断流时机需保留协议尾部消息。共享入口与 AppDev 两阶段请求的专属 controller 接线均纳入修复范围。主会话使用的 `fetchEventSourceConversationInfo.ts` 已有独立实现，可参考。
 
 ### R02：gateway 关闭等待升级连接
 
@@ -61,13 +61,13 @@ P1 表示优先修复的资源或退出可靠性问题；P2 表示常驻开销�
 
 建议按客户端设置待写字节和等待时间预算；背压时暂停/合并可恢复事件，超限断开慢客户端并通过现有恢复协议补齐。不能简单丢弃业务消息。
 
-### R04：卸载后重新启动容器保活（AppDev 专属，暂缓）
+### R04：卸载后重新启动容器保活（AppDev 专属，纳入当前批次）
 
 [useUserAppEnvPod.ts:47](/Users/apple/workspace/nuwax-client/nuwax/src/pages/AppDevPro/hooks/useUserAppEnvPod.ts:47) 初始化递增 generation，但 cleanup 只 cancel 保活，没有使在途 ensure 失效。迟到成功或节流响应仍可通过代次检查并运行 60 秒保活（85–105 行）。ahooks 的卸载 cancel 不能阻止之后再次调用 run。
 
 受控顺序为：ensure pending → 卸载 cancel → resolve 成功 → `runKeepalive(afterUnmount)`。已有代次检查能防环境/会话切换，漏掉最终卸载。
 
-留待 AppDev 重构时处理：卸载递增 generation 或设置 disposed，并在所有重新启动保活的分支复核生命周期。是否继续维持远端运行任务，应由独立的任务所有者决定。普通路由失活已有代次保护，本项触发边界是请求未完成时直接卸载。
+建议卸载递增 generation 或设置 disposed，并在所有重新启动保活的分支复核生命周期。是否继续维持远端运行任务，应由独立的任务所有者决定。普通路由失活已有代次保护，本项触发边界是请求未完成时直接卸载。
 
 ### R05：思考锚点累计
 
@@ -149,8 +149,8 @@ ego-browser 的独立审计空间成功打开 `localhost:3001` 已登录首页�
 
 ## 修复与长期验收顺序
 
-1. 当前优先处理 R02 gateway 连接收尾与有效退出 deadline、R01 共享 SSE 的显式取消及独立 watchdog、R03 慢消费者预算与恢复完整性。AppDev 专属修复暂缓。
-2. 核心会话、共享终端/预览、宿主隐藏初态和登录态轮询继续评估；根据真实生产构建的测量结果决定渲染与后台轮询改造幅度。隐藏时优先暂停 UI 工作，必要的运行任务与保活单独决策。R04 及 R09 的 AppDev 专属部分留待重构。
+1. 当前优先处理 R02 gateway 连接收尾与有效退出 deadline、R01 通用及 AppDev SSE 的显式取消与独立 watchdog、R04 卸载后迟到响应失效；同批设计 R03 慢消费者预算与恢复完整性。
+2. 核心会话、AppDevPro 任务/日志轮询、共享终端/预览、宿主隐藏初态和登录态轮询继续评估；根据真实生产构建的测量结果决定渲染与后台轮询改造幅度。隐藏时优先暂停 UI 工作，必要的运行任务与保活单独决策。
 3. 用固定源码版本的真实安装包做 24 小时初验、72 小时复验，分别覆盖 macOS/Windows；PC Web 使用生产构建对照。执行空闲、托盘/锁屏、运行任务、100 次页面切换、慢网络、断网恢复、睡眠唤醒、登出重登、关二级窗口和退出。
 4. 分进程低频记录 CPU、RSS、JS heap、GPU/子进程、连接、句柄、timer/listener、缓存实例/字节、待写队列及日志/数据库体积。预热后同一场景应趋于平台，关闭资源后数量回到约定上界；登录页无鉴权轮询，隐藏 UI 无高频状态查询，任务正常继续，恢复无重复流，退出有明确 deadline。
 
