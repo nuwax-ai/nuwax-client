@@ -283,10 +283,13 @@ test('manifest source must agree on all five platforms', () => {
   assert.throws(() => verifyManifests(f.manifests, f.view().assets, f.identity, source), /frontend 来源/);
 });
 
-test('platform-local frontend builds may have different resource tree hashes', () => {
+test('stable requires identical pinned frontend bytes; beta permits platform-local builds', () => {
   const f = fixture();
   f.manifests['linux-arm64'].frontend = { ...f.manifests['linux-arm64'].frontend, distSha256: '1'.repeat(64) };
-  assert.doesNotThrow(() => verifyManifests(f.manifests, f.view().assets, f.identity, source));
+  assert.throws(() => verifyManifests(f.manifests, f.view().assets, f.identity, source), /stable 五平台前端产物 SHA256 不一致/);
+  const beta = fixture({ channel: 'beta' });
+  beta.manifests['linux-arm64'].frontend = { ...beta.manifests['linux-arm64'].frontend, distSha256: '1'.repeat(64) };
+  assert.doesNotThrow(() => verifyManifests(beta.manifests, beta.view().assets, beta.identity, source));
 });
 
 test('mirror verification compares actual SHA256 and rejects same-size replacement', async () => {

@@ -201,6 +201,9 @@ function verify([tag, assetsDir, channel = 'stable']) {
       if (manifest.source[name] !== source[name]) fail(`各平台 ${name} SHA 不一致`);
     }
   }
+  if (channel === 'stable' && new Set(manifests.map((value) => value.frontend.distSha256)).size !== 1) {
+    fail('stable 五平台前端产物 SHA256 不一致');
+  }
   const version = tag.replace(/^(electron|prerelease)-v/, '');
   const windowsExe = channel === 'beta'
     ? `Nuwax-Setup-${version}-unsigned.exe`

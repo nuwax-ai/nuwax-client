@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
-import { buildFrontend, preparePinnedFrontend } from './client/frontend.mjs';
+import { buildFrontend, preparePinnedFrontend, usePinnedFrontendDist } from './client/frontend.mjs';
 
 function write(file, contents) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -16,7 +16,7 @@ function fixture(t, { initialized = true, versionExists = true } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-frontend-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const p = core.paths(root);
-  const sourceSha = 'a'.repeat(40), stamp = sourceSha.slice(0, 9);
+  const sourceSha = 'a'.repeat(40), stamp = sourceSha.slice(0, 9), distSha = 'd'.repeat(40);
   const generated = path.join(p.frontend, 'src/constants/version.ts');
   const original = Buffer.from('// developer-owned bytes\r\nexport const version = "local";\r\n');
   write(path.join(p.frontend, 'package.json'), { packageManager: 'pnpm@10.27.0' });
@@ -25,7 +25,7 @@ function fixture(t, { initialized = true, versionExists = true } = {}) {
   if (versionExists) write(generated, original);
   const userFile = path.join(p.frontend, 'src/current-wip.ts');
   write(userFile, 'export const uncommitted = true;\n');
-  const state = { sourceSha, stamp, status: '', expected: sourceSha, head: sourceSha, buildCalls: 0, installs: 0 };
+  const state = { sourceSha, distSha, stamp, status: '', expected: sourceSha, head: sourceSha, distHead: distSha, distStatus: '', buildCalls: 0, installs: 0 };
   const calls = [];
   const tools = {
     ...core,
@@ -35,10 +35,11 @@ function fixture(t, { initialized = true, versionExists = true } = {}) {
       if (args[0] === 'rev-parse') {
         if (args.includes('--short')) return state.stamp;
         if (args[1] === 'HEAD:nuwax') return state.sourceSha;
-        if (args[1] === 'HEAD') return state.head;
+        if (args[1] === 'HEAD:nuwax-dist') return state.distSha;
+        if (args[1] === 'HEAD') return dir === p.dist ? state.distHead : state.head;
         if (args[1].endsWith('^{commit}')) return state.expected;
       }
-      if (args[0] === 'status') return state.status;
+      if (args[0] === 'status') return dir === p.dist ? state.distStatus : state.status;
       return '';
     },
     pnpmRun(dir, args, options = {}) {
@@ -195,4 +196,37 @@ test('CI pinned entry enforces clean source even if allowDirty is supplied', asy
   const f = fixture(t); f.state.status = ' M src/current-wip.ts';
   await assert.rejects(preparePinnedFrontend(f.root, { expectedSha: f.state.sourceSha, allowDirty: true, tools: f.tools }), /source edits/);
   assert.equal(f.state.installs, 0);
+});
+
+test('release stages only the exact clean artifact pin and matching frontend stamp', async (t) => {
+  const f = fixture(t);
+  write(path.join(f.p.dist, '.git'), 'gitdir: fixture');
+  write(path.join(f.p.dist, 'README.md'), 'artifact repo documentation');
+  write(path.join(f.p.dist, 'version.json'), { gitHash: f.state.stamp });
+  write(path.join(f.p.dist, 'index.html'), '<script src="/app.js"></script>');
+  write(path.join(f.p.dist, 'app.js'), 'console.log("pinned")');
+  const result = await usePinnedFrontendDist(f.root, { tools: f.tools });
+  assert.equal(result.sourceSha, f.state.sourceSha);
+  assert.equal(result.distSha, f.state.distSha);
+  assert.equal(fs.readFileSync(path.join(f.p.frontend, 'dist/app.js'), 'utf8'), 'console.log("pinned")');
+  assert.equal(fs.existsSync(path.join(f.p.frontend, 'dist/.git')), false);
+  assert.equal(fs.existsSync(path.join(f.p.frontend, 'dist/README.md')), false);
+  assert.equal(f.state.buildCalls, 0);
+  assert.equal(f.state.installs, 0);
+});
+
+test('release refuses mismatched or dirty artifact pin before staging', async (t) => {
+  const f = fixture(t);
+  write(path.join(f.p.dist, '.git'), 'gitdir: fixture');
+  write(path.join(f.p.dist, 'version.json'), { gitHash: f.state.stamp });
+  write(path.join(f.p.dist, 'index.html'), 'frontend');
+  f.state.distHead = 'e'.repeat(40);
+  await assert.rejects(usePinnedFrontendDist(f.root, { tools: f.tools }), /does not match/);
+  f.state.distHead = f.state.distSha;
+  f.state.distStatus = ' M app.js';
+  await assert.rejects(usePinnedFrontendDist(f.root, { tools: f.tools }), /local changes/);
+  f.state.distStatus = '';
+  write(path.join(f.p.dist, 'version.json'), { gitHash: 'b'.repeat(9) });
+  await assert.rejects(usePinnedFrontendDist(f.root, { tools: f.tools }), /differs from source gitlink/);
+  assert.equal(fs.existsSync(path.join(f.p.frontend, 'dist')), false);
 });

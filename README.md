@@ -199,7 +199,7 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 
 - **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
 - **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
-- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应机器生成资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。phase 1 的正式版与 beta CI 保持从 tag 内 `nuwax/` gitlink 现场重建、校验 `dist/version.json`，再将 `nuwax/dist` 打入安装包；CI 尚不消费产物 pin，来源清单仍读取现场构建目录。工作区已有 dist 不代表发布包内容。
+- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 仍从源码 pin 现场构建。工作区已有 dist 不代表正式包内容。
 
 ### 发版流程
 
@@ -214,7 +214,7 @@ npm run release -- --channel beta --version X.Y.Z --dry-run
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
 
 1. 提交 `release-notes/electron-v{x.y.z}.md`（beta 使用 `release-notes/prerelease-v{x.y.z}.md`）。
-2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：先跑双轨与前端门禁，再从锁定的 gitlink 构建前端和五平台安装包，产物先留在 Draft Release；每个平台上传源码与产物摘要清单。macOS 必须签名、公证并完成运行时验证，Windows 初始产出 unsigned 包。
+2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：先跑双轨与前端门禁，再校验锁定的前端产物 pin、构建五平台安装包，产物先留在 Draft Release；每个平台上传源码与产物摘要清单。macOS 必须签名、公证并完成运行时验证，Windows 初始产出 unsigned 包。
 3. Windows 人工签名：[docs/sign-windows.md](./docs/sign-windows.md)（Certum SimplySign + 基座内 `npm run sign:win`）。
 4. 调用独立的 `sync-electron-to-oss.yml`：先核对五平台清单和签名版 Windows EXE，再同步资产、更新 stable 指针并公开 Release；失败以红灯呈现。`scripts/release-stable.sh` 编排上述步骤。
 

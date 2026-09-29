@@ -63,6 +63,7 @@ function fixture() {
   assert.equal(record.status, 0, record.stderr);
   copyFileSync(join(windowsOutput, 'build-manifest-windows-x64.json'),
     join(assets, 'build-manifest-windows-x64.json'));
+  const distSha256 = JSON.parse(readFileSync(join(assets, 'build-manifest-windows-x64.json'), 'utf8')).frontend.distSha256;
   const signedDigest = createHash('sha256').update('signed fixture').digest('hex');
   const names = {
     'macos-arm64': ['Nuwax-1.0.32-arm64.dmg', 'Nuwax-1.0.32-arm64-mac.zip'],
@@ -78,7 +79,7 @@ function fixture() {
       schemaVersion: 1,
       tag: 'prerelease-v1.0.32',
       source: { client, shell, frontend },
-      frontend: { stamp: frontend.slice(0, 9), distSha256: 'c'.repeat(64) },
+      frontend: { stamp: frontend.slice(0, 9), distSha256 },
       platform,
       arch,
       artifacts: Object.fromEntries(names[key].map((name) => [name, signedDigest])),
