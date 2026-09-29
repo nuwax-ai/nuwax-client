@@ -140,9 +140,12 @@ jobs:
           # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：凭据经 credential helper 按域注入。
           # 不用 insteadOf——它会改写 `git remote get-url` 输出，upgrade:micro-apps 的
           # 「origin 与 .gitmodules 一致」预检会拒（CI 实测）；helper 只供凭据不动 URL。
+          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：PAT 经 http.extraHeader 按域注入
+          # （actions/checkout 同款机制；不改写 URL/credential——upgrade:micro-apps 的
+          # origin/.gitmodules 一致性预检依赖原始 remote URL，insteadOf/credential helper 均实测翻车）
           if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
-            git config --global credential."https://git.yichamao.com".helper \
-              '!f() { echo username=oauth2; echo password='"'"'"$YICHAMAO_GIT_TOKEN"'"'"'; }; f'
+            git config --global http.https://git.yichamao.com/.extraheader \
+              "Authorization: Basic $(printf 'oauth2:%s' "$YICHAMAO_GIT_TOKEN" | base64)"
           fi
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
