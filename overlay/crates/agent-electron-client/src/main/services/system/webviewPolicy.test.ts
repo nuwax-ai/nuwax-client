@@ -22,13 +22,14 @@ const mocks = vi.hoisted(() => {
     partitionSessions.set(partition, ses);
     return ses;
   });
-  return { appOn: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
+  return { appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
     attachHostActivityBusinessWindow: vi.fn() };
 });
 const settings = new Map<string, unknown>();
 
 vi.mock("electron", () => ({
   app: { on: mocks.appOn },
+  dialog: { showMessageBoxSync: mocks.showMessageBoxSync },
   session: { defaultSession: mocks.defaultSession, fromPartition: mocks.fromPartition },
   BrowserWindow: class {
     loadURL = vi.fn();
@@ -47,6 +48,8 @@ vi.mock("../../db", () => ({
 vi.mock("../hostActivity", () => ({
   attachHostActivityBusinessWindow: mocks.attachHostActivityBusinessWindow,
 }));
+
+vi.mock("../i18n", () => ({ t: (key: string) => key }));
 
 const business = "https://business.example";
 const external = "https://external.example";
@@ -105,6 +108,7 @@ beforeEach(() => {
   settings.clear();
   settings.set("step1_config", { serverHost: business });
   mocks.appOn.mockClear();
+  mocks.showMessageBoxSync.mockReset();
   mocks.fromPartition.mockClear();
   mocks.partitionSessions.clear();
   mocks.popupWindows.length = 0;
@@ -115,7 +119,104 @@ afterEach(() => {
   else process.env.NUWAX_APP_IDENTIFIER = originalProduct;
 });
 
+describe("standalone page unload confirmation", () => {
+  async function unloadWindow(url = `${external}/cashier`, mainWindow = false) {
+    process.env.NUWAX_APP_IDENTIFIER = "nuwax";
+    vi.resetModules();
+    const contents = fakeContents("window", url);
+    const win = { webContents: contents, isDestroyed: () => false };
+    const { initWebviewPolicy } = await import("./webviewPolicy");
+    initWebviewPolicy(() => mainWindow ? win as never : null);
+    const created = mocks.appOn.mock.calls.find(([name]) => name === "browser-window-created")![1];
+    created({}, win);
+    const handler = contents.on.mock.calls.find(([name]) => name === "will-prevent-unload")![1];
+    const event = { preventDefault: vi.fn() };
+    return { win, event, unload: () => handler(event) };
+  }
+
+  it("lets a pending cashier close when the user chooses to leave", async () => {
+    const { win, event, unload } = await unloadWindow();
+    mocks.showMessageBoxSync.mockReturnValue(0);
+    unload();
+    expect(mocks.showMessageBoxSync).toHaveBeenCalledWith(win, expect.objectContaining({
+      type: "question",
+      buttons: ["Claw.Webview.leave", "Claw.Webview.stay"],
+      defaultId: 1,
+      cancelId: 1,
+    }));
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the pending cashier open when the user stays or dismisses the dialog", async () => {
+    const { event, unload } = await unloadWindow();
+    mocks.showMessageBoxSync.mockReturnValue(1);
+    unload();
+    expect(mocks.showMessageBoxSync).toHaveBeenCalledOnce();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("also confirms unsaved work in a standalone business page", async () => {
+    const { event, unload } = await unloadWindow(`${business}/editor`);
+    mocks.showMessageBoxSync.mockReturnValue(1);
+    unload();
+    expect(mocks.showMessageBoxSync).toHaveBeenCalledOnce();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("preserves the main window close-to-tray policy", async () => {
+    const { event, unload } = await unloadWindow(`${business}/home`, true);
+    unload();
+    expect(mocks.showMessageBoxSync).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not take over shell or blank-page unload", async () => {
+    for (const url of ["file:///app/index.html", "about:blank"]) {
+      const { event, unload } = await unloadWindow(url);
+      unload();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+    expect(mocks.showMessageBoxSync).not.toHaveBeenCalled();
+  });
+
+  it("preserves the page if a native dialog cannot be shown", async () => {
+    const { event, unload } = await unloadWindow();
+    mocks.showMessageBoxSync.mockImplementation(() => { throw new Error("dialog unavailable"); });
+    expect(unload).not.toThrow();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("keeps the community window lifecycle unchanged", async () => {
+    await setup("nuwaclaw");
+    expect(mocks.appOn.mock.calls.some(([name]) => name === "browser-window-created")).toBe(false);
+  });
+});
+
 describe("window.open session boundary", () => {
+  it.each([
+    ["webview", business],
+    ["webview", external],
+    ["window", business],
+    ["window", external],
+  ] as const)("%s popup to %s keeps native close controls even when the page requests no frame", async (type, target) => {
+    const created = await setup();
+    const opener = type === "webview"
+      ? attachedWebview(created, `${business}/home`)
+      : fakeContents("window", `${business}/home`);
+    if (type === "window") created({}, opener);
+    const handler = opener.setWindowOpenHandler.mock.lastCall![0];
+    const result = handler({
+      ...(popup(`${target}/cashier`, `${business}/home`) as object),
+      features: "width=500,height=300,frame=no",
+    });
+    expect(result.overrideBrowserWindowOptions).toMatchObject({
+      frame: true,
+      titleBarStyle: "default",
+      titleBarOverlay: false,
+      closable: true,
+    });
+  });
+
   it.each([
     ["webview", business, business, business, true],
     ["window", business, business, business, true],

@@ -7,7 +7,7 @@
  * 3. 文件下载（导出等场景，支持进度条）
  */
 
-import { app, session as electronSession, BrowserWindow } from "electron";
+import { app, session as electronSession, BrowserWindow, dialog } from "electron";
 import type { HandlerDetails, BrowserWindowConstructorOptions, Session, WebContents, WebPreferences } from "electron";
 import { randomUUID } from "crypto";
 import * as path from "path";
@@ -22,6 +22,7 @@ import {
 import { businessBridgeOrigins } from "../auth/businessOrigins";
 import { attachHostActivityBusinessWindow } from "../hostActivity";
 import { isGuestNewTaskAvailable } from "../newTaskAvailability";
+import { t } from "../i18n";
 
 // ---------- 权限白名单 ----------
 
@@ -220,6 +221,11 @@ function buildPopupWindowOptions(
     height,
     minWidth: WEBVIEW_POPUP_MIN_WIDTH,
     minHeight: WEBVIEW_POPUP_MIN_HEIGHT,
+    // 收银台等页面没有壳工具栏，必须由原生标题栏提供关闭入口；覆盖页面的 frame=no。
+    frame: true,
+    titleBarStyle: "default",
+    titleBarOverlay: false,
+    closable: true,
     webPreferences,
     show: true,
     backgroundColor: "#ffffff",
@@ -347,6 +353,34 @@ function setupWindowOpen(): void {
   });
 }
 
+// ---------- 独立页面离开确认 ----------
+
+function setupPopupUnloadConfirmation(getMainWindow: () => BrowserWindow | null): void {
+  // 同时覆盖 native.openWindow、window.open 和跨域导航创建的独立窗口。
+  // beforeunload 不会自动弹出浏览器确认框；不处理会让收银台的关闭按钮无响应。
+  app.on("browser-window-created", (_event, win) => {
+    win.webContents.on("will-prevent-unload", (event) => {
+      if (win.isDestroyed() || win === getMainWindow() ||
+          !parseHttpUrl(win.webContents.getURL())) return;
+      try {
+        const choice = dialog.showMessageBoxSync(win, {
+          type: "question",
+          title: t("Claw.Webview.leaveTitle"),
+          message: t("Claw.Webview.leaveMessage"),
+          buttons: [t("Claw.Webview.leave"), t("Claw.Webview.stay")],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        // Electron 此事件的 preventDefault 是忽略页面拦截，允许离开。
+        if (choice === 0) event.preventDefault();
+      } catch (error) {
+        log.warn("[WebviewPolicy] Failed to confirm page unload", error);
+      }
+    });
+  });
+}
+
 // ---------- 文件下载 ----------
 
 function setupDownloads(getMainWindow: () => BrowserWindow | null): void {
@@ -391,6 +425,7 @@ export function initWebviewPolicy(
   setupPermissions();
   setupSpellCheck();
   setupWindowOpen();
+  if (APP_NAME_IDENTIFIER === "nuwax") setupPopupUnloadConfirmation(getMainWindow);
   setupDownloads(getMainWindow);
   log.info(
     "[WebviewPolicy] Initialized (permissions, spellcheck off, window.open, downloads)",

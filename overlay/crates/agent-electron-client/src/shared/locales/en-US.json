@@ -1,4 +1,8 @@
 {
+  "Claw.Webview.leaveTitle": "Leave this page?",
+  "Claw.Webview.leaveMessage": "This page may have a pending payment or unsaved work. Do you want to leave?",
+  "Claw.Webview.leave": "Leave",
+  "Claw.Webview.stay": "Stay",
   "Claw.Common.loading": "Loading...",
   "Claw.Common.save": "Save",
   "Claw.Common.cancel": "Cancel",
