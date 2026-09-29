@@ -161,8 +161,14 @@ export function normalizeGatewayRequestUrl(
   // Already-routed API/microapp resources retain their URLs and cookie path scope.
   if (matchesBackendPrefix(url.pathname, config.backendPrefixes)) return null;
   const referrer = request.referrer ? httpUrl(request.referrer) : null;
+  // /repo and /instant-message are also top-level SPA routes. A matching
+  // pathname alone cannot prove that the resource belongs to a backend iframe.
+  const parentFrame = request.parentFrameUrl
+    ? httpUrl(request.parentFrameUrl)
+    : null;
   const backendFrame =
     !!frame &&
+    parentFrame?.origin === page.origin &&
     frame.origin === gateway.origin &&
     matchesBackendPrefix(frame.pathname, config.backendPrefixes);
   const backendReferrer =

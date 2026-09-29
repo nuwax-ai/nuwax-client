@@ -931,7 +931,7 @@ describe("loopback gateway（透明反代）", () => {
       targetOrigin: up.origin,
       distDir,
       // 传入即整体替换：编排层（index.ts）负责把缺省三前缀一并带上
-      backendPrefixes: ["/api", "/computer", "/devcomputer", "/repo"],
+      backendPrefixes: ["/api", "/computer", "/devcomputer", "/repo", "/instant-message"],
       getTicket: () => "TK",
       clientTypeHeader: "",
     });
@@ -944,6 +944,22 @@ describe("loopback gateway（透明反代）", () => {
     expect(await asset.text()).toContain("REPO-WEB");
     expect(up.captured.microPath).toBe("/repo/static/app.js");
     expect(up.captured.auth).toBeUndefined();
+    // Browser refresh of a top-level qiankun route must load the bundled SPA.
+    for (const route of ["/repo", "/repo/doc/abc", "/instant-message", "/instant-message/chat/7"]) {
+      const page = await fetch(`${gw.origin}${route}`, {
+        headers: { "sec-fetch-dest": "document" },
+      });
+      expect(await page.text()).toContain("HOME");
+    }
+    // An older embedded microapp remains owned by the backend.
+    const iframe = await fetch(`${gw.origin}/repo/doc/abc`, {
+      headers: { "sec-fetch-dest": "iframe" },
+    });
+    expect(await iframe.text()).toContain("REPO-WEB");
+    const backendApi = await fetch(`${gw.origin}/repo/internal/session`, {
+      headers: { "sec-fetch-dest": "document" },
+    });
+    expect(await backendApi.text()).toContain("REPO-WEB");
     // 前缀按段匹配：/repository 不命中 /repo，回落本地 dist SPA
     const notPrefix = await fetch(`${gw.origin}/repository/x`);
     expect(await notPrefix.text()).toContain("HOME");

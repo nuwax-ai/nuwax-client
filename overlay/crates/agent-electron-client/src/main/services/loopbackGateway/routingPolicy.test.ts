@@ -129,7 +129,7 @@ describe("backend URL routing", () => {
       expect(normalizeGatewayRequestUrl({ ...main, url }, config)).toBeNull();
       expect(
         normalizeGatewayRequestUrl(
-          { ...main, frameUrl: `${gatewayOrigin}/repo/doc/7`, url },
+          { ...main, frameUrl: `${gatewayOrigin}/repo/doc/7`, parentFrameUrl: main.webContentsUrl, url },
           config,
         ),
       ).toBe(namespace + path);
@@ -154,6 +154,20 @@ describe("backend URL routing", () => {
         config,
       ),
     ).toBeNull();
+  });
+
+  it("keeps the main SPA's assets local on microapp routes", () => {
+    for (const route of ["/repo", "/repo/doc/7", "/instant-message"]) {
+      const page = `${gatewayOrigin}${route}`;
+      for (const asset of ["/p__MicroAppEntry__index.63c12b11.async.js", "/umi.css", "/favicon.ico"]) {
+        expect(
+          normalizeGatewayRequestUrl(
+            { ...main, webContentsUrl: page, frameUrl: page, url: `${gatewayOrigin}${asset}` },
+            config,
+          ),
+        ).toBeNull();
+      }
+    }
   });
 
   it("uses namespaced CSS/module referrers for root-relative dependencies without redirect loops", () => {

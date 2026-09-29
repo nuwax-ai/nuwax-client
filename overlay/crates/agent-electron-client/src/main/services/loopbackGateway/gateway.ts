@@ -636,6 +636,25 @@ export async function startLoopbackGateway(
             urlPath.startsWith(`${p}/`) ||
             urlPath.startsWith(`${p}?`),
         );
+        // /repo and /instant-message are also routes in the bundled SPA.
+        // Chromium marks a top-level navigation as "document" and an embedded
+        // legacy microapp navigation as "iframe". Serve only the former from
+        // the local frontend; iframe documents and backend APIs keep proxying.
+        if (
+          hitBackend &&
+          (req.method === "GET" || req.method === "HEAD") &&
+          req.headers["sec-fetch-dest"] === "document" &&
+          ["/repo", "/instant-message"].some(
+            (route) => urlPath === route || urlPath.startsWith(`${route}/`) || urlPath.startsWith(`${route}?`),
+          ) &&
+          !["/repo/internal", "/repo/ws", "/instant-message/ws"].some(
+            (route) => urlPath === route || urlPath.startsWith(`${route}/`) || urlPath.startsWith(`${route}?`),
+          ) &&
+          isSpaFallbackCandidate(urlPath)
+        ) {
+          sendFile(res, nodePath.join(distDir, "index.html"), "/index.html", req.method === "HEAD");
+          return;
+        }
         if (!hitBackend) {
           const file = safeDistPath(distDir, urlPath);
           if (file) {
