@@ -22,7 +22,7 @@ export interface IMReceiverDeps {
     packet(packet: Record<string, any>): void;
     close(): void;
   }): IMReceiverSocket;
-  unread(session: IMReceiverSession, signal: AbortSignal): Promise<{total: number; dndTotal: number; authoritative?: boolean}>;
+  unread(session: IMReceiverSession, signal: AbortSignal): Promise<{total: number; dndTotal?: number | null; authoritative?: boolean}>;
   onUnread(snapshot: IMUnreadSnapshot): void;
   onMessage(message: Record<string, any>, generation: number, isCurrent: () => boolean, selfId: string): void;
   onClear(): void;
@@ -308,10 +308,12 @@ export class IMReceiver {
     try {
       const result = await this.deps.unread(session, abort.signal);
       if (!current()) { if (sameRun() && !this.deps.isOnline()) this.reconcile(); return; }
-      if (!nonNegativeCount(result.total) || !nonNegativeCount(result.dndTotal) ||
-          !Number.isSafeInteger(result.total + result.dndTotal)) throw new Error("Invalid IM unread result");
+      // 现有 IM 契约允许免打扰统计为空；此时保留服务端给出的 total。
+      const dndTotal = result.dndTotal ?? 0;
+      if (!nonNegativeCount(result.total) || !nonNegativeCount(dndTotal) ||
+          !Number.isSafeInteger(result.total + dndTotal)) throw new Error("Invalid IM unread result");
       this.pullMinMs = result.authoritative === false ? 60_000 : 1_000;
-      const next = {sessionGeneration: generation, revision: ++this.revision, total: result.total, dndTotal: result.dndTotal};
+      const next = {sessionGeneration: generation, revision: ++this.revision, total: result.total, dndTotal};
       this.snapshot = next;
       this.deps.onUnread({...next});
     } catch (error) {

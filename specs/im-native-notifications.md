@@ -6,6 +6,8 @@
 依赖由商业仓根清单和锁文件管理；社区基座不新增依赖、接收器、角标或原生通知。
 运行时也检查产品身份，仅 nuwax 可初始化接收器。
 
+维护边界：IM 项目由其他团队负责，仅只读核对现有接口与协议。此次接入只修改商业壳及 PC 宿主适配，不修改、提交或推送 IM 原仓或其子模块，不重放用户已撤销的 IM 提交。
+
 主进程单例独立设备 `<commercial-device-id>#im-native`，POST `/api/instant-message/devices`，WS `/instant-message/ws` 使用 im-v1、ticket Cookie、JSON CONNECT/PING。所有ID按字符串安全解析。HTTP走当前商业ticket能力，不跨域重定向，不记录凭据。
 
 监听 MSG_RECV/MSG_REVOKE/CONV_UPDATE/CONV_UNREAD；CONNECT_ACK、恢复前台、解锁/唤醒补拉 GET `/api/instant-message/unread-total`。变化合并，最多一个在途请求，保留最后成功数。authoritative=false仍为可用结果，后续请求限为每分钟一次。
@@ -16,7 +18,7 @@
 
 native通知按账号与msgId去重，前台、锁屏、睡眠不弹；按需查询会话详情复核DND并生成标题，失败不阻断角标。元数据并发2、等待会话50、去重2048、近期通知回调20有上限；容量淘汰仅释放JS引用，系统通知历史交给OS管理。商业IM关闭浏览器通知，原开关同步给主进程；不开IM页也从既有localStorage恢复开关。点击恢复show/focus客户端，未读数不因点击清零。账号边界使旧通知回调失效。系统消息列表指操作系统通知中心，不新建客户端列表。
 
-服务端仅unread-total使用专用user/shard/convId游标分页聚合，不移除原共享500会话保护。完整统计所有可用会话；分片失败不返回部分数伪装完整。
+直接消费现有 GET `/api/instant-message/unread-total` 契约：`total` 不含免打扰，`dndTotal` 为可选的免打扰数量，两者都有值时相加；`dndTotal` 为 null 或缺省时仅显示可用的 `total`。客户端不遍历会话补算统计，不改变服务端500会话扫描上限或失败策略。数量完整性以现有接口能力为准，相关服务端问题交由IM维护团队处理。
 
 ## WS事件对照
 

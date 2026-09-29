@@ -206,6 +206,18 @@ describe("IMReceiver: independent session and unread aggregation", () => {
 });
 
 describe("IMReceiver: bounded unread refresh", () => {
+  it.each([null, undefined])("uses available total when the existing IM API omits DND counts (%s)", async (dndTotal) => {
+    const h = harness();
+    await login(h);
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 2, dndTotal: 3 });
+    h.deps.unread.mockResolvedValue({ total: 54, dndTotal, authoritative: true });
+    h.receiver.refresh();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 54, dndTotal: 0 });
+    const snapshot = h.receiver.getSnapshot()!;
+    expect(snapshot.total + snapshot.dndTotal).toBe(54);
+  });
+
   it.each([3002, 3004, 6000, 6001, 5001])("refreshes unread for invalidation op %s", async (op) => {
     const h = harness();
     const connection = await login(h);
