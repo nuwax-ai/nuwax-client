@@ -3,6 +3,24 @@ import path from 'node:path';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 
+// Windows 构建垫片：前端 upgrade/sync micro-apps 以绝对路径调 `tar -xf`，Git Bash 的 GNU tar
+// 会把 `D:\...` 盘符冒号解析为远程主机（tar: Cannot connect to D:，CI win 五连挂实测）。
+// 仅 win32 在 build 前给前端工作树打运行时补丁（--force-local + 正斜杠）；mac bsdtar 不认
+// --force-local 故保留原分支。前端仓根治后删除本函数即可。
+const TAR_CALL = "execute('tar', ['-xf', archive, '-C', working]";
+const TAR_PATCHED = "execute('tar', process.platform === 'win32' ? ['-xf', '--force-local', String(archive).replaceAll('\\\\', '/'), '-C', String(working).replaceAll('\\\\', '/')] : ['-xf', archive, '-C', working]";
+export function patchWindowsTar(frontend) {
+  if (process.platform !== 'win32') return;
+  for (const file of ['scripts/upgrade-micro-apps.mjs', 'scripts/sync-micro-apps.mjs']) {
+    const target = path.join(frontend, file);
+    let source = fs.readFileSync(target, 'utf8');
+    if (source.includes(TAR_PATCHED)) continue;
+    if (!source.includes(TAR_CALL)) throw new Error(`win tar 垫片定位失败：${file}（前端仓源码已变？请同步垫片）`);
+    fs.writeFileSync(target, source.replace(TAR_CALL, TAR_PATCHED));
+    console.log('[frontend] win tar 垫片已打：' + file);
+  }
+}
+
 export async function cleanFrontendDist(root, options = {}) {
   const tools = { ...core, ...options.tools };
   const { frontend } = tools.paths(root);
@@ -32,6 +50,7 @@ export async function buildFrontend(root, options = {}) {
   }
   const generated = path.join(frontend, 'src', 'constants', 'version.ts');
   const original = fs.existsSync(generated) ? fs.readFileSync(generated) : null;
+  patchWindowsTar(frontend);
   const key = tools.fingerprint([tools.fileHash(path.join(frontend, 'package.json')), tools.fileHash(path.join(frontend, 'pnpm-lock.yaml')),
     process.platform, process.arch, process.version]);
   const marker = path.join(cache, 'frontend-install.json');
