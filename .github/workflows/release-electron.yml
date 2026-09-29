@@ -134,10 +134,13 @@ jobs:
           gh auth setup-git
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
+          # 前端新批次嵌套子模块（micro-apps 构建期升级依赖，git.yichamao.com 匿名可达）
+          git -C nuwax submodule update --init --recursive
           git submodule status
           # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
           test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
           test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
+          test -d nuwax/submodules/nuwax-repo-web || { echo "::error::nuwax nested submodule nuwax-repo-web not checked out"; exit 1; }
 
       # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
       - name: Sync overlay into base worktree

@@ -85,7 +85,8 @@ resume=""
 if [ -f "$unsigned" ] && [ "$(sha256sum "$unsigned" | awk '{print $1}')" = ${quote(resume.unsignedSha256 ?? '')} ]; then
   resume="--skip-download"
 fi
-git -C "$repo" fetch origin ${quote(`refs/tags/${tag}`)}
+# git>=2.5x fetch 默认递归子模块：新拉历史中若有孤立 pin（未推送提交）会炸 upload-pack，显式关闭
+git -c fetch.recurseSubmodules=no -C "$repo" fetch origin ${quote(`refs/tags/${tag}`)}
 test "$(git -C "$repo" rev-parse 'FETCH_HEAD^{commit}')" = ${quote(sha)}
 if [ -d "$work" ]; then
   test "$(git -C "$work" rev-parse HEAD)" = ${quote(sha)}
@@ -95,6 +96,8 @@ else
 fi
 cd "$work"
 git submodule update --init nuwa-electron-shell
+# 新版 git submodule update 会检出声明分支尖而非 gitlink（win git 2.53 实测），强制钉回发布 pin
+git -C nuwa-electron-shell checkout -q -f ${quote(source.shell)}
 test "$(git -C nuwa-electron-shell rev-parse HEAD)" = ${quote(source.shell)}
 node scripts/sync-overlay.js
 cd nuwa-electron-shell/crates/agent-electron-client
@@ -226,7 +229,10 @@ function requireSuccess(runResult, id) {
 }
 
 async function releaseView(tools, settings, identity) {
-  const value = await tools.gh(['api', `repos/${settings.repo}/releases/tags/${identity.tag}`]);
+  // /releases/tags/{tag} 对 draft Release 恒 404；签名阶段 Release 仍是 draft，须走列表端点匹配
+  const list = await tools.gh(['api', `repos/${settings.repo}/releases?per_page=100`]);
+  const value = Array.isArray(list) ? list.find((entry) => entry.tag_name === identity.tag) : null;
+  if (!value) throw new Error(`未找到 Release ${identity.tag}`);
   if (value.tag_name !== identity.tag || Boolean(value.prerelease) !== (identity.channel === 'beta')) throw new Error('Release tag/通道状态不匹配');
   return value;
 }
