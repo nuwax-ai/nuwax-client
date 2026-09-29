@@ -86,7 +86,7 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
         if (!force && lastAppliedWindow === mainWindow && lastAppliedCount === unreadCount) return;
         if (label && (cachedLabel !== label || !cachedImage)) {
           cachedLabel = label;
-          cachedImage = createOverlayImage(createIMBadgePng(unreadCount));
+          cachedImage = createOverlayImage(createIMBadgePng(unreadCount, 1, "taskbar"));
         }
         mainWindow.setOverlayIcon(label ? cachedImage : null, label ? unreadDescription(unreadCount) : "");
       }

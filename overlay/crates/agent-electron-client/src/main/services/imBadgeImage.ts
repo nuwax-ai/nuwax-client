@@ -85,7 +85,7 @@ function pngChunk(name: string, data: Buffer): Buffer {
 }
 
 /** 本地绘制透明 PNG，避开 SVG 解码和平台相关 bitmap 字节序。 */
-export function createIMBadgePng(count: number, pixelScale: 1 | 2 = 1): Buffer {
+export function createIMBadgePng(count: number, pixelScale: 1 | 2 = 1, style: "full" | "taskbar" = "full"): Buffer {
   const label = formatIMBadgeCount(count);
   const imageSize = BADGE_SIZE * pixelScale;
   const pixels = Buffer.alloc(imageSize * imageSize * 4);
@@ -100,10 +100,18 @@ export function createIMBadgePng(count: number, pixelScale: 1 | 2 = 1): Buffer {
   if (label) {
     for (let y = 0; y < BADGE_SIZE; y += 1) {
       for (let x = 0; x < BADGE_SIZE; x += 1) {
-        if ((x - 7.5) ** 2 + (y - 7.5) ** 2 <= 7.5 ** 2) paint(x, y, 230, 41, 57);
+        if (style === "taskbar") {
+          // 任务栏叠加角标只占 12px；99+ 略加宽为 14px，保留图标主体。
+          const badgeLeft = label.length > 2 ? 1 : 2;
+          const badgeRight = BADGE_SIZE - badgeLeft;
+          const nearestX = Math.max(badgeLeft + 6, Math.min(x + 0.5, badgeRight - 6));
+          if ((x + 0.5 - nearestX) ** 2 + (y + 0.5 - 8) ** 2 <= 6 ** 2) paint(x, y, 230, 41, 57);
+        } else if ((x - 7.5) ** 2 + (y - 7.5) ** 2 <= 7.5 ** 2) {
+          paint(x, y, 230, 41, 57);
+        }
       }
     }
-    const scale = label.length === 1 ? 2 : 1;
+    const scale = style === "taskbar" ? 1 : label.length === 1 ? 2 : 1;
     const width = (label.length * 4 - 1) * scale;
     const left = Math.floor((BADGE_SIZE - width) / 2);
     const top = Math.floor((BADGE_SIZE - GLYPHS["0"].length * scale) / 2);

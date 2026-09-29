@@ -166,6 +166,28 @@ describe("IM native unread badge", () => {
     expect(pixels.includes(Buffer.from([255, 255, 255, 255]))).toBe(true);
     expect(createIMBadgePng(100)).toEqual(createIMBadgePng(105));
   });
+
+  it("uses a smaller Windows taskbar badge while preserving the full-size tray badge", () => {
+    const fixture = setup({ platform: "win32" });
+    fixture.presentation.setUnreadCount(4);
+    const png = createIMBadgePng(4, 1, "taskbar");
+    expect(fixture.options.createOverlayImage).toHaveBeenCalledWith(png);
+    expect(png.readUInt32BE(16)).toBe(16);
+    const idatLength = png.readUInt32BE(33);
+    const pixels = inflateSync(png.subarray(41, 41 + idatLength));
+    const bounds = { left: 16, top: 16, right: -1, bottom: -1 };
+    for (let y = 0; y < 16; y += 1) {
+      for (let x = 0; x < 16; x += 1) {
+        if (pixels[y * 65 + 1 + x * 4 + 3] === 0) continue;
+        bounds.left = Math.min(bounds.left, x);
+        bounds.top = Math.min(bounds.top, y);
+        bounds.right = Math.max(bounds.right, x);
+        bounds.bottom = Math.max(bounds.bottom, y);
+      }
+    }
+    expect(bounds).toEqual({ left: 2, top: 2, right: 13, bottom: 13 });
+    expect(createIMBadgePng(4)).not.toEqual(png);
+  });
 });
 
 describe("IM native notifications", () => {
