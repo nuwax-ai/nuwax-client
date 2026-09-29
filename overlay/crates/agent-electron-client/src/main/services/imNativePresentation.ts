@@ -54,7 +54,12 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
     isSupported: () => Notification.isSupported(),
     create: (details: NotificationConstructorOptions) => new Notification(details),
   };
-  const setDockBadge = options.setDockBadge ?? ((text: string) => app.dock?.setBadge(text));
+  const setDockBadge = options.setDockBadge ?? ((text: string) => {
+    const dock = app.dock;
+    if (!dock) return;
+    dock.setBadge(text);
+    log.debug("[IM] Dock unread badge updated", { requested: text, applied: dock.getBadge() });
+  });
   const setTrayBadgeCount = options.setTrayBadgeCount ?? setTrayUnreadCount;
   const createOverlayImage = options.createOverlayImage ?? ((png: Buffer) => nativeImage.createFromBuffer(png));
   const unreadDescription = options.unreadDescription ?? ((count: number) => t(I18N_KEYS.IM.UNREAD_MESSAGES, String(count)));
