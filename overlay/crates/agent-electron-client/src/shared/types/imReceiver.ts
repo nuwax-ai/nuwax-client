@@ -8,8 +8,12 @@ export interface IMUnreadSnapshot {
 
 export interface IMReceiverBridge {
   setNotificationEnabled(enabled: boolean): Promise<void>;
+  getUnreadSnapshot(): Promise<IMUnreadSnapshot | null>;
+  onUnreadChanged(listener: (snapshot: IMUnreadSnapshot | null) => void): () => void;
 }
 
 export const IM_IPC_CHANNELS = {
   NOTIFICATION_ENABLED: "nuwax:im:notify:enabled",
+  UNREAD_SNAPSHOT: "nuwax:im:unread:snapshot",
+  UNREAD_CHANGED: "nuwax:im:unread:changed",
 } as const;

@@ -7,6 +7,7 @@ import {
 import {
   IM_IPC_CHANNELS,
   type IMReceiverBridge,
+  type IMUnreadSnapshot,
 } from "@shared/types/imReceiver";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
@@ -30,7 +31,7 @@ function mayExposeBusinessBridge(): boolean {
 
 const bridgeAllowed = mayExposeBusinessBridge();
 
-/** IM 偏好桥仅供商业客户端的受信顶层业务页消费。 */
+/** IM 展示桥仅供商业客户端的受信顶层业务页消费。 */
 function mayExposeIMBridge(): boolean {
   const runtimeProduct = process.argv
     .find((arg) => arg.startsWith("--nuwax-host-product="))
@@ -42,6 +43,18 @@ function mayExposeIMBridge(): boolean {
 const im: IMReceiverBridge = {
   async setNotificationEnabled(enabled): Promise<void> {
     await ipcRenderer.invoke(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, enabled === true);
+  },
+  getUnreadSnapshot: () => ipcRenderer.invoke(IM_IPC_CHANNELS.UNREAD_SNAPSHOT),
+  onUnreadChanged(listener) {
+    let disposed = false;
+    const receive = (_event: Electron.IpcRendererEvent, snapshot: IMUnreadSnapshot | null) => {
+      if (!disposed) listener(snapshot);
+    };
+    ipcRenderer.on(IM_IPC_CHANNELS.UNREAD_CHANGED, receive);
+    return () => {
+      disposed = true;
+      ipcRenderer.removeListener(IM_IPC_CHANNELS.UNREAD_CHANGED, receive);
+    };
   },
 };
 

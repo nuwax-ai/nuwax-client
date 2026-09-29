@@ -41,11 +41,32 @@ async function loadBridge({ product = "nuwax", origin = "https://business.exampl
 }
 
 describe("commercial top-level IM bridge", () => {
-  it("exposes only the native notification preference on the trusted commercial top document", async () => {
+  it("exposes notification preference and read-only unread on the trusted commercial top document", async () => {
     const bridge = await loadBridge();
     expect(bridge?.im).toEqual({
       setNotificationEnabled: expect.any(Function),
+      getUnreadSnapshot: expect.any(Function),
+      onUnreadChanged: expect.any(Function),
     });
+  });
+
+  it("reads the initial snapshot and pairs unread event registration with disposal", async () => {
+    const im = (await loadBridge())!.im!;
+    const snapshot = {sessionGeneration: 2, revision: 3, total: 126, dndTotal: 0};
+    mocks.invoke.mockResolvedValue(snapshot);
+    expect(await im.getUnreadSnapshot()).toEqual(snapshot);
+    expect(mocks.invoke).toHaveBeenCalledWith(IM_IPC_CHANNELS.UNREAD_SNAPSHOT);
+    const listener = vi.fn();
+    const off = im.onUnreadChanged(listener);
+    const receive = mocks.on.mock.calls.find(([channel]) => channel === IM_IPC_CHANNELS.UNREAD_CHANGED)![1];
+    receive({privileged: true}, snapshot);
+    expect(listener).toHaveBeenLastCalledWith(snapshot);
+    receive({}, null);
+    expect(listener).toHaveBeenLastCalledWith(null);
+    off();
+    expect(mocks.removeListener).toHaveBeenCalledWith(IM_IPC_CHANNELS.UNREAD_CHANGED, receive);
+    receive({}, snapshot);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it.each([

@@ -16,6 +16,11 @@ const json = JSONBigInt({storeAsString: true, strict: true});
 const ENABLED_KEY = "nuwax.im.notifications.enabled";
 let runtime: ReturnType<typeof createRuntime> | null = null;
 let quitting = false;
+const unreadListeners = new Set<(snapshot: IMUnreadSnapshot | null) => void>();
+
+function publishUnread(snapshot: IMUnreadSnapshot | null): void {
+  for (const listener of unreadListeners) listener(snapshot);
+}
 
 function createRuntime(getMainWindow: () => BrowserWindow | null) {
   let disposed = false;
@@ -119,6 +124,7 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     unread: (session, signal) => request(session, "/api/instant-message/unread-total", signal),
     onUnread: snapshot => {
       native.setUnreadCount(snapshot.total + snapshot.dndTotal);
+      publishUnread(snapshot);
     },
     onClear: clearActions,
     onBlocked: reason => {
@@ -205,7 +211,11 @@ export function initIMReceiver(getMainWindow: () => BrowserWindow | null): void 
 }
 export function startIMReceiver(account: string): void { runtime?.start(account); }
 export function stopIMReceiver(): void { runtime?.stop(); }
-export function disposeIMReceiver(): void { quitting = true; runtime?.dispose(); runtime = null; }
+export function disposeIMReceiver(): void { quitting = true; runtime?.dispose(); runtime = null; unreadListeners.clear(); }
 export function getIMUnreadSnapshot(): IMUnreadSnapshot | null { return runtime?.snapshot() ?? null; }
+export function onIMUnreadChanged(listener: (snapshot: IMUnreadSnapshot | null) => void): () => void {
+  unreadListeners.add(listener);
+  return () => { unreadListeners.delete(listener); };
+}
 export function retryIMReceiver(): void { runtime?.retry(); }
 export function setIMNotificationEnabled(enabled: boolean): void { runtime?.setNotificationEnabled(enabled); }

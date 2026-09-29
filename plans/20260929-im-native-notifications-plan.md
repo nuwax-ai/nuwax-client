@@ -56,3 +56,19 @@
 - 分层：通过。`imReceiverRuntime.ts:19` 连接 Electron 会话与传输，receiver不依赖页面；`src/features/client-shell/imNotificationPreference.ts:14` 仅消费宿主通知开关桥，`src/utils/hostBridge/index.ts:401` 保持最小能力检测。商业依赖留在外层，社区入口零请求/零原生展示由专项测试覆盖。
 - 维护：通过。`imReceiver.ts:103` / `:136` 对应代次失效与请求、定时器、socket回收；`imNativePresentation.ts:49` / `:50` 固定去重和通知回调上限。WS事件表、暂停恢复策略、可空统计和IM只读维护边界写入规格；客户端不维护服务端扫描或自愈逻辑。
 - 结论：本功能可本地提交。暂存候选回归与构建通过；真实系统图标、通知历史和耐久运行验收仍按上述证据边界保留，不作为已验收结果。
+
+## 2026-09-30 菜单角标修复
+
+现状证据：loopback 顶层 origin=http://127.0.0.1:46800，消息菜单 code=message、path=https://testagent.xspaceagi.com/instant-message、openType=1；unread-total 返回 total=1、dndTotal=0，但父页面 window.__im 缺失，商业桥仅有通知偏好。生产 BASE_URL 为空导致业务域菜单未归一，且 Web 未读订阅等待 IM 页面挂载。
+
+1. 商业 runtime 发布既有快照及清零；IPC 仅向已握手、账号代次有效的受信顶层文档提供快照与推送；preload 配对事件订阅/退订。社区不暴露。
+2. PC 客户端聚合初始化接入壳层未读；先订阅再读取、校验代次/修订，登出清零并丢弃迟到响应。IM 页面仍保留自定义事件，商业未读展示以壳为准。
+3. 菜单 API 使用已验证的商业 loopback 上下文归一化 IM/资料库地址，浏览器和第三方地址沿用原策略。
+4. 回归 IPC 信任边界、真实本地 HTTP/WS 到快照、未打开 IM 页面时的菜单展示、0/99/99+、退出/换账号、旧回调与资源清理；通过后对本批做三问自查。
+5. 只提交本次文件，隔离构建已提交 PC 源码，发布配套产物与外层双 pin；loopback 在主页实际验收。IM 原仓及子模块保持原 HEAD/工作区。
+
+本批质量自查：
+- 内聚通过：壳接收器统一发布快照（imReceiverRuntime.ts），页面展示及账号清理集中于 imEventBridge.ts；菜单无需认识 WS/HTTP。
+- 分层通过：IPC 信任检查沿用当前文档/账号门禁，preload 只暴露计数；PC 服务仅通过 hostBridge 访问商业能力，lint:arch 无新增违规。
+- 维护通过：一个顶层文档一个推送目标，销毁/换域/换代回收；事件与登录监听配对退订，初始快照与推送竞态、0/99/99+ 均有行为回归。
+- 本批门禁：PC 13 文件 140 测试通过，商业壳 7 文件 158 测试通过；商业 main/preload production bundle 成功。全库 TypeScript 仍有既有错误，本批改动的源码及新增测试文件无诊断。

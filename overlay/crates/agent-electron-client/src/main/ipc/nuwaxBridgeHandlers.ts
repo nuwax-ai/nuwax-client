@@ -56,7 +56,8 @@ import { configureIsolatedWebSession, destroyTrustedBusinessPopups } from "../se
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
-import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled } from "../services/imReceiverRuntime";
+import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
+import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
 
 import {
@@ -295,6 +296,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, (event, enabled: unknown) => {
     if (isIMSender(event) && typeof enabled === "boolean") setIMNotificationEnabled(enabled);
   });
+  registerIMUnreadBridge({ ipc: ipcMain, isAllowed: isIMSender, getSnapshot: getIMUnreadSnapshot, onChange: onIMUnreadChanged });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
       webContents.getAllWebContents().map((wc) => wc.session),

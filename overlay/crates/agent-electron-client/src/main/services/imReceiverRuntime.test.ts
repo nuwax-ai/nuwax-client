@@ -228,7 +228,10 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
   it("registers a separate device, authenticates im-v1 with Cookie, and pushes long-ID events into unread HTTP and badges", async () => {
     const backend = await localBackend();
     const { business, external, api } = await start(backend);
+    const unread = vi.fn();
+    const offUnread = api.onIMUnreadChanged(unread);
     await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11), { timeout: 2500 });
+    expect(unread).toHaveBeenLastCalledWith(expect.objectContaining({total: 9, dndTotal: 2}));
     expect(backend.requests.find((request) => request.path.endsWith("/devices"))?.body).toEqual({
       deviceId: "machine-123#im-native", platform: "desktop", pushEnabled: false, appVersion: "1.2.3",
     });
@@ -253,9 +256,16 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     await vi.waitFor(() => expect(api.getIMUnreadSnapshot()?.total).toBe(2), { timeout: 2500 });
     expect(api.getIMUnreadSnapshot()!.revision).toBeGreaterThan(previous.revision);
     expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(3);
+    expect(unread).toHaveBeenLastCalledWith(api.getIMUnreadSnapshot());
     expect(backend.requests.some((request) => request.path === `/api/instant-message/conversations/${CONV_ID}`)).toBe(true);
     expect(backend.packets.every((packet) => [1000, 2000].includes(packet.op))).toBe(true);
     expect(backend.requests.some((request) => /\/(ack|read|messages)$/.test(request.path))).toBe(false);
+    api.stopIMReceiver();
+    expect(unread).toHaveBeenLastCalledWith(expect.objectContaining({total: 0, dndTotal: 0}));
+    offUnread();
+    unread.mockClear();
+    api.stopIMReceiver();
+    expect(unread).not.toHaveBeenCalled();
   });
 
   it("rechecks DND from conversation details, lets @self/@all through, and ignores own long-ID messages", async () => {

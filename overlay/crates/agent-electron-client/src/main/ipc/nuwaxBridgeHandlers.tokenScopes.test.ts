@@ -49,11 +49,13 @@ const mocks = vi.hoisted(() => ({
   installContextMenu: vi.fn(),
   startIM: vi.fn(), stopIM: vi.fn(), unreadIM: vi.fn(() => ({sessionGeneration: 1, revision: 1, total: 2, dndTotal: 3})),
   retryIM: vi.fn(), enabledIM: vi.fn(), ackIM: vi.fn(),
+  unreadChanged: vi.fn((_listener: (snapshot: unknown) => void) => () => {}),
 }));
 
 vi.mock("../services/imReceiverRuntime", () => ({
   initIMReceiver: vi.fn(), startIMReceiver: mocks.startIM, stopIMReceiver: mocks.stopIM,
   getIMUnreadSnapshot: mocks.unreadIM, retryIMReceiver: mocks.retryIM,
+  onIMUnreadChanged: mocks.unreadChanged,
   setIMNotificationEnabled: mocks.enabledIM, ackIMOpenConversation: mocks.ackIM,
 }));
 
@@ -289,6 +291,27 @@ describe("host activity read-only IPC", () => {
 });
 
 describe("native IM preference IPC", () => {
+  it("unread is available only after auth binding and changes recheck top-frame/account/origin", async () => {
+    const frame = {url: `${GW_ORIGIN}/home`, processId: 14, routingId: 24};
+    const sender = {id: 34, mainFrame: frame, getURL: () => frame.url, once: vi.fn(), isDestroyed: () => false, send: vi.fn()};
+    const event = {sender, senderFrame: frame};
+    const read = handlers.get(IM_IPC_CHANNELS.UNREAD_SNAPSHOT)!;
+    expect(read(event)).toBeNull();
+    handlers.get("auth:getContext")!(event);
+    expect(read(event)).toEqual({sessionGeneration: 1, revision: 1, total: 2, dndTotal: 3});
+    expect(read({...event, senderFrame: {...frame, routingId: 25}})).toBeNull();
+    const publish = mocks.unreadChanged.mock.calls.at(-1)![0] as (snapshot: unknown) => void;
+    const next = {sessionGeneration: 1, revision: 2, total: 126, dndTotal: 0};
+    publish(next);
+    expect(sender.send).toHaveBeenLastCalledWith(IM_IPC_CHANNELS.UNREAD_CHANGED, next);
+    sender.send.mockClear();
+    await handlers.get("auth:clear")!(event);
+    publish(next); expect(sender.send).not.toHaveBeenCalled(); expect(read(event)).toBeNull();
+    handlers.get("auth:getContext")!(event); read(event);
+    frame.url = "https://external.example/home";
+    publish(next); expect(sender.send).not.toHaveBeenCalled(); expect(read(event)).toBeNull();
+  });
+
   it("accepts only boolean preferences from the current trusted top document", async () => {
     const frame = { url: `${GW_ORIGIN}/home`, processId: 11, routingId: 21 };
     const sender = { id: 31, mainFrame: frame, getURL: () => frame.url };
