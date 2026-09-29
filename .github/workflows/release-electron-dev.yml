@@ -44,6 +44,7 @@ permissions:
 jobs:
   verify-source:
     uses: ./.github/workflows/ci.yml
+    secrets: inherit
 
   prepare:
     name: Prepare release
@@ -130,14 +131,20 @@ jobs:
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
+          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
         run: |
           # submodule 认证统一走 gh CLI 凭据助手（跨平台一致；Windows Git 的
           # GCM 会劫持/覆盖 URL 内嵌凭据，insteadOf 亦不生效——均实测失败）
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
+          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：PAT 经 insteadOf 注入
+          # （github.com 域不受影响；secret 值被 Actions 掩码）
+          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
+            git config --global url."https://oauth2:${YICHAMAO_GIT_TOKEN}@git.yichamao.com/".insteadOf "https://git.yichamao.com/"
+          fi
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
-          # 前端新批次嵌套子模块（micro-apps 构建期升级依赖，git.yichamao.com 匿名可达）
+          # 前端嵌套子模块（micro-apps 构建期升级依赖）
           git -C nuwax submodule update --init --recursive
           git submodule status
           # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
