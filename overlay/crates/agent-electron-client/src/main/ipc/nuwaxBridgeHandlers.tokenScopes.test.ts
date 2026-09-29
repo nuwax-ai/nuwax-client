@@ -47,6 +47,14 @@ const mocks = vi.hoisted(() => ({
     setPermissionCheckHandler: ReturnType<typeof vi.fn>;
   }>(),
   installContextMenu: vi.fn(),
+  startIM: vi.fn(), stopIM: vi.fn(), unreadIM: vi.fn(() => ({sessionGeneration: 1, revision: 1, total: 2, dndTotal: 3})),
+  retryIM: vi.fn(), enabledIM: vi.fn(), ackIM: vi.fn(),
+}));
+
+vi.mock("../services/imReceiverRuntime", () => ({
+  initIMReceiver: vi.fn(), startIMReceiver: mocks.startIM, stopIMReceiver: mocks.stopIM,
+  getIMUnreadSnapshot: mocks.unreadIM, retryIMReceiver: mocks.retryIM,
+  setIMNotificationEnabled: mocks.enabledIM, ackIMOpenConversation: mocks.ackIM,
 }));
 
 vi.mock("../services/hostActivity", () => ({
@@ -134,6 +142,7 @@ vi.mock("electron", () => ({
       remove: mocks.cookiesRemove, on: mocks.cookiesOn } },
     fromPartition: (partition: string) => {
       const ses = {
+        on: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setSpellCheckerEnabled: vi.fn(),
@@ -184,6 +193,7 @@ import {
 } from "./nuwaxBridgeHandlers";
 import { DEFAULT_SERVER_HOST } from "../../shared/constants";
 import { getMainLang, setMainLang } from "../services/i18n";
+import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
@@ -206,6 +216,7 @@ async function seedTicket(value: string): Promise<void> {
 }
 
 beforeEach(() => {
+  for (const mock of [mocks.startIM, mocks.stopIM, mocks.unreadIM, mocks.retryIM, mocks.enabledIM, mocks.ackIM]) mock.mockClear();
   mocks.hostActivitySnapshot.mockClear();
   mocks.syncHostActivityGuest.mockClear();
   mocks.attachHostActivityBusinessWindow.mockClear();
@@ -274,6 +285,29 @@ describe("host activity read-only IPC", () => {
   });
 });
 
+describe("native IM preference IPC", () => {
+  it("accepts only boolean preferences from the current trusted top document", async () => {
+    const frame = { url: `${GW_ORIGIN}/home`, processId: 11, routingId: 21 };
+    const sender = { id: 31, mainFrame: frame, getURL: () => frame.url };
+    const event = { sender, senderFrame: frame };
+    const setEnabled = handlers.get(IM_IPC_CHANNELS.NOTIFICATION_ENABLED)!;
+    setEnabled(event, false);
+    expect(mocks.enabledIM).not.toHaveBeenCalled();
+    handlers.get("auth:getContext")!(event);
+    setEnabled(event, false);
+    expect(mocks.enabledIM.mock.calls).toEqual([[false]]);
+    mocks.enabledIM.mockClear();
+    setEnabled(event, "false");
+    setEnabled({ ...event, senderFrame: { ...frame } }, true);
+    setEnabled(senderEvent("https://external.example"), true);
+    expect(mocks.enabledIM).not.toHaveBeenCalled();
+    await handlers.get("auth:clear")!(event);
+    setEnabled(event, true);
+    expect(mocks.enabledIM).not.toHaveBeenCalled();
+    expect(mocks.stopIM).toHaveBeenCalledOnce();
+  });
+});
+
 describe("cookie 会话与旧 token 桥", () => {
   it("开发覆盖地址带路径时，桥信任仍按 origin 判断", () => {
     settings.set("nuwax.webviewOverride", { origin: `${DEV_ORIGIN}/app/` });
@@ -296,6 +330,7 @@ describe("cookie 会话与旧 token 桥", () => {
         configKey: "device-key", serverHost: "tunnel.example", serverPort: 443,
       } })));
     expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+    expect(mocks.startIM).toHaveBeenCalledWith("alice");
     expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBe("direct-new");
     await vi.waitFor(() => expect(settings.get("auth.config_key")).toBe("device-key"));
     expect(mocks.netFetch.mock.calls[0][1].headers.Cookie).toBe("ticket=direct-new");
@@ -317,6 +352,7 @@ describe("cookie 会话与旧 token 桥", () => {
     mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "old", path: "/", secure: true,
       domain: new URL(HOST_ORIGIN).hostname }] as never);
     await handlers.get("auth:beginLogin")!(senderEvent(GW_ORIGIN));
+    expect(mocks.stopIM).toHaveBeenCalledOnce();
     expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeNull();
     expect(mocks.cookiesRemove).toHaveBeenCalledWith(HOST_ORIGIN, "ticket");
     expect(mocks.cookiesRemove).toHaveBeenCalledWith(GW_ORIGIN, "ticket");

@@ -18,6 +18,8 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
   const calls = [];
   const sourceSha = 'a'.repeat(40);
   const distSha = 'b'.repeat(40);
+  write(path.join(root, 'package.json'), { packageManager: 'pnpm@10.27.0', dependencies: { ws: '8.19.0', 'json-bigint': '1.0.0' } });
+  write(path.join(root, 'pnpm-lock.yaml'), 'commercial lock');
   for (const name of ['nuwa-electron-shell', 'nuwax', 'nuwax-dist']) write(path.join(root, name, '.git'));
   write(path.join(p.dist, 'index.html'), '<!doctype html>');
   write(path.join(p.dist, 'version.json'), { gitHash: sourceSha.slice(0, 9) });
@@ -55,6 +57,10 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
     },
     pnpmRun(dir, args) {
       calls.push(['pnpm', dir, ...args]);
+      if (dir === root && args[0] === 'install') {
+        for (const [name, version] of Object.entries(core.readJson(path.join(root, 'package.json')).dependencies))
+          write(path.join(root, 'node_modules', name, 'package.json'), { version });
+      }
       if (dir === kit && args[0] === 'run') for (const name of ['index.js', 'index.cjs', 'index.d.ts']) write(path.join(kit, 'dist', name));
       if (dir === p.base && args[0] === 'install') {
         for (const name of ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit', 'agent-gui-server']) write(path.join(p.client, 'node_modules', name, 'package.json'), { version: '1.0.0' });

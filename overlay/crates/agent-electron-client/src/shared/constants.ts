@@ -326,6 +326,9 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  IM: {
+    UNREAD_MESSAGES: "Claw.IM.unreadMessages",
+  },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",
     CHECKUPDATE: "Claw.NativeMenu.checkUpdate",

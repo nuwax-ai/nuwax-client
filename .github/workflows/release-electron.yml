@@ -259,6 +259,9 @@ jobs:
         working-directory: nuwa-electron-shell/crates/agent-electron-client
         run: npm run electron-rebuild
 
+      - name: Install commercial dependencies
+        run: node scripts/client/commercial-dependencies.mjs
+
       - name: Cache bundled Node.js
         uses: actions/cache@v4
         with:

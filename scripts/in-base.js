@@ -9,7 +9,8 @@
  * 执行顺序：
  *   1. overlay 同步（scripts/sync-overlay.js）——把 overlay/ 商业自有代码覆写进基座
  *      工作树（当前为空即 no-op）；--no-inject 跳过（社区基线须用干净基座源码跑）。
- *   2. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
+ *   2. 仅商业入口准备壳根依赖，社区 --no-inject 不安装、不修改基座依赖。
+ *   3. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
  *   NUWAX_APP_IDENTIFIER=nuwax        → 数据目录 ~/.nuwax（历史目录迁移链已被
  *                                       overlay 覆写 migrate.ts 阻断，全新开始）
  *   NUWAX_APP_DISPLAY_NAME=Nuwax      → 客户端展示名（窗口标题/设置「关于」/
@@ -56,6 +57,13 @@ if (!noInject) {
   if (sync.status !== 0) {
     console.error('[in-base] overlay 同步失败，中止');
     process.exit(sync.status ?? 1);
+  }
+  const dependencies = spawnSync(process.execPath, [path.join(__dirname, 'client/commercial-dependencies.mjs')], {
+    stdio: 'inherit', cwd: rootDir,
+  });
+  if (dependencies.status !== 0) {
+    console.error('[in-base] 商业依赖准备失败，中止');
+    process.exit(dependencies.status ?? 1);
   }
 } else {
   // 社区基线须跑在干净基座源码上：还原上一轮同步进工作树的 overlay 文件

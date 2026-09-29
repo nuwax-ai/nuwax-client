@@ -3,6 +3,7 @@
   "Claw.Webview.leaveMessage": "This page may have a pending payment or unsaved work. Do you want to leave?",
   "Claw.Webview.leave": "Leave",
   "Claw.Webview.stay": "Stay",
+  "Claw.IM.unreadMessages": "{0} unread messages",
   "Claw.Common.loading": "Loading...",
   "Claw.Common.save": "Save",
   "Claw.Common.cancel": "Cancel",

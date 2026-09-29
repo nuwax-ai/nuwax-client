@@ -16,6 +16,11 @@
 - **防泄回**：提交基座前跑 `npm run check:pin`（overlay 托管路径不得进基座提交，
   CI 另有 `--remote origin/main` 字节级防线）。
 
+IM 原生通知与未读角标只用于商业 Nuwax。其 `ws`、`json-bigint` 及类型依赖由本仓根
+`package.json` / `pnpm-lock.yaml` 管理，商业 prepare、in-base 和发布 CI 自动准备，
+由 esbuild 打进 main bundle；不写入基座依赖文件。社区入口不安装这些依赖，
+社区基座不包含接收器代码；即使临时同步了商业 overlay，社区产品身份也不会启动接收器。
+
 ## 覆写面积纪律
 
 只放商业专属实现的整文件；基座若为商业功能开插槽（可选注册/扩展点），优先用插槽

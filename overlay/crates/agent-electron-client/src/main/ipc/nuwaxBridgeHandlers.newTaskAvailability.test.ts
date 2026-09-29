@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../services/imReceiverRuntime", () => ({
+  initIMReceiver: vi.fn(), startIMReceiver: vi.fn(), stopIMReceiver: vi.fn(),
+  getIMUnreadSnapshot: vi.fn(() => null), retryIMReceiver: vi.fn(),
+  setIMNotificationEnabled: vi.fn(), ackIMOpenConversation: vi.fn(),
+}));
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (...args: any[]) => unknown>(),

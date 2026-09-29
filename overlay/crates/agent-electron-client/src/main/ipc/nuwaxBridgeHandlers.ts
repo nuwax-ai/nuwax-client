@@ -54,6 +54,8 @@ import { configureIsolatedWebSession, destroyTrustedBusinessPopups } from "../se
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
+import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled } from "../services/imReceiverRuntime";
+import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
 
 import {
   initializeCommercialAuth,
@@ -162,6 +164,7 @@ export function applyMainWindowMinSize(win: BrowserWindow): void {
 }
 
 export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
+  initIMReceiver(ctx.getMainWindow);
   // 主进程身份随进程固定；guest preload 可能在 dev 期间被另一次构建覆盖。
   // 在 webview 创建前传入运行时身份，避免 preload 的静态构建值让前端误判
   // 商业沉浸壳（logo / 菜单退让、折叠入口等随之失效）。
@@ -216,6 +219,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       // token 失效 ≠ 注销设备：保留注册凭据（reg 仍要 savedKey），用户重新
       // 登录即可闭环；换账号登录由 persistToken 的账号切换检测清除。
       authGeneration++;
+      stopIMReceiver();
       invalidateTicketSession(nuwaxSessionScopes(currentBusinessOrigin()));
       cancelTransfers();
       const scopes = nuwaxSessionScopes(currentBusinessOrigin());
@@ -259,6 +263,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   const isCurrentDocument = (event: IpcMainInvokeEvent) =>
     !switching && isTrustedBusinessSender(event, trustedOrigins()) &&
     documents.get(documentKey(event)) === authGeneration;
+  const isIMSender = (event: IpcMainInvokeEvent) =>
+    event.senderFrame === event.sender.mainFrame && isCurrentDocument(event);
+  ipcMain.handle(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, (event, enabled: unknown) => {
+    if (isIMSender(event) && typeof enabled === "boolean") setIMNotificationEnabled(enabled);
+  });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
       webContents.getAllWebContents().map((wc) => wc.session),
@@ -503,6 +512,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     if (!isTrustedSender(event)) return false;
     authClearHandled = false;
     authGeneration++;
+    stopIMReceiver();
     const generation = authGeneration;
     documents.set(documentKey(event), authGeneration);
     cancelTransfers();
@@ -549,6 +559,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const expire = async () => {
       if (generation !== authGeneration) return;
       authGeneration++;
+      stopIMReceiver();
       cancelTransfers();
       const scopes = nuwaxSessionScopes(scope);
       invalidateTicketSession(scopes);
@@ -596,6 +607,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const previousAccount = readSetting("auth.username");
     if (previousAccount && previousAccount !== username) {
       advanceTicketEpoch();
+      stopIMReceiver();
       cancelTransfers();
       await lifecycle.stop();
       clearShellAuthState();
@@ -605,6 +617,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: true });
     authClearHandled = false;
     emitRegistrationTrace({ stage: "sync-session-valid", origin: businessOrigin, phase: serviceState.phase });
+    // IM is independent of local sandbox services and of the IM page mount.
+    startIMReceiver(username);
     void lifecycle.start();
     return true;
   });
@@ -615,6 +629,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     authClearHandled = true;
     const hadTicket = !!currentTicket();
     authGeneration++;
+    stopIMReceiver();
     cancelTransfers();
     const stopping = lifecycle.stop();
     const scope = resolveSenderOrigin(event);
@@ -670,6 +685,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       return { success: false, error: "Stale document" };
     switching = true;
     authGeneration++;
+    stopIMReceiver();
     cancelTransfers();
     const scopes = nuwaxSessionScopes(resolveSenderOrigin(event));
     invalidateTicketSession([...scopes, origin]);

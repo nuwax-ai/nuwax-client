@@ -3,6 +3,7 @@
   "Claw.Webview.leaveMessage": "頁面可能有尚未完成的付款或未儲存的操作，是否離開？",
   "Claw.Webview.leave": "離開",
   "Claw.Webview.stay": "留在此頁",
+  "Claw.IM.unreadMessages": "{0} 條未讀訊息",
   "Claw.Common.loading": "載入中...",
   "Claw.Common.save": "儲存",
   "Claw.Common.cancel": "取消",

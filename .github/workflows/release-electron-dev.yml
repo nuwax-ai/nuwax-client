@@ -271,6 +271,9 @@ jobs:
         working-directory: nuwa-electron-shell/crates/agent-electron-client
         run: npm run electron-rebuild
 
+      - name: Install commercial dependencies
+        run: node scripts/client/commercial-dependencies.mjs
+
       # 缓存内置 Node.js（所有平台）、Git（仅 Windows）、uv（所有平台）和 nuwaxcode（所有平台）
       - name: Cache bundled Node.js
         uses: actions/cache@v4

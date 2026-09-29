@@ -27,5 +27,18 @@
     "sync:oss": "node scripts/client/forward.mjs sync:oss",
     "doctor": "node scripts/client/cli.mjs doctor",
     "setup": "node scripts/client/cli.mjs setup"
+  },
+  "dependencies": {
+    "json-bigint": "1.0.0",
+    "ws": "8.19.0"
+  },
+  "devDependencies": {
+    "@types/json-bigint": "1.0.4",
+    "@types/ws": "8.18.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/node": "22.19.15"
+    }
   }
 }

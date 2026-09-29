@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
+import { ensureCommercialDependencies } from './commercial-dependencies.mjs';
 
 const ignoredInputs = new Set(['node_modules', '.git', 'dist', 'release', '.cache', 'target']);
 export const sourceNames = ['nuwax-file-server', 'claude-code-acp-ts'];
@@ -259,7 +260,7 @@ export async function prepare(root, options = {}) {
   const opt = { frontend: config.frontend.mode, platform: process.platform, arch: process.arch, ...options };
   if (!['dist', 'source'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist 或 source');
   await ensureSubmodules(root, opt, tools);
-  const plan = ['overlay', 'agent-kit', 'workspace', 'native', 'resources'];
+  const plan = ['overlay', 'commercial-dependencies', 'agent-kit', 'workspace', 'native', 'resources'];
   if (opt.dryRun) {
     console.log(`[prepare] dry-run: ${plan.join(' → ')} (${opt.platform}-${opt.arch}, frontend=${opt.frontend})`);
     return { ...p, dryRun: true, steps: plan };
@@ -273,6 +274,7 @@ export async function prepare(root, options = {}) {
   const env = commercialEnv(root, { TARGET_ARCH: opt.arch });
     await syncOverlay(p, tools, state);
     save();
+    await ensureCommercialDependencies(root, tools);
     const kit = path.join(p.base, 'crates/agent-kit');
     // The inherited workspace postinstall can generate an ignored standalone
     // lock. It is build output, rather than an authoritative dependency input.

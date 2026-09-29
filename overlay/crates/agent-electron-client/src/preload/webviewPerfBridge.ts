@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import {
+  IM_IPC_CHANNELS,
+  type IMReceiverBridge,
+} from "@shared/types/imReceiver";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
 function mayExposeBusinessBridge(): boolean {
@@ -21,6 +25,21 @@ function mayExposeBusinessBridge(): boolean {
 }
 
 const bridgeAllowed = mayExposeBusinessBridge();
+
+/** IM 偏好桥仅供商业客户端的受信顶层业务页消费。 */
+function mayExposeIMBridge(): boolean {
+  const runtimeProduct = process.argv
+    .find((arg) => arg.startsWith("--nuwax-host-product="))
+    ?.slice("--nuwax-host-product=".length);
+  return bridgeAllowed && (runtimeProduct || APP_NAME_IDENTIFIER) === "nuwax"
+    && typeof window !== "undefined" && window.top === window;
+}
+
+const im: IMReceiverBridge = {
+  async setNotificationEnabled(enabled): Promise<void> {
+    await ipcRenderer.invoke(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, enabled === true);
+  },
+};
 
 // guest 与宿主是独立文档：点击 webview 不会触发宿主 antd 菜单的外部点击监听。
 // 捕获阶段通知主进程收起顶栏菜单，即使 guest 原本已有焦点也能生效。
@@ -384,4 +403,5 @@ if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   i18n,
   meta,
   host,
+  ...(mayExposeIMBridge() ? { im } : {}),
 });

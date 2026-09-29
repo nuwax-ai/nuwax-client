@@ -1,5 +1,6 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
+import { disposeIMReceiver } from "./services/imReceiverRuntime";
 import {
   app,
   BrowserWindow,
@@ -67,6 +68,7 @@ import { APP_DATA_DIR_NAME } from "@shared/constants";
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
   app.setName("Nuwax");
+  if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
   app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
 }
 
@@ -472,6 +474,7 @@ ipcMain.handle("tray:updateServicesStatus", (_, running: boolean) => {
 
 async function cleanupAllProcesses(): Promise<void> {
   log.info("[Cleanup] Stopping all processes...");
+  disposeIMReceiver();
   // Cancel registration/start before shutting down any dependent service.
   commercialLifecycle?.invalidate();
 

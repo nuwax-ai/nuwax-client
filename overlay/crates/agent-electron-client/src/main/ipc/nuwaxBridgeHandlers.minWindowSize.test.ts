@@ -10,6 +10,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+vi.mock("../services/imReceiverRuntime", () => ({
+  initIMReceiver: vi.fn(), startIMReceiver: vi.fn(), stopIMReceiver: vi.fn(),
+  getIMUnreadSnapshot: vi.fn(() => null), retryIMReceiver: vi.fn(),
+  setIMNotificationEnabled: vi.fn(), ackIMOpenConversation: vi.fn(),
+}));
 
 const settings = new Map<string, unknown>();
 const handlers = new Map<
