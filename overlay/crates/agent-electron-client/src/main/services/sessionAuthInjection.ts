@@ -51,7 +51,8 @@ function trustedRequest(
     details.resourceType === "mainFrame" &&
     (!topUrl || topUrl === "about:blank") &&
     initialNavigations.get(contents) === details.url &&
-    matchesBusinessOrigin(details.url, context.businessOrigin)
+    (matchesBusinessOrigin(details.url, context.businessOrigin) ||
+      (!!context.gateway && matchesBusinessOrigin(details.url, context.gateway.origin)))
   );
 }
 

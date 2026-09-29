@@ -7,7 +7,7 @@ vi.mock("electron", () => ({
 }));
 vi.mock("electron-log", () => ({ default: { info: vi.fn() } }));
 vi.mock("./commercialTicketSession", () => ({ currentTicket: mocks.currentTicket }));
-import { applySessionAuthHeaders, initSessionAuthInjection } from "./sessionAuthInjection";
+import { applySessionAuthHeaders, initSessionAuthInjection, trustInitialBusinessNavigation } from "./sessionAuthInjection";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
 import { nativeTicketHeaders } from "./nativeTicketCapability";
@@ -32,6 +32,28 @@ function request(overrides: Record<string, unknown> = {}): OnBeforeSendHeadersLi
 }
 beforeEach(() => { mocks.install.mockClear(); mocks.currentTicket.mockReturnValue(null); });
 describe("business cookie session boundary", () => {
+  it.each([businessOrigin, gatewayOrigin])("authenticates a registered initial popup document at %s", (origin) => {
+    const contents = { getURL: () => "", isDestroyed: () => false, once: vi.fn() };
+    const url = `${origin}/api/f/s3/fixture.zip`;
+    const initial = request({ url, resourceType: "mainFrame", webContents: contents, frame: { url: "" }, requestHeaders: { Cookie: "ticket=new" } });
+    expect(applySessionAuthHeaders(initial, context).Cookie).toBeUndefined();
+    trustInitialBusinessNavigation(contents as never, url);
+    const headers = applySessionAuthHeaders(initial, context);
+    expect(headers.Cookie).toBe("ticket=new");
+    if (origin === gatewayOrigin) expect(headers[GATEWAY_REQUEST_HEADER]).toBe("secret");
+    expect(applySessionAuthHeaders(request({ ...initial, url: `${origin}/api/other` }), context).Cookie).toBeUndefined();
+    contents.once.mock.calls[0][1]();
+    expect(applySessionAuthHeaders(initial, context).Cookie).toBeUndefined();
+  });
+  it("does not authorize a registered initial URL at an unrelated loopback port or external origin", () => {
+    for (const url of ["http://127.0.0.1:46801/api/file", "https://external.example/api/file"]) {
+      const contents = { getURL: () => "about:blank", isDestroyed: () => false, once: vi.fn() };
+      trustInitialBusinessNavigation(contents as never, url);
+      const headers = applySessionAuthHeaders(request({ url, resourceType: "mainFrame", webContents: contents, frame: { url: "" }, requestHeaders: { Cookie: "ticket=new" } }), context);
+      expect(headers.Cookie).toBeUndefined();
+      expect(headers[GATEWAY_REQUEST_HEADER]).toBeUndefined();
+    }
+  });
   it("keeps ticket on trusted business requests and removes legacy Bearer", () => {
     expect(applySessionAuthHeaders(request({ requestHeaders: {
       Cookie: "ticket=new; a=1", Authorization: "Bearer obsolete",

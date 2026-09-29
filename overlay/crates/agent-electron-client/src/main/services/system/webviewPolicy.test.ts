@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  const popupWindows: Array<{ options: unknown; loadURL: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn> }> = [];
+  const popupWindows: Array<{
+    options: unknown;
+    loadURL: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    show: ReturnType<typeof vi.fn>;
+    destroy: ReturnType<typeof vi.fn>;
+    isDestroyed: () => boolean;
+    webContents: { session: unknown; getURL: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; once: ReturnType<typeof vi.fn>; removeListener: ReturnType<typeof vi.fn> };
+  }> = [];
   const defaultSession = {
     setPermissionRequestHandler: vi.fn(),
     setPermissionCheckHandler: vi.fn(),
@@ -12,18 +20,20 @@ const mocks = vi.hoisted(() => {
     setPermissionRequestHandler: ReturnType<typeof vi.fn>;
     setPermissionCheckHandler: ReturnType<typeof vi.fn>;
     setSpellCheckerEnabled: ReturnType<typeof vi.fn>;
+    on: ReturnType<typeof vi.fn>;
   }>();
   const fromPartition = vi.fn((partition: string) => {
     const ses = {
       setPermissionRequestHandler: vi.fn(),
       setPermissionCheckHandler: vi.fn(),
       setSpellCheckerEnabled: vi.fn(),
+      on: vi.fn(),
     };
     partitionSessions.set(partition, ses);
     return ses;
   });
   return { appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
-    attachHostActivityBusinessWindow: vi.fn() };
+    attachHostActivityBusinessWindow: vi.fn(), trustInitialBusinessNavigation: vi.fn() };
 });
 const settings = new Map<string, unknown>();
 
@@ -32,10 +42,20 @@ vi.mock("electron", () => ({
   dialog: { showMessageBoxSync: mocks.showMessageBoxSync },
   session: { defaultSession: mocks.defaultSession, fromPartition: mocks.fromPartition },
   BrowserWindow: class {
-    loadURL = vi.fn();
+    loadURL = vi.fn(async () => undefined);
     focus = vi.fn();
-    constructor(options: unknown) {
-      mocks.popupWindows.push({ options, loadURL: this.loadURL, focus: this.focus });
+    show = vi.fn();
+    on = vi.fn();
+    destroyed = false;
+    destroy = vi.fn(() => { this.destroyed = true; });
+    isDestroyed = () => this.destroyed;
+    webContents = { session: undefined as unknown, getURL: vi.fn(() => ""), on: vi.fn(), once: vi.fn(), removeListener: vi.fn() };
+    constructor(public options: unknown) {
+      const configured = options as { webPreferences?: { session?: unknown; partition?: string }; webContents?: typeof this.webContents };
+      if (configured.webContents) this.webContents = configured.webContents;
+      else this.webContents.session = configured.webPreferences?.session ??
+        mocks.partitionSessions.get(configured.webPreferences?.partition ?? "") ?? mocks.defaultSession;
+      mocks.popupWindows.push(this);
     }
   },
 }));
@@ -48,6 +68,9 @@ vi.mock("../../db", () => ({
 vi.mock("../hostActivity", () => ({
   attachHostActivityBusinessWindow: mocks.attachHostActivityBusinessWindow,
 }));
+vi.mock("../sessionAuthInjection", () => ({
+  trustInitialBusinessNavigation: mocks.trustInitialBusinessNavigation,
+}));
 
 vi.mock("../i18n", () => ({ t: (key: string) => key }));
 
@@ -59,9 +82,12 @@ function fakeContents(type: "window" | "webview", url: string, session: unknown 
   return {
     getType: () => type,
     getURL: () => url,
+    mainFrame: { framesInSubtree: [{ origin: new URL(url || "about:blank").origin }] },
     session,
     isDestroyed: () => false,
     on: vi.fn(),
+    once: vi.fn(),
+    removeListener: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     send: vi.fn(),
     openDevTools: vi.fn(),
@@ -109,10 +135,12 @@ beforeEach(() => {
   settings.set("step1_config", { serverHost: business });
   mocks.appOn.mockClear();
   mocks.showMessageBoxSync.mockReset();
+  mocks.defaultSession.on.mockClear();
   mocks.fromPartition.mockClear();
   mocks.partitionSessions.clear();
   mocks.popupWindows.length = 0;
   mocks.attachHostActivityBusinessWindow.mockClear();
+  mocks.trustInitialBusinessNavigation.mockClear();
 });
 afterEach(() => {
   if (originalProduct === undefined) delete process.env.NUWAX_APP_IDENTIFIER;
@@ -311,12 +339,16 @@ describe("window.open session boundary", () => {
       businessHandler(popup(`${business}/agent`, `${external}/iframe`)),
       businessHandler(popup(`https://user:pass@business.example/agent`, `${business}/home`)),
       businessHandler(popup(`${business}/agent`, `https://user:pass@business.example/home`)),
-      businessHandler(popup(`${business}/agent`, "")),
     ]) {
       expect(result.overrideBrowserWindowOptions?.webPreferences.partition)
         .toMatch(/^temp:nuwax-popup-/);
       expect(result.overrideBrowserWindowOptions?.webPreferences.preload).toBeUndefined();
     }
+    const missingReferrer = businessHandler(popup(`${business}/agent`, ""));
+    expect(missingReferrer.action).toBe("deny");
+    const options = mocks.popupWindows.at(-1)!.options as any;
+    expect(options.webPreferences.partition).toMatch(/^temp:nuwax-popup-/);
+    expect(options.webPreferences.preload).toBeUndefined();
   });
 
   it("popup from isolated BrowserWindow remains isolated, including second level popup", async () => {
@@ -411,6 +443,156 @@ describe("business top-level navigation boundary", () => {
     expect(mocks.partitionSessions.get(preferences.partition)?.setPermissionRequestHandler)
       .toHaveBeenCalledOnce();
     expect(isolateUntrustedInitialWebview({}, { src: `${business}/home` })).toBe(false);
+  });
+});
+
+describe("download popup lifecycle", () => {
+  function fire(contents: { on: ReturnType<typeof vi.fn> }, name: string, ...args: unknown[]) {
+    const handler = contents.on.mock.calls.find(([event]) => event === name)?.[1];
+    expect(handler).toBeTypeOf("function");
+    handler(...args);
+  }
+
+  async function createPopup(target = business) {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    const result = handler(popup(`${target}/file`, `${business}/home`));
+    const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
+    return { result, contents, win: mocks.popupWindows.at(-1)! };
+  }
+
+  it("registers initial business authentication before loading a hidden popup", async () => {
+    const { result, contents, win } = await createPopup();
+    expect(result.overrideBrowserWindowOptions?.show).toBe(false);
+    expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, `${business}/file`);
+    expect(mocks.trustInitialBusinessNavigation.mock.invocationCallOrder[0])
+      .toBeLessThan(win.loadURL.mock.invocationCallOrder[0]);
+    expect(win.loadURL).toHaveBeenCalledWith(`${business}/file`, expect.objectContaining({
+      httpReferrer: { url: `${business}/home`, policy: "strict-origin-when-cross-origin" },
+    }));
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledWith(win);
+    expect(win.show).not.toHaveBeenCalled();
+  });
+
+  it("authenticates a noreferrer business file without giving it the page bridge", async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    const url = `${business}/api/f/s3/default/fixture.zip`;
+    const result = handler(popup(url, ""));
+    expect(result.action).toBe("allow");
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.session).toBe(mocks.defaultSession);
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.preload).toBeUndefined();
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.additionalArguments).toBeUndefined();
+    const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
+    expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, url);
+  });
+
+  it("keeps an external noreferrer link in a new isolated window", async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    expect(handler(popup(`${external}/file.zip`, "")).action).toBe("deny");
+    const win = mocks.popupWindows.at(-1)!;
+    expect(win.webContents.session).not.toBe(mocks.defaultSession);
+    expect((win.options as any).webPreferences.preload).toBeUndefined();
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
+  });
+
+  it.each([external, "null"])("does not lend noreferrer file authentication with an iframe origin of %s", async (origin) => {
+    const guest = attachedWebview(await setup(), `${business}/home`);
+    guest.mainFrame.framesInSubtree.push({ origin });
+    const handler = guest.setWindowOpenHandler.mock.lastCall![0];
+    expect(handler(popup(`${business}/api/f/s3/fixture.zip`, "")).action).toBe("deny");
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
+    expect(mocks.popupWindows.at(-1)!.webContents.session).not.toBe(mocks.defaultSession);
+  });
+
+  it.each([
+    { opener: external, referrer: "", url: `${business}/api/f/s3/fixture.zip` },
+    { opener: business, referrer: external, url: `${business}/api/f/s3/fixture.zip` },
+    { opener: business, referrer: "", url: `${business}/api/other` },
+  ])("does not lend download authentication outside its allowed source and path: $url", async (input) => {
+    const handler = webviewPopupHandler(await setup(), `${input.opener}/home`) as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    const result = handler(popup(input.url, input.referrer));
+    if (result.createWindow) result.createWindow(result.overrideBrowserWindowOptions!);
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
+    expect(mocks.popupWindows.at(-1)!.webContents.session).not.toBe(mocks.defaultSession);
+  });
+
+  it("preserves an existing Chromium guest without loading its URL twice", async () => {
+    const { result } = await createPopup();
+    const existing = { session: mocks.defaultSession, getURL: vi.fn(() => ""), on: vi.fn(), once: vi.fn(), removeListener: vi.fn() };
+    const options = { ...result.overrideBrowserWindowOptions, webContents: existing };
+    expect(result.createWindow!(options)).toBe(existing);
+    expect(mocks.popupWindows.at(-1)!.loadURL).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { contentType: "application/x-www-form-urlencoded", boundary: undefined },
+    { contentType: "multipart/form-data", boundary: "fixture-boundary" },
+  ])("preserves POST form headers for $contentType popup navigation", async (format) => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    const data = [{ type: "rawData", bytes: Buffer.from("fixture=value") }];
+    const result = handler({
+      ...popup(`${business}/file`, `${business}/home`),
+      postBody: { ...format, data },
+    });
+    result.createWindow!(result.overrideBrowserWindowOptions!);
+    expect(mocks.popupWindows.at(-1)!.loadURL).toHaveBeenCalledWith(`${business}/file`, {
+      httpReferrer: { url: `${business}/home`, policy: "strict-origin-when-cross-origin" },
+      postData: data,
+      extraHeaders: `content-type: ${format.contentType}${
+        format.boundary ? `; boundary=${format.boundary}` : ""
+      }`,
+    });
+  });
+
+  it.each(["completed", "cancelled", "interrupted"])("closes a download-only isolated popup after %s", async (state) => {
+    const { win } = await createPopup(external);
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
+    const ses = win.webContents.session as { on: ReturnType<typeof vi.fn> };
+    const item = { getFilename: () => "fixture.zip", getTotalBytes: () => 42, getSavePath: () => "/tmp/fixture.zip", on: vi.fn(), once: vi.fn() };
+    fire(ses, "will-download", {}, item, win.webContents);
+    fire(win.webContents, "did-fail-load", {}, -3, "ERR_ABORTED", `${external}/file`, true);
+    expect(win.destroy).not.toHaveBeenCalled();
+    item.once.mock.calls.find(([event]) => event === "done")![1]({}, state);
+    expect(win.destroy).toHaveBeenCalledOnce();
+    expect(win.show).not.toHaveBeenCalled();
+  });
+
+  it("shows committed HTML and retains it when a later download finishes", async () => {
+    const { win } = await createPopup(external);
+    win.webContents.getURL.mockReturnValue(`${external}/docs`);
+    fire(win.webContents, "did-finish-load");
+    expect(win.show).toHaveBeenCalledOnce();
+    const item = { getFilename: () => "fixture.zip", getTotalBytes: () => 42, getSavePath: () => "/tmp/fixture.zip", on: vi.fn(), once: vi.fn() };
+    fire(win.webContents.session as { on: ReturnType<typeof vi.fn> }, "will-download", {}, item, win.webContents);
+    item.once.mock.calls.find(([event]) => event === "done")![1]({}, "completed");
+    expect(win.destroy).not.toHaveBeenCalled();
+  });
+
+  it("retains committed HTML when its download finishes before slow subresources load", async () => {
+    const { win } = await createPopup(external);
+    fire(win.webContents, "dom-ready");
+    expect(win.show).not.toHaveBeenCalled();
+    win.webContents.getURL.mockReturnValue(`${external}/docs`);
+    fire(win.webContents, "did-navigate", {}, `${external}/docs`);
+    fire(win.webContents, "dom-ready");
+    expect(win.show).toHaveBeenCalledOnce();
+    const item = { getFilename: () => "fixture.zip", getTotalBytes: () => 42, getSavePath: () => "/tmp/fixture.zip", on: vi.fn(), once: vi.fn() };
+    fire(win.webContents.session as { on: ReturnType<typeof vi.fn> }, "will-download", {}, item, win.webContents);
+    item.once.mock.calls.find(([event]) => event === "done")![1]({}, "completed");
+    expect(win.destroy).not.toHaveBeenCalled();
+    fire(win.webContents, "did-finish-load");
+    expect(win.show).toHaveBeenCalledOnce();
+  });
+
+  it("closes an empty failed page without creating a download", async () => {
+    const { win } = await createPopup(external);
+    fire(win.webContents, "did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", `${external}/file`, true);
+    expect(win.destroy).toHaveBeenCalledOnce();
+    expect(win.show).not.toHaveBeenCalled();
   });
 });
 
