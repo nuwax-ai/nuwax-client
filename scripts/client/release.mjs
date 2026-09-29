@@ -63,6 +63,10 @@ export function verifyManifests(manifests, assets, identity, source) {
       if (asset.digest && asset.digest !== `sha256:${digest}`) throw new Error(`${filename} 与 CI 构建 SHA256 不一致`);
     }
   }
+  if (identity.channel === 'stable') {
+    const digests = new Set(platforms.map((key) => manifests[key].frontend.distSha256));
+    if (digests.size !== 1) throw new Error('stable 五平台前端产物 SHA256 不一致');
+  }
   const signing = manifests['windows-x64'].windowsSigning;
   if (!Number.isSafeInteger(signing?.unsignedSize) || signing.unsignedSize <= 0 || !hashPattern.test(signing?.signingIdentitySha256 ?? ''))
     throw new Error('Windows 构建清单缺少签名来源记录');

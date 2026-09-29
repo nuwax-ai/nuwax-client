@@ -100,3 +100,43 @@ export async function preparePinnedFrontend(root, options = {}) {
   }
   return buildFrontend(root, { ...options, expectedSha, allowDirty: false, tools });
 }
+
+/** Consume the exact frontend artifact gitlink for release builds. */
+export async function usePinnedFrontendDist(root, options = {}) {
+  const tools = { ...core, ...options.tools };
+  const { frontend, dist } = tools.paths(root);
+  const indexReady = (directory) => {
+    const file = path.join(directory, 'index.html');
+    return fs.existsSync(file) && fs.statSync(file).isFile() && fs.statSync(file).size > 0;
+  };
+  const sourceSha = await tools.git(root, ['rev-parse', 'HEAD:nuwax']);
+  const distSha = await tools.git(root, ['rev-parse', 'HEAD:nuwax-dist']);
+  if (!/^[0-9a-f]{40}$/.test(sourceSha) || !/^[0-9a-f]{40}$/.test(distSha))
+    throw new Error('release frontend gitlinks are invalid');
+  if (!fs.existsSync(path.join(dist, '.git')) || await tools.git(dist, ['rev-parse', 'HEAD']) !== distSha)
+    throw new Error('nuwax-dist checkout does not match the release gitlink');
+  if (await tools.git(dist, ['status', '--porcelain', '--untracked-files=all']))
+    throw new Error('nuwax-dist has local changes');
+  let stamp;
+  try { stamp = tools.readJson(path.join(dist, 'version.json')).gitHash; } catch {}
+  if (typeof stamp !== 'string' || !/^[0-9a-f]{7,40}$/.test(stamp) || !sourceSha.startsWith(stamp))
+    throw new Error(`nuwax-dist stamp ${stamp ?? '(missing)'} differs from source gitlink ${sourceSha}`);
+  if (!indexReady(dist))
+    throw new Error('nuwax-dist index.html is missing or empty');
+  const target = path.join(frontend, 'dist');
+  if (fs.existsSync(target)) throw new Error('nuwax/dist already exists; refusing to overwrite source build output');
+  fs.mkdirSync(target, { recursive: true });
+  try {
+    for (const name of fs.readdirSync(dist)) {
+      if (name === '.git' || name === 'README.md') continue;
+      fs.cpSync(path.join(dist, name), path.join(target, name), { recursive: true, verbatimSymlinks: true });
+    }
+    if (!indexReady(target))
+      throw new Error('copied frontend index.html is missing or empty');
+  } catch (error) {
+    fs.rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
+  console.log(`[frontend] pinned dist ready: ${distSha} from ${sourceSha}`);
+  return { sourceSha, distSha, stamp, distDir: target };
+}

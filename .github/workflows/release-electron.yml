@@ -6,8 +6,8 @@
 # 构建/签名/上传逻辑与社区版 release-electron.yml 同构，差异集中在本文件头注：
 #   1. checkout 用 submodules: true（非 recursive）：以 github.token 拉 submodule
 #      （基座仓公开）；显式两层 init 见 Init submodules 步骤
-#   2. nuwax 前端子模块（壳根 nuwax/；发布 tag 的 gitlink 源码现场重建 dist）
-#      第二层手动 init（远端公开可匿名拉取）
+#   2. nuwax 源码与 nuwax-dist 产物使用发布 tag 的双 gitlink；正式包消费
+#      已锁定的前端产物，校验版本戳与源码 pin，避免五平台重复构建。
 #   3. 所有 crates/ 路径前缀 nuwa-electron-shell/crates/；pnpm workspace 根在 nuwa-electron-shell/
 #   4. 「Set version & commercial branding」步骤覆盖 appId/productName（npm pkg），
 #      并删除 extendInfo.CFBundleIdentifier 旧覆盖使 macOS bundle id 与 appId 统一
@@ -119,39 +119,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 显式 submodule init（不依赖 checkout action 内部递归 sync）：
-      # nuwa-electron-shell submodule → 基座仓 nuwax-ai/nuwa-electron-shell 的 main 分支（公开，
-      #   github.token 注入凭据）；nuwax → 壳根前端 pin（公开可匿名拉取，gitlink 须在
-      #   feat-dong.0930 上可达；基座已不含内嵌 nuwax——前端 dist 打包来源=壳根 nuwax/dist）
-      - name: Init submodules (nuwa-electron-shell + nuwax)
+      # 初始化发布 tag 的三个 gitlink；前端嵌套子模块仅源码测试需要，
+      # 正式包消费 nuwax-dist pin，无需在五个平台重复拉取/构建它们。
+      - name: Init pinned submodules
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
-          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
         run: |
-          # submodule 认证统一走 gh CLI 凭据助手（跨平台一致；Windows Git 的
-          # GCM 会劫持/覆盖 URL 内嵌凭据，insteadOf 亦不生效——均实测失败）
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：凭据经 credential helper 按域注入。
-          # 不用 insteadOf——它会改写 `git remote get-url` 输出，upgrade:micro-apps 的
-          # 「origin 与 .gitmodules 一致」预检会拒（CI 实测）；helper 只供凭据不动 URL。
-          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：PAT 经 http.extraHeader 按域注入
-          # （actions/checkout 同款机制；不改写 URL/credential——upgrade:micro-apps 的
-          # origin/.gitmodules 一致性预检依赖原始 remote URL，insteadOf/credential helper 均实测翻车）
-          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
-            git config --global http.https://git.yichamao.com/.extraheader \
-              "Authorization: Basic $(printf 'oauth2:%s' "$YICHAMAO_GIT_TOKEN" | base64)"
-          fi
+          # Windows runner 可能启用 CRLF checkout；五平台必须复制相同的产物字节。
+          git config --global core.autocrlf false
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
-          # 前端嵌套子模块（micro-apps 构建期升级依赖）
-          git -C nuwax submodule update --init --recursive
+          git submodule update --init nuwax-dist
           git submodule status
-          # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
+          # submodule update 内部重试失败时可能以 0 退出，逐项强校验。
           test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
           test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
-          test -d nuwax/submodules/nuwax-repo-web || { echo "::error::nuwax nested submodule nuwax-repo-web not checked out"; exit 1; }
+          test -f nuwax-dist/index.html || { echo "::error::nuwax-dist artifact submodule not checked out"; exit 1; }
 
       # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
       - name: Sync overlay into base worktree
@@ -226,9 +212,9 @@ jobs:
           version: 9.15.5
           package_json_file: nuwa-electron-shell/package.json
 
-      - name: Build pinned nuwax frontend dist
+      - name: Stage pinned nuwax frontend dist
         shell: bash
-        run: ./scripts/prepare-nuwax-dist.sh
+        run: ./scripts/prepare-nuwax-dist.sh --pinned
 
       - name: Install setuptools for node-gyp (Python 3.12+)
         shell: bash
@@ -407,6 +393,13 @@ jobs:
           NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
           NUWAX_PORT_OFFSET: "1000"
         run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # dist:mac 显式使用 compression=maximum（ZIP level 9）；v3.0.3 的
+            # macOS ZIP 阶段约 55 分钟。v3.0.6 改为 level 1 后该段约 5 分钟，
+            # 但 DMG 包体也增加约 25%；后续应单独调优 ZIP 与 DMG。
+            export ELECTRON_BUILDER_COMPRESSION_LEVEL=1
+            echo "macOS archive compression level: ${ELECTRON_BUILDER_COMPRESSION_LEVEL}"
+          fi
           if [ "${{ runner.os }}" = "macOS" ] && [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
             echo "No Apple certificate, building unsigned Mac package for ${{ matrix.arch }}"
             npm run dist:mac:unsigned:${{ matrix.arch }} -- --publish never
