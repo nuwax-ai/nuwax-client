@@ -302,8 +302,18 @@ jobs:
                 echo "blockMapSize: $blockmap_size"
               fi
               echo "files:"
+              # 同一文件可被多个 key 引用（latest.json 的 windows-x86_64 与
+              # windows-x86_64-nsis 指向同一 exe，linux 的 *-appimage 对同理）：
+              # files[] 按文件名去重只保留首个 key 的记录，否则生成重复条目
+              # （v1.0.45 latest.yml 双 exe 实证，无实义但易误导消费方）。
+              # 文件名不含空格，用空格分隔的 seen 串匹配即可，不依赖 bash 版本。
+              local emitted_files=" "
               while IFS= read -r k; do
                 fname=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].url' | sed 's|.*/||')
+                if [[ "$emitted_files" == *" $fname "* ]]; then
+                  continue
+                fi
+                emitted_files="$emitted_files$fname "
                 sig=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].signature')
                 size=$(echo "$PLATFORMS" | jq -r --arg k "$k" '.[$k].size')
                 echo "  - url: $fname"

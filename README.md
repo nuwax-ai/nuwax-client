@@ -149,8 +149,10 @@ npm run pack -- --frontend source
 | `npm run dev -- --frontend source` | 自动准备前端依赖，启动 UMI 热更新、壳 Vite 和 Electron |
 | `npm run pack` | 默认使用产物 pin，生成当前平台无签名 Nuwax 包；`--frontend source` 先构建当前前端源码 |
 | `npm run sub:update` | 更新源码、构建、提交并推送产物仓、提交外层双 pin |
-| `npm run release -- --channel stable --version X.Y.Z` | 编排 CI、Windows 签名机和正式发布；支持 `--channel beta` |
+| `npm run release -- --channel stable --version X.Y.Z` | 编排 CI、Windows 签名机和正式发布；支持 `--channel beta`；`--stage sign` / `--stage sync` 可将 Windows 签名与 OSS/S3 同步分开跑（sync 前置校验签名资产就位） |
 | `npm run doctor -- --json` | 只读报告环境、依赖、资源和 pin 就绪状态 |
+
+两层 `package.json` 的完整脚本参考（含基座签名 / 打包 / prepare 族）见 [docs/npm-scripts.md](./docs/npm-scripts.md)。
 
 `client.config.mjs` 集中定义商业身份、前端模式与端口、前端构建/热更新的 Node 内存参数，以及打包输出目录和是否只生成解包应用。默认前端模式为 `dist`，构建/热更新分别使用 4096/8192 MB 堆内存，完整安装包输出到 `release/<version>/`；已有 `NODE_OPTIONS` 环境变量会原样优先使用，命令行参数可覆盖模式与打包选项。
 

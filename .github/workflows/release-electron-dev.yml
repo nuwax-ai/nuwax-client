@@ -163,6 +163,15 @@ jobs:
           # 目录名一律保持 ASCII Nuwax 不变。
           npm pkg set build.appId="com.nuwax-ai.nuwax"
           npm pkg set build.productName="Nuwax"
+          # electron-updater 缓存目录名 = sanitize(包名)+"-updater"（builder 25.1.8 无
+          # electronUpdaterCacheDirName 配置键，唯一改法是有效包名）。基座 scoped 包名
+          # @nuwax-ai/nuwaclaw 与社区版 NuwaClaw 同源，两边都烤出同一个
+          # @nuwax-ainuwaclaw-updater 缓存目录，同机双装时 electron-updater 下载前
+          # emptyDir(pending) 互清对方安装包（v1.0.45 升级「Windows 找不到文件」实证）。
+          # extraMetadata.name 在 AppInfo 构建前 deepAssign 合并，商业版缓存目录由此
+          # 隔离为 nuwax-updater，与本地 npm run pack（builderConfig 同键）一致；
+          # artifactName 全走 ${productName}、deb/rpm packageName 已显式覆盖，不受影响。
+          npm pkg set build.extraMetadata.name="nuwax"
           # 顶层 productName：Electron app.getName() 优先读它——商业版更新调试信息与
           # 打包 userData 目录名显示 Nuwax 而非内部 scoped 包名（产物命名仍以 build.productName 为准）。
           # ⚠️ 必须保持 ASCII：autoUpdater 用 app.getName() 拼「Uninstall <name>.exe」
@@ -191,7 +200,7 @@ jobs:
           # 前端 dist 打包来源（基座已中立化移除该条目）：壳根 nuwax/dist →
           # resources/nuwax-dist（dev 形态运行时经 NUWAX_FRONTEND_DIST env 解析）
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.from&&e.from.includes('nuwax/dist'))).concat([{from:'../../../nuwax/dist',to:'nuwax-dist'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
-          echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
+          echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -462,6 +471,9 @@ jobs:
           for f in "${OUT_DIR}"/*; do
             [ -e "$f" ] || continue
             [ -f "$f" ] || continue
+            # electron-builder 构建告警时写入输出目录的调试转储；不在 build-manifest/provenance
+            # 资产清单内，上传会让最终镜像校验（Release 资产须被 provenance 全覆盖）必然失败。
+            [ "$(basename "$f")" = "builder-debug.yml" ] && { echo "Skipping $(basename "$f") (builder debug dump)"; continue; }
             echo "Uploading $(basename "$f") ..."
             gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
           done

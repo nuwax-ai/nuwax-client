@@ -33,6 +33,13 @@ SIGN_WIN_ARTIFACT_PREFIX="Nuwax" \
 npm run sign:win -- <version>
 ```
 
+等价简写（外层仓库根，`scripts/client/forward.mjs` 自动注入
+`SIGN_RELEASE_REPO` 与 `SIGN_WIN_ARTIFACT_PREFIX=Nuwax`，其余参数原样透传）：
+
+```bash
+npm run sign:win -- <version>
+```
+
 说明：
 
 - **产物前缀必须显式指定 `Nuwax`**：CI 在构建时覆写
@@ -56,12 +63,55 @@ npm run sign:win -- <version>
 签名后重跑时，Release 仅有签名版 EXE 也会通过资产前置检查；`--notes` 允许
 指定说明文件尚未提交，脚本会先单独提交并推送它。
 
+签名与同步需要分开跑时（跨天发版、签名机现场直签后回 mac 同步等场景）用
+`--stage` 拆开，两个阶段各自携带完整前置校验、可独立续跑：
+
+```bash
+npm run release -- --channel stable --version X.Y.Z --stage sign   # 只到签名资产就位
+npm run release -- --channel stable --version X.Y.Z --stage sync   # 只 dispatch 同步 + 镜像验证
+```
+
+`--stage sync` 在 stable 缺签名资产时会拒绝并提示先跑 `--stage sign`；beta 无签名
+阶段，`--stage sign` 不适用。
+
 win-pc 一次性配置记录（已做，勿重复）：
 
 - `winget install GitHub.cli` + `gh auth login`（mac 侧 `gh auth token | ssh win-pc "bash -lc 'gh auth login --with-token'"` 管道，token 不落日志）；
 - `WINDOWS_CERTIFICATE_SHA1` 在 `~/.bashrc`；signtool 用 Windows Kits 自带（`.../Windows Kits/10/bin/*/x64/signtool.exe`）；
 - **sshd 会话 PATH 不含 MSI 装的 gh**（新开 ssh 会话拿旧环境），调用时须显式
   `export PATH="/c/Program Files/GitHub CLI:$PATH"`——编排脚本已内置。
+
+### 签名机上本地直签（续签/排查用）
+
+正常发版无需上机（mac 侧 `npm run release` SSH 编排同款命令）。SSH 链路不可用或需要
+现场排查时，在签名机上按同一口径直跑：
+
+```bash
+cd /c/soddy-git-workspace/nuwax-client
+tag=electron-v<version>                       # 例 electron-v1.0.45
+sha=$(git rev-parse "$tag^{commit}")
+git fetch origin "refs/tags/$tag"
+work=../.nuwax-release-$tag-${sha:0:12}
+git worktree add --detach "$work" "$sha" 2>/dev/null || true   # 已存在时复用
+cd "$work" && git submodule update --init nuwa-electron-shell
+node scripts/sync-overlay.js
+cd nuwa-electron-shell/crates/agent-electron-client
+SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
+SIGN_WORK_DIR=/c/tmp/nuwax-sign/$tag-${sha:0:12} \
+SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true \
+npm run sign:win -- <version>
+```
+
+要点：
+
+- **重跑免重下**：draft 期间远端 digest 查询受限，签名脚本缓存校验拿不到哈希会整包
+  重下（~731MB）。SimplySign 2FA 超时重试时，若 `SIGN_WORK_DIR/unsigned/` 已有完整
+  unsigned EXE 且其 SHA256 与 Release 上 `build-manifest-windows-x64.json` 记录一致，
+  追加 `--skip-download` 续跑（`release` 编排已内置此判定）。
+- 签名留档在 `SIGN_WORK_DIR/signed/`（每版 unsigned+signed ~1.5GB，无人自动清理，
+  需要时手动清旧 tag 目录）。
+- 编排脚本在签名成功后会自动清理其他 `.nuwax-release-*` 一次性 worktree（其他 tag
+  与旧命名后缀）；手动直签场景须自行 `git worktree remove`。
 
 已知取舍：v2 签名脚本默认 `SIGN_SKIP_BLOCKMAP=true`，签名版 EXE 不重生成 blockmap，
 Windows 自动更新走全量下载（非差分）；需要差分时在签名机上手动生成并补传。
@@ -73,6 +123,13 @@ cd <nuwax-client 检出>/nuwa-electron-shell/crates/agent-electron-client
 
 SYNC_OSS_REPO=nuwax-ai/nuwax-client \
 SYNC_OSS_REF=release/v1.0.x \
+npm run sync:oss -- electron-v<version> stable
+```
+
+等价简写（外层仓库根，`SYNC_OSS_REPO` 注入、`SYNC_OSS_REF` 默认取当前分支——
+须在目标发布线分支上运行）：
+
+```bash
 npm run sync:oss -- electron-v<version> stable
 ```
 

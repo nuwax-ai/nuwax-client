@@ -22,6 +22,9 @@
     "pack": "node scripts/client/cli.mjs pack",
     "sub:update": "node scripts/client/cli.mjs sub:update",
     "release": "node scripts/client/cli.mjs release",
+    "sign:win": "node scripts/client/forward.mjs sign:win",
+    "verify:sign:win": "node scripts/client/forward.mjs verify:sign:win",
+    "sync:oss": "node scripts/client/forward.mjs sync:oss",
     "doctor": "node scripts/client/cli.mjs doctor",
     "setup": "node scripts/client/cli.mjs setup"
   }

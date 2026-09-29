@@ -19,3 +19,9 @@ test('CLI refuses contradictory update flags before acquiring a lock', async () 
   await assert.rejects(main(['sub:update', '--no-commit', '--push']), /cannot be combined/);
   await assert.rejects(main(['sub:update', '--no-build', '--force-build']), /cannot be combined/);
 });
+test('CLI validates release --stage values', () => {
+  assert.deepEqual(parseArgs(['release', '--stage', 'sign', '--version', '1.2.3']).options,
+    { stage: 'sign', version: '1.2.3' });
+  assert.throws(() => parseArgs(['release', '--stage', 'build']));
+  assert.throws(() => parseArgs(['pack', '--stage', 'sign']));
+});

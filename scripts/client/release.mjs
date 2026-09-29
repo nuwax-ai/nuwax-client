@@ -68,14 +68,23 @@ export function verifyManifests(manifests, assets, identity, source) {
     throw new Error('Windows 构建清单缺少签名来源记录');
 }
 
-function remoteScript(state, settings) {
+export function remoteScript(state, settings, resume = {}) {
   const { tag, sha, version, source } = state;
   const work = `${settings.windowsClientDir.replace(/\/$/, '')}/../.nuwax-release-${tag}-${sha.slice(0, 12)}`;
+  const signWork = `/c/tmp/nuwax-sign/${tag}-${sha.slice(0, 12)}`;
   // All paths and values are shell quoted; no caller-supplied text is interpolated as code.
   return `set -euo pipefail
 export PATH=${quote(settings.signGhPath)}:"$PATH"
 repo=${quote(settings.windowsClientDir)}
 work=${quote(work)}
+signwork=${quote(signWork)}
+unsigned="$signwork/unsigned/Nuwax-Setup-${version}-unsigned.exe"
+# Draft 期间远端 digest 查询受限，基座脚本缓存校验拿不到哈希会整包重下；
+# 本地已有同 SHA256 的 unsigned EXE 时改用 --skip-download 续跑（哈希由 mac 侧构建清单提供）。
+resume=""
+if [ -f "$unsigned" ] && [ "$(sha256sum "$unsigned" | awk '{print $1}')" = ${quote(resume.unsignedSha256 ?? '')} ]; then
+  resume="--skip-download"
+fi
 git -C "$repo" fetch origin ${quote(`refs/tags/${tag}`)}
 test "$(git -C "$repo" rev-parse 'FETCH_HEAD^{commit}')" = ${quote(sha)}
 if [ -d "$work" ]; then
@@ -89,7 +98,12 @@ git submodule update --init nuwa-electron-shell
 test "$(git -C nuwa-electron-shell rev-parse HEAD)" = ${quote(source.shell)}
 node scripts/sync-overlay.js
 cd nuwa-electron-shell/crates/agent-electron-client
-SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR=${quote(`/c/tmp/nuwax-sign/${tag}-${sha.slice(0, 12)}`)} SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true npm run sign:win -- ${quote(version)}
+SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true npm run sign:win -- ${quote(version)} $resume
+# 签名上传成功后清理一次性 worktree 残留（其他 tag 与旧版命名后缀）；失败路径不执行，保留续跑现场。
+for stale in "$(dirname "$work")"/.nuwax-release-*; do
+  if [ ! -e "$stale" ] || [ "$stale" = "$work" ]; then continue; fi
+  git -C "$repo" worktree remove --force "$stale" >/dev/null 2>&1 || rm -rf "$stale" 2>/dev/null || true
+done
 `;
 }
 
@@ -284,6 +298,8 @@ export async function verifyMirrors(tools, settings, identity, view, source) {
 
 export async function release(root, options = {}, injected = {}) {
   const identity = releaseIdentity(options.channel ?? 'stable', options.version);
+  const stage = options.stage;
+  if (stage === 'sign' && identity.channel !== 'stable') throw new Error('--stage sign 仅适用 stable（beta 不做 Windows 签名）');
   const settings = { ...config.release, ...(options.settings ?? {}),
     signHost: process.env.RELEASE_SIGN_HOST ?? options.settings?.signHost ?? config.release.signHost,
     windowsClientDir: process.env.WIN_CLIENT_DIR ?? options.settings?.windowsClientDir ?? config.release.windowsClientDir,
@@ -292,11 +308,13 @@ export async function release(root, options = {}, injected = {}) {
   const state = await preflight(root, identity, options, tools, settings);
   const steps = ['校验已提交发布说明、远端 HEAD 与子模块 pin', `确保不可变 tag ${identity.tag} 指向 ${state.sha}`,
     `跟踪 ${identity.buildWorkflow} 同 tag/SHA 的 push run`, '校验五平台来源及安装资产',
-    ...(identity.channel === 'stable' ? [`在 ${settings.signHost} 使用 tagged 签名脚本；SimplySign 手机认证须人工完成`, 'dispatch 同步 workflow，固定当前分支 ref'] : ['跟踪自动 beta 同步；同步失败可重跑续接']),
-    '验证公开 Release、GitHub/S3/OSS SHA256 与通道指针'];
+    ...(identity.channel === 'stable' && stage !== 'sync' ? [`在 ${settings.signHost} 使用 tagged 签名脚本；SimplySign 手机认证须人工完成`] : []),
+    ...(stage === 'sign' ? ['仅签名阶段（--stage sign）：不同步 OSS/S3']
+      : identity.channel === 'stable' ? ['dispatch 同步 workflow，固定当前分支 ref'] : ['跟踪自动 beta 同步；同步失败可重跑续接']),
+    ...(stage === 'sign' ? [] : ['验证公开 Release、GitHub/S3/OSS SHA256 与通道指针'])];
   if (options.dryRun) {
     const result = { dryRun: true, ok: state.findings.length === 0, tag: identity.tag, source: state.source, branch: state.branch, notes: state.notes,
-      findings: state.findings, steps, signHost: settings.signHost, ...(options.notes === true ? { notesCommitPlanned: true } : {}) };
+      findings: state.findings, steps, signHost: settings.signHost, ...(stage ? { stage } : {}), ...(options.notes === true ? { notesCommitPlanned: true } : {}) };
     tools.log(JSON.stringify(result, null, 2));
     return result;
   }
@@ -332,14 +350,21 @@ export async function release(root, options = {}, injected = {}) {
     tools.log('[release] beta 构建完成，自动同步失败；继续同步重试');
   }
   let view = await releaseView(tools, settings, identity);
-  await manifestsFromRelease(tools, identity, view, state.source);
+  const manifests = await manifestsFromRelease(tools, identity, view, state.source);
   if (identity.channel === 'stable' && !view.assets.some((asset) => asset.name === identity.windows)) {
+    if (stage === 'sync') throw new Error(`stable 同步前缺少签名资产 ${identity.windows}：先运行 --stage sign 完成签名`);
     tools.log(`[release] Windows 签名阶段：请确认 ${settings.signHost} SimplySign Desktop 已完成手机认证`);
-    const script = remoteScript(state, settings);
+    const script = remoteScript(state, settings,
+      { unsignedSha256: manifests['windows-x64'].artifacts[`Nuwax-Setup-${identity.version}-unsigned.exe`] });
     try { await tools.exec('ssh', [settings.signHost, `bash -lc ${quote(script)}`]); }
     catch (error) { throw new Error(`Windows 签名未完成。请在 ${settings.signHost} 完成 SimplySign 手机认证并检查证书/工具；重跑同版本可续接。${error.message}`); }
     view = await releaseView(tools, settings, identity);
     if (!view.assets.some((asset) => asset.name === identity.windows)) throw new Error(`签名后仍缺少 ${identity.windows}`);
+  }
+  if (stage === 'sign') {
+    tools.log(`[release] --stage sign 完成：${identity.windows} 已就位；OSS/S3 同步未执行（续跑 --stage sync 或完整 release）`);
+    return { stage: 'sign', tag: identity.tag, version: identity.version, source: state.source, windows: identity.windows,
+      releaseUrl: `https://github.com/${settings.repo}/releases/tag/${identity.tag}` };
   }
   // Successful sync performs osslsigncode + PE provenance checks. Public assets alone never bypass it.
   const title = `Sync ${identity.channel} ${identity.tag}`;

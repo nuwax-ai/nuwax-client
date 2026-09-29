@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { release, releaseIdentity, selectRun, verifyManifests, verifyMirrors } from './client/release.mjs';
+import { release, releaseIdentity, remoteScript, selectRun, verifyManifests, verifyMirrors } from './client/release.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40), dist: 'd'.repeat(40) };
@@ -160,6 +160,54 @@ test('stable signs with exact tagged isolated worktree and then publishes', asyn
   assert.match(ssh.at(-1), /aaaaaaaaaaaa/);
   assert.match(ssh.at(-1), /SIGN_SKIP_BLOCKMAP=true/);
   assert.equal(f.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
+});
+
+test('signing resume embeds the manifest unsigned SHA256 for --skip-download', async () => {
+  const f = fixture({ signed: false, publicRelease: false });
+  await f.run();
+  const ssh = f.calls.find(([type, command]) => type === 'exec' && command === 'ssh');
+  assert.match(ssh.at(-1), /sha256sum "\$unsigned"/);
+  assert.ok(ssh.at(-1).includes(digest(Buffer.from('Nuwax-Setup-1.2.3-unsigned.exe'))));
+  assert.match(ssh.at(-1), /--skip-download/);
+});
+
+test('remote script keeps the active worktree and prunes stale one-shot signing worktrees', () => {
+  const identity = releaseIdentity('stable', '1.2.3');
+  const script = remoteScript({ tag: identity.tag, sha: source.client, version: identity.version, source }, settings);
+  assert.match(script, /\.nuwax-release-electron-v1\.2\.3-aaaaaaaaaaaa/);
+  assert.match(script, /\[ "\$stale" = "\$work" \]/);
+  assert.match(script, /worktree remove --force "\$stale"/);
+  // 无清单哈希时续跑守卫恒为假：与空串比较，绝不盲跳下载
+  assert.match(script, /= ''/);
+  assert.doesNotMatch(script, /' [0-9a-f]{64}'|=[ ]*'[0-9a-f]{64}'/);
+});
+
+test('--stage sign signs without dispatching sync, and is a no-op when already signed', async () => {
+  const f = fixture({ signed: false, publicRelease: false });
+  const result = await f.run({ stage: 'sign' });
+  assert.equal(result.stage, 'sign');
+  assert.equal(f.calls.some(([type, command]) => type === 'exec' && command === 'ssh'), true);
+  assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
+  const done = fixture();
+  const resumed = await done.run({ stage: 'sign' });
+  assert.equal(resumed.stage, 'sign');
+  assert.equal(done.calls.some(([type, command]) => type === 'exec' && command === 'ssh'), false);
+});
+
+test('--stage sync refuses an unsigned stable release and dispatches for a signed one', async () => {
+  const unsigned = fixture({ signed: false, publicRelease: false });
+  await assert.rejects(unsigned.run({ stage: 'sync' }), /--stage sign/);
+  assert.equal(unsigned.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
+  const signed = fixture({ publicRelease: false });
+  const result = await signed.run({ stage: 'sync' });
+  assert.equal(result.version, '1.2.3');
+  assert.equal(signed.calls.some(([type, command]) => type === 'exec' && command === 'ssh'), false);
+  assert.equal(signed.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
+});
+
+test('--stage sign is refused for beta releases', async () => {
+  const f = fixture({ channel: 'beta' });
+  await assert.rejects(f.run({ stage: 'sign' }), /仅适用 stable/);
 });
 
 test('SimplySign failure is actionable and leaves remote release resumable', async () => {
