@@ -149,6 +149,13 @@ export class TrayManager {
       if (label && (label !== this.badgeLabel || !this.badgeIcon)) {
         this.badgeLabel = label;
         this.badgeIcon = nativeImage.createFromBuffer(createIMBadgePng(this.unreadCount));
+        if (this.platform === "win32") {
+          const retinaPng = createIMBadgePng(this.unreadCount, 2);
+          this.badgeIcon.addRepresentation({
+            scaleFactor: 2,
+            dataURL: `data:image/png;base64,${retinaPng.toString("base64")}`,
+          });
+        }
       }
       this.tray.setImage(label ? this.badgeIcon! : original);
     }
@@ -329,7 +336,7 @@ export class TrayManager {
     }
 
     // Windows / Linux: 彩色图标，参考 macOS 的处理方式
-    const targetSize = this.platform === "win32" ? 16 : 22; // Windows 托盘图标标准尺寸 16x16
+    const targetSize = this.platform === "win32" ? 16 : 22;
     const pathNormal = this.getIconPath(TRAY_ICON_DEFAULT);
     const pathRetina = this.getIconPath("tray@2x.png");
 
@@ -341,6 +348,22 @@ export class TrayManager {
 
     if (!icon.isEmpty()) {
       const size = icon.getSize();
+      if (this.platform === "win32") {
+        // 彩色资源四周有 1/8 透明留白；裁掉大部分留白后提供 16/32px 两档，
+        // 让 Windows 在高 DPI 托盘中选到清晰且占比合适的图像。
+        const inset = Math.round(Math.min(size.width, size.height) * 3 / 32);
+        const cropped = icon.crop({
+          x: inset,
+          y: inset,
+          width: size.width - inset * 2,
+          height: size.height - inset * 2,
+        });
+        const retina = cropped.resize({ width: 32, height: 32 });
+        icon = cropped.resize({ width: 16, height: 16 });
+        icon.addRepresentation({ scaleFactor: 2, dataURL: retina.toDataURL() });
+        log.info("[Tray] Windows tray icon loaded with 1x/2x representations");
+        return icon;
+      }
       // 如果图标尺寸过大，缩放到目标尺寸
       if (size.width > targetSize || size.height > targetSize) {
         icon = icon.resize({ width: targetSize, height: targetSize });

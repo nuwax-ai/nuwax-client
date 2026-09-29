@@ -42,12 +42,17 @@ function pngChunk(name: string, data: Buffer): Buffer {
 }
 
 /** 本地绘制透明 PNG，避开 SVG 解码和平台相关 bitmap 字节序。 */
-export function createIMBadgePng(count: number): Buffer {
+export function createIMBadgePng(count: number, pixelScale: 1 | 2 = 1): Buffer {
   const label = formatIMBadgeCount(count);
-  const pixels = Buffer.alloc(BADGE_SIZE * BADGE_SIZE * 4);
+  const imageSize = BADGE_SIZE * pixelScale;
+  const pixels = Buffer.alloc(imageSize * imageSize * 4);
   const paint = (x: number, y: number, red: number, green: number, blue: number): void => {
-    const offset = (y * BADGE_SIZE + x) * 4;
-    pixels.set([red, green, blue, 255], offset);
+    for (let dy = 0; dy < pixelScale; dy += 1) {
+      for (let dx = 0; dx < pixelScale; dx += 1) {
+        const offset = ((y * pixelScale + dy) * imageSize + x * pixelScale + dx) * 4;
+        pixels.set([red, green, blue, 255], offset);
+      }
+    }
   };
   if (label) {
     for (let y = 0; y < BADGE_SIZE; y += 1) {
@@ -73,13 +78,13 @@ export function createIMBadgePng(count: number): Buffer {
     });
   }
   const header = Buffer.alloc(13);
-  header.writeUInt32BE(BADGE_SIZE, 0);
-  header.writeUInt32BE(BADGE_SIZE, 4);
+  header.writeUInt32BE(imageSize, 0);
+  header.writeUInt32BE(imageSize, 4);
   header[8] = 8;
   header[9] = 6; // 8-bit RGBA
-  const scanlines = Buffer.alloc(BADGE_SIZE * (BADGE_SIZE * 4 + 1));
-  for (let y = 0; y < BADGE_SIZE; y += 1) {
-    pixels.copy(scanlines, y * (BADGE_SIZE * 4 + 1) + 1, y * BADGE_SIZE * 4, (y + 1) * BADGE_SIZE * 4);
+  const scanlines = Buffer.alloc(imageSize * (imageSize * 4 + 1));
+  for (let y = 0; y < imageSize; y += 1) {
+    pixels.copy(scanlines, y * (imageSize * 4 + 1) + 1, y * imageSize * 4, (y + 1) * imageSize * 4);
   }
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),

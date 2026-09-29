@@ -25,12 +25,16 @@ vi.mock('electron', () => ({
       isEmpty: vi.fn(() => false),
       getSize: vi.fn(() => ({ width: 16, height: 16 })),
       resize: vi.fn(function(this: any) { return this; }),
+      addRepresentation: vi.fn(),
       setTemplateImage: vi.fn(),
     })),
     createFromPath: vi.fn().mockReturnValue({
       isEmpty: vi.fn(() => false),
-      getSize: vi.fn(() => ({ width: 22, height: 22 })),
+      getSize: vi.fn(() => ({ width: 64, height: 64 })),
+      crop: vi.fn(function(this: any) { return this; }),
       resize: vi.fn(function(this: any) { return this; }),
+      addRepresentation: vi.fn(),
+      toDataURL: vi.fn(() => 'data:image/png;base64,retina'),
       setTemplateImage: vi.fn(),
     }),
     createFromDataURL: vi.fn().mockReturnValue({
@@ -185,9 +189,20 @@ describe('TrayManager', () => {
       await trayManager.create();
       const tray = trayManager.getTray()!;
       const original = vi.mocked(nativeImage.createFromPath).mock.results[0].value;
+      expect(original.crop).toHaveBeenCalledWith({ x: 6, y: 6, width: 52, height: 52 });
+      expect(original.resize).toHaveBeenCalledWith({ width: 16, height: 16 });
+      expect(original.resize).toHaveBeenCalledWith({ width: 32, height: 32 });
+      expect(original.addRepresentation).toHaveBeenCalledWith({
+        scaleFactor: 2,
+        dataURL: 'data:image/png;base64,retina',
+      });
       const menus = vi.mocked(Menu.buildFromTemplate).mock.calls.length;
       trayManager.setUnreadCount(100);
       const badge = vi.mocked(nativeImage.createFromBuffer).mock.results[0].value;
+      const badgeRetina = badge.addRepresentation.mock.calls[0][0];
+      expect(badgeRetina.scaleFactor).toBe(2);
+      const retinaPng = Buffer.from(badgeRetina.dataURL.split(',')[1], 'base64');
+      expect([retinaPng.readUInt32BE(16), retinaPng.readUInt32BE(20)]).toEqual([32, 32]);
       expect(tray.setImage).toHaveBeenLastCalledWith(badge);
       trayManager.setUnreadCount(200);
       trayManager.setUnreadCount(10000);
