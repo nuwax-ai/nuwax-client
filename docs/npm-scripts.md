@@ -87,6 +87,8 @@ win-pc → 干净 worktree（fetch tag → 校验 SHA → submodule → sync-ove
 `prepare:windows-mcp`、`prepare:sandbox-runtime`、`build:sandbox-helper` /
 `prepare:sandbox-helper-win`、`electron-rebuild`（重编 better-sqlite3）。产物落
 `resources/`，缓存与覆盖规则见 README「缓存」段。
+商业版外层 `prepare` 和发布 CI 跳过旧沙箱 helper、runtime、sandboxed MCP；
+上述沙箱脚本仍供基座社区版使用。
 
 ### 测试与检查
 

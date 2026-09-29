@@ -1,7 +1,7 @@
 # Nuwax 商业版 — beta 预发布（prerelease-v* 触发，构建成功后公开 Release）
 # 商业产品壳（基座仓 nuwax-ai/nuwa-electron-shell main 分支承载业务）：
 # 路径前缀 nuwa-electron-shell/、checkout 后以 github.token 拉基座 submodule、pnpm 显式版本、
-# 沙箱 helper 断言。通道 nuwax-electron/；品牌/端口注入与 release-electron.yml 一致。
+# 旧沙箱资源排除。通道 nuwax-electron/；品牌/端口注入与 release-electron.yml 一致。
 
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 prerelease-v* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
@@ -215,6 +215,8 @@ jobs:
           # 前端 dist 打包来源（基座已中立化移除该条目）：壳根 nuwax/dist →
           # resources/nuwax-dist（dev 形态运行时经 NUWAX_FRONTEND_DIST env 解析）
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.from&&e.from.includes('nuwax/dist'))).concat([{from:'../../../nuwax/dist',to:'nuwax-dist'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          # 商业版已停用旧沙箱方案，移除通用与 Windows 专用的资源打包条目。
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
       - name: Setup Node.js
@@ -312,20 +314,9 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           GH_TOKEN: ${{ github.token }}
+          NUWAX_APP_IDENTIFIER: nuwax
         run: npm run prepare:all
         timeout-minutes: 15
-
-      # 基座脚本在 rustc 缺失时只告警不失败——这里兜底断言，防止静默产出无沙箱 helper 的包
-      - name: Assert sandbox helper built (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        working-directory: nuwa-electron-shell/crates/agent-electron-client
-        run: |
-          if [ ! -f resources/sandbox-helper/nuwax-sandbox-helper.exe ]; then
-            echo "::error::sandbox helper missing (resources/sandbox-helper/nuwax-sandbox-helper.exe) — runner rust toolchain broken?"
-            exit 1
-          fi
-          echo "sandbox helper OK"
 
       # ---- macOS：导入证书并配置公证（可选） ----
       - name: Import Apple certificate (macOS)

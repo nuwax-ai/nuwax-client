@@ -8,7 +8,7 @@ import * as core from './client/core.mjs';
 import { builderConfig, pack, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
 
 test('independent builder config contains commercial identity/payload and leaves package unchanged', () => {
-  const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'stale/dist', to: 'nuwax-dist' }], mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
+  const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'stale/dist', to: 'nuwax-dist' }, { from: 'resources/sandbox-runtime', to: 'sandbox-runtime' }, { from: 'resources/sandboxed-bash-mcp', to: 'sandboxed-bash-mcp' }, { from: 'resources/sandboxed-fs-mcp', to: 'sandboxed-fs-mcp' }], win: { extraResources: [{ from: 'resources/sandbox-helper', to: 'sandbox-helper' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
   const original = structuredClone(pkg);
   const result = builderConfig(pkg, { frontendDist: '/client/nuwax-dist', output: '/client/release/1.2.3', version: '1.2.3', helperDir: '/client/resources/computer-use' });
   assert.deepEqual(pkg, original);
@@ -22,6 +22,8 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.equal(result.extraResources.filter((entry) => entry.to === 'nuwax-dist').length, 1);
   assert.equal(result.extraResources.find((entry) => entry.to === 'nuwax-dist').from, '/client/nuwax-dist');
   assert.ok(result.extraResources.some((entry) => entry.to === 'computer-use'));
+  assert.ok(result.extraResources.every((entry) => !['sandbox-runtime', 'sandboxed-bash-mcp', 'sandboxed-fs-mcp'].includes(entry.to)));
+  assert.deepEqual(result.win.extraResources.map((entry) => entry.to), ['windows-mcp']);
   assert.equal(result.afterSign, undefined);
   assert.equal(result.publish, null);
   assert.equal(result.deb.packageName, 'nuwax');

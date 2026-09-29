@@ -62,7 +62,8 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.npmRebuild = false;
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
-  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use'].includes(entry.to));
+  const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper']);
+  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use'].includes(entry.to) && !legacySandboxResources.has(entry.to));
   result.extraResources.push({ from: frontendDist, to: 'nuwax-dist', filter: ['**/*', '!.git', '!.git/**', '!README.md'] });
   if (helperDir) result.extraResources.push({ from: helperDir, to: 'computer-use', filter: ['**/*'] });
   result.mac ??= {};
@@ -75,6 +76,7 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   // Keep rcedit metadata/icon updates for branding; certificate discovery is
   // disabled by unsignedEnv, so this does not enable code signing.
   result.win = { ...result.win, signAndEditExecutable: true, signDlls: false };
+  result.win.extraResources = (result.win.extraResources ?? []).filter((entry) => typeof entry === 'string' || !legacySandboxResources.has(entry.to));
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
   result.linux = { ...result.linux, desktop: { ...result.linux?.desktop, entry: { ...result.linux?.desktop?.entry, Name: product.displayName } } };

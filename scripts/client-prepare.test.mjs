@@ -31,7 +31,6 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
   write(path.join(kit, 'src/index.ts'), 'export const value = 1');
   const bundledSources = Object.fromEntries(['nuwax-file-server', 'claude-code-acp-ts'].map((name) => [name, { url: `https://example.invalid/${name}.git`, branch: 'main' }]));
   write(path.join(p.client, 'package.json'), { bundledSources });
-  for (const name of ['sandboxed-bash-mcp', 'sandboxed-fs-mcp']) write(path.join(p.client, 'resources', name, `${name}.mjs`), 'source');
   write(path.join(p.frontend, 'package.json'), { packageManager: 'pnpm@10.0.0' });
   const success = { status: 0, stdout: '', stderr: '' };
   const tools = {
@@ -80,7 +79,6 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
       const spec = resourceSpecs(p.client, platform, arch).find((item) => item.script === script);
       if (spec) {
         for (const file of spec.files) write(file);
-        if (spec.name === 'sandbox-runtime') write(spec.files[0], { skipped: true });
         if (spec.name === 'windows-mcp') {
           write(spec.files[0], { files: ['windows_mcp.whl'] });
           write(path.join(p.client, 'resources/windows-mcp/wheels/windows_mcp.whl'));
@@ -236,11 +234,13 @@ test('managed source resources with local edits are preserved on refresh', async
   assert.equal(fs.readFileSync(entry, 'utf8'), 'developer edit');
 });
 
-test('Windows sandbox helper success without actual exe is rejected', async (t) => {
+test('commercial Windows preparation skips legacy sandbox resources and Rust', async (t) => {
   const f = fixture(t, { platform: 'win32', arch: 'x64' });
-  const npm = f.tools.npmRun;
-  f.tools.npmRun = (dir, script) => script === 'prepare:sandbox-helper-win' ? { status: 0, stdout: '', stderr: '' } : npm(dir, script);
-  await assert.rejects(prepare(f.root, { tools: f.tools, platform: 'win32', arch: 'x64' }), /sandbox-helper-win.*产物缺失/);
+  await prepare(f.root, { tools: f.tools, platform: 'win32', arch: 'x64' });
+  const legacy = new Set(['sandboxed-mcp', 'sandbox-runtime', 'sandbox-helper-win']);
+  assert.ok(resourceSpecs(f.p.client, 'win32', 'x64').every((spec) => !legacy.has(spec.name)));
+  assert.ok(f.calls.every((call) => !call.some((part) => typeof part === 'string' && /sandbox-helper|sandbox-runtime|sandboxed-mcp/.test(part))));
+  assert.ok(f.calls.every((call) => call[1] !== 'cargo'));
   assert.equal(fs.existsSync(path.join(f.p.cache, 'prepare.lock')), false);
 });
 
