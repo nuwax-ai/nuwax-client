@@ -229,9 +229,10 @@ function requireSuccess(runResult, id) {
 }
 
 async function releaseView(tools, settings, identity) {
-  // /releases/tags/{tag} 对 draft Release 恒 404；签名阶段 Release 仍是 draft，须走列表端点匹配
-  const list = await tools.gh(['api', `repos/${settings.repo}/releases?per_page=100`]);
-  const value = Array.isArray(list) ? list.find((entry) => entry.tag_name === identity.tag) : null;
+  // /releases/tags/{tag} 对 draft Release 恒 404；签名阶段 Release 仍是 draft，须走列表端点匹配。
+  // 兼容直接返回单对象的 adapter（测试 fixture），tag 校验在下方统一把关。
+  const response = await tools.gh(['api', `repos/${settings.repo}/releases?per_page=100`]);
+  const value = Array.isArray(response) ? response.find((entry) => entry.tag_name === identity.tag) : response;
   if (!value) throw new Error(`未找到 Release ${identity.tag}`);
   if (value.tag_name !== identity.tag || Boolean(value.prerelease) !== (identity.channel === 'beta')) throw new Error('Release tag/通道状态不匹配');
   return value;
