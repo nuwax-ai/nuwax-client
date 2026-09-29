@@ -8,7 +8,7 @@ import * as core from './core.mjs';
 // 仅 win32 在 build 前给前端工作树打运行时补丁（--force-local + 正斜杠）；mac bsdtar 不认
 // --force-local 故保留原分支。前端仓根治后删除本函数即可。
 const TAR_CALL = "execute('tar', ['-xf', archive, '-C', working]";
-const TAR_PATCHED = "execute('tar', process.platform === 'win32' ? ['-xf', '--force-local', String(archive).replaceAll('\\\\', '/'), '-C', String(working).replaceAll('\\\\', '/')] : ['-xf', archive, '-C', working]";
+const TAR_PATCHED = "execute('tar', process.platform === 'win32' ? ['--force-local', '-xf', String(archive).replaceAll('\\\\', '/'), '-C', String(working).replaceAll('\\\\', '/')] : ['-xf', archive, '-C', working]";
 export function patchWindowsTar(frontend) {
   if (process.platform !== 'win32') return;
   for (const file of ['scripts/upgrade-micro-apps.mjs', 'scripts/sync-micro-apps.mjs']) {
