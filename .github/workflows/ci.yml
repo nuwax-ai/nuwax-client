@@ -153,9 +153,11 @@ jobs:
           YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
         run: |
           # 前端嵌套子模块（micro-frontends 测试 git archive 依赖）在私有 GitLab（git.yichamao.com），
-          # PAT 经 insteadOf 注入（secret 值被 Actions 输出掩码；缺失时跳过=匿名场景兼容）
+          # 凭据经 credential helper 按域注入（不用 insteadOf：会改写 remote get-url，
+          # upgrade:micro-apps 的 origin/.gitmodules 一致性预检会拒；secret 值被 Actions 掩码）
           if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
-            git config --global url."https://oauth2:${YICHAMAO_GIT_TOKEN}@git.yichamao.com/".insteadOf "https://git.yichamao.com/"
+            git config --global credential."https://git.yichamao.com".helper \
+              '!f() { echo username=oauth2; echo password='"'"'"$YICHAMAO_GIT_TOKEN"'"'"'; }; f'
           fi
           git submodule update --init nuwax
           git -C nuwax submodule update --init --recursive

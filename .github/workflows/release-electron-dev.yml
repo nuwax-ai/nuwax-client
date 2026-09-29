@@ -137,10 +137,12 @@ jobs:
           # GCM 会劫持/覆盖 URL 内嵌凭据，insteadOf 亦不生效——均实测失败）
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：PAT 经 insteadOf 注入
-          # （github.com 域不受影响；secret 值被 Actions 掩码）
+          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：凭据经 credential helper 按域注入。
+          # 不用 insteadOf——它会改写 `git remote get-url` 输出，upgrade:micro-apps 的
+          # 「origin 与 .gitmodules 一致」预检会拒（CI 实测）；helper 只供凭据不动 URL。
           if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
-            git config --global url."https://oauth2:${YICHAMAO_GIT_TOKEN}@git.yichamao.com/".insteadOf "https://git.yichamao.com/"
+            git config --global credential."https://git.yichamao.com".helper \
+              '!f() { echo username=oauth2; echo password='"'"'"$YICHAMAO_GIT_TOKEN"'"'"'; }; f'
           fi
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
