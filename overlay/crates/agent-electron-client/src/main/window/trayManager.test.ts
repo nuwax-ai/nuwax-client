@@ -34,9 +34,18 @@ vi.mock('electron', () => ({
       crop: vi.fn(function(this: any) { return this; }),
       resize: vi.fn(function(this: any) { return this; }),
       addRepresentation: vi.fn(),
+      toBitmap: vi.fn((options?: { scaleFactor?: number }) => {
+        const size = options?.scaleFactor === 2 ? 32 : 16;
+        return Buffer.from(Array(size * size).fill([20, 40, 60, 255]).flat());
+      }),
       toDataURL: vi.fn(() => 'data:image/png;base64,retina'),
       setTemplateImage: vi.fn(),
     }),
+    createFromBitmap: vi.fn().mockImplementation(() => ({
+      isEmpty: vi.fn(() => false),
+      addRepresentation: vi.fn(),
+      toDataURL: vi.fn(() => 'data:image/png;base64,badge-retina'),
+    })),
     createFromDataURL: vi.fn().mockReturnValue({
       isEmpty: vi.fn(() => false),
       getSize: vi.fn(() => ({ width: 16, height: 16 })),
@@ -184,7 +193,7 @@ describe('TrayManager', () => {
       expect(nativeImage.createFromBuffer).not.toHaveBeenCalled();
     });
 
-    it('Windows displays red 99+ digits, caches one image, and restores the original icon at zero', async () => {
+    it('Windows keeps the app icon beneath the unread badge and restores it at zero', async () => {
       trayManager = new TrayManager({ ...mockOptions, platform: 'win32' });
       await trayManager.create();
       const tray = trayManager.getTray()!;
@@ -198,22 +207,31 @@ describe('TrayManager', () => {
       });
       const menus = vi.mocked(Menu.buildFromTemplate).mock.calls.length;
       trayManager.setUnreadCount(100);
-      const badge = vi.mocked(nativeImage.createFromBuffer).mock.results[0].value;
-      const badgeRetina = badge.addRepresentation.mock.calls[0][0];
-      expect(badgeRetina.scaleFactor).toBe(2);
-      const retinaPng = Buffer.from(badgeRetina.dataURL.split(',')[1], 'base64');
-      expect([retinaPng.readUInt32BE(16), retinaPng.readUInt32BE(20)]).toEqual([32, 32]);
+      const badge = vi.mocked(nativeImage.createFromBitmap).mock.results[0].value;
+      const bitmap1x = vi.mocked(nativeImage.createFromBitmap).mock.calls[0][0];
+      const bitmap2x = vi.mocked(nativeImage.createFromBitmap).mock.calls[1][0];
+      expect(vi.mocked(nativeImage.createFromBitmap).mock.calls.map(([, options]) => options)).toEqual([
+        { width: 16, height: 16 },
+        { width: 32, height: 32 },
+      ]);
+      expect(bitmap1x.subarray((15 * 16) * 4, (15 * 16) * 4 + 4)).toEqual(Buffer.from([20, 40, 60, 255]));
+      expect(bitmap1x.subarray((4 * 16 + 15) * 4, (4 * 16 + 16) * 4)).toEqual(Buffer.from([57, 41, 230, 255]));
+      expect(bitmap2x.subarray((31 * 32) * 4, (31 * 32) * 4 + 4)).toEqual(Buffer.from([20, 40, 60, 255]));
+      expect(badge.addRepresentation).toHaveBeenCalledWith({
+        scaleFactor: 2,
+        dataURL: 'data:image/png;base64,badge-retina',
+      });
       expect(tray.setImage).toHaveBeenLastCalledWith(badge);
       trayManager.setUnreadCount(200);
       trayManager.setUnreadCount(10000);
-      expect(nativeImage.createFromBuffer).toHaveBeenCalledOnce();
+      expect(nativeImage.createFromBitmap).toHaveBeenCalledTimes(2);
       expect(tray.setToolTip).toHaveBeenLastCalledWith(expect.stringContaining('10000 unread messages'));
       expect(Menu.buildFromTemplate).toHaveBeenCalledTimes(menus);
       trayManager.updateServicesStatus(true);
       trayManager.refresh();
       expect(tray.setImage).toHaveBeenLastCalledWith(badge);
       expect(tray.setToolTip).toHaveBeenLastCalledWith(expect.stringContaining('Claw.Tray.Status.running'));
-      expect(nativeImage.createFromBuffer).toHaveBeenCalledOnce();
+      expect(nativeImage.createFromBitmap).toHaveBeenCalledTimes(2);
       trayManager.setUnreadCount(0);
       expect(tray.setImage).toHaveBeenLastCalledWith(original);
     });

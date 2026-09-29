@@ -24,6 +24,49 @@ export function formatIMBadgeCount(count: number): string {
   return normalized === 0 ? "" : normalized > 99 ? "99+" : String(normalized);
 }
 
+/** 在 Windows NativeImage.toBitmap() 的 BGRA 位图上绘制右上角未读角标。 */
+export function paintWindowsTrayBadgeBitmap(base: Buffer, count: number, pixelScale: 1 | 2): Buffer {
+  const size = BADGE_SIZE * pixelScale;
+  if (base.length !== size * size * 4) {
+    throw new Error(`Invalid Windows tray bitmap size: ${base.length}`);
+  }
+  const result = Buffer.from(base);
+  const label = formatIMBadgeCount(count);
+  if (!label) return result;
+
+  const glyphWidth = label.length * 4 - 1;
+  const badgeWidth = Math.max(9, glyphWidth + 4);
+  const badgeLeft = BADGE_SIZE - badgeWidth;
+  const paint = (x: number, y: number, blue: number, green: number, red: number): void => {
+    for (let dy = 0; dy < pixelScale; dy += 1) {
+      for (let dx = 0; dx < pixelScale; dx += 1) {
+        const offset = ((y * pixelScale + dy) * size + x * pixelScale + dx) * 4;
+        result.set([blue, green, red, 255], offset);
+      }
+    }
+  };
+
+  // 9px 高的圆角红底最多占据右上角，应用图标的下半部分始终可见。
+  const radius = 4.5;
+  for (let y = 0; y < 9; y += 1) {
+    for (let x = badgeLeft; x < BADGE_SIZE; x += 1) {
+      const nearestX = Math.max(badgeLeft + radius, Math.min(x + 0.5, BADGE_SIZE - radius));
+      const distance = (x + 0.5 - nearestX) ** 2 + (y + 0.5 - radius) ** 2;
+      if (distance <= radius ** 2) paint(x, y, 57, 41, 230);
+    }
+  }
+
+  const glyphLeft = badgeLeft + Math.floor((badgeWidth - glyphWidth) / 2);
+  [...label].forEach((character, index) => {
+    GLYPHS[character].forEach((row, y) => {
+      [...row].forEach((pixel, x) => {
+        if (pixel === "1") paint(glyphLeft + index * 4 + x, y + 1, 255, 255, 255);
+      });
+    });
+  });
+  return result;
+}
+
 function pngChunk(name: string, data: Buffer): Buffer {
   const type = Buffer.from(name, "ascii");
   const contents = Buffer.concat([type, data]);

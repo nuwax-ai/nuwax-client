@@ -17,7 +17,7 @@ import {
   AutoLaunchManager,
 } from "./autoLaunchManager";
 import { t } from "../services/i18n";
-import { createIMBadgePng, formatIMBadgeCount, normalizeIMUnreadCount } from "../services/imBadgeImage";
+import { createIMBadgePng, formatIMBadgeCount, normalizeIMUnreadCount, paintWindowsTrayBadgeBitmap } from "../services/imBadgeImage";
 
 // ==================== Types ====================
 
@@ -148,13 +148,24 @@ export class TrayManager {
     } else {
       if (label && (label !== this.badgeLabel || !this.badgeIcon)) {
         this.badgeLabel = label;
-        this.badgeIcon = nativeImage.createFromBuffer(createIMBadgePng(this.unreadCount));
         if (this.platform === "win32") {
-          const retinaPng = createIMBadgePng(this.unreadCount, 2);
-          this.badgeIcon.addRepresentation({
-            scaleFactor: 2,
-            dataURL: `data:image/png;base64,${retinaPng.toString("base64")}`,
-          });
+          try {
+            const normal = nativeImage.createFromBitmap(
+              paintWindowsTrayBadgeBitmap(original.toBitmap(), this.unreadCount, 1),
+              { width: 16, height: 16 },
+            );
+            const retina = nativeImage.createFromBitmap(
+              paintWindowsTrayBadgeBitmap(original.toBitmap({ scaleFactor: 2 }), this.unreadCount, 2),
+              { width: 32, height: 32 },
+            );
+            normal.addRepresentation({ scaleFactor: 2, dataURL: retina.toDataURL() });
+            this.badgeIcon = normal;
+          } catch (error) {
+            log.error("[Tray] Failed to draw Windows unread badge:", error);
+            this.badgeIcon = original;
+          }
+        } else {
+          this.badgeIcon = nativeImage.createFromBuffer(createIMBadgePng(this.unreadCount));
         }
       }
       this.tray.setImage(label ? this.badgeIcon! : original);
