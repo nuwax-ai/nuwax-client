@@ -110,7 +110,10 @@ vi.mock("electron", () => ({
   net: { fetch: mocks.netFetch },
   BrowserWindow: class {
     constructor(options: unknown) { mocks.windowOptions(options); }
-    webContents = { once: vi.fn() };
+    webContents = {
+      once: vi.fn(), on: vi.fn(), removeListener: vi.fn(),
+      isDestroyed: () => false,
+    };
     private closed: (() => void) | null = null;
     private destroyed = false;
     on = vi.fn((name: string, callback: () => void) => {

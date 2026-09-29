@@ -95,6 +95,8 @@ function fakeWC(type: string, destroyed = false) {
   const wc = {
     isDestroyed: vi.fn(() => destroyed),
     getType: vi.fn(() => type),
+    once: vi.fn(),
+    removeListener: vi.fn(),
     on: vi.fn((event: string, fn: (...a: unknown[]) => void) => {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event)!.push(fn);

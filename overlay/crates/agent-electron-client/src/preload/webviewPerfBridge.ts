@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import {
+  parseComputerServiceStateCommand,
+  type ComputerServiceStateCommand,
+} from "@shared/types/computerServiceState";
+import {
   IM_IPC_CHANNELS,
   type IMReceiverBridge,
 } from "@shared/types/imReceiver";
@@ -257,13 +261,14 @@ const updater = {
 
 /**
  * events 命名空间：宿主→nuwax 入站命令通道。
- * nuwaclaw 工具栏等通过 <webview>.send('nuwax:host-command', payload) 下发，
+ * 工具栏经 <webview>.send、主进程直接向受信 guest 下发 nuwax:host-command，
  * 此处 ipcRenderer.on 接收并转发给 nuwax 注册的回调（contextBridge 保证回调在 guest
  * 上下文执行，从而能操作 nuwax 的 React/model 状态）。payload 协议见 nuwax 侧
  * global.d.ts 的 HostCommand。
  */
 let hostCommandHandler: ((payload: unknown) => void) | null = null;
 let latestHostActivity: { type: "host-activity"; visible: boolean } | null = null;
+let latestComputerServiceState: ComputerServiceStateCommand | null = null;
 if (bridgeAllowed) {
   ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
     // 状态允许迟订阅同步；动作命令只在到达时分发，不能重放新建任务等业务动作。
@@ -273,6 +278,13 @@ if (bridgeAllowed) {
         latestHostActivity = { type: "host-activity", visible: activity.visible };
       }
     }
+    const computerState = parseComputerServiceStateCommand(payload);
+    if (computerState) {
+      latestComputerServiceState = computerState;
+      hostCommandHandler?.({ ...computerState });
+      return;
+    }
+    if ((payload as { type?: unknown } | null)?.type === "computer-service-state") return;
     hostCommandHandler?.(payload);
   });
 }
@@ -283,7 +295,9 @@ const events = {
     if (cb) {
       // 新文档没有旧 preload 的缓存，向宿主请求当前态补齐重载/冷启动时序。
       ipcRenderer.send("nuwax:host-activity-sync");
+      if (host.getProduct() === "nuwax") ipcRenderer.send("nuwax:computer-service-state-sync");
       if (latestHostActivity) cb({ ...latestHostActivity });
+      if (latestComputerServiceState) cb({ ...latestComputerServiceState });
     }
   },
 };

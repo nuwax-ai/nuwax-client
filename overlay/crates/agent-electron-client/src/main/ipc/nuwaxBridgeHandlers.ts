@@ -46,6 +46,8 @@ import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
 import { attachHostActivityBusinessWindow, getHostActivitySnapshot, syncHostActivityGuest } from "../services/hostActivity";
 import { setGuestNewTaskAvailable } from "../services/newTaskAvailability";
+import { createComputerServiceStateBridge } from "../services/computerServiceState";
+import { normalizeComputerSandboxId } from "@shared/types/computerServiceState";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
@@ -185,6 +187,30 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   for (const contents of webContents.getAllWebContents()) attachHostProduct(contents);
 
   let serviceState: { phase: string; error?: string } = { phase: "stopped" };
+  const computerServiceState = createComputerServiceStateBridge({
+    getState: () => {
+      // 只有当前代次注册提交后的 starting/ready 可携带本机配置 ID。
+      // registering/停用/失效期间不得把上个账号或旧注册 ID 当作本机。
+      const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
+      const sandboxId = ["starting", "ready"].includes(serviceState.phase) &&
+        registration?.currentDomain === currentBusinessOrigin()
+        ? normalizeComputerSandboxId(registration.id) : undefined;
+      return {
+        type: "computer-service-state",
+        phase: serviceState.phase,
+        ...(sandboxId === undefined ? {} : { sandboxId }),
+      };
+    },
+    canSend: (contents) => APP_NAME_IDENTIFIER === "nuwax" && !switching &&
+      contents.session === session.defaultSession &&
+      businessBridgeOrigins().includes(httpOrigin(contents.getURL()) ?? ""),
+  });
+  const attachComputerStateGuest = (contents: Electron.WebContents) => {
+    if (!contents.isDestroyed() && contents.getType() === "webview")
+      computerServiceState.attach(contents);
+  };
+  app.on("web-contents-created", (_event, contents) => attachComputerStateGuest(contents));
+  for (const contents of webContents.getAllWebContents()) attachComputerStateGuest(contents);
   const emitRegistrationTrace = (event: RegistrationTrace) => {
     log.info("[NuwaxReg]", event);
     ctx.getMainWindow()?.webContents.send("nuwax:registrationTrace", event);
@@ -213,6 +239,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       serviceState = { phase, error };
       log.info("[NuwaxBridge] Service state", serviceState);
       ctx.getMainWindow()?.webContents.send("nuwax:serviceState", serviceState);
+      computerServiceState.broadcast();
     },
     () => {
       // 注册接口也能发现登录失效；不依赖页面恰好发起下一次业务请求。
@@ -462,6 +489,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.on("nuwax:host-activity-sync", (event) => {
     if (!isTrustedSender(event) || event.senderFrame !== event.sender.mainFrame) return;
     syncHostActivityGuest(event.sender);
+  });
+  ipcMain.on("nuwax:computer-service-state-sync", (event) => {
+    if (!isTrustedSender(event) || event.senderFrame !== event.sender.mainFrame) return;
+    computerServiceState.sync(event.sender);
   });
   ipcMain.handle("window:getHostActivity", (event) => {
     return isHostSender(event) ? getHostActivitySnapshot() : null;
@@ -857,6 +888,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (businessWindow) {
         trustInitialBusinessNavigation(win.webContents, target.href);
         attachHostActivityBusinessWindow(win);
+        computerServiceState.attach(win.webContents);
       }
       void win.loadURL(target.href);
       win.focus();
