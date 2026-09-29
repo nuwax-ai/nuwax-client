@@ -105,6 +105,7 @@ interface Step1GatewayFields {
 }
 
 let running: LoopbackGatewayHandle | undefined;
+let runningPackagedConfig: string | null = null;
 // 起停、设置刷新共用队列，迟到 start 不能越过 stop；失败不阻塞下一轮。
 let lifecycleQueue: Promise<unknown> = Promise.resolve();
 function enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
@@ -119,6 +120,23 @@ export function isLoopbackGatewayEnabled(): boolean {
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   if (step1?.nuwaxLoadMode) return step1.nuwaxLoadMode === "gateway";
   return process.env.NUWAX_LOOPBACK === "1";
+}
+
+// 打包客户端的网关目标由这些配置决定。启动任务已经建好网关时，业务服务
+// 拉起不应再断开它：此时首页请求已在途，无条件 close 会让页面弹网络错误。
+// 开发模式还受本地 dev server 的实时可达性影响，继续走完整刷新流程。
+function packagedGatewayConfig(): string | null {
+  if (!app.isPackaged) return null;
+  const step1 = readSetting("step1_config") as Step1GatewayFields | null;
+  return JSON.stringify({
+    enabled: isLoopbackGatewayEnabled(),
+    backend: resolveBackendOrigin(),
+    mode: isDistModeEnabled() ? "dist" : "proxy",
+    gatewayPort: step1?.gatewayPort,
+    extraBackendPrefixes: resolveExtraBackendPrefixes(),
+    // 换账号或重新登录后轮换请求 capability，旧页面不能借用新会话的 ticket。
+    ticketEpoch: ticketEpoch(),
+  });
 }
 
 /** 透明反代目标 origin：dev（未打包）联调 localhost:3000（NUWAX_LOOPBACK_TARGET
@@ -285,6 +303,7 @@ async function ensureLoopbackGatewayNow(): Promise<
     }
   }
   try {
+    const config = packagedGatewayConfig();
     const requestSecret = randomBytes(32).toString("hex");
     running = await startLoopbackGateway({
       targetOrigin,
@@ -326,6 +345,7 @@ async function ensureLoopbackGatewayNow(): Promise<
       },
       trustedRequestSecret: requestSecret,
     });
+    runningPackagedConfig = config;
     await setLoopbackTicketOrigin(running.origin);
     // Cookie 镜像也是 await；关闭意图可能在 start 或镜像期间到达。
     if (!isLoopbackGatewayEnabled()) {
@@ -352,6 +372,7 @@ async function ensureLoopbackGatewayNow(): Promise<
     });
     return running;
   } catch (e) {
+    runningPackagedConfig = null;
     setGatewayRequestContext(null);
     log.warn("[LoopbackGateway] start failed (non-fatal):", e);
     writeSetting(LOOPBACK_RUNTIME_KEY, {
@@ -436,6 +457,7 @@ function stopAbsoluteUrlNormalization(): void {
 async function stopLoopbackGatewayNow(): Promise<void> {
   setGatewayRequestContext(null);
   await setLoopbackTicketOrigin(null);
+  runningPackagedConfig = null;
   if (!running) return;
   const handle = running;
   running = undefined;
@@ -468,6 +490,8 @@ async function refreshLoopbackGatewayNow(): Promise<void> {
   // 未设置写 {origin:null}——env 是权威源，顺带清掉手动种的残留 override。
   // 此前 syncWebviewOverrideFromEnv 无任何调用方，旋钮自 f68964eb 起失效。
   syncWebviewOverrideFromEnv();
+  const config = packagedGatewayConfig();
+  if (running && config !== null && config === runningPackagedConfig) return;
   const before = JSON.stringify(readSetting(LOOPBACK_RUNTIME_KEY) ?? null);
   await stopLoopbackGatewayNow();
   await ensureLoopbackGatewayNow();

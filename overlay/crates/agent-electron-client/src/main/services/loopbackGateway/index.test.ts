@@ -134,6 +134,7 @@ describe("loopbackGateway resolves frontend assets", () => {
 
 describe("loopbackGateway runtime key carries backend", () => {
   beforeEach(() => {
+    mocks.app.isPackaged = true;
     mocks.store.clear();
     mocks.sendSpy.mockClear();
     mocks.startGateway.mockReset().mockImplementation(async () => fakeHandle());
@@ -398,10 +399,52 @@ describe("loopbackGateway runtime key carries backend", () => {
       serverHost: "https://a.example.com",
     });
     const mod = await importFresh();
-    await mod.ensureLoopbackGateway();
+    const handle = await mod.ensureLoopbackGateway();
     await mod.refreshLoopbackGateway();
 
+    expect(mocks.startGateway).toHaveBeenCalledTimes(1);
+    expect(handle?.close).not.toHaveBeenCalled();
     expect(mocks.sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("restarts the packaged gateway when its port changes", async () => {
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    const mod = await importFresh();
+    const handle = await mod.ensureLoopbackGateway();
+
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+      gatewayPort: 46900,
+    });
+    await mod.refreshLoopbackGateway();
+
+    expect(handle?.close).toHaveBeenCalledTimes(1);
+    expect(mocks.startGateway).toHaveBeenCalledTimes(2);
+    expect(mocks.startGateway).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fixedPort: 46900 }),
+    );
+  });
+
+  it("rotates the packaged gateway capability after the ticket session changes", async () => {
+    mocks.store.set("step1_config", {
+      nuwaxLoadMode: "gateway",
+      serverHost: "https://a.example.com",
+    });
+    const mod = await importFresh();
+    const handle = await mod.ensureLoopbackGateway();
+    const firstSecret = mocks.startGateway.mock.calls[0][0].trustedRequestSecret;
+    const ticket = await import("../commercialTicketSession");
+
+    ticket.advanceTicketEpoch();
+    await mod.refreshLoopbackGateway();
+
+    expect(handle?.close).toHaveBeenCalledTimes(1);
+    expect(mocks.startGateway).toHaveBeenCalledTimes(2);
+    expect(mocks.startGateway.mock.calls[1][0].trustedRequestSecret).not.toBe(firstSecret);
   });
 
   it("notifies renderer on domain change in DIRECT mode too (backend in disabled key)", async () => {
