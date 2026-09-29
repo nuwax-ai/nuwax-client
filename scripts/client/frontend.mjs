@@ -3,22 +3,31 @@ import path from 'node:path';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 
-// Windows 构建垫片：前端 upgrade/sync micro-apps 以绝对路径调 `tar -xf`，Git Bash 的 GNU tar
-// 会把 `D:\...` 盘符冒号解析为远程主机（tar: Cannot connect to D:，CI win 五连挂实测）。
-// 仅 win32 在 build 前给前端工作树打运行时补丁（--force-local + 正斜杠）；mac bsdtar 不认
-// --force-local 故保留原分支。前端仓根治后删除本函数即可。
+// Windows 构建垫片：前端 upgrade/sync micro-apps 的两处 Windows 兼容缺陷（CI win 连挂实测）——
+// ① tar -xf 绝对路径：Git Bash GNU tar 把 `D:\...` 盘符冒号解析为远程主机（Cannot connect to D:），
+//    补丁=--force-local 前置+正斜杠（mac bsdtar 不认 --force-local 故保留原分支）；
+// ② spawn('corepack', shell:false)：win 上 corepack 只有 .cmd shim，CreateProcess 直呼 ENOENT，
+//    补丁=win 走 cmd.exe /c corepack。
+// 仅 win32 在 build 前给前端工作树打运行时补丁；前端仓根治后删除本函数即可。
 const TAR_CALL = "execute('tar', ['-xf', archive, '-C', working]";
 const TAR_PATCHED = "execute('tar', process.platform === 'win32' ? ['--force-local', '-xf', String(archive).replaceAll('\\\\', '/'), '-C', String(working).replaceAll('\\\\', '/')] : ['-xf', archive, '-C', working]";
+const CP_CALL = "execute('corepack', [packages.packageManager, ...args], options)";
+const CP_PATCHED = "execute(process.platform === 'win32' ? 'cmd.exe' : 'corepack', process.platform === 'win32' ? ['/c', 'corepack', packages.packageManager, ...args] : [packages.packageManager, ...args], options)";
+function patchFile(frontend, file, pairs) {
+  const target = path.join(frontend, file);
+  let source = fs.readFileSync(target, 'utf8');
+  for (const [call, patched] of pairs) {
+    if (source.includes(patched)) continue;
+    if (!source.includes(call)) throw new Error(`win 垫片定位失败：${file} 的 ${call.slice(0, 40)}…（前端仓源码已变？请同步垫片）`);
+    source = source.replace(call, patched);
+  }
+  fs.writeFileSync(target, source);
+  console.log('[frontend] win 垫片已打：' + file);
+}
 export function patchWindowsTar(frontend) {
   if (process.platform !== 'win32') return;
-  for (const file of ['scripts/upgrade-micro-apps.mjs', 'scripts/sync-micro-apps.mjs']) {
-    const target = path.join(frontend, file);
-    let source = fs.readFileSync(target, 'utf8');
-    if (source.includes(TAR_PATCHED)) continue;
-    if (!source.includes(TAR_CALL)) throw new Error(`win tar 垫片定位失败：${file}（前端仓源码已变？请同步垫片）`);
-    fs.writeFileSync(target, source.replace(TAR_CALL, TAR_PATCHED));
-    console.log('[frontend] win tar 垫片已打：' + file);
-  }
+  patchFile(frontend, 'scripts/upgrade-micro-apps.mjs', [[TAR_CALL, TAR_PATCHED]]);
+  patchFile(frontend, 'scripts/sync-micro-apps.mjs', [[TAR_CALL, TAR_PATCHED], [CP_CALL, CP_PATCHED]]);
 }
 
 export async function cleanFrontendDist(root, options = {}) {
