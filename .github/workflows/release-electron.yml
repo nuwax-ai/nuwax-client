@@ -394,9 +394,9 @@ jobs:
           NUWAX_PORT_OFFSET: "1000"
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            # electron-builder 25.1.8 默认 ZIP Deflate level 7；v3.0.3 的
-            # macOS ZIP 阶段约 55 分钟。仅本次正式构建改为 level 1，
-            # 保留 ZIP/DMG 双目标、签名和公证，比较耗时与包体大小。
+            # dist:mac 显式使用 compression=maximum（ZIP level 9）；v3.0.3 的
+            # macOS ZIP 阶段约 55 分钟。v3.0.6 改为 level 1 后该段约 5 分钟，
+            # 但 DMG 包体也增加约 25%；后续应单独调优 ZIP 与 DMG。
             export ELECTRON_BUILDER_COMPRESSION_LEVEL=1
             echo "macOS archive compression level: ${ELECTRON_BUILDER_COMPRESSION_LEVEL}"
           fi
