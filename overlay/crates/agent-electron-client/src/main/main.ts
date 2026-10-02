@@ -45,6 +45,7 @@ import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./serv
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createServiceManager } from "./window/serviceManager";
+import { createTrayServiceActions } from "./window/trayServiceActions";
 import { initAutoUpdater, showUpdateDialogFlow } from "./services/autoUpdater";
 import {
   attachHostActivityWindow,
@@ -430,6 +431,12 @@ async function initTrayManager() {
     agentRunner,
     ttyd,
   });
+  const serviceActions = createTrayServiceActions({
+    getCommercialLifecycle: () => commercialLifecycle,
+    serviceManager,
+    updateServicesStatus: (running) => trayManager?.updateServicesStatus(running),
+    setErrorStatus: () => trayManager?.setStatus("error"),
+  });
 
   trayManager = createTrayManager({
     onShowWindow: () => {
@@ -443,14 +450,11 @@ async function initTrayManager() {
     },
     onRestartServices: async () => {
       log.info("[Tray] Restarting all services...");
-      if (commercialLifecycle) await commercialLifecycle.start(true);
-      else await serviceManager.restartAllServices();
-      trayManager?.updateServicesStatus(true);
+      await serviceActions.onRestartServices();
     },
     onStopServices: async () => {
       log.info("[Tray] Stopping all services...");
-      await serviceManager.stopAllServices();
-      trayManager?.updateServicesStatus(false);
+      await serviceActions.onStopServices();
       log.info("[Tray] All services stopped");
     },
   });

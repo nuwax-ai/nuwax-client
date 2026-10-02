@@ -83,17 +83,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Init base submodule
+      - name: Init base and host contract source submodules
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
         run: |
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          git submodule update --init nuwa-electron-shell
+          git submodule update --init nuwa-electron-shell nuwax
           # purity --remote 需要 origin/main 可达（submodule clone 不保证带全量分支引用）
           git -C nuwa-electron-shell fetch origin '+refs/heads/main:refs/remotes/origin/main'
+
+      - name: Check overlay compatibility with base pin changes
+        shell: bash
+        env:
+          COMPARISON_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          comparison="$COMPARISON_REF"
+          if [ -z "$comparison" ] || [[ "$comparison" =~ ^0+$ ]]; then
+            comparison=HEAD^
+          fi
+          if ! git cat-file -e "$comparison^{commit}"; then
+            echo "Cannot resolve previous client commit: $comparison" >&2
+            exit 1
+          fi
+          previous_pin=$(git ls-tree "$comparison" -- nuwa-electron-shell | awk '$1 == "160000" {print $3}')
+          current_pin=$(git ls-tree HEAD -- nuwa-electron-shell | awk '$1 == "160000" {print $3}')
+          if [ -z "$previous_pin" ] || [ -z "$current_pin" ]; then
+            echo "Missing base gitlink in comparison commits" >&2
+            exit 1
+          fi
+          if ! git -C nuwa-electron-shell cat-file -e "$previous_pin^{commit}"; then
+            git -C nuwa-electron-shell fetch --no-tags origin "$previous_pin"
+          fi
+          node scripts/check-overlay-compatibility.mjs --from "$previous_pin" --to "$current_pin"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -122,6 +148,9 @@ jobs:
 
       - name: Guard scripts self-test
         run: npm run test:scripts
+
+      - name: Check host bridge contract snapshot
+        run: npm run host-bridge:check
 
       - name: Sync commercial overlay for static gates
         run: npm run overlay:sync
@@ -171,6 +200,10 @@ jobs:
       - name: Install frontend dependencies
         id: frontend_install
         run: pnpm -C nuwax install --frozen-lockfile
+      - name: Test frontend type gate
+        run: pnpm -C nuwax test:typecheck
+      - name: Check frontend type domains
+        run: pnpm -C nuwax typecheck
       - name: Run frontend tests
         # 支付结算专项暂缓（当前 5 条既有失败，单独记债）；其余前端用例仍为发布门禁。
         # recommendFormModal 单条本地 2-3s、CI 慢机超 5s 默认超时，门禁统一抬到 15s（仍能抓真悬挂）。

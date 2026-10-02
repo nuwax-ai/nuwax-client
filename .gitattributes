@@ -1,0 +1,5 @@
+# Review hashes bind overlay worktree bytes; keep text identical across platforms.
+overlay/** text=auto eol=lf
+overlay/**/*.png -text
+overlay/**/*.ico -text
+overlay/**/*.icns -text

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { update } from './client/update.mjs';
 import * as core from './client/core.mjs';
+import { checkOverlayCompatibility } from './check-overlay-compatibility.mjs';
 
 const temporary = [];
 afterEach(() => { for (const dir of temporary.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -120,6 +121,12 @@ test('managed overlay permits shell movement and resync; other source WIP remain
   write(f.root, '.overlay-sync.json', JSON.stringify(['source.txt']));
   write(shell, 'source.txt', 'commercial generated overlay\n');
   const target = f.advance('nuwa-electron-shell'); f.advance();
+  git(shell, 'fetch', 'origin');
+  const compatibility = await checkOverlayCompatibility(f.root, { from: 'HEAD', to: target });
+  commit(f.root, 'overlay-base-reviews.json', JSON.stringify({ schemaVersion: 1, reviews: compatibility.changes.map(change => ({
+    path: change.path, baseBlob: change.newBase?.blob ?? null, baseMode: change.newBase?.mode ?? null,
+    overlaySha256: change.overlaySha256, note: 'Reviewed fixture base changes and retained commercial override.',
+  })) }));
   await update(f.root, {}, { buildFrontend: f.buildFrontend });
   assert.equal(git(shell, 'rev-parse', 'HEAD'), target);
   assert.equal(git(f.root, 'rev-parse', 'HEAD:nuwa-electron-shell'), target);
@@ -130,6 +137,44 @@ test('managed overlay permits shell movement and resync; other source WIP remain
   assert.equal(git(shell, 'rev-parse', 'HEAD'), target);
   assert.equal(fs.readFileSync(path.join(shell, 'developer.ts'), 'utf8'), 'developer WIP\n');
   assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'commercial generated overlay\n');
+});
+
+test('unreviewed base overlap blocks shell and frontend movement before restoring overlay or WIP', async () => {
+  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
+  write(f.root, 'overlay/source.txt', 'commercial generated overlay\n');
+  write(f.root, 'scripts/sync-overlay.js', fs.readFileSync(new URL('./sync-overlay.js', import.meta.url), 'utf8'));
+  commit(f.root, 'overlay/README.md', 'overlay fixture\n');
+  write(f.root, '.overlay-sync.json', JSON.stringify(['source.txt']));
+  write(shell, 'source.txt', 'commercial generated overlay\n');
+  write(f.root, 'notes.txt', 'unrelated staged WIP\n'); git(f.root, 'add', 'notes.txt');
+  const before = Object.fromEntries(['nuwa-electron-shell', 'nuwax', 'nuwax-dist'].map(name => [name, git(path.join(f.root, name), 'rev-parse', 'HEAD')]));
+  const index = fs.readFileSync(path.join(f.root, '.git/index'));
+  const manifest = fs.readFileSync(path.join(f.root, '.overlay-sync.json'));
+  f.advance('nuwa-electron-shell'); f.advance();
+  await assert.rejects(update(f.root, { force: true }, { buildFrontend: f.buildFrontend }), /overlay.*兼容审查/);
+  for (const [name, sha] of Object.entries(before)) assert.equal(git(path.join(f.root, name), 'rev-parse', 'HEAD'), sha);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, '.git/index')), index);
+  assert.deepEqual(fs.readFileSync(path.join(f.root, '.overlay-sync.json')), manifest);
+  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'commercial generated overlay\n');
+  assert.equal(fs.readFileSync(path.join(f.root, 'notes.txt'), 'utf8'), 'unrelated staged WIP\n');
+  assert.equal(f.builds, 0);
+});
+
+test('compatibility gate accepts injected tools and runs before either source checkout', async () => {
+  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
+  const shellHead = git(shell, 'rev-parse', 'HEAD'), frontendHead = git(path.join(f.root, 'nuwax'), 'rev-parse', 'HEAD');
+  const target = f.advance('nuwa-electron-shell'); f.advance();
+  let checked = false;
+  const injectedRun = (...args) => core.run(...args);
+  await assert.rejects(update(f.root, {}, {
+    buildFrontend: f.buildFrontend, run: injectedRun,
+    async assertOverlayCompatibility(root, options, tools) {
+      checked = true; assert.equal(root, f.root); assert.deepEqual(options, { from: shellHead, to: target }); assert.equal(tools.run, injectedRun);
+      assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead); assert.equal(git(path.join(f.root, 'nuwax'), 'rev-parse', 'HEAD'), frontendHead);
+      throw new Error('compatibility gate fixture failure');
+    },
+  }), /compatibility gate fixture failure/);
+  assert.equal(checked, true); assert.equal(f.builds, 0); assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead);
 });
 
 test('overlay movement refuses staged changes and mismatching previous generated files', async () => {

@@ -1,50 +1,8 @@
 // Type definitions for Electron API exposed via preload
-import type { IMReceiverBridge } from "./imReceiver";
+import type { HostBridgeContract } from './hostBridge';
 
-/** 业务 webview 的桥契约，与宿主 renderer 的 ElectronAPI 分开。 */
-export interface NuwaClawBridgeAPI {
-  perf: {
-    enabled(): boolean;
-    mark(stage: string, payload?: Record<string, unknown>): void;
-    markOnce(key: string, stage: string, payload?: Record<string, unknown>): void;
-  };
-  auth: {
-    getContext(): Promise<{ businessOrigin: string; gatewayOrigin: string | null; loadMode: "gateway" | "direct" } | null>;
-    syncSession(): Promise<boolean>;
-    beginLogin(): Promise<boolean>;
-    getToken(): Promise<string | null>;
-    persistToken(token: string): Promise<boolean>;
-    clear(): Promise<boolean>;
-    configureServerHost(host: string): Promise<{ success: boolean; serverHost?: string; error?: string }>;
-  };
-  native: {
-    saveImage(url: string, filename?: string): Promise<{ success: boolean; path?: string; error?: string }>;
-    saveFile(url: string, filename?: string): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>;
-    openWindow(path: string): Promise<{ success: boolean; error?: string }>;
-    openClientSettings(): Promise<{ success: boolean; error?: string }>;
-  };
-  localFiles: { pickDirectory(): Promise<{ canceled: boolean; paths: string[] }> };
-  updater: {
-    getState(): Promise<Record<string, unknown> | null>;
-    check(): Promise<Record<string, unknown> | null>;
-    download(): Promise<{ success: boolean; error?: string }>;
-    install(): Promise<{ success: boolean; error?: string }>;
-  };
-  events: { onHostCommand(callback: ((payload: unknown) => void) | null): void };
-  theme: { syncTheme(payload: Record<string, unknown>): void };
-  layout: {
-    setNewTaskAvailable(available: boolean): void;
-    setSecondMenuAvailable(available: boolean): void;
-    setSecondMenuCollapsed(collapsed: boolean): void;
-    setTitlebarDragRegions(regions: Array<{ x: number; y: number; width: number; height: number }>): void;
-  };
-  titlebar: { beginDrag(): void; endDrag(): void; toggleMaximize(): void };
-  i18n: { syncLang(lang: string): void };
-  meta: { syncWebInfo(payload: { appVersion: string; gitHash?: string }): void };
-  host: { getProduct(): string };
-  /** 旧宿主、普通 Web 与 iframe 无此能力，消费方必须先检查。 */
-  im?: IMReceiverBridge;
-}
+/** 业务 webview 契约来自前端 canonical 的生成快照，与宿主 renderer 的 ElectronAPI 分开。 */
+export type NuwaClawBridgeAPI = HostBridgeContract;
 
 export type McpServerEntry =
   | {
