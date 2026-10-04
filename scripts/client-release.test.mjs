@@ -52,7 +52,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
   const view = () => ({ tag_name: identity.tag, draft: !publicRelease, prerelease: channel === 'beta', assets: [...data].map(([name, bytes]) => ({ name, size: bytes.length, digest: `sha256:${digest(bytes)}` })) });
   const build = { databaseId: 10, headBranch: identity.tag, headSha: source.client, event: 'push', status: 'completed', conclusion: 'success' };
   const successfulSync = { databaseId: 20, headBranch: 'release-fixture', headSha: source.client, event: 'workflow_dispatch', displayTitle: `Sync ${channel} ${identity.tag}`, status: 'completed', conclusion: 'success' };
-  const state = { remoteTag: source.client, remoteHead: source.client, syncRuns: publicRelease ? [successfulSync] : [], builds: [build], lookup: 0 };
+  const state = { remoteTag: source.client, remoteHead: source.client, syncRuns: publicRelease ? [successfulSync] : [], builds: [build], lookup: 0, releaseTags: '', sequenceReads: 0 };
   const adapters = {
     log: (message) => calls.push(['log', message]), sleep: async (ms) => calls.push(['sleep', ms]),
     git: async (args) => {
@@ -67,6 +67,11 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
       if (args[0] === 'status') return state.dirty ?? '';
       if (args[0] === 'config') return args.at(-1).endsWith('.url') ? `https://github.com/example/${args.at(-1).split('.')[1]}.git` : 'main';
       if (args[0] === 'ls-remote') {
+        if (args[1] === '--tags') {
+          state.sequenceReads++;
+          const history = state.sequenceReads > 1 ? state.tagsBeforePush ?? state.releaseTags : state.releaseTags;
+          return `${state.remoteTag ? `${state.remoteTag}\trefs/tags/${identity.tag}\n` : ''}${history}`;
+        }
         if (args.at(-1).startsWith('refs/heads/')) return `${state.remoteHead}\t${args.at(-1)}`;
         if (args[1] === 'origin') return state.remoteTag ? `${state.remoteTag}\trefs/tags/${identity.tag}` : '';
         return `${source.shell}\trefs/heads/main\n${source.frontend}\trefs/heads/main\n${source.dist}\trefs/heads/main`;
@@ -97,7 +102,10 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     },
     assetJson: async (asset) => JSON.parse(data.get(asset.name).toString()),
     assetHash: async (asset) => digest(data.get(asset.name)),
-    fetchBytes: async () => data.get('latest.json'),
+    fetchBytes: async () => {
+      if (!data.has('latest.json')) throw new Error('HTTP 404: fixture channel pointer');
+      return data.get('latest.json');
+    },
     hashUrl: async (url) => state.corruptMirror ? '0'.repeat(64) : digest(data.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)))),
   };
   const run = (options = {}) => release('/nonexistent/nuwax-release-fixture', { channel, version: identity.version, settings, lookupAttempts: 3, pollAttempts: 3, ...options }, adapters);
@@ -133,6 +141,96 @@ test('same-name remote tag with another SHA is immutable', async () => {
   const f = fixture(); f.state.remoteTag = source.shell;
   await assert.rejects(f.run(), /禁止改 tag/);
   assert.equal(f.calls.some(([type, cmd]) => type === 'git' && ['push', 'tag'].includes(cmd)), false);
+});
+
+const tagRef = (tag) => `${source.shell}\trefs/tags/${tag}`;
+const tagMutations = (calls) => calls.filter(([type, command]) => type === 'git' && ['tag', 'push'].includes(command));
+
+test('new releases cannot reuse the other channel numeric version', async () => {
+  for (const channel of ['stable', 'beta']) {
+    const f = fixture({ channel }); f.state.remoteTag = null;
+    f.state.releaseTags = tagRef(`${channel === 'stable' ? 'prerelease' : 'electron'}-v1.2.3`);
+    await assert.rejects(f.run(), /版本 1\.2\.3 已被.*使用/);
+    assert.deepEqual(tagMutations(f.calls), []);
+  }
+});
+
+test('new releases alternate channels instead of issuing two consecutive stable or beta versions', async () => {
+  for (const channel of ['stable', 'beta']) {
+    const f = fixture({ channel }); f.state.remoteTag = null;
+    f.state.releaseTags = tagRef(`${channel === 'stable' ? 'electron' : 'prerelease'}-v1.2.2`);
+    await assert.rejects(f.run(), /通道须交替/);
+    assert.deepEqual(tagMutations(f.calls), []);
+  }
+});
+
+test('new version must increase numerically within its version line', async () => {
+  const f = fixture(); f.state.remoteTag = null;
+  f.state.releaseTags = tagRef('prerelease-v1.2.10');
+  const result = await f.run({ dryRun: true });
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join('\n'), /大于.*1\.2\.10/);
+  assert.deepEqual(tagMutations(f.calls), []);
+});
+
+test('new alternating releases accept annotated history and ignore unrelated old version lines', async () => {
+  for (const channel of ['stable', 'beta']) {
+    const f = fixture({ channel }); f.state.remoteTag = null;
+    const previous = `${channel === 'stable' ? 'prerelease' : 'electron'}-v1.2.2`;
+    f.state.releaseTags = [tagRef(previous), `${source.frontend}\trefs/tags/${previous}^{}`, tagRef('prerelease-v8.0.1')].join('\n');
+    const result = await f.run();
+    assert.equal(result.version, '1.2.3');
+    assert.equal(f.state.sequenceReads, 2);
+  }
+});
+
+test('same-tag same-SHA resume remains valid after legacy duplicate versions and newer releases', async () => {
+  const f = fixture();
+  f.state.releaseTags = [tagRef('prerelease-v1.2.3'), tagRef('electron-v1.2.10')].join('\n');
+  const result = await f.run();
+  assert.equal(result.version, '1.2.3');
+  assert.deepEqual(tagMutations(f.calls), []);
+});
+
+test('historical release resume cannot downgrade either channel pointer', async () => {
+  for (const channel of ['stable', 'beta']) {
+    const f = fixture({ channel });
+    f.state.releaseTags = tagRef(`${channel === 'stable' ? 'electron' : 'prerelease'}-v1.2.10`);
+    const pointer = JSON.parse(f.data.get('latest.json').toString());
+    pointer.version = '1.2.10';
+    f.data.set('latest.json', Buffer.from(JSON.stringify(pointer)));
+    await assert.rejects(f.run(), /禁止.*降级/);
+    assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
+    assert.equal(JSON.parse(f.data.get('latest.json').toString()).version, '1.2.10');
+  }
+});
+
+test('historical signing can resume without downgrading a newer channel pointer', async () => {
+  const f = fixture();
+  const pointer = JSON.parse(f.data.get('latest.json').toString());
+  pointer.version = '1.2.10';
+  f.data.set('latest.json', Buffer.from(JSON.stringify(pointer)));
+  const result = await f.run({ stage: 'sign' });
+  assert.equal(result.stage, 'sign');
+  assert.equal(JSON.parse(f.data.get('latest.json').toString()).version, '1.2.10');
+});
+
+test('a newer pointer in either mirror prevents an old sync even if the other mirror is current', async () => {
+  const f = fixture();
+  const current = f.data.get('latest.json');
+  const newer = JSON.parse(current.toString()); newer.version = '1.2.10';
+  f.adapters.fetchBytes = async (url) => url.startsWith(settings.ossBase) ? Buffer.from(JSON.stringify(newer)) : current;
+  await assert.rejects(f.run({ stage: 'sync' }), /禁止.*降级/);
+  assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
+});
+
+test('new release rechecks remote history before creating or pushing its tag', async () => {
+  const f = fixture(); f.state.remoteTag = null;
+  f.state.releaseTags = tagRef('prerelease-v1.2.2');
+  f.state.tagsBeforePush = tagRef('electron-v1.2.4');
+  await assert.rejects(f.run(), /大于.*1\.2\.4/);
+  assert.deepEqual(tagMutations(f.calls), []);
+  assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
 });
 
 test('run discovery polls the eventual tag/SHA event instead of selecting another build', async () => {

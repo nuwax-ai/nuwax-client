@@ -27,6 +27,35 @@ function remoteTagSha(output, tag) {
     ?? lines.find(([, ref]) => ref === `refs/tags/${tag}`)?.[0] ?? null;
 }
 
+function releaseTagRefs(tools) {
+  return tools.git(['ls-remote', '--tags', 'origin', 'refs/tags/electron-v*', 'refs/tags/prerelease-v*']);
+}
+
+function releaseSequenceFindings(identity, sha, refs) {
+  const ownSha = remoteTagSha(refs, identity.tag);
+  // Existing releases may predate the sequence policy. Their exact tag/SHA
+  // must remain resumable for build, signing and mirror recovery.
+  if (ownSha) return ownSha === sha ? [] : [`远端 ${identity.tag} 已指向另一提交 ${ownSha}，禁止改 tag；请使用新版本`];
+  const tags = refs.trim().split('\n').flatMap((line) => {
+    const match = /^\S+\s+refs\/tags\/(electron|prerelease)-v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/.exec(line);
+    return match ? [{ version: match[2], line: `${match[3]}.${match[4]}`, patch: BigInt(match[5]), channel: match[1] === 'electron' ? 'stable' : 'beta' }] : [];
+  });
+  const collision = tags.find((tag) => tag.version === identity.version);
+  if (collision) return [`版本 ${identity.version} 已被 ${collision.channel} 使用；beta 与 stable 不得重复数字版本`];
+  const [major, minor, patch] = identity.version.split('.');
+  const history = tags.filter((tag) => tag.line === `${major}.${minor}`);
+  // Ignore unrelated historical version lines; legacy same-number promotion
+  // treated stable as the completed version, so it wins a historical tie.
+  const latest = history.reduce((current, tag) => {
+    if (!current || tag.patch > current.patch || tag.patch === current.patch && tag.channel === 'stable') return tag;
+    return current;
+  }, null);
+  if (!latest) return [];
+  if (BigInt(patch) <= latest.patch) return [`新版本 ${identity.version} 必须大于 ${major}.${minor} 版本线已使用的 ${latest.version}`];
+  if (identity.channel === latest.channel) return [`发布通道须交替：${latest.version} 为 ${latest.channel}，下一版须为 ${latest.channel === 'stable' ? 'beta' : 'stable'}`];
+  return [];
+}
+
 export function selectRun(runs, { tag, sha, event = 'push', title, branch, afterId = 0 }) {
   return runs.filter((entry) => entry.headSha === sha && entry.event === event &&
     entry.headBranch === (branch ?? tag) && (!title || entry.displayTitle === title) &&
@@ -201,9 +230,9 @@ async function preflight(root, identity, options, tools, settings) {
       }
     }
   }
-  const remote = await tools.git(['ls-remote', 'origin', `refs/tags/${identity.tag}`, `refs/tags/${identity.tag}^{}`]);
+  const remote = await releaseTagRefs(tools);
   const tagSha = remoteTagSha(remote, identity.tag);
-  if (tagSha && tagSha !== sha) findings.push(`远端 ${identity.tag} 已指向另一提交 ${tagSha}，禁止改 tag；请使用新版本`);
+  findings.push(...releaseSequenceFindings(identity, sha, remote));
   return { ...identity, sha, branch, source, notes, findings, tagSha, settings };
 }
 
@@ -261,6 +290,24 @@ async function pointers(tools, settings, identity) {
   const value = JSON.parse(Buffer.from(s3).toString());
   if (value.version !== identity.version) throw new Error(`通道指针版本 ${value.version}，期望 ${identity.version}`);
   return { value, bytes: Buffer.from(s3) };
+}
+
+async function preventPointerDowngrade(tools, settings, identity) {
+  const folder = identity.channel === 'stable' ? 'latest' : 'beta';
+  const target = identity.version.split('.').map(BigInt);
+  await Promise.all([settings.s3Base, settings.ossBase].map(async (base) => {
+    let bytes;
+    try { bytes = await tools.fetchBytes(`${base}/${folder}/latest.json`); }
+    catch (error) {
+      if (/^HTTP 404:/.test(error.message)) return; // The first release has no channel pointer yet.
+      throw error;
+    }
+    const version = JSON.parse(Buffer.from(bytes).toString()).version;
+    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) throw new Error('当前通道指针版本无效，停止同步');
+    const current = version.split('.').map(BigInt);
+    const index = current.findIndex((value, part) => value !== target[part]);
+    if (index !== -1 && current[index] > target[index]) throw new Error(`禁止 ${identity.channel} 通道从 ${version} 降级到 ${identity.version}；历史版本仅可继续构建或签名`);
+  }));
 }
 
 export async function verifyMirrors(tools, settings, identity, view, source) {
@@ -342,13 +389,20 @@ export async function release(root, options = {}, injected = {}) {
     }
   }
   if (!state.tagSha) {
-    let localTag;
-    try { localTag = await tools.git(['rev-parse', `refs/tags/${identity.tag}^{commit}`]); } catch { /* no local tag */ }
-    if (localTag && localTag !== state.sha) throw new Error(`本地 ${identity.tag} 指向另一提交；禁止自动改 tag`);
-    if (!localTag) await tools.git(['tag', identity.tag, state.sha]);
-    await tools.git(['push', 'origin', `refs/tags/${identity.tag}:refs/tags/${identity.tag}`]);
-    const pushed = remoteTagSha(await tools.git(['ls-remote', 'origin', `refs/tags/${identity.tag}`, `refs/tags/${identity.tag}^{}`]), identity.tag);
-    if (pushed !== state.sha) throw new Error('tag 推送后远端 SHA 不匹配');
+    const remote = await releaseTagRefs(tools);
+    const findings = releaseSequenceFindings(identity, state.sha, remote);
+    if (findings.length) throw new Error(findings.join('\n'));
+    // Another invocation may have created this same tag after preflight.
+    // Exact source identity permits resuming it without creating another tag.
+    if (remoteTagSha(remote, identity.tag) !== state.sha) {
+      let localTag;
+      try { localTag = await tools.git(['rev-parse', `refs/tags/${identity.tag}^{commit}`]); } catch { /* no local tag */ }
+      if (localTag && localTag !== state.sha) throw new Error(`本地 ${identity.tag} 指向另一提交；禁止自动改 tag`);
+      if (!localTag) await tools.git(['tag', identity.tag, state.sha]);
+      await tools.git(['push', 'origin', `refs/tags/${identity.tag}:refs/tags/${identity.tag}`]);
+      const pushed = remoteTagSha(await tools.git(['ls-remote', 'origin', `refs/tags/${identity.tag}`, `refs/tags/${identity.tag}^{}`]), identity.tag);
+      if (pushed !== state.sha) throw new Error('tag 推送后远端 SHA 不匹配');
+    }
   }
   const build = await lookupRun(tools, settings, identity.buildWorkflow, { tag: identity.tag, sha: state.sha }, options);
   const buildResult = await waitRun(tools, settings, build, options);
@@ -390,6 +444,7 @@ export async function release(root, options = {}, injected = {}) {
   if (!verified) {
     let sync = selectRun(syncRuns, criteria);
     if (!sync || sync.status === 'completed') {
+      await preventPointerDowngrade(tools, settings, identity);
       // dispatch resolves a branch ref: compare it again immediately before the mutation.
       const remote = (await tools.git(['ls-remote', 'origin', `refs/heads/${state.branch}`])).split(/\s/)[0];
       if (remote !== state.sha) throw new Error(`发布分支 ${state.branch} 已被推进；请在 tag 对应分支提交续跑，禁止 dispatch 错误 SHA`);

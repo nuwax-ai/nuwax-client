@@ -52,8 +52,8 @@
 | `electron-vX.Y.Z` | `release-electron.yml` | 正式版 |
 | `prerelease-vX.Y.Z` | `release-electron-dev.yml` | 预发（验证通过后转正） |
 
-- 预发 → 转正节奏：先打 `prerelease-vX.Y.Z` 走预发链路，验证通过后再打 `electron-vX.Y.Z`，并补 `release-notes/electron-vX.Y.Z.md` 正式说明。
-- **重打同号 tag 前必须先删远端 tag 与对应 Draft Release**，否则产物/Release 会错挂。
+- 使用纯 `X.Y.Z` 数字版本，beta 与 stable 共用版本序列；同一 `X.Y` 版本线每次发布递增并交替通道，不复用数字版本。例如 `3.0.7 stable → 3.0.8 beta → 3.0.9 stable`；beta 验证通过后，正式版使用新的更高版本号，并补对应正式发布说明。
+- 历史 tag 不删除、不移动、不重打。同一 tag、同一 SHA 可续跑构建和签名；同步不得降低任一存储的当前通道版本。需要改源码时使用新的版本。`npm run release` 在预检与新 tag 创建前校验两通道远端标签；直接推送 tag 前也须遵守同一规则。
 
 ### 2.6 已知缺口（待办）
 
@@ -111,12 +111,15 @@
 git checkout -b feat/<slug> main
 
 # 切版本线
-git checkout -b release/v1.0.x main
+git checkout -b release/v3.0.x main
 
-# 发预发 → 转正（重打同号 tag 前先删远端 tag 与 Draft Release）
-git tag prerelease-v1.0.5 && git push origin prerelease-v1.0.5
-git tag electron-v1.0.5  && git push origin electron-v1.0.5
+# beta → stable 使用不同版本，沿当前版本线递增；正式发布前先验收
+npm run release -- --channel beta --version 3.0.8 --dry-run
+npm run release -- --channel beta --version 3.0.8
+# beta 验收后准备对应正式发布说明，再发布新版本
+npm run release -- --channel stable --version 3.0.9 --dry-run
+npm run release -- --channel stable --version 3.0.9
 
 # 版本线回流（转正后）
-git checkout main && git merge --ff-only origin/release/v1.0.x && git push origin main
+git checkout main && git merge --ff-only origin/release/v3.0.x && git push origin main
 ```
