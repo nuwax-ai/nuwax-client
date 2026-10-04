@@ -86,6 +86,10 @@
       Quit
     ${endif}
 
+    ; A missing InstallLocation is normal for older per-user installs. Its
+    ; ReadRegStr leaves NSIS's error flag set even after GetFileParent supplies
+    ; a verified path; do not carry that stale flag into the upgrade steps.
+    ClearErrors
     DetailPrint `Preserving old "${PRODUCT_NAME}" installation in $R5 (${ROOT_KEY})`
     File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}"`
