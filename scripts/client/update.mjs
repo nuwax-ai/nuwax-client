@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as core from './core.mjs';
 import { buildFrontend } from './frontend.mjs';
+import { assertOverlayCompatibility } from '../check-overlay-compatibility.mjs';
 
 const names = ['nuwa-electron-shell', 'nuwax', 'nuwax-dist'];
 const message = (text) => console.log(`[sub:update] ${text}`);
@@ -283,6 +284,9 @@ export async function update(root, options = {}, dependencies = {}) {
     for (const name of ['nuwa-electron-shell', 'nuwax']) targets[name] = await resolveTarget(tools, modules[name], options[name === 'nuwax' ? 'nuwax' : 'shell']);
     const shellHead = await tools.git(modules['nuwa-electron-shell'].dir, ['rev-parse', 'HEAD']);
     const shellOverlay = targets['nuwa-electron-shell'] !== shellHead ? await managedOverlayChanges(tools, root, modules['nuwa-electron-shell'].dir) : [];
+    if (targets['nuwa-electron-shell'] !== shellHead) {
+      await (dependencies.assertOverlayCompatibility ?? assertOverlayCompatibility)(root, { from: shellHead, to: targets['nuwa-electron-shell'] }, tools);
+    }
     // Resolve all source refs before changing either source checkout.
     for (const name of ['nuwa-electron-shell', 'nuwax']) {
       if (name === 'nuwax') await cleanScratch(tools, modules[name].dir);

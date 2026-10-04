@@ -9,6 +9,13 @@ import {
   type IMReceiverBridge,
   type IMUnreadSnapshot,
 } from "@shared/types/imReceiver";
+import type {
+  ClientUpdateCheckResult,
+  ClientUpdateState,
+  HostBridgeContract,
+  HostCommand,
+  ShellThemePayload,
+} from "@shared/types/hostBridge";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
 function mayExposeBusinessBridge(): boolean {
@@ -158,9 +165,9 @@ const perf = {
 };
 
 /**
- * auth 命名空间：nuwax webview ↔ nuwaclaw 壳的 ACCESS_TOKEN 双向同步。
- * nuwax 用 localStorage.ACCESS_TOKEN 鉴权（Authorization header），非 cookie；
- * token 由主进程按 webview 来源 origin 持久化到 settings 表，跨重启复用。
+ * auth 命名空间：业务 webview 与宿主的会话协调。
+ * 商业宿主以 ticket cookie 为登录事实源，由主进程确认并持久化会话；
+ * getToken/persistToken 仅保留旧调用兼容，在商业宿主为 no-op。
  * 后端见 main/ipc/nuwaxBridgeHandlers.ts。
  */
 const auth = {
@@ -179,15 +186,15 @@ const auth = {
   beginLogin(): Promise<boolean> {
     return ipcRenderer.invoke("auth:beginLogin");
   },
-  /** 读取本 origin 持久化的 nuwax ACCESS_TOKEN（重启免登）。 */
+  /** @deprecated 商业宿主返回 null；请使用 cookie 会话与 syncSession。 */
   getToken(): Promise<string | null> {
     return ipcRenderer.invoke("auth:getToken");
   },
-  /** nuwax 登录成功后持久化 token（写入 settings 表）。 */
+  /** @deprecated 商业宿主返回 false，不持久化 token。 */
   persistToken(token: string): Promise<boolean> {
     return ipcRenderer.invoke("auth:persistToken", token);
   },
-  /** nuwax 登出联动：清除本 origin 的持久化 token。 */
+  /** 业务登出联动：清除宿主会话并停止对应服务。 */
   clear(): Promise<boolean> {
     return ipcRenderer.invoke("auth:clear");
   },
@@ -255,11 +262,11 @@ const localFiles = {
  */
 const updater = {
   /** 当前更新状态 + 宿主客户端版本号（hostVersion）。 */
-  getState(): Promise<Record<string, unknown> | null> {
+  getState(): Promise<ClientUpdateState | null> {
     return ipcRenderer.invoke("updater:get-state");
   },
   /** 触发一次更新检查（与关于页「检查更新」同源）。 */
-  check(): Promise<Record<string, unknown> | null> {
+  check(): Promise<ClientUpdateCheckResult | null> {
     return ipcRenderer.invoke("updater:check");
   },
   /** 下载更新（幂等：已在下载/已下载时由主进程侧守卫）。 */
@@ -277,9 +284,9 @@ const updater = {
  * 工具栏经 <webview>.send、主进程直接向受信 guest 下发 nuwax:host-command，
  * 此处 ipcRenderer.on 接收并转发给 nuwax 注册的回调（contextBridge 保证回调在 guest
  * 上下文执行，从而能操作 nuwax 的 React/model 状态）。payload 协议见 nuwax 侧
- * global.d.ts 的 HostCommand。
+ * shared/types/hostBridge 的 HostCommand。
  */
-let hostCommandHandler: ((payload: unknown) => void) | null = null;
+let hostCommandHandler: ((payload: HostCommand) => void) | null = null;
 let latestHostActivity: { type: "host-activity"; visible: boolean } | null = null;
 let latestComputerServiceState: ComputerServiceStateCommand | null = null;
 if (bridgeAllowed) {
@@ -298,12 +305,13 @@ if (bridgeAllowed) {
       return;
     }
     if ((payload as { type?: unknown } | null)?.type === "computer-service-state") return;
-    hostCommandHandler?.(payload);
+    // IPC 载荷仍原样转发；宿主命令的编译期契约在桥边界统一。
+    hostCommandHandler?.(payload as HostCommand);
   });
 }
 const events = {
   /** 注册/注销宿主命令回调（传 null 注销）。 */
-  onHostCommand(cb: ((payload: unknown) => void) | null): void {
+  onHostCommand(cb: ((payload: HostCommand) => void) | null): void {
     hostCommandHandler = cb;
     if (cb) {
       // 新文档没有旧 preload 的缓存，向宿主请求当前态补齐重载/冷启动时序。
@@ -323,7 +331,7 @@ const events = {
  */
 const theme = {
   /** 推送主题状态给壳。 */
-  syncTheme(payload: Record<string, unknown>): void {
+  syncTheme(payload: ShellThemePayload): void {
     ipcRenderer.send("nuwax:theme-sync", payload);
   },
 };
@@ -431,4 +439,4 @@ if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   meta,
   host,
   ...(mayExposeIMBridge() ? { im } : {}),
-});
+} satisfies HostBridgeContract);
