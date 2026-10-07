@@ -180,13 +180,14 @@ jobs:
       - name: Init pinned frontend
         env:
           YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
+          YICHAMAO_GIT_USERNAME: ${{ secrets.YICHAMAO_GIT_USERNAME || 'oauth2' }}
         run: |
           # 前端嵌套子模块（micro-frontends 测试 git archive 依赖）在私有 GitLab（git.yichamao.com），
-          # PAT 经 http.extraHeader 按域注入（actions/checkout 同款；不改写 URL/credential，
+          # 凭据经 http.extraHeader 按域注入（actions/checkout 同款；不改写 URL/credential，
           # upgrade:micro-apps 一致性预检依赖原始 remote URL——insteadOf/helper 均实测翻车）
           if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
             git config --global http.https://git.yichamao.com/.extraheader \
-              "Authorization: Basic $(printf 'oauth2:%s' "$YICHAMAO_GIT_TOKEN" | base64)"
+              "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
           fi
           git submodule update --init nuwax
           git -C nuwax submodule update --init --recursive

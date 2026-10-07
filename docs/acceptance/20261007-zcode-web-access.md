@@ -69,8 +69,10 @@ iframe 真实 Electron 夹具另外通过：默认/临时/持久会话、XFO 与
 
 Beta 3.0.8 首轮预检重试后 `ok=true`，0 findings，随后创建 tag `prerelease-v3.0.8@0dd4330bac80f81eb05b91b5a368fe6ff5b0f3d8`。该次 [CI run 37599838681](https://github.com/nuwax-ai/nuwax-client/actions/runs/37599838681) 的商业/社区门通过，但前端初始化私有子模块失败，后续五平台构建和发布跳过。Release 查询为 404，run 安装资产为 0；不能将本次 beta 称为已发布。
 
-现有 `YICHAMAO_GIT_TOKEN` Secret 名称存在，但 CI 步骤解析到的值为空。本机对两份私有 Git 源均可鉴权；当前前端确实依赖 `submodules/nuwax-im` 与 `submodules/nuwax-repo-web`，不能跳过它们或改成不存在的公开源。本地凭据转入 CI 属于新的凭据使用范围，需要明确授权。
+首轮 CI 的 `YICHAMAO_GIT_TOKEN` Secret 名称存在，但步骤解析到的值为空。当前前端确实依赖 `submodules/nuwax-im` 与 `submodules/nuwax-repo-web`，不能跳过它们或改成不存在的公开源。用户随后明确授权将本机可用私库凭据写入客户端 CI，并删除重建这一个未发布失败 tag。
 
-补修会改变发布提交，已创建的 tag 仍保留原 SHA。发布入口 `scripts/client/release.mjs` 明确禁止将已有 tag 指向另一提交；该失败 tag 的删除与重建也需要明确授权。客户端草稿 [PR #12](https://github.com/nuwax-ai/nuwax-client/pull/12) 保留完整变更用于评审。
+真实鉴权校验发现本机凭据需要配套用户名：隔离 Git 配置中，强制 `oauth2` 对两份私库均失败，原用户名 Basic 对两份均成功。CI 与 beta 构建两处增加可选 `YICHAMAO_GIT_USERNAME`（默认仍为 `oauth2`），保持域限定 extraHeader、不改 URL；base64 去除 CR/LF，避免长凭据折行。两项 Secret 已通过 stdin 更新，仅使用内存传递，没有明文落盘或输出值。YAML、鉴权块脚本语法与差异检查通过；其余源门禁和运行时/pin 未变。
+
+补修会改变发布提交，已创建的 tag 原 SHA 为 `0dd4330b`。发布入口 `scripts/client/release.mjs` 默认禁止改写已有 tag；本次按用户明确授权，仅清理这个失败 tag 后由标准入口重新创建，保留其它 tag 和发布历史。清理前 Release 列表（含 draft）未发现本版本，tag SHA 未变。客户端草稿 [PR #12](https://github.com/nuwax-ai/nuwax-client/pull/12) 保留完整变更用于评审。
 
 远端已使用 3.0.7，因此本次 beta 目标为 3.0.8，不能继续旧任务的 3.0.4。真实账号、Windows/Linux 设备、正式安装包签名/公证与远端全平台发布状态需要各自证据；本地源码与临时 profile 验收不代替这些环节。
