@@ -1,7 +1,7 @@
 # 实施计划：web-access
 
 - 对应规格：`specs/web-access.md`
-- 状态：源码、冻结 pin、完整质量门及本地 macOS 候选包完成；进入已授权 beta 3.0.8 全平台 CI 与发布资产验证。详见 `docs/acceptance/20261007-zcode-web-access.md`。
+- 状态：网页访问修复、前端完整 CI 门、冻结双 pin 与最终 macOS 候选包已验证。首轮 beta CI 因私库凭据为空失败，没有生成 Release 或安装资产；修复凭据及重建失败 tag 待明确授权。详见 `docs/acceptance/20261007-zcode-web-access.md`。
 
 ## 改动文件清单
 
@@ -15,7 +15,7 @@
 | overlay/.../hostActivity.ts + test | 修改 | 关闭时使用已捕获 WebContents，避免 destroyed getter 异常 |
 | scripts/acceptance/popup-login-session.cjs | 修改 | 真实窗口、导航和票据回归 |
 | README.md / 验收记录 | 修改/新增 | 新行为与实测证据 |
-| 独立前端 micro-frontends/message 与 package.json | 修改 | 冻结 pin、补丁重制、移除生产构建自动升级 |
+| 独立前端微应用适配与 package.json | 修改 | 冻结 pin、补丁重制、移除生产构建自动升级、恢复误删的类型和 CI 门 |
 
 ## 实施顺序
 
