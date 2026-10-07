@@ -344,11 +344,57 @@ describe("window.open session boundary", () => {
         .toMatch(/^temp:nuwax-popup-/);
       expect(result.overrideBrowserWindowOptions?.webPreferences.preload).toBeUndefined();
     }
-    const missingReferrer = businessHandler(popup(`${business}/agent`, ""));
-    expect(missingReferrer.action).toBe("deny");
-    const options = mocks.popupWindows.at(-1)!.options as any;
-    expect(options.webPreferences.partition).toMatch(/^temp:nuwax-popup-/);
-    expect(options.webPreferences.preload).toBeUndefined();
+  });
+
+  it.each([
+    ["webview", "direct", "/"],
+    ["window", "direct", "/repo/doc/fixture"],
+    ["webview", "gateway", "/repo/doc/fixture"],
+    ["window", "gateway", "/"],
+  ] as const)("%s noreferrer business link keeps the logged-in session in %s mode: %s", async (type, mode, route) => {
+    const created = await setup();
+    const gateway = "http://127.0.0.1:46800";
+    if (mode === "gateway") settings.set("nuwax.loopback", { enabled: true, origin: gateway });
+    const source = mode === "gateway" ? gateway : business;
+    const opener = type === "webview"
+      ? attachedWebview(created, `${source}/instant-message`)
+      : fakeContents(type, `${source}/instant-message`);
+    if (type === "window") created({}, opener);
+    const handler = opener.setWindowOpenHandler.mock.lastCall![0] as
+      (details: unknown) => import("electron").WindowOpenHandlerResponse;
+    const url = `${business}${route}`;
+    const result = handler(popup(url, ""));
+    expect(result.action).toBe("allow");
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.session).toBe(mocks.defaultSession);
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.partition).toBeUndefined();
+    expect(result.overrideBrowserWindowOptions?.webPreferences?.preload).toMatch(/webviewPerfBridge\.js$/);
+    const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
+    expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, url);
+    const win = mocks.popupWindows.at(-1)!;
+    expect(mocks.trustInitialBusinessNavigation.mock.invocationCallOrder[0])
+      .toBeLessThan(win.loadURL.mock.invocationCallOrder[0]);
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledWith(win);
+  });
+
+  it.each([external, "null"])("noreferrer business page stays isolated when an iframe origin is %s", async (origin) => {
+    const opener = attachedWebview(await setup(), `${business}/instant-message`);
+    opener.mainFrame.framesInSubtree.push({ origin });
+    const handler = opener.setWindowOpenHandler.mock.lastCall![0];
+    expect(handler(popup(`${business}/repo/doc/fixture`, "")).action).toBe("deny");
+    const win = mocks.popupWindows.at(-1)!;
+    expect(win.webContents.session).not.toBe(mocks.defaultSession);
+    expect((win.options as any).webPreferences.preload).toBeUndefined();
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
+  });
+
+  it("does not infer a noreferrer POST form's source from its business target", async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`);
+    expect(handler({
+      ...popup(`${business}/repo/doc/fixture`, ""),
+      postBody: { contentType: "application/x-www-form-urlencoded", data: [{ type: "rawData", bytes: Buffer.from("value=fixture") }] },
+    }).action).toBe("deny");
+    expect(mocks.popupWindows.at(-1)!.webContents.session).not.toBe(mocks.defaultSession);
+    expect(mocks.trustInitialBusinessNavigation).not.toHaveBeenCalled();
   });
 
   it("popup from isolated BrowserWindow remains isolated, including second level popup", async () => {

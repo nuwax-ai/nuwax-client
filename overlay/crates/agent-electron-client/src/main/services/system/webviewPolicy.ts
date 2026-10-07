@@ -342,14 +342,18 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     !openerUrl.username && !openerUrl.password &&
     !target.username && !target.password &&
     allowed.includes(openerUrl.origin) && allowed.includes(target.origin);
-  const trustedBusiness = businessPair && !!referrerUrl &&
+  // IM/Markdown 的 noreferrer 链接不提供 referrer，不能因此丢失站内登录。
+  // 只有 opener 的全部 frame 都属于当前业务域，才可确认无 referrer GET 的来源。
+  const noReferrerBusinessNavigation = businessPair && !details.referrer?.url &&
+    !details.postBody && hasOnlyBusinessFrames(opener);
+  const trustedBusiness = (businessPair && !!referrerUrl &&
     !referrerUrl.username && !referrerUrl.password &&
     openerUrl.origin === referrerUrl.origin &&
-    allowed.includes(referrerUrl.origin);
-  // IM 正文链接使用 noreferrer。只允许业务文件 GET 首请求鉴权，不授予页面 IPC 桥。
-  const authenticatedDownload = businessPair && !details.referrer?.url &&
-    !details.postBody && target.pathname.startsWith("/api/f/s3/") &&
-    hasOnlyBusinessFrames(opener);
+    allowed.includes(referrerUrl.origin)) ||
+    (noReferrerBusinessNavigation && !target.pathname.startsWith("/api/"));
+  // 业务附件仍只借用首请求鉴权，不授予页面 IPC 桥或扩大其它 API 的范围。
+  const authenticatedDownload = noReferrerBusinessNavigation &&
+    target.pathname.startsWith("/api/f/s3/");
   const options = buildPopupWindowOptions(features ?? "", trustedBusiness, authenticatedDownload);
   log.debug(
     `[WebviewPolicy] Opening in-app popup: ${target.origin} (${options.width}x${options.height})`,
