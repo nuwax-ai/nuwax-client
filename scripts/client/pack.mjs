@@ -4,6 +4,9 @@ import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 import { buildFrontend } from './frontend.mjs';
 import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
+import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+
+const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
 
 export function unsignedEnv(root) {
   return commercialEnv(root, {
@@ -49,7 +52,7 @@ export function validateOutput(root, output, tools = core) {
   return output;
 }
 
-export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir }) {
+export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, platform = process.platform, env = process.env, builderVersions }) {
   if (version && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
   const result = structuredClone(packageJson.build ?? {});
   result.extends = null;
@@ -80,7 +83,7 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
   result.linux = { ...result.linux, desktop: { ...result.linux?.desktop, entry: { ...result.linux?.desktop?.entry, Name: product.displayName } } };
-  return result;
+  return applyInstallerArchivePolicy(result, { env, platform, builderVersions });
 }
 
 export async function prepareComputerUse(root, { tools = core, platform = process.platform, arch = process.arch, refreshResources = false } = {}) {
@@ -116,12 +119,20 @@ export async function pack(root, options = {}) {
   const p = tools.paths(root);
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
+  const archiveMode = resolveInstallerArchiveMode({ platform });
   const frontendMode = options.frontend ?? config.frontend.mode;
   if (!['darwin', 'win32', 'linux'].includes(platform)) throw new Error(`[pack] 不支持的平台 ${platform}`);
   const version = options.version ?? await localVersion(root, tools);
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
   const output = validateOutput(root, path.resolve(root, options.output ?? path.join(config.pack.outputDir, version)), tools);
   const prepared = await (options.prepare ?? prepare)(root, { ...options, frontend: frontendMode });
+  let pkg;
+  let builderVersions;
+  if (archiveMode) {
+    pkg = tools.readJson(path.join(p.client, 'package.json'));
+    builderVersions = installedBuilderVersions(p.client);
+    applyInstallerArchivePolicy(pkg.build ?? {}, { platform, builderVersions });
+  }
   if (options.dryRun) {
     console.log(`[pack] dry-run: ${platform}-${arch}，前端=${frontendMode}，无签名，不发布`);
     return { ...prepared, dryRun: true };
@@ -129,8 +140,8 @@ export async function pack(root, options = {}) {
   const frontend = frontendMode === 'source' ? await (options.buildFrontend ?? buildFrontend)(root, { allowDirty: true, restoreGenerated: true, cleanDist: false }) : prepared.frontend;
   if (!frontend?.distDir || !fileReady(path.join(frontend.distDir, 'index.html'))) throw new Error('[pack] 前端 index.html 缺失');
   const helperDir = await (options.prepareComputerUse ?? prepareComputerUse)(root, { ...options, tools, platform, arch });
-  const pkg = tools.readJson(path.join(p.client, 'package.json'));
-  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir });
+  pkg ??= tools.readJson(path.join(p.client, 'package.json'));
+  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, platform, builderVersions });
   fs.mkdirSync(p.cache, { recursive: true });
   const configFile = path.join(p.cache, `electron-builder-${platform}-${arch}.json`);
   tools.atomicJson(configFile, generated);
