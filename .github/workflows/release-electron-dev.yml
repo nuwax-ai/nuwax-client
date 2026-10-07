@@ -6,14 +6,14 @@
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 prerelease-v* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
-# workflow_dispatch / codex/beta-qa/X.Y.Z 只输出 7 天 Actions artifacts；
-# manifest 的 prerelease-vX.Y.Z 是构建标识，不创建 tag/Release，不改更新指针。
+# workflow_dispatch / codex/beta-qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
+# manifest 的 qa-v完整版本是独立构建标识，不创建 tag/Release，不改更新指针。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/prerelease-v{x.y.z}.md
 #   3. git tag prerelease-v{x.y.z} && git push origin prerelease-v{x.y.z}
-#   隔离 QA：workflow_dispatch(version=X.Y.Z) 或推送冻结 HEAD 到 codex/beta-qa/X.Y.Z。
+#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 codex/beta-qa/ 分支。
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -44,7 +44,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "QA candidate numeric version (X.Y.Z); no release tag is created"
+        description: "QA version X.Y.Z-qa.YYYYMMDD.N (for example 3.0.9-qa.20261008.1); no release tag is created"
         required: true
         type: string
       windows_archive:
@@ -74,6 +74,8 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       source_sha: ${{ steps.version.outputs.source_sha }}
       windows_archive: ${{ steps.version.outputs.windows_archive }}
+      qa_build: ${{ steps.version.outputs.qa_build }}
+      native_version: ${{ steps.version.outputs.native_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,6 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           WINDOWS_ARCHIVE=""
+          QA_BUILD=false
           case "$BUILD_EVENT:$BUILD_REF" in
             push:refs/tags/prerelease-v*)
               TAG="${BUILD_REF#refs/tags/}"
@@ -99,12 +102,12 @@ jobs:
               ;;
             push:refs/heads/codex/beta-qa/*)
               VERSION="${BUILD_REF#refs/heads/codex/beta-qa/}"
-              TAG="prerelease-v${VERSION}"
+              QA_BUILD=true
               WINDOWS_ARCHIVE=zip-qa
               ;;
             workflow_dispatch:refs/heads/*)
               VERSION="$VERSION_INPUT"
-              TAG="prerelease-v${VERSION}"
+              QA_BUILD=true
               WINDOWS_ARCHIVE="$WINDOWS_ARCHIVE_INPUT"
               case "$WINDOWS_ARCHIVE" in
                 7z|zip-qa) ;;
@@ -113,13 +116,32 @@ jobs:
               ;;
             *) echo "::error::Unsupported build event/ref"; exit 1 ;;
           esac
-          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::Version must be numeric X.Y.Z"
-            exit 1
+          if [ "$QA_BUILD" = true ]; then
+            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-qa\.[1-9][0-9]{7}\.[1-9][0-9]*$ ]]; then
+              echo "::error::QA version must be X.Y.Z-qa.YYYYMMDD.N with a positive attempt"
+              exit 1
+            fi
+            node - "$VERSION" <<'NODE'
+          const day = process.argv[2].split('-qa.')[1].split('.')[0];
+          const iso = `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
+          const date = new Date(`${iso}T00:00:00.000Z`);
+          if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== iso) {
+            console.error('::error::QA version contains an invalid calendar date');
+            process.exit(1);
+          }
+          NODE
+            TAG="qa-v${VERSION}"
+            NATIVE_VERSION="${VERSION%%-qa.*}"
+          else
+            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::Public prerelease version must be numeric X.Y.Z"
+              exit 1
+            fi
+            NATIVE_VERSION="$VERSION"
           fi
           SOURCE_SHA="$(git rev-parse HEAD)"
           [ "$SOURCE_SHA" = "$BUILD_SHA" ] || { echo "::error::Checkout differs from frozen workflow SHA"; exit 1; }
-          printf 'version=%s\ntag=%s\nsource_sha=%s\nwindows_archive=%s\n' "$VERSION" "$TAG" "$SOURCE_SHA" "$WINDOWS_ARCHIVE" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\ntag=%s\nsource_sha=%s\nwindows_archive=%s\nqa_build=%s\nnative_version=%s\n' "$VERSION" "$TAG" "$SOURCE_SHA" "$WINDOWS_ARCHIVE" "$QA_BUILD" "$NATIVE_VERSION" >> "$GITHUB_OUTPUT"
           echo "Build identity: $TAG at $SOURCE_SHA"
           if [ -n "$WINDOWS_ARCHIVE" ]; then
             echo "QA artifacts only: build identity is not a created/published release tag"
@@ -244,9 +266,17 @@ jobs:
       - name: Set version & commercial branding in package.json
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
+        env:
+          QA_BUILD: ${{ needs.prepare.outputs.qa_build }}
+          NATIVE_VERSION: ${{ needs.prepare.outputs.native_version }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           npm pkg set version="$VERSION"
+          # package.version 保留 QA 标识；原生版本字段仅使用数字基线，便于 Mac 公证及 Windows 安装器。
+          if [ "$QA_BUILD" = true ]; then
+            npm pkg set build.buildVersion="$NATIVE_VERSION"
+            npm pkg set build.mac.bundleShortVersion="$NATIVE_VERSION"
+          fi
           # 商业身份：文件名/包名一律 ASCII（productName=Nuwax；appId 尾段与
           # 注入 identifier 一致=nuwax）。面向用户的「显示名」与「文件名」分离：
           # 显示名走中文营销名 女娲Nuwax（mac CFBundleDisplayName / win NSIS 向导+
@@ -523,18 +553,23 @@ jobs:
       - name: Record platform source and verify macOS signature
         shell: bash
         env:
+          QA_BUILD: ${{ needs.prepare.outputs.qa_build }}
+          BUILD_IDENTITY: ${{ needs.prepare.outputs.tag }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
         run: |
+          set -euo pipefail
           case "${{ runner.os }}" in macOS) PLATFORM=macos;; Windows) PLATFORM=windows;; Linux) PLATFORM=linux;; esac
-          VERSION="${{ needs.prepare.outputs.version }}"
+          VERSION="$BUILD_VERSION"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
           if [ "$PLATFORM" = macos ]; then
             for value in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
-              [ -n "${!value}" ] || { echo "::error::${value} is required for published macOS builds"; exit 1; }
+              [ -n "${!value}" ] || { echo "::error::${value} is required for signed macOS builds"; exit 1; }
             done
             APP_PATH="$(find "$OUT_DIR" -maxdepth 3 -type d -name Nuwax.app -print -quit)"
             [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
@@ -542,7 +577,12 @@ jobs:
             spctl --assess --type execute --verbose "$APP_PATH"
             compgen -G "$OUT_DIR/*.dmg" >/dev/null || { echo '::error::macOS DMG missing'; exit 1; }
           fi
-          node scripts/release-provenance.mjs record "${{ needs.prepare.outputs.tag }}" "$PLATFORM" "${{ matrix.arch }}" "$OUT_DIR"
+          case "$QA_BUILD" in
+            true) PROVENANCE_COMMAND=record-qa ;;
+            false) PROVENANCE_COMMAND=record ;;
+            *) echo '::error::Invalid QA build mode'; exit 1 ;;
+          esac
+          node scripts/release-provenance.mjs "$PROVENANCE_COMMAND" "$BUILD_IDENTITY" "$PLATFORM" "$TARGET_ARCH" "$OUT_DIR"
 
       - name: Upload artifacts to Release
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/prerelease-v') }}

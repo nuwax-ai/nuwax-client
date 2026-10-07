@@ -12,7 +12,21 @@ const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linu
 function requiredArtifacts(tag, key) {
   const match = /^(?:electron|prerelease)-v(\d+\.\d+\.\d+)$/.exec(tag);
   if (!match) fail(`无效发布 tag: ${tag}`);
-  const version = match[1];
+  return artifactsForVersion(match[1], key);
+}
+
+function qaVersionFromIdentity(identity) {
+  const match = /^qa-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-qa\.([1-9]\d{7})\.[1-9]\d*)$/.exec(identity);
+  if (!match) fail(`无效 QA 构建身份: ${identity}`);
+  const date = match[2];
+  const parsedDate = new Date(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00.000Z`);
+  if (Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10).replaceAll('-', '') !== date) {
+    fail(`无效 QA 构建身份: ${identity}`);
+  }
+  return match[1];
+}
+
+function artifactsForVersion(version, key) {
   return {
     'macos-arm64': [`Nuwax-${version}-arm64.dmg`, `Nuwax-${version}-arm64-mac.zip`],
     'macos-x64': [`Nuwax-${version}.dmg`, `Nuwax-${version}-mac.zip`],
@@ -124,10 +138,16 @@ function peSigningIdentity(path, unsignedSize = undefined) {
   } finally { closeSync(fd); }
 }
 
-function record([tag, platform, arch, outDir]) {
+function record([tag, platform, arch, outDir], qa = false) {
   if (!tag || !platform || !arch || !outDir || !platforms.includes(`${platform}-${arch}`)) {
-    fail('用法: record <tag> <macos|windows|linux> <arch> <release-output-dir>');
+    fail(`用法: ${qa ? 'record-qa <qa-build-identity>' : 'record <tag>'} <macos|windows|linux> <arch> <release-output-dir>`);
   }
+  // QA labels are not release tags. Validate them only through this isolated
+  // record entry point so public verification keeps its numeric-tag policy.
+  const qaVersion = qa ? qaVersionFromIdentity(tag) : undefined;
+  const expectedArtifacts = qa
+    ? artifactsForVersion(qaVersion, `${platform}-${arch}`)
+    : requiredArtifacts(tag, `${platform}-${arch}`);
   const output = resolve(outDir);
   const frontend = git('rev-parse', 'HEAD:nuwax');
   const shell = git('rev-parse', 'HEAD:nuwa-electron-shell');
@@ -138,6 +158,7 @@ function record([tag, platform, arch, outDir]) {
   const manifest = {
     schemaVersion: 1,
     tag,
+    ...(qa ? { version: qaVersion, buildIdentity: tag, distribution: 'actions-artifact-only', published: false } : {}),
     source: { client: git('rev-parse', 'HEAD'), shell, frontend },
     frontend: { stamp, distSha256: sha256Tree(join(root, 'nuwax/dist')) },
     platform,
@@ -146,11 +167,11 @@ function record([tag, platform, arch, outDir]) {
       .filter((file) => basename(file) === file && /\.(?:dmg|zip|exe|msi|AppImage|deb|rpm)$/.test(file))
       .map((file) => [file.replaceAll('\\', '/'), sha256File(join(output, file))])),
   };
-  for (const file of requiredArtifacts(tag, `${platform}-${arch}`)) {
+  for (const file of expectedArtifacts) {
     if (!manifest.artifacts[file]) fail(`${platform}-${arch} 缺少预期安装资产 ${file}`);
   }
   if (platform === 'windows') {
-    manifest.windowsSigning = peSigningIdentity(join(output, requiredArtifacts(tag, 'windows-x64')[0]));
+    manifest.windowsSigning = peSigningIdentity(join(output, expectedArtifacts[0]));
   }
   const filename = `build-manifest-${platform}-${arch}.json`;
   writeFileSync(join(output, filename), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -161,6 +182,7 @@ function verify([tag, assetsDir, channel = 'stable']) {
   if (!tag || !assetsDir || !['beta', 'stable'].includes(channel)) {
     fail('用法: verify <tag> <downloaded-release-assets-dir> [beta|stable]');
   }
+  requiredArtifacts(tag, platforms[0]);
   const dir = resolve(assetsDir);
   const manifests = platforms.map((key) => {
     const path = join(dir, `build-manifest-${key}.json`);
@@ -252,5 +274,6 @@ function existsFile(path) {
 
 const [command, ...args] = process.argv.slice(2);
 if (command === 'record') record(args);
+else if (command === 'record-qa') record(args, true);
 else if (command === 'verify') verify(args);
-else fail('用法: release-provenance.mjs <record|verify> ...');
+else fail('用法: release-provenance.mjs <record|record-qa|verify> ...');
