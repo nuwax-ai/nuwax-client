@@ -1,7 +1,7 @@
 # 实施计划：web-access
 
 - 对应规格：`specs/web-access.md`
-- 状态：网页访问修复、前端完整 CI 门、冻结双 pin 与最终 macOS 候选包已验证。首轮 beta CI 因私库凭据为空失败，没有生成 Release 或安装资产。用户已明确授权凭据更新及重建失败 tag；两份私库真实 Basic 鉴权校验通过，CI 配置已补齐，继续全平台构建及发布验证。详见 `docs/acceptance/20261007-zcode-web-access.md`。
+- 状态：网页访问修复、冻结双 pin、源码质量门、本地 macOS 候选包和正式 Beta 3.0.8 发布已完成。用户授权后更新 CI 凭据并重建失败 tag；五平台 CI 全绿，Mac 签名/公证通过，29 个 S3 发布资产与 6 个 OSS 更新元数据的 SHA256 核验通过，双端 Beta 指针一致，稳定版 3.0.7 指针保持原摘要。真实账号及各平台真机安装/权限验收仍待验证。详见 `docs/acceptance/20261007-zcode-web-access.md`。
 
 ## 改动文件清单
 

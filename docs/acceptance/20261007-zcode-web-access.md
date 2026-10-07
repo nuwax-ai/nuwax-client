@@ -67,7 +67,7 @@ iframe 真实 Electron 夹具另外通过：默认/临时/持久会话、XFO 与
 
 隔离运行夹具使用匹配的 Electron 40.8.2 加载实际包内主进程与资源，强制临时 home/appData/session 目录。空白账号下验证 host/guest 启动、API 路由、任意域 popup 共享会话、无异域业务桥/票据、原 guest 跨域返回与桥恢复、最终前端印记。它没有模拟注册/登录后端，不代替真实账号、安装器或正式签名的系统权限验收。
 
-Beta 3.0.8 首轮预检重试后 `ok=true`，0 findings，随后创建 tag `prerelease-v3.0.8@0dd4330bac80f81eb05b91b5a368fe6ff5b0f3d8`。该次 [CI run 37599838681](https://github.com/nuwax-ai/nuwax-client/actions/runs/37599838681) 的商业/社区门通过，但前端初始化私有子模块失败，后续五平台构建和发布跳过。Release 查询为 404，run 安装资产为 0；不能将本次 beta 称为已发布。
+Beta 3.0.8 首轮预检重试后 `ok=true`，0 findings，随后创建 tag `prerelease-v3.0.8@0dd4330bac80f81eb05b91b5a368fe6ff5b0f3d8`。该次 [CI run 37599838681](https://github.com/nuwax-ai/nuwax-client/actions/runs/37599838681) 的商业/社区门通过，但前端初始化私有子模块失败，后续五平台构建和发布跳过。Release 查询为 404，run 安装资产为 0；该首轮尝试没有完成发布。
 
 首轮 CI 的 `YICHAMAO_GIT_TOKEN` Secret 名称存在，但步骤解析到的值为空。当前前端确实依赖 `submodules/nuwax-im` 与 `submodules/nuwax-repo-web`，不能跳过它们或改成不存在的公开源。用户随后明确授权将本机可用私库凭据写入客户端 CI，并删除重建这一个未发布失败 tag。
 
@@ -75,4 +75,33 @@ Beta 3.0.8 首轮预检重试后 `ok=true`，0 findings，随后创建 tag `prer
 
 补修会改变发布提交，已创建的 tag 原 SHA 为 `0dd4330b`。发布入口 `scripts/client/release.mjs` 默认禁止改写已有 tag；本次按用户明确授权，仅清理这个失败 tag 后由标准入口重新创建，保留其它 tag 和发布历史。清理前 Release 列表（含 draft）未发现本版本，tag SHA 未变。客户端草稿 [PR #12](https://github.com/nuwax-ai/nuwax-client/pull/12) 保留完整变更用于评审。
 
-远端已使用 3.0.7，因此本次 beta 目标为 3.0.8，不能继续旧任务的 3.0.4。真实账号、Windows/Linux 设备、正式安装包签名/公证与远端全平台发布状态需要各自证据；本地源码与临时 profile 验收不代替这些环节。
+远端已使用 3.0.7，因此本次 beta 目标为 3.0.8，不能继续旧任务的 3.0.4。授权恢复后的正式发布证据如下。
+
+## 正式 Beta 3.0.8 交付
+
+不可变 tag 为 `prerelease-v3.0.8@3b85c5b3606e3c751e92088aa306efabd6fd807a`。[CI run 37607592289](https://github.com/nuwax-ai/nuwax-client/actions/runs/37607592289) 的三条源码门、五平台构建及同步发布全部成功；两份私库在所有构建节点正常拉取。[Release](https://github.com/nuwax-ai/nuwax-client/releases/tag/prerelease-v3.0.8) 于 2026-10-07 12:39:31 UTC 公开，`draft=false`、`prerelease=true`，29 个资产，共 7,363,057,718 字节，匿名读取成功。
+
+| 实际云端质量门 | 结果 |
+| --- | --- |
+| 商业 | 169 文件，2198 通过，5 跳过，0 失败 |
+| 社区 | 126 文件，1518 通过，5 跳过，0 失败 |
+| 前端 | 355 文件，3294 通过，6 跳过，0 失败 |
+| 类型检查器自测 | 19 通过 |
+| 前端类型/架构门 | 319 域内文件 0 诊断；域外 284 如实报告；0 新架构违规，97 条原有豁免 |
+| 客户端脚本门 | 162 通过，0 失败 |
+
+CI 原有 `tests/sandbox-integration/**` 排除使云端商业/社区统计与上文隔离本地完整门不同，未新增排除或调整基线。
+
+独立 verifier 逐份验证 5 个 build manifest：客户端 `3b85c5b3`、基座 `6e361961e`、前端 `d16531c8e`，stamp 全部为 `d16531c8e`；12 个安装资产摘要匹配 GitHub digest，HTTP Range 总大小也全部一致。最终 provenance 的 5 builds、23 个资产摘要匹配 Release 元数据。phase 1 CI 从前端源 pin 构建，未消费 `nuwax-dist` pin；各平台 buildAt 可导致树摘要不同，按对应 manifest 记录，未要求等于本地 qa.2 的树摘要。
+
+macOS arm64/x64 日志分别在 11:22:05/11:23:10 UTC 记录公证成功，实际严格 codesign/spctl 步骤分别于 12:19:41/12:23:57 UTC 成功，均为 `accepted`、`source=Notarized Developer ID`。[arm64 日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37607592289/job/112750144897)、[x64 日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37607592289/job/112750144891)。结论覆盖 Nuwax.app；主 app staple 由锁定 notarize 2.5.0 的成功返回路径佐证，日志额外内部二进制计数 0 不代表主 app 未 staple。
+
+Windows Beta 为 `Nuwax-Setup-3.0.8-unsigned.exe`，773,552,739 字节，实际 PE 证书目录 offset/size 为 0；符合 Beta 未签名渠道约定。SimplySign 属于 stable 流程。Windows/Linux 尚未做真机安装运行验收。
+
+标准 `scripts/client/release.mjs` 发布入口最终退出 0，记录“29 个资产 SHA256 已校验”：本机从公开 S3 路径完整流式读取全部 29 个资产，对照 GitHub digest 与 provenance；OSS 仅镜像更新元数据，6 个 `.yml`/`latest.json` 的摘要也通过。DMG/ZIP 完整摘要核验已经完成，未将元数据对照替代整包读取。
+
+S3/OSS 双端 `/beta/latest.json` 均为 3.0.8，字节一致，SHA256 `9bf784ae8f6e93858d79bcb5f0900e6f604cb45ce7ed762f8c73d5c0097fd7a4`。7 个必需平台键及既有安装格式别名合计 14 项，URL、大小、摘要和签名格式核验通过。双端 `/latest/latest.json` 仍为 3.0.7，SHA256 `bf71c4759e16326edf830c6b8f8002377931acedf64d7c436eaa2a374e85bc34`，与发布前完全相同。
+
+公开 [provenance](https://github.com/nuwax-ai/nuwax-client/releases/download/prerelease-v3.0.8/release-provenance.json) SHA256 为 `d7222109fb280f8dcb724866233c5c2c1229cef451e59e6d1f0d65a1e551850b`。原始 Release 元数据、provenance、指针前后快照、标准发布日志和最终摘要保存在本地 `release/3.0.8-qa.2-20261007/`。
+
+本地 qa.2 与正式 3.0.8 是不同产物，结果分别记录。真实账号登录/ticket 生命周期、各平台正式安装器启动与系统权限仍待实机验收；本次源码、临时 profile、CI 分发签名及镜像核验各自覆盖上述范围。
