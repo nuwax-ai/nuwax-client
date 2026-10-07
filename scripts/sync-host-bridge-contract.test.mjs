@@ -5,18 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { hostBridgeSource, hostBridgeSnapshot, syncHostBridgeContract } from './sync-host-bridge-contract.mjs';
+import { hostBridgeSource, hostBridgeSources, hostBridgeSnapshot, resolveHostBridgeSource, syncHostBridgeContract } from './sync-host-bridge-contract.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = [];
 afterEach(() => { for (const directory of temporary.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 
-function fixture() {
+function fixture(sourcePath = hostBridgeSource) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'host-bridge-contract-'));
   temporary.push(directory);
-  const source = path.join(directory, hostBridgeSource);
+  const source = path.join(directory, sourcePath);
   fs.mkdirSync(path.dirname(source), { recursive: true });
-  fs.copyFileSync(path.join(root, hostBridgeSource), source);
+  fs.writeFileSync(source, 'export interface HostBridgeContract { host: { getProduct(): string } }\n');
   return { directory, source, snapshot: path.join(directory, hostBridgeSnapshot) };
 }
 
@@ -29,6 +29,40 @@ test('generates a deterministic snapshot without changing canonical source or un
   assert.deepEqual(fs.readFileSync(f.source), source);
   assert.deepEqual(fs.readFileSync(f.snapshot), snapshot);
   assert.equal(fs.readFileSync(unrelated, 'utf8'), 'keep WIP');
+});
+
+test('resolves the renamed canonical type file and records its actual path in generated provenance', () => {
+  const f = fixture(hostBridgeSources[0]);
+  assert.equal(resolveHostBridgeSource(f.directory), f.source);
+  assert.equal(syncHostBridgeContract(f.directory).source, f.source);
+  assert.ok(fs.readFileSync(f.snapshot, 'utf8').startsWith(`// Generated from ${hostBridgeSources[0]};`));
+  assert.equal(syncHostBridgeContract(f.directory, { check: true }).changed, false);
+  const before = fs.readFileSync(f.snapshot);
+  fs.appendFileSync(f.source, '\nexport type ChangedPayload = { visible: boolean };\n');
+  assert.throws(() => syncHostBridgeContract(f.directory, { check: true }), /snapshot is stale/);
+  assert.deepEqual(fs.readFileSync(f.snapshot), before);
+});
+
+test('prefers the renamed type source over a leftover legacy path without hiding content changes', () => {
+  const f = fixture();
+  syncHostBridgeContract(f.directory);
+  const before = fs.readFileSync(f.snapshot);
+  const renamed = path.join(f.directory, hostBridgeSources[0]);
+  fs.writeFileSync(renamed, 'export interface HostBridgeContract { host: { getProduct(): number } }\n');
+  assert.equal(resolveHostBridgeSource(f.directory), renamed);
+  assert.throws(() => syncHostBridgeContract(f.directory, { check: true }), /snapshot is stale/);
+  assert.deepEqual(fs.readFileSync(f.snapshot), before);
+});
+
+test('missing canonical source fails explicitly without using or changing a pre-existing snapshot', () => {
+  const f = fixture();
+  syncHostBridgeContract(f.directory);
+  const before = fs.readFileSync(f.snapshot);
+  fs.rmSync(f.source);
+  for (const check of [false, true]) {
+    assert.throws(() => syncHostBridgeContract(f.directory, { check }), /canonical source is missing/);
+  }
+  assert.deepEqual(fs.readFileSync(f.snapshot), before);
 });
 
 test('check fails on missing, edited or obsolete snapshots without writing anything', () => {
@@ -83,7 +117,6 @@ const baseClient = path.join(root, 'nuwa-electron-shell/crates/agent-electron-cl
 const requireFromBase = createRequire(path.join(baseClient, 'package.json'));
 const ts = requireFromBase('typescript');
 const overlaySource = path.join(root, 'overlay/crates/agent-electron-client/src');
-const canonical = path.join(root, hostBridgeSource);
 
 function compile(entry, source, { provider = false, overrides = new Map() } = {}) {
   const options = {
@@ -114,6 +147,10 @@ function compile(entry, source, { provider = false, overrides = new Map() } = {}
 }
 
 const importType = filename => JSON.stringify(filename.replace(/\\/g, '/').replace(/\.ts$/, ''));
+
+test('actual generated snapshot matches the selected frontend canonical contract exactly', () => {
+  assert.equal(syncHostBridgeContract(root, { check: true }).changed, false);
+});
 
 test('actual preload exposure and Electron bridge alias compile against the generated contract', () => {
   const preload = path.join(overlaySource, 'preload/webviewPerfBridge.ts');
@@ -147,6 +184,7 @@ const updaterUpdate: UpdaterState = wireUpdate;
 });
 
 test('frontend window keeps optional legacy capabilities and typed command/theme/update/IM payloads without Electron', () => {
+  const canonical = resolveHostBridgeSource(root);
   const globals = path.join(root, 'nuwax/src/types/global.d.ts');
   const entry = path.join(root, 'nuwax/.host-bridge-consumer-check.ts');
   const source = `
