@@ -1,7 +1,7 @@
 # 实施计划：web-access
 
 - 对应规格：`specs/web-access.md`
-- 状态：源码修复和质量门完成，进入冻结 pin 与隔离打包验证；用户在当前会话已授权处理今日问题和需求。
+- 状态：源码、冻结 pin、完整质量门及本地 macOS 候选包完成；进入已授权 beta 3.0.8 全平台 CI 与发布资产验证。详见 `docs/acceptance/20261007-zcode-web-access.md`。
 
 ## 改动文件清单
 

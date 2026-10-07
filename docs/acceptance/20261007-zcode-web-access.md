@@ -27,6 +27,9 @@
 | 前端生产构建 | 通过，受跟踪源码干净 | `bbebed854071ecb92e4e7b7597869859ae2903bc` |
 | 前端桥/事件/IM | 90 通过 | 纯类型契约恢复后 |
 | 严格桥契约门，独立 verifier | 12 通过，0 失败；host-bridge:check 通过 | canonical/overlay 一致，旧宿主能力保持可选 |
+| 完整脚本门 | 162 通过，0 失败 | 最终冻结候选，70.34 秒 |
+| macOS arm64 本地 pack | 通过 | 3.0.8-qa.1，标准入口，未做 Developer ID 分发签名 |
+| 包静态检查，独立 verifier | 9 通过，0 失败 | Info 身份、Electron/ABI、asar、989 前端文件、图标与签名边界 |
 | overlay/check:pin | 135 文件一致，0 待同步；130 基座脏文件全部为 overlay 产物 | 未清理原工作区 |
 | 真实窗口夹具 | 通过 | direct/gateway × BrowserWindow/webview；anchor/window.open、混合 iframe、跨域原窗口/回跳/302、自有第三方 Cookie |
 
@@ -34,7 +37,7 @@
 
 iframe 真实 Electron 夹具另外通过：默认/临时/持久会话、XFO 与多 CSP 策略、重定向和嵌套 iframe、保留其余 CSP、`/page` 资源与重启 Cookie 恢复（79 请求、2 个 Cookie 重启进程）。
 
-原工作区和首个冻结候选脚本门均为 151 通过、7 失败，暴露了 canonical 契约缺失。首个候选的真实原因是上述排障回退；不能用快照兜底或弱化类型门掩盖。恢复后 12 个严格门已通过，完整脚本门在打包台重跑。
+原工作区和首个冻结候选脚本门均为 151 通过、7 失败，暴露了 canonical 契约缺失。首个候选的真实原因是上述排障回退；不能用快照兜底或弱化类型门掩盖。恢复后 12 个严格门和 162 项完整脚本门全部通过。
 
 ## 三问质量走查
 
@@ -46,6 +49,16 @@ iframe 真实 Electron 夹具另外通过：默认/临时/持久会话、XFO 与
 
 前端：`bbebed854071ecb92e4e7b7597869859ae2903bc`，远端分支 `codex/fix-micro-app-build-frozen-20261007`，草稿 [PR #187](https://github.com/nuwax-ai/nuwax/pull/187)。message pin `f3a568275c0b3ed21537df98a7eedd6bdbf6b070`，repo pin `18ae973c890c699c678b086ad1da3b95275a3c86`。
 
-对应前端产物已提交推送 `nuwax-dist` main 的 `756de5ae4a40b37046c7e51ad94b6c9628bcd991`。stamp `bbebed854`，989 文件，SHA256 tree `6bfb930b6848fb88411460720a63c875118c21225e23c7623104365740ea3d35`。
+对应前端产物已提交推送 `nuwax-dist` main 的 `756de5ae4a40b37046c7e51ad94b6c9628bcd991`。stamp `bbebed854`，989 文件，按 `release-provenance.mjs` 文件排序/摘要算法的 SHA256 tree `2da8547c091a20b551a2e532cd70f312acd54e24a70e4c72fc78e3e8bb25266b`。包内前端与该提交逐文件相同，0 缺失、0 额外、0 差异。
+
+## 本地候选包
+
+产物与日志保存在 `release/3.0.8-qa.1-20261007/`（本地忽略目录），应用为 `mac-arm64/Nuwax.app`。标准 pack 使用固定 helper 源码 `625118a9076e51da2f57b6a5d475972030197443` 加声明补丁；反向补丁检查确认无额外源码变更，合法重建当前商业图标的 helper。
+
+包内 main/preload 与打包输入逐字节一致。Computer Use helper 的 ad-hoc strict 验证通过，图标等于当前商业图标；主应用未做 Developer ID 分发签名，Electron 主二进制自身仍有 linker ad-hoc，不能称整个应用完全没有任何签名字节。
+
+隔离运行夹具使用匹配的 Electron 40.8.2 加载实际包内主进程与资源，强制临时 home/appData/session 目录。空白账号下验证 host/guest 启动、API 路由、任意域 popup 共享会话、无异域业务桥/票据、原 guest 跨域返回与桥恢复、最终前端印记。它没有模拟注册/登录后端，不代替真实账号、安装器或正式签名的系统权限验收。
+
+Beta 3.0.8 预检曾因网络中断失败；重试后 `ok=true`，0 findings，远端分支和三项 pin 可达、版本序列合法。客户端草稿 [PR #12](https://github.com/nuwax-ai/nuwax-client/pull/12) 保留完整变更用于评审。
 
 远端已使用 3.0.7，因此本次 beta 目标为 3.0.8，不能继续旧任务的 3.0.4。真实账号、Windows/Linux 设备、正式安装包签名/公证与远端全平台发布状态需要各自证据；本地源码与临时 profile 验收不代替这些环节。
