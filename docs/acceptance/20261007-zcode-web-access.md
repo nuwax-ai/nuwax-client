@@ -34,7 +34,7 @@
 | macOS arm64 本地 pack | 通过 | 最终 3.0.8-qa.2，标准入口，未做 Developer ID 分发签名 |
 | 最终包静态检查，独立 verifier | 989/989 前端文件零差异，3 个 main/preload 文件一致 | 3.0.8-qa.2；Info 身份、Electron/ABI、图标与签名边界核实 |
 | 最终包内资源隔离运行 | 通过 | 实际 main/guest/API、共享 popup、跨域返回与桥隔离；空白账号，stamp `d16531c8e` |
-| overlay/check:pin | 135 文件一致，0 待同步；130 基座脏文件全部为 overlay 产物 | 未清理原工作区 |
+| overlay/check:pin | 130 个托管路径一致，0 待同步；130 基座脏文件全部为 overlay 产物 | 未清理原工作区；以 --untracked-files=all 计数 |
 | 真实窗口夹具 | 通过 | direct/gateway × BrowserWindow/webview；anchor/window.open、混合 iframe、跨域原窗口/回跳/302、自有第三方 Cookie |
 
 真实窗口夹具编译实际 `webviewPerfBridge`，验证跨域后桥消失、返回业务页恢复。临时 profile 与模拟 ticket，不读取真实账号。原窗口关闭问题曾先复现失败，再改源码使 32 个 HostActivity 用例通过。
