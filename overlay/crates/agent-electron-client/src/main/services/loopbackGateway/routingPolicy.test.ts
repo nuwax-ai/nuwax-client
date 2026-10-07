@@ -12,7 +12,7 @@ const gatewayOrigin = "http://127.0.0.1:46800";
 const config = {
   backendOrigin,
   gatewayOrigin,
-  backendPrefixes: ["/api", "/repo", "/instant-message", "/computer"],
+  backendPrefixes: ["/api", "/repo", "/instant-message", "/computer", "/page"],
 };
 const namespace = `${gatewayOrigin}/__backend/business.example:8443`;
 const main = {
@@ -170,6 +170,72 @@ describe("backend URL routing", () => {
     }
   });
 
+  it("keeps published app documents at /page for both top-level and iframe navigation", () => {
+    for (const resourceType of ["mainFrame", "subFrame"]) {
+      expect(
+        normalizeGatewayRequestUrl(
+          { ...main, resourceType, url: `${backendOrigin}/page/app-7/prod/?mode=preview#section` },
+          config,
+        ),
+      ).toBe(`${gatewayOrigin}/page/app-7/prod/?mode=preview#section`);
+    }
+  });
+
+  it("routes published app root-relative assets for both top-level and trusted iframe documents", () => {
+    const appPage = `${gatewayOrigin}/page/app-7/prod/`;
+    for (const embedded of [false, true]) {
+      for (const [resourceType, path] of [
+        ["script", "/assets/app.js?q=%2F"],
+        ["script", "/sdk/client.js"],
+        ["stylesheet", "/assets/style.css"],
+        ["image", "/logo.svg"],
+        ["xhr", "/data/config.json"],
+      ]) {
+        expect(
+          normalizeGatewayRequestUrl(
+            {
+              ...main,
+              webContentsUrl: embedded ? main.webContentsUrl : appPage,
+              frameUrl: appPage,
+              ...(embedded ? { parentFrameUrl: main.webContentsUrl } : {}),
+              resourceType,
+              url: gatewayOrigin + path,
+            },
+            config,
+          ),
+        ).toBe(namespace + path);
+      }
+    }
+  });
+
+  it("does not infer published app ownership from another origin, pathname or missing frame", () => {
+    const appPage = `${gatewayOrigin}/page/app-7/prod/`;
+    for (const context of [
+      { webContentsUrl: `${gatewayOrigin}/pages/app-7/prod/`, frameUrl: `${gatewayOrigin}/pages/app-7/prod/` },
+      { webContentsUrl: `${gatewayOrigin}/page-builder`, frameUrl: `${gatewayOrigin}/page-builder` },
+      { webContentsUrl: appPage, frameUrl: undefined },
+      { webContentsUrl: appPage, frameUrl: "https://foreign.example/page/app-7/prod/" },
+      { webContentsUrl: appPage, frameUrl: appPage, parentFrameUrl: "https://foreign.example/home" },
+      { webContentsUrl: main.webContentsUrl, frameUrl: appPage },
+    ]) {
+      expect(
+        normalizeGatewayRequestUrl({ ...main, ...context, url: `${gatewayOrigin}/assets/app.js` }, config),
+      ).toBeNull();
+    }
+    expect(
+      normalizeGatewayRequestUrl(
+        { ...main, webContentsUrl: appPage, frameUrl: appPage, url: "https://cdn.example/sdk/client.js" },
+        config,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeGatewayRequestUrl(
+        { ...main, webContentsUrl: appPage, frameUrl: appPage, url: `${gatewayOrigin}/assets/app.js` },
+        { ...config, backendPrefixes: config.backendPrefixes.filter((prefix) => prefix !== "/page") },
+      ),
+    ).toBeNull();
+  });
+
   it("uses namespaced CSS/module referrers for root-relative dependencies without redirect loops", () => {
     expect(
       normalizeGatewayRequestUrl(
@@ -193,6 +259,38 @@ describe("backend URL routing", () => {
         config,
       ),
     ).toBeNull();
+    for (const [resourceType, source, target] of [
+      ["font", "/assets/style.css", "/fonts/app.woff2"],
+      ["script", "/assets/main.js", "/sdk/module.js"],
+    ]) {
+      const appPage = `${gatewayOrigin}/page/app-7/prod/`;
+      expect(
+        normalizeGatewayRequestUrl(
+          {
+            ...main,
+            webContentsUrl: appPage,
+            frameUrl: appPage,
+            resourceType,
+            url: gatewayOrigin + target,
+            referrer: namespace + source,
+          },
+          config,
+        ),
+      ).toBe(namespace + target);
+      expect(
+        normalizeGatewayRequestUrl(
+          {
+            ...main,
+            webContentsUrl: appPage,
+            frameUrl: appPage,
+            resourceType,
+            url: namespace + target,
+            referrer: namespace + source,
+          },
+          config,
+        ),
+      ).toBeNull();
+    }
   });
 
   it("does not capture shell, foreign iframe, different scheme/port or unknown frame resources", () => {

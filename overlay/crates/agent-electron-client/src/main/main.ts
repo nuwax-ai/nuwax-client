@@ -65,6 +65,7 @@ import { initWebviewPolicy, isolateUntrustedInitialWebview } from "./services/sy
 import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
 import { APP_DATA_DIR_NAME } from "@shared/constants";
+import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
@@ -610,31 +611,17 @@ app.whenReady().then(async () => {
   log.info("App ready");
   logSystemInfo();
 
-  // Dev mode: fix CORS duplicate header issue
-  // Server returns both specific origin and '*', causing browser to reject.
-  // Strip duplicate Access-Control-Allow-Origin values.
-  if (isDev) {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      const headers = details.responseHeaders;
-      if (headers) {
-        const acoKey = Object.keys(headers).find(
-          (k) => k.toLowerCase() === "access-control-allow-origin",
-        );
-        if (acoKey && headers[acoKey] && headers[acoKey].length > 1) {
-          // Keep only the specific origin (not '*')
-          const specific = headers[acoKey].find((v) => v !== "*");
-          headers[acoKey] = [specific || "*"];
-          // 仅在确实修改了 ACO 时才回传 responseHeaders，
-          // 避免无条件替换导致 Set-Cookie 被 Chromium 网络服务丢弃
-          callback({ responseHeaders: headers });
-          return;
-        }
-      }
-      // 未修改任何 header → 不传 responseHeaders，Chromium 原样传递
-      callback({});
-    });
-    log.info("Dev CORS fix enabled");
+  // 在首个窗口导航前安装；开发 CORS 与商业防嵌入兼容共用监听器，避免相互覆盖。
+  initFrameEmbeddingPolicy({
+    app,
+    defaultSession: session.defaultSession,
+    isCommercial: APP_NAME_IDENTIFIER === "nuwax",
+    isDev,
+  });
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    log.info("Frame embedding response header policy enabled for all sessions");
   }
+  if (isDev) log.info("Dev CORS fix enabled");
 
   // 为所有 http/https 出站请求注入客户端标识头，供 nuwax 后端识别「桌面客户端内」环境，
   // 后端凭该头在登录响应里返回 token（nuwax 用 Authorization 头鉴权）。值非敏感

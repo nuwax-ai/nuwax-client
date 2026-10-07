@@ -205,6 +205,7 @@ describe("loopbackGateway runtime key carries backend", () => {
           "/devcomputer",
           "/instant-message",
           "/repo",
+          "/page",
         ],
       }),
     );
@@ -229,6 +230,7 @@ describe("loopbackGateway runtime key carries backend", () => {
             "/devcomputer",
             "/instant-message",
             "/repo",
+            "/page",
             "/im",
             "/wiki",
           ],
@@ -276,6 +278,25 @@ describe("loopbackGateway runtime key carries backend", () => {
         redirectURL:
           "http://127.0.0.1:46800/__backend/a.example.com/assets/app.js",
       });
+      const appDocument = "http://127.0.0.1:46800/page/app-7/prod/";
+      vi.mocked(webContents.fromId).mockReturnValue({
+        getURL: () => appDocument,
+      } as Electron.WebContents);
+      listener(
+        {
+          ...details,
+          url: "http://127.0.0.1:46800/sdk/client.js",
+          frame: { url: appDocument },
+        } as Parameters<typeof listener>[0],
+        callback,
+      );
+      expect(callback).toHaveBeenLastCalledWith({
+        redirectURL:
+          "http://127.0.0.1:46800/__backend/a.example.com/sdk/client.js",
+      });
+      vi.mocked(webContents.fromId).mockReturnValue({
+        getURL: () => "http://127.0.0.1:46800/home",
+      } as Electron.WebContents);
       listener(
         {
           ...details,

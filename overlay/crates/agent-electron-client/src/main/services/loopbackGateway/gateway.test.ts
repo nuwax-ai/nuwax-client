@@ -488,6 +488,62 @@ describe("loopback gateway（透明反代）", () => {
     }
   });
 
+  it("proxies published /page documents and their assets while keeping top-level microapp SPA routes local", async () => {
+    const upstreamPaths: string[] = [];
+    const up = await startUpstream((req, res) => {
+      upstreamPaths.push(req.url!);
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.end(`PUBLISHED APP ${req.url}`);
+    });
+    const distDir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-page-"));
+    temporaryDirectories.push(distDir);
+    fs.writeFileSync(path.join(distDir, "index.html"), "LOCAL SPA");
+    fs.mkdirSync(path.join(distDir, "assets"));
+    fs.writeFileSync(path.join(distDir, "assets", "app.js"), "LOCAL SCRIPT");
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      distDir,
+      backendPrefixes: ["/api", "/repo", "/instant-message", "/page"],
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    const documentPath = "/page/app-7/prod/?mode=preview";
+    for (const destination of ["document", "iframe"]) {
+      const response = await fetch(gw.origin + documentPath, {
+        headers: { "sec-fetch-dest": destination },
+      });
+      expect(await response.text()).toBe(`PUBLISHED APP ${documentPath}`);
+      expect(upstreamPaths.at(-1)).toBe(documentPath);
+    }
+    const head = await fetch(gw.origin + documentPath, {
+      method: "HEAD",
+      headers: { "sec-fetch-dest": "document" },
+    });
+    expect(head.status).toBe(200);
+    expect(upstreamPaths.at(-1)).toBe(documentPath);
+    for (const resourcePath of ["/page/app-7/prod/assets/app.js", "/page/app-7/prod/config.json"]) {
+      const response = await fetch(gw.origin + resourcePath);
+      expect(await response.text()).toBe(`PUBLISHED APP ${resourcePath}`);
+      expect(upstreamPaths.at(-1)).toBe(resourcePath);
+    }
+    const namespace = `/__backend/${new URL(up.origin).host}`;
+    for (const resourcePath of ["/assets/app.js", "/sdk/client.js", "/fonts/app.woff2"]) {
+      const response = await fetch(gw.origin + namespace + resourcePath, {
+        headers: { referer: gw.origin + documentPath },
+      });
+      expect(await response.text()).toBe(`PUBLISHED APP ${resourcePath}`);
+      expect(upstreamPaths.at(-1)).toBe(resourcePath);
+    }
+    for (const spaRoute of ["/home", "/pages/app-7/prod", "/page-builder", "/repo/doc/7", "/instant-message/chat/7"]) {
+      const response = await fetch(gw.origin + spaRoute, {
+        headers: { "sec-fetch-dest": "document" },
+      });
+      expect(await response.text()).toBe("LOCAL SPA");
+    }
+    const frontendScript = await fetch(`${gw.origin}/assets/app.js`);
+    expect(await frontendScript.text()).toBe("LOCAL SCRIPT");
+  });
+
   it("x-client-type：缺省随产品标识 APP_NAME_IDENTIFIER，空串关闭", async () => {
     // ubuntu CI 两次在无 body 的 204 往返中出现 UND_ERR_SOCKET（响应读到一半
     // socket 被毁，34676294850 / 34678353803）。归因：fetch 默认 keep-alive 池化
