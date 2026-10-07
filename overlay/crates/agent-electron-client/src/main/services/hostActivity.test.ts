@@ -247,7 +247,13 @@ describe("attachHostActivityWindow", () => {
     mock.fireAttach(survivor.guest);
     destroyed.destroy();
     expect(destroyed.listeners("did-finish-load")).toBe(0);
-    mock.fireWin("closed");
+    // Electron 的 closed 回调中读取 BrowserWindow.webContents 会抛销毁异常。
+    const contents = mock.win.webContents;
+    Object.defineProperty(mock.win, "webContents", {
+      get: () => { throw new Error("Object has been destroyed"); },
+    });
+    expect(() => mock.fireWin("closed")).not.toThrow();
+    expect(contents.removeListener).toHaveBeenCalledWith("did-finish-load", expect.any(Function));
     expect(survivor.listeners("did-finish-load")).toBe(0);
     survivor.fire("did-finish-load");
     expect(hostActivityPayloads(survivor)).toHaveLength(1);

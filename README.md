@@ -80,6 +80,8 @@
 
 品牌与端口为构建期注入（机制见[开发者指南](#开发者指南)），两版互不写对方数据目录。
 
+商业客户端内任意 HTTP/HTTPS 网站可在原窗口、新窗口或 iframe 加载；跨域导航和重定向留在原网页窗口，网页窗口共享正常浏览器会话，第三方网站可保留自己的 Cookie。当前配置业务源、已启用的 loopback 与开发覆盖源共享业务登录；轻量宿主桥按实际文档来源暴露，请求层仍过滤发送给异域的业务 ticket 和网关私有头。网关同主机的其他端口无法证明 ticket 归属，或读取 Cookie 来源失败时，会保守移除 ticket 命名的 Cookie，其他 Cookie 保留。业务页面出现第三方 iframe 不应使站内 GET 新窗口失去登录；POST/API 仍校验实际请求 frame。iframe 解除 XFO 和 CSP frame-ancestors，不自动解除网站其余 CSP、混合内容或脚本限制。实现与验收范围见 [访问规格](specs/web-access.md)。
+
 ## 版本历史
 
 详见 [release-notes/](./release-notes/)。近期要点：

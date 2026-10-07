@@ -9,7 +9,6 @@
 
 import { app, session as electronSession, BrowserWindow, dialog } from "electron";
 import type { HandlerDetails, BrowserWindowConstructorOptions, Session, WebContents, WebPreferences, WindowOpenHandlerResponse } from "electron";
-import { randomUUID } from "crypto";
 import * as path from "path";
 import log from "electron-log";
 import {
@@ -38,7 +37,7 @@ const ALLOWED_PERMISSIONS = new Set([
   "openExternal",
 ]);
 // 外部网站仍可使用普通复制/全屏；设备、通知、剪贴板读取等需留在业务会话。
-const ALLOWED_ISOLATED_PERMISSIONS = new Set([
+const ALLOWED_EXTERNAL_PERMISSIONS = new Set([
   "clipboard-sanitized-write",
   "fullscreen",
 ]);
@@ -72,7 +71,7 @@ function configurePermissionHandlers(ses: Session, allowed: ReadonlySet<string>)
       const trusted = ses !== electronSession.defaultSession ||
         APP_NAME_IDENTIFIER !== "nuwax" ||
         isTrustedPermissionSource(contents, details?.requestingUrl);
-      if (allowed.has(permission) && trusted) {
+      if (allowed.has(permission) && (trusted || ALLOWED_EXTERNAL_PERMISSIONS.has(permission))) {
         callback(true);
       } else {
         log.warn(`[WebviewPolicy] Denied permission request: ${permission}`);
@@ -85,6 +84,7 @@ function configurePermissionHandlers(ses: Session, allowed: ReadonlySet<string>)
     (contents, permission, requestingOrigin, details) => {
       if (!allowed.has(permission)) return false;
       if (ses !== electronSession.defaultSession || APP_NAME_IDENTIFIER !== "nuwax") return true;
+      if (ALLOWED_EXTERNAL_PERMISSIONS.has(permission)) return true;
       return isTrustedPermissionSource(contents, requestingOrigin) &&
         (!details?.requestingUrl || isTrustedBusinessUrl(details.requestingUrl)) &&
         (!details?.embeddingOrigin || isTrustedBusinessUrl(details.embeddingOrigin)) &&
@@ -96,17 +96,6 @@ function configurePermissionHandlers(ses: Session, allowed: ReadonlySet<string>)
 
 function setupPermissions(): void {
   configurePermissionHandlers(electronSession.defaultSession, ALLOWED_PERMISSIONS);
-}
-
-/** 必须在创建外链窗口之前设置其独立会话权限；Electron 不从 defaultSession 继承。 */
-export function configureIsolatedWebSession(partition: string): Session {
-  if (!partition.startsWith("temp:nuwax-") || partition.startsWith("persist:"))
-    throw new Error("Invalid isolated web partition");
-  const ses = electronSession.fromPartition(partition);
-  configurePermissionHandlers(ses, ALLOWED_ISOLATED_PERMISSIONS);
-  configureDownloads(ses);
-  ses.setSpellCheckerEnabled(false);
-  return ses;
 }
 
 // ---------- 拼写检查 ----------
@@ -156,19 +145,26 @@ function hasOnlyBusinessFrames(contents: WebContents): boolean {
   }
 }
 
-/** Keep a non-business initial <webview src> out of the shared session before its first request. */
-export function isolateUntrustedInitialWebview(
+/** 全部普通网页共享浏览器存储；轻量 preload 按每次实际文档决定是否暴露桥。 */
+export function configureSharedWebview(
   webPreferences: WebPreferences,
   params: Record<string, string>,
 ): boolean {
-  if (APP_NAME_IDENTIFIER !== "nuwax" || !params.src || isTrustedBusinessUrl(params.src))
+  if (APP_NAME_IDENTIFIER !== "nuwax" || !parseHttpUrl(params.src))
     return false;
-  const partition = `temp:nuwax-webview-${randomUUID()}`;
-  configureIsolatedWebSession(partition);
-  delete webPreferences.session;
-  delete webPreferences.preload;
-  webPreferences.partition = partition;
-  params.partition = partition;
+  webPreferences.session = electronSession.defaultSession;
+  delete webPreferences.partition;
+  delete params.partition;
+  webPreferences.preload = path.join(__dirname, "..", "preload", "webviewPerfBridge.js");
+  webPreferences.contextIsolation = true;
+  webPreferences.nodeIntegration = false;
+  webPreferences.sandbox = true;
+  webPreferences.additionalArguments = [
+    ...(webPreferences.additionalArguments ?? []).filter((arg) =>
+      !arg.startsWith("--nuwax-host-product=") && !arg.startsWith("--nuwax-trusted-origins=")),
+    `--nuwax-host-product=${APP_NAME_IDENTIFIER}`,
+    `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(businessBridgeOrigins()))}`,
+  ];
   return true;
 }
 
@@ -214,8 +210,6 @@ function resolveWebviewPopupSize(features: string): {
 /** 应用内 http(s) 弹窗的 BrowserWindow 配置 */
 function buildPopupWindowOptions(
   features: string,
-  trustedBusiness: boolean,
-  authenticatedDownload = false,
 ): BrowserWindowConstructorOptions {
   const { width, height } = resolveWebviewPopupSize(features);
   const webPreferences: NonNullable<BrowserWindowConstructorOptions["webPreferences"]> = {
@@ -225,20 +219,12 @@ function buildPopupWindowOptions(
     spellcheck: false,
   };
   if (APP_NAME_IDENTIFIER === "nuwax") {
-    if (trustedBusiness || authenticatedDownload) {
-      webPreferences.session = electronSession.defaultSession;
-      if (trustedBusiness) {
-        webPreferences.preload = path.join(__dirname, "..", "preload", "webviewPerfBridge.js");
-        webPreferences.additionalArguments = [
-          `--nuwax-host-product=${APP_NAME_IDENTIFIER}`,
-          `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(businessBridgeOrigins()))}`,
-        ];
-      }
-    } else {
-      // 子窗口不继承默认业务 cookie；每次打开均用新的内存会话。
-      webPreferences.partition = `temp:nuwax-popup-${randomUUID()}`;
-      configureIsolatedWebSession(webPreferences.partition);
-    }
+    webPreferences.session = electronSession.defaultSession;
+    webPreferences.preload = path.join(__dirname, "..", "preload", "webviewPerfBridge.js");
+    webPreferences.additionalArguments = [
+      `--nuwax-host-product=${APP_NAME_IDENTIFIER}`,
+      `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(businessBridgeOrigins()))}`,
+    ];
   }
   return {
     width,
@@ -266,7 +252,7 @@ function registerTrustedPopup(win: BrowserWindow): void {
 }
 
 /** 附件不提交页面；等待真实文档后显示，并只清理下载专用窗口。 */
-function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void {
+export function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void {
   const contents = win.webContents;
   const state: PopupWindowState = { window: win, opener, hasDocument: false, downloads: 0 };
   popupWindows.set(contents, state);
@@ -305,7 +291,7 @@ function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void {
   });
 }
 
-function loadPopupDocument(win: BrowserWindow, url: string, details?: HandlerDetails): void {
+export function loadPopupDocument(win: BrowserWindow, url: string, details?: HandlerDetails): void {
   const contents = win.webContents;
   const postBody = details?.postBody;
   const loading = details ? win.loadURL(url, {
@@ -342,42 +328,32 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     !openerUrl.username && !openerUrl.password &&
     !target.username && !target.password &&
     allowed.includes(openerUrl.origin) && allowed.includes(target.origin);
-  // IM/Markdown 的 noreferrer 链接不提供 referrer，不能因此丢失站内登录。
-  // 只有 opener 的全部 frame 都属于当前业务域，才可确认无 referrer GET 的来源。
+  // 普通 GET 文档遵循浏览器导航；无关 iframe 不决定顶层站内链接的登录。
   const noReferrerBusinessNavigation = businessPair && !details.referrer?.url &&
-    !details.postBody && hasOnlyBusinessFrames(opener);
+    !details.postBody;
   const trustedBusiness = (businessPair && !!referrerUrl &&
     !referrerUrl.username && !referrerUrl.password &&
-    openerUrl.origin === referrerUrl.origin &&
     allowed.includes(referrerUrl.origin)) ||
-    (noReferrerBusinessNavigation && !target.pathname.startsWith("/api/"));
-  // 业务附件仍只借用首请求鉴权，不授予页面 IPC 桥或扩大其它 API 的范围。
+    (noReferrerBusinessNavigation && target.pathname !== "/api" && !target.pathname.startsWith("/api/"));
+  // 附件首请求仍校验来源；页面桥按实际文档 origin 决定，其它 API 的范围不变。
   const authenticatedDownload = noReferrerBusinessNavigation &&
-    target.pathname.startsWith("/api/f/s3/");
-  const options = buildPopupWindowOptions(features ?? "", trustedBusiness, authenticatedDownload);
+    target.pathname.startsWith("/api/f/s3/") && hasOnlyBusinessFrames(opener);
+  const options = buildPopupWindowOptions(features ?? "");
   log.debug(
     `[WebviewPolicy] Opening in-app popup: ${target.origin} (${options.width}x${options.height})`,
   );
   if (APP_NAME_IDENTIFIER !== "nuwax")
     return { action: "allow", overrideBrowserWindowOptions: options };
-  if (!trustedBusiness && !authenticatedDownload && !details.referrer?.url) {
-    // noreferrer 的 Chromium guest 已绑定 opener 会话，构造器不能改它的 Session。
-    // 拒绝该 guest，显式创建没有继承业务 cookie/preload 的隔离窗口。
-    const win = new BrowserWindow(options);
-    trackPopupWindow(win, opener);
-    loadPopupDocument(win, target.href, details);
-    return { action: "deny" };
-  }
   return {
     action: "allow",
     overrideBrowserWindowOptions: options,
     createWindow: (windowOptions) => {
       const win = new BrowserWindow(windowOptions);
       trackPopupWindow(win, opener);
+      registerTrustedPopup(win);
       if (trustedBusiness || authenticatedDownload) {
         // 必须早于首个请求；自定义 createWindow 不会触发 did-create-window。
         trustInitialBusinessNavigation(win.webContents, target.href);
-        registerTrustedPopup(win);
       }
       // 有 Chromium guest 时由它导航；普通链接路径需要显式加载。
       const guest = (windowOptions as BrowserWindowConstructorOptions & {
@@ -389,7 +365,7 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   };
 }
 
-/** A business document must not carry its defaultSession into an external top-level page. */
+/** 普通 HTTP(S) 导航留在原窗口；阻止非网页协议进入商业网页容器。 */
 function guardBusinessNavigation(contents: WebContents): void {
   if (APP_NAME_IDENTIFIER !== "nuwax" ||
       contents.session !== electronSession.defaultSession ||
@@ -397,25 +373,9 @@ function guardBusinessNavigation(contents: WebContents): void {
   guardedBusinessContents.add(contents);
 
   const handleTarget = (event: Electron.Event, targetUrl: string, isMainFrame: boolean) => {
-    if (!isMainFrame || isTrustedBusinessUrl(targetUrl)) return;
+    if (!isMainFrame || parseHttpUrl(targetUrl)) return;
     event.preventDefault();
-    const target = parseHttpUrl(targetUrl);
-    if (!target) {
-      log.warn(`[WebviewPolicy] Blocked non-HTTP top-level navigation: ${targetUrl}`);
-      return;
-    }
-    try {
-      const previous = popupWindows.get(contents);
-      const win = new BrowserWindow(buildPopupWindowOptions("", false));
-      trackPopupWindow(win, previous?.opener ?? contents);
-      loadPopupDocument(win, target.href);
-      // 首次下载重定向时，原业务弹窗也没有提交内容。
-      if (previous && !previous.hasDocument && !previous.window.isDestroyed())
-        previous.window.destroy();
-      log.info(`[WebviewPolicy] Isolated external navigation: ${target.origin}`);
-    } catch (error) {
-      log.warn("[WebviewPolicy] Failed to open isolated external navigation", error);
-    }
+    log.warn(`[WebviewPolicy] Blocked non-HTTP top-level navigation: ${targetUrl}`);
   };
   // will-frame-navigate covers _self / location changes, including named-frame
   // targeting the top frame. will-redirect covers server redirects from loadURL

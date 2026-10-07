@@ -30,7 +30,6 @@ import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
 import * as path from "path";
-import { randomUUID } from "crypto";
 import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
@@ -52,7 +51,7 @@ import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../ser
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
-import { configureIsolatedWebSession, destroyTrustedBusinessPopups } from "../services/system/webviewPolicy";
+import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
@@ -207,7 +206,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       businessBridgeOrigins().includes(httpOrigin(contents.getURL()) ?? ""),
   });
   const attachComputerStateGuest = (contents: Electron.WebContents) => {
-    if (!contents.isDestroyed() && contents.getType() === "webview")
+    if (!contents.isDestroyed() && ["webview", "window"].includes(contents.getType()))
       computerServiceState.attach(contents);
   };
   app.on("web-contents-created", (_event, contents) => attachComputerStateGuest(contents));
@@ -799,7 +798,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // ---- native：新开独立窗口打开 nuwax 页面 ----
   // 智能体详情/工作流/网页应用开发/我的电脑等全屏页在主窗口会被沉浸式工具栏遮挡
   //（fixed 头部/画布类布局也无法内嵌避让），改为独立窗口承载：带系统标题栏零遮挡，
-  // 站内页带桥 preload 并追加 _shell=1；外链用无桥、独立内存会话窗口。
+  // 网页共用浏览器会话；轻量 preload 只向实际业务文档暴露桥。
   ipcMain.handle("native:openWindow", (event, opts: { path?: unknown }) => {
     try {
       if (!isTrustedSender(event)) {
@@ -848,8 +847,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       // Absolute same-origin links also open a standalone window. Its frontend
       // must use the standalone layout, regardless of the secondary-page setting.
       if (businessWindow) target.searchParams.set("_shell", "1");
-      const isolatedPartition = businessWindow ? null : `temp:nuwax-external-${randomUUID()}`;
-      if (isolatedPartition) configureIsolatedWebSession(isolatedPartition);
       if (loopback?.enabled && loopback.origin && matchesBusinessOrigin(target.href, currentBusinessOrigin())) {
         // Concatenate the fixed origin explicitly: a pathname beginning with //
         // must remain a path, never become a scheme-relative external authority.
@@ -863,37 +860,32 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         minWidth: NUWAX_MAIN_WINDOW_MIN_WIDTH,
         minHeight: NUWAX_MAIN_WINDOW_MIN_HEIGHT,
         autoHideMenuBar: true,
-        webPreferences: businessWindow
-          ? {
-              preload: path.join(__dirname, "..", "preload", "webviewPerfBridge.js"),
-              additionalArguments: [
-                hostProductArg,
-                `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(trustedOrigins()))}`,
-              ],
-              contextIsolation: true,
-              nodeIntegration: false,
-            }
-          : {
-              // 外部网站只留在客户端窗口；独立内存会话不携带业务 cookie。
-              partition: isolatedPartition!,
-              contextIsolation: true,
-              nodeIntegration: false,
-              sandbox: true,
-            },
+        show: false,
+        webPreferences: {
+          session: session.defaultSession,
+          preload: path.join(__dirname, "..", "preload", "webviewPerfBridge.js"),
+          additionalArguments: [
+            hostProductArg,
+            `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(trustedOrigins()))}`,
+          ],
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
       });
+      trackPopupWindow(win, event.sender);
       shellWindows.add(win);
-      if (businessWindow) businessShellWindows.add(win);
+      businessShellWindows.add(win);
       win.on("closed", () => {
         shellWindows.delete(win);
         businessShellWindows.delete(win);
       });
       if (businessWindow) {
         trustInitialBusinessNavigation(win.webContents, target.href);
-        attachHostActivityBusinessWindow(win);
-        computerServiceState.attach(win.webContents);
       }
-      void win.loadURL(target.href);
-      win.focus();
+      attachHostActivityBusinessWindow(win);
+      computerServiceState.attach(win.webContents);
+      loadPopupDocument(win, target.href);
       log.info("[NuwaxBridge] native:openWindow", { path: raw });
       return { success: true };
     } catch (error) {

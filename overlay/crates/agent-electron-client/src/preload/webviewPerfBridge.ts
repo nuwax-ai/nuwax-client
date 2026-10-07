@@ -30,6 +30,11 @@ function mayExposeBusinessBridge(): boolean {
   if (!encoded || typeof window === "undefined") return false;
   try {
     const allowed: unknown = JSON.parse(decodeURIComponent(encoded));
+    if (window.location.href) {
+      const documentUrl = new URL(window.location.href);
+      if (!/^https?:$/.test(documentUrl.protocol) || documentUrl.username || documentUrl.password)
+        return false;
+    }
     return Array.isArray(allowed) && allowed.includes(window.location.origin);
   } catch {
     return false;

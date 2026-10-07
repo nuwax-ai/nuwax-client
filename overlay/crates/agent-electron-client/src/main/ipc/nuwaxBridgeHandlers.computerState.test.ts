@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({
   appListeners: new Map<string, Array<(...args: any[]) => any>>(),
   contents: [] as any[],
   windows: [] as any[],
-  defaultSession: { cookies: { get: vi.fn(async () => []), on: vi.fn() } },
+  defaultSession: { on: vi.fn(), cookies: { get: vi.fn(async () => []), on: vi.fn() } },
   changed: null as ((phase: string, error?: string) => void) | null,
   host: { send: vi.fn() },
 }));
@@ -44,7 +44,8 @@ vi.mock("electron", () => ({
     constructor() { super(); h.windows.push(this); }
     isVisible() { return true; }
     isDestroyed() { return false; }
-    loadURL(url: string) { this.webContents.url = url; }
+    loadURL(url: string) { this.webContents.url = url; return Promise.resolve(); }
+    show() {}
     focus() {}
   },
   webContents: { getAllWebContents: () => h.contents },
@@ -112,15 +113,18 @@ describe("生命周期电脑状态 IPC 集成", () => {
     expect(h.host.send).toHaveBeenCalledWith("nuwax:serviceState", { phase: "registering", error: "secret registration error" });
   });
 
-  it("导航到外域、内存隔离会话、普通窗口与子 frame 不接收电脑状态", () => {
+  it("业务窗口同步状态，外域、内存隔离会话与子 frame 不接收电脑状态", () => {
     const guest = document(`${origin}/home`);
     const external = document("https://external.example/home");
     const isolated = document(`${origin}/home`, "webview", {});
-    const unrelated = document(`${origin}/home`, "window");
-    h.contents = [guest, external, isolated, unrelated];
+    const businessWindow = document(`${origin}/home`, "window");
+    h.contents = [guest, external, isolated, businessWindow];
     registerNuwaxBridgeHandlers({ getMainWindow: () => ({ webContents: h.host }) } as never);
     h.changed!("ready");
-    for (const source of [external, isolated, unrelated]) expect(source.send).not.toHaveBeenCalled();
+    for (const source of [external, isolated]) expect(source.send).not.toHaveBeenCalled();
+    expect(businessWindow.send).toHaveBeenCalledWith("nuwax:host-command", {
+      type: "computer-service-state", phase: "ready", sandboxId: "31",
+    });
     guest.send.mockClear();
     sync(guest, { url: `${origin}/child` });
     expect(guest.send).not.toHaveBeenCalled();
@@ -131,7 +135,7 @@ describe("生命周期电脑状态 IPC 集成", () => {
     expect(guest.send).not.toHaveBeenCalled();
   });
 
-  it("新 guest 与受信独立业务窗口加载时补态；外链窗口没有桥或状态监听", async () => {
+  it("新 guest 与独立业务窗口加载时补态；外链窗口的生命周期监听按当前源阻止状态发送", async () => {
     registerNuwaxBridgeHandlers({ getMainWindow: () => ({ webContents: h.host }) } as never);
     h.changed!("ready");
     const guest = document(`${origin}/home`);
@@ -143,12 +147,11 @@ describe("生命周期电脑状态 IPC 集成", () => {
     const businessWindow = h.windows.at(-1);
     businessWindow.webContents.emit("dom-ready");
     expect(businessWindow.webContents.send).toHaveBeenCalledWith("nuwax:host-command", { type: "computer-service-state", phase: "ready", sandboxId: "31" });
-    // 外部窗口进入原有隔离会话路径，配置前即不登记为电脑状态目标。
-    expect(businessWindow.webContents.listenerCount("dom-ready")).toBe(1);
+    expect(businessWindow.webContents.listenerCount("dom-ready")).toBe(2);
     expect(await h.handlers.get("native:openWindow")!(event, { path: "https://external.example/home" })).toEqual({ success: true });
     const externalWindow = h.windows.at(-1);
     externalWindow.webContents.emit("dom-ready");
-    expect(externalWindow.webContents.listenerCount("dom-ready")).toBe(0);
+    expect(externalWindow.webContents.listenerCount("dom-ready")).toBe(2);
     expect(externalWindow.webContents.send).not.toHaveBeenCalled();
   });
 

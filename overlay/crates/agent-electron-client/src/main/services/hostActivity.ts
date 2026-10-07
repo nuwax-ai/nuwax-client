@@ -200,10 +200,11 @@ function attachGuest(contents: WebContents): void {
  * 在 createWindow() 内窗口创建后调用；窗口销毁时自动清理（closed 沿）。
  */
 export function attachHostActivityWindow(win: BrowserWindow): void {
+  const contents = win.webContents;
   state = { ...state, windowVisible: win.isVisible() };
-  mainWindowContents = win.webContents;
+  mainWindowContents = contents;
   const syncShellDocument = () => emitToShell(getHostActivitySnapshot().visible);
-  win.webContents.on("did-finish-load", syncShellDocument);
+  contents.on("did-finish-load", syncShellDocument);
   const setWindowVisible = (windowVisible: boolean, reason: string): void => {
     state = { ...state, windowVisible };
     recompute(reason);
@@ -213,13 +214,13 @@ export function attachHostActivityWindow(win: BrowserWindow): void {
   win.on("show", () => setWindowVisible(true, "show"));
   // close 被拦截为 hide()（托盘模式），hide 沿即托盘隐藏
   win.on("hide", () => setWindowVisible(false, "hide"));
-  win.webContents.on("did-attach-webview", (_event, contents) => {
-    attachGuest(contents);
+  contents.on("did-attach-webview", (_event, guest) => {
+    attachGuest(guest);
   });
   win.on("closed", () => {
     for (const guest of [...guests]) detachGuest(guest);
-    win.webContents.removeListener("did-finish-load", syncShellDocument);
-    if (mainWindowContents === win.webContents) mainWindowContents = null;
+    contents.removeListener("did-finish-load", syncShellDocument);
+    if (mainWindowContents === contents) mainWindowContents = null;
     state = { ...state, windowVisible: true };
     lastPushedVisible = null;
   });

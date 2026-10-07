@@ -17,13 +17,13 @@ afterEach(() => {
   expose.mockClear();
 });
 
-async function loadAt(origin: string) {
+async function loadAt(href: string, allowlist: string | null = encodeURIComponent(JSON.stringify(["https://business.example"]))) {
   vi.resetModules();
   const product = "--nuwax-host-product=nuwax";
-  const origins = `--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(["https://business.example"]))}`;
-  process.argv.push(product, origins);
-  addedArgs.push(product, origins);
-  vi.stubGlobal("window", { location: { origin }, addEventListener: vi.fn() });
+  const args = [product, ...(allowlist === null ? [] : [`--nuwax-trusted-origins=${allowlist}`])];
+  process.argv.push(...args);
+  addedArgs.push(...args);
+  vi.stubGlobal("window", { location: { href, origin: new URL(href).origin }, addEventListener: vi.fn() });
   await import("./webviewPerfBridge");
 }
 
@@ -35,6 +35,40 @@ describe("commercial guest preload origin guard", () => {
 
   it("does not expose any bridge after cross-origin navigation", async () => {
     await loadAt("https://external.example");
+    expect(expose).not.toHaveBeenCalled();
+  });
+
+  it.each(["https://business.example", "http://127.0.0.1:46800", "https://mirror.example"])("exposes only the actual admitted business or mirror origin %s", async (origin) => {
+    await loadAt(`${origin}/document`, encodeURIComponent(JSON.stringify([
+      "https://business.example", "http://127.0.0.1:46800", "https://mirror.example",
+    ])));
+    expect(expose).toHaveBeenCalledWith("NuwaClawBridge", expect.any(Object));
+  });
+
+  it.each([
+    "https://user@business.example/document", "https://user:password@business.example/document",
+  ])("does not expose the bridge on credential-bearing document %s", async (href) => {
+    await loadAt(href);
+    expect(expose).not.toHaveBeenCalled();
+  });
+
+  it.each(["about:blank", "data:text/html,fixture", "file:///tmp/fixture.html"])("does not expose the bridge on non-web document %s even if null origin is listed", async (href) => {
+    await loadAt(href, encodeURIComponent(JSON.stringify(["null"])));
+    expect(expose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null, "", "%", encodeURIComponent("broken-json"),
+    encodeURIComponent(JSON.stringify({ origin: "https://business.example" })),
+    encodeURIComponent(JSON.stringify([])),
+    encodeURIComponent(JSON.stringify(["https://business.example/path"])),
+  ])("fails closed on missing, malformed, or mismatched origin allowlist %j", async (allowlist) => {
+    await loadAt("https://business.example/document", allowlist);
+    expect(expose).not.toHaveBeenCalled();
+  });
+
+  it.each(["https://child.business.example/document", "http://business.example/document", "https://business.example:8443/document"])("does not widen the trusted origin to %s", async (href) => {
+    await loadAt(href);
     expect(expose).not.toHaveBeenCalled();
   });
 });

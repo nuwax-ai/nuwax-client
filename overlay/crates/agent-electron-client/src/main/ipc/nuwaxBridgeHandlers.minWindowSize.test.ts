@@ -51,9 +51,12 @@ vi.mock("electron", () => ({
       once: vi.fn(),
       removeListener: vi.fn(),
       send: vi.fn(),
+      session: undefined as unknown,
+      getURL: () => "",
     };
     constructor(opts: Record<string, unknown>) {
       this.opts = opts;
+      this.webContents.session = (opts.webPreferences as { session: unknown }).session;
       winInstances.push({ opts: this.opts });
     }
     on() {
@@ -66,7 +69,7 @@ vi.mock("electron", () => ({
       return true;
     }
     loadURL() {
-      return undefined;
+      return Promise.resolve();
     }
     focus() {
       return undefined;
@@ -75,7 +78,7 @@ vi.mock("electron", () => ({
   webContents: {
     getAllWebContents: () => [],
   },
-  session: { defaultSession: { cookies: { get: vi.fn(async () => []) } } },
+  session: { defaultSession: { on: vi.fn(), cookies: { get: vi.fn(async () => []) } } },
   screen: {},
   powerSaveBlocker: { start: vi.fn(() => 0), stop: vi.fn() },
   // fullDiskAccess boot 钩子在注册期挂 unlock-screen/resume 监听
@@ -115,7 +118,7 @@ const HOST_ORIGIN = "https://testagent.xspaceagi.com";
 function senderEvent(origin: string) {
   return {
     senderFrame: { url: `${origin}/home` },
-    sender: { getURL: () => `${origin}/home` },
+    sender: { getURL: () => `${origin}/home`, once: vi.fn(), removeListener: vi.fn() },
   };
 }
 

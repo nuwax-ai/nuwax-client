@@ -35,8 +35,16 @@ const mocks = vi.hoisted(() => ({
   cookiesSet: vi.fn(async () => undefined),
   cookiesRemove: vi.fn(async () => undefined),
   cookiesOn: vi.fn(),
-  loadURL: vi.fn(),
+  loadURL: vi.fn(async () => undefined),
   windowOptions: vi.fn(),
+  windows: [] as Array<{
+    webContents: { getURL: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> };
+    show: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    on: ReturnType<typeof vi.fn>;
+    isDestroyed: () => boolean;
+  }>,
+  sessionOn: vi.fn(),
   destroyWindow: vi.fn(),
   refreshGateway: vi.fn(async () => undefined),
   mainLang: "zh-cn",
@@ -111,23 +119,28 @@ vi.mock("electron", () => ({
   dialog: { showSaveDialog: mocks.showSaveDialog, showOpenDialog: mocks.showOpenDialog },
   net: { fetch: mocks.netFetch },
   BrowserWindow: class {
-    constructor(options: unknown) { mocks.windowOptions(options); }
+    constructor(options: unknown) {
+      mocks.windowOptions(options);
+      this.webContents.session = (options as { webPreferences: { session: unknown } }).webPreferences.session;
+      mocks.windows.push(this);
+    }
     webContents = {
       once: vi.fn(), on: vi.fn(), removeListener: vi.fn(),
+      session: undefined as unknown,
+      getURL: vi.fn(() => ""),
       isDestroyed: () => false,
     };
-    private closed: (() => void) | null = null;
     private destroyed = false;
-    on = vi.fn((name: string, callback: () => void) => {
-      if (name === "closed") this.closed = callback;
-    });
+    on = vi.fn();
+    show = vi.fn();
     focus = vi.fn();
     loadURL = mocks.loadURL;
     isDestroyed = () => this.destroyed;
     destroy = () => {
       this.destroyed = true;
       mocks.destroyWindow();
-      this.closed?.();
+      for (const [name, callback] of this.on.mock.calls)
+        if (name === "closed") callback();
     };
   },
   webContents: {
@@ -143,7 +156,7 @@ vi.mock("electron", () => ({
     ],
   },
   session: {
-    defaultSession: { cookies: { get: mocks.cookiesGet, set: mocks.cookiesSet,
+    defaultSession: { on: mocks.sessionOn, cookies: { get: mocks.cookiesGet, set: mocks.cookiesSet,
       remove: mocks.cookiesRemove, on: mocks.cookiesOn } },
     fromPartition: (partition: string) => {
       const ses = {
@@ -207,7 +220,7 @@ const DEV_ORIGIN = "http://localhost:3000";
 function senderEvent(origin: string) {
   return {
     senderFrame: { url: `${origin}/home` },
-    sender: { getURL: () => `${origin}/home` },
+    sender: { getURL: () => `${origin}/home`, once: vi.fn(), removeListener: vi.fn() },
   };
 }
 
@@ -234,7 +247,8 @@ beforeEach(() => {
   mocks.cookiesSet.mockReset().mockResolvedValue(undefined);
   mocks.cookiesRemove.mockReset().mockResolvedValue(undefined);
   mocks.cookiesOn.mockClear();
-  mocks.loadURL.mockClear();
+  mocks.loadURL.mockReset().mockResolvedValue(undefined);
+  mocks.windows.length = 0;
   mocks.showSaveDialog.mockClear();
   mocks.showOpenDialog.mockClear();
   mocks.windowOptions.mockClear();
@@ -769,7 +783,81 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 describe("trusted runtime auth context and window navigation", () => {
   const windowEvent = (frameOrigin = GW_ORIGIN, topOrigin = GW_ORIGIN) => ({
     senderFrame: { url: `${frameOrigin}/home` },
-    sender: { getURL: () => `${topOrigin}/home` },
+    sender: { getURL: () => `${topOrigin}/home`, once: vi.fn(), removeListener: vi.fn() },
+  });
+
+  function fire(contents: { on: ReturnType<typeof vi.fn> }, name: string, ...args: unknown[]) {
+    const callbacks = contents.on.mock.calls.filter(([event]) => event === name);
+    expect(callbacks.length).toBeGreaterThan(0);
+    for (const [, callback] of callbacks) callback(...args);
+  }
+
+  it("keeps native windows hidden until a real document is ready, then shows and focuses once", () => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/docs" });
+    const win = mocks.windows.at(-1)!;
+    expect(mocks.windowOptions.mock.lastCall?.[0]).toMatchObject({ show: false });
+    expect(win.show).not.toHaveBeenCalled();
+    expect(win.focus).not.toHaveBeenCalled();
+    fire(win.webContents, "dom-ready");
+    expect(win.show).not.toHaveBeenCalled();
+    win.webContents.getURL.mockReturnValue("https://external.example/docs");
+    fire(win.webContents, "did-navigate", {}, "https://external.example/docs");
+    fire(win.webContents, "dom-ready");
+    fire(win.webContents, "did-finish-load");
+    expect(win.show).toHaveBeenCalledOnce();
+    expect(win.focus).toHaveBeenCalledOnce();
+  });
+
+  it.each(["completed", "cancelled", "interrupted"])("closes an empty native download window after %s", (state) => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}/api/f/s3/fixture.zip` });
+    const win = mocks.windows.at(-1)!;
+    const download = { getFilename: () => "fixture.zip", getTotalBytes: () => 42,
+      getSavePath: () => "/tmp/fixture.zip", on: vi.fn(), once: vi.fn() };
+    fire({ on: mocks.sessionOn }, "will-download", {}, download, win.webContents);
+    fire(win.webContents, "did-fail-load", {}, -3, "ERR_ABORTED", "", true);
+    expect(win.isDestroyed()).toBe(false);
+    download.once.mock.calls.find(([name]) => name === "done")![1]({}, state);
+    expect(win.isDestroyed()).toBe(true);
+    expect(win.show).not.toHaveBeenCalled();
+  });
+
+  it("closes a native window after its initial document fails", () => {
+    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable" });
+    const win = mocks.windows.at(-1)!;
+    fire(win.webContents, "did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", "", true);
+    expect(win.isDestroyed()).toBe(true);
+    expect(win.show).not.toHaveBeenCalled();
+  });
+
+  it("handles native loadURL rejection and closes the empty window", async () => {
+    mocks.loadURL.mockRejectedValueOnce({ code: "ERR_NAME_NOT_RESOLVED" });
+    expect(handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable" }))
+      .toEqual({ success: true });
+    await Promise.resolve();
+    expect(mocks.windows.at(-1)!.isDestroyed()).toBe(true);
+  });
+
+  it("keeps a native download window until its item finishes when loadURL rejects ERR_ABORTED", async () => {
+    mocks.loadURL.mockRejectedValueOnce({ code: "ERR_ABORTED" });
+    handlers.get("native:openWindow")!(windowEvent(), { path: `${HOST_ORIGIN}/api/f/s3/fixture.zip` });
+    const win = mocks.windows.at(-1)!;
+    const download = { getFilename: () => "fixture.zip", getTotalBytes: () => 42,
+      getSavePath: () => "/tmp/fixture.zip", on: vi.fn(), once: vi.fn() };
+    fire({ on: mocks.sessionOn }, "will-download", {}, download, win.webContents);
+    await Promise.resolve();
+    expect(win.isDestroyed()).toBe(false);
+    download.once.mock.calls.find(([name]) => name === "done")![1]({}, "completed");
+    expect(win.isDestroyed()).toBe(true);
+  });
+
+  it("closes native child windows with their opener and removes the opener listener", () => {
+    const event = windowEvent();
+    handlers.get("native:openWindow")!(event, { path: "https://external.example/docs" });
+    const win = mocks.windows.at(-1)!;
+    const listener = event.sender.once.mock.calls.find(([name]) => name === "destroyed")![1];
+    listener();
+    expect(win.isDestroyed()).toBe(true);
+    expect(event.sender.removeListener).toHaveBeenCalledWith("destroyed", listener);
   });
 
   it("returns the runtime business/gateway origins only to admitted pages", () => {
@@ -818,16 +906,10 @@ describe("trusted runtime auth context and window navigation", () => {
     handlers.get("native:openWindow")!(windowEvent(), { path: url });
     expect(mocks.loadURL).toHaveBeenCalledWith(url);
     const preferences = (mocks.windowOptions.mock.lastCall?.[0] as { webPreferences: Record<string, unknown> }).webPreferences;
-    expect(preferences.preload).toBeUndefined();
-    expect(preferences.partition).toMatch(/^temp:nuwax-external-/);
-    const isolated = mocks.partitionSessions.get(preferences.partition as string);
-    expect(isolated?.setPermissionRequestHandler).toHaveBeenCalledTimes(1);
-    expect(isolated?.setPermissionCheckHandler).toHaveBeenCalledTimes(1);
-    const check = isolated?.setPermissionCheckHandler.mock.lastCall?.[0] as (
-      contents: unknown, permission: string,
-    ) => boolean;
-    expect(check(null, "media")).toBe(false);
-    expect(mocks.attachHostActivityBusinessWindow).not.toHaveBeenCalled();
+    expect(preferences.preload).toMatch(/webviewPerfBridge\.js$/);
+    expect(preferences.session).toBe(session.defaultSession);
+    expect(preferences.partition).toBeUndefined();
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledOnce();
   });
 
   it.each([

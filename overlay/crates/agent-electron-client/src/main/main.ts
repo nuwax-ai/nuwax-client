@@ -61,7 +61,7 @@ import { openLogDirectory } from "./ipc/appHandlers";
 import { shouldInjectWebviewPerfBridge } from "./ipc/bridgeTrust";
 import { migrateDataDir, migrateSettingsPaths } from "./bootstrap/migrate";
 import { getDeviceId, logSystemInfo } from "./services/system/deviceId";
-import { initWebviewPolicy, isolateUntrustedInitialWebview } from "./services/system/webviewPolicy";
+import { initWebviewPolicy, configureSharedWebview } from "./services/system/webviewPolicy";
 import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
 import { APP_DATA_DIR_NAME } from "@shared/constants";
@@ -259,15 +259,16 @@ function createWindow() {
   });
 
   // 为 webview guest 注入轻量 Bridge（NuwaClawBridge）。
-  // 商业版仅对当前业务/回环/开发覆盖域注入，社区版维持已有 http(s) 行为。
+  // 商业网页共享会话，桥由轻量 preload 按实际业务文档暴露。
   mainWindow.webContents.on(
     "will-attach-webview",
-    (_event, webPreferences, params) => {
+    (event, webPreferences, params) => {
       const targetUrl = String(params.src || "");
+      if (APP_NAME_IDENTIFIER === "nuwax") {
+        if (!configureSharedWebview(webPreferences, params)) event.preventDefault();
+        return;
+      }
       if (!shouldInjectWebviewPerfBridge(targetUrl, APP_NAME_IDENTIFIER)) {
-        // Initial <webview src> is a programmatic load and does not emit
-        // will-frame-navigate. Isolate an external target before its first request.
-        isolateUntrustedInitialWebview(webPreferences, params);
         return;
       }
       webPreferences.preload = WEBVIEW_PERF_BRIDGE_PRELOAD;
