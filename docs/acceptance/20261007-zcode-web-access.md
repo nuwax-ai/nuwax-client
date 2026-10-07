@@ -14,6 +14,7 @@
 - native 窗口共用 popup 加载/下载清理；页面就绪显示，加载失败、下载结束或 opener 销毁关闭空窗口。
 - 修复关闭窗口时 HostActivity 访问 destroyed getter 的异常。
 - 前端生产构建消费冻结微应用 pin，移除隐式自动升级；重制 message adapter，隔离卸载实例异步续跑，修正 repo portal 平移后的宽高。
+- 今日排障回退 `dd43c1730` 曾把既有桥类型契约一并删除；恢复四个纯类型文件和全局引用，不恢复其它被回退的运行时功能。同步脚本的单位夹具独立于当前前端检出，缺失 canonical 明确失败，保留严格 consumer/provider 与逐字节快照门。
 
 ## 质量门与真实运行
 
@@ -23,13 +24,17 @@
 | 社区隔离完整门 | 1534 通过，18 跳过，0 失败；127 文件通过，1 跳过 | 干净固定基座副本；复用本机依赖与 mcp-proxy dist |
 | 访问相关专项 | 226 通过 | 注入、mirror、window policy、native、真实 preload 模块 |
 | 独立前端矩形/store/lifecycle | 14 通过 | 冻结候选 `4239d467`；旧实例续跑和活跃分页分别验证 |
-| 前端生产构建 | 通过，受跟踪源码干净 | `4239d4671437f0f886276c69a3484b4466d123da` |
+| 前端生产构建 | 通过，受跟踪源码干净 | `bbebed854071ecb92e4e7b7597869859ae2903bc` |
+| 前端桥/事件/IM | 90 通过 | 纯类型契约恢复后 |
+| 严格桥契约门，独立 verifier | 12 通过，0 失败；host-bridge:check 通过 | canonical/overlay 一致，旧宿主能力保持可选 |
 | overlay/check:pin | 135 文件一致，0 待同步；130 基座脏文件全部为 overlay 产物 | 未清理原工作区 |
 | 真实窗口夹具 | 通过 | direct/gateway × BrowserWindow/webview；anchor/window.open、混合 iframe、跨域原窗口/回跳/302、自有第三方 Cookie |
 
 真实窗口夹具编译实际 `webviewPerfBridge`，验证跨域后桥消失、返回业务页恢复。临时 profile 与模拟 ticket，不读取真实账号。原窗口关闭问题曾先复现失败，再改源码使 32 个 HostActivity 用例通过。
 
-原工作区脚本门最初 151 通过、7 失败，全部因该目录保留的旧前端缺少 hostBridge 契约文件；冻结候选集成后在打包台重新验证。此结果不能当作候选源码失败，也不能省略候选重跑。
+iframe 真实 Electron 夹具另外通过：默认/临时/持久会话、XFO 与多 CSP 策略、重定向和嵌套 iframe、保留其余 CSP、`/page` 资源与重启 Cookie 恢复（79 请求、2 个 Cookie 重启进程）。
+
+原工作区和首个冻结候选脚本门均为 151 通过、7 失败，暴露了 canonical 契约缺失。首个候选的真实原因是上述排障回退；不能用快照兜底或弱化类型门掩盖。恢复后 12 个严格门已通过，完整脚本门在打包台重跑。
 
 ## 三问质量走查
 
@@ -39,8 +44,8 @@
 
 ## 冻结记录与交付边界
 
-前端：`4239d4671437f0f886276c69a3484b4466d123da`，远端分支 `codex/fix-micro-app-build-frozen-20261007`，草稿 [PR #187](https://github.com/nuwax-ai/nuwax/pull/187)。message pin `f3a568275c0b3ed21537df98a7eedd6bdbf6b070`，repo pin `18ae973c890c699c678b086ad1da3b95275a3c86`。
+前端：`bbebed854071ecb92e4e7b7597869859ae2903bc`，远端分支 `codex/fix-micro-app-build-frozen-20261007`，草稿 [PR #187](https://github.com/nuwax-ai/nuwax/pull/187)。message pin `f3a568275c0b3ed21537df98a7eedd6bdbf6b070`，repo pin `18ae973c890c699c678b086ad1da3b95275a3c86`。
 
-对应前端产物已提交推送 `nuwax-dist` main 的 `d7d9bf8`。stamp `4239d4671`，989 文件，SHA256 tree `03399ab77ce35263f876a759299a468593f577eece4907284464132c55ba6003`。
+对应前端产物已提交推送 `nuwax-dist` main 的 `756de5ae4a40b37046c7e51ad94b6c9628bcd991`。stamp `bbebed854`，989 文件，SHA256 tree `6bfb930b6848fb88411460720a63c875118c21225e23c7623104365740ea3d35`。
 
 远端已使用 3.0.7，因此本次 beta 目标为 3.0.8，不能继续旧任务的 3.0.4。真实账号、Windows/Linux 设备、正式安装包签名/公证与远端全平台发布状态需要各自证据；本地源码与临时 profile 验收不代替这些环节。
