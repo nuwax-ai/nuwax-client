@@ -43,7 +43,7 @@ test('CLI storage verification uses provenance SHA256 headers without downloadin
   assert.ok(reads.some(url => url.endsWith('release-provenance.json')));
 });
 
-function fixture({ channel = 'stable', signed = true, publicRelease = true } = {}) {
+function fixture({ channel = 'stable', signed = true, publicRelease = true, root = '/nonexistent/nuwax-release-fixture' } = {}) {
   const version = channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';
   const identity = releaseIdentity(channel, version);
   const calls = [];
@@ -95,17 +95,23 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
   const adapters = {
     signingTools: async (sha) => { calls.push(['signingTools', sha]); return { pin: source.shell, files: { 'sign-release-win-v2.sh': '#!/bin/bash\nexit 0', 'sign-win.js': '// committed signer' } }; },
     log: (message) => calls.push(['log', message]), sleep: async (ms) => calls.push(['sleep', ms]),
-    git: async (args) => {
+    git: async (args, directory) => {
       calls.push(['git', ...args]);
       if (args[0] === 'rev-parse') {
-        if (args[1] === 'HEAD') return source.client;
+        if (args[1] === 'HEAD') return directory ? state.localHeads?.[path.basename(directory)] ?? source.client : source.client;
         if (args[1].startsWith('refs/tags')) { if (state.remoteTag) return state.remoteTag; throw new Error('no tag'); }
         return { 'nuwa-electron-shell': source.shell, nuwax: source.frontend, 'nuwax-dist': source.dist }[args[1].split(':').at(-1)];
       }
       if (args[0] === 'branch') return 'release-fixture';
       if (args[0] === 'show') return 'committed release notes';
       if (args[0] === 'status') return state.dirty ?? '';
-      if (args[0] === 'config') return args.at(-1).endsWith('.url') ? `https://github.com/example/${args.at(-1).split('.')[1]}.git` : 'main';
+      if (args[0] === 'diff') return state.localDirty?.[path.basename(directory)] ?? '';
+      if (args[0] === 'config') {
+        const folder = args.at(-1).split('.')[1];
+        const revision = args[args.indexOf('--blob') + 1]?.split(':')[0];
+        return args.at(-1).endsWith('.url') ? state.moduleUrls?.[revision]?.[folder] ?? `https://github.com/example/${folder}.git`
+          : state.moduleBranches?.[revision]?.[folder] ?? 'main';
+      }
       if (args[0] === 'ls-remote') {
         if (args[1] === '--tags') {
           state.sequenceReads++;
@@ -114,14 +120,22 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
         }
         if (args.at(-1).startsWith('refs/heads/')) return `${state.remoteHead}\t${args.at(-1)}`;
         if (args[1] === 'origin') return state.remoteTag ? `${state.remoteTag}\trefs/tags/${identity.tag}` : '';
-        return `${source.shell}\trefs/heads/main\n${source.frontend}\trefs/heads/main\n${source.dist}\trefs/heads/main`;
+        const folder = /\/([^/]+)\.git$/.exec(args.at(-1))?.[1];
+        return state.moduleRefs?.[folder] ?? `${{ 'nuwa-electron-shell': source.shell, nuwax: source.frontend, 'nuwax-dist': source.dist }[folder]}\trefs/heads/main`;
       }
       if (args[0] === 'push' && args[2]?.startsWith('refs/tags')) state.remoteTag = source.client;
       return '';
     },
     gh: async (args) => {
       calls.push(['gh', ...args]);
-      if (args[0] === 'api') return view();
+      if (args[0] === 'api') {
+        const folder = /^repos\/[^/]+\/([^/]+)\/compare\//.exec(args[1])?.[1];
+        if (folder) {
+          if (state.compareFailure?.includes(folder)) throw new Error('HTTP 404 commit unavailable');
+          return { status: state.compareStatus?.[folder] ?? 'ahead' };
+        }
+        return view();
+      }
       if (args[1] === 'list') {
         const workflow = args[args.indexOf('--workflow') + 1];
         if (workflow === identity.buildWorkflow) { state.lookup++; return state.lookup <= (state.race ?? 0) ? [{ ...build, headSha: '0'.repeat(40) }] : state.builds; }
@@ -148,7 +162,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     },
     hashUrl: async (url) => state.corruptMirror ? '0'.repeat(64) : digest(data.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)))),
   };
-  const run = (options = {}) => release('/nonexistent/nuwax-release-fixture', { channel, version: identity.version, settings, stage: channel === 'stable' && signed ? 'sync' : undefined, lookupAttempts: 3, pollAttempts: 3, ...options }, adapters);
+  const run = (options = {}) => release(root, { channel, version: identity.version, settings, stage: channel === 'stable' && signed ? 'sync' : undefined, lookupAttempts: 3, pollAttempts: 3, ...options }, adapters);
   return { identity, data, manifests, state, calls, adapters, view, run };
 }
 
@@ -175,6 +189,92 @@ test('dry-run reports preflight problems without tag, dispatch, signing or downl
   assert.match(result.findings.join('\n'), /禁止改 tag/);
   assert.equal(f.calls.some(([type, command]) => type === 'git' && ['push', 'tag', 'commit', 'add'].includes(command)), false);
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
+});
+
+test('stable and beta preflight allow historical frontend pins without adopting remote changes', async () => {
+  for (const channel of ['stable', 'beta']) {
+    const f = fixture({ channel });
+    const tips = { nuwax: '1'.repeat(40), 'nuwax-dist': '2'.repeat(40) };
+    f.state.moduleRefs = Object.fromEntries(Object.entries(tips).map(([folder, tip]) => [folder, `${tip}\trefs/heads/main`]));
+    const gh = f.adapters.gh;
+    f.adapters.gh = async args => {
+      const result = await gh(args);
+      // A newer commit appears while preflight is comparing the captured tip.
+      if (args[0] === 'api' && args[1].includes('/compare/')) f.state.moduleRefs.nuwax = `${'3'.repeat(40)}\trefs/heads/main`;
+      return result;
+    };
+    const result = await f.run({ dryRun: true });
+    assert.equal(result.ok, true, result.findings.join('\n'));
+    assert.deepEqual(result.source, source);
+    assert.ok(f.calls.some(call => call[0] === 'gh' && call[2] === `repos/example/nuwax/compare/${source.frontend}...${tips.nuwax}`));
+    assert.ok(f.calls.some(call => call[0] === 'gh' && call[2] === `repos/example/nuwax-dist/compare/${source.dist}...${tips['nuwax-dist']}`));
+    assert.ok(f.calls.every(call => !(call[0] === 'git' && ['checkout', 'switch', 'fetch', 'add', 'commit', 'tag', 'push'].includes(call[1]))));
+    assert.match(result.steps[0], /允许.*历史 pin/);
+  }
+});
+
+test('frontend pins outside declared history fail before mutations even when a remote tag references them', async () => {
+  for (const folder of ['nuwax', 'nuwax-dist']) {
+    const pin = folder === 'nuwax' ? source.frontend : source.dist;
+    for (const status of ['behind', 'diverged']) {
+      const f = fixture();
+      f.state.moduleRefs = { [folder]: `${'1'.repeat(40)}\trefs/heads/main\n${pin}\trefs/tags/retained-pin` };
+      f.state.compareStatus = { [folder]: status };
+      const result = await f.run({ dryRun: true });
+      assert.equal(result.ok, false);
+      assert.match(result.findings.join('\n'), new RegExp(`${folder} pin 不在远端 main 历史中`));
+      await assert.rejects(f.run(), /pin 不在远端 main 历史中/);
+      assert.equal(tagMutations(f.calls).length, 0);
+      assert.ok(f.calls.every(call => !(call[0] === 'exec' && (call[1] === 'ssh' || call[2] === 'workflow'))));
+    }
+  }
+});
+
+test('frontend remote missing branches and inaccessible history are rejected', async () => {
+  const f = fixture();
+  f.state.moduleRefs = { nuwax: `${source.frontend}\trefs/tags/old-only`, 'nuwax-dist': `${'2'.repeat(40)}\trefs/heads/main` };
+  f.state.compareFailure = ['nuwax-dist'];
+  const result = await f.run({ dryRun: true });
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join('\n'), /nuwax 声明分支 main 远端无法获取/);
+  assert.match(result.findings.join('\n'), /nuwax-dist pin 远端无法获取/);
+});
+
+test('historical tag preflight uses target gitmodules URL and consumption branch independently of tools', async () => {
+  const f = fixture();
+  const target = '9'.repeat(40), tip = '1'.repeat(40);
+  f.state.remoteTag = target;
+  f.state.moduleBranches = { [target]: { nuwax: 'historical-frontend' }, [source.client]: { nuwax: 'new-frontend' } };
+  f.state.moduleUrls = { [target]: { nuwax: 'https://github.com/example/old-frontend.git' } };
+  f.state.moduleRefs = { 'old-frontend': `${tip}\trefs/heads/historical-frontend` };
+  const result = await f.run({ tag: f.identity.tag, dryRun: true });
+  assert.equal(result.ok, true, result.findings.join('\n'));
+  assert.equal(result.source.client, target);
+  assert.equal(result.source.frontend, source.frontend);
+  const configReads = f.calls.filter(call => call[0] === 'git' && call[1] === 'config');
+  assert.equal(configReads.length, 6);
+  assert.ok(configReads.every(call => call[2] === '--blob' && call[3] === `${target}:.gitmodules`));
+  assert.ok(f.calls.some(call => call[0] === 'gh' && call[2] === `repos/example/old-frontend/compare/${source.frontend}...${tip}`));
+});
+
+test('historical frontend permission retains local HEAD and tracked-edit checks', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-release-local-pin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'nuwax'));
+  fs.writeFileSync(path.join(root, 'nuwax/.git'), 'fixture gitdir');
+  fs.writeFileSync(path.join(root, 'nuwax/app.js'), 'uncommitted source');
+  const f = fixture({ root });
+  f.state.moduleRefs = { nuwax: `${'1'.repeat(40)}\trefs/heads/main` };
+  f.state.localHeads = { nuwax: '2'.repeat(40) };
+  let result = await f.run({ dryRun: true });
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join('\n'), /nuwax 当前 HEAD 与发布 pin 不同/);
+  f.state.localHeads.nuwax = source.frontend;
+  f.state.localDirty = { nuwax: 'app.js' };
+  result = await f.run({ dryRun: true });
+  assert.equal(result.ok, false);
+  assert.match(result.findings.join('\n'), /nuwax 受跟踪文件未提交：app.js/);
+  assert.equal(fs.readFileSync(path.join(root, 'nuwax/app.js'), 'utf8'), 'uncommitted source');
 });
 
 test('same-name remote tag with another SHA is immutable', async () => {
