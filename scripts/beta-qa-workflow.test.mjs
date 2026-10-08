@@ -28,6 +28,27 @@ function script(name) {
   return lines.slice(start + 1).map((line) => line.startsWith('          ') ? line.slice(10) : line).join('\n');
 }
 
+function installedBuilder(t) {
+  // Default to this checkout's client dependencies. An isolated checkout without
+  // submodules can explicitly reuse another client's installed dependencies read-only.
+  const override = process.env.NUWAX_TEST_BUILDER_CLIENT_DIR;
+  if (override) assert.ok(path.isAbsolute(override), 'NUWAX_TEST_BUILDER_CLIENT_DIR must be an absolute client directory');
+  const client = override ?? path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
+  const require = createRequire(import.meta.url);
+  let builderFile;
+  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); }
+  catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND') throw error;
+    if (override) assert.fail(`Pinned builder dependencies unavailable in ${client}`);
+    t.diagnostic('Installed builder unavailable; real builder contract not run');
+    return null;
+  }
+  const builderRequire = createRequire(builderFile);
+  assert.equal(builderRequire('./package.json').version, '25.1.8');
+  builderRequire('app-builder-lib');
+  return builderRequire;
+}
+
 function condition(block) {
   const match = /^\s+if: \$\{\{ (.+) \}\}$/m.exec(block);
   assert.ok(match, 'Missing explicit event/ref guard');
@@ -158,13 +179,8 @@ test('QA native package fields remain numeric while the full app version and pub
     assert.ok(pkg.build.extraResources.some((entry) => entry.to === 'node'), 'Unrelated complete resources must be retained');
     packages.push(pkg);
   }
-  const require = createRequire(import.meta.url);
-  let builderFile;
-  try { builderFile = require.resolve('electron-builder/package.json', { paths: [path.join(root, 'nuwa-electron-shell/crates/agent-electron-client')] }); }
-  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; t.diagnostic('Installed builder unavailable; native shell behavior passed, real schema contract not run'); return; }
-  const builderRequire = createRequire(builderFile);
-  assert.equal(builderRequire('./package.json').version, '25.1.8');
-  builderRequire('app-builder-lib');
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) return;
   const { AppInfo } = builderRequire('app-builder-lib/out/appInfo.js');
   const { validateConfiguration } = builderRequire('app-builder-lib/out/util/config/config.js');
   const pkg = packages[0];
@@ -181,6 +197,47 @@ test('QA native package fields remain numeric while the full app version and pub
     const packager = new PlatformPackager({ metadata: { ...qaPkg, name: 'nuwax', productName: 'Nuwax' }, config: { ...qaPkg.build, productName: 'Nuwax' } }, { buildConfigurationKey: 'mac' });
     const outputName = packager.expandArtifactNamePattern(qaPkg.build.dmg, 'dmg', arch, '${productName}-' + qaPkg.build.mac.bundleShortVersion + '-${arch}.${ext}', true);
     assert.equal(outputName, name, 'Real builder DMG naming must use full QA version despite numeric bundleShortVersion');
+  }
+});
+
+test('public Beta keeps numeric Mac bundle versions and full DMG identity in the pinned builder', async (t) => {
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) { t.skip('Requires installed electron-builder 25.1.8'); return; }
+  const { AppInfo } = builderRequire('app-builder-lib/out/appInfo.js');
+  const { MacPackager } = builderRequire('app-builder-lib/out/macPackager.js');
+  const { PlatformPackager } = builderRequire('app-builder-lib/out/platformPackager.js');
+  const { validateConfiguration } = builderRequire('app-builder-lib/out/util/config/config.js');
+  const { Arch } = builderRequire('builder-util');
+  for (const version of ['3.0.11-beta.1', '3.0.11-beta.10']) {
+    for (const arch of ['x64', 'arm64']) {
+      await t.test(`${version} ${arch}`, async (t) => {
+        const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-beta-native-version-'));
+        t.after(() => rmSync(directory, { recursive: true, force: true }));
+        writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name: 'fixture-client', version: '0.0.0',
+          build: { extraResources: [{ from: 'complete-resource', to: 'node' }], mac: { extendInfo: {} }, win: {} } }));
+        const run = script('Set version & commercial branding in package.json').replaceAll('${{ needs.prepare.outputs.version }}', version);
+        const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
+          QA_BUILD: 'false', NATIVE_VERSION: '3.0.11', TARGET_ARCH: arch, npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false',
+        } });
+        assert.equal(result.status, 0, result.stderr);
+        const pkg = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
+        assert.equal(pkg.version, version, 'Application/ASAR version must keep the complete Beta identity');
+        assert.ok(pkg.build.extraResources.some((entry) => entry.to === 'node'), 'Complete integrated resources must remain present');
+        await validateConfiguration(pkg.build, { isEnabled: false });
+        const appInfo = new AppInfo({ metadata: pkg, config: pkg.build });
+        assert.equal(appInfo.version, version);
+        assert.equal(appInfo.channel, 'beta');
+        const plist = {};
+        await MacPackager.prototype.applyCommonInfo.call({ appInfo, getIconPath: async () => null,
+          platformSpecificBuildOptions: pkg.build.mac, config: pkg.build }, plist, '/unused-fixture');
+        assert.equal(plist.CFBundleShortVersionString, '3.0.11', 'Mac marketing version must use the numeric native version');
+        assert.equal(plist.CFBundleVersion, '3.0.11', 'Mac build version must use the numeric native version');
+        const packager = new PlatformPackager({ metadata: pkg, config: pkg.build }, { buildConfigurationKey: 'mac' });
+        const outputName = packager.expandArtifactNamePattern(pkg.build.dmg, 'dmg', arch === 'arm64' ? Arch.arm64 : Arch.x64,
+          '${productName}-' + pkg.build.mac.bundleShortVersion + '-${arch}.${ext}', true);
+        assert.equal(outputName, `Nuwax-${version}${arch === 'arm64' ? '-arm64' : ''}.dmg`, 'Numeric native versions must not shorten or collide public Beta artifact names');
+      });
+    }
   }
 });
 

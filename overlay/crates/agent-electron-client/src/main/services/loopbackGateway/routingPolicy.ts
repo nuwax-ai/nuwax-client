@@ -140,6 +140,12 @@ export function normalizeGatewayRequestUrl(
   // A foreign/missing frame is untrusted even for document navigation. Otherwise
   // a foreign iframe could navigate to our backend and acquire gateway credentials.
   if (frame?.origin !== page.origin) return null;
+  // IdP state Cookie must be established on the same business origin as the
+  // registered callback. Keep top-level auth/identity flows out of loopback;
+  // the frontend validates the cookie then returns to its configured gateway.
+  if (request.resourceType === "mainFrame" && url.origin === backend.origin &&
+      /^\/(?:auth\/|api\/auth\/idp\/|api\/user\/identity\/bind\/)/.test(url.pathname))
+    return null;
   // Electron reports both XMLHttpRequest and fetch as xhr. The explicit source
   // frontend keeps its documents/assets/HMR; only business API requests enter
   // the existing capability-authorized gateway namespace.

@@ -7,8 +7,8 @@
 ## 发布入口
 
 ```bash
-npm run release -- --version 3.0.11-beta.1 --dry-run
-npm run release -- --version 3.0.11-beta.1
+npm run release -- --version 3.0.11-beta.2 --dry-run
+npm run release -- --version 3.0.11-beta.2
 npm run release -- --version 3.0.11 --dry-run
 npm run release -- --version 3.0.11 --stage sign
 # 真实安装包验收通过后
@@ -33,7 +33,7 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-b
 
 beta workflow 的手动与 `codex/beta-qa/**` 分支入口只产隔离 QA artifacts，不创建正式 tag/Release，不更新订阅入口。正式打包只用 tag push。非法 tag 在版本校验处失败，不进入测试门禁或五平台矩阵；有效 tag 只触发一套发布构建。
 
-CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` 会在副作用前报冲突；应使用 `--version 3.0.11-beta.1`。失败用 `gh run rerun <原 run id> --failed` 重试原 tag/SHA，或用 `npm run release -- --tag <原 tag>` 续跑；改源码后须发布下一个可用版本。
+CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` 会在副作用前报冲突；应使用 `--version 3.0.11-beta.2`。失败用 `gh run rerun <原 run id> --failed` 重试原 tag/SHA，或用 `npm run release -- --tag <原 tag>` 续跑；改源码后须发布下一个可用版本。
 
 版本解析由 `release-version.mjs` 共用，CLI 编排在 `client/release.mjs`，来源核验在 `release-provenance.mjs`，镜像指针事务在 `publish-release-pointers.mjs`。签名机只处理安装包，安装验收和镜像发布由外层负责。
 
@@ -57,7 +57,7 @@ v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub
 
 ## 首次上线
 
-旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后从 `v3.0.11-beta.1` 开始新序列。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
+旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后从 `v3.0.11-beta.2` 开始新序列。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
 
 单元测试不能替代安装包验收：正式上线前验证真实包版本、签名、旧版升级、beta 连续升级和同号转正，记录平台与实际结果。
 
@@ -66,3 +66,5 @@ v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub
 Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、验签、上传；当前已提交签名工具由外层通过 SSH stdin 提供。应用来源校验留在外层，签名机无需源码、子模块、overlay 或 npm 安装，并保留 tag/SHA 缓存供失败续跑。
 
 旧 beta 客户端首次接入新序列应先升级兼容正式版 3.0.10。若尚未升级而 beta 入口已进入 beta.N，可临时订阅 stable 获得 3.0.10，再按用户选择订阅 beta；已有用户选择不会被安装包覆盖。
+
+2026-10-08：beta.1 已创建但因补充分支整合取消，未公开，序号仍被占用。首次公开候选为 beta.2；示例版本以发布前远端占用检查为准。
