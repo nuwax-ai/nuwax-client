@@ -22,6 +22,15 @@ const main = {
 };
 
 describe("backend URL routing", () => {
+  it("keeps top-level IdP and identity state on the callback's business origin", () => {
+    for (const pathname of ["/api/auth/idp/authorize", "/api/auth/idp/callback/3", "/api/user/identity/bind/3", "/auth/bind"]) {
+      const request = {...main, resourceType: "mainFrame", url: `${backendOrigin}${pathname}?state=fixture`};
+      expect(normalizeGatewayRequestUrl(request, config)).toBeNull();
+      // This exception grants no credential capability to iframe/XHR paths.
+      expect(normalizeGatewayRequestUrl({...request, resourceType: "subFrame"}, config)).toBe(`${gatewayOrigin}${pathname}?state=fixture`);
+      expect(normalizeGatewayRequestUrl({...request, resourceType: "xhr"}, config)).toBe(`${namespace}${pathname}?state=fixture`);
+    }
+  });
   const devFrontendOrigin = "http://localhost:3099";
   const devConfig: GatewayRoutingConfig = { ...config, devFrontendOrigin };
   const devPage = {
