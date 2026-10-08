@@ -289,15 +289,15 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           npm pkg set version="$VERSION"
-          # package.version 保留 QA 标识；原生版本字段仅使用数字基线，便于 Mac 公证及 Windows 安装器。
-          if [ "$QA_BUILD" = true ]; then
+          # package.version 保留完整 Beta/QA 标识；原生版本字段使用数字基线，便于 Mac 公证及 Windows 安装器。
+          if [ "$QA_BUILD" = true ] || [[ "$VERSION" == *-beta.* ]]; then
             npm pkg set build.buildVersion="$NATIVE_VERSION"
             npm pkg set build.mac.bundleShortVersion="$NATIVE_VERSION"
-            # dmg-builder 默认用 bundleShortVersion 命名 DMG；QA 包文件必须保留完整应用版本。
+            # dmg-builder 默认用 bundleShortVersion 命名 DMG；Beta/QA 包文件必须保留完整应用版本。
             node --input-type=commonjs <<'NODE'
           const fs = require('node:fs');
           const arch = process.env.TARGET_ARCH;
-          if (!['x64', 'arm64'].includes(arch)) throw new Error('Invalid QA artifact architecture');
+          if (!['x64', 'arm64'].includes(arch)) throw new Error('Invalid prerelease artifact architecture');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           pkg.build.dmg = { ...pkg.build.dmg, artifactName: '${productName}-${version}' + (arch === 'arm64' ? '-arm64' : '') + '.${ext}' };
           fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
