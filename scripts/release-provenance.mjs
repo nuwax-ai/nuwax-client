@@ -16,7 +16,8 @@ const root = sourceRoot ? resolve(sourceRoot) : resolve(import.meta.dirname, '..
 const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linux-arm64'];
 
 function requiredArtifacts(tag, key) {
-  return artifactsForVersion(parseReleaseTag(tag, { allowLegacy: true }).version, key);
+  try { return artifactsForVersion(parseReleaseTag(tag, { allowLegacy: true }).version, key); }
+  catch (error) { fail(`无效发布 tag: ${tag}；${error.message}`); }
 }
 
 function qaVersionFromIdentity(identity) {

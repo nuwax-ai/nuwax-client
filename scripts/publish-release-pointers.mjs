@@ -1,6 +1,7 @@
 /** Commit update subscriptions only after versioned assets have been verified. */
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,7 +16,9 @@ function pointerVersion(bytes, folder) {
   return version;
 }
 
-export async function publishPointers(identity, bytes, adapter, finalize = async () => {}) {
+export async function publishPointers(identity, bytes, adapter, finalize = async () => {}, signal) {
+  const checkInterrupted = () => signal?.throwIfAborted();
+  checkInterrupted();
   const candidate = JSON.parse(Buffer.from(bytes).toString());
   if (candidate.version !== identity.version) throw new Error('目标元数据版本与 tag 不一致');
   parseReleaseVersion(candidate.version);
@@ -40,8 +43,10 @@ export async function publishPointers(identity, bytes, adapter, finalize = async
   const touched = [];
   try {
     for (const folder of update) {
+      checkInterrupted();
       for (const mirror of mirrors) {
         // Register before the write: a failed upload may still have changed the object.
+        checkInterrupted();
         touched.push([mirror, folder]);
         await adapter.write(mirror, folder, bytes);
       }
@@ -50,6 +55,7 @@ export async function publishPointers(identity, bytes, adapter, finalize = async
         if (actual === null || !Buffer.from(actual).equals(Buffer.from(bytes))) throw new Error(`${mirror}/${folder}: 指针回读不一致`);
       }
     }
+    checkInterrupted();
     await finalize();
   } catch (error) {
     const failures = [];
@@ -70,7 +76,7 @@ export async function publishPointers(identity, bytes, adapter, finalize = async
 }
 
 function commandAdapter(env, directory) {
-  const execute = (command, args) => execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const execute = (command, args) => promisify(execFile)(command, args, { encoding: 'utf8', timeout: 60000 });
   const s3Args = ['--endpoint-url', env.S3_ENDPOINT];
   const ossArgs = ['--endpoint', env.OSS_ENDPOINT, '--region', env.OSS_REGION,
     '--access-key-id', env.OSS_ACCESS_KEY_ID, '--access-key-secret', env.OSS_ACCESS_KEY_SECRET];
@@ -79,8 +85,8 @@ function commandAdapter(env, directory) {
     async read(mirror, folder) {
       const file = join(directory, `read-${mirror}-${folder}.json`);
       try {
-        if (mirror === 's3') execute('aws', ['s3', 'cp', location(mirror, folder), file, ...s3Args, '--no-sign-request']);
-        else execute('ossutil', ['cp', '--force', location(mirror, folder), file, ...ossArgs]);
+        if (mirror === 's3') await execute('aws', ['s3', 'cp', location(mirror, folder), file, ...s3Args, '--no-sign-request']);
+        else await execute('ossutil', ['cp', '--force', location(mirror, folder), file, ...ossArgs]);
         return readFileSync(file);
       } catch (error) {
         const diagnostic = String(error.stderr ?? '');
@@ -93,31 +99,39 @@ function commandAdapter(env, directory) {
       const file = join(directory, `write-${mirror}-${folder}.json`);
       writeFileSync(file, bytes);
       try {
-        if (mirror === 's3') execute('aws', ['s3', 'cp', file, location(mirror, folder), ...s3Args]);
-        else execute('ossutil', ['cp', '--force', file, location(mirror, folder), ...ossArgs]);
+        if (mirror === 's3') await execute('aws', ['s3', 'cp', file, location(mirror, folder), ...s3Args]);
+        else await execute('ossutil', ['cp', '--force', file, location(mirror, folder), ...ossArgs]);
       } catch (error) { throw new Error(`${mirror}/${folder}: 指针写入失败（exit ${error.status ?? 'unknown'}）`); }
     },
     async remove(mirror, folder) {
       try {
-        if (mirror === 's3') execute('aws', ['s3', 'rm', location(mirror, folder), ...s3Args]);
-        else execute('ossutil', ['rm', '--force', location(mirror, folder), ...ossArgs]);
+        if (mirror === 's3') await execute('aws', ['s3', 'rm', location(mirror, folder), ...s3Args]);
+        else await execute('ossutil', ['rm', '--force', location(mirror, folder), ...ossArgs]);
       } catch (error) { throw new Error(`${mirror}/${folder}: 指针删除失败（exit ${error.status ?? 'unknown'}）`); }
     },
     async finalize(identity) {
-      execute('gh', ['release', 'edit', identity.tag, '--draft=false', `--prerelease=${identity.channel === 'beta'}`, '--repo', env.GITHUB_REPOSITORY]);
+      await execute('gh', ['release', 'edit', identity.tag, '--draft=false', `--prerelease=${identity.channel === 'beta'}`, '--repo', env.GITHUB_REPOSITORY]);
     },
   };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const directory = mkdtempSync(join(tmpdir(), 'nuwax-pointers-'));
+  const controller = new AbortController();
+  const interrupt = () => controller.abort(new Error('同步被中断，恢复原通道指针'));
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
   try {
     const [tag, metadata, channel] = process.argv.slice(2);
     const identity = parseReleaseTag(tag, { allowLegacy: true });
     if (channel && channel !== identity.channel) throw new Error('tag 与 channel 冲突');
     const adapter = commandAdapter(process.env, directory);
-    const result = await publishPointers(identity, readFileSync(metadata), adapter, () => adapter.finalize(identity));
+    const result = await publishPointers(identity, readFileSync(metadata), adapter, () => adapter.finalize(identity), controller.signal);
     console.log(JSON.stringify(result));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
-  finally { rmSync(directory, { recursive: true, force: true }); }
+  finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
+    rmSync(directory, { recursive: true, force: true });
+  }
 }

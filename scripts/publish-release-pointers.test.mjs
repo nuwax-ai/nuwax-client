@@ -18,7 +18,7 @@ function fixture(latest, beta) {
     },
     async remove(mirror, folder) { calls.push(['remove', `${mirror}/${folder}`]); data.set(`${mirror}/${folder}`, null); },
   };
-  return { data, original, calls, faults, run: (tag, finalize) => publishPointers(parseReleaseTag(tag), metadata(tag.slice(1)), adapter, finalize) };
+  return { data, original, calls, faults, adapter, run: (tag, finalize, signal) => publishPointers(parseReleaseTag(tag), metadata(tag.slice(1)), adapter, finalize, signal) };
 }
 
 test('stable promotes both subscriptions, beta changes only beta', async () => {
@@ -69,4 +69,16 @@ test('same identity is idempotent but same-version source replacement is refused
   for (const mirror of ['s3', 'oss']) f.data.set(`${mirror}/latest`, Buffer.from('{"version":"3.0.11","other":true}'));
   await assert.rejects(f.run('v3.0.11'), /同版本/);
   assert.deepEqual(f.calls, []);
+});
+
+
+test('interruption between mirror uploads rolls back completed writes', async () => {
+  const f = fixture('3.0.10', '3.0.10');
+  const controller = new AbortController(), write = f.adapter.write;
+  f.adapter.write = async (...args) => {
+    await write(...args);
+    controller.abort(new Error('interrupted'));
+  };
+  await assert.rejects(f.run('v3.0.11', undefined, controller.signal), /interrupted/);
+  assert.deepEqual(f.data, f.original);
 });
