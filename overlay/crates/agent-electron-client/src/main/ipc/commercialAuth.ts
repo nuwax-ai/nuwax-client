@@ -26,6 +26,32 @@ export function getComputerName(): string {
   return os.hostname().replace(/\.local$/i, "").trim();
 }
 
+/** 账号身份与展示名称分离：老账号可以没有用户名，昵称不用于判定换账号。 */
+export function resolveCommercialAccount(data: unknown): {
+  accountId: string;
+  loginName: string;
+  displayName: string;
+  userId?: string | number;
+} | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const user = data as Record<string, unknown>;
+  const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
+  const userName = text(user.userName);
+  const uid = text(user.uid);
+  const userId = typeof user.id === "string" && /^\d+$/.test(user.id) && /[1-9]/.test(user.id)
+    ? user.id
+    : typeof user.id === "number" && Number.isSafeInteger(user.id) && user.id > 0 ? user.id : undefined;
+  // 兼容旧接口只返回 userName 的响应；昵称和“未知”永不充当账号标识。
+  const accountId = uid ? `uid:${uid}` : userId !== undefined ? `id:${userId}` : userName ? `username:${userName}` : "";
+  if (!accountId) return null;
+  return {
+    accountId,
+    loginName: userName || text(user.phone) || text(user.email),
+    displayName: userName || text(user.nickName) || "未知",
+    userId,
+  };
+}
+
 /** Diagnostic only: never include ticket, savedKey, username, or response bodies. */
 export type RegistrationTrace = {
   attempt?: number;
@@ -69,10 +95,12 @@ export function clearRegistration(
 ): void {
   const legacySavedKey = readSetting("auth.saved_key");
   const legacyUsername = readSetting("auth.username");
+  const legacyAccountId = readSetting("auth.account_id");
   for (const key of [
     "auth.config_key",
     "auth.saved_key",
     "auth.username",
+    "auth.account_id",
     "auth.token",
     "auth.online_status",
     "lanproxy.server_host",
@@ -93,6 +121,7 @@ export function clearRegistration(
   if (opts?.preserveSavedKey) {
     if (legacySavedKey != null) writeSetting("auth.saved_key", legacySavedKey);
     if (legacyUsername != null) writeSetting("auth.username", legacyUsername);
+    if (legacyAccountId != null) writeSetting("auth.account_id", legacyAccountId);
   }
 }
 export function initializeCommercialAuth(
@@ -209,8 +238,8 @@ export function initializeCommercialAuth(
       if (!sessionResponse.ok) throw new Error(`Session HTTP ${sessionResponse.status}`);
       const sessionPayload = await sessionResponse.json();
       report("session-check-result", { status: sessionResponse.status, code: registrationTraceCode(sessionPayload?.code) });
-      const username = sessionPayload?.data?.userName;
-      if (sessionPayload?.code !== "0000" || typeof username !== "string" || !username)
+      const account = resolveCommercialAccount(sessionPayload?.data);
+      if (sessionPayload?.code !== "0000" || !account)
         throw new Error("Cookie session is not authenticated");
       if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
         throw new Error("Session changed during registration");
@@ -232,7 +261,8 @@ export function initializeCommercialAuth(
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         body: JSON.stringify({
-          username,
+          // Cookie 决定认证主体；兼容字段只带真实登录名，不使用昵称或展示兜底。
+          username: account.loginName,
           password: "",
           ...(savedKey ? { savedKey } : {}),
           deviceId,
@@ -285,17 +315,18 @@ export function initializeCommercialAuth(
         value.serverPort > 65535
       )
         throw new Error("Incomplete registration response");
-      return { ...value, origin, username };
+      return { ...value, origin, account };
     },
     commit: (value) => {
       writeSetting("auth.config_key", value.configKey);
       writeSetting("auth.saved_key", value.configKey);
-      writeSetting("auth.username", value.username);
+      writeSetting("auth.username", value.account.loginName || null);
+      writeSetting("auth.account_id", value.account.accountId);
       writeSetting("auth.online_status", value.online);
       writeSetting("auth.user_info", {
         id: value.id,
-        username: value.username,
-        displayName: value.name,
+        username: value.account.loginName,
+        displayName: value.account.displayName,
         currentDomain: value.origin,
       });
       writeSetting("lanproxy.server_host", value.serverHost);
