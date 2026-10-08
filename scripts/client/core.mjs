@@ -30,7 +30,7 @@ export function run(command, args = [], options = {}) {
   }
   const result = spawnSync(executable, argv, {
     ...rest, cwd, env: env ? { ...process.env, ...env } : process.env,
-    stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: [rest.input !== undefined ? 'pipe' : capture ? 'ignore' : 'inherit', capture ? 'pipe' : 'inherit', capture ? 'pipe' : 'inherit'],
     encoding: 'utf8', shell, windowsHide: true, maxBuffer: 32 * 1024 * 1024,
   });
   const output = { status: result.status ?? 1, stdout: result.stdout || '', stderr: result.stderr || '' };

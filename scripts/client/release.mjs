@@ -79,48 +79,49 @@ export function verifyManifests(manifests, assets, identity, source) {
     throw new Error('Windows 构建清单缺少签名来源记录');
 }
 
-export function remoteScript(state, settings, resume = {}) {
-  const { tag, sha, version, source } = state;
-  const work = `${settings.windowsClientDir.replace(/\/$/, '')}/../.nuwax-release-${tag}-${sha.slice(0, 12)}`;
-  const signWork = `/c/tmp/nuwax-sign/${tag}-${sha.slice(0, 12)}`;
-  // All paths and values are shell quoted; no caller-supplied text is interpolated as code.
+const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js'];
+
+export async function committedSigningTools(tools, root, automationSha) {
+  const pin = await tools.git(['rev-parse', `${automationSha}:nuwa-electron-shell`]);
+  if (!shaPattern.test(pin)) throw new Error('签名工具基座 pin 无效');
+  const files = {};
+  for (const name of signingFiles) {
+    files[name] = await tools.git(['show', `${pin}:crates/agent-electron-client/scripts/build/${name}`], path.join(root, 'nuwa-electron-shell'));
+    if (!files[name]) throw new Error(`已提交签名工具为空：${name}`);
+  }
+  return { pin, files };
+}
+
+export function remoteScript(state, settings, signing) {
+  const { tag, sha, version } = state;
+  if (!hashPattern.test(signing?.unsignedSha256 ?? '') || !shaPattern.test(signing?.pin ?? ''))
+    throw new Error('签名需要构建清单 SHA256 和已提交工具 pin');
+  const payload = signingFiles.map(name => {
+    if (!signing.files?.[name]) throw new Error(`缺少签名工具 ${name}`);
+    return `printf '%s' ${quote(Buffer.from(signing.files[name]).toString('base64'))} | base64 -d > "$toolwork/${name}"`;
+  }).join('\n');
+  const signWork = `${(settings.windowsSignDir ?? '/c/tmp/nuwax-sign').replace(/\/$/, '')}/${tag}-${sha.slice(0, 12)}`;
+  // Stream committed tools through SSH stdin; Windows needs no app/source checkout.
   return `set -euo pipefail
 export PATH=${quote(settings.signGhPath)}:"$PATH"
-repo=${quote(settings.windowsClientDir)}
-work=${quote(work)}
 signwork=${quote(signWork)}
+mkdir -p "$signwork/unsigned"
+signlock="$signwork/.sign-lock"
+mkdir "$signlock" || { echo '该 tag/SHA 已有签名任务运行；请先确认该任务状态' >&2; exit 1; }
+toolwork=""
+trap 'if [ -n "$toolwork" ]; then rm -rf "$toolwork"; fi; rmdir "$signlock"' EXIT
 unsigned="$signwork/unsigned/Nuwax-Setup-${version}-unsigned.exe"
-# Draft 期间远端 digest 查询受限，基座脚本缓存校验拿不到哈希会整包重下；
-# 本地已有同 SHA256 的 unsigned EXE 时改用 --skip-download 续跑（哈希由 mac 侧构建清单提供）。
-resume=""
-if [ -f "$unsigned" ] && [ "$(sha256sum "$unsigned" | awk '{print $1}')" = ${quote(resume.unsignedSha256 ?? '')} ]; then
-  resume="--skip-download"
+expected=${quote(signing.unsignedSha256)}
+# 缓存与下载均按 CI 清单验证，签名之前禁止消费其他字节。
+if [ ! -f "$unsigned" ] || [ "$(sha256sum "$unsigned" | awk '{print $1}')" != "$expected" ]; then
+  gh release download ${quote(tag)} --repo ${quote(settings.repo)} --pattern ${quote(`Nuwax-Setup-${version}-unsigned.exe`)} --dir "$signwork/unsigned" --clobber
 fi
-# git>=2.5x fetch 默认递归子模块：新拉历史中若有孤立 pin（未推送提交）会炸 upload-pack，显式关闭
-git -c fetch.recurseSubmodules=no -C "$repo" fetch origin ${quote(`refs/tags/${tag}`)}
-test "$(git -C "$repo" rev-parse 'FETCH_HEAD^{commit}')" = ${quote(sha)}
-if [ -d "$work" ]; then
-  test "$(git -C "$work" rev-parse HEAD)" = ${quote(sha)}
-  test -z "$(git -C "$work" status --porcelain --untracked-files=no --ignore-submodules=dirty)"
-else
-  git -C "$repo" worktree add --detach "$work" ${quote(sha)}
-fi
-cd "$work"
-# worktree 共享本地配置；签名机的开发检出可能用本地缓存 URL。
-# 只在本次命令中使用目标源码声明的 URL，保留开发检出的配置。
-shellurl="$(git config --file .gitmodules --get submodule.nuwa-electron-shell.url)"
-git -c "submodule.nuwa-electron-shell.url=$shellurl" submodule update --init nuwa-electron-shell
-# 新版 git submodule update 会检出声明分支尖而非 gitlink（win git 2.53 实测），强制钉回发布 pin
-git -C nuwa-electron-shell checkout -q -f ${quote(source.shell)}
-test "$(git -C nuwa-electron-shell rev-parse HEAD)" = ${quote(source.shell)}
-node scripts/sync-overlay.js
-cd nuwa-electron-shell/crates/agent-electron-client
-SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true npm run sign:win -- ${quote(version)} $resume
-# 签名上传成功后清理一次性 worktree 残留（其他 tag 与旧版命名后缀）；失败路径不执行，保留续跑现场。
-for stale in "$(dirname "$work")"/.nuwax-release-*; do
-  if [ ! -e "$stale" ] || [ "$stale" = "$work" ]; then continue; fi
-  git -C "$repo" worktree remove --force "$stale" >/dev/null 2>&1 || rm -rf "$stale" 2>/dev/null || true
-done
+test "$(sha256sum "$unsigned" | awk '{print $1}')" = "$expected" || { echo 'unsigned EXE 与 CI 清单 SHA256 不一致' >&2; exit 1; }
+toolwork="$(mktemp -d "$signwork/.tools-XXXXXX")"
+${payload}
+echo ${quote(`[release] signing tools base ${signing.pin}; target ${tag} @ ${sha}`)}
+cd "$toolwork"
+SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true bash "$toolwork/sign-release-win-v2.sh" ${quote(version)} --skip-download
 `;
 }
 
@@ -145,6 +146,7 @@ function defaultAdapters(root, settings) {
   return {
     git: (args, directory = root, options = {}) => git(directory, args, options),
     exec: execute, gh, sleep, log: console.log,
+    signingTools: (automationSha) => committedSigningTools({ git: (args, directory) => git(directory ?? root, args) }, root, automationSha),
     fetchBytes: async (url) => {
       const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
@@ -344,13 +346,12 @@ export async function release(root, options = {}, injected = {}) {
   if (stage === 'sign' && identity.channel !== 'stable') throw new Error('--stage sign 仅适用 stable（beta 不做 Windows 签名）');
   const settings = { ...config.release, ...(options.settings ?? {}),
     signHost: process.env.RELEASE_SIGN_HOST ?? options.settings?.signHost ?? config.release.signHost,
-    windowsClientDir: process.env.WIN_CLIENT_DIR ?? options.settings?.windowsClientDir ?? config.release.windowsClientDir,
     signGhPath: process.env.SIGN_GH_PATH ?? options.settings?.signGhPath ?? config.release.signGhPath };
   const tools = { ...defaultAdapters(root, settings), ...injected, ...(options.adapters ?? {}) };
   const state = await preflight(root, identity, options, tools, settings);
   const steps = ['校验已提交发布说明、远端 HEAD 与子模块 pin', `确保不可变 tag ${identity.tag} 指向 ${state.sha}`,
     `跟踪 ${identity.buildWorkflow} 同 tag/SHA 的 push run`, '校验五平台来源及安装资产',
-    ...(identity.channel === 'stable' && stage !== 'sync' ? [`在 ${settings.signHost} 使用 tagged 签名脚本；SimplySign 手机认证须人工完成`] : []),
+    ...(identity.channel === 'stable' && stage !== 'sync' ? [`在 ${settings.signHost} 使用当前已提交的签名工具下载、签名、上传；SimplySign 手机认证须人工完成`] : []),
     ...(stage === 'sign' ? ['仅签名阶段（--stage sign）：不同步 OSS/S3']
       : identity.channel === 'stable' ? ['dispatch 同步 workflow，固定当前分支 ref'] : ['跟踪自动 beta 同步；同步失败可重跑续接']),
     ...(stage === 'sign' ? [] : ['验证公开 Release、GitHub/S3/OSS SHA256 与通道指针'])];
@@ -404,10 +405,11 @@ export async function release(root, options = {}, injected = {}) {
   if (identity.channel === 'stable' && !view.assets.some((asset) => asset.name === identity.windows)) {
     if (stage === 'sync') throw new Error(`stable 同步前缺少签名资产 ${identity.windows}：先运行 --stage sign 完成签名`);
     tools.log(`[release] Windows 签名阶段：请确认 ${settings.signHost} SimplySign Desktop 已完成手机认证`);
+    const signing = await tools.signingTools(state.automationSha);
     const script = remoteScript(state, settings,
-      { unsignedSha256: manifests['windows-x64'].artifacts[`Nuwax-Setup-${identity.version}-unsigned.exe`] });
-    try { await tools.exec('ssh', [settings.signHost, `bash -lc ${quote(script)}`]); }
-    catch (error) { throw new Error(`Windows 签名未完成。请在 ${settings.signHost} 完成 SimplySign 手机认证并检查证书/工具；重跑同版本可续接。${error.message}`); }
+      { ...signing, unsignedSha256: manifests['windows-x64'].artifacts[`Nuwax-Setup-${identity.version}-unsigned.exe`] });
+    try { await tools.exec('ssh', [settings.signHost, "bash -lc 'bash -s'"], { input: script }); }
+    catch (error) { throw new Error(`Windows 签名未完成。请检查 ${settings.signHost} 下载、工具及证书状态；需要时完成 SimplySign 手机认证，重跑同 tag/SHA 可续接。${error.message}`); }
     view = await releaseView(tools, settings, identity);
     if (!view.assets.some((asset) => asset.name === identity.windows)) throw new Error(`签名后仍缺少 ${identity.windows}`);
   }

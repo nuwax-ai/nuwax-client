@@ -16,8 +16,8 @@
    ```
 
 3. `gh auth login` 完成 GitHub CLI 登录（需对 `nuwax-ai/nuwax-client` 有 Release 写权限）。
-4. 壳仓 clone + submodule 初始化（见 README「本地开发」）；本地运行基座脚本前
-   先 `npm run base:install`（会同步 overlay 覆写基座工作树）。
+4. SSH 编排只需要签名机的 Git Bash、Node、gh 与签名工具/证书环境；无需 clone 应用仓库、安装 npm 依赖或同步 overlay。
+   本地开发入口 `npm run sign:win` 仍可在已有开发检出中使用。
 
 ## stable 发版流程（每次）
 
@@ -57,68 +57,40 @@ npm run sign:win -- <version>
   缺少该记录的旧构建清单不能通过新同步门禁；需要重同步时须重新构建。
 - 排障（Release 资产名对照、gh 找不到等）见基座 windows-signing.md 同名章节。
 
-## SSH 远程代跑（2026-09-15 起，一条龙编排）
+## SSH 远程签名：只下载、签名、上传
 
-签名步骤可从 mac 经 ssh 在签名机（`win-pc`）上代跑，全程编排在
-`scripts/release-stable.sh`（tag → CI → 远程签名 → stable 同步 → 验证，断点续跑），
-无需人工上机敲命令。人工前置只剩一件：**SimplySign Desktop 登录（手机 2FA）**。
-签名后重跑时，Release 仅有签名版 EXE 也会通过资产前置检查；`--notes` 允许
-指定说明文件尚未提交，脚本会先单独提交并推送它。
+从 mac 运行外层 `npm run release`。正式包先由 GitHub Actions 构建，外层核对目标 tag/SHA、五平台来源及 Windows unsigned 清单，再通过 SSH 将**当前自动化提交所 pin 的基座签名工具**传给 `win-pc`。工具通过 stdin 传输，避免 Windows 命令长度限制。
 
-签名与同步需要分开跑时（跨天发版、签名机现场直签后回 mac 同步等场景）用
-`--stage` 拆开，两个阶段各自携带完整前置校验、可独立续跑：
+Windows 端只执行以下安装包步骤：
+
+1. 按目标 tag 下载 unsigned EXE；缓存和新下载的字节均须匹配 CI 清单 SHA256。
+2. 使用 Certum SimplySign 签名并以 signtool 验签；手机认证仍由用户完成。
+3. 上传签名 EXE 成功后才删除 Release 上的 unsigned 资产。失败保留安装包缓存，以原 tag/SHA 重跑。
+
+签名机不检出源码、不初始化子模块、不同步 overlay、不构建，也不清理任何开发 worktree。临时签名工具在该次任务结束时移除，安装包缓存保留在 `/c/tmp/nuwax-sign/<tag>-<source SHA 前12位>/`。来源校验、真实安装验收和 OSS/S3 同步属于外层发布流程。
 
 ```bash
-npm run release -- --channel stable --version X.Y.Z --stage sign   # 只到签名资产就位
-npm run release -- --channel stable --version X.Y.Z --stage sync   # 只 dispatch 同步 + 镜像验证
+npm run release -- --version 3.0.10 --stage sign
+# 历史 tag 续跑：使用当前已提交工具，目标源码固定在原 tag
+npm run release -- --tag v3.0.10 --stage sign
+# 完成真实安装包验收后再同步、公开
+npm run release -- --tag v3.0.10 --stage sync
 ```
 
-`--stage sync` 在 stable 缺签名资产时会拒绝并提示先跑 `--stage sign`；beta 无签名
-阶段，`--stage sign` 不适用。
+stable 默认停在签名阶段并保留 Draft。`--stage sync` 缺签名资产时会拒绝；beta 不使用 `--stage sign`。`--channel` 仅作版本/tag 的一致性校验。发布说明使用已提交的 `release-notes/<tag>.md`，历史 tag 续跑不得修改其源码和说明。
 
-win-pc 一次性配置记录（已做，勿重复）：
+签名机一次性环境：`gh auth login`、SimplySign Desktop、Windows SDK signtool 与 Node。SSH 会话须显式加入 `/c/Program Files/GitHub CLI`，编排已内置；证书环境由现有 Git Bash 登录环境提供，密钥不进入仓库或日志。
 
-- `winget install GitHub.cli` + `gh auth login`（mac 侧 `gh auth token | ssh win-pc "bash -lc 'gh auth login --with-token'"` 管道，token 不落日志）；
-- `WINDOWS_CERTIFICATE_SHA1` 在 `~/.bashrc`；signtool 用 Windows Kits 自带（`.../Windows Kits/10/bin/*/x64/signtool.exe`）；
-- **sshd 会话 PATH 不含 MSI 装的 gh**（新开 ssh 会话拿旧环境），调用时须显式
-  `export PATH="/c/Program Files/GitHub CLI:$PATH"`——编排脚本已内置。
-
-### 签名机上本地直签（续签/排查用）
-
-正常发版无需上机（mac 侧 `npm run release` SSH 编排同款命令）。SSH 链路不可用或需要
-现场排查时，在签名机上按同一口径直跑：
+现场排查可在已部署的工具目录直接运行（不需要应用源码）：
 
 ```bash
-cd /c/soddy-git-workspace/nuwax-client
-tag=v<version>                       # 例 v3.0.10
-git fetch origin "refs/tags/$tag"
-sha=$(git rev-parse "FETCH_HEAD^{commit}")
-work=../.nuwax-release-$tag-${sha:0:12}
-git worktree add --detach "$work" "$sha" 2>/dev/null || true   # 已存在时复用
-cd "$work"
-shellurl=$(git config --file .gitmodules --get submodule.nuwa-electron-shell.url)
-git -c "submodule.nuwa-electron-shell.url=$shellurl" submodule update --init nuwa-electron-shell
-node scripts/sync-overlay.js
-cd nuwa-electron-shell/crates/agent-electron-client
-SIGN_RELEASE_TAG="$tag" SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
-SIGN_WORK_DIR=/c/tmp/nuwax-sign/$tag-${sha:0:12} \
+SIGN_RELEASE_TAG=v3.0.10 SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
+SIGN_WORK_DIR=/c/tmp/nuwax-sign/v3.0.10-708a46cc3e71 \
 SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true \
-npm run sign:win -- <version>
+bash ./sign-release-win-v2.sh 3.0.10
 ```
 
-要点：
-
-- **重跑免重下**：draft 期间远端 digest 查询受限，签名脚本缓存校验拿不到哈希会整包
-  重下（~731MB）。SimplySign 2FA 超时重试时，若 `SIGN_WORK_DIR/unsigned/` 已有完整
-  unsigned EXE 且其 SHA256 与 Release 上 `build-manifest-windows-x64.json` 记录一致，
-  追加 `--skip-download` 续跑（`release` 编排已内置此判定）。
-- 签名留档在 `SIGN_WORK_DIR/signed/`（每版 unsigned+signed ~1.5GB，无人自动清理，
-  需要时手动清旧 tag 目录）。
-- 编排脚本在签名成功后会自动清理其他 `.nuwax-release-*` 一次性 worktree（其他 tag
-  与旧命名后缀）；手动直签场景须自行 `git worktree remove`。
-
-已知取舍：v2 签名脚本默认 `SIGN_SKIP_BLOCKMAP=true`，签名版 EXE 不重生成 blockmap，
-Windows 自动更新走全量下载（非差分）；需要差分时在签名机上手动生成并补传。
+只有 unsigned 文件 SHA256 与构建清单一致时才可加 `--skip-download`；自动编排已执行该验证。签名缓存无人自动清理，需要时手动清旧 tag 目录。默认不生成签名版 blockmap，Windows 自动更新走全量下载。
 
 ## 同步 OSS（stable 须先完成上面签名）
 

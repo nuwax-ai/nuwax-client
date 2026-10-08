@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { release, releaseIdentity, remoteScript, selectRun, verifyManifests, verifyMirrors } from './client/release.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { run } from './client/core.mjs';
+import { release, releaseIdentity, committedSigningTools, remoteScript, selectRun, verifyManifests, verifyMirrors } from './client/release.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40), dist: 'd'.repeat(40) };
-const settings = { repo: 'example/client', signHost: 'win-fixture', windowsClientDir: '/c/work/client', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
+const settings = { repo: 'example/client', signHost: 'win-fixture', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
 
 function fixture({ channel = 'stable', signed = true, publicRelease = true } = {}) {
   const version = channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';
@@ -57,6 +62,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
   const successfulSync = { databaseId: 20, headBranch: 'release-fixture', headSha: source.client, event: 'workflow_dispatch', displayTitle: `Sync ${channel} ${identity.tag}`, status: 'completed', conclusion: 'success' };
   const state = { remoteTag: source.client, remoteHead: source.client, syncRuns: publicRelease ? [successfulSync] : [], builds: [build], lookup: 0, releaseTags: '', sequenceReads: 0 };
   const adapters = {
+    signingTools: async (sha) => { calls.push(['signingTools', sha]); return { pin: source.shell, files: { 'sign-release-win-v2.sh': '#!/bin/bash\nexit 0', 'sign-win.js': '// committed signer' } }; },
     log: (message) => calls.push(['log', message]), sleep: async (ms) => calls.push(['sleep', ms]),
     git: async (args) => {
       calls.push(['git', ...args]);
@@ -97,8 +103,8 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
       }
       throw new Error(`unexpected gh ${args}`);
     },
-    exec: async (command, args) => {
-      calls.push(['exec', command, ...args]);
+    exec: async (command, args, options = {}) => {
+      calls.push(['exec', command, ...args, ...(options.input ? [options.input] : [])]);
       if (command === 'ssh') { if (state.signFailure) throw new Error('authentication unavailable'); sign(); }
       if (command === 'gh' && args[0] === 'workflow') state.syncRuns = [{ ...successfulSync, headSha: state.remoteHead, databaseId: 21, status: 'in_progress', conclusion: null }];
       return { status: 0, stdout: '', stderr: '' };
@@ -255,7 +261,7 @@ test('stable defaults to signing, then publishes only after explicit acceptance 
   const result = await f.run();
   assert.equal(result.version, '1.2.3');
   const ssh = f.calls.find(([type, command]) => type === 'exec' && command === 'ssh');
-  assert.match(ssh.at(-1), /worktree add --detach/);
+  assert.doesNotMatch(ssh.at(-1), /worktree|submodule|sync-overlay|npm run|git -/);
   assert.match(ssh.at(-1), /SIGN_RELEASE_REPO/);
   assert.match(ssh.at(-1), /aaaaaaaaaaaa/);
   assert.match(ssh.at(-1), /SIGN_SKIP_BLOCKMAP=true/);
@@ -276,15 +282,68 @@ test('signing resume embeds the manifest unsigned SHA256 for --skip-download', a
   assert.match(ssh.at(-1), /--skip-download/);
 });
 
-test('remote script keeps the active worktree and prunes stale one-shot signing worktrees', () => {
-  const identity = releaseIdentity('stable', '1.2.3');
-  const script = remoteScript({ tag: identity.tag, sha: source.client, version: identity.version, source }, settings);
-  assert.match(script, /\.nuwax-release-v1\.2\.3-aaaaaaaaaaaa/);
-  assert.match(script, /\[ "\$stale" = "\$work" \]/);
-  assert.match(script, /worktree remove --force "\$stale"/);
-  // 无清单哈希时续跑守卫恒为假：与空串比较，绝不盲跳下载
-  assert.match(script, /= ''/);
-  assert.doesNotMatch(script, /' [0-9a-f]{64}'|=[ ]*'[0-9a-f]{64}'/);
+test('signing tools use committed automation pin independently of historical target source', async () => {
+  const calls = [];
+  const tools = { git: async (args, directory) => {
+    calls.push({ args, directory });
+    return args[0] === 'rev-parse' ? source.shell : '# committed tool';
+  } };
+  const bundle = await committedSigningTools(tools, '/automation', source.dist);
+  assert.equal(bundle.pin, source.shell);
+  assert.deepEqual(calls[0].args, ['rev-parse', `${source.dist}:nuwa-electron-shell`]);
+  assert.ok(calls.slice(1).every(call => call.directory === '/automation/nuwa-electron-shell' && call.args[1].startsWith(`${source.shell}:`)));
+  assert.throws(() => remoteScript({ tag: 'v1.2.3', sha: source.client, version: '1.2.3' }, settings, bundle), /清单 SHA256/);
+});
+
+test('command runner streams tool payload through stdin without putting it in argv', () => {
+  const payload = 'a'.repeat(60000) + '\n';
+  const result = run(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { capture: true, input: payload });
+  assert.equal(result.stdout, payload);
+});
+
+test('standalone signing deploys tools, verifies cached/downloaded bytes, and retains retry artifacts', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-sign-standalone-'));
+  try {
+    const bin = path.join(directory, 'bin'); fs.mkdirSync(bin);
+    const log = path.join(directory, 'calls');
+    const downloaded = path.join(directory, 'downloaded.exe');
+    fs.writeFileSync(downloaded, 'expected CI unsigned bytes');
+    fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FIXTURE_LOG"
+dir=""; pattern=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in --dir) dir="$2"; shift;; --pattern) pattern="$2"; shift;; esac
+  shift
+done
+cp "$FIXTURE_DOWNLOAD" "$dir/$pattern"
+`, { mode: 0o755 });
+    const signer = `#!/bin/bash
+set -euo pipefail
+test -f "$(dirname "$0")/sign-win.js"
+printf 'sign %s %s %s\\n' "$SIGN_RELEASE_TAG" "$1" "$2" >> "$FIXTURE_LOG"
+cp "$SIGN_WORK_DIR/unsigned/Nuwax-Setup-$1-unsigned.exe" "$SIGN_WORK_DIR/signed.exe"
+exit "\${FIXTURE_SIGN_STATUS:-0}"
+`;
+    const state = { tag: 'v1.2.3', sha: source.client, version: '1.2.3' };
+    const script = remoteScript(state, { ...settings, signGhPath: bin, windowsSignDir: directory }, {
+      unsignedSha256: digest(fs.readFileSync(downloaded)), pin: source.shell,
+      files: { 'sign-release-win-v2.sh': signer, 'sign-win.js': '// neutral committed tool' },
+    });
+    const execute = (env = {}) => spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: { ...process.env, FIXTURE_LOG: log, FIXTURE_DOWNLOAD: downloaded, ...env } });
+    const cache = path.join(directory, 'v1.2.3-aaaaaaaaaaaa');
+    const first = execute(); assert.equal(first.status, 0, first.stderr);
+    assert.equal(fs.readFileSync(log, 'utf8').split('release download').length - 1, 1);
+    const retry = execute({ FIXTURE_SIGN_STATUS: '1' }); assert.equal(retry.status, 1);
+    assert.equal(fs.readFileSync(log, 'utf8').split('release download').length - 1, 1, 'verified cache skips download');
+    assert.ok(fs.existsSync(path.join(cache, 'signed.exe')));
+    assert.ok(fs.readdirSync(cache).every(name => !name.startsWith('.tools-') && name !== '.sign-lock'));
+    fs.writeFileSync(path.join(cache, 'unsigned', 'Nuwax-Setup-1.2.3-unsigned.exe'), 'bad cache');
+    fs.writeFileSync(downloaded, 'wrong downloaded bytes');
+    const bad = execute(); assert.notEqual(bad.status, 0); assert.match(bad.stderr, /SHA256/);
+    assert.equal(fs.readFileSync(log, 'utf8').split('sign v1.2.3').length - 1, 2, 'bad download never reaches signing');
+    assert.doesNotMatch(script, /worktree|submodule|sync-overlay|npm run|git -/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('--stage sign signs without dispatching sync, and is a no-op when already signed', async () => {
@@ -317,7 +376,7 @@ test('--stage sign is refused for beta releases', async () => {
 
 test('SimplySign failure is actionable and leaves remote release resumable', async () => {
   const f = fixture({ signed: false, publicRelease: false }); f.state.signFailure = true;
-  await assert.rejects(f.run(), /SimplySign 手机认证.*重跑同版本可续接/);
+  await assert.rejects(f.run(), /SimplySign 手机认证.*重跑同 tag\/SHA 可续接/);
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
 });
 
