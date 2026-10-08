@@ -68,8 +68,8 @@ export class SessionTicketProvenance {
   }
 }
 
-// API/download documents need explicit source admission before a committed frame.
-// Ordinary GET pages follow normal browser navigation separately below.
+// Gateway API/download documents and non-GET business documents need explicit
+// source admission before a committed frame. Business GET pages follow normal navigation.
 const initialNavigations = new WeakMap<WebContents, string>();
 export function trustInitialBusinessNavigation(
   contents: WebContents,
@@ -90,13 +90,16 @@ function trustedRequest(
     const trustedOrigin = (url: string) => context.trustedOrigins.some((origin) =>
       matchesBusinessOrigin(url, origin));
     const target = new URL(details.url);
-    const ordinaryDocument = (details.method ?? "GET").toUpperCase() === "GET" &&
-      /^https?:$/.test(target.protocol) && !target.username && !target.password &&
-      trustedOrigin(details.url) &&
+    const getDocument = (details.method ?? "GET").toUpperCase() === "GET" &&
+      /^https?:$/.test(target.protocol) && !target.username && !target.password;
+    const ordinaryDocument = getDocument && trustedOrigin(details.url) &&
       target.pathname !== "/api" && !target.pathname.startsWith("/api/");
+    // Match the current platform origin, independently of its domain and routes.
+    // Only keep Chromium's selected cookie; never lend it to the source app.
+    const businessDocument = getDocument && matchesBusinessOrigin(details.url, context.businessOrigin);
     // Top-level GET links and cross-origin returns are browser navigations, even
     // when the previous page was third-party or the new popup has no frame yet.
-    if (ordinaryDocument && details.resourceType === "mainFrame") return true;
+    if ((ordinaryDocument || businessDocument) && details.resourceType === "mainFrame") return true;
     if (details.frame?.detached) return false;
     if (trustedOrigin(topUrl)) {
       if (ordinaryDocument && details.resourceType === "subFrame") return true;

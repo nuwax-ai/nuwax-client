@@ -44,6 +44,7 @@ import { buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
+import { createAutoLaunchManager } from "./window/autoLaunchManager";
 import { createServiceManager } from "./window/serviceManager";
 import { createTrayServiceActions } from "./window/trayServiceActions";
 import { initAutoUpdater, showUpdateDialogFlow } from "./services/autoUpdater";
@@ -686,6 +687,7 @@ app.whenReady().then(async () => {
 
   migrateDataDir();
   initDatabase();
+  await createAutoLaunchManager().initializeDefault();
   migrateSettingsPaths();
   getDeviceId();
 
