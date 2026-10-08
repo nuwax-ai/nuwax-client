@@ -12,4 +12,6 @@ v3.0.11-beta.3 的 Windows job 113231822050 在 WiX light.exe 链接 MSI 时返�
 
 用户接管真机和 QA 客户端验证，本任务只完成自动化检查、Actions 打包和镜像同步，不启动或替换真实客户端。
 
-本地完成：20 项针对性测试及 252 项全量脚本测试通过；四 workflow actionlint、overlay:check、host-bridge:check、check:pin --remote origin/main 与 diff 检查通过。三问与失败证据落在 docs/acceptance/20261008-release-channels.md。待 GitHub 三轨检查、beta.4 五平台构建和镜像同步实测。
+本地完成：20 项针对性测试及 252 项全量脚本测试通过；四 workflow actionlint、overlay:check、host-bridge:check、check:pin --remote origin/main 与 diff 检查通过。三问与失败证据落在 docs/acceptance/20261008-release-channels.md。
+
+2026-10-08 实测完成：PR #17 的三轨检查通过，合入 release/v3.0.x 后，v3.0.11-beta.4@21f4500f 的 run 37760448840 五平台全部成功。Windows 实际输出为 D:/a/_temp/nw-37760448840-1-x64，原 260 字符文件路径缩至 190 字符，MSI/NSIS、来源记录和 Release 上传全部成功。后续同步 job 113295991814 通过，Verify S3 upload 从 v3.0.10 的 322 秒缩至本轮约 6 秒；实际观察到服务端 SHA256 COMPOSITE/FULL_OBJECT，大安装包未完整读回。beta 两镜像为 3.0.11-beta.4 且字节一致，stable 两镜像保留 3.0.10 原字节。完整日志、UTC 时间及指针 SHA256 已补入上述验收文档；真实安装/升级仍由用户验收。

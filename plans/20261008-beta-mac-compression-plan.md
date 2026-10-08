@@ -1,6 +1,6 @@
 # Beta macOS 压缩配置对齐
 
-v3.0.11-beta.4 的 Windows/Linux 构建已成功，Mac 仍在打包。检查固定基座的 run-build-electron.js，构建命令显式使用 compression=maximum；stable workflow 通过 ELECTRON_BUILDER_COMPRESSION_LEVEL=1 覆盖，beta 缺少对应配置。实际 SDK 25.1.8 的 ZIP/7z 参数生成器支持该覆盖。
+v3.0.11-beta.4 的五平台构建已成功。检查固定基座的 run-build-electron.js，构建命令显式使用 compression=maximum；stable workflow 通过 ELECTRON_BUILDER_COMPRESSION_LEVEL=1 覆盖，beta 缺少对应配置。实际 SDK 25.1.8 的 ZIP/7z 参数生成器支持该覆盖。
 
 - beta 的所有 macOS 构建使用与 stable 相同的压缩级别 1，保留 DMG/ZIP、完整资源、签名、公证和来源验证。
 - 执行实际 workflow 的构建命令夹具，核对 Mac 两架构与非 Mac 分支，并调用固定 SDK 验证有效 ZIP/7z 压缩参数。
@@ -10,6 +10,8 @@ v3.0.11-beta.4 的 Windows/Linux 构建已成功，Mac 仍在打包。检查固�
 
 本地验证：17 项 beta/QA workflow 测试全部通过，无 skip；四 workflow 的 actionlint 1.7.12 与 diff 检查通过。隔离工作区用 NUWAX_TEST_BUILDER_CLIENT_DIR 只读复用已安装的 25.1.8，直接调用 computeZipCompressArgs/compute7zCompressArgs，验证 maximum 默认 level 9、执行实际 workflow 后 Mac 两架构有效 level 1、Windows/Linux 不注入该覆盖。
 
-三问：内聚——压缩覆盖仅在既有 Mac 构建分支；分层——沿用 builder 官方环境配置，不改客户端、来源或更新协议；可维护——真实命令与固定 SDK 回归覆盖有效参数，签名/公证步骤和三个 gitlink 未变。合并仍等待 GitHub 三轨门禁。
+三问：内聚——压缩覆盖仅在既有 Mac 构建分支；分层——沿用 builder 官方环境配置，不改客户端、来源或更新协议；可维护——真实命令与固定 SDK 回归覆盖有效参数，签名/公证步骤和三个 gitlink 未变。GitHub 三轨门禁已通过，合并结果见下文。
+
+2026-10-08 实测与合并结果：beta.4 的 Mac arm64 ZIP 开始于 10:50:08、blockmap 开始于 11:46:41 UTC，约 56 分 33 秒；x64 为 10:51:42—11:48:11 UTC，约 56 分 30 秒。两架构签名、公证和 Notarized Developer ID 验证均通过。该包仍使用旧最大压缩配置；PR #18 的三轨门禁通过后已合入 d3aca75a，新配置的实际耗时与包体变化待后续 Actions 实测，不能用 SDK/命令夹具结果替代。beta.4 已完成公开及 S3/OSS 同步，Verify S3 约 6 秒，stable 保持 3.0.10 原字节；完整证据已记录在 docs/acceptance/20261008-release-channels.md。
 
 发布线后续已有 5fcdb019、3c2bffaf、1a0eadb5：OAuth 导航/弹窗会话匹配、桌面开机启动/状态反馈及前端双 pin 更新。按用户「合并最新代码」要求将这些已提交代码合入本分支，未提交 WIP 保留。新的前端源码 f8dbcb4a、产物 5739f983 随发布线消费；基座仍为 d078bb3c。准备 beta.5 说明，三轨门禁通过并合并后用下一可用 tag 交付最新代码；beta.4 保持 21f4500f 用于本轮链路实测。

@@ -95,3 +95,26 @@ v3.0.11-beta.2@fdefc2ba 的 run 37749699954 三轨门禁成功，用户追加分
 原 run 37752266150 已取消其他四个平台，公开/同步跳过，Draft 无资产；tag/SHA 保留并占用 beta.3。修复改变 workflow，需要下一候选 beta.4，不在原 tag 上替换源码。用户接管后续真机与 QA 客户端验证，不再由本任务启动或替换客户端。
 
 本批三问：内聚——短输出计算与输入校验集中于 configure-windows-output.mjs，两套 workflow 仅调用；分层——builder 输出配置、来源记录、Release 上传与 QA staging 共用 NUWAX_WINDOWS_OUTPUT_DIR，应用版本、资源、签名和压缩规则保持现有策略；可维护——真实脚本和 workflow 命令夹具覆盖缺失变量提前失败、重试/架构隔离、非法输入零写入，以及完整元数据和资源配置保持。20 项针对性测试和 252 项全量脚本测试通过；actionlint 1.7.12 四 workflow、overlay 133 文件、host-bridge、check:pin --remote origin/main、diff 检查通过。应用源码与三个 pin 未改变，社区/商业全量结果沿用上批记录，新提交仍须 GitHub 三轨门禁通过才合并。
+
+## beta.4 五平台与 Windows 修复实测
+
+2026-10-08，[run 37760448840](https://github.com/nuwax-ai/nuwax-client/actions/runs/37760448840) 的三轨门禁与五平台构建全部成功，随后自动同步并公开 [v3.0.11-beta.4 prerelease](https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.11-beta.4)，共 29 个资产。tag 仍固定在 21f4500f2e9a4c4dbedf86882c060a1ab8da5e88；五平台来源验证使用基座 d078bb3cd、前端源码 307a3d6b2，dist pin 为 67ac1ad。该包不包含之后更新的 f8dbcb4a 或其他较新前端 pin，不能据此验证最新前端功能。
+
+Windows job 113258876524 实际使用 `D:/a/_temp/nw-37760448840-1-x64`，原失败文件的完整路径由 260 字符缩至 190 字符。MSI、NSIS 均构建成功，Build Electron 步骤为 10:24:00—10:36:05 UTC（约 12 分 05 秒）；来源记录与 EXE/MSI 上传继续使用该短目录，确认修复了 beta.3 的 WiX LGHT0103。Windows beta 资产为 `Nuwax-Setup-3.0.11-beta.4-unsigned.exe` 和 `Nuwax.3.0.11-beta.4.msi`；构建成功不等同于已签名或真实安装验收。
+
+Mac 两架构的签名、公证及 `Notarized Developer ID` 验证均通过。beta.4 尚未包含压缩级别 1 的配置，ZIP 从开始构建到生成 blockmap 的观测时间如下（均为 2026-10-08 UTC，不是整个构建步骤耗时）：
+
+| 架构 | ZIP 开始 | ZIP blockmap | 观测间隔 |
+|---|---|---|---|
+| arm64 | 10:50:08 | 11:46:41 | 约 56 分 33 秒 |
+| x64 | 10:51:42 | 11:48:11 | 约 56 分 30 秒 |
+
+beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1`，固定 SDK 参数与真实 workflow 命令夹具通过；新包实际耗时和包体变化仍待后续 Actions 记录。证据日志为执行机 `/tmp/nuwax-beta4-windows-success.log`、`/tmp/nuwax-beta4-macos-arm-success.log`、`/tmp/nuwax-beta4-macos-x64-success.log`。真实客户端安装、升级与业务验收由用户继续验证，本段不补写尚未取得的真机结果。
+
+## beta.4 镜像与 S3 性能实测
+
+[同步 job 113295991814](https://github.com/nuwax-ai/nuwax-client/actions/runs/37760448840/job/113295991814) 成功。Verify S3 upload 步骤为 11:56:52—11:56:58 UTC，约 6 秒；此前 v3.0.10 为 322 秒。此次 29 个资产中，12 个大文件使用服务端 SHA256 COMPOSITE，15 个文件使用 SHA256 FULL_OBJECT；仅 `latest.json` 与 `release-provenance.json` 两个小文件完整读回 SHA256，大安装包未重复完整下载。日志确认实际使用 SHA256，已超出先前仅观察到 CRC64NVME 的验证边界。两个发布输入的资产数量与内容不同，该耗时对比是实际运行记录，不是相同输入的受控基准。OSS 元数据 SHA256 验证亦通过，指针事务输出 `updated=[beta]`。
+
+同步后独立读取四个订阅入口，并对 stable 与同步前保存的原字节进行比较：S3/OSS 的 `latest/latest.json` 均保持 3.0.10、4606 字节、SHA256 `1b29818787ef418300e4a347eec3fdcced89462016dcb576eebaef13e002647d`；两个 `beta/latest.json` 均为 3.0.11-beta.4、5033 字节、SHA256 `d86dfc92bdffc706f195710c643fa14cfeb54ec6a5e3f0e15ccbc2fe82fb461a`，镜像字节一致。该指针快照对应 beta.4 同步完成时，后续更高 beta 发布会继续推进 beta 指针。
+
+证据为执行机 `/tmp/nuwax-beta4-sync.log`、`/tmp/nuwax-v3.0.11-beta.4-pointer-baseline.json`、`/tmp/nuwax-verify-beta4-pointers.mjs` 与 `/tmp/nuwax-v3.0.11-beta.4-pointers-actual.json`；原 tag/SHA、stable 两入口均未改动。

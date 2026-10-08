@@ -201,7 +201,7 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 
 - **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
 - **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
-- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 仍从源码 pin 现场构建。工作区已有 dist 不代表正式包内容。
+- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 仍从源码 pin 现场构建。工作区已有 dist 不代表正式包内容。 direct 优先加载线上前端，不要求包内前端 pin 等于远端最新；发布仍固定可达源码与对应产物，并通过兼容及质量门。
 
 ### 发版流程
 
@@ -223,7 +223,7 @@ npm run release -- --tag v3.0.11 --stage sync
 3. 完成 Windows SimplySign 签名和真实安装包验收后，运行 `npm run release -- --tag v3.0.10 --stage sync`：验证来源和哈希，同步镜像、推进 stable 及较旧 beta 指针，最后公开 Release。
 4. beta 五平台全部成功后自动同步 beta 指针并公开 prerelease。可以多轮 beta 后同号转正，也可直接或连续发 stable；正式 tag 创建后关闭同号 beta。序号从 1 开始，已有 tag/Draft 占用版本，源码变更必须升号。
 
-旧 tag 和资产目录保留，使用 `--tag` 续跑同 SHA。首次上线先发 `v3.0.10` 兼容正式版，之后进入 `v3.0.11-beta.5`。完整规范见 [发布与更新通道](./docs/release-channels.md)，Windows 签名见 [签名指南](./docs/sign-windows.md)，验收见 [发布验收模板](./docs/release-acceptance-template.md)。
+旧 tag 和资产目录保留，使用 `--tag` 续跑同 SHA。首次上线已完成 `v3.0.10` 兼容正式版与 `v3.0.11-beta.4` 的 beta 链路；当前候选 `v3.0.11-beta.5` 固定已提交源码和双 pin；后续前端更新独立交付，不阻塞本轮。完整规范见 [发布与更新通道](./docs/release-channels.md)，Windows 签名见 [签名指南](./docs/sign-windows.md)，验收见 [发布验收模板](./docs/release-acceptance-template.md)。
 
 维护人员可在故障机器上运行 `npm run diagnostics:export -- --output <path>` 导出本地诊断 JSON。它只记录日志级别、组件和错误码统计，以及固定端口连通性；不包含日志正文、凭据或远程上报。
 
@@ -231,7 +231,8 @@ npm run release -- --tag v3.0.11 --stage sync
 
 - [ ] GitHub Settings → Secrets（与社区版同值，共用证书）：`GH_PAT`（可选）+ Apple 签名/公证族（`APPLE_TEAM_ID` 等）+ `MINIO_*` + `OSS_*`
 - [x] `v3.0.10` 兼容 stable 已完成 Actions、Windows 签名、安装验收和 OSS/S3 同步
-- [ ] 发布 `v3.0.11-beta.5` 验证 beta.N 链路；平时可用 `ci-smoke.yml`（workflow_dispatch）快速回归 submodule 链路
+- [x] `v3.0.11-beta.4` 五平台、beta.N 来源与 OSS/S3 同步链路已通过；stable 指针保持 `3.0.10`
+- [ ] `v3.0.11-beta.5` 按固定源码和双 pin 由 Actions 打包；真实客户端验收由用户进行。平时可用 `ci-smoke.yml`（workflow_dispatch）快速回归 submodule 链路
 - [ ] Windows 签名机按 docs/sign-windows.md 完成一次 sign:win 演练
 - [ ] 验证 OSS `nuwax-electron/` 指针与社区版 `nuwaclaw-electron/` 互不影响
 
