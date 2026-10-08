@@ -20,4 +20,6 @@
 实施结束补充实际测试数字、基座/外层提交与 PR、安装包验收结果和未完成的外部条件。
 
 
-2026-10-08：基座中立修复通过 PR #25 合入 main（d38db5b982feb328a5904e59d4021f257af57a86），商业 pin 跟随 main。集成远端 3.0.9 已提交修复和前端双 pin，未纳入原工作区 WIP。质量三问与本地验证见 docs/acceptance/20261008-release-channels.md。用户指定优先通过 GitHub Actions 执行完整 stable 流程，目标 v3.0.10。
+2026-10-08：基座中立修复通过 PR #25 合入 main（d078bb3cd87eb111a38299bb23d9dff819f53c13），商业 pin 跟随 main。集成远端 3.0.9 已提交修复和前端双 pin，未纳入原工作区 WIP。质量三问与本地验证见 docs/acceptance/20261008-release-channels.md。用户指定优先通过 GitHub Actions 执行完整 stable 流程，目标 v3.0.10。
+
+签名上传续跑修复通过基座 PR #26 合入 main，4 项实际 bash/gh 成功和失败测试通过。同步元数据使用固定 Release 创建时间，禁止网络失败时生成变化时间戳。
