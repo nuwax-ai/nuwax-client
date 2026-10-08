@@ -366,14 +366,17 @@ if ($Action -eq 'Restore') {
     $restoredWorkspaces.Add($original) | Out-Null
     $restored++
   }
+  if ($conflicts -gt 0) {
+    # 即使所有条目都冲突，也要保留 marker 和可重试的未完成状态。
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-incomplete'; restored = $restored; conflicts = $conflicts })
+    Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
+    exit 3
+  }
   Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts })
   if ([System.IO.File]::Exists($extendedMarker)) {
     [System.IO.File]::Delete($extendedMarker)
   }
   Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
-  if ($conflicts -gt 0) {
-    exit 3
-  }
   exit 0
 }
 
@@ -385,7 +388,7 @@ if ($recoveryDir) {
     $status = [string]$records[$index].status
     if ($status -in @('restore-complete', 'rollback-complete')) {
       $lastTerminal = $index
-    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored')) {
+    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
       $lastPartialRestore = $index
     } elseif ($status -in @('planned', 'moved')) {
       $lastPrepareChange = $index

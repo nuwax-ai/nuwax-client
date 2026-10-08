@@ -6,11 +6,14 @@
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
+# workflow_dispatch / codex/beta-qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
+# manifest 的 qa-v完整版本是独立构建标识，不创建 tag/Release，不改更新指针。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/v{x.y.z}-beta.1.md
 #   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
+#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 codex/beta-qa/ 分支。
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -36,6 +39,22 @@ on:
   push:
     tags:
       - "v*-beta.*"
+    branches:
+      - "codex/beta-qa/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "QA version X.Y.Z-qa.YYYYMMDD.N (for example 3.0.9-qa.20261008.1); no release tag is created"
+        required: true
+        type: string
+      windows_archive:
+        description: "Windows QA installer extraction policy"
+        required: true
+        type: choice
+        default: zip-qa
+        options:
+          - 7z
+          - zip-qa
 
 permissions:
   actions: read
@@ -43,6 +62,7 @@ permissions:
 
 jobs:
   validate-tag:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     name: Validate release identity
     runs-on: ubuntu-latest
     outputs:
@@ -56,6 +76,7 @@ jobs:
         run: node scripts/release-version.mjs "$RELEASE_TAG" beta >> "$GITHUB_OUTPUT"
 
   verify-source:
+    if: always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped')
     needs: validate-tag
     uses: ./.github/workflows/ci.yml
     secrets: inherit
@@ -63,37 +84,108 @@ jobs:
   prepare:
     name: Prepare release
     needs: [validate-tag, verify-source]
+    if: always() && needs.verify-source.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
+      windows_archive: ${{ steps.version.outputs.windows_archive }}
+      qa_build: ${{ steps.version.outputs.qa_build }}
+      native_version: ${{ steps.version.outputs.native_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
-      - name: Get version from tag
+      - name: Resolve frozen build identity
         id: version
+        shell: bash
+        env:
+          BUILD_EVENT: ${{ github.event_name }}
+          BUILD_REF: ${{ github.ref }}
+          BUILD_SHA: ${{ github.sha }}
+          VERSION_INPUT: ${{ inputs.version }}
+          WINDOWS_ARCHIVE_INPUT: ${{ inputs.windows_archive }}
         run: |
-          VERSION="${{ needs.validate-tag.outputs.version }}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          WINDOWS_ARCHIVE=""
+          QA_BUILD=false
+          case "$BUILD_EVENT:$BUILD_REF" in
+            push:refs/tags/v*-beta.*)
+              TAG="${BUILD_REF#refs/tags/}"
+              node scripts/release-version.mjs "$TAG" beta > /tmp/build-release-identity
+              VERSION="$(sed -n 's/^version=//p' /tmp/build-release-identity)"
+              ;;
+            push:refs/heads/codex/beta-qa/*)
+              VERSION="${BUILD_REF#refs/heads/codex/beta-qa/}"
+              QA_BUILD=true
+              WINDOWS_ARCHIVE=zip-qa
+              ;;
+            workflow_dispatch:refs/heads/*)
+              VERSION="$VERSION_INPUT"
+              QA_BUILD=true
+              WINDOWS_ARCHIVE="$WINDOWS_ARCHIVE_INPUT"
+              case "$WINDOWS_ARCHIVE" in
+                7z|zip-qa) ;;
+                *) echo "::error::Invalid Windows QA archive policy"; exit 1 ;;
+              esac
+              ;;
+            *) echo "::error::Unsupported build event/ref"; exit 1 ;;
+          esac
+          if [ "$QA_BUILD" = true ]; then
+            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-qa\.[1-9][0-9]{7}\.[1-9][0-9]*$ ]]; then
+              echo "::error::QA version must be X.Y.Z-qa.YYYYMMDD.N with a positive attempt"
+              exit 1
+            fi
+            node - "$VERSION" <<'NODE'
+          const day = process.argv[2].split('-qa.')[1].split('.')[0];
+          const iso = `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
+          const date = new Date(`${iso}T00:00:00.000Z`);
+          if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== iso) {
+            console.error('::error::QA version contains an invalid calendar date');
+            process.exit(1);
+          }
+          NODE
+            TAG="qa-v${VERSION}"
+            NATIVE_VERSION="${VERSION%%-qa.*}"
+          else
+            NATIVE_VERSION="${VERSION%%-beta.*}"
+          fi
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          [ "$SOURCE_SHA" = "$BUILD_SHA" ] || { echo "::error::Checkout differs from frozen workflow SHA"; exit 1; }
+          printf 'version=%s\ntag=%s\nsource_sha=%s\nwindows_archive=%s\nqa_build=%s\nnative_version=%s\n' "$VERSION" "$TAG" "$SOURCE_SHA" "$WINDOWS_ARCHIVE" "$QA_BUILD" "$NATIVE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Build identity: $TAG at $SOURCE_SHA"
+          if [ -n "$WINDOWS_ARCHIVE" ]; then
+            echo "QA artifacts only: build identity is not a created/published release tag"
+          fi
 
       - name: Read release notes
         id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BUILD_EVENT: ${{ github.event_name }}
+          BUILD_REF: ${{ github.ref }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="${{ github.ref_name }}"
           NOTES_FILE="release-notes/${TAG}.md"
           if [ -f "$NOTES_FILE" ]; then
             echo "Using release notes from $NOTES_FILE"
             cp "$NOTES_FILE" release_notes.txt
+          elif [ "$BUILD_EVENT" != push ] || [[ "$BUILD_REF" != refs/tags/v*-beta.* ]]; then
+            echo "::error::QA builds require committed release notes: $NOTES_FILE"
+            exit 1
           else
             echo "女娲Nuwax ${VERSION} (Prerelease)。请在 Assets 中下载对应平台安装包。" > release_notes.txt
           fi
 
       - name: Create GitHub Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ steps.version.outputs.tag }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
             DRAFT="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
             [ "$DRAFT" = true ] || { echo "::error::已公开的 Release 不允许覆盖资产: $TAG"; exit 1; }
@@ -137,11 +229,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
 
       # 显式 submodule init（不依赖 checkout action 内部递归 sync）：
       # nuwa-electron-shell submodule → 基座仓 nuwax-ai/nuwa-electron-shell 的 main 分支（公开，
       #   github.token 注入凭据）；nuwax → 壳根前端 pin（公开可匿名拉取，gitlink 须在
-      #   feat-dong.0930 上可达；基座已不含内嵌 nuwax——前端 dist 打包来源=壳根 nuwax/dist）
+      #   声明远端上可获取；基座已不含内嵌 nuwax——前端 dist 打包来源=壳根 nuwax/dist）
       - name: Init submodules (nuwa-electron-shell + nuwax)
         shell: bash
         env:
@@ -178,12 +272,37 @@ jobs:
           node scripts/sync-overlay.js --check
           git -C nuwa-electron-shell status --short | head -40 || true
 
+      - name: Exercise Windows installer recovery with isolated fixtures
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-installer-recovery.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer recovery fixtures failed.' }
+
       - name: Set version & commercial branding in package.json
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
+        env:
+          QA_BUILD: ${{ needs.prepare.outputs.qa_build }}
+          NATIVE_VERSION: ${{ needs.prepare.outputs.native_version }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           npm pkg set version="$VERSION"
+          # package.version 保留 QA 标识；原生版本字段仅使用数字基线，便于 Mac 公证及 Windows 安装器。
+          if [ "$QA_BUILD" = true ]; then
+            npm pkg set build.buildVersion="$NATIVE_VERSION"
+            npm pkg set build.mac.bundleShortVersion="$NATIVE_VERSION"
+            # dmg-builder 默认用 bundleShortVersion 命名 DMG；QA 包文件必须保留完整应用版本。
+            node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const arch = process.env.TARGET_ARCH;
+          if (!['x64', 'arm64'].includes(arch)) throw new Error('Invalid QA artifact architecture');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.build.dmg = { ...pkg.build.dmg, artifactName: '${productName}-${version}' + (arch === 'arm64' ? '-arm64' : '') + '.${ext}' };
+          fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          fi
           # 商业身份：文件名/包名一律 ASCII（productName=Nuwax；appId 尾段与
           # 注入 identifier 一致=nuwax）。面向用户的「显示名」与「文件名」分离：
           # 显示名走中文营销名 女娲Nuwax（mac CFBundleDisplayName / win NSIS 向导+
@@ -232,6 +351,30 @@ jobs:
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
+      - name: Configure short output directory for Windows QA
+        if: runner.os == 'Windows' && needs.prepare.outputs.qa_build == 'true'
+        shell: bash
+        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const temp = process.env.RUNNER_TEMP;
+          const runId = process.env.GITHUB_RUN_ID;
+          const attempt = process.env.GITHUB_RUN_ATTEMPT;
+          if (!temp || /[\r\n\0]/.test(temp) || !path.win32.isAbsolute(temp)
+              || !/^[1-9][0-9]*$/.test(runId || '') || !/^[1-9][0-9]*$/.test(attempt || '')) {
+            throw new Error('Invalid Windows QA runner output identity');
+          }
+          // WiX 的原生文件访问仍受长路径限制；完整 QA 版本留在包名和 metadata 中。
+          const output = path.win32.join(temp, `nq-${runId}-${attempt}`).replaceAll('\\', '/');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.build.directories = { ...pkg.build.directories, output };
+          fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `NUWAX_QA_WINDOWS_OUTPUT_DIR=${output}\n`);
+          console.log(`Windows QA output: ${output}`);
+          NODE
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -247,7 +390,7 @@ jobs:
           version: 9.15.5
           package_json_file: nuwa-electron-shell/package.json
 
-      # 与正式版相同：从发布 tag 的 gitlink 构建前端，五个平台来源一致。
+      # 与正式版相同：从冻结客户端 SHA 的 gitlink 构建前端，五个平台来源一致。
       - name: Build pinned nuwax frontend dist
         shell: bash
         run: ./scripts/prepare-nuwax-dist.sh
@@ -429,6 +572,8 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           SKIP_PREPARE: "1"
+          # QA only; public tag pushes retain the default 7z installer policy.
+          NUWAX_WINDOWS_INSTALLER_ARCHIVE: ${{ runner.os == 'Windows' && needs.prepare.outputs.windows_archive == 'zip-qa' && 'zip-qa' || '' }}
           # 商业版品牌注入（构建期经 esbuild/vite define 固化）：
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
@@ -437,6 +582,7 @@ jobs:
           NUWAX_RELEASE_CHANNEL: beta
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
+          NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
           # 端口整体 +1000（19099/61002~61009/61173），与社区版/nuwa-cli 同机错开
           NUWAX_PORT_OFFSET: "1000"
         run: |
@@ -457,18 +603,27 @@ jobs:
       - name: Record platform source and verify macOS signature
         shell: bash
         env:
+          QA_BUILD: ${{ needs.prepare.outputs.qa_build }}
+          BUILD_IDENTITY: ${{ needs.prepare.outputs.tag }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
         run: |
+          set -euo pipefail
           case "${{ runner.os }}" in macOS) PLATFORM=macos;; Windows) PLATFORM=windows;; Linux) PLATFORM=linux;; esac
-          VERSION="${{ needs.prepare.outputs.version }}"
+          VERSION="$BUILD_VERSION"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
+          if [ "$QA_BUILD" = true ] && [ "$PLATFORM" = windows ]; then
+            : "${NUWAX_QA_WINDOWS_OUTPUT_DIR:?Short Windows QA output missing}"
+            OUT_DIR="$NUWAX_QA_WINDOWS_OUTPUT_DIR"
+          fi
           if [ "$PLATFORM" = macos ]; then
             for value in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
-              [ -n "${!value}" ] || { echo "::error::${value} is required for published macOS builds"; exit 1; }
+              [ -n "${!value}" ] || { echo "::error::${value} is required for signed macOS builds"; exit 1; }
             done
             APP_PATH="$(find "$OUT_DIR" -maxdepth 3 -type d -name Nuwax.app -print -quit)"
             [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
@@ -476,14 +631,20 @@ jobs:
             spctl --assess --type execute --verbose "$APP_PATH"
             compgen -G "$OUT_DIR/*.dmg" >/dev/null || { echo '::error::macOS DMG missing'; exit 1; }
           fi
-          node scripts/release-provenance.mjs record "${{ github.ref_name }}" "$PLATFORM" "${{ matrix.arch }}" "$OUT_DIR"
+          case "$QA_BUILD" in
+            true) PROVENANCE_COMMAND=record-qa ;;
+            false) PROVENANCE_COMMAND=record ;;
+            *) echo '::error::Invalid QA build mode'; exit 1 ;;
+          esac
+          node scripts/release-provenance.mjs "$PROVENANCE_COMMAND" "$BUILD_IDENTITY" "$PLATFORM" "$TARGET_ARCH" "$OUT_DIR"
 
       - name: Upload artifacts to Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
           VERSION="${{ needs.prepare.outputs.version }}"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
           if [ ! -d "$OUT_DIR" ]; then
@@ -500,8 +661,74 @@ jobs:
             gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
           done
 
+      - name: Stage isolated QA packages and build context
+        if: ${{ github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') }}
+        id: qa_artifacts
+        shell: bash
+        env:
+          QA_VERSION: ${{ needs.prepare.outputs.version }}
+          QA_BUILD_IDENTITY: ${{ needs.prepare.outputs.tag }}
+          QA_SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          QA_EVENT: ${{ github.event_name }}
+          QA_REF: ${{ github.ref }}
+          QA_ARCHIVE: ${{ runner.os == 'Windows' && needs.prepare.outputs.windows_archive || '' }}
+          QA_PLATFORM: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${QA_VERSION}"
+          if [ "$QA_PLATFORM" = Windows ]; then
+            : "${NUWAX_QA_WINDOWS_OUTPUT_DIR:?Short Windows QA output missing}"
+            OUT_DIR="$NUWAX_QA_WINDOWS_OUTPUT_DIR"
+          fi
+          STAGE_DIR="$RUNNER_TEMP/nuwax-qa-${{ runner.os }}-${{ matrix.arch }}"
+          mkdir -p "$STAGE_DIR"
+          for file in "$OUT_DIR"/*; do
+            [ -f "$file" ] || continue
+            [ "$(basename "$file")" = builder-debug.yml ] && continue
+            cp "$file" "$STAGE_DIR/"
+          done
+          cp "release-notes/${QA_BUILD_IDENTITY}.md" "$STAGE_DIR/acceptance-notes.md"
+          export QA_STAGE_DIR="$STAGE_DIR"
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const client = git('rev-parse', 'HEAD');
+          if (client !== process.env.QA_SOURCE_SHA) throw new Error('QA checkout does not match frozen source SHA');
+          const context = {
+            schemaVersion: 1,
+            version: process.env.QA_VERSION,
+            buildIdentity: process.env.QA_BUILD_IDENTITY,
+            identityMeaning: 'Build manifest identity only; no release tag is created by this QA run',
+            distribution: 'github-actions-artifacts',
+            published: false,
+            tagCreated: false,
+            updatePointersChanged: false,
+            event: process.env.QA_EVENT,
+            ref: process.env.QA_REF,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+            windowsArchive: process.env.QA_ARCHIVE || null,
+            source: { client, shell: git('rev-parse', 'HEAD:nuwa-electron-shell'), frontend: git('rev-parse', 'HEAD:nuwax') },
+          };
+          writeFileSync(join(process.env.QA_STAGE_DIR, 'qa-build-context.json'), `${JSON.stringify(context, null, 2)}\n`);
+          NODE
+          printf 'path=%s\n' "$STAGE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload isolated QA packages
+        if: ${{ github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuwax-qa-${{ needs.prepare.outputs.version }}-${{ runner.os }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.qa_artifacts.outputs.path }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish-beta:
     name: Publish beta after five platform builds
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: build-electron
     uses: ./.github/workflows/sync-electron-to-oss.yml
     with:

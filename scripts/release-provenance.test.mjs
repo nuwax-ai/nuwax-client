@@ -236,3 +236,128 @@ test('current automation verifies a target source tree without tools in that tag
     rmSync(automation, { recursive: true, force: true });
   }
 });
+
+const qaVersion = '3.0.9-qa.20261008.1';
+const qaIdentity = `qa-v${qaVersion}`;
+
+function qaOutput(f, key) {
+  const output = join(f.root, `qa-${key}`);
+  mkdirSync(output);
+  const names = {
+    'macos-arm64': [`Nuwax-${qaVersion}-arm64.dmg`, `Nuwax-${qaVersion}-arm64-mac.zip`],
+    'macos-x64': [`Nuwax-${qaVersion}.dmg`, `Nuwax-${qaVersion}-mac.zip`],
+    'windows-x64': [`Nuwax-Setup-${qaVersion}-unsigned.exe`],
+    'linux-x64': [`Nuwax-${qaVersion}.AppImage`],
+    'linux-arm64': [`Nuwax-${qaVersion}-arm64.AppImage`],
+  }[key];
+  for (const name of names) writeFileSync(join(output, name), key === 'windows-x64' ? f.unsigned : `${key} QA fixture`);
+  const [platform, arch] = key.split('-');
+  const run = (command = 'record-qa', identity = qaIdentity) => spawnSync(process.execPath,
+    [join(f.root, 'scripts', 'release-provenance.mjs'), command, identity, platform, arch, output],
+    { cwd: f.root, encoding: 'utf8' });
+  return { output, names, run, manifest: join(output, `build-manifest-${key}.json`) };
+}
+
+test('records artifact-only QA for all five platforms with the full prerelease version and frozen source', () => {
+  const f = fixture();
+  try {
+    const source = JSON.parse(readFileSync(join(f.assets, 'build-manifest-windows-x64.json'), 'utf8')).source;
+    for (const key of keys) {
+      const qa = qaOutput(f, key);
+      const result = qa.run();
+      assert.equal(result.status, 0, `${key}: ${result.stderr}`);
+      const manifest = JSON.parse(readFileSync(qa.manifest, 'utf8'));
+      assert.equal(manifest.schemaVersion, 1);
+      assert.equal(manifest.tag, qaIdentity);
+      assert.equal(manifest.version, qaVersion);
+      assert.equal(manifest.buildIdentity, qaIdentity);
+      assert.equal(manifest.distribution, 'actions-artifact-only');
+      assert.equal(manifest.published, false);
+      assert.deepEqual(manifest.source, source);
+      assert.equal(manifest.frontend.stamp, frontend.slice(0, 9));
+      assert.match(manifest.frontend.distSha256, /^[0-9a-f]{64}$/);
+      assert.deepEqual(Object.keys(manifest.artifacts).sort(), [...qa.names].sort());
+      for (const name of qa.names) {
+        assert.equal(manifest.artifacts[name], createHash('sha256').update(readFileSync(join(qa.output, name))).digest('hex'));
+      }
+      if (key === 'windows-x64') {
+        assert.equal(manifest.windowsSigning.unsignedSize, f.unsigned.length);
+        assert.match(manifest.windowsSigning.signingIdentitySha256, /^[0-9a-f]{64}$/);
+      }
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('record-qa rejects public tags and malformed or noncanonical QA identities before writing a manifest', () => {
+  const f = fixture();
+  try {
+    const qa = qaOutput(f, 'linux-x64');
+    for (const identity of [
+      'prerelease-v3.0.9', 'electron-v3.0.9', 'prerelease-v3.0.9-qa.20261008.1',
+      'qa-v3.0.9', 'qa-v03.0.9-qa.20261008.1', 'qa-v3.0.9-qa.20261008.0',
+      'qa-v3.0.9-qa.20261008.01', 'qa-v3.0.9-qa.2026108.1',
+      'qa-v3.0.9-qa.20260230.1', 'qa-v3.0.9-qa.20261308.1',
+      'qa-v3.0.9-qa.20261008.1+metadata', `${qaIdentity}\nversion=9.9.9`,
+    ]) {
+      const result = qa.run('record-qa', identity);
+      assert.notEqual(result.status, 0, identity);
+      assert.match(result.stderr, /无效 QA 构建身份/, identity);
+      assert.throws(() => readFileSync(qa.manifest), { code: 'ENOENT' });
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('public record and verify reject QA identities while retaining numeric release identity rules', () => {
+  const f = fixture();
+  try {
+    const qa = qaOutput(f, 'windows-x64');
+    for (const identity of [qaIdentity, `prerelease-v${qaVersion}`, `electron-v${qaVersion}`]) {
+      const record = qa.run('record', identity);
+      assert.notEqual(record.status, 0);
+      assert.match(record.stderr, /无效发布 tag/);
+      const verify = spawnSync(process.execPath,
+        [join(f.root, 'scripts', 'release-provenance.mjs'), 'verify', identity, qa.output, 'beta'],
+        { cwd: f.root, encoding: 'utf8' });
+      assert.notEqual(verify.status, 0);
+      assert.match(verify.stderr, /无效发布 tag/);
+      assert.throws(() => readFileSync(join(qa.output, 'release-provenance.json')), { code: 'ENOENT' });
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('record-qa requires package filenames to bind the complete QA version', () => {
+  const f = fixture();
+  try {
+    const qa = qaOutput(f, 'linux-x64');
+    rmSync(join(qa.output, qa.names[0]));
+    writeFileSync(join(qa.output, 'Nuwax-3.0.9.AppImage'), 'numeric release fixture');
+    const result = qa.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /缺少预期安装资产 Nuwax-3\.0\.9-qa\.20261008\.1\.AppImage/);
+    assert.throws(() => readFileSync(qa.manifest), { code: 'ENOENT' });
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('record-qa keeps Windows unsigned provenance checks and rejects a signed payload', () => {
+  const f = fixture();
+  try {
+    const qa = qaOutput(f, 'windows-x64');
+    writeFileSync(join(qa.output, qa.names[0]), signedPe(f.unsigned));
+    const result = qa.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /CI 原始文件已有签名证书/);
+    assert.throws(() => readFileSync(qa.manifest), { code: 'ENOENT' });
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('record-qa rejects a frontend dist stamp outside the frozen source gitlink', () => {
+  const f = fixture();
+  try {
+    const qa = qaOutput(f, 'linux-arm64');
+    writeFileSync(join(f.root, 'nuwax', 'dist', 'version.json'), JSON.stringify({ gitHash: 'c'.repeat(9) }));
+    const result = qa.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /前端 dist stamp .* 与 gitlink .* 不符/);
+    assert.throws(() => readFileSync(qa.manifest), { code: 'ENOENT' });
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
