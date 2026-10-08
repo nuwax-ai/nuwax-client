@@ -6,11 +6,42 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { run } from './client/core.mjs';
-import { release, releaseIdentity, committedSigningTools, remoteScript, selectRun, verifyManifests, verifyMirrors } from './client/release.mjs';
+import { release, releaseIdentity, committedSigningTools, remoteScript, selectRun, verifyManifests, verifyMirrors, retryGitHubRead } from './client/release.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40), dist: 'd'.repeat(40) };
 const settings = { repo: 'example/client', signHost: 'win-fixture', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
+
+test('GitHub read retries are bounded and never repeat permanent failures', async () => {
+  let attempts = 0;
+  const waits = [], options = { wait: async ms => waits.push(ms), log: () => {} };
+  assert.equal(await retryGitHubRead(async () => { if (++attempts < 3) throw new Error('unexpected EOF'); return 'ok'; }, options), 'ok');
+  assert.deepEqual(waits, [1000, 2000]);
+  attempts = 0;
+  await assert.rejects(retryGitHubRead(async () => { attempts++; throw new Error('HTTP 403 Forbidden'); }, options), /403/);
+  assert.equal(attempts, 1);
+  attempts = 0;
+  await assert.rejects(retryGitHubRead(async () => { attempts++; throw new Error('HTTP 502'); }, options), /502/);
+  assert.equal(attempts, 3);
+});
+
+test('CLI storage verification uses provenance SHA256 headers without downloading installers', async () => {
+  const f = fixture(), value = JSON.parse(f.data.get('release-provenance.json'));
+  value.s3Checksums = Object.fromEntries([...f.data].filter(([name]) => name !== 'release-provenance.json').map(([name, bytes]) =>
+    [name, { size: bytes.length, sha256: digest(bytes), checksumType: 'FULL_OBJECT', checksumSHA256: createHash('sha256').update(bytes).digest('base64') }]));
+  f.data.set('release-provenance.json', Buffer.from(JSON.stringify(value)));
+  const reads = [];
+  f.adapters.fetchHead = async url => {
+    const bytes = f.data.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)));
+    return new Response(null, { headers: { 'content-length': bytes.length, 'x-amz-checksum-sha256': createHash('sha256').update(bytes).digest('base64') } });
+  };
+  const hash = f.adapters.hashUrl;
+  f.adapters.hashUrl = async url => { reads.push(url); return hash(url); };
+  const result = await verifyMirrors(f.adapters, settings, f.identity, f.view(), source);
+  assert.equal(result.version, '1.2.3');
+  assert.ok(reads.every(url => !/\.exe$|\.dmg$|\.zip$|\.AppImage$/.test(url)));
+  assert.ok(reads.some(url => url.endsWith('release-provenance.json')));
+});
 
 function fixture({ channel = 'stable', signed = true, publicRelease = true } = {}) {
   const version = channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';

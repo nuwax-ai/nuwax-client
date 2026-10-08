@@ -109,11 +109,11 @@ npm run sync:oss -- v<version> stable
 npm run sync:oss -- v<version> stable
 ```
 
-- `SYNC_OSS_REF` 应填目标发布线分支（示例为 `release/v3.0.x`），并确认该分支含与发布 tag 相同的来源校验 workflow。脚本在基座目录运行时不可依赖其默认 ref。
+- `SYNC_OSS_REF` 应填已提交并推送的自动化分支（示例为 `release/v3.0.x`）。同步工具从该 ref 检出，目标 tag 源码另行检出用于来源校验；历史 tag 无需包含新工具。脚本在基座目录运行时不可依赖其默认 ref。
 - 通道根由**壳仓 workflow 的 RELEASE_ROOT**（`nuwax-electron`）决定——脚本只负责
   dispatch，通道由 tag 推导，显式 channel 只校验一致性。
 - beta / v*-beta.* 不需要 Windows 人工签名。推送 tag 后，`release-electron-dev.yml` 的五个平台全部构建成功，才自动调用同步工作流；它以 CI 原产 `Nuwax-Setup-<version>-unsigned.exe` 生成 beta 更新元数据，校验来源/哈希、同步 S3/OSS beta 指针，最后公开 GitHub prerelease。用户可直接下载、安装 beta；已选 stable 的客户端仍只读 stable 指针。未签名 MSI 不进入自动更新元数据。
-- stable / vX.Y.Z 由 `scripts/release-stable.sh x.y.z` 单独触发 stable 通道，并核对 S3/OSS 两侧 stable 指针；beta tag 不会触发 stable 同步。
+- stable / vX.Y.Z 的兼容入口 `scripts/release-stable.sh X.Y.Z` 默认停在签名阶段；安装验收后用 `npm run release -- --tag vX.Y.Z --stage sync` 同步，核对 stable 指针并提升较旧 beta 指针。beta 发布仅推进 beta 指针。
 - 同步产物落到独立通道 `nuwax-electron/`（stable 指针
   `nuwax-electron/latest/latest.json`、beta 指针 `nuwax-electron/beta/latest.json`），
   与社区版 `nuwaclaw-electron/` 互不影响——客户端经

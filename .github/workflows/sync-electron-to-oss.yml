@@ -1,3 +1,4 @@
+# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
 # Nuwax 商业版 — 仅同步：将指定 tag 的 GitHub Release 资产同步到 MinIO S3 与阿里云 OSS。
 # MinIO：完整资产；OSS：仅元数据（*.yml + latest.json）。版本目录先上传、核对，
 # 最后才更新通道指针：beta 在五平台构建成功后通过 workflow_call 自动执行，
@@ -367,6 +368,7 @@ jobs:
             echo "::error::Windows 更新元数据未指向 ${RELEASE_CHANNEL} 安装包 ${EXPECTED_WIN}"
             exit 1
           }
+          node scripts/release-storage-integrity.mjs record /tmp/release-assets
           gh release upload "$RELEASE_TAG" /tmp/release-assets/*.yml /tmp/release-assets/latest.json \
             /tmp/release-assets/release-provenance.json --clobber --repo "$GITHUB_REPOSITORY"
 
@@ -375,6 +377,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
         run: |
+          # Match the SHA256 composite checksum recorded by the shared verifier.
+          aws configure set default.s3.preferred_transfer_client classic
+          aws configure set default.s3.multipart_threshold 8MB
+          aws configure set default.s3.multipart_chunksize 8MB
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
           if [ "$CHANNEL" = "beta" ]; then
@@ -390,7 +396,7 @@ jobs:
             filename=$(basename "$file")
             echo "Uploading to S3: ${filename}"
             aws s3 cp "$file" "s3://${S3_BUCKET}/${S3_PREFIX}/${filename}" \
-              --endpoint-url "$S3_ENDPOINT"
+              --endpoint-url "$S3_ENDPOINT" --checksum-algorithm SHA256 --only-show-errors
           done
 
           echo "==> MinIO: (2/3) platform yml"
@@ -399,57 +405,17 @@ jobs:
             filename=$(basename "$file")
             echo "Uploading to S3: ${filename}"
             aws s3 cp "$file" "s3://${S3_BUCKET}/${S3_PREFIX}/${filename}" \
-              --endpoint-url "$S3_ENDPOINT"
+              --endpoint-url "$S3_ENDPOINT" --checksum-algorithm SHA256 --only-show-errors
           done
           shopt -u nullglob
 
           echo "==> MinIO: (3/3) versioned latest.json"
           aws s3 cp /tmp/latest.json "s3://${S3_BUCKET}/${S3_PREFIX}/latest.json" \
-            --endpoint-url "$S3_ENDPOINT"
+            --endpoint-url "$S3_ENDPOINT" --checksum-algorithm SHA256 --only-show-errors
 
       - name: Verify S3 upload
         run: |
-          set -euo pipefail
-          TAG="${RELEASE_TAG}"
-          CHANNEL="${RELEASE_CHANNEL}"
-          # 发布对象公开可读。v1.0.36 的带签名 HeadObject 在 runner 上稳定
-          # 返回 403，匿名读取正常；用客户实际可访问的匿名路径校验。
-          if [ "$CHANNEL" = beta ]; then
-            S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
-          else
-            S3_PREFIX="${RELEASE_ROOT}/${TAG}"
-          fi
-          for i in 1 2 3 4 5 6; do
-            if HEAD_OUT="$(aws s3api head-object \
-              --bucket "${S3_BUCKET}" --key "${S3_PREFIX}/latest-mac.yml" \
-              --endpoint-url "$S3_ENDPOINT" --no-sign-request 2>&1)"; then
-              echo "==> S3 对象就绪（第 $i 次尝试）"
-              break
-            fi
-            if [ "$i" = "6" ]; then
-              echo "::error::S3 对象持续不可读: ${S3_PREFIX}/latest-mac.yml"
-              echo "head-object 输出: ${HEAD_OUT}"
-              exit 1
-            fi
-            echo "Attempt $i: 对象暂不可读（${HEAD_OUT}），5s 后重试"
-            sleep 5
-          done
-          for file in /tmp/release-assets/*; do
-            [ -f "$file" ] || continue
-            name="$(basename "$file")"
-            case "$name" in
-              build-manifest-*.json|release-provenance.json)
-                expected="$(sha256sum "$file" | cut -d' ' -f1)" ;;
-              *)
-                expected="$(jq -r --arg name "$name" '.assets[$name] // empty' /tmp/release-assets/release-provenance.json)"
-                [ -n "$expected" ] || { echo "::error::来源清单缺少资产: $name"; exit 1; } ;;
-            esac
-            actual="$(aws s3 cp "s3://${S3_BUCKET}/${S3_PREFIX}/${name}" - \
-              --endpoint-url "$S3_ENDPOINT" --no-sign-request --quiet | sha256sum | cut -d' ' -f1)" \
-              || { echo "::error::S3 读取失败: $name"; exit 1; }
-            [ "$actual" = "$expected" ] || { echo "::error::S3 资产 SHA256 不一致: $name"; exit 1; }
-          done
-          echo "==> S3 versioned assets verified"
+          node scripts/release-storage-integrity.mjs verify /tmp/release-assets
 
       - name: Upload platform yml and latest.json to Alibaba OSS
         env:

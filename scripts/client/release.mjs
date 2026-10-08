@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import config from '../../client.config.mjs';
 import { run, git, withLock } from './core.mjs';
 import { parseReleaseVersion, parseReleaseTag, releaseSequenceFindings, compareReleaseVersions } from '../release-version.mjs';
+import { hashResponse, mapLimit, verifyS3Asset, VERIFY_CONCURRENCY } from '../release-storage-integrity.mjs';
 
 const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linux-arm64'];
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -125,17 +126,9 @@ SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WO
 `;
 }
 
-async function hashResponse(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30 * 60 * 1000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
-  const hash = createHash('sha256');
-  for await (const chunk of response.body) hash.update(chunk);
-  return hash.digest('hex');
-}
-
 function defaultAdapters(root, settings) {
   const execute = (command, args, options = {}) => run(command, args, { cwd: root, ...options });
-  const gh = async (args) => JSON.parse((await execute('gh', args, { capture: true })).stdout || 'null');
+  const gh = (args) => retryGitHubRead(async () => JSON.parse((await execute('gh', args, { capture: true })).stdout || 'null'));
   async function downloaded(asset, identity, action) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-release-'));
     try {
@@ -153,6 +146,7 @@ function defaultAdapters(root, settings) {
       return Buffer.from(await response.arrayBuffer());
     },
     hashUrl: hashResponse,
+    fetchHead: (url, options) => fetch(url, options),
     assetJson: (asset, identity) => downloaded(asset, identity, (file) => JSON.parse(fs.readFileSync(file, 'utf8'))),
     assetHash: (asset, identity) => asset.digest?.startsWith('sha256:') ? asset.digest.slice(7) : downloaded(asset, identity, async (file) => {
       const hash = createHash('sha256');
@@ -160,6 +154,17 @@ function defaultAdapters(root, settings) {
       return hash.digest('hex');
     }),
   };
+}
+
+export async function retryGitHubRead(action, { wait = sleep, log = console.log } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await action(); }
+    catch (error) {
+      if (attempt >= 2 || !/EOF|ECONNRESET|connection reset|TLS handshake|i\/o timeout|timed out|HTTP 50[234]/i.test(error.message)) throw error;
+      log(`[release] GitHub 读取暂时失败，${attempt + 1}s 后重试`);
+      await wait((attempt + 1) * 1000);
+    }
+  }
 }
 
 async function preflight(root, identity, options, tools, settings) {
@@ -324,18 +329,20 @@ export async function verifyMirrors(tools, settings, identity, view, source) {
   }
   if (sha256(bytes) !== provenance.assets?.['latest.json']) throw new Error('通道指针与最终元数据 SHA256 不一致');
   const checked = new Set();
-  for (const asset of view.assets) {
+  await mapLimit(view.assets, VERIFY_CONCURRENCY, async (asset) => {
     if (/[\\/]/.test(asset.name) || path.basename(asset.name) !== asset.name) throw new Error('无效 Release 资产路径');
     const expected = await tools.assetHash(asset, identity);
     if (!hashPattern.test(expected)) throw new Error(`${asset.name} 缺少有效 GitHub SHA256`);
     if (!asset.name.startsWith('build-manifest-') && asset.name !== 'release-provenance.json' && expected !== provenance.assets?.[asset.name])
       throw new Error(`${asset.name} GitHub 资产与来源清单 SHA256 不一致`);
-    if (await tools.hashUrl(`${base}/${asset.name}`) !== expected) throw new Error(`S3 资产 SHA256 不一致：${asset.name}`);
+    await verifyS3Asset(`${base}/${encodeURIComponent(asset.name)}`, {
+      sha256: expected, size: asset.size, checksum: provenance.s3Checksums?.[asset.name],
+    }, { hashUrl: tools.hashUrl, fetchImpl: tools.fetchHead, log: tools.log });
     if (asset.name.endsWith('.yml') || asset.name === 'latest.json') {
       if (await tools.hashUrl(`${settings.ossBase}/${prefix}/${asset.name}`) !== expected) throw new Error(`OSS 元数据 SHA256 不一致：${asset.name}`);
     }
     checked.add(asset.name);
-  }
+  });
   for (const filename of Object.keys(provenance.assets ?? {})) if (!checked.has(filename)) throw new Error(`最终来源清单资产缺失：${filename}`);
   return { version: value.version, assetsVerified: checked.size, windows: value.platforms['windows-x86_64'].url };
 }

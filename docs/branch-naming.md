@@ -113,12 +113,12 @@ git checkout -b feat/<slug> main
 # 切版本线
 git checkout -b release/v3.0.x main
 
-# beta → stable 使用不同版本，沿当前版本线递增；正式发布前先验收
-npm run release -- --channel beta --version 3.0.8 --dry-run
-npm run release -- --channel beta --version 3.0.8
-# beta 验收后准备对应正式发布说明，再发布新版本
-npm run release -- --channel stable --version 3.0.9 --dry-run
-npm run release -- --channel stable --version 3.0.9
+# beta 可连续发布，也可同号转正；正式 tag 创建后关闭同号 beta
+npm run release -- --version 3.0.11-beta.1 --dry-run
+npm run release -- --version 3.0.11-beta.1
+# 提交对应正式发布说明，签名/验收后续跑同步；也允许直接 stable
+npm run release -- --version 3.0.11 --stage sign
+npm run release -- --tag v3.0.11 --stage sync
 
 # 版本线回流（转正后）
 git checkout main && git merge --ff-only origin/release/v3.0.x && git push origin main

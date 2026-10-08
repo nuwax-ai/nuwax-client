@@ -1,3 +1,4 @@
+# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
 # Nuwax 商业版 — Electron 客户端发布（薄壳编排）
 #
 # 本仓 = 商业产品壳：业务与构建系统在 nuwa-electron-shell/ submodule（基座仓

@@ -53,3 +53,14 @@ Windows 签名流程增量三问：下载/缓存失效/签名/上传集中在 re
 镜像同步已通过 CLI --tag v3.0.10 --stage sync 启动 GitHub Actions run 37741910045，工具 SHA d564e49b78b720c3fb99cd109f746d9a6123224c，目标源码仍为 708a46cc。最终镜像指针、资产 SHA 与公开状态待运行结束后补记。
 
 验收边界：五平台 Actions、来源和更新/事务/签名脚本测试通过；本轮真实 GUI 安装/重启覆盖 Mac arm64 与 Windows x64。Mac x64、Linux arm64/x64 的真实设备安装、真实 beta.N 连续升级/同号转正以及跨通道切换等待正式版追上，尚未做真实包验证；保持下一轮 v3.0.11-beta.1 的验证项，不能用单测或五平台构建冒充完成。
+
+
+## stable 同步完成与 S3 性能修复
+
+v3.0.10 镜像同步 run 37741910045 于 2026-10-08 07:27 UTC 成功，Release 已公开且非 prerelease。来源验证、EV 签名复验、S3 全资产完整 SHA256、OSS 全元数据 SHA256 及指针事务均通过。事务输出 updated=[latest,beta]；随后独立读取四个入口，全部为 3.0.10，4606 字节，SHA256 1b29818787ef418300e4a347eec3fdcced89462016dcb576eebaef13e002647d。没有重复 dispatch 或改动 v3.0.10 tag。
+
+用户补充要求加速 Verify S3 upload。实际耗时 5m22s，旧逻辑串行读回 28 个文件共 7,766,653,598 字节，CLI 还会再次完整读取。服务端匿名 HEAD 的 checksum-mode 已实测返回 CRC64NVME/FULL_OBJECT，证明支持 checksum 查询；SHA256 composite 上传与新校验路径将在 beta Actions 验证，不能以 CRC 响应替代 SHA256 实测。
+
+性能增量三问：完整性策略集中在 release-storage-integrity.mjs，CI 和 CLI 共用，更新指针事务保持单独属主；固定分片参数明确绑定上传配置，来源清单可选字段兼容历史标签；SHA256、大小和类型不符直接失败，旧文件仍完整回读，四路并发失败先收敛再返回。测试覆盖实际 HTTP HEAD/流、multipart 边界、同尺寸损坏与实际 aws 子命令晚失败。
+
+性能修复本地质量门：npm run test:scripts 243 passed / 0 failed；actionlint 1.7.12 校验四套 workflow 通过，check:pin --remote origin/main 和 git diff --check 通过。内聚证据：release-storage-integrity.mjs 的 mapLimit/fileChecksums/verifyS3Asset 管理校验与失败收敛，client/release.mjs 仅传入 GH 来源，workflow 仅配置上传和调用共享工具；无客户端或基座源码变动。下一轮 beta 的实际 Actions 耗时另记。
