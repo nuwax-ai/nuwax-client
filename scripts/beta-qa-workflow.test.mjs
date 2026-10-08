@@ -274,19 +274,24 @@ test('Windows short output covers public Beta and QA while preserving full ident
   assert.match(script('Upload artifacts to Release'), /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
 });
 
-function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, failedTool = '', shortOutput = 'D:/a/_temp/nq-123-1' }) {
+function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, missingNotificationModule = false, failedTool = '', shortOutput = 'D:/a/_temp/nq-123-1' }) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-qa-record-command-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const bin = path.join(directory, 'bin'), calls = path.join(directory, 'calls');
   mkdirSync(bin);
   writeFileSync(calls, '');
-  for (const command of ['node', 'codesign', 'spctl']) {
+  for (const command of ['node', 'codesign', 'spctl', 'lipo']) {
     writeFileSync(path.join(bin, command), '#!/bin/bash\nprintf "%s\\t" "$(basename "$0")" "$@" >> "$QA_CALLS"\nprintf "\\n" >> "$QA_CALLS"\n[ "$(basename "$0")" != "$QA_FAILED_TOOL" ]\n', { mode: 0o755 });
   }
   const version = qa === 'true' ? '3.0.9-qa.20261008.1' : '3.0.9';
   const identity = qa === 'true' ? `qa-v${version}` : `prerelease-v${version}`;
   const out = path.join(directory, 'nuwa-electron-shell/crates/agent-electron-client/release', version);
   mkdirSync(path.join(out, 'Nuwax.app'), { recursive: true });
+  if (!missingNotificationModule) {
+    const modulePath = path.join(out, 'Nuwax.app/Contents/Resources/app.asar.unpacked/dist/main/mac-notification-permission.node');
+    mkdirSync(path.dirname(modulePath), { recursive: true });
+    writeFileSync(modulePath, 'native module fixture only');
+  }
   writeFileSync(path.join(out, 'Nuwax.dmg'), 'fake fixture only');
   const run = script('Record platform source and verify macOS signature').replaceAll('${{ runner.os }}', osName);
   const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
@@ -320,14 +325,22 @@ test('artifact-only QA retains the full macOS secret and signature gates before 
   for (const qa of ['true', 'false']) {
     const passed = runRecordStep(t, { qa, osName: 'macOS' });
     assert.equal(passed.status, 0, passed.stderr);
-    assert.deepEqual(passed.calls.map((call) => call[0]), ['codesign', 'spctl', 'node']);
-    assert.equal(passed.calls[2][2], qa === 'true' ? 'record-qa' : 'record');
+    assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'codesign', 'codesign', 'spctl', 'node']);
+    assert.deepEqual(passed.calls[0].slice(1, 4), ['-verify_arch', 'arm64', 'x86_64']);
+    assert.match(passed.calls[1][3], /app\.asar\.unpacked\/dist\/main\/mac-notification-permission\.node$/);
+    assert.equal(passed.calls[4][2], qa === 'true' ? 'record-qa' : 'record');
     const missing = runRecordStep(t, { qa, osName: 'macOS', missingCertificate: true });
     assert.notEqual(missing.status, 0);
     assert.deepEqual(missing.calls, []);
     const failed = runRecordStep(t, { qa, osName: 'macOS', failedTool: 'codesign' });
     assert.notEqual(failed.status, 0);
-    assert.deepEqual(failed.calls.map((call) => call[0]), ['codesign']);
+    assert.deepEqual(failed.calls.map((call) => call[0]), ['lipo', 'codesign']);
+    const missingModule = runRecordStep(t, { qa, osName: 'macOS', missingNotificationModule: true });
+    assert.notEqual(missingModule.status, 0);
+    assert.deepEqual(missingModule.calls, []);
+    const wrongArch = runRecordStep(t, { qa, osName: 'macOS', failedTool: 'lipo' });
+    assert.notEqual(wrongArch.status, 0);
+    assert.deepEqual(wrongArch.calls.map((call) => call[0]), ['lipo']);
   }
 });
 

@@ -331,6 +331,8 @@ jobs:
           npm pkg set build.mac.extendInfo.CFBundleName="Nuwax"
           npm pkg set build.mac.extendInfo.CFBundleDisplayName="女娲Nuwax"
           npm pkg delete build.mac.extendInfo.CFBundleIdentifier || true
+          # 与 stable 一致：通知原生模块需真实文件供加载与嵌套签名。
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const old=j.build.asarUnpack;j.build.asarUnpack=[...new Set([...(Array.isArray(old)?old:old?[old]:[]),'dist/main/mac-notification-permission.node'])];fs.writeFileSync(p,JSON.stringify(j,null,2));"
           # win NSIS 快捷方式名（开始菜单/桌面）；向导标题与正文由 overlay 的
           # build/installer.nsh customHeader 宏覆写 Name（底部 BrandingText 仍为 Nuwax <ver>）
           npm pkg set build.nsis.shortcutName="女娲Nuwax"
@@ -617,6 +619,10 @@ jobs:
             done
             APP_PATH="$(find "$OUT_DIR" -maxdepth 3 -type d -name Nuwax.app -print -quit)"
             [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
+            NOTIFICATION_MODULE="$APP_PATH/Contents/Resources/app.asar.unpacked/dist/main/mac-notification-permission.node"
+            [ -f "$NOTIFICATION_MODULE" ] || { echo '::error::macOS notification module missing from unpacked app'; exit 1; }
+            lipo -verify_arch arm64 x86_64 "$NOTIFICATION_MODULE"
+            codesign --verify --strict "$NOTIFICATION_MODULE"
             codesign --verify --deep --strict "$APP_PATH"
             spctl --assess --type execute --verbose "$APP_PATH"
             compgen -G "$OUT_DIR/*.dmg" >/dev/null || { echo '::error::macOS DMG missing'; exit 1; }
