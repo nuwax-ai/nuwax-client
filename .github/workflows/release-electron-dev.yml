@@ -352,29 +352,13 @@ jobs:
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
-      - name: Configure short output directory for Windows QA
-        if: runner.os == 'Windows' && needs.prepare.outputs.qa_build == 'true'
+      - name: Configure short output directory for Windows
+        if: runner.os == 'Windows'
         shell: bash
-        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          node --input-type=commonjs <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const temp = process.env.RUNNER_TEMP;
-          const runId = process.env.GITHUB_RUN_ID;
-          const attempt = process.env.GITHUB_RUN_ATTEMPT;
-          if (!temp || /[\r\n\0]/.test(temp) || !path.win32.isAbsolute(temp)
-              || !/^[1-9][0-9]*$/.test(runId || '') || !/^[1-9][0-9]*$/.test(attempt || '')) {
-            throw new Error('Invalid Windows QA runner output identity');
-          }
-          // WiX 的原生文件访问仍受长路径限制；完整 QA 版本留在包名和 metadata 中。
-          const output = path.win32.join(temp, `nq-${runId}-${attempt}`).replaceAll('\\', '/');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          pkg.build.directories = { ...pkg.build.directories, output };
-          fs.writeFileSync('package.json', `${JSON.stringify(pkg, null, 2)}\n`);
-          fs.appendFileSync(process.env.GITHUB_ENV, `NUWAX_QA_WINDOWS_OUTPUT_DIR=${output}\n`);
-          console.log(`Windows QA output: ${output}`);
-          NODE
+          node scripts/configure-windows-output.mjs nuwa-electron-shell/crates/agent-electron-client/package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -618,9 +602,9 @@ jobs:
           case "${{ runner.os }}" in macOS) PLATFORM=macos;; Windows) PLATFORM=windows;; Linux) PLATFORM=linux;; esac
           VERSION="$BUILD_VERSION"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
-          if [ "$QA_BUILD" = true ] && [ "$PLATFORM" = windows ]; then
-            : "${NUWAX_QA_WINDOWS_OUTPUT_DIR:?Short Windows QA output missing}"
-            OUT_DIR="$NUWAX_QA_WINDOWS_OUTPUT_DIR"
+          if [ "$PLATFORM" = windows ]; then
+            : "${NUWAX_WINDOWS_OUTPUT_DIR:?Short Windows output missing}"
+            OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           if [ "$PLATFORM" = macos ]; then
             for value in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
@@ -648,6 +632,10 @@ jobs:
           TAG="${{ needs.prepare.outputs.tag }}"
           VERSION="${{ needs.prepare.outputs.version }}"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
+          if [ "${{ runner.os }}" = Windows ]; then
+            : "${NUWAX_WINDOWS_OUTPUT_DIR:?Short Windows output missing}"
+            OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
+          fi
           if [ ! -d "$OUT_DIR" ]; then
             echo "::error::Output directory not found: $OUT_DIR"
             exit 1
@@ -678,8 +666,8 @@ jobs:
           set -euo pipefail
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${QA_VERSION}"
           if [ "$QA_PLATFORM" = Windows ]; then
-            : "${NUWAX_QA_WINDOWS_OUTPUT_DIR:?Short Windows QA output missing}"
-            OUT_DIR="$NUWAX_QA_WINDOWS_OUTPUT_DIR"
+            : "${NUWAX_WINDOWS_OUTPUT_DIR:?Short Windows output missing}"
+            OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           STAGE_DIR="$RUNNER_TEMP/nuwax-qa-${{ runner.os }}-${{ matrix.arch }}"
           mkdir -p "$STAGE_DIR"

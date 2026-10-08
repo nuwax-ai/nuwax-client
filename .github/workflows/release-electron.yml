@@ -216,6 +216,14 @@ jobs:
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
+      - name: Configure short output directory for Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          node scripts/configure-windows-output.mjs nuwa-electron-shell/crates/agent-electron-client/package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -434,6 +442,10 @@ jobs:
           case "${{ runner.os }}" in macOS) PLATFORM=macos;; Windows) PLATFORM=windows;; Linux) PLATFORM=linux;; esac
           VERSION="${{ needs.prepare.outputs.version }}"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
+          if [ "$PLATFORM" = windows ]; then
+            : "${NUWAX_WINDOWS_OUTPUT_DIR:?Short Windows output missing}"
+            OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
+          fi
           if [ "$PLATFORM" = macos ]; then
             for value in APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
               [ -n "${!value}" ] || { echo "::error::${value} is required for published macOS builds"; exit 1; }
@@ -454,6 +466,10 @@ jobs:
           TAG="${{ github.ref_name }}"
           VERSION="${{ needs.prepare.outputs.version }}"
           OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${VERSION}"
+          if [ "${{ runner.os }}" = Windows ]; then
+            : "${NUWAX_WINDOWS_OUTPUT_DIR:?Short Windows output missing}"
+            OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
+          fi
           if [ ! -d "$OUT_DIR" ]; then
             echo "::error::Output directory not found: $OUT_DIR"
             exit 1
