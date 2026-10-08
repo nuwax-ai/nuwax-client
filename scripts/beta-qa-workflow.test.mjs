@@ -281,7 +281,8 @@ function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, 
   mkdirSync(bin);
   writeFileSync(calls, '');
   for (const command of ['node', 'codesign', 'spctl', 'lipo']) {
-    writeFileSync(path.join(bin, command), '#!/bin/bash\nprintf "%s\\t" "$(basename "$0")" "$@" >> "$QA_CALLS"\nprintf "\\n" >> "$QA_CALLS"\n[ "$(basename "$0")" != "$QA_FAILED_TOOL" ]\n', { mode: 0o755 });
+    const lipoArguments = command === 'lipo' ? '[ "$#" = 4 ] && [[ "$1" == *.node ]] && [ "$2" = -verify_arch ] && [ "$3" = arm64 ] && [ "$4" = x86_64 ] || exit 64\n' : '';
+    writeFileSync(path.join(bin, command), '#!/bin/bash\nprintf "%s\\t" "$(basename "$0")" "$@" >> "$QA_CALLS"\nprintf "\\n" >> "$QA_CALLS"\n' + lipoArguments + '[ "$(basename "$0")" != "$QA_FAILED_TOOL" ]\n', { mode: 0o755 });
   }
   const version = qa === 'true' ? '3.0.9-qa.20261008.1' : '3.0.9';
   const identity = qa === 'true' ? `qa-v${version}` : `prerelease-v${version}`;
@@ -326,7 +327,7 @@ test('artifact-only QA retains the full macOS secret and signature gates before 
     const passed = runRecordStep(t, { qa, osName: 'macOS' });
     assert.equal(passed.status, 0, passed.stderr);
     assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'codesign', 'codesign', 'spctl', 'node']);
-    assert.deepEqual(passed.calls[0].slice(1, 4), ['-verify_arch', 'arm64', 'x86_64']);
+    assert.deepEqual(passed.calls[0].slice(2, 5), ['-verify_arch', 'arm64', 'x86_64']);
     assert.match(passed.calls[1][3], /app\.asar\.unpacked\/dist\/main\/mac-notification-permission\.node$/);
     assert.equal(passed.calls[4][2], qa === 'true' ? 'record-qa' : 'record');
     const missing = runRecordStep(t, { qa, osName: 'macOS', missingCertificate: true });
@@ -342,6 +343,28 @@ test('artifact-only QA retains the full macOS secret and signature gates before 
     assert.notEqual(wrongArch.status, 0);
     assert.deepEqual(wrongArch.calls.map((call) => call[0]), ['lipo']);
   }
+});
+
+test('macOS notification architecture gate executes real lipo and rejects a missing slice', { skip: process.platform !== 'darwin' }, (t) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax native architecture '));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = path.join(directory, 'fixture.c');
+  writeFileSync(source, 'int notification_fixture(void) { return 0; }\n');
+  const slices = ['arm64', 'x86_64'].map((arch) => {
+    const output = path.join(directory, `${arch}.o`);
+    execFileSync('xcrun', ['--sdk', 'macosx', 'clang', '-arch', arch, '-c', source, '-o', output]);
+    return output;
+  });
+  const universal = path.join(directory, 'notification.node');
+  execFileSync('xcrun', ['lipo', '-create', ...slices, '-output', universal]);
+  const command = script('Record platform source and verify macOS signature').split('\n').find(line => /^\s*lipo /.test(line));
+  assert.ok(command, 'Missing production architecture gate');
+  const verify = (file) => spawnSync('bash', ['-e', '-u', '-c', command], {
+    env: { ...process.env, NOTIFICATION_MODULE: file }, encoding: 'utf8',
+  });
+  const passed = verify(universal);
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.notEqual(verify(slices[0]).status, 0);
 });
 
 test('QA artifact staging preserves complete package files, notes and frozen source metadata without unpacked duplication', (t) => {

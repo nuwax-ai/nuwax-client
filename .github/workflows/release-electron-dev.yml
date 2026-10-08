@@ -621,7 +621,7 @@ jobs:
             [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
             NOTIFICATION_MODULE="$APP_PATH/Contents/Resources/app.asar.unpacked/dist/main/mac-notification-permission.node"
             [ -f "$NOTIFICATION_MODULE" ] || { echo '::error::macOS notification module missing from unpacked app'; exit 1; }
-            lipo -verify_arch arm64 x86_64 "$NOTIFICATION_MODULE"
+            lipo "$NOTIFICATION_MODULE" -verify_arch arm64 x86_64
             codesign --verify --strict "$NOTIFICATION_MODULE"
             codesign --verify --deep --strict "$APP_PATH"
             spctl --assess --type execute --verbose "$APP_PATH"
