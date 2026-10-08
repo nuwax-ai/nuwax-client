@@ -1,7 +1,7 @@
 # 实施计划：统一版本与 stable/beta 通道
 
 - 对应 spec：specs/release-channels.md
-- 状态：stable 3.0.10 与 beta.4 已公开并同步双镜像；beta.6@d1749fce 的 Actions 正在执行，未完成发布验收
+- 状态：stable 3.0.10 与 beta.4 已公开并同步双镜像；beta.6@d1749fce 因 lipo 参数顺序失败，修复后的 beta.6@a5197d98 Actions 正在执行，未完成发布验收
 
 ## 实施顺序
 
@@ -30,4 +30,4 @@ Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、�
 
 追加性能修复：run 37741910045 已成功；Verify S3 upload 串行完整下载耗时 5 分 22 秒。新增共享 SHA256 服务端校验/历史完整读回模块；上传固定 classic/8 MiB 分片，来源清单绑定完整 hash 与服务端 composite hash。CI、CLI 去除新资产重复下载，历史回读限制四路并发。覆盖分片边界、同尺寸损坏、校验值缺失/错误、流失败、并发失败收敛；更新文档并在 beta Actions 实测收益。
 
-2026-10-08 beta.6 追加记录：用户明确指定最新 release/v3.0.x 源码重新打 beta.6，对尚未公开、零资产的原候选作一次性重定向。原 run 37781815290（b3d942a6）已取消，原 Draft 删除；绑定旧 SHA 的 force-with-lease 将 tag 更新为已正常提交、推送的 d1749fce。默认 tag 不可变、源码变化升号规则保持，例外仅限本次用户指定的未公开候选。新 tag push run 37783268381 正在执行；冻结来源、三个 pin、通知原生模块打包检查与待完成验收项详见 docs/acceptance/20261008-release-channels.md。证据文档独立提交，暂不合入发布分支或改动冻结源码。
+2026-10-08 beta.6 追加记录：用户明确指定最新 release/v3.0.x 源码重新打 beta.6，对尚未公开的本轮候选作例外重定向。原 run 37781815290（b3d942a6）已取消，原零资产 Draft 删除；绑定旧 SHA 的 force-with-lease 将 tag 更新为正常提交、推送的 d1749fce。run 37783268381 三轨门禁成功，但两个 Mac 成品来源记录因 lipo 参数顺序错误失败，公开/同步跳过；15 个 Windows/Linux 资产完整保留在 archive-beta6-d1749fce 的未公开 Draft。修复 a5197d98 仅改 workflow/test、业务源码和三个 pin 不变，22 项定向测试及真实 lipo 架构检查通过；绑定 d1749fce 的 lease 继续本轮未公开候选重打。默认 tag 不可变、源码变化升号规则保持，例外仅限本次用户指定的未公开候选。新 tag push run 37792419346 正在执行；历史尝试、冻结来源、三个 pin 与待完成验收项详见 docs/acceptance/20261008-release-channels.md。证据分支正常 merge 最新 release 后独立提交，保留已推送历史，暂不合入发布分支或改动冻结源码。

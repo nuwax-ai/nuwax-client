@@ -119,23 +119,41 @@ beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_
 
 证据为执行机 `/tmp/nuwax-beta4-sync.log`、`/tmp/nuwax-v3.0.11-beta.4-pointer-baseline.json`、`/tmp/nuwax-verify-beta4-pointers.mjs` 与 `/tmp/nuwax-v3.0.11-beta.4-pointers-actual.json`；原 tag/SHA、stable 两入口均未改动。
 
-## beta.6 未公开候选按用户授权重定向
+## beta.6 未公开候选重打记录
 
 2026-10-08，用户明确要求以 `release/v3.0.x` 最新提交重新打包 beta.6。本次仅对尚未公开的候选作一次性例外：原 [run 37781815290](https://github.com/nuwax-ai/nuwax-client/actions/runs/37781815290) 对应 `v3.0.11-beta.6@b3d942a6e66c0ca5d57a8acf5dfa7fd3280f96b2`，已取消；原 Draft 为零资产，删除后再更新 tag。推送使用绑定上述旧 SHA 的 `force-with-lease`，远端 tag 随后核对为 `d1749fce081825497a916e67d6854bab15c85a32`。旧 run 与旧 SHA 在本记录保留，不能将它们的检查结果计入新候选。
 
-默认规则仍为已存在 tag 占用版本、同 tag/SHA 重试、源码变化使用新版本；本次例外来自用户对这一未公开候选的明确要求，不改变版本解析、占用检查或发布工具的默认规则，也不允许据此重写已公开 tag。
+默认规则仍为已存在 tag 占用版本、同 tag/SHA 重试、源码变化使用新版本；下述两次重定向均属于用户明确指定的本轮未公开 beta.6 候选例外，不改变版本解析、占用检查或发布工具的默认规则，也不允许据此重写已公开 tag。
 
-新来源先正常提交、推送发布分支，再触发 tag push：最新业务提交为 `156bbbc006afbadac0f96c147fa6eb88028e885c`，其上增加打包修复 `d1749fce081825497a916e67d6854bab15c85a32`。beta Mac 配置显式将 `dist/main/mac-notification-permission.node` 放入 `asarUnpack`，实际构建后的来源记录步骤要求模块存在、`lipo -verify_arch arm64 x86_64` 通过，并严格验签该模块，再验签整个 app。21 项 beta/QA workflow 定向脚本测试通过；这不代表新 CI 安装包的原生模块、签名和公证已完成验证。
+第一次重打先正常提交、推送发布分支，再触发 tag push：最新业务提交为 `156bbbc006afbadac0f96c147fa6eb88028e885c`，其上增加打包修复 `d1749fce081825497a916e67d6854bab15c85a32`。beta Mac 配置显式将 `dist/main/mac-notification-permission.node` 放入 `asarUnpack`，实际构建后的来源记录步骤增加模块存在、双架构与严格验签检查。此前 21 项 beta/QA workflow 定向脚本测试通过，但命令夹具未发现真实 `lipo` 的参数解析错误。
 
-本轮冻结来源：
+该候选的 [run 37783268381](https://github.com/nuwax-ai/nuwax-client/actions/runs/37783268381) 创建于 2026-10-08 13:18:05 UTC，headSha 为 d1749fce，CLI 预检 `findings=[]`，三轨门禁均成功：
+
+| 门禁 | 文件数 | passed | skipped |
+|---|---|---|---|
+| 社区 | 128 | 1536 | 5 |
+| 商业 | 176 | 2314 | 5 |
+| 前端 | 378 | 3672 | 6 |
+
+商业 job 的脚本测试 258 passed / 0 failed，`check:pin` 与 `check:pin -- --remote origin/main` 均通过；前端类型域与架构 gate 通过。上述结果仅归属 d1749fce，日志为执行机 `/tmp/nuwax-beta6-community.log`、`/tmp/nuwax-beta6-commercial.log`、`/tmp/nuwax-beta6-frontend.log`。
+
+该 run 最终为 `failure`：Windows x64、Linux x64/arm64 三个构建 job 成功；两个 Mac 的安装包生成、签名和公证已完成，但后续来源记录步骤中的 `lipo -verify_arch arm64 x86_64 "$NOTIFICATION_MODULE"` 顺序错误，实际工具将最后的文件名当作架构标识并报 `unknown architecture specification flag`。两个 Mac 的来源记录失败，资产上传跳过，公开及同步亦跳过。不能将其记作五平台发布成功。
+
+旧 arm64 job 的 `/tmp/nuwax-beta6-macos-arm.log` 显示通知 addon 构建为 arm64+x64，公证成功于 14:01:13 UTC，Gatekeeper 于 14:11:05 返回 accepted / Notarized Developer ID；ZIP 开始于 14:11:05，blockmap 于 14:18:07，观测间隔约 7 分 02 秒。这些仅是 d1749fce 失败候选的构建阶段证据，不能作为后续新候选的原生模块验签或最终安装包验收结果。
+
+原 Draft 的 15 个 Windows/Linux 资产完整保留在 `archive-beta6-d1749fce@d1749fce081825497a916e67d6854bab15c85a32`；归档 Release 仍为 Draft、prerelease，`publishedAt=null`，未公开。资产包括三个平台来源清单与 Linux/Windows 更新元数据、安装包，没有 Mac 资产。保留归档后，绑定 d1749fce 旧 SHA 的 lease 将 beta.6 tag 更新为下一段的新候选，未改动 stable/beta 已公开订阅入口。
+
+第二次重打的修复正常提交、推送为 `a5197d987b3b521d4653f9f08890b45eea6f4ab2`，仅改 beta workflow 与对应脚本测试，业务源码及三个 pin 保持 d1749fce 的值。命令改为 `lipo "$NOTIFICATION_MODULE" -verify_arch arm64 x86_64`；新增 Darwin 真实双架构 Mach-O 夹具执行 workflow 原命令，并确认单架构被拒，命令 mock 同时核对参数顺序。22 项定向测试全部通过，本机真实通知 `.node` 亦通过相同架构检查；这些本地结果仍不能替代新 Actions 的最终成品验证。
+
+当前冻结来源：
 
 | 项目 | SHA |
 |---|---|
-| 外层 / tag | `d1749fce081825497a916e67d6854bab15c85a32` |
+| 外层 / tag | `a5197d987b3b521d4653f9f08890b45eea6f4ab2` |
 | 基座 `nuwa-electron-shell` | `d078bb3cd87eb111a38299bb23d9dff819f53c13` |
 | 前端源码 `nuwax` | `4dfea90cd29330e504bf8c858531d38ecc570b12` |
 | 前端产物 `nuwax-dist` | `4a497a0553a235ad2f919ab7c1e3779e5e63c45e` |
 
-新 [run 37783268381](https://github.com/nuwax-ai/nuwax-client/actions/runs/37783268381) 创建于 2026-10-08 13:18:05 UTC，事件为 push，headBranch 为 `v3.0.11-beta.6`，headSha 与上表一致；本次 CLI 预检 `findings=[]`。记录时运行状态为 `in_progress`、无最终 conclusion，三轨门禁、五平台构建、Mac 原生模块/签名/公证、公开及 OSS/S3 同步结果待后续补充，未提前计作完成。
+新 [run 37792419346](https://github.com/nuwax-ai/nuwax-client/actions/runs/37792419346) 创建于 2026-10-08 14:26:03 UTC，事件为 push，headBranch 为 `v3.0.11-beta.6`，headSha 与上表一致。记录时运行状态为 `in_progress`、无最终 conclusion，新门禁、五平台构建、Mac 原生模块/签名/公证、公开及 OSS/S3 同步的最终结果待后续补充，未提前计作完成。
 
-开始本轮时，stable 订阅入口仍为 3.0.10，beta 入口仍为 3.0.11-beta.4。文档证据在独立 `codex/beta6-release-evidence-20261008` 分支记录，暂不合入发布分支，保持本轮构建源码冻结。真实客户端安装、升级与 GUI 验收继续由用户负责。
+开始本轮时，stable 订阅入口仍为 3.0.10，beta 入口仍为 3.0.11-beta.4。文档证据在独立 `codex/beta6-release-evidence-20261008` 分支正常 merge 最新发布线并继续记录，保留已推送文档历史；暂不合入发布分支，保持本轮构建源码冻结。真实客户端安装、升级与 GUI 验收继续由用户负责。
