@@ -20,6 +20,8 @@ npm run release -- --tag electron-v3.0.9 --stage sync
 
 `--channel` 可省略；传入时必须与版本/tag 匹配。`--tag` 只接受已经存在的远端标签。说明文件为 `release-notes/<tag>.md`，须在目标发布提交中已提交。
 
+当前客户端默认 direct，加载业务线上页面；打包前端用于显式 gateway 模式的本地承载，不因线上加载失败自动切换。发布 pin 无须追到远端最新，但必须在声明消费线历史中可达，源码/产物版本戳一致且兼容宿主接口。每个 tag 固定这些输入，打包期间不追新提交。
+
 stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-beta.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名显式传入 `SIGN_RELEASE_TAG`，基座默认保持社区的 electron-v 格式。
 
 ## CI 路由与脚本责任
@@ -55,13 +57,13 @@ beta 发布只推进 beta 指针。stable 发布推进 stable 指针，在版本
 
 历史资产/清单或存储端缺 SHA256 时仍完整读回 SHA256，最多四路并行；校验值或大小不符直接失败，不转成宽松校验。任何读流/子命令失败都阻止发布，等待已启动读流结束后才返回失败。来源清单自身及 OSS 小元数据仍完整读取。日志逐文件显示校验方式与耗时。multipart ETag、文件大小或用户自填 metadata 不作为完整性证明。
 
-v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub 下载 3m42s、S3 上传 5m22s、旧串行 S3 校验 5m22s，OSS 两步各 5s。该版本沿原流程完成验证并公开；新路径在下一次 beta Actions 中验证实际收益，不重传或改动既有 tag。上传/下载本身的传输耗时仍受带宽影响。
+v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub 下载 3m42s、S3 上传 5m22s、旧串行 S3 校验 5m22s，OSS 两步各 5s。该版本沿原流程完成验证并公开。v3.0.11-beta.4 的同步 job 113295991814 实测 GitHub 下载 60s、S3 上传 4m45s、S3 校验 6s（11:56:52–11:56:58 UTC），校验耗时较旧流程减少约 98%。大包使用服务端 SHA256 COMPOSITE，小资产使用 FULL_OBJECT；仅小型 latest.json 和来源清单完整读回。两个版本包体与输入不同，此处为实际发布对照。上传/下载仍受带宽影响；既有 tag 不重传或改动。
 
 依据：[AWS CLI 校验说明](https://docs.aws.amazon.com/cli/latest/topic/s3-faq.html)、[S3 SHA256 分片与校验类型](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)。固定分片配置见同步 workflow，不要单独修改其中一处。
 
 ## 首次上线
 
-旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后进入 `v3.0.11-beta.N` 新序列，当前最新代码候选为 `v3.0.11-beta.5`。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
+旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后进入 `v3.0.11-beta.N` 新序列，当前发布候选为 `v3.0.11-beta.5`，固定已提交的源码和双 pin。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
 
 单元测试不能替代安装包验收：正式上线前验证真实包版本、签名、旧版升级、beta 连续升级和同号转正，记录平台与实际结果。
 
@@ -71,4 +73,4 @@ Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、�
 
 旧 beta 客户端首次接入新序列应先升级兼容正式版 3.0.10。若尚未升级而 beta 入口已进入 beta.N，可临时订阅 stable 获得 3.0.10，再按用户选择订阅 beta；已有用户选择不会被安装包覆盖。
 
-2026-10-08：beta.1、beta.2 因补充分支整合取消；beta.3 的 Windows MSI 遇到 260 字符文件路径，修复需要变更 workflow，取消原 run。三个 tag/SHA 和 Draft 均保留，未公开且继续占用序号。beta.4 已在 21f4500f 冻结并构建，后续源码和 CI 调整进入 beta.5；示例版本以发布前远端占用检查为准。
+2026-10-08：beta.1、beta.2 因补充分支整合取消；beta.3 的 Windows MSI 遇到 260 字符文件路径，修复需要变更 workflow，取消原 run。三个 tag/SHA 和 Draft 均保留，未公开且继续占用序号。beta.4 已在 21f4500f 完成五平台构建、公开 prerelease 与双镜像同步。beta.5 固定在 d3aca75a，曾因准备更新前端双 pin 取消构建；用户随后要求先完成本轮打包，已在同 tag/SHA 重跑 run 37772988364。后续前端更新独立交付，不移动 beta.5。示例版本以发布前远端占用检查为准。

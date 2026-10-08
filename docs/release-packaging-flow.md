@@ -2,7 +2,7 @@
 
 > 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。v3.0.10 由 `v3.0.10` tag push 触发 GitHub Actions；stable 消费锁定的 `nuwax-dist` pin，beta 仍从源码 pin 构建。stable 构建后保持 Draft，完成 Windows 签名与安装验收，再显式同步公开。下文的 v3.0.2–v3.0.6 耗时和执行口径为历史记录。
 
-Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本、正式 7z 压缩及签名规则保留。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征；实际修复由新 tag 的 Windows 构建验证。
+Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本、正式 7z 压缩及签名规则保留。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征。v3.0.11-beta.4 的 Windows MSI/NSIS 构建、来源记录和上传已成功，五平台与 S3/OSS 同步实测见 [验收记录](./acceptance/20261008-release-channels.md)。
 
 ## 本次问题暴露的缺口
 
@@ -38,7 +38,9 @@ v3.0.5 由用户取消，因此完整发布耗时用成功的 v3.0.3 作对照�
 
 五个平台的前端装载步骤均为 0–2 秒，清单记录同一个前端目录 SHA256。Linux/Windows 包体与 v3.0.3 基本一致，Mac DMG 额外增大与本次压缩参数相关；下一轮应分别控制 ZIP 和 DMG 的压缩，同时保留签名、公证、自动更新 ZIP 与安装包验收。v3.0.6 已完成 CI、Windows 签名及本机 arm64 DMG 的哈希/签名/公证校验，仍待登录态资料库和女娲智联验收，保持 Draft。
 
-## 推荐的阶段与准入条件
+## Stable 阶段与准入条件
+
+下表用于 stable；beta 在五平台门禁、来源和存储完整性检查通过后自动公开 prerelease，只推进 beta 指针。Windows beta 保持 unsigned，真实客户端验收由用户进行。
 
 | 阶段 | 动作 | 必须留存的证据 |
 | --- | --- | --- |
@@ -48,7 +50,7 @@ v3.0.5 由用户取消，因此完整发布耗时用成功的 v3.0.3 作对照�
 | 4. 安装包验收 | 从 Draft 下载**本次 CI 产物**安装到隔离环境；登录测试账号，打开首页、资料库、女娲智联，并分别刷新或重启后直达；检查 Network/Console 无错误的 chunk 与资源 MIME；验证更新路径 | 平台、安装包 SHA256、测试账号环境、页面结果、失败日志/截图；至少 macOS 与 Windows 必过，Linux 在支持的桌面环境检查 |
 | 5. 签名与提升 | Windows 对 Draft 的 unsigned 安装包签名，核对签名前后来源；验收报告通过后单独触发 stable 同步 | 签名证书/PE 校验、签名安装包哈希、验收报告、GitHub/S3/OSS 镜像哈希与 `latest.json` |
 
-任何阶段失败都在相同 tag/SHA 上续跑可重试的构建或签名步骤；如果修复需要改源码，则升新版本，不能移动已有 tag。`latest.json` 只在安装包验收和签名均通过后更新。
+任何阶段失败都在相同 tag/SHA 上续跑可重试的构建或签名步骤；如果修复需要改源码，则升新版本，不能移动已有 tag。stable 的 `latest/latest.json` 只在安装包验收和签名均通过后更新。
 
 ## 本次 v3.0.5 执行口径
 
