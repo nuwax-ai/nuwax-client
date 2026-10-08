@@ -95,9 +95,6 @@ export function clearRegistration(
     if (legacyUsername != null) writeSetting("auth.username", legacyUsername);
   }
 }
-/** 「本地化默认开」一次性迁移旗标（存量库 direct→gateway 只强制这一次）。 */
-const LOADMODE_DEFAULT_MIGRATED_KEY = "nuwax.loadModeDefaultMigrated";
-
 export function initializeCommercialAuth(
   start: (signal: AbortSignal) => Promise<ServiceResult>,
   stop: () => Promise<ServiceResult>,
@@ -113,12 +110,10 @@ export function initializeCommercialAuth(
     writeSetting("nuwax.cookieAuthMustRelogin", true);
     writeSetting("nuwax.cookieAuthMigrated", true);
   }
-  // 新安装使用随包前端，离线也能打开登录/企业域名配置；已有模式偏好保留。
+  // 本地加速默认关闭，直连业务域；用户在设置页显式开启 gateway 的偏好保留。
   // 安装包始终使用正式业务域。beta/stable 仅控制更新订阅；用户显式配置的
   // 企业域或测试域继续保留，不因客户端版本升级而被覆盖。
-  // NUWAX_SERVER_HOST 仅用于 dev；两种形态都默认
-  // 种 gateway（本地化默认开）——dev 直连联调走 NUWAX_WEBVIEW_ORIGIN，其
-  // 优先级高于 loopback，不受影响。
+  // NUWAX_SERVER_HOST 仅用于 dev；两种形态都默认 direct。
   const devSeedHost = process.env.NUWAX_SERVER_HOST?.trim();
   const packagedSeedHost = DEFAULT_SERVER_HOST;
   const seeded = readSetting("step1_config") as {
@@ -128,12 +123,12 @@ export function initializeCommercialAuth(
     if (app?.isPackaged) {
       writeSetting("step1_config", {
         serverHost: packagedSeedHost,
-        nuwaxLoadMode: "gateway",
+        nuwaxLoadMode: "direct",
       });
     } else if (devSeedHost) {
       writeSetting("step1_config", {
         serverHost: devSeedHost,
-        nuwaxLoadMode: "gateway",
+        nuwaxLoadMode: "direct",
       });
     }
   } else if (!seeded.serverHost) {
@@ -156,26 +151,23 @@ export function initializeCommercialAuth(
       readSetting("update_channel") == null) {
     writeSetting("update_channel", "beta");
   }
-  // 存量库一次性对齐「本地化默认开」（2026-09-17 拍板）：历史库存在未操作
-  // 也落 direct 的值（09-14 排障实证），与用户显式关闭不可区分，故以旗标
-  // 只强制这一次；此后设置页的关闭（direct）不再被覆盖。
+  // 旧库缺少模式时补默认 direct；不再把已有 direct 强制迁移为 gateway。
+  // 旧版本的 loadModeDefaultMigrated 旗标不再影响默认值或用户显式选择。
   const existingStep1 = readSetting("step1_config") as {
     nuwaxLoadMode?: "direct" | "gateway";
   } | null;
   if (
     existingStep1 &&
-    readSetting(LOADMODE_DEFAULT_MIGRATED_KEY) == null &&
-    existingStep1.nuwaxLoadMode !== "gateway"
+    existingStep1.nuwaxLoadMode == null
   ) {
     writeSetting("step1_config", {
       ...existingStep1,
-      nuwaxLoadMode: "gateway",
+      nuwaxLoadMode: "direct",
     });
     log.info(
-      "[CommercialAuth] 默认开启本地化：存量库 nuwaxLoadMode 迁移为 gateway",
+      "[CommercialAuth] 本地加速默认关闭：缺失 nuwaxLoadMode 补为 direct",
     );
   }
-  if (existingStep1) writeSetting(LOADMODE_DEFAULT_MIGRATED_KEY, true);
   const deviceId = getDeviceId();
   if (readSetting("nuwax.registrationDeviceId") !== deviceId) {
     // 设备身份算法升级（安装 ID → 硬件 ID）/盐变更/换设备时清注册派生凭据，

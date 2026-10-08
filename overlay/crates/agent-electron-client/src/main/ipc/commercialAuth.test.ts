@@ -72,11 +72,11 @@ beforeEach(() => {
   delete process.env.NUWAX_RELEASE_CHANNEL;
 });
 describe("commercial registration protocol", () => {
-  it("fresh installation selects bundled UI without importing legacy credentials", () => {
+  it("fresh installation disables local acceleration without importing legacy credentials", () => {
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
       serverHost: "https://agent.nuwax.com",
-      nuwaxLoadMode: "gateway",
+      nuwaxLoadMode: "direct",
     });
     expect(mocks.settings.get("auth.saved_key")).toBeNull();
   });
@@ -199,14 +199,14 @@ describe("commercial registration protocol", () => {
 });
 
 describe("dev 首启种值（NUWAX_SERVER_HOST 旋钮）", () => {
-  it("dev 全新库 + env → 种 serverHost + 默认 gateway（直连联调走 NUWAX_WEBVIEW_ORIGIN 覆盖，优先级更高不受影响）", () => {
+  it("dev 全新库 + env → 种 serverHost + 默认 direct", () => {
     mocks.isPackaged = false;
     process.env.NUWAX_SERVER_HOST = "https://testagent.xspaceagi.com";
     try {
       fixture();
       expect(mocks.settings.get("step1_config")).toMatchObject({
         serverHost: "https://testagent.xspaceagi.com",
-        nuwaxLoadMode: "gateway",
+        nuwaxLoadMode: "direct",
       });
     } finally {
       delete process.env.NUWAX_SERVER_HOST;
@@ -219,17 +219,17 @@ describe("dev 首启种值（NUWAX_SERVER_HOST 旋钮）", () => {
   });
 });
 
-describe("本地化默认开一次性迁移（2026-09-17）", () => {
-  it("存量库 direct → 迁移 gateway 并落旗标", () => {
+describe("本地加速默认关闭（2026-10-08）", () => {
+  it("存量库 direct 无旧迁移旗标也不自动开启 gateway", () => {
     mocks.settings.set("step1_config", {
       serverHost: origin,
       nuwaxLoadMode: "direct",
     });
     fixture();
     expect(mocks.settings.get("step1_config")).toMatchObject({
-      nuwaxLoadMode: "gateway",
+      nuwaxLoadMode: "direct",
     });
-    expect(mocks.settings.get("nuwax.loadModeDefaultMigrated")).toBe(true);
+    expect(mocks.settings.has("nuwax.loadModeDefaultMigrated")).toBe(false);
   });
   it("旗标已存在 → 保留用户显式 direct 不再覆盖", () => {
     mocks.settings.set("step1_config", {
@@ -242,16 +242,41 @@ describe("本地化默认开一次性迁移（2026-09-17）", () => {
       nuwaxLoadMode: "direct",
     });
   });
+  it("缺少模式补 direct，保留既有域名与工作区配置", () => {
+    mocks.settings.set("step1_config", {
+      serverHost: origin,
+      workspaceDir: "/Users/x/Nuwax",
+      agentPort: 61016,
+    });
+    fixture();
+    expect(mocks.settings.get("step1_config")).toEqual({
+      serverHost: origin,
+      workspaceDir: "/Users/x/Nuwax",
+      agentPort: 61016,
+      nuwaxLoadMode: "direct",
+    });
+  });
+  it("保留用户显式开启的 gateway", () => {
+    mocks.settings.set("step1_config", {
+      serverHost: origin,
+      nuwaxLoadMode: "gateway",
+    });
+    fixture();
+    expect(mocks.settings.get("step1_config")).toMatchObject({
+      serverHost: origin,
+      nuwaxLoadMode: "gateway",
+    });
+  });
 });
 
 describe("serverHost backfill（真实时序：ensureDefaultWorkspaceDir 先写 step1_config，首启种子恒不命中）", () => {
   it("稳定版：step1_config 已存在（仅 workspaceDir）缺 serverHost → 补正式域并保留既有字段", () => {
     mocks.settings.set("step1_config", { workspaceDir: "/Users/x/Nuwax" });
     fixture();
-    //（loadMode 一次性迁移会顺带补 gateway，故用 toMatchObject 锚定关键字段）
     expect(mocks.settings.get("step1_config")).toMatchObject({
       workspaceDir: "/Users/x/Nuwax",
       serverHost: "https://agent.nuwax.com",
+      nuwaxLoadMode: "direct",
     });
   });
   it("Beta 新安装与缺失域名补值均使用正式域", () => {
