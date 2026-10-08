@@ -217,10 +217,10 @@ const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
 const DEV_ORIGIN = "http://localhost:3000";
 
-function senderEvent(origin: string) {
+function senderEvent(origin: string, id?: number) {
   return {
-    senderFrame: { url: `${origin}/home` },
-    sender: { getURL: () => `${origin}/home`, once: vi.fn(), removeListener: vi.fn() },
+    senderFrame: { url: `${origin}/home`, processId: id, routingId: id },
+    sender: { id, getURL: () => `${origin}/home`, once: vi.fn(), removeListener: vi.fn() },
   };
 }
 
@@ -370,7 +370,7 @@ describe("cookie 会话与旧 token 桥", () => {
         configKey: "device-key", serverHost: "tunnel.example", serverPort: 443,
       } })));
     expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
-    expect(mocks.startIM).toHaveBeenCalledWith("alice");
+    expect(mocks.startIM).toHaveBeenCalledWith("username:alice");
     expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBe("direct-new");
     await vi.waitFor(() => expect(settings.get("auth.config_key")).toBe("device-key"));
     expect(mocks.netFetch.mock.calls[0][1].headers.Cookie).toBe("ticket=direct-new");
@@ -385,6 +385,82 @@ describe("cookie 会话与旧 token 桥", () => {
     settings.set(`${NUWAX_TOKEN_KEY_PREFIX}${HOST_ORIGIN}`, "LEGACY");
     expect(await handlers.get("auth:getToken")!(senderEvent(GW_ORIGIN))).toBeNull();
     expect(await handlers.get("auth:persistToken")!(senderEvent(GW_ORIGIN), "LEGACY")).toBe(false);
+  });
+
+  it.each([
+    [{ id: 101, uid: "old-user", userName: null, nickName: "旧账号" }, "uid:old-user"],
+    [{ id: 101, userName: null, nickName: null }, "id:101"],
+  ])("用户名和昵称缺失不阻断有效 Cookie 登录：%j", async (user, accountId) => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "valid-old-user", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    mocks.netFetch.mockReset().mockImplementation(async () => new Response(JSON.stringify({ code: "0000", data: user })));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+    expect(settings.get("auth.account_id")).toBe(accountId);
+    expect(mocks.startIM).toHaveBeenCalledWith(accountId);
+  });
+
+  it("同名或未知名称的不同账号仍清除旧设备凭据", async () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    settings.set("auth.account_id", "uid:first-user");
+    settings.set("auth.username", "同名");
+    settings.set("auth.saved_key", "first-device-key");
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "second-user-ticket", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    const user = { uid: "second-user", userName: null, nickName: "同名" };
+    mocks.netFetch.mockReset().mockImplementation(async () => new Response(JSON.stringify({ code: "0000", data: user })));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+    expect(settings.get("auth.saved_key")).toBeNull();
+    expect(settings.get("auth.account_id")).toBe("uid:second-user");
+    expect(mocks.startIM).toHaveBeenCalledWith("uid:second-user");
+  });
+
+  it("同一账号修改用户名或昵称仍保留设备凭据", async () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    settings.set("auth.account_id", "uid:same-user");
+    settings.set("auth.username", "旧用户名");
+    settings.set("auth.saved_key", "same-device-key");
+    settings.set("auth.user_info", { id: 700, currentDomain: HOST_ORIGIN });
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "same-user-ticket", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    const user = { id: 101, uid: "same-user", userName: "新用户名", nickName: "新昵称" };
+    mocks.netFetch.mockReset().mockImplementation(async () => new Response(JSON.stringify({ code: "0000", data: user })));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+    expect(settings.get("auth.saved_key")).toBe("same-device-key");
+    expect(settings.get("auth.user_info")).toMatchObject({ id: 700 });
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+    expect(settings.get("auth.user_info")).toMatchObject({ id: 700 });
+  });
+
+  it("成功码且只有昵称的响应不被当成有效账号", async () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "invalid-account-ticket", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    mocks.netFetch.mockReset().mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { nickName: "昵称" } })));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(false);
+    expect(mocks.startIM).not.toHaveBeenCalled();
+  });
+
+  it("老账号登录后重复恢复会话成功，设备注册失败也不清除有效登录", async () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    const authChanges: boolean[] = [];
+    mainWindowSender = (channel, payload) => {
+      if (channel === "nuwax:authChanged") authChanges.push((payload as { loggedIn: boolean }).loggedIn);
+    };
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "valid-old-user", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    mocks.netFetch.mockReset().mockImplementation(async (url) => new Response(JSON.stringify(
+      String(url).endsWith("/api/user/getLoginInfo")
+        ? { code: "0000", data: { uid: "old-user", userName: null, nickName: null } }
+        : { code: "4000", message: "Device registration unavailable" },
+    )));
+    const event = senderEvent(HOST_ORIGIN);
+    expect(await handlers.get("auth:syncSession")!(event)).toBe(true);
+    await vi.waitFor(() => expect(mocks.netFetch.mock.calls.some(([url]) => String(url).endsWith("/api/sandbox/config/reg/v2"))).toBe(true));
+    expect(await handlers.get("auth:syncSession")!(event)).toBe(true);
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBe("valid-old-user");
+    expect(settings.get("auth.user_info")).toMatchObject({ displayName: "未知" });
+    expect(authChanges).toEqual([true, true]);
   });
 
   it("开始新登录前清除业务域和网关旧 cookie", async () => {
@@ -434,6 +510,39 @@ describe("cookie 会话与旧 token 桥", () => {
 });
 
 describe("configureServerHost（企业登录切换域名）", () => {
+  it("NUW-49：直连页面登出后无需刷新即可切换企业域名，其他旧页面仍被拒绝", async () => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    const caller = senderEvent(HOST_ORIGIN, 11);
+    const other = senderEvent(HOST_ORIGIN, 12);
+    handlers.get("auth:getContext")!(caller);
+    handlers.get("auth:getContext")!(other);
+    await seedTicket("old-ticket");
+    expect(await handlers.get("auth:clear")!(caller)).toBe(true);
+    expect(await handlers.get("auth:configureServerHost")!(other, "other.example.com"))
+      .toEqual({ success: false, error: "Stale document" });
+    // preload 在显式切域前读取最新上下文，保留主进程对其他旧文档的拒绝。
+    handlers.get("auth:getContext")!(caller);
+    expect(await handlers.get("auth:configureServerHost")!(caller, "agent.nuwax.com"))
+      .toMatchObject({ success: true, serverHost: "https://agent.nuwax.com" });
+  });
+
+  it("迟到的登出不能重新授权已经被新登录取代的页面", async () => {
+    const caller = senderEvent(GW_ORIGIN, 11);
+    const newer = senderEvent(GW_ORIGIN, 12);
+    handlers.get("auth:getContext")!(caller);
+    let finishStop!: (value: { success: boolean; results: Record<string, never> }) => void;
+    mocks.stop.mockImplementationOnce(() => new Promise((resolve) => { finishStop = resolve; }));
+    await seedTicket("old-ticket");
+    const clearing = handlers.get("auth:clear")!(caller);
+    await vi.waitFor(() => expect(finishStop).toBeTypeOf("function"));
+    const beginning = handlers.get("auth:beginLogin")!(newer);
+    finishStop({ success: true, results: {} });
+    expect(await clearing).toBe(true);
+    expect(await beginning).toBe(true);
+    expect(await handlers.get("auth:configureServerHost")!(caller, "old.example.com"))
+      .toEqual({ success: false, error: "Stale document" });
+  });
+
   it("拒绝宿主在前一次切域未完成时再次切域", async () => {
     let finishStop!: (value: { success: boolean; results: Record<string, never> }) => void;
     mocks.stop.mockImplementationOnce(() => new Promise((resolve) => { finishStop = resolve; }));

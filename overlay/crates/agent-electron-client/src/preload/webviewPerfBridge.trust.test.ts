@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const expose = vi.hoisted(() => vi.fn());
+const invoke = vi.hoisted(() => vi.fn());
 vi.mock("electron", () => ({
   contextBridge: { exposeInMainWorld: expose },
-  ipcRenderer: { on: vi.fn(), send: vi.fn(), invoke: vi.fn() },
+  ipcRenderer: { on: vi.fn(), send: vi.fn(), invoke },
 }));
 
 const addedArgs: string[] = [];
@@ -15,6 +16,7 @@ afterEach(() => {
   addedArgs.length = 0;
   vi.unstubAllGlobals();
   expose.mockClear();
+  invoke.mockReset();
 });
 
 async function loadAt(href: string, allowlist: string | null = encodeURIComponent(JSON.stringify(["https://business.example"]))) {
@@ -28,6 +30,27 @@ async function loadAt(href: string, allowlist: string | null = encodeURIComponen
 }
 
 describe("commercial guest preload origin guard", () => {
+  it.each(["direct", "gateway"])("NUW-49：%s 企业切域先读取当前文档上下文", async (loadMode) => {
+    await loadAt("https://business.example/login");
+    const bridge = expose.mock.calls.at(-1)![1];
+    const result = { success: true, serverHost: "https://next.example" };
+    invoke.mockResolvedValueOnce({ businessOrigin: "https://business.example", loadMode })
+      .mockResolvedValueOnce(result);
+    expect(await bridge.auth.configureServerHost("https://next.example")).toEqual(result);
+    expect(invoke.mock.calls).toEqual([
+      ["auth:getContext"], ["auth:configureServerHost", "https://next.example"],
+    ]);
+  });
+
+  it("当前文档已不可信时不发起企业切域", async () => {
+    await loadAt("https://business.example/login");
+    const bridge = expose.mock.calls.at(-1)![1];
+    invoke.mockResolvedValueOnce(null);
+    expect(await bridge.auth.configureServerHost("https://next.example"))
+      .toEqual({ success: false, error: "Stale document" });
+    expect(invoke.mock.calls).toEqual([["auth:getContext"]]);
+  });
+
   it("exposes the bridge on the admitted business origin", async () => {
     await loadAt("https://business.example");
     expect(expose).toHaveBeenCalledWith("NuwaClawBridge", expect.any(Object));

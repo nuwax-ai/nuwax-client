@@ -64,6 +64,7 @@ import {
   currentBusinessOrigin,
   clearRegistration,
   registrationTraceCode,
+  resolveCommercialAccount,
   type RegistrationTrace,
 } from "./commercialAuth";
 
@@ -603,7 +604,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     };
     // Query the authenticated account rather than trusting a login token or
     // renderer-supplied identity. A different account invalidates device keys.
-    let username: string;
+    let account: NonNullable<ReturnType<typeof resolveCommercialAccount>>;
     try {
       const response = await net.fetch(`${businessOrigin}/api/user/getLoginInfo`, {
         method: "GET", redirect: "error", credentials: "omit",
@@ -622,13 +623,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         return false;
       }
       const payload = await response.json();
-      if (!response.ok || payload?.code !== "0000" || !payload?.data?.userName) {
+      const resolvedAccount = resolveCommercialAccount(payload?.data);
+      if (!response.ok || payload?.code !== "0000" || !resolvedAccount) {
         emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin,
           status: response.status, code: registrationTraceCode(payload?.code) });
         if (response.status === 401 || ["4010", "4011"].includes(payload?.code)) await expire();
         return false;
       }
-      username = payload.data.userName;
+      account = resolvedAccount;
     } catch (error) {
       emitRegistrationTrace({ stage: "sync-session-validation-error", origin: businessOrigin });
       log.warn("[NuwaxBridge] cookie session validation failed", error);
@@ -636,8 +638,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     }
     if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin() ||
         ticket !== currentTicket() || !isCurrentDocument(event)) return false;
-    const previousAccount = readSetting("auth.username");
-    if (previousAccount && previousAccount !== username) {
+    const previousAccountId = readSetting("auth.account_id");
+    const previousLoginName = readSetting("auth.username");
+    const accountChanged = previousAccountId
+      ? previousAccountId !== account.accountId
+      : !!previousLoginName && previousLoginName !== account.loginName;
+    if (accountChanged) {
       advanceTicketEpoch();
       stopIMReceiver();
       cancelTransfers();
@@ -646,11 +652,21 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       clearRegistration();
       if (generation !== authGeneration || ticket !== currentTicket()) return false;
     }
+    const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
+    writeSetting("auth.account_id", account.accountId);
+    writeSetting("auth.username", account.loginName || null);
+    writeSetting("auth.user_info", {
+      // 此 ID 属于设备注册配置，用于 sandboxId；账号 ID 单独存 auth.account_id。
+      id: registration?.currentDomain === businessOrigin ? registration.id : undefined,
+      username: account.loginName,
+      displayName: account.displayName,
+      currentDomain: businessOrigin,
+    });
     ctx.getMainWindow()?.webContents.send("nuwax:authChanged", { loggedIn: true });
     authClearHandled = false;
     emitRegistrationTrace({ stage: "sync-session-valid", origin: businessOrigin, phase: serviceState.phase });
     // IM is independent of local sandbox services and of the IM page mount.
-    startIMReceiver(username);
+    startIMReceiver(account.accountId);
     void lifecycle.start();
     return true;
   });

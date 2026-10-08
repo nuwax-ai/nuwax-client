@@ -207,9 +207,12 @@ const auth = {
    * 企业登录：切换客户端后端域名并重新初始化（写业务域名配置 + 立即停全部
    * 本地服务 + webview 重载到新域登录页）。仅壳内有效；浏览器端返回未处理。
    */
-  configureServerHost(
+  async configureServerHost(
     host: string,
   ): Promise<{ success: boolean; serverHost?: string; error?: string }> {
+    // SPA 登出会更新会话代次；显式切域前重新绑定当前可信文档。
+    const context = await ipcRenderer.invoke("auth:getContext");
+    if (!context) return { success: false, error: "Stale document" };
     return ipcRenderer.invoke("auth:configureServerHost", host);
   },
 };

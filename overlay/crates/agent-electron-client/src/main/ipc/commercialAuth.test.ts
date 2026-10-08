@@ -55,8 +55,23 @@ import {
   getComputerName,
   initializeCommercialAuth,
   readTicketCookieValue,
+  resolveCommercialAccount,
 } from "./commercialAuth";
 const origin = "https://enterprise.example.com";
+describe("可选用户名与账号身份", () => {
+  it("用户名优先展示，昵称及手机号不改变稳定账号标识", () => {
+    expect(resolveCommercialAccount({ uid: "user-1", userName: " alice ", nickName: "昵称", phone: "18000000001" }))
+      .toMatchObject({ accountId: "uid:user-1", loginName: "alice", displayName: "alice" });
+  });
+  it("无用户名时邮箱只用于兼容注册，展示昵称", () => {
+    expect(resolveCommercialAccount({ id: "9007199254740993", userName: null, nickName: "旧账号", email: "user@example.com" }))
+      .toMatchObject({ accountId: "id:9007199254740993", loginName: "user@example.com", displayName: "旧账号" });
+  });
+  it.each([null, [], {}, { id: 0 }, { id: -1 }, { id: {} }, { id: Number.MAX_SAFE_INTEGER + 1 }, { uid: 123 }, { nickName: "昵称" }])
+    ("无可用账号标识的响应不通过认证：%j", (data) => {
+      expect(resolveCommercialAccount(data)).toBeNull();
+    });
+});
 function fixture() {
   const start = vi.fn(async () => ({ success: true }));
   const stop = vi.fn(async () => ({ success: true }));
@@ -139,6 +154,35 @@ describe("commercial registration protocol", () => {
     const { flow } = fixture();
     expect((await flow.start()).success).toBe(false);
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ id: 101, uid: "old-user", userName: null, nickName: "旧账号", phone: "18000000001" }, "旧账号", "18000000001"],
+    [{ id: 101, uid: "old-user", userName: " ", nickName: " ", phone: "18000000001" }, "未知", "18000000001"],
+    [{ id: 101, uid: "old-user", userName: null, nickName: null }, "未知", ""],
+  ])("无用户名老账号仍可注册，展示名称与注册字段分开：%j", async (user, displayName, loginName) => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "valid-ticket");
+    mocks.fetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: user })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: {
+        id: 700, configKey: "old-user-device", serverHost: "tunnel.example.com", serverPort: 443,
+        name: "我的电脑",
+      } })));
+    const { flow, start } = fixture();
+    expect((await flow.start()).success).toBe(true);
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body).username).toBe(loginName);
+    expect(mocks.settings.get("auth.account_id")).toBe("uid:old-user");
+    expect(mocks.settings.get("auth.user_info")).toMatchObject({ id: 700, displayName });
+    expect(start).toHaveBeenCalledOnce();
+  });
+  it("成功码但没有账号身份的数据不触发注册", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "valid-ticket");
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { nickName: "同名" } })));
+    const { flow, start } = fixture();
+    expect((await flow.start()).success).toBe(false);
+    expect(mocks.fetch).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
   });
   it("does not authenticate a rejected mirror even if its old DB key remains", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
@@ -335,6 +379,7 @@ describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
     mocks.settings.set("auth.saved_key", "sk-1");
     mocks.settings.set("auth.config_key", "sk-1");
     mocks.settings.set("auth.username", "18000000000");
+    mocks.settings.set("auth.account_id", "uid:original-user");
     mocks.settings.set("lanproxy_config", {
       serverIp: "old",
       serverPort: 123,
@@ -347,6 +392,7 @@ describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
     expect(mocks.settings.get("auth.saved_key")).toBeNull();
     expect(mocks.settings.get("auth.config_key")).toBeNull();
     expect(mocks.settings.get("auth.username")).toBeNull();
+    expect(mocks.settings.get("auth.account_id")).toBeNull();
     expect(mocks.settings.get("lanproxy_config")).toEqual({ enabled: true });
   });
 
@@ -354,6 +400,7 @@ describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
     clearRegistration({ preserveSavedKey: true });
     expect(mocks.settings.get("auth.saved_key")).toBe("sk-1");
     expect(mocks.settings.get("auth.username")).toBe("18000000000");
+    expect(mocks.settings.get("auth.account_id")).toBe("uid:original-user");
     expect(mocks.settings.get("auth.config_key")).toBeNull();
     expect(mocks.settings.get("lanproxy_config")).toEqual({ enabled: true });
   });

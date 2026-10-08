@@ -2224,7 +2224,10 @@ function App() {
                           onAuthChange={handleAuthChange}
                           onLoginComplete={openBrowserHome}
                           onStartSession={openStartSession}
-                          onGotoLogin={() => setMainViewMode("browser")}
+                          onGotoLogin={() => {
+                            setSettingsModalOpen(false);
+                            setMainViewMode("browser");
+                          }}
                         />
                       )}
                       {activeTab === "sessions" && (
