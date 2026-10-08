@@ -143,6 +143,51 @@ describe("business cookie session boundary", () => {
     }), context);
     expect(headers.Cookie).toBe("ticket=new");
   });
+  it.each(["", "about:blank", "https://preview.example/api/python/auth/login"])
+    ("应用 OAuth 顶层 GET 授权跳转保留当前业务域登录：%s", (source) => {
+      const headers = applySessionAuthHeaders(request({
+        url: `${businessOrigin}/api/oauth2/authorize?client_id=app&response_type=code`,
+        resourceType: "mainFrame", method: "GET",
+        webContents: { getURL: () => source, isDestroyed: () => false },
+        frame: { url: source }, requestHeaders: { Cookie: "ticket=new" },
+      }), context);
+      expect(headers.Cookie).toBe("ticket=new");
+    });
+  it.each(["xhr", "subFrame", "webSocket"])("OAuth 例外不允许外域 %s 请求借用平台凭据", (resourceType) => {
+    const source = "https://preview.example";
+    const headers = applySessionAuthHeaders(request({
+      url: `${businessOrigin}/api/oauth2/authorize?client_id=app`, resourceType, method: "GET",
+      webContents: { getURL: () => source, isDestroyed: () => false },
+      frame: { url: source }, requestHeaders: { Cookie: "ticket=new" },
+    }), context);
+    expect(headers.Cookie).toBeUndefined();
+  });
+  it.each([
+    { url: `${businessOrigin}/api/oauth2/authorize`, method: "POST" },
+    { url: `${businessOrigin}/api/oauth2/revoke`, method: "GET" },
+    { url: "https://other-business.example/api/oauth2/authorize", method: "GET" },
+  ])("OAuth 例外限制当前业务域、GET 和授权端点：$method $url", ({ url, method }) => {
+    mocks.currentTicket.mockReturnValue("new");
+    const source = "https://preview.example";
+    const headers = applySessionAuthHeaders(request({
+      url, resourceType: "mainFrame", method,
+      webContents: { getURL: () => source, isDestroyed: () => false },
+      frame: { url: source }, requestHeaders: { Cookie: "ticket=new" },
+    }), context);
+    expect(headers.Cookie).toBeUndefined();
+  });
+  it("OAuth 授权后回到应用域仍剥离平台 ticket，保留应用自己的 Cookie", () => {
+    const source = "https://preview.example";
+    const contents = { getURL: () => source, isDestroyed: () => false };
+    expect(applySessionAuthHeaders(request({
+      url: `${businessOrigin}/api/oauth2/authorize`, resourceType: "mainFrame", method: "GET",
+      webContents: contents, requestHeaders: { Cookie: "ticket=new" },
+    }), context).Cookie).toBe("ticket=new");
+    expect(applySessionAuthHeaders(request({
+      url: `${source}/callback`, resourceType: "mainFrame", method: "GET",
+      webContents: contents, requestHeaders: { Cookie: "ticket=new; app_session=own" },
+    }), context).Cookie).toBe("app_session=own");
+  });
   it.each([
     { path: "/api", method: "GET" }, { path: "/api/user/info", method: "GET" },
     { path: "/repo/doc/123", method: "POST" },

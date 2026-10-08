@@ -94,9 +94,14 @@ function trustedRequest(
       /^https?:$/.test(target.protocol) && !target.username && !target.password &&
       trustedOrigin(details.url) &&
       target.pathname !== "/api" && !target.pathname.startsWith("/api/");
+    // OAuth authorization is a top-level platform document reached from apps.
+    // Keep Chromium's business cookie here; the app never receives that cookie.
+    const oauthAuthorization = (details.method ?? "GET").toUpperCase() === "GET" &&
+      matchesBusinessOrigin(details.url, context.businessOrigin) &&
+      target.pathname === "/api/oauth2/authorize";
     // Top-level GET links and cross-origin returns are browser navigations, even
     // when the previous page was third-party or the new popup has no frame yet.
-    if (ordinaryDocument && details.resourceType === "mainFrame") return true;
+    if ((ordinaryDocument || oauthAuthorization) && details.resourceType === "mainFrame") return true;
     if (details.frame?.detached) return false;
     if (trustedOrigin(topUrl)) {
       if (ordinaryDocument && details.resourceType === "subFrame") return true;
