@@ -11,3 +11,5 @@ v3.0.11-beta.4 的 Windows/Linux 构建已成功，Mac 仍在打包。检查固�
 本地验证：17 项 beta/QA workflow 测试全部通过，无 skip；四 workflow 的 actionlint 1.7.12 与 diff 检查通过。隔离工作区用 NUWAX_TEST_BUILDER_CLIENT_DIR 只读复用已安装的 25.1.8，直接调用 computeZipCompressArgs/compute7zCompressArgs，验证 maximum 默认 level 9、执行实际 workflow 后 Mac 两架构有效 level 1、Windows/Linux 不注入该覆盖。
 
 三问：内聚——压缩覆盖仅在既有 Mac 构建分支；分层——沿用 builder 官方环境配置，不改客户端、来源或更新协议；可维护——真实命令与固定 SDK 回归覆盖有效参数，签名/公证步骤和三个 gitlink 未变。合并仍等待 GitHub 三轨门禁。
+
+发布线后续已有 5fcdb019、3c2bffaf、1a0eadb5：OAuth 导航/弹窗会话匹配、桌面开机启动/状态反馈及前端双 pin 更新。按用户「合并最新代码」要求将这些已提交代码合入本分支，未提交 WIP 保留。新的前端源码 f8dbcb4a、产物 5739f983 随发布线消费；基座仍为 d078bb3c。准备 beta.5 说明，三轨门禁通过并合并后用下一可用 tag 交付最新代码；beta.4 保持 21f4500f 用于本轮链路实测。
