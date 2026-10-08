@@ -106,7 +106,10 @@ else
   git -C "$repo" worktree add --detach "$work" ${quote(sha)}
 fi
 cd "$work"
-git submodule update --init nuwa-electron-shell
+# worktree 共享本地配置；签名机的开发检出可能用本地缓存 URL。
+# 只在本次命令中使用目标源码声明的 URL，保留开发检出的配置。
+shellurl="$(git config --file .gitmodules --get submodule.nuwa-electron-shell.url)"
+git -c "submodule.nuwa-electron-shell.url=$shellurl" submodule update --init nuwa-electron-shell
 # 新版 git submodule update 会检出声明分支尖而非 gitlink（win git 2.53 实测），强制钉回发布 pin
 git -C nuwa-electron-shell checkout -q -f ${quote(source.shell)}
 test "$(git -C nuwa-electron-shell rev-parse HEAD)" = ${quote(source.shell)}

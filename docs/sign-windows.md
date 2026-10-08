@@ -91,11 +91,13 @@ win-pc 一次性配置记录（已做，勿重复）：
 ```bash
 cd /c/soddy-git-workspace/nuwax-client
 tag=v<version>                       # 例 v3.0.10
-sha=$(git rev-parse "$tag^{commit}")
 git fetch origin "refs/tags/$tag"
+sha=$(git rev-parse "FETCH_HEAD^{commit}")
 work=../.nuwax-release-$tag-${sha:0:12}
 git worktree add --detach "$work" "$sha" 2>/dev/null || true   # 已存在时复用
-cd "$work" && git submodule update --init nuwa-electron-shell
+cd "$work"
+shellurl=$(git config --file .gitmodules --get submodule.nuwa-electron-shell.url)
+git -c "submodule.nuwa-electron-shell.url=$shellurl" submodule update --init nuwa-electron-shell
 node scripts/sync-overlay.js
 cd nuwa-electron-shell/crates/agent-electron-client
 SIGN_RELEASE_TAG="$tag" SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
