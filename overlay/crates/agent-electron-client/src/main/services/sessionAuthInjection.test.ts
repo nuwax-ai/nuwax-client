@@ -50,7 +50,8 @@ beforeEach(() => {
   mocks.cookiesOn.mockClear();
 });
 describe("business cookie session boundary", () => {
-  it.each([businessOrigin, gatewayOrigin])("authenticates a registered initial popup document at %s", (origin) => {
+  it("authenticates a registered initial gateway popup document", () => {
+    const origin = gatewayOrigin;
     const contents = { getURL: () => "", isDestroyed: () => false, once: vi.fn() };
     const url = `${origin}/api/f/s3/fixture.zip`;
     const initial = request({ url, resourceType: "mainFrame", webContents: contents, frame: { url: "" }, requestHeaders: { Cookie: "ticket=new" } });
@@ -153,7 +154,22 @@ describe("business cookie session boundary", () => {
       }), context);
       expect(headers.Cookie).toBe("ticket=new");
     });
-  it.each(["xhr", "subFrame", "webSocket"])("OAuth 例外不允许外域 %s 请求借用平台凭据", (resourceType) => {
+  it.each([
+    { origin: businessOrigin, path: "/api" },
+    { origin: businessOrigin, path: "/api/user/info" },
+    { origin: businessOrigin, path: "/api/identity/authorize" },
+    { origin: "https://enterprise.example:8443", path: "/sso/authorize" },
+    { origin: "https://enterprise.example:8443", path: "/api/custom/authorize" },
+  ])("同域顶层 GET 导航不绑定固定地址：域名 $origin，路径 $path", ({ origin, path }) => {
+    const activeContext = { ...context, businessOrigin: origin, trustedOrigins: [origin, gatewayOrigin] };
+    const source = "https://preview.example";
+    expect(applySessionAuthHeaders(request({
+      url: `${origin}${path}`, resourceType: "mainFrame", method: "GET",
+      webContents: { getURL: () => source, isDestroyed: () => false },
+      frame: { url: source }, requestHeaders: { Cookie: "ticket=new" },
+    }), activeContext).Cookie).toBe("ticket=new");
+  });
+  it.each(["xhr", "subFrame", "webSocket"])("顶层导航规则不允许外域 %s 请求借用平台凭据", (resourceType) => {
     const source = "https://preview.example";
     const headers = applySessionAuthHeaders(request({
       url: `${businessOrigin}/api/oauth2/authorize?client_id=app`, resourceType, method: "GET",
@@ -164,9 +180,13 @@ describe("business cookie session boundary", () => {
   });
   it.each([
     { url: `${businessOrigin}/api/oauth2/authorize`, method: "POST" },
-    { url: `${businessOrigin}/api/oauth2/revoke`, method: "GET" },
     { url: "https://other-business.example/api/oauth2/authorize", method: "GET" },
-  ])("OAuth 例外限制当前业务域、GET 和授权端点：$method $url", ({ url, method }) => {
+    { url: "https://child.business.example/api/custom/authorize", method: "GET" },
+    { url: "https://business.example:8443/api/custom/authorize", method: "GET" },
+    { url: "http://business.example/api/custom/authorize", method: "GET" },
+    { url: "wss://business.example/api/custom/authorize", method: "GET" },
+    { url: "https://user:pass@business.example/api/custom/authorize", method: "GET" },
+  ])("顶层导航规则限制当前业务来源和 GET：$method $url", ({ url, method }) => {
     mocks.currentTicket.mockReturnValue("new");
     const source = "https://preview.example";
     const headers = applySessionAuthHeaders(request({
@@ -189,8 +209,9 @@ describe("business cookie session boundary", () => {
     }), context).Cookie).toBe("app_session=own");
   });
   it.each([
-    { path: "/api", method: "GET" }, { path: "/api/user/info", method: "GET" },
+    { path: "/api/user/info", method: "POST" },
     { path: "/repo/doc/123", method: "POST" },
+    { path: "/api/user/info", method: "PUT" },
   ])("does not turn an external main-frame $method $path request into business admission", ({ path, method }) => {
     const source = "https://external.example/checkout";
     const headers = applySessionAuthHeaders(request({
@@ -199,6 +220,14 @@ describe("business cookie session boundary", () => {
       frame: { url: source }, requestHeaders: { Cookie: "ticket=new" },
     }), context);
     expect(headers.Cookie).toBeUndefined();
+  });
+  it("同域顶层跳转到公开登录接口仍清除 ticket", () => {
+    const source = "https://preview.example";
+    expect(applySessionAuthHeaders(request({
+      url: `${businessOrigin}/api/user/passwordLogin`, resourceType: "mainFrame", method: "GET",
+      webContents: { getURL: () => source, isDestroyed: () => false },
+      frame: { url: source }, requestHeaders: { Cookie: "ticket=new; theme=dark" },
+    }), context).Cookie).toBe("theme=dark");
   });
   it("keeps business iframe GET login but rejects its external-frame POST and API", () => {
     const foreignFrame = { url: "https://external.example/embed" };
@@ -274,6 +303,28 @@ function cookieChanged(cookie: Cookie, removed = false) {
 }
 
 describe("installed session cookie provenance", () => {
+  it("企业切域后顶层导航使用最新域名，旧域不再携带平台 ticket", async () => {
+    let activeContext: SessionAuthContext = context;
+    mocks.currentTicket.mockReturnValue("old-ticket");
+    initSessionAuthInjection(() => activeContext);
+    const source = "https://preview.example";
+    const navigation = {
+      resourceType: "mainFrame", method: "GET",
+      webContents: { getURL: () => source, isDestroyed: () => false },
+      frame: { url: source },
+    };
+    expect((await intercepted(request({ ...navigation, url: `${businessOrigin}/api/custom/authorize`,
+      requestHeaders: { Cookie: "ticket=old-ticket" },
+    })).done).Cookie).toBe("ticket=old-ticket");
+    activeContext = { businessOrigin: "https://enterprise.example:8443", trustedOrigins: ["https://enterprise.example:8443"] };
+    mocks.currentTicket.mockReturnValue("new-ticket");
+    expect((await intercepted(request({ ...navigation, url: `${activeContext.businessOrigin}/api/custom/authorize`,
+      requestHeaders: { Cookie: "ticket=new-ticket" },
+    })).done).Cookie).toBe("ticket=new-ticket");
+    expect((await intercepted(request({ ...navigation, url: `${businessOrigin}/api/custom/authorize`,
+      requestHeaders: { Cookie: "ticket=old-ticket; theme=dark" },
+    })).done).Cookie).toBe("theme=dark");
+  });
   it.each([{}, { Cookie: "preference=kept" }, { cookie: "a=1; b=2" }])("does not read the jar when request cookies contain no ticket: %j", async (requestHeaders) => {
     initSessionAuthInjection(() => context);
     const pending = intercepted(request({ requestHeaders }));
