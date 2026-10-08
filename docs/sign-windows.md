@@ -21,13 +21,13 @@
 
 ## stable 发版流程（每次）
 
-CI 在 nuwax-client 打 `electron-v{v}` tag 后产出**未签名**产物
+CI 在 nuwax-client 打 `v{v}` tag 后产出**未签名**产物
 `Nuwax-Setup-{v}-unsigned.exe`（以及最终名 MSI，不签名）。
 
 ```bash
 cd <nuwax-client 检出>/nuwa-electron-shell/crates/agent-electron-client
 
-SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
+SIGN_RELEASE_TAG="$tag" SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
 SIGN_WORK_DIR=/c/tmp/nuwax-sign \
 SIGN_WIN_ARTIFACT_PREFIX="Nuwax" \
 npm run sign:win -- <version>
@@ -88,7 +88,7 @@ win-pc 一次性配置记录（已做，勿重复）：
 
 ```bash
 cd /c/soddy-git-workspace/nuwax-client
-tag=electron-v<version>                       # 例 electron-v1.0.45
+tag=v<version>                       # 例 v3.0.10
 sha=$(git rev-parse "$tag^{commit}")
 git fetch origin "refs/tags/$tag"
 work=../.nuwax-release-$tag-${sha:0:12}
@@ -96,7 +96,7 @@ git worktree add --detach "$work" "$sha" 2>/dev/null || true   # 已存在时复
 cd "$work" && git submodule update --init nuwa-electron-shell
 node scripts/sync-overlay.js
 cd nuwa-electron-shell/crates/agent-electron-client
-SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
+SIGN_RELEASE_TAG="$tag" SIGN_RELEASE_REPO=nuwax-ai/nuwax-client \
 SIGN_WORK_DIR=/c/tmp/nuwax-sign/$tag-${sha:0:12} \
 SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true \
 npm run sign:win -- <version>
@@ -123,21 +123,21 @@ cd <nuwax-client 检出>/nuwa-electron-shell/crates/agent-electron-client
 
 SYNC_OSS_REPO=nuwax-ai/nuwax-client \
 SYNC_OSS_REF=release/v1.0.x \
-npm run sync:oss -- electron-v<version> stable
+npm run sync:oss -- v<version> stable
 ```
 
 等价简写（外层仓库根，`SYNC_OSS_REPO` 注入、`SYNC_OSS_REF` 默认取当前分支——
 须在目标发布线分支上运行）：
 
 ```bash
-npm run sync:oss -- electron-v<version> stable
+npm run sync:oss -- v<version> stable
 ```
 
 - `SYNC_OSS_REF` 应填目标发布线分支（示例为 `release/v1.0.x`），并确认该分支含与发布 tag 相同的来源校验 workflow。脚本在基座目录运行时不可依赖其默认 ref。
 - 通道根由**壳仓 workflow 的 RELEASE_ROOT**（`nuwax-electron`）决定——脚本只负责
-  dispatch，不接收通道参数，无需也无法在此覆盖。
-- beta / prerelease-v* 不需要 Windows 人工签名。推送 tag 后，`release-electron-dev.yml` 的五个平台全部构建成功，才自动调用同步工作流；它以 CI 原产 `Nuwax-Setup-<version>-unsigned.exe` 生成 beta 更新元数据，校验来源/哈希、同步 S3/OSS beta 指针，最后公开 GitHub prerelease。用户可直接下载、安装 beta；已选 stable 的客户端仍只读 stable 指针。未签名 MSI 不进入自动更新元数据。
-- stable / electron-v* 由 `scripts/release-stable.sh x.y.z` 单独触发 stable 通道，并核对 S3/OSS 两侧 stable 指针；beta tag 不会触发 stable 同步。
+  dispatch，通道由 tag 推导，显式 channel 只校验一致性。
+- beta / v*-beta.* 不需要 Windows 人工签名。推送 tag 后，`release-electron-dev.yml` 的五个平台全部构建成功，才自动调用同步工作流；它以 CI 原产 `Nuwax-Setup-<version>-unsigned.exe` 生成 beta 更新元数据，校验来源/哈希、同步 S3/OSS beta 指针，最后公开 GitHub prerelease。用户可直接下载、安装 beta；已选 stable 的客户端仍只读 stable 指针。未签名 MSI 不进入自动更新元数据。
+- stable / vX.Y.Z 由 `scripts/release-stable.sh x.y.z` 单独触发 stable 通道，并核对 S3/OSS 两侧 stable 指针；beta tag 不会触发 stable 同步。
 - 同步产物落到独立通道 `nuwax-electron/`（stable 指针
   `nuwax-electron/latest/latest.json`、beta 指针 `nuwax-electron/beta/latest.json`），
   与社区版 `nuwaclaw-electron/` 互不影响——客户端经
@@ -147,9 +147,11 @@ npm run sync:oss -- electron-v<version> stable
 
 ```bash
 gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref release/v1.0.x \
-  -f tag=electron-v<version> -f channel=stable
+  -f tag=v<version> -f channel=stable
 
 # beta 重试：
 gh workflow run sync-electron-to-oss.yml --repo nuwax-ai/nuwax-client --ref release/v1.0.x \
-  -f tag=prerelease-v<version> -f channel=beta
+  -f tag=v<version>-beta.1 -f channel=beta
 ```
+
+新规范见 [发布与更新通道](./release-channels.md)。stable 默认签名后保持 Draft，真实安装包验收后显式 `--stage sync`。历史 tag 续跑须传原值给 `SIGN_RELEASE_TAG`，不得改历史标签。

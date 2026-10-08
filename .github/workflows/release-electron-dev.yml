@@ -1,16 +1,16 @@
-# Nuwax 商业版 — beta 预发布（prerelease-v* 触发，构建成功后公开 Release）
+# Nuwax 商业版 — beta 预发布（v*-beta.* 触发，构建成功后公开 Release）
 # 商业产品壳（基座仓 nuwax-ai/nuwa-electron-shell main 分支承载业务）：
 # 路径前缀 nuwa-electron-shell/、checkout 后以 github.token 拉基座 submodule、pnpm 显式版本、
 # 旧沙箱资源排除。通道 nuwax-electron/；品牌/端口注入与 release-electron.yml 一致。
 
 # Electron 桌面客户端 — 预发布版本构建
-# 通过 prerelease-v* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
+# 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
-#   2. 准备 release-notes/prerelease-v{x.y.z}.md
-#   3. git tag prerelease-v{x.y.z} && git push origin prerelease-v{x.y.z}
+#   2. 准备 release-notes/v{x.y.z}-beta.1.md
+#   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -35,20 +35,34 @@ name: Release Electron App (Prerelease, Nuwax)
 on:
   push:
     tags:
-      - "prerelease-v*"
+      - "v*-beta.*"
 
 permissions:
   actions: read
   contents: write
 
 jobs:
+  validate-tag:
+    name: Validate release identity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      channel: ${{ steps.identity.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-version.mjs "$RELEASE_TAG" beta >> "$GITHUB_OUTPUT"
+
   verify-source:
+    needs: validate-tag
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   prepare:
     name: Prepare release
-    needs: verify-source
+    needs: [validate-tag, verify-source]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -59,9 +73,8 @@ jobs:
       - name: Get version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#prerelease-v}"
+          VERSION="${{ needs.validate-tag.outputs.version }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Electron prerelease version: $VERSION"
 
       - name: Read release notes
         id: notes
@@ -82,7 +95,9 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
-            echo "Release $TAG already exists"
+            DRAFT="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            [ "$DRAFT" = true ] || { echo "::error::已公开的 Release 不允许覆盖资产: $TAG"; exit 1; }
+            echo "Draft Release $TAG already exists"
           else
             gh release create "$TAG" \
               --title "女娲Nuwax (Electron) ${{ steps.version.outputs.version }} - Prerelease" \

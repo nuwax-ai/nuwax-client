@@ -2,7 +2,7 @@
 import { fileURLToPath } from 'node:url';
 import { withLock } from './core.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const valueFlags = new Set(['frontend', 'port', 'version', 'channel', 'nuwax', 'shell', 'output', 'stage']);
+const valueFlags = new Set(['frontend', 'port', 'version', 'tag', 'channel', 'nuwax', 'shell', 'output', 'stage']);
 const booleanFlags = new Set(['json', 'dry-run', 'refresh-resources', 'dir', 'no-build', 'force-build',
   'with-test', 'no-commit', 'no-push-dist', 'push', 'force', 'notes', 'help']);
 const camel = value => value.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
@@ -13,7 +13,7 @@ const commandFlags = {
   setup: ['frontend', 'refresh-resources', 'dry-run'],
   pack: ['frontend', 'refresh-resources', 'version', 'output', 'dir', 'dry-run'],
   'sub:update': ['nuwax', 'shell', 'no-build', 'force-build', 'with-test', 'no-commit', 'no-push-dist', 'push', 'force', 'dry-run'],
-  release: ['channel', 'version', 'notes', 'stage', 'dry-run'],
+  release: ['channel', 'version', 'tag', 'notes', 'stage', 'dry-run'],
 };
 export function parseArgs(argv) {
   const [command = 'help', ...args] = argv, options = {};
@@ -44,7 +44,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'help' || options.help) {
     console.log('Nuwax: dev [--frontend source], frontend:build, pack [--frontend source] [--dir],');
     console.log('       sub:update [--nuwax ref] [--shell ref] [--push],');
-    console.log('       release --channel stable|beta --version X.Y.Z [--stage sign|sync] [--dry-run], doctor [--json]');
+    console.log('       release --version X.Y.Z[-beta.N] [--channel stable|beta] [--tag existing-tag] [--stage sign|sync] [--dry-run], doctor [--json]');
     return;
   }
   if (command === 'doctor') return (await import('./doctor.mjs')).doctor(root, options);

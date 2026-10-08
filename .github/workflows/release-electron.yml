@@ -29,20 +29,35 @@ name: Release Electron App (Nuwax)
 on:
   push:
     tags:
-      - "electron-v*"
+      - "v*"
+      - "!v*-beta.*"
 
 permissions:
   contents: write
 
 jobs:
+  validate-tag:
+    name: Validate release identity
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      channel: ${{ steps.identity.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-version.mjs "$RELEASE_TAG" stable >> "$GITHUB_OUTPUT"
+
   verify-source:
+    needs: validate-tag
     if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
   prepare:
     name: Prepare release
-    needs: verify-source
+    needs: [validate-tag, verify-source]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
@@ -54,9 +69,8 @@ jobs:
       - name: Get version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#electron-v}"
+          VERSION="${{ needs.validate-tag.outputs.version }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Nuwax release version: $VERSION"
 
       - name: Read release notes
         id: notes

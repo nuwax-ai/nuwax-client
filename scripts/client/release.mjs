@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import config from '../../client.config.mjs';
 import { run, git, withLock } from './core.mjs';
+import { parseReleaseVersion, parseReleaseTag, releaseSequenceFindings, compareReleaseVersions } from '../release-version.mjs';
 
 const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linux-arm64'];
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -13,12 +14,14 @@ const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
-export function releaseIdentity(channel, version) {
-  if (!['stable', 'beta'].includes(channel)) throw new Error('channel 须为 stable 或 beta');
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) throw new Error('版本须显式指定为 x.y.z');
-  return { channel, version, tag: `${channel === 'stable' ? 'electron' : 'prerelease'}-v${version}`,
-    buildWorkflow: channel === 'stable' ? 'release-electron.yml' : 'release-electron-dev.yml',
-    windows: channel === 'stable' ? `Nuwax.Setup.${version}.exe` : `Nuwax-Setup-${version}-unsigned.exe` };
+export function releaseIdentity(channel, version, tag) {
+  const identity = tag ? { ...parseReleaseTag(tag, { allowLegacy: true }), resumeOnly: true }
+    : { ...parseReleaseVersion(version), tag: `v${version}`, legacy: false };
+  if (channel && channel !== identity.channel) throw new Error(`版本/tag 属于 ${identity.channel}，与 channel=${channel} 冲突`);
+  if (tag && version && version !== identity.version) throw new Error('--version 与 --tag 冲突');
+  return { ...identity,
+    buildWorkflow: identity.channel === 'stable' ? 'release-electron.yml' : 'release-electron-dev.yml',
+    windows: identity.channel === 'stable' ? `Nuwax.Setup.${identity.version}.exe` : `Nuwax-Setup-${identity.version}-unsigned.exe` };
 }
 
 function remoteTagSha(output, tag) {
@@ -28,32 +31,7 @@ function remoteTagSha(output, tag) {
 }
 
 function releaseTagRefs(tools) {
-  return tools.git(['ls-remote', '--tags', 'origin', 'refs/tags/electron-v*', 'refs/tags/prerelease-v*']);
-}
-
-function releaseSequenceFindings(identity, sha, refs) {
-  const ownSha = remoteTagSha(refs, identity.tag);
-  // Existing releases may predate the sequence policy. Their exact tag/SHA
-  // must remain resumable for build, signing and mirror recovery.
-  if (ownSha) return ownSha === sha ? [] : [`远端 ${identity.tag} 已指向另一提交 ${ownSha}，禁止改 tag；请使用新版本`];
-  const tags = refs.trim().split('\n').flatMap((line) => {
-    const match = /^\S+\s+refs\/tags\/(electron|prerelease)-v((0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*))$/.exec(line);
-    return match ? [{ version: match[2], line: `${match[3]}.${match[4]}`, patch: BigInt(match[5]), channel: match[1] === 'electron' ? 'stable' : 'beta' }] : [];
-  });
-  const collision = tags.find((tag) => tag.version === identity.version);
-  if (collision) return [`版本 ${identity.version} 已被 ${collision.channel} 使用；beta 与 stable 不得重复数字版本`];
-  const [major, minor, patch] = identity.version.split('.');
-  const history = tags.filter((tag) => tag.line === `${major}.${minor}`);
-  // Ignore unrelated historical version lines; legacy same-number promotion
-  // treated stable as the completed version, so it wins a historical tie.
-  const latest = history.reduce((current, tag) => {
-    if (!current || tag.patch > current.patch || tag.patch === current.patch && tag.channel === 'stable') return tag;
-    return current;
-  }, null);
-  if (!latest) return [];
-  if (BigInt(patch) <= latest.patch) return [`新版本 ${identity.version} 必须大于 ${major}.${minor} 版本线已使用的 ${latest.version}`];
-  if (identity.channel === latest.channel) return [`发布通道须交替：${latest.version} 为 ${latest.channel}，下一版须为 ${latest.channel === 'stable' ? 'beta' : 'stable'}`];
-  return [];
+  return tools.git(['ls-remote', '--tags', 'origin', 'refs/tags/v*', 'refs/tags/electron-v*', 'refs/tags/prerelease-v*']);
 }
 
 export function selectRun(runs, { tag, sha, event = 'push', title, branch, afterId = 0 }) {
@@ -134,7 +112,7 @@ git -C nuwa-electron-shell checkout -q -f ${quote(source.shell)}
 test "$(git -C nuwa-electron-shell rev-parse HEAD)" = ${quote(source.shell)}
 node scripts/sync-overlay.js
 cd nuwa-electron-shell/crates/agent-electron-client
-SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true npm run sign:win -- ${quote(version)} $resume
+SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true npm run sign:win -- ${quote(version)} $resume
 # 签名上传成功后清理一次性 worktree 残留（其他 tag 与旧版命名后缀）；失败路径不执行，保留续跑现场。
 for stale in "$(dirname "$work")"/.nuwax-release-*; do
   if [ ! -e "$stale" ] || [ "$stale" = "$work" ]; then continue; fi
@@ -183,7 +161,15 @@ async function preflight(root, identity, options, tools, settings) {
   const findings = [];
   try { await tools.exec('gh', ['auth', 'status'], { capture: true }); }
   catch { findings.push('需要安装 gh 并完成 gh auth login'); }
-  const sha = await tools.git(['rev-parse', 'HEAD']);
+  const automationSha = await tools.git(['rev-parse', 'HEAD']);
+  const remote = await releaseTagRefs(tools);
+  const tagSha = remoteTagSha(remote, identity.tag);
+  const sha = identity.resumeOnly && tagSha ? tagSha : automationSha;
+  if (identity.resumeOnly && options.notes === true) throw new Error('--tag 续跑不得修改历史说明');
+  if (sha !== automationSha) {
+    try { await tools.git(['cat-file', '-e', `${sha}^{commit}`]); }
+    catch { await tools.git(['fetch', '--no-recurse-submodules', 'origin', `refs/tags/${identity.tag}`]); }
+  }
   const branch = await tools.git(['branch', '--show-current']);
   if (!branch) findings.push('须在远端可达的发布分支运行，不支持 detached HEAD');
   const notes = typeof options.notes === 'string' ? options.notes : `release-notes/${identity.tag}.md`;
@@ -191,18 +177,18 @@ async function preflight(root, identity, options, tools, settings) {
   const status = await tools.git(['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=dirty', '--', '.', ...(options.notes === true ? [`:(exclude)${notes}`] : [])]);
   if (status) findings.push(`外层存在未提交的受跟踪改动：${status}`);
   let noteCommitted = false;
-  try { noteCommitted = Boolean((await tools.git(['show', `HEAD:${notes}`])).trim()); } catch { /* missing note */ }
+  try { noteCommitted = Boolean((await tools.git(['show', `${sha}:${notes}`])).trim()); } catch { /* missing note */ }
   if (!noteCommitted && options.notes !== true) findings.push(`缺少已提交的说明 ${notes}`);
   if (options.notes === true && (!fs.existsSync(path.join(root, notes)) || !fs.readFileSync(path.join(root, notes), 'utf8').trim()))
     findings.push(`说明文件不存在或为空：${notes}`);
   if (branch) {
     const remote = (await tools.git(['ls-remote', 'origin', `refs/heads/${branch}`])).split(/\s/)[0];
-    if (remote !== sha) findings.push(`远端分支 ${branch} 与当前 HEAD 不同；先推送发布提交`);
+    if (remote !== automationSha) findings.push(`远端分支 ${branch} 与当前 HEAD 不同；先推送发布提交`);
   }
   const source = { client: sha };
   for (const [name, folder] of [['shell', 'nuwa-electron-shell'], ['frontend', 'nuwax'], ['dist', 'nuwax-dist']]) {
     let pin;
-    try { pin = await tools.git(['rev-parse', `HEAD:${folder}`]); } catch { if (name === 'dist') continue; throw new Error(`缺少 ${folder} gitlink`); }
+    try { pin = await tools.git(['rev-parse', `${sha}:${folder}`]); } catch { if (name === 'dist') continue; throw new Error(`缺少 ${folder} gitlink`); }
     if (!shaPattern.test(pin)) { findings.push(`${folder} 不是有效 gitlink`); continue; }
     source[name] = pin;
     const url = await tools.git(['config', '-f', '.gitmodules', '--get', `submodule.${folder}.url`]);
@@ -219,7 +205,7 @@ async function preflight(root, identity, options, tools, settings) {
       }
     }
     const directory = path.join(root, folder);
-    if (fs.existsSync(path.join(directory, '.git'))) {
+    if (sha === automationSha && fs.existsSync(path.join(directory, '.git'))) {
       if (await tools.git(['rev-parse', 'HEAD'], directory) !== pin) findings.push(`${folder} 当前 HEAD 与发布 pin 不同`);
       const dirty = await tools.git(['diff', 'HEAD', '--name-only'], directory);
       for (const file of dirty.split('\n').filter(Boolean)) {
@@ -230,10 +216,8 @@ async function preflight(root, identity, options, tools, settings) {
       }
     }
   }
-  const remote = await releaseTagRefs(tools);
-  const tagSha = remoteTagSha(remote, identity.tag);
   findings.push(...releaseSequenceFindings(identity, sha, remote));
-  return { ...identity, sha, branch, source, notes, findings, tagSha, settings };
+  return { ...identity, sha, automationSha, branch, source, notes, findings, tagSha, settings };
 }
 
 async function lookupRun(tools, settings, workflow, criteria, options) {
@@ -294,7 +278,6 @@ async function pointers(tools, settings, identity) {
 
 async function preventPointerDowngrade(tools, settings, identity) {
   const folder = identity.channel === 'stable' ? 'latest' : 'beta';
-  const target = identity.version.split('.').map(BigInt);
   await Promise.all([settings.s3Base, settings.ossBase].map(async (base) => {
     let bytes;
     try { bytes = await tools.fetchBytes(`${base}/${folder}/latest.json`); }
@@ -303,10 +286,8 @@ async function preventPointerDowngrade(tools, settings, identity) {
       throw error;
     }
     const version = JSON.parse(Buffer.from(bytes).toString()).version;
-    if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) throw new Error('当前通道指针版本无效，停止同步');
-    const current = version.split('.').map(BigInt);
-    const index = current.findIndex((value, part) => value !== target[part]);
-    if (index !== -1 && current[index] > target[index]) throw new Error(`禁止 ${identity.channel} 通道从 ${version} 降级到 ${identity.version}；历史版本仅可继续构建或签名`);
+    try { parseReleaseVersion(version); } catch { throw new Error('当前通道指针版本无效，停止同步'); }
+    if (compareReleaseVersions(version, identity.version) > 0) throw new Error(`禁止 ${identity.channel} 通道从 ${version} 降级到 ${identity.version}；历史版本仅可继续构建或签名`);
   }));
 }
 
@@ -355,8 +336,8 @@ export async function verifyMirrors(tools, settings, identity, view, source) {
 }
 
 export async function release(root, options = {}, injected = {}) {
-  const identity = releaseIdentity(options.channel ?? 'stable', options.version);
-  const stage = options.stage;
+  const identity = releaseIdentity(options.channel, options.version, options.tag);
+  const stage = options.stage ?? (identity.channel === 'stable' ? 'sign' : undefined);
   if (stage === 'sign' && identity.channel !== 'stable') throw new Error('--stage sign 仅适用 stable（beta 不做 Windows 签名）');
   const settings = { ...config.release, ...(options.settings ?? {}),
     signHost: process.env.RELEASE_SIGN_HOST ?? options.settings?.signHost ?? config.release.signHost,
@@ -386,6 +367,7 @@ export async function release(root, options = {}, injected = {}) {
       await tools.git(['push', 'origin', `HEAD:refs/heads/${state.branch}`]);
       state.sha = await tools.git(['rev-parse', 'HEAD']);
       state.source.client = state.sha;
+      state.automationSha = state.sha;
     }
   }
   if (!state.tagSha) {
@@ -427,14 +409,14 @@ export async function release(root, options = {}, injected = {}) {
     if (!view.assets.some((asset) => asset.name === identity.windows)) throw new Error(`签名后仍缺少 ${identity.windows}`);
   }
   if (stage === 'sign') {
-    tools.log(`[release] --stage sign 完成：${identity.windows} 已就位；OSS/S3 同步未执行（续跑 --stage sync 或完整 release）`);
+    tools.log(`[release] --stage sign 完成：${identity.windows} 已就位；OSS/S3 同步未执行（安装包验收后续跑 --stage sync）`);
     return { stage: 'sign', tag: identity.tag, version: identity.version, source: state.source, windows: identity.windows,
       releaseUrl: `https://github.com/${settings.repo}/releases/tag/${identity.tag}` };
   }
   // Successful sync performs osslsigncode + PE provenance checks. Public assets alone never bypass it.
   const title = `Sync ${identity.channel} ${identity.tag}`;
   const syncRuns = await tools.gh(['run', 'list', '--repo', settings.repo, '--workflow', 'sync-electron-to-oss.yml', '--limit', '100', '--json', 'databaseId,headBranch,headSha,event,status,conclusion,displayTitle']);
-  const criteria = { tag: identity.tag, sha: state.sha, event: 'workflow_dispatch', title, branch: state.branch };
+  const criteria = { tag: identity.tag, sha: state.automationSha, event: 'workflow_dispatch', title, branch: state.branch };
   const successfulSync = selectRun(syncRuns.filter((entry) => entry.status === 'completed' && entry.conclusion === 'success'), criteria);
   let verified;
   if (!view.draft && (successfulSync || (identity.channel === 'beta' && buildResult.conclusion === 'success'))) {
@@ -447,7 +429,7 @@ export async function release(root, options = {}, injected = {}) {
       await preventPointerDowngrade(tools, settings, identity);
       // dispatch resolves a branch ref: compare it again immediately before the mutation.
       const remote = (await tools.git(['ls-remote', 'origin', `refs/heads/${state.branch}`])).split(/\s/)[0];
-      if (remote !== state.sha) throw new Error(`发布分支 ${state.branch} 已被推进；请在 tag 对应分支提交续跑，禁止 dispatch 错误 SHA`);
+      if (remote !== state.automationSha) throw new Error(`发布分支 ${state.branch} 已被推进；请在 同步工具分支提交续跑，禁止 dispatch 错误 SHA`);
       const previousId = sync?.databaseId ?? 0;
       await tools.exec('gh', ['workflow', 'run', 'sync-electron-to-oss.yml', '--repo', settings.repo, '--ref', state.branch, '-f', `tag=${identity.tag}`, '-f', `channel=${identity.channel}`]);
       sync = await lookupRun(tools, settings, 'sync-electron-to-oss.yml', { ...criteria, afterId: previousId }, options);
@@ -465,9 +447,11 @@ export async function release(root, options = {}, injected = {}) {
 // Legacy shell wrapper uses this CLI; root client dispatcher imports release().
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const argv = process.argv.slice(2);
-  const options = { channel: 'stable' };
+  const options = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--channel') options.channel = argv[++i];
+    else if (argv[i] === '--tag') options.tag = argv[++i];
+    else if (argv[i] === '--stage') options.stage = argv[++i];
     else if (argv[i] === '--version') options.version = argv[++i];
     else if (argv[i] === '--dry-run') options.dryRun = true;
     else if (argv[i] === '--notes') options.notes = true;
