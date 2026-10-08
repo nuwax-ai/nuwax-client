@@ -22,6 +22,8 @@ npm run release -- --tag electron-v3.0.9 --stage sync
 
 当前客户端默认 direct，加载业务线上页面；打包前端用于显式 gateway 模式的本地承载，不因线上加载失败自动切换。发布 pin 无须追到远端最新，但必须在声明消费线历史中可达，源码/产物版本戳一致且兼容宿主接口。每个 tag 固定这些输入，打包期间不追新提交。
 
+CLI 按预检时捕获的消费分支 SHA 核对历史关系，允许远端比 pin 更新，不把分支尖端替换成构建输入。`--tag` 续跑从目标发布提交的 `.gitmodules` 读取 URL 与消费分支，工具工作区换线不会改变历史目标。doctor/prepare 继续核对本地 HEAD 与已提交 pin、工作树及产物戳；这些检查不要求远端最新。
+
 stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-beta.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名显式传入 `SIGN_RELEASE_TAG`，基座默认保持社区的 electron-v 格式。
 
 ## CI 路由与脚本责任
