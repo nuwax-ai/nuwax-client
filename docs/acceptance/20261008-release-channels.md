@@ -118,3 +118,24 @@ beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_
 同步后独立读取四个订阅入口，并对 stable 与同步前保存的原字节进行比较：S3/OSS 的 `latest/latest.json` 均保持 3.0.10、4606 字节、SHA256 `1b29818787ef418300e4a347eec3fdcced89462016dcb576eebaef13e002647d`；两个 `beta/latest.json` 均为 3.0.11-beta.4、5033 字节、SHA256 `d86dfc92bdffc706f195710c643fa14cfeb54ec6a5e3f0e15ccbc2fe82fb461a`，镜像字节一致。该指针快照对应 beta.4 同步完成时，后续更高 beta 发布会继续推进 beta 指针。
 
 证据为执行机 `/tmp/nuwax-beta4-sync.log`、`/tmp/nuwax-v3.0.11-beta.4-pointer-baseline.json`、`/tmp/nuwax-verify-beta4-pointers.mjs` 与 `/tmp/nuwax-v3.0.11-beta.4-pointers-actual.json`；原 tag/SHA、stable 两入口均未改动。
+
+## beta.6 未公开候选按用户授权重定向
+
+2026-10-08，用户明确要求以 `release/v3.0.x` 最新提交重新打包 beta.6。本次仅对尚未公开的候选作一次性例外：原 [run 37781815290](https://github.com/nuwax-ai/nuwax-client/actions/runs/37781815290) 对应 `v3.0.11-beta.6@b3d942a6e66c0ca5d57a8acf5dfa7fd3280f96b2`，已取消；原 Draft 为零资产，删除后再更新 tag。推送使用绑定上述旧 SHA 的 `force-with-lease`，远端 tag 随后核对为 `d1749fce081825497a916e67d6854bab15c85a32`。旧 run 与旧 SHA 在本记录保留，不能将它们的检查结果计入新候选。
+
+默认规则仍为已存在 tag 占用版本、同 tag/SHA 重试、源码变化使用新版本；本次例外来自用户对这一未公开候选的明确要求，不改变版本解析、占用检查或发布工具的默认规则，也不允许据此重写已公开 tag。
+
+新来源先正常提交、推送发布分支，再触发 tag push：最新业务提交为 `156bbbc006afbadac0f96c147fa6eb88028e885c`，其上增加打包修复 `d1749fce081825497a916e67d6854bab15c85a32`。beta Mac 配置显式将 `dist/main/mac-notification-permission.node` 放入 `asarUnpack`，实际构建后的来源记录步骤要求模块存在、`lipo -verify_arch arm64 x86_64` 通过，并严格验签该模块，再验签整个 app。21 项 beta/QA workflow 定向脚本测试通过；这不代表新 CI 安装包的原生模块、签名和公证已完成验证。
+
+本轮冻结来源：
+
+| 项目 | SHA |
+|---|---|
+| 外层 / tag | `d1749fce081825497a916e67d6854bab15c85a32` |
+| 基座 `nuwa-electron-shell` | `d078bb3cd87eb111a38299bb23d9dff819f53c13` |
+| 前端源码 `nuwax` | `4dfea90cd29330e504bf8c858531d38ecc570b12` |
+| 前端产物 `nuwax-dist` | `4a497a0553a235ad2f919ab7c1e3779e5e63c45e` |
+
+新 [run 37783268381](https://github.com/nuwax-ai/nuwax-client/actions/runs/37783268381) 创建于 2026-10-08 13:18:05 UTC，事件为 push，headBranch 为 `v3.0.11-beta.6`，headSha 与上表一致；本次 CLI 预检 `findings=[]`。记录时运行状态为 `in_progress`、无最终 conclusion，三轨门禁、五平台构建、Mac 原生模块/签名/公证、公开及 OSS/S3 同步结果待后续补充，未提前计作完成。
+
+开始本轮时，stable 订阅入口仍为 3.0.10，beta 入口仍为 3.0.11-beta.4。文档证据在独立 `codex/beta6-release-evidence-20261008` 分支记录，暂不合入发布分支，保持本轮构建源码冻结。真实客户端安装、升级与 GUI 验收继续由用户负责。

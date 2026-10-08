@@ -1,7 +1,7 @@
 # 实施计划：统一版本与 stable/beta 通道
 
 - 对应 spec：specs/release-channels.md
-- 状态：首次 stable 已公开并同步双镜像；更新同步性能与文档后执行 beta 打包
+- 状态：stable 3.0.10 与 beta.4 已公开并同步双镜像；beta.6@d1749fce 的 Actions 正在执行，未完成发布验收
 
 ## 实施顺序
 
@@ -29,3 +29,5 @@ Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、�
 2026-10-08：v3.0.10 的 GitHub Actions 五平台构建与 win-pc EV 签名完成；Mac arm64 / Windows x64 的真实安装、业务页、完整退出重启及原订阅保留通过。Windows 安装慢的 I/O 与 7z 写盘证据已补入既有 NUW-21。镜像同步 run 37741910045 正在执行；其余真实设备与 beta.N 链路验证边界见验收文档。
 
 追加性能修复：run 37741910045 已成功；Verify S3 upload 串行完整下载耗时 5 分 22 秒。新增共享 SHA256 服务端校验/历史完整读回模块；上传固定 classic/8 MiB 分片，来源清单绑定完整 hash 与服务端 composite hash。CI、CLI 去除新资产重复下载，历史回读限制四路并发。覆盖分片边界、同尺寸损坏、校验值缺失/错误、流失败、并发失败收敛；更新文档并在 beta Actions 实测收益。
+
+2026-10-08 beta.6 追加记录：用户明确指定最新 release/v3.0.x 源码重新打 beta.6，对尚未公开、零资产的原候选作一次性重定向。原 run 37781815290（b3d942a6）已取消，原 Draft 删除；绑定旧 SHA 的 force-with-lease 将 tag 更新为已正常提交、推送的 d1749fce。默认 tag 不可变、源码变化升号规则保持，例外仅限本次用户指定的未公开候选。新 tag push run 37783268381 正在执行；冻结来源、三个 pin、通知原生模块打包检查与待完成验收项详见 docs/acceptance/20261008-release-channels.md。证据文档独立提交，暂不合入发布分支或改动冻结源码。
