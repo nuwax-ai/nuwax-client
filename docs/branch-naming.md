@@ -114,8 +114,8 @@ git checkout -b feat/<slug> main
 git checkout -b release/v3.0.x main
 
 # beta 可连续发布，也可同号转正；正式 tag 创建后关闭同号 beta
-npm run release -- --version 3.0.11-beta.1 --dry-run
-npm run release -- --version 3.0.11-beta.1
+npm run release -- --version 3.0.11-beta.2 --dry-run
+npm run release -- --version 3.0.11-beta.2
 # 提交对应正式发布说明，签名/验收后续跑同步；也允许直接 stable
 npm run release -- --version 3.0.11 --stage sign
 npm run release -- --tag v3.0.11 --stage sync

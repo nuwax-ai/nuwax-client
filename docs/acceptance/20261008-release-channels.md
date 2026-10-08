@@ -64,3 +64,14 @@ v3.0.10 镜像同步 run 37741910045 于 2026-10-08 07:27 UTC 成功，Release �
 性能增量三问：完整性策略集中在 release-storage-integrity.mjs，CI 和 CLI 共用，更新指针事务保持单独属主；固定分片参数明确绑定上传配置，来源清单可选字段兼容历史标签；SHA256、大小和类型不符直接失败，旧文件仍完整回读，四路并发失败先收敛再返回。测试覆盖实际 HTTP HEAD/流、multipart 边界、同尺寸损坏与实际 aws 子命令晚失败。
 
 性能修复本地质量门：npm run test:scripts 243 passed / 0 failed；actionlint 1.7.12 校验四套 workflow 通过，check:pin --remote origin/main 和 git diff --check 通过。内聚证据：release-storage-integrity.mjs 的 mapLimit/fileChecksums/verifyS3Asset 管理校验与失败收敛，client/release.mjs 仅传入 GH 来源，workflow 仅配置上传和调用共享工具；无客户端或基座源码变动。下一轮 beta 的实际 Actions 耗时另记。
+
+
+## 指定 worktree 分支整合
+
+用户补充要求在 beta 打包前合齐 codex/release-channel-rules 与 codex/desktop-idp-20261008。前者经 PR #14 合入发布线 65ef6502；后者整合 debca8ba（含公开 beta 原生版本修复 25675bf5、IdP 网关修复 54f44a18）。隔离工作区无冲突合并，原主区与其他 worktree WIP 保留。
+
+三问证据：routingPolicy.ts:143 在既有 page/frame 可信判断之后，仅保留业务域顶层 auth/idp/identity 导航的 origin，iframe/XHR 与请求头策略不放宽；beta workflow 的包版本、原生字段与 DMG 模板在同一版本注入步骤处理，真实 electron-builder 25.1.8 测试核对 beta.1/beta.10 的两个 Mac 架构；450 行 IdP acceptance 工具使用独立临时 profile 和 loopback fixture，权限/凭据隔离与 finally 清理明确。前端页面配套不在当前 307a3d6b2 pin 中，不据此宣称完整三方登录已入安装包。
+
+整合后本地质量门：脚本 248 passed / 0 failed；社区 1552 passed / 18 skipped；商业 2235 passed / 18 skipped；overlay:check、host-bridge:check、check:pin --remote origin/main、actionlint 四 workflow 与 diff 检查通过。
+
+v3.0.11-beta.1@177e9fca 的 run 37745492545 三轨门禁成功，按用户新增合并顺序取消；构建取消、公开同步跳过。tag 与 Draft 不删除、不移动，继续占用 beta.1。新源码候选为 beta.2，创建前重新查远端占用。S3 新校验的实际性能测量随下一 beta 同步执行。
