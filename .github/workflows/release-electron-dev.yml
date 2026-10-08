@@ -572,6 +572,11 @@ jobs:
           NUWAX_PORT_OFFSET: "1000"
         run: |
           echo "Building Electron app for ${{ runner.os }} (${{ matrix.arch }})"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # 与 stable 一致：覆盖基座的 maximum，避免 ZIP level 9 的长时间压缩。
+            export ELECTRON_BUILDER_COMPRESSION_LEVEL=1
+            echo "macOS archive compression level: ${ELECTRON_BUILDER_COMPRESSION_LEVEL}"
+          fi
           if [ "${{ runner.os }}" = "macOS" ] && [ -z "${{ secrets.APPLE_CERTIFICATE || '' }}" ]; then
             echo "APPLE_CERTIFICATE not set — using unsigned mac build"
             case "${{ matrix.arch }}" in
