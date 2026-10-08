@@ -1,10 +1,12 @@
 # Nuwax 商业版打包与发布流程
 
+> 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。v3.0.10 由 `v3.0.10` tag push 触发 GitHub Actions；stable 消费锁定的 `nuwax-dist` pin，beta 仍从源码 pin 构建。stable 构建后保持 Draft，完成 Windows 签名与安装验收，再显式同步公开。下文的 v3.0.2–v3.0.6 耗时和执行口径为历史记录。
+
 ## 本次问题暴露的缺口
 
 `electron-v3.0.2` 与 `electron-v3.0.3` 的构建门禁可以通过，但安装后的 `/repo`、`/instant-message` 仍可能因 Electron 请求路由错误而加载 HTML 代替 JavaScript。构建成功、来源哈希正确，只能证明产物可生成且未被替换，不能证明安装包里的 WebView 能打开业务页。
 
-当前 `sub:update` 构建并推送 `nuwax-dist`，正式发布工作流却从 `nuwax` 源码 pin 在五个平台各重建一次前端，`nuwax-dist` pin 不参与打包。这使“双 pin”看起来锁定了发布载荷，实际安装包使用的是五次现场构建的结果。
+当时 `sub:update` 构建并推送 `nuwax-dist`，正式发布工作流却从 `nuwax` 源码 pin 在五个平台各重建一次前端，`nuwax-dist` pin 不参与打包。这使“双 pin”看起来锁定了发布载荷，实际安装包使用的是五次现场构建的结果；stable 后续已改为消费产物 pin。
 
 ## 实测耗时与优化顺序
 

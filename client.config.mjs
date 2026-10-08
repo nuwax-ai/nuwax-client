@@ -20,7 +20,6 @@ export default Object.freeze({
   release: Object.freeze({
     repo: 'nuwax-ai/nuwax-client',
     signHost: 'win-pc',
-    windowsClientDir: '/c/soddy-git-workspace/nuwax-client',
     signGhPath: '/c/Program Files/GitHub CLI',
     s3Base: 'https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron',
     ossBase: 'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',

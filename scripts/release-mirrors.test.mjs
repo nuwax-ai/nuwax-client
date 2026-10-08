@@ -70,7 +70,8 @@ name=$(basename "$last")
 cat "$MOCK_OSS_DIR/$name" || exit
 [ "$MOCK_OSS_FAIL_NAME" != "$name" ] || exit 23
 `, { mode: 0o755 });
-  const run = (step, extra = {}) => spawnSync('bash', ['-c', runBlock(step).replaceAll('/tmp/release-assets', assets)], {
+  const run = (step, extra = {}) => spawnSync('bash', ['-c', runBlock(step).replaceAll('/tmp/release-assets', assets)
+    .replace('node scripts/release-storage-integrity.mjs', `node "${new URL('./release-storage-integrity.mjs', import.meta.url).pathname}"`)], {
     cwd: root,
     encoding: 'utf8',
     env: {
@@ -105,7 +106,7 @@ test('S3 rejects an installer changed without changing ContentLength', () => {
     writeFileSync(path, changed);
     const result = f.run('Verify S3 upload');
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout, /S3 资产 SHA256 不一致/);
+    assert.match(result.stdout + result.stderr, /S3 资产 SHA256 不一致/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

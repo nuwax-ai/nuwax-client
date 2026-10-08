@@ -1,3 +1,4 @@
+# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
 # Nuwax 商业版 — beta 预发布（v*-beta.* 触发，构建成功后公开 Release）
 # 商业产品壳（基座仓 nuwax-ai/nuwa-electron-shell main 分支承载业务）：
 # 路径前缀 nuwa-electron-shell/、checkout 后以 github.token 拉基座 submodule、pnpm 显式版本、

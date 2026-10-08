@@ -1,3 +1,4 @@
+# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
 # 外层仓测试 CI：双轨门禁 + 基座纯净守卫
 #
 # 此前本仓 4 个 workflow（smoke/release×2/sync）均无测试步骤——商业侧 1309 条

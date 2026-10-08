@@ -18,7 +18,7 @@ electron-builder 打包与运行资源准备。本页是完整清单；日常速
 | `npm run pack` / `base:bundle` | 当前平台无签名商业包；`--frontend source` 将当前前端源码改动打入包 |
 | `npm run frontend:build` | 安装前端依赖并构建，输出保留在 `nuwax/dist` |
 | `npm run sub:update` | 子模块一键更新：拉源码 → 构建 dist → 推产物仓 → 提交外层双 pin |
-| `npm run release` | 发版一条龙（tag → CI → Windows 签名机 → 同步 OSS/S3 → SHA256 验证），断点续跑；`--channel stable\|beta --version X.Y.Z`，`--dry-run` 预检；`--stage sign` / `--stage sync` 把 Windows 签名与 OSS/S3 同步拆开单独跑（各阶段自带前置校验，`sync` 缺签名资产会拒绝并提示先 `sign`） |
+| `npm run release` | `--version X.Y.Z` 或 `X.Y.Z-beta.N` 推导通道，`--channel` 仅校验，`--dry-run` 预检。stable 默认完成签名后保留 Draft，安装验收后显式 `--stage sync`；beta 五平台成功后自动同步公开。`--tag` 以当前工具续跑历史 tag/SHA |
 | `npm run sign:win -- <版本>` | 转发基座签名脚本（`scripts/client/forward.mjs` 自动注入 `SIGN_RELEASE_REPO`/`SIGN_WIN_ARTIFACT_PREFIX=Nuwax`）；手动兜底用，正常发版走 `release` |
 | `npm run verify:sign:win` | 转发基座本地验签 |
 | `npm run sync:oss -- <tag> <stable\|beta>` | 转发基座 OSS 同步（自动注入 `SYNC_OSS_REPO`、`SYNC_OSS_REF=当前分支`）；手动兜底用 |
@@ -38,7 +38,7 @@ electron-builder 打包与运行资源准备。本页是完整清单；日常速
 `diagnostics:export`（导出诊断包）。`release-stable.sh` 是 `npm run release -- --channel
 stable` 的兼容壳，真身在 `scripts/client/release.mjs`。`sign:win`/`verify:sign:win`/`sync:oss`
 经 `scripts/client/forward.mjs` 转发：cwd 落基座 crate 并注入商业发布 env（外层同名 env
-优先），参数原样透传；正常发版无需手动跑签名/同步，`release` 状态机会编排好。
+优先），参数原样透传；常规签名由 `release` 编排；stable 安装验收完成后，仍须显式运行 `release --tag <原 tag> --stage sync`。
 
 ## 基座 crate `agent-electron-client/package.json`
 
@@ -52,11 +52,9 @@ stable` 的兼容壳，真身在 `scripts/client/release.mjs`。`sign:win`/`veri
 | `npm run verify:sign` | mac 产物验签 |
 | `npm run sync:oss` | 手动同步 OSS 的兜底入口（stable 常规路径由 release 状态机 dispatch workflow 完成） |
 
-签名链路：外层 `npm run release -- --channel stable` → `client/release.mjs` SSH 到
-win-pc → 干净 worktree（fetch tag → 校验 SHA → submodule → sync-overlay）→ 跑基座
-`npm run sign:win`。mac 侧不会直接跑 `sign:win`。证书为 Certum SimplySign（指纹存于
-签名机 `~/.bashrc` 的 `WINDOWS_CERTIFICATE_SHA1`），人工前置仅手机 2FA。细节全在
-[sign-windows.md](./sign-windows.md)。
+签名链路：外层 `npm run release -- --version X.Y.Z --stage sign` 校验目标 tag/SHA 与五平台来源，读取当前自动化提交 pin 的基座签名工具，通过 SSH stdin 交给 win-pc。Windows 只下载/核验缓存 → 签名/验签 → 上传，不需要源码、子模块、overlay 或 npm 安装；上传成功才删除 unsigned 资产。证书为 Certum SimplySign，手机 2FA 由人工完成。详见 [sign-windows.md](./sign-windows.md)。
+
+版本策略由 `scripts/release-version.mjs` 共用；`scripts/client/release.mjs` 编排不可变 tag、同 tag/SHA Actions、签名及最终校验；`scripts/release-provenance.mjs` 校验独立目标源码；`scripts/publish-release-pointers.mjs` 管理双镜像指针备份、SemVer 防回退、回读与失败回滚。CI 路由见 [发布与更新通道](./release-channels.md)。
 
 ### 构建与打包
 
@@ -95,3 +93,5 @@ win-pc → 干净 worktree（fetch tag → 校验 SHA → submodule → sync-ove
 `test(:run/:coverage)`、`test:scripts`、`test:integrated-node`、
 `sandbox:matrix:check|generate`（沙箱矩阵一致性）、`check:boundaries`（import 边界）、
 `check:appdir`（应用目录字面量）、`check-ports(:dev)`（启动端口检查）、`lint(:fix)`。
+
+S3 上传验证由 `scripts/release-storage-integrity.mjs` 共用于 Actions 与 CLI：新资产优先服务端 SHA256/大小，缺少校验值时限四路完整回读；逐文件打印方式与耗时。`s3Checksums` 是可选来源记录，旧 tag 不要求补写。GitHub 只读轮询遇到 EOF、连接超时或 502/503/504 时最多重试两次，发布写操作不会因此重复执行。

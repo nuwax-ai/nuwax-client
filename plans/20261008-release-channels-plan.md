@@ -1,7 +1,7 @@
 # 实施计划：统一版本与 stable/beta 通道
 
 - 对应 spec：specs/release-channels.md
-- 状态：已接受，实施中
+- 状态：首次 stable 已公开并同步双镜像；更新同步性能与文档后执行 beta 打包
 
 ## 实施顺序
 
@@ -23,3 +23,9 @@
 2026-10-08：基座中立修复通过 PR #25 合入 main（d078bb3cd87eb111a38299bb23d9dff819f53c13），商业 pin 跟随 main。集成远端 3.0.9 已提交修复和前端双 pin，未纳入原工作区 WIP。质量三问与本地验证见 docs/acceptance/20261008-release-channels.md。用户指定优先通过 GitHub Actions 执行完整 stable 流程，目标 v3.0.10。
 
 签名上传续跑修复通过基座 PR #26 合入 main，4 项实际 bash/gh 成功和失败测试通过。同步元数据使用固定 Release 创建时间，禁止网络失败时生成变化时间戳。
+
+Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、验签、上传；当前已提交签名工具由外层通过 SSH stdin 提供。应用来源校验留在外层，签名机无需源码、子模块、overlay 或 npm 安装，并保留 tag/SHA 缓存供失败续跑。
+
+2026-10-08：v3.0.10 的 GitHub Actions 五平台构建与 win-pc EV 签名完成；Mac arm64 / Windows x64 的真实安装、业务页、完整退出重启及原订阅保留通过。Windows 安装慢的 I/O 与 7z 写盘证据已补入既有 NUW-21。镜像同步 run 37741910045 正在执行；其余真实设备与 beta.N 链路验证边界见验收文档。
+
+追加性能修复：run 37741910045 已成功；Verify S3 upload 串行完整下载耗时 5 分 22 秒。新增共享 SHA256 服务端校验/历史完整读回模块；上传固定 classic/8 MiB 分片，来源清单绑定完整 hash 与服务端 composite hash。CI、CLI 去除新资产重复下载，历史回读限制四路并发。覆盖分片边界、同尺寸损坏、校验值缺失/错误、流失败、并发失败收敛；更新文档并在 beta Actions 实测收益。

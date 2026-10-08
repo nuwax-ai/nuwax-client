@@ -151,7 +151,7 @@ npm run pack -- --frontend source
 | `npm run dev -- --frontend source` | 自动准备前端依赖，启动 UMI 热更新、壳 Vite 和 Electron |
 | `npm run pack` | 默认使用产物 pin，生成当前平台无签名 Nuwax 包；`--frontend source` 先构建当前前端源码 |
 | `npm run sub:update` | 更新源码、构建、提交并推送产物仓、提交外层双 pin |
-| `npm run release -- --channel stable --version X.Y.Z` | 编排 CI、Windows 签名机和正式发布；支持 `--channel beta`；`--stage sign` / `--stage sync` 可将 Windows 签名与 OSS/S3 同步分开跑（sync 前置校验签名资产就位） |
+| `npm run release -- --version X.Y.Z[-beta.N]` | 完整版本推导通道；stable 默认停在签名/Draft，验收后 `--stage sync`；beta 五平台成功后自动同步公开。`--channel` 仅校验一致性，`--tag` 续跑已存在的历史发布 |
 | `npm run doctor -- --json` | 只读报告环境、依赖、资源和 pin 就绪状态 |
 
 两层 `package.json` 的完整脚本参考（含基座签名 / 打包 / prepare 族）见 [docs/npm-scripts.md](./docs/npm-scripts.md)。
@@ -208,9 +208,12 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 先运行只读预检，再用同一入口发布或续跑：
 
 ```bash
-npm run release -- --channel stable --version X.Y.Z --dry-run
-npm run release -- --channel stable --version X.Y.Z
-npm run release -- --channel beta --version X.Y.Z --dry-run
+npm run release -- --version 3.0.11-beta.1 --dry-run
+npm run release -- --version 3.0.11-beta.1
+# stable 默认完成 Windows 签名后停在 Draft
+npm run release -- --version 3.0.11 --stage sign
+# 真实安装验收通过后，续跑同一个 tag
+npm run release -- --tag v3.0.11 --stage sync
 ```
 
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
