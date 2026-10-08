@@ -36,13 +36,15 @@ function signedPe(unsigned) {
   return file;
 }
 
-function fixture() {
+function fixture({ tag = 'electron-v1.0.32', channel = 'stable' } = {}) {
+  const version = tag.replace(/^(electron|prerelease)-v|^v/, '');
   const root = mkdtempSync(join(tmpdir(), 'release-provenance-'));
   const scripts = join(root, 'scripts');
   const assets = join(root, 'assets');
   mkdirSync(scripts);
   mkdirSync(assets);
   copyFileSync(original, join(scripts, 'release-provenance.mjs'));
+  copyFileSync(new URL('./release-version.mjs', import.meta.url), join(scripts, 'release-version.mjs'));
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('config', 'user.email', 'test@example.invalid');
@@ -56,9 +58,9 @@ function fixture() {
   const windowsOutput = join(root, 'windows-output');
   mkdirSync(windowsOutput);
   const unsigned = unsignedPe();
-  writeFileSync(join(windowsOutput, 'Nuwax-Setup-1.0.32-unsigned.exe'), unsigned);
+  writeFileSync(join(windowsOutput, `Nuwax-Setup-${version}-unsigned.exe`), unsigned);
   const record = spawnSync(process.execPath,
-    [join(scripts, 'release-provenance.mjs'), 'record', 'prerelease-v1.0.32', 'windows', 'x64', windowsOutput],
+    [join(scripts, 'release-provenance.mjs'), 'record', tag, 'windows', 'x64', windowsOutput],
     { cwd: root, encoding: 'utf8' });
   assert.equal(record.status, 0, record.stderr);
   copyFileSync(join(windowsOutput, 'build-manifest-windows-x64.json'),
@@ -73,11 +75,12 @@ function fixture() {
     'linux-arm64': ['Nuwax-1.0.32-arm64.AppImage'],
   };
   for (const key of keys) {
+    names[key] = names[key].map(name => name.replaceAll('1.0.32', version));
     if (key === 'windows-x64') continue;
     const [platform, arch] = key.split('-');
     writeFileSync(join(assets, `build-manifest-${key}.json`), JSON.stringify({
       schemaVersion: 1,
-      tag: 'prerelease-v1.0.32',
+      tag,
       source: { client, shell, frontend },
       frontend: { stamp: frontend.slice(0, 9), distSha256 },
       platform,
@@ -88,14 +91,15 @@ function fixture() {
   for (const name of Object.values(names).flat().filter((name) => !name.endsWith('-unsigned.exe'))) {
     writeFileSync(join(assets, name), 'signed fixture');
   }
-  writeFileSync(join(assets, 'Nuwax.Setup.1.0.32.exe'), signedPe(unsigned));
+  if (channel === 'beta') writeFileSync(join(assets, `Nuwax-Setup-${version}-unsigned.exe`), unsigned);
+  else writeFileSync(join(assets, `Nuwax.Setup.${version}.exe`), signedPe(unsigned));
   for (const name of ['latest.yml', 'latest-mac.yml', 'latest-linux.yml',
     'latest-linux-arm64.yml', 'latest-linux-x64.yml']) {
-    writeFileSync(join(assets, name), 'version: 1.0.32\n');
+    writeFileSync(join(assets, name), `version: ${version}\n`);
   }
-  writeFileSync(join(assets, 'latest.json'), '{"version":"1.0.32"}\n');
-  return { root, assets, unsigned, run: () => spawnSync(process.execPath,
-    [join(scripts, 'release-provenance.mjs'), 'verify', 'prerelease-v1.0.32', assets],
+  writeFileSync(join(assets, 'latest.json'), JSON.stringify({version}) + '\n');
+  return { root, assets, unsigned, run: (extra = []) => spawnSync(process.execPath,
+    [join(scripts, 'release-provenance.mjs'), 'verify', tag, assets, channel, ...extra],
     { cwd: root, encoding: 'utf8' }) };
 }
 
@@ -204,6 +208,33 @@ test('rejects a missing macOS update zip even when its DMG is present', () => {
     rmSync(join(f.assets, 'Nuwax-1.0.32-arm64-mac.zip'));
     assert.notEqual(f.run().status, 0);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+test('canonical beta provenance keeps the full version and unsigned installer identity', () => {
+  const f = fixture({ tag: 'v1.0.32-beta.10', channel: 'beta' });
+  try {
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(readFileSync(join(f.assets, 'release-provenance.json'), 'utf8'));
+    assert.equal(value.tag, 'v1.0.32-beta.10');
+    assert.ok(value.assets['Nuwax-Setup-1.0.32-beta.10-unsigned.exe']);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('current automation verifies a target source tree without tools in that tag', () => {
+  const f = fixture({ tag: 'v1.0.32' });
+  const automation = mkdtempSync(join(tmpdir(), 'release-automation-'));
+  try {
+    copyFileSync(original, join(automation, 'release-provenance.mjs'));
+    copyFileSync(new URL('./release-version.mjs', import.meta.url), join(automation, 'release-version.mjs'));
+    rmSync(join(f.root, 'scripts'), { recursive: true });
+    const result = spawnSync(process.execPath, [join(automation, 'release-provenance.mjs'), 'verify', 'v1.0.32', f.assets, 'stable', '--source-root', f.root], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+    rmSync(automation, { recursive: true, force: true });
+  }
 });
 
 const qaVersion = '3.0.9-qa.20261008.1';

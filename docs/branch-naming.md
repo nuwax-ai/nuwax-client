@@ -38,7 +38,7 @@
 
 - 格式固定：`release/v<major>.<minor>.x`，末位 `x` 为字面通配——patch 位由 tag 递进，分支名不随 patch 变化。
 - 从 main（或收尾提交）切出；线上只进 cherry-pick 与发布收尾提交（release-notes、pin bump），不进新功能。
-- **回流**：对应正式 tag（`electron-vX.Y.Z`）验证转正后，将线 PR 回 main（可 fast-forward），随后删除该线。不回流 = 主干与发布产物长期分叉。
+- **回流**：对应正式 tag（`vX.Y.Z`）验证转正后，将线 PR 回 main（可 fast-forward），随后删除该线。不回流 = 主干与发布产物长期分叉。
 - 现状（定档日）：`release/v1.0.x` 领先 main 19 个提交，基点 `codex/download-redirect-closeout@2043f755`；`electron-v1.0.4` 已转正，待回流。
 
 ### 2.4 archive/*
@@ -49,10 +49,10 @@
 
 | tag 格式 | 触发 workflow | 用途 |
 |---|---|---|
-| `electron-vX.Y.Z` | `release-electron.yml` | 正式版 |
-| `prerelease-vX.Y.Z` | `release-electron-dev.yml` | 预发（验证通过后转正） |
+| `vX.Y.Z` | `release-electron.yml` | 正式版 |
+| `vX.Y.Z-beta.N` | `release-electron-dev.yml` | 预发（验证通过后转正） |
 
-- 使用纯 `X.Y.Z` 数字版本，beta 与 stable 共用版本序列；同一 `X.Y` 版本线每次发布递增并交替通道，不复用数字版本。例如 `3.0.7 stable → 3.0.8 beta → 3.0.9 stable`；beta 验证通过后，正式版使用新的更高版本号，并补对应正式发布说明。
+- 版本使用 X.Y.Z / X.Y.Z-beta.N，beta 从 1 开始并按最大已占用序号加一；可多轮 beta 同号转正、直接或连续 stable。正式 tag 创建后关闭同号 beta；Draft 占版本，失败只续跑原 tag/SHA，源码变更升号。详见 [更新通道规范](./release-channels.md)。
 - 历史 tag 不删除、不移动、不重打。同一 tag、同一 SHA 可续跑构建和签名；同步不得降低任一存储的当前通道版本。需要改源码时使用新的版本。`npm run release` 在预检与新 tag 创建前校验两通道远端标签；直接推送 tag 前也须遵守同一规则。
 
 ### 2.6 已知缺口（待办）

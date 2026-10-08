@@ -34,7 +34,7 @@ test('independent builder config contains commercial identity/payload and leaves
 
 test('local version derives reachable release tags and marks local builds dev', async () => {
   assert.equal(await localVersion('/client', { git: () => 'electron-v1.0.37' }), '1.0.37-dev');
-  assert.equal(await localVersion('/client', { git: () => 'prerelease-v1.0.38-beta.1' }), '1.0.38-beta.1-dev');
+  assert.equal(await localVersion('/client', { git: () => 'v1.0.38-beta.1' }), '1.0.38-beta.1-dev');
   assert.equal(await localVersion('/client', { git: () => '' }), '0.0.0-dev');
 });
 

@@ -6,13 +6,18 @@ import { execFileSync } from 'node:child_process';
 import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
-const root = resolve(import.meta.dirname, '..');
+import { parseReleaseTag } from './release-version.mjs';
+
+const argv = process.argv.slice(2);
+const sourceFlag = argv.indexOf('--source-root');
+if (sourceFlag !== -1 && !argv[sourceFlag + 1]) throw new Error('--source-root 缺少目标源码目录');
+const sourceRoot = sourceFlag === -1 ? null : argv.splice(sourceFlag, 2)[1];
+const root = sourceRoot ? resolve(sourceRoot) : resolve(import.meta.dirname, '..');
 const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linux-arm64'];
 
 function requiredArtifacts(tag, key) {
-  const match = /^(?:electron|prerelease)-v(\d+\.\d+\.\d+)$/.exec(tag);
-  if (!match) fail(`无效发布 tag: ${tag}`);
-  return artifactsForVersion(match[1], key);
+  try { return artifactsForVersion(parseReleaseTag(tag, { allowLegacy: true }).version, key); }
+  catch (error) { fail(`无效发布 tag: ${tag}；${error.message}`); }
 }
 
 function qaVersionFromIdentity(identity) {
@@ -226,7 +231,9 @@ function verify([tag, assetsDir, channel = 'stable']) {
   if (channel === 'stable' && new Set(manifests.map((value) => value.frontend.distSha256)).size !== 1) {
     fail('stable 五平台前端产物 SHA256 不一致');
   }
-  const version = tag.replace(/^(electron|prerelease)-v/, '');
+  const identity = parseReleaseTag(tag, { allowLegacy: true });
+  if (identity.channel !== channel) fail('tag 与 channel 冲突');
+  const version = identity.version;
   const windowsExe = channel === 'beta'
     ? `Nuwax-Setup-${version}-unsigned.exe`
     : `Nuwax.Setup.${version}.exe`;
@@ -272,7 +279,7 @@ function existsFile(path) {
   catch { return false; }
 }
 
-const [command, ...args] = process.argv.slice(2);
+const [command, ...args] = argv;
 if (command === 'record') record(args);
 else if (command === 'record-qa') record(args, true);
 else if (command === 'verify') verify(args);

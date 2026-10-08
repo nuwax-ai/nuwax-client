@@ -9,12 +9,13 @@
  * 用法（外层仓库根，参数原样透传给基座脚本）：
  *   npm run sign:win -- 1.0.46            # Windows 签名（正常发版由 npm run release 经 SSH 编排）
  *   npm run verify:sign:win               # 本地验签
- *   npm run sync:oss -- electron-v1.0.46 stable
+ *   npm run sync:oss -- v3.0.10 stable
  * 不做 overlay 同步：签名/同步只读基座 scripts 与 package.json，与 overlay 托管文件无关。
  */
 import { fileURLToPath } from 'node:url';
 import config from '../../client.config.mjs';
 import { run, git, paths } from './core.mjs';
+import { parseReleaseVersion } from '../release-version.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -36,8 +37,14 @@ export function main(argv = process.argv.slice(2)) {
     return;
   }
   const branch = git(root, ['branch', '--show-current'], { allowFailure: true });
+  const env = forwardEnv(process.env, branch);
+  if (script === 'sign:win' && args[0] && !process.env.SIGN_RELEASE_TAG) {
+    const identity = parseReleaseVersion(args[0]);
+    if (identity.channel !== 'stable') throw new Error('Windows 签名仅适用 stable');
+    env.SIGN_RELEASE_TAG = `v${identity.version}`;
+  }
   const result = run('npm', ['run', script, ...(args.length ? ['--', ...args] : [])],
-    { cwd: paths(root).client, env: forwardEnv(process.env, branch), allowFailure: true });
+    { cwd: paths(root).client, env, allowFailure: true });
   process.exitCode = result.status;
 }
 

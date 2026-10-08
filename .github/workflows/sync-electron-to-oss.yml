@@ -7,7 +7,7 @@
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
 
 name: Sync Electron Release to MinIO S3 & OSS (Nuwax)
-run-name: Sync ${{ inputs.channel }} ${{ inputs.tag }}
+run-name: Sync ${{ inputs.channel || ((contains(inputs.tag, '-beta.') || startsWith(inputs.tag, 'prerelease-v')) && 'beta' || 'stable') }} ${{ inputs.tag }}
 
 on:
   workflow_call:
@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       channel:
-        required: true
+        required: false
         type: string
     secrets:
       GH_PAT:
@@ -32,24 +32,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to sync (e.g. electron-v0.9.0)"
+        description: "Release tag to sync (e.g. v3.0.10 or v3.0.11-beta.1)"
         required: true
         type: string
       channel:
-        description: "Update channel pointer to publish (stable|beta). beta will NOT overwrite latest/latest.json"
+        description: "Optional channel assertion (stable|beta); inferred from tag"
         required: false
-        default: stable
-        type: choice
-        options:
-          - stable
-          - beta
+        type: string
 
 permissions:
   actions: read
   contents: write
 
 concurrency:
-  group: nuwax-update-${{ inputs.channel || 'stable' }}
+  group: nuwax-update-subscriptions
   cancel-in-progress: false
 
 jobs:
@@ -69,23 +65,27 @@ jobs:
       RELEASE_ROOT: "nuwax-electron"
       PRODUCT_PREFIX: "Nuwax"
       RELEASE_TAG: ${{ inputs.tag }}
-      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+      RELEASE_CHANNEL: ${{ inputs.channel }}
     steps:
+      - name: Checkout release automation
+        uses: actions/checkout@v4
+
       - name: Validate release tag and channel
         run: |
-          if [[ "$RELEASE_TAG" =~ ^electron-v[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASE_CHANNEL" == stable ]]; then
-            exit 0
-          fi
-          if [[ "$RELEASE_TAG" =~ ^prerelease-v[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASE_CHANNEL" == beta ]]; then
-            exit 0
-          fi
-          echo "::error::electron-v* 只能发布 stable，prerelease-v* 只能发布 beta，版本须为 x.y.z"
-          exit 1
+          set -euo pipefail
+          node scripts/release-version.mjs "$RELEASE_TAG" "$RELEASE_CHANNEL" --allow-legacy > /tmp/release-identity
+          while IFS='=' read -r key value; do
+            case "$key" in
+              version) echo "RELEASE_VERSION=$value" >> "$GITHUB_ENV" ;;
+              channel) echo "RELEASE_CHANNEL=$value" >> "$GITHUB_ENV" ;;
+            esac
+          done < /tmp/release-identity
 
       - name: Checkout release source for provenance verification
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
+          path: release-source
 
       - name: Verify release state and successful build
         env:
@@ -107,7 +107,7 @@ jobs:
             # 明确 needs: build-electron；此时整条 run 尚未 completed。
             [ "$RELEASE_CHANNEL" = beta ] &&
               [ "$GITHUB_REF" = "refs/tags/${RELEASE_TAG}" ] &&
-              [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ] || {
+              [ "$GITHUB_SHA" = "$(git -C release-source rev-parse HEAD)" ] || {
                 echo "::error::自动 beta 同步必须来自相同 tag/SHA 的构建工作流"
                 exit 1
               }
@@ -123,7 +123,7 @@ jobs:
             if [ "$RELEASE_CHANNEL" = beta ]; then
               # 自动同步失败会使整个 prerelease run 标红；手动重试只要求
               # 前置源码门禁及五个平台 build job 都成功（矩阵 job 依赖 prepare/verify-source）。
-              BUILD_RUN_ID="$(echo "$BUILD_RUNS" | jq -r --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
+              BUILD_RUN_ID="$(echo "$BUILD_RUNS" | jq -r --arg tag "$RELEASE_TAG" --arg sha "$(git -C release-source rev-parse HEAD)" '
                 first(.[] | select(.headBranch == $tag and .headSha == $sha and .event == "push") | .databaseId) // empty')"
               [ -n "$BUILD_RUN_ID" ] || { echo "::error::${RELEASE_TAG} 没有对应的构建 run"; exit 1; }
               gh run view "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs | jq -e '
@@ -140,7 +140,7 @@ jobs:
                 exit 1
               }
             else
-              echo "$BUILD_RUNS" | jq -e --arg tag "$RELEASE_TAG" --arg sha "$(git rev-parse HEAD)" '
+              echo "$BUILD_RUNS" | jq -e --arg tag "$RELEASE_TAG" --arg sha "$(git -C release-source rev-parse HEAD)" '
                 any(.[]; .headBranch == $tag and .headSha == $sha and .event == "push" and
                   .status == "completed" and .conclusion == "success")
               ' >/dev/null || {
@@ -197,27 +197,18 @@ jobs:
         run: |
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          if [[ "$TAG" == prerelease-v* ]]; then
-            VERSION="${TAG#prerelease-v}"
-          else
-            VERSION="${TAG#electron-v}"
-          fi
+          VERSION="${RELEASE_VERSION}"
           if [ "$CHANNEL" = beta ]; then
             WIN_EXE="${PRODUCT_PREFIX}-Setup-${VERSION}-unsigned.exe"
           else
             WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
           fi
-          if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
+          if [ "$CHANNEL" = "beta" ]; then
             S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
           else
             S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}"
           fi
           ASSETS_DIR="/tmp/release-assets"
-
-          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Invalid version '${VERSION}'. MVP only supports numeric x.y.z"
-            exit 1
-          fi
 
           if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
             echo "::error::Invalid channel '${CHANNEL}', expected stable or beta"
@@ -226,12 +217,10 @@ jobs:
 
           rm -f "${ASSETS_DIR}"/*.yml
 
-          RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,createdAt 2>/dev/null || echo '{}')
+          RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,createdAt)
           NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' | head -c 500)
           PUB_DATE=$(echo "$RELEASE_JSON" | jq -r '.createdAt // empty')
-          if [ -z "$PUB_DATE" ]; then
-            PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
-          fi
+          [ -n "$PUB_DATE" ] || { echo "::error::缺少固定 Release 创建时间，禁止生成不可重试的元数据"; exit 1; }
 
           add_platform() {
             local key="$1" file="$2"
@@ -361,8 +350,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
-          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets "$RELEASE_CHANNEL"
-          VERSION="${RELEASE_TAG#*-v}"
+          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets "$RELEASE_CHANNEL" --source-root release-source
+          VERSION="${RELEASE_VERSION}"
           if [ "$RELEASE_CHANNEL" = stable ]; then
             EXPECTED_WIN="Nuwax.Setup.${VERSION}.exe"
             sudo apt-get update -qq
@@ -388,7 +377,7 @@ jobs:
         run: |
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          if [[ "$TAG" == prerelease-v* ]] || [ "$CHANNEL" = "beta" ]; then
+          if [ "$CHANNEL" = "beta" ]; then
             S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
           else
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
@@ -517,71 +506,8 @@ jobs:
       - name: Publish channel pointers after all checks
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-        run: |
-          if [ "$RELEASE_CHANNEL" = stable ]; then POINTER=latest; else POINTER=beta; fi
-          S3_POINTER="s3://${S3_BUCKET}/${RELEASE_ROOT}/${POINTER}/latest.json"
-          OSS_POINTER="${OSS_BUCKET}/${RELEASE_ROOT}/${POINTER}/latest.json"
-          S3_PREVIOUS=0
-          OSS_PREVIOUS=0
-          S3_TOUCHED=0
-          OSS_TOUCHED=0
-          if aws s3 cp "$S3_POINTER" /tmp/previous-s3-pointer.json --endpoint-url "$S3_ENDPOINT" --no-sign-request 2>/tmp/s3-backup-error; then
-            S3_PREVIOUS=1
-          elif ! grep -Eiq '404|NoSuchKey|not found' /tmp/s3-backup-error; then
-            cat /tmp/s3-backup-error >&2
-            exit 1
-          fi
-          if ossutil cp --force "$OSS_POINTER" /tmp/previous-oss-pointer.json \
-            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
-            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET" 2>/tmp/oss-backup-error; then
-            OSS_PREVIOUS=1
-          elif ! grep -Eiq '404|NoSuchKey|not found' /tmp/oss-backup-error; then
-            cat /tmp/oss-backup-error >&2
-            exit 1
-          fi
-          rollback() {
-            status=$?
-            [ "$status" -ne 0 ] || status=1
-            trap - ERR INT TERM
-            set +e
-            if [ "$S3_TOUCHED" = 1 ]; then
-              if [ "$S3_PREVIOUS" = 1 ]; then
-                aws s3 cp /tmp/previous-s3-pointer.json "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
-              else
-                aws s3 rm "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
-              fi
-            fi
-            if [ "$OSS_TOUCHED" = 1 ]; then
-              if [ "$OSS_PREVIOUS" = 1 ]; then
-                ossutil cp --force /tmp/previous-oss-pointer.json "$OSS_POINTER" \
-                  --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
-                  --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-              else
-                ossutil rm --force "$OSS_POINTER" --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
-                  --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-              fi
-            fi
-            exit "$status"
-          }
-          trap rollback ERR INT TERM
-          S3_TOUCHED=1
-          aws s3 cp /tmp/latest.json "$S3_POINTER" --endpoint-url "$S3_ENDPOINT"
-          OSS_TOUCHED=1
-          ossutil cp --force /tmp/latest.json "$OSS_POINTER" \
-            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
-            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-          aws s3 cp "$S3_POINTER" /tmp/current-s3-pointer.json --endpoint-url "$S3_ENDPOINT" --no-sign-request
-          ossutil cp --force "$OSS_POINTER" /tmp/current-oss-pointer.json \
-            --endpoint "$OSS_ENDPOINT" --region "$OSS_REGION" \
-            --access-key-id "$OSS_ACCESS_KEY_ID" --access-key-secret "$OSS_ACCESS_KEY_SECRET"
-          cmp /tmp/latest.json /tmp/current-s3-pointer.json
-          cmp /tmp/latest.json /tmp/current-oss-pointer.json
-          if [ "$RELEASE_CHANNEL" = beta ]; then
-            gh release edit "$RELEASE_TAG" --draft=false --prerelease --repo "$GITHUB_REPOSITORY"
-          else
-            gh release edit "$RELEASE_TAG" --draft=false --repo "$GITHUB_REPOSITORY"
-          fi
-          trap - ERR INT TERM
-          echo "==> ${RELEASE_CHANNEL} pointer published to S3 and OSS"
+        run: node scripts/publish-release-pointers.mjs "$RELEASE_TAG" /tmp/latest.json "$RELEASE_CHANNEL"

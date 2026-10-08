@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
+import { parseReleaseTag } from '../release-version.mjs';
 import { buildFrontend } from './frontend.mjs';
 import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
@@ -19,9 +20,9 @@ export function unsignedEnv(root) {
 }
 
 export async function localVersion(root, tools = core) {
-  const tag = await tools.git(root, ['describe', '--tags', '--match', 'electron-v*', '--match', 'prerelease-v*', '--abbrev=0', 'HEAD'], { allowFailure: true });
-  const value = tag.replace(/^(?:electron|prerelease)-v/, '');
-  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value) ? value.endsWith('-dev') ? value : `${value}-dev` : '0.0.0-dev';
+  const tag = await tools.git(root, ['describe', '--tags', '--match', 'v*', '--match', 'electron-v*', '--match', 'prerelease-v*', '--abbrev=0', 'HEAD'], { allowFailure: true });
+  try { return `${parseReleaseTag(tag, { allowLegacy: true }).version}-dev`; }
+  catch { return '0.0.0-dev'; }
 }
 
 function canonical(file) {

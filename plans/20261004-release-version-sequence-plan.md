@@ -1,3 +1,5 @@
+> 本文为历史方案；版本与通道规则已由 [20261008 新计划](./20261008-release-channels-plan.md) 和 specs/release-channels.md 替代。
+
 # 发布版本序列修正
 
 - 依据：用户要求合并 Windows 登录/安装修复，并使用正常 `X.Y.Z` 版本，beta、stable 交替且不重复。

@@ -8,7 +8,8 @@ const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.re
 const settings = { repo: 'example/client', signHost: 'win-fixture', windowsClientDir: '/c/work/client', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
 
 function fixture({ channel = 'stable', signed = true, publicRelease = true } = {}) {
-  const identity = releaseIdentity(channel, '1.2.3');
+  const version = channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';
+  const identity = releaseIdentity(channel, version);
   const calls = [];
   const data = new Map();
   const manifests = {};
@@ -18,7 +19,8 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     'windows-x64': ['Nuwax-Setup-1.2.3-unsigned.exe'],
     'linux-x64': ['Nuwax-1.2.3.AppImage'], 'linux-arm64': ['Nuwax-1.2.3-arm64.AppImage'],
   };
-  for (const [key, files] of Object.entries(installers)) {
+  for (const [key, originalFiles] of Object.entries(installers)) {
+    const files = originalFiles.map(file => file.replaceAll('1.2.3', version));
     const [platform, arch] = key.split('-');
     files.forEach((file) => data.set(file, Buffer.from(file)));
     const value = { schemaVersion: 1, tag: identity.tag, platform, arch, source: { client: source.client, shell: source.shell, frontend: source.frontend },
@@ -39,6 +41,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     'darwin-x86_64': 'Nuwax-1.2.3.dmg', 'darwin-x86_64-zip': 'Nuwax-1.2.3-mac.zip',
     'windows-x86_64': identity.windows, 'linux-x86_64': 'Nuwax-1.2.3.AppImage', 'linux-aarch64': 'Nuwax-1.2.3-arm64.AppImage',
   };
+  for (const key of Object.keys(platformNames)) if (key !== 'windows-x86_64') platformNames[key] = platformNames[key].replaceAll('1.2.3', version);
   function publish() {
     const pointer = { version: identity.version, yml: { darwin: `${settings.s3Base}/${prefix}/latest-mac.yml`, linux: `${settings.s3Base}/${prefix}/latest-linux.yml`, win: `${settings.s3Base}/${prefix}/latest.yml` }, platforms: Object.fromEntries(Object.entries(platformNames).map(([key, filename]) => [key,
       { url: `${settings.s3Base}/${prefix}/${filename}`, size: data.get(filename).length, signature: Buffer.alloc(64).toString('base64') }])) };
@@ -60,7 +63,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
       if (args[0] === 'rev-parse') {
         if (args[1] === 'HEAD') return source.client;
         if (args[1].startsWith('refs/tags')) { if (state.remoteTag) return state.remoteTag; throw new Error('no tag'); }
-        return { 'HEAD:nuwa-electron-shell': source.shell, 'HEAD:nuwax': source.frontend, 'HEAD:nuwax-dist': source.dist }[args[1]];
+        return { 'nuwa-electron-shell': source.shell, nuwax: source.frontend, 'nuwax-dist': source.dist }[args[1].split(':').at(-1)];
       }
       if (args[0] === 'branch') return 'release-fixture';
       if (args[0] === 'show') return 'committed release notes';
@@ -97,7 +100,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     exec: async (command, args) => {
       calls.push(['exec', command, ...args]);
       if (command === 'ssh') { if (state.signFailure) throw new Error('authentication unavailable'); sign(); }
-      if (command === 'gh' && args[0] === 'workflow') state.syncRuns = [{ ...successfulSync, databaseId: 21, status: 'in_progress', conclusion: null }];
+      if (command === 'gh' && args[0] === 'workflow') state.syncRuns = [{ ...successfulSync, headSha: state.remoteHead, databaseId: 21, status: 'in_progress', conclusion: null }];
       return { status: 0, stdout: '', stderr: '' };
     },
     assetJson: async (asset) => JSON.parse(data.get(asset.name).toString()),
@@ -108,21 +111,21 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true } = {
     },
     hashUrl: async (url) => state.corruptMirror ? '0'.repeat(64) : digest(data.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)))),
   };
-  const run = (options = {}) => release('/nonexistent/nuwax-release-fixture', { channel, version: identity.version, settings, lookupAttempts: 3, pollAttempts: 3, ...options }, adapters);
+  const run = (options = {}) => release('/nonexistent/nuwax-release-fixture', { channel, version: identity.version, settings, stage: channel === 'stable' && signed ? 'sync' : undefined, lookupAttempts: 3, pollAttempts: 3, ...options }, adapters);
   return { identity, data, manifests, state, calls, adapters, view, run };
 }
 
 test('release version and channel are explicit and strict', () => {
   for (const version of [undefined, '1.2', '01.2.3', '1.2.3;echo', '1.2.3-beta']) assert.throws(() => releaseIdentity('stable', version));
   assert.throws(() => releaseIdentity('nightly', '1.2.3'));
-  assert.equal(releaseIdentity('beta', '1.2.3').tag, 'prerelease-v1.2.3');
+  assert.equal(releaseIdentity('beta', '1.2.3-beta.1').tag, 'v1.2.3-beta.1');
 });
 
 test('workflow selection requires exact tag, SHA and event', () => {
-  const runs = [{ databaseId: 1, headBranch: 'electron-v1.2.3', headSha: source.client, event: 'push' }];
-  assert.equal(selectRun(runs, { tag: 'electron-v1.2.3', sha: source.client }).databaseId, 1);
+  const runs = [{ databaseId: 1, headBranch: 'v1.2.3', headSha: source.client, event: 'push' }];
+  assert.equal(selectRun(runs, { tag: 'v1.2.3', sha: source.client }).databaseId, 1);
   for (const criteria of [{ sha: source.shell }, { event: 'workflow_dispatch' }, { tag: 'electron-v1.2.4' }])
-    assert.equal(selectRun(runs, { tag: 'electron-v1.2.3', sha: source.client, ...criteria }), undefined);
+    assert.equal(selectRun(runs, { tag: 'v1.2.3', sha: source.client, ...criteria }), undefined);
 });
 
 test('dry-run reports preflight problems without tag, dispatch, signing or downloads', async () => {
@@ -150,17 +153,16 @@ test('new releases cannot reuse the other channel numeric version', async () => 
   for (const channel of ['stable', 'beta']) {
     const f = fixture({ channel }); f.state.remoteTag = null;
     f.state.releaseTags = tagRef(`${channel === 'stable' ? 'prerelease' : 'electron'}-v1.2.3`);
-    await assert.rejects(f.run(), /版本 1\.2\.3 已被.*使用/);
+    await assert.rejects(f.run(), /占用/);
     assert.deepEqual(tagMutations(f.calls), []);
   }
 });
 
-test('new releases alternate channels instead of issuing two consecutive stable or beta versions', async () => {
+test('new releases allow consecutive stable and beta versions', async () => {
   for (const channel of ['stable', 'beta']) {
     const f = fixture({ channel }); f.state.remoteTag = null;
-    f.state.releaseTags = tagRef(`${channel === 'stable' ? 'electron' : 'prerelease'}-v1.2.2`);
-    await assert.rejects(f.run(), /通道须交替/);
-    assert.deepEqual(tagMutations(f.calls), []);
+    f.state.releaseTags = tagRef(channel === 'stable' ? 'v1.2.2' : 'v1.2.2-beta.1');
+    assert.equal((await f.run()).version, f.identity.version);
   }
 });
 
@@ -169,24 +171,24 @@ test('new version must increase numerically within its version line', async () =
   f.state.releaseTags = tagRef('prerelease-v1.2.10');
   const result = await f.run({ dryRun: true });
   assert.equal(result.ok, false);
-  assert.match(result.findings.join('\n'), /大于.*1\.2\.10/);
+  assert.match(result.findings.join('\n'), /大于已占用/);
   assert.deepEqual(tagMutations(f.calls), []);
 });
 
-test('new alternating releases accept annotated history and ignore unrelated old version lines', async () => {
+test('new releases accept annotated history and ignore unrelated old version lines', async () => {
   for (const channel of ['stable', 'beta']) {
     const f = fixture({ channel }); f.state.remoteTag = null;
     const previous = `${channel === 'stable' ? 'prerelease' : 'electron'}-v1.2.2`;
     f.state.releaseTags = [tagRef(previous), `${source.frontend}\trefs/tags/${previous}^{}`, tagRef('prerelease-v8.0.1')].join('\n');
     const result = await f.run();
-    assert.equal(result.version, '1.2.3');
+    assert.equal(result.version, f.identity.version);
     assert.equal(f.state.sequenceReads, 2);
   }
 });
 
 test('same-tag same-SHA resume remains valid after legacy duplicate versions and newer releases', async () => {
   const f = fixture();
-  f.state.releaseTags = [tagRef('prerelease-v1.2.3'), tagRef('electron-v1.2.10')].join('\n');
+  f.state.releaseTags = [tagRef('v1.2.3-beta.1'), tagRef('electron-v1.2.10')].join('\n');
   const result = await f.run();
   assert.equal(result.version, '1.2.3');
   assert.deepEqual(tagMutations(f.calls), []);
@@ -228,7 +230,7 @@ test('new release rechecks remote history before creating or pushing its tag', a
   const f = fixture(); f.state.remoteTag = null;
   f.state.releaseTags = tagRef('prerelease-v1.2.2');
   f.state.tagsBeforePush = tagRef('electron-v1.2.4');
-  await assert.rejects(f.run(), /大于.*1\.2\.4/);
+  await assert.rejects(f.run(), /大于已占用/);
   assert.deepEqual(tagMutations(f.calls), []);
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
 });
@@ -248,7 +250,7 @@ test('completed remote release resumes without tag, signing or workflow dispatch
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
 });
 
-test('stable signs with exact tagged isolated worktree and then publishes', async () => {
+test('stable defaults to signing, then publishes only after explicit acceptance sync', async () => {
   const f = fixture({ signed: false, publicRelease: false });
   const result = await f.run();
   assert.equal(result.version, '1.2.3');
@@ -257,6 +259,11 @@ test('stable signs with exact tagged isolated worktree and then publishes', asyn
   assert.match(ssh.at(-1), /SIGN_RELEASE_REPO/);
   assert.match(ssh.at(-1), /aaaaaaaaaaaa/);
   assert.match(ssh.at(-1), /SIGN_SKIP_BLOCKMAP=true/);
+  assert.equal(result.stage, 'sign');
+  assert.equal(f.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 0);
+  assert.equal(f.view().draft, true);
+  const published = await f.run({ stage: 'sync' });
+  assert.equal(published.assetsVerified, f.data.size);
   assert.equal(f.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
 });
 
@@ -272,7 +279,7 @@ test('signing resume embeds the manifest unsigned SHA256 for --skip-download', a
 test('remote script keeps the active worktree and prunes stale one-shot signing worktrees', () => {
   const identity = releaseIdentity('stable', '1.2.3');
   const script = remoteScript({ tag: identity.tag, sha: source.client, version: identity.version, source }, settings);
-  assert.match(script, /\.nuwax-release-electron-v1\.2\.3-aaaaaaaaaaaa/);
+  assert.match(script, /\.nuwax-release-v1\.2\.3-aaaaaaaaaaaa/);
   assert.match(script, /\[ "\$stale" = "\$work" \]/);
   assert.match(script, /worktree remove --force "\$stale"/);
   // 无清单哈希时续跑守卫恒为假：与空串比较，绝不盲跳下载
@@ -330,7 +337,7 @@ test('failed build never enters signing or sync', async () => {
 test('beta reuses successful automatic publishing and never signs', async () => {
   const f = fixture({ channel: 'beta' }); f.state.syncRuns = [];
   const result = await f.run();
-  assert.equal(result.tag, 'prerelease-v1.2.3');
+  assert.equal(result.tag, 'v1.2.3-beta.1');
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
 });
 
@@ -399,4 +406,26 @@ test('mirror verification requires a public Release and committed source identit
   const f = fixture();
   await assert.rejects(verifyMirrors(f.adapters, settings, f.identity, { ...f.view(), draft: true }, source), /尚未公开/);
   await assert.rejects(verifyMirrors(f.adapters, settings, f.identity, f.view(), { ...source, frontend: source.shell }), /来源清单/);
+});
+
+
+test('channel conflicts fail before external reads or mutations', async () => {
+  const f = fixture();
+  await assert.rejects(f.run({ version: '1.2.3-beta.1' }), /冲突/);
+  assert.deepEqual(f.calls, []);
+  assert.equal(releaseIdentity(undefined, '1.2.3-beta.10').channel, 'beta');
+  assert.equal(releaseIdentity(undefined, undefined, 'prerelease-v1.2.3').resumeOnly, true);
+  assert.throws(() => releaseIdentity('stable', undefined, 'v1.2.3-beta.1'), /冲突/);
+});
+
+test('--tag resumes the historical source using current automation without moving the tag', async () => {
+  const f = fixture();
+  const git = f.adapters.git;
+  f.adapters.git = async (args, directory) => args[0] === 'rev-parse' && args[1] === 'HEAD' ? source.dist : git(args, directory);
+  f.state.remoteHead = source.dist;
+  f.state.syncRuns = [];
+  const result = await f.run({ tag: f.identity.tag, stage: 'sync' });
+  assert.equal(result.source.client, source.client);
+  assert.equal(f.state.syncRuns[0].headSha, source.dist);
+  assert.deepEqual(tagMutations(f.calls), []);
 });

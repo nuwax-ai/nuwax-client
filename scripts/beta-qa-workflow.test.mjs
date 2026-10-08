@@ -63,11 +63,11 @@ test('manual QA builds use separate full QA identities and select only allowed W
 });
 
 test('QA branch push defaults to ZIP while public tag push preserves its original archive policy', (t) => {
-  for (const [ref, archive, qa] of [['refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', 'zip-qa', true], ['refs/tags/prerelease-v3.0.9', '', false]]) {
+  for (const [ref, archive, qa] of [['refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', 'zip-qa', true], ['refs/tags/v3.0.9-beta.1', '', false]]) {
     const result = resolveIdentity(t, { BUILD_EVENT: 'push', BUILD_REF: ref });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.values.version, qa ? '3.0.9-qa.20261008.1' : '3.0.9');
-    assert.equal(result.values.tag, qa ? 'qa-v3.0.9-qa.20261008.1' : 'prerelease-v3.0.9');
+    assert.equal(result.values.version, qa ? '3.0.9-qa.20261008.1' : '3.0.9-beta.1');
+    assert.equal(result.values.tag, qa ? 'qa-v3.0.9-qa.20261008.1' : 'v3.0.9-beta.1');
     assert.equal(result.values.windows_archive, archive);
     assert.equal(result.values.qa_build, String(qa));
     assert.equal(result.values.native_version, '3.0.9');
@@ -103,11 +103,11 @@ test('QA identity rejects malformed versions, unsupported refs, archive input an
     { WINDOWS_ARCHIVE_INPUT: 'zip-qa$(touch "$QA_SENTINEL")' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/codex/beta-qa/nested/3.0.9' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/codex/beta-qa/3.0.9' },
-    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/prerelease-v3.0.9-qa.20261008.1' },
-    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/prerelease-v3.0.9-beta.1' },
-    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/prerelease-v3.0.9$(touch "$QA_SENTINEL")' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.1-qa.20261008.1' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.0' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.1$(touch "$QA_SENTINEL")' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/main' },
-    { BUILD_REF: 'refs/tags/prerelease-v3.0.9' },
+    { BUILD_REF: 'refs/tags/v3.0.9-beta.1' },
     { BUILD_SHA: '0'.repeat(40) },
   ];
   const sentinelDir = mkdtempSync(path.join(os.tmpdir(), 'nuwax-qa-injection-'));
@@ -126,10 +126,10 @@ test('all three release mutations require a real tag push and QA artifacts use t
     condition(workflow.slice(workflow.indexOf('  publish-beta:')))];
   const qaPredicates = [condition(step('Stage isolated QA packages and build context')), condition(step('Upload isolated QA packages'))];
   for (const [event, ref, published] of [
-    ['push', 'refs/tags/prerelease-v3.0.9', true],
+    ['push', 'refs/tags/v3.0.9-beta.1', true],
     ['push', 'refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', false],
     ['workflow_dispatch', 'refs/heads/codex/client-qa', false],
-    ['workflow_dispatch', 'refs/tags/prerelease-v3.0.9', false],
+    ['workflow_dispatch', 'refs/tags/v3.0.9-beta.1', false],
   ]) {
     for (const predicate of releasePredicates) assert.equal(predicate(event, ref), published, `${event}:${ref}`);
     for (const predicate of qaPredicates) assert.equal(predicate(event, ref), !published, `${event}:${ref}`);

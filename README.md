@@ -55,8 +55,8 @@
 | Windows（x64） | `exe`（NSIS）/ `msi` | NSIS EXE 人工代码签名；MSI 暂未签名，不进自动更新指针 |
 | Linux（x64 / arm64） | `AppImage` / `deb` / `rpm` | 随通道分发 |
 
-- **stable 通道**：正式版（`electron-v*` 发版）。
-- **beta 通道**：预发布版（`prerelease-v*` 发版），提前体验新功能。
+- **stable 通道**：正式版（`vX.Y.Z` 发版）。
+- **beta 通道**：接收 `vX.Y.Z-beta.N` 和较新的正式版，提前体验新功能。
 - 更新源（OSS 指针，应用内自动更新同源）：`https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron`；安装包获取以官网与企业分发渠道为准。
 
 ## 快速上手
@@ -186,7 +186,7 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 
 ### 分支模型与双轨门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`electron-v*` / `prerelease-v*`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
@@ -215,19 +215,19 @@ npm run release -- --channel beta --version X.Y.Z --dry-run
 
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
 
-1. 提交 `release-notes/electron-v{x.y.z}.md`（beta 使用 `release-notes/prerelease-v{x.y.z}.md`）。
-2. `git tag electron-v{x.y.z} && git push origin electron-v{x.y.z}` → `release-electron.yml`：先跑双轨与前端门禁，再校验锁定的前端产物 pin、构建五平台安装包，产物先留在 Draft Release；每个平台上传源码与产物摘要清单。macOS 必须签名、公证并完成运行时验证，Windows 初始产出 unsigned 包。
-3. Windows 人工签名：[docs/sign-windows.md](./docs/sign-windows.md)（Certum SimplySign + 基座内 `npm run sign:win`）。
-4. 调用独立的 `sync-electron-to-oss.yml`：先核对五平台清单和签名版 Windows EXE，再同步资产、更新 stable 指针并公开 Release；失败以红灯呈现。`scripts/release-stable.sh` 编排上述步骤。
+1. 提交 `release-notes/vX.Y.Z.md`（beta 使用 `release-notes/vX.Y.Z-beta.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
+2. `npm run release -- --version 3.0.10 --dry-run` 预检，随后正式运行；不可变 tag push 触发对应 Actions，先校验版本，再跑双轨/前端门禁和五平台矩阵。macOS 必须签名、公证，Windows 初始产出 unsigned 包。stable 默认停在 Draft 签名阶段。
+3. 完成 Windows SimplySign 签名和真实安装包验收后，运行 `npm run release -- --tag v3.0.10 --stage sync`：验证来源和哈希，同步镜像、推进 stable 及较旧 beta 指针，最后公开 Release。
+4. beta 五平台全部成功后自动同步 beta 指针并公开 prerelease。可以多轮 beta 后同号转正，也可直接或连续发 stable；正式 tag 创建后关闭同号 beta。序号从 1 开始，已有 tag/Draft 占用版本，源码变更必须升号。
 
-beta 通道：`prerelease-v{x.y.z}` tag 的五平台构建全部成功后，`release-electron-dev.yml` 自动调用同步工作流，以 CI 原产未签名 Windows EXE 生成 beta 更新元数据，校验来源和哈希，更新 S3/OSS beta 指针，并公开 GitHub prerelease。用户可直接下载安装；客户端是否接收 beta 只由更新通道设置决定。正式版由 `scripts/release-stable.sh` 人工签名后独立同步 stable，beta 不改 stable 指针。验收字段见 [发布验收模板](./docs/release-acceptance-template.md)，维护规则见 [工程维护](./docs/maintenance.md)。
+旧 tag 和资产目录保留，使用 `--tag` 续跑同 SHA。首次上线先发 `v3.0.10` 兼容正式版，之后进入 `v3.0.11-beta.1`。完整规范见 [发布与更新通道](./docs/release-channels.md)，Windows 签名见 [签名指南](./docs/sign-windows.md)，验收见 [发布验收模板](./docs/release-acceptance-template.md)。
 
 维护人员可在故障机器上运行 `npm run diagnostics:export -- --output <path>` 导出本地诊断 JSON。它只记录日志级别、组件和错误码统计，以及固定端口连通性；不包含日志正文、凭据或远程上报。
 
 ### 首次启用清单（人工操作）
 
 - [ ] GitHub Settings → Secrets（与社区版同值，共用证书）：`GH_PAT`（可选）+ Apple 签名/公证族（`APPLE_TEAM_ID` 等）+ `MINIO_*` + `OSS_*`
-- [ ] 打首个 `prerelease-v*` tag 验证构建链路；平时可用 `ci-smoke.yml`（workflow_dispatch）快速回归 submodule 链路
+- [ ] 先打 `v3.0.10` 兼容 stable tag 验证完整构建/签名链路，再发 `v3.0.11-beta.1`；平时可用 `ci-smoke.yml`（workflow_dispatch）快速回归 submodule 链路
 - [ ] Windows 签名机按 docs/sign-windows.md 完成一次 sign:win 演练
 - [ ] 验证 OSS `nuwax-electron/` 指针与社区版 `nuwaclaw-electron/` 互不影响
 
