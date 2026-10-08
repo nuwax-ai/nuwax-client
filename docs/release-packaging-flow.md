@@ -2,6 +2,8 @@
 
 > 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。v3.0.10 由 `v3.0.10` tag push 触发 GitHub Actions；stable 消费锁定的 `nuwax-dist` pin，beta 仍从源码 pin 构建。stable 构建后保持 Draft，完成 Windows 签名与安装验收，再显式同步公开。下文的 v3.0.2–v3.0.6 耗时和执行口径为历史记录。
 
+Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本、正式 7z 压缩及签名规则保留。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征；实际修复由新 tag 的 Windows 构建验证。
+
 ## 本次问题暴露的缺口
 
 `electron-v3.0.2` 与 `electron-v3.0.3` 的构建门禁可以通过，但安装后的 `/repo`、`/instant-message` 仍可能因 Electron 请求路由错误而加载 HTML 代替 JavaScript。构建成功、来源哈希正确，只能证明产物可生成且未被替换，不能证明安装包里的 WebView 能打开业务页。

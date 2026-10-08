@@ -87,3 +87,11 @@ v3.0.11-beta.1@177e9fca 的 run 37745492545 三轨门禁成功，按用户新增
 补齐后质量门再次通过：脚本 248 passed / 0 failed / 0 skipped；社区 1552 passed / 18 skipped；商业 2235 passed / 18 skipped。overlay 133 文件一致、host-bridge 快照匹配、check:pin --remote origin/main 和 diff 检查通过。
 
 v3.0.11-beta.2@fdefc2ba 的 run 37749699954 三轨门禁成功，用户追加分支时取消五平台构建，Draft 无资产，公开与同步未执行。tag/SHA 保留并占用 beta.2。下一候选为 v3.0.11-beta.3，创建前重查远端占用。
+
+## Windows beta.3 MSI 长路径
+
+用户指定检查 [job 113231822050](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050)。v3.0.11-beta.3@cb52fe2a 的三轨门禁通过，Windows 在 MSI 的 light.exe 阶段返回 LGHT0103/exit 103：PreferOptionalChainOptions.d.ts 的完整路径为 260 字符；同路径换成 stable 3.0.10 的目录名为 253 字符，短输出目录为 190 字符。报错发生在 NSIS 构建之前，不能据此归因到刚合入的卸载脚本。证据符合传统 Windows/WiX 路径限制，实际修复结果由下一次 Windows Actions 确认。
+
+原 run 37752266150 已取消其他四个平台，公开/同步跳过，Draft 无资产；tag/SHA 保留并占用 beta.3。修复改变 workflow，需要下一候选 beta.4，不在原 tag 上替换源码。用户接管后续真机与 QA 客户端验证，不再由本任务启动或替换客户端。
+
+本批三问：内聚——短输出计算与输入校验集中于 configure-windows-output.mjs，两套 workflow 仅调用；分层——builder 输出配置、来源记录、Release 上传与 QA staging 共用 NUWAX_WINDOWS_OUTPUT_DIR，应用版本、资源、签名和压缩规则保持现有策略；可维护——真实脚本和 workflow 命令夹具覆盖缺失变量提前失败、重试/架构隔离、非法输入零写入，以及完整元数据和资源配置保持。20 项针对性测试和 252 项全量脚本测试通过；actionlint 1.7.12 四 workflow、overlay 133 文件、host-bridge、check:pin --remote origin/main、diff 检查通过。应用源码与三个 pin 未改变，社区/商业全量结果沿用上批记录，新提交仍须 GitHub 三轨门禁通过才合并。

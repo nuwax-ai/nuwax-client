@@ -7,8 +7,8 @@
 ## 发布入口
 
 ```bash
-npm run release -- --version 3.0.11-beta.3 --dry-run
-npm run release -- --version 3.0.11-beta.3
+npm run release -- --version 3.0.11-beta.4 --dry-run
+npm run release -- --version 3.0.11-beta.4
 npm run release -- --version 3.0.11 --dry-run
 npm run release -- --version 3.0.11 --stage sign
 # 真实安装包验收通过后
@@ -33,7 +33,9 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-b
 
 beta workflow 的手动与 `codex/beta-qa/**` 分支入口只产隔离 QA artifacts，不创建正式 tag/Release，不更新订阅入口。正式打包只用 tag push。非法 tag 在版本校验处失败，不进入测试门禁或五平台矩阵；有效 tag 只触发一套发布构建。
 
-CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` 会在副作用前报冲突；应使用 `--version 3.0.11-beta.3`。失败用 `gh run rerun <原 run id> --failed` 重试原 tag/SHA，或用 `npm run release -- --tag <原 tag>` 续跑；改源码后须发布下一个可用版本。
+CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` 会在副作用前报冲突；应使用 `--version 3.0.11-beta.4`。失败用 `gh run rerun <原 run id> --failed` 重试原 tag/SHA，或用 `npm run release -- --tag <原 tag>` 续跑；改源码后须发布下一个可用版本。
+
+Windows 的 stable、beta 与 QA 打包共用 `configure-windows-output.mjs`，将 builder 输出放到 `RUNNER_TEMP/nw-<run>-<attempt>-<arch>`。来源记录、Release 上传和 QA staging 必须读取同一个 `NUWAX_WINDOWS_OUTPUT_DIR`，缺失时提前失败。完整版本仍注入应用与资产文件名，资源载荷保持完整。修改输出目录时须同时验证这些消费者；只设置 Git longpaths 不能保证 WiX 的原生文件访问支持长路径。
 
 版本解析由 `release-version.mjs` 共用，CLI 编排在 `client/release.mjs`，来源核验在 `release-provenance.mjs`，镜像指针事务在 `publish-release-pointers.mjs`。签名机只处理安装包，安装验收和镜像发布由外层负责。
 
@@ -57,7 +59,7 @@ v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub
 
 ## 首次上线
 
-旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后从 `v3.0.11-beta.3` 开始新序列。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
+旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后进入 `v3.0.11-beta.N` 新序列，当前候选为 `v3.0.11-beta.4`。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
 
 单元测试不能替代安装包验收：正式上线前验证真实包版本、签名、旧版升级、beta 连续升级和同号转正，记录平台与实际结果。
 
@@ -67,4 +69,4 @@ Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、�
 
 旧 beta 客户端首次接入新序列应先升级兼容正式版 3.0.10。若尚未升级而 beta 入口已进入 beta.N，可临时订阅 stable 获得 3.0.10，再按用户选择订阅 beta；已有用户选择不会被安装包覆盖。
 
-2026-10-08：beta.1、beta.2 已创建但因补充分支整合取消，未公开，序号仍被占用。首次公开候选为 beta.3；示例版本以发布前远端占用检查为准。
+2026-10-08：beta.1、beta.2 因补充分支整合取消；beta.3 的 Windows MSI 遇到 260 字符文件路径，修复需要变更 workflow，取消原 run。三个 tag/SHA 和 Draft 均保留，未公开且继续占用序号。首次公开候选为 beta.4；示例版本以发布前远端占用检查为准。

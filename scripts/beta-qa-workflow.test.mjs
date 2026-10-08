@@ -241,35 +241,37 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
   }
 });
 
-test('Windows QA short output retains the full identity and every resource; public and other platforms skip it', (t) => {
-  const block = step('Configure short output directory for Windows QA');
+test('Windows short output covers public Beta and QA while preserving full identity and resources', (t) => {
+  const block = step('Configure short output directory for Windows');
   const expression = /^\s+if: (.+)$/m.exec(block)[1];
   const applies = Function('runner', 'needs', `return (${expression});`);
-  for (const [osName, qa, expected] of [['Windows', 'true', true], ['Windows', 'false', false], ['macOS', 'true', false], ['Linux', 'true', false]]) {
+  for (const [osName, qa, expected] of [['Windows', 'true', true], ['Windows', 'false', true], ['macOS', 'true', false], ['Linux', 'true', false]]) {
     assert.equal(applies({ os: osName }, { prepare: { outputs: { qa_build: qa } } }), expected);
   }
   const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-qa-short-output-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const initial = { version: '3.0.9-qa.20261008.2', build: { directories: { output: 'release/${version}', buildResources: 'build' }, extraResources: [{ from: 'complete-resource', to: 'node' }] } };
-  const packagePath = path.join(directory, 'package.json'), envPath = path.join(directory, 'github-env');
+  const clientDirectory = path.join(directory, 'nuwa-electron-shell/crates/agent-electron-client');
+  mkdirSync(clientDirectory, { recursive: true });
+  const packagePath = path.join(clientDirectory, 'package.json'), envPath = path.join(directory, 'github-env');
   const run = (env) => {
     writeFileSync(packagePath, JSON.stringify(initial));
     writeFileSync(envPath, '');
-    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script('Configure short output directory for Windows QA')], { cwd: directory, encoding: 'utf8', env: { ...process.env, GITHUB_ENV: envPath, RUNNER_TEMP: 'D:\\a\\_temp', GITHUB_RUN_ID: '37666382509', GITHUB_RUN_ATTEMPT: '2', ...env } });
+    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script('Configure short output directory for Windows').replace('node scripts/configure-windows-output.mjs', `node "${path.join(root, 'scripts/configure-windows-output.mjs')}"`)], { cwd: directory, encoding: 'utf8', env: { ...process.env, GITHUB_ENV: envPath, RUNNER_TEMP: 'D:\\a\\_temp', GITHUB_RUN_ID: '37666382509', GITHUB_RUN_ATTEMPT: '2', TARGET_ARCH: 'x64', ...env } });
   };
   const result = run({});
   assert.equal(result.status, 0, result.stderr);
-  const output = 'D:/a/_temp/nq-37666382509-2';
+  const output = 'D:/a/_temp/nw-37666382509-2-x64';
   assert.deepEqual(JSON.parse(readFileSync(packagePath, 'utf8')), { ...initial, build: { ...initial.build, directories: { ...initial.build.directories, output } } });
-  assert.equal(readFileSync(envPath, 'utf8'), `NUWAX_QA_WINDOWS_OUTPUT_DIR=${output}\n`);
+  assert.equal(readFileSync(envPath, 'utf8'), `NUWAX_WINDOWS_OUTPUT_DIR=${output}\n`);
   for (const env of [{ RUNNER_TEMP: 'relative-path' }, { RUNNER_TEMP: 'D:\\temp\nOTHER=1' }, { GITHUB_RUN_ID: '../escape' }, { GITHUB_RUN_ATTEMPT: '0' }]) {
     const rejected = run(env);
     assert.notEqual(rejected.status, 0);
     assert.deepEqual(JSON.parse(readFileSync(packagePath, 'utf8')), initial);
     assert.equal(readFileSync(envPath, 'utf8'), '');
   }
-  assert.match(script('Stage isolated QA packages and build context'), /OUT_DIR="\$NUWAX_QA_WINDOWS_OUTPUT_DIR"/);
-  assert.doesNotMatch(script('Upload artifacts to Release'), /NUWAX_QA_WINDOWS_OUTPUT_DIR/);
+  assert.match(script('Stage isolated QA packages and build context'), /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
+  assert.match(script('Upload artifacts to Release'), /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
 });
 
 function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, failedTool = '', shortOutput = 'D:/a/_temp/nq-123-1' }) {
@@ -291,7 +293,7 @@ function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, 
     PATH: `${bin}${path.delimiter}${process.env.PATH}`, QA_BUILD: qa, BUILD_IDENTITY: identity, TARGET_ARCH: 'x64', BUILD_VERSION: version,
     QA_CALLS: calls, QA_FAILED_TOOL: failedTool, APPLE_CERTIFICATE: missingCertificate ? '' : 'fixture', APPLE_SIGNING_IDENTITY: 'fixture',
     APPLE_API_KEY: 'fixture', APPLE_API_KEY_ID: 'fixture', APPLE_ISSUER_ID: 'fixture',
-    NUWAX_QA_WINDOWS_OUTPUT_DIR: shortOutput,
+    NUWAX_WINDOWS_OUTPUT_DIR: shortOutput,
   } });
   return { ...result, calls: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean).map((line) => line.split('\t')), identity, version };
 }
@@ -302,7 +304,7 @@ test('record commands isolate full QA identity from public provenance and reject
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.calls.length, 1);
     assert.deepEqual(result.calls[0].slice(0, 6), ['node', 'scripts/release-provenance.mjs', qa === 'true' ? 'record-qa' : 'record', result.identity, 'windows', 'x64']);
-    assert.equal(result.calls[0][6], qa === 'true' ? 'D:/a/_temp/nq-123-1' : `nuwa-electron-shell/crates/agent-electron-client/release/${result.version}`);
+    assert.equal(result.calls[0][6], 'D:/a/_temp/nq-123-1');
   }
   const rejected = runRecordStep(t, { qa: 'unexpected' });
   assert.notEqual(rejected.status, 0);
@@ -361,7 +363,7 @@ test('QA artifact staging preserves complete package files, notes and frozen sou
     const result = spawnSync('bash', ['-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
       QA_VERSION: version, QA_BUILD_IDENTITY: `qa-v${version}`, QA_SOURCE_SHA: clientSha, QA_PLATFORM: osName,
       QA_EVENT: 'push', QA_REF: `refs/heads/codex/beta-qa/${version}`, QA_ARCHIVE: osName === 'Windows' ? 'zip-qa' : '',
-      NUWAX_QA_WINDOWS_OUTPUT_DIR: shortOutput, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output,
+      NUWAX_WINDOWS_OUTPUT_DIR: shortOutput, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output,
       GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1',
     } });
     const stage = path.join(runnerTemp, `nuwax-qa-${osName}-x64`);
