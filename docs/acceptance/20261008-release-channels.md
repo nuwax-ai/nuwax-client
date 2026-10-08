@@ -75,3 +75,15 @@ v3.0.10 镜像同步 run 37741910045 于 2026-10-08 07:27 UTC 成功，Release �
 整合后本地质量门：脚本 248 passed / 0 failed；社区 1552 passed / 18 skipped；商业 2235 passed / 18 skipped；overlay:check、host-bridge:check、check:pin --remote origin/main、actionlint 四 workflow 与 diff 检查通过。
 
 v3.0.11-beta.1@177e9fca 的 run 37745492545 三轨门禁成功，按用户新增合并顺序取消；构建取消、公开同步跳过。tag 与 Draft 不删除、不移动，继续占用 beta.1。新源码候选为 beta.2，创建前重新查远端占用。S3 新校验的实际性能测量随下一 beta 同步执行。
+
+## 补齐 Windows followups 分支
+
+前两条客户端分支通过 PR #15 合入 release/v3.0.x@ae625ba5。用户补充 codex/client-followups-20261007 后，在隔离工作区无冲突合入 fdb61759（父提交 36f20d92）。新增范围为商业 NSIS customRemoveFiles、Windows 假文件验收工具及原验收记录；基座、前端源码和 dist pin 保持原值，原 followups worktree 的未提交改动不纳入。
+
+三问自查：独立卸载的备份、删除、失败恢复与返回 2 都在同一个 customRemoveFiles 内，失败在登记/快捷方式清理前终止；升级 --updated 分支沿用固定 builder 25.1.8 的 atomicRMDir/restoreFiles 段；夹具只创建 Temp UUID 根及独立 HKCU fixture key，报告逐项退出码、登记、卸载器摘要与树外哨兵。安装目录内未知数据保护、ACL、all-users/UAC 和实际新包卸载仍属原 followups 验收边界。
+
+2026-10-08 16:34 北京时间，重新在 win-pc 执行 7 个夹具检查均通过。standalone/updated 锁文件返回 2 并保留登记与卸载器摘要；解锁重试返回 0，正常删除返回 0；缺失卸载器提前返回 2、payload 保留。树外哨兵不变，实际 Nuwax 安装、应用和登记未触碰。canonical hook SHA256 为 ba030b116fa08f7bc1ea6881b67565cb848a270d2508681d157de984a30e2839。
+
+补齐后质量门再次通过：脚本 248 passed / 0 failed / 0 skipped；社区 1552 passed / 18 skipped；商业 2235 passed / 18 skipped。overlay 133 文件一致、host-bridge 快照匹配、check:pin --remote origin/main 和 diff 检查通过。
+
+v3.0.11-beta.2@fdefc2ba 的 run 37749699954 三轨门禁成功，用户追加分支时取消五平台构建，Draft 无资产，公开与同步未执行。tag/SHA 保留并占用 beta.2。下一候选为 v3.0.11-beta.3，创建前重查远端占用。
