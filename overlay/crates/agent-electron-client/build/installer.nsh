@@ -21,6 +21,72 @@
   Name "女娲Nuwax"
 !macroend
 
+!macro nuwaxStopStandaloneUninstall MESSAGE
+  DetailPrint "${MESSAGE}"
+  ${ifNot} ${Silent}
+    MessageBox MB_OK|MB_ICONSTOP "${MESSAGE}"
+  ${endif}
+  SetErrorLevel 2
+  Quit
+!macroend
+
+; The vendor standalone branch ignores RMDir errors and then removes the
+; registration. Keep a retry entry when files remain; its uninstaller may have
+; been deleted before a locked payload made RMDir fail. The --updated branch
+; retains the vendor atomic rename/restore behavior used by the parent installer.
+!macro customRemoveFiles
+  ${if} ${isUpdated}
+    CreateDirectory "$PLUGINSDIR\old-install"
+
+    Push ""
+    Call un.atomicRMDir
+    Pop $R0
+
+    ${if} $R0 != 0
+      DetailPrint "File is busy, aborting: $R0"
+
+      Push ""
+      Call un.restoreFiles
+      Pop $R0
+
+      Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install".`
+    ${endif}
+
+    RMDir /r $INSTDIR
+  ${else}
+    InitPluginsDir
+    ClearErrors
+    CopyFiles /SILENT "$INSTDIR\${UNINSTALL_FILENAME}" "$PLUGINSDIR\nuwax-uninstaller-backup.exe"
+    ${if} ${Errors}
+      !insertmacro nuwaxStopStandaloneUninstall "无法保存卸载程序，卸载已停止，原安装文件和卸载登记未删除。"
+    ${endif}
+
+    ; un.onInit sets the current directory to INSTDIR. Move out before removing
+    ; it, otherwise our own directory handle can leave an empty install root.
+    SetOutPath "$PLUGINSDIR"
+    ClearErrors
+    RMDir /r $INSTDIR
+    StrCpy $R0 0
+    ${if} ${Errors}
+      StrCpy $R0 1
+    ${endif}
+    ${if} ${FileExists} "$INSTDIR\*.*"
+      StrCpy $R0 1
+    ${endif}
+
+    ${if} $R0 != 0
+      ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
+        ClearErrors
+        CopyFiles /SILENT "$PLUGINSDIR\nuwax-uninstaller-backup.exe" "$INSTDIR\${UNINSTALL_FILENAME}"
+        ${if} ${Errors}
+          !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，且无法恢复卸载程序。系统卸载登记已保留，请使用原安装包修复后重试。"
+        ${endif}
+      ${endif}
+      !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，部分文件可能被占用或权限不足。卸载入口已保留，请解除占用或权限限制后重试。"
+    ${endif}
+  ${endif}
+!macroend
+
 ; electron-builder 25's default CHECK_APP_RUNNING only stops matching Nuwax.exe
 ; processes. The Electron main process owns several helper trees, so a surviving
 ; child can keep the install directory locked and make the stock retry loop fail.
