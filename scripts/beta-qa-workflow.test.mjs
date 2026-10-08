@@ -391,3 +391,40 @@ test('QA artifact staging preserves complete package files, notes and frozen sou
     assert.equal(context.updatePointersChanged, false);
   }
 });
+
+test('Beta Mac build commands override maximum with the stable compression level in both SDK archive paths', (t) => {
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) { t.skip('Requires installed electron-builder 25.1.8'); return; }
+  const { compute7zCompressArgs, computeZipCompressArgs } = builderRequire('app-builder-lib/out/targets/archive.js');
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-mac-archive-level-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bin = path.join(directory, 'bin'), capture = path.join(directory, 'level');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'npm'), '#!/bin/bash\nprintf "%s" "${ELECTRON_BUILDER_COMPRESSION_LEVEL-unset}" > "$ARCHIVE_LEVEL_CAPTURE"\n', { mode: 0o755 });
+  const initialLevel = process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
+  try {
+    delete process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
+    assert.ok(compute7zCompressArgs('zip', { compression: 'maximum' }).includes('-mx=9'));
+    assert.ok(computeZipCompressArgs({ compression: 'maximum' }).includes('-9'));
+    for (const [osName, arch] of [['macOS', 'arm64'], ['macOS', 'x64'], ['Windows', 'x64'], ['Linux', 'arm64']]) {
+      const run = script('Build Electron app').replaceAll('${{ runner.os }}', osName)
+        .replaceAll('${{ matrix.arch }}', arch).replaceAll('${{ matrix.dist_cmd }}', `dist:mac:${arch}`)
+        .replaceAll("${{ secrets.APPLE_CERTIFICATE || '' }}", 'fixture').replaceAll('${{ secrets.APPLE_SIGNING_IDENTITY }}', 'fixture');
+      const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ARCHIVE_LEVEL_CAPTURE: capture };
+      delete env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
+      const result = spawnSync('bash', ['-e', '-u', '-o', 'pipefail', '-c', run], { cwd: directory, env, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      const level = readFileSync(capture, 'utf8');
+      assert.equal(level, osName === 'macOS' ? '1' : 'unset');
+      if (osName === 'macOS') {
+        process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = level;
+        assert.ok(compute7zCompressArgs('zip', { compression: 'maximum' }).includes('-mx=1'));
+        assert.ok(computeZipCompressArgs({ compression: 'maximum' }).includes('-1'));
+        delete process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
+      }
+    }
+  } finally {
+    if (initialLevel === undefined) delete process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
+    else process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = initialLevel;
+  }
+});
