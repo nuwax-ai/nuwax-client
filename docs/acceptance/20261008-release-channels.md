@@ -109,7 +109,7 @@ Mac 两架构的签名、公证及 `Notarized Developer ID` 验证均通过。be
 | arm64 | 10:50:08 | 11:46:41 | 约 56 分 33 秒 |
 | x64 | 10:51:42 | 11:48:11 | 约 56 分 30 秒 |
 
-beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1`，固定 SDK 参数与真实 workflow 命令夹具通过；新包实际耗时和包体变化仍待后续 Actions 记录。证据日志为执行机 `/tmp/nuwax-beta4-windows-success.log`、`/tmp/nuwax-beta4-macos-arm-success.log`、`/tmp/nuwax-beta4-macos-x64-success.log`。真实客户端安装、升级与业务验收由用户继续验证，本段不补写尚未取得的真机结果。
+beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1`，固定 SDK 参数与真实 workflow 命令夹具通过；后续 beta.6 的真实压缩配置与耗时见下文。证据日志为执行机 `/tmp/nuwax-beta4-windows-success.log`、`/tmp/nuwax-beta4-macos-arm-success.log`、`/tmp/nuwax-beta4-macos-x64-success.log`。真实客户端安装、升级与业务验收由用户继续验证，本段不补写尚未取得的真机结果。
 
 ## beta.4 镜像与 S3 性能实测
 
@@ -154,6 +154,48 @@ beta workflow 的后续修复已对齐 stable 的 `ELECTRON_BUILDER_COMPRESSION_
 | 前端源码 `nuwax` | `4dfea90cd29330e504bf8c858531d38ecc570b12` |
 | 前端产物 `nuwax-dist` | `4a497a0553a235ad2f919ab7c1e3779e5e63c45e` |
 
-新 [run 37792419346](https://github.com/nuwax-ai/nuwax-client/actions/runs/37792419346) 创建于 2026-10-08 14:26:03 UTC，事件为 push，headBranch 为 `v3.0.11-beta.6`，headSha 与上表一致。记录时运行状态为 `in_progress`、无最终 conclusion，新门禁、五平台构建、Mac 原生模块/签名/公证、公开及 OSS/S3 同步的最终结果待后续补充，未提前计作完成。
+新 [run 37792419346](https://github.com/nuwax-ai/nuwax-client/actions/runs/37792419346) 创建于 2026-10-08 14:26:03 UTC，事件为 push，headBranch 为 `v3.0.11-beta.6`，headSha 与上表一致。最终运行状态为 `completed/success`，三轨门禁、五平台构建与自动同步全部成功；成品、公开与镜像证据见下文。发布 tag 保持 a5197d98，不随文档提交移动。
 
 开始本轮时，stable 订阅入口仍为 3.0.10，beta 入口仍为 3.0.11-beta.4。文档证据在独立 `codex/beta6-release-evidence-20261008` 分支正常 merge 最新发布线并继续记录，保留已推送文档历史；暂不合入发布分支，保持本轮构建源码冻结。真实客户端安装、升级与 GUI 验收继续由用户负责。
+
+## beta.6 修复候选五平台验证
+
+本段仅记录新 run 37792419346、冻结源码 `a5197d987b3b521d4653f9f08890b45eea6f4ab2` 的实际结果。三轨门禁均成功：社区 128 文件、1536 passed / 5 skipped；商业 176 文件、2314 passed / 5 skipped；前端 378 文件、3672 passed / 6 skipped，类型域与架构 gate 通过。商业 job 的脚本测试为 258 passed / 0 failed / 1 skipped，Darwin 真实 lipo 用例在 Linux 按平台跳过；本机 Darwin 的 22 项定向测试全部通过。证据为执行机 `/tmp/nuwax-beta6-corrected-community.log`、`/tmp/nuwax-beta6-corrected-commercial.log`、`/tmp/nuwax-beta6-corrected-frontend.log`。
+
+五个平台 job 全部成功。逐项核对五份 `build-manifest-*.json`：tag 均为 `v3.0.11-beta.6`，外层、基座、前端来源均与上表冻结 SHA 一致，前端 stamp 均为 `4dfea90cd`；12 个安装包文件名均携带 `3.0.11-beta.6`。beta 从同一前端源码 pin 在各平台构建，来源一致不表示五个平台的 distSha256 相同。Windows NSIS/EXE 与 MSI 均成功；本轮 Windows beta EXE 为 unsigned，不记作 EV 签名或真实安装通过。
+
+两套 Mac 的日志均显示通知 addon 构建为 arm64+x64。解包后的 `app.asar.unpacked/dist/main/mac-notification-permission.node` 存在检查、修正顺序的真实 `lipo` 双架构检查、模块严格验签、整 app 验签与 Gatekeeper 均通过，来源记录与资产上传成功。两架构实际输出 `macOS archive compression level: 1`；公证与 ZIP 时间如下（2026-10-08 UTC，ZIP 间隔截止到 blockmap 开始，不是完整 job 耗时）：
+
+| 架构 | 公证成功 | ZIP 开始 | ZIP blockmap | ZIP 观测间隔 | Gatekeeper accepted |
+|---|---|---|---|---|---|
+| arm64 | 15:15:11 | 15:24:38.290 | 15:31:16.490 | 约 6 分 38 秒 | 15:24:38、15:31:40 |
+| x64 | 15:14:39 | 15:22:27.352 | 15:28:24.774 | 约 5 分 57 秒 | 15:22:27、15:28:45 |
+
+beta.4 最大压缩时的 ZIP 观测间隔为 arm64 约 56 分 33 秒、x64 约 56 分 30 秒；本轮确认 level 1 在真实 Actions 生效并明显缩短观测间隔。版本、源码和产物内容已变化，这不是相同输入的受控基准。新候选的证据为执行机 `/tmp/nuwax-beta6-corrected-evidence/build-manifest-*.json`、`/tmp/nuwax-beta6-corrected-macos-arm.log`、`/tmp/nuwax-beta6-corrected-macos-x64.log`，与旧 d1749fce 的失败日志分开记录。
+
+自动同步 job 113395450302 已成功，公开、镜像校验、指针事务与独立回读结果见下一段。本段完成五平台构建及成品自动校验记录，未记录真实客户端安装、升级或 GUI 验收通过。
+
+## beta.6 公开与镜像同步完成
+
+[同步 job 113395450302](https://github.com/nuwax-ai/nuwax-client/actions/runs/37792419346/job/113395450302) 全部步骤成功。[v3.0.11-beta.6 Release](https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.11-beta.6) 于 2026-10-08 15:41:02 UTC 公开，`isDraft=false`、`isPrerelease=true`，共 29 个资产。CLI 最终退出 0，输出 29 个资产 SHA256 已校验；发布来源仍为 a5197d987b3b521d4653f9f08890b45eea6f4ab2。
+
+GitHub Release 与 S3 的全部 29 个资产均完成来源及 SHA256 校验。S3 的 12 个大文件使用服务端 SHA256 COMPOSITE，15 个文件使用 SHA256 FULL_OBJECT，仅 `latest.json` 与 `release-provenance.json` 两个小 JSON 完整读回；未重复完整下载大安装包。OSS 沿既有架构上传并校验各平台 `.yml`、`latest.json` 等更新元数据及订阅指针，OSS 不存放安装包；更新下载地址继续指向 S3。
+
+实际同步步骤时间如下（2026-10-08 UTC）：
+
+| 步骤 | 开始 | 完成 | 耗时 |
+|---|---|---|---|
+| 下载 GitHub Release 资产 | 15:33:49 | 15:34:49 | 60 秒 |
+| S3 上传全资产 | 15:35:29 | 15:40:35 | 306 秒 |
+| Verify S3 upload | 15:40:35 | 15:40:42 | 7 秒 |
+| OSS 更新元数据校验 | 15:40:48 | 15:40:54 | 6 秒 |
+| 订阅指针事务 | 15:40:54 | 15:41:02 | 8 秒 |
+
+Verify S3 从旧 v3.0.10 的 322 秒缩至本轮 7 秒，服务端 SHA256 路径再次实测成功；资产上传仍约 5 分 06 秒，不把校验提速表述为整个同步只需 7 秒。指针事务输出 `updated=[beta]`。随后独立执行 `/tmp/nuwax-verify-beta6-pointers.mjs`，退出 0；S3/OSS 的 stable 原字节与发布前基线完全相同，两 beta 指针字节完全一致：
+
+| 两镜像入口 | 版本 | 字节数 | SHA256 |
+|---|---|---|---|
+| `latest/latest.json` | 3.0.10 | 4606 | `1b29818787ef418300e4a347eec3fdcced89462016dcb576eebaef13e002647d` |
+| `beta/latest.json` | 3.0.11-beta.6 | 5038 | `1407584e7857820ad57efd589dd93316293fbaaba7ca5793b45770c5c38de0d6` |
+
+最终证据为执行机 `/tmp/nuwax-beta6-corrected-release.log`、`/tmp/nuwax-beta6-corrected-sync.log`、`/tmp/nuwax-v3.0.11-beta.6-pointer-baseline.json`、`/tmp/nuwax-verify-beta6-pointers.mjs`、`/tmp/nuwax-v3.0.11-beta.6-pointers-actual.json` 及 `/tmp/nuwax-beta6-corrected-evidence/` 的五份来源清单、最终 provenance。旧 d1749fce 的 15 个资产继续保留在归档 Draft，未公开。代码、CI、打包、公开及镜像同步已完成；Windows beta EXE 仍未签名，真实客户端安装、升级与 GUI 验收待用户验证。原工作区基座 WIP 保留，文档提交不改变已公开 beta.6 tag。
