@@ -2,7 +2,7 @@
  * PermissionsPage - 系统授权页面 (Electron 版, 仅 macOS)
  *
  * 从 Tauri 客户端 PermissionsPage 简化移植：
- * - 权限列表：全磁盘访问、辅助功能、屏幕录制
+ * - 权限列表：全磁盘访问、辅助功能、屏幕录制、消息通知
  * - 每项显示状态（已授权/未授权）
  * - "前往设置"按钮
  *
@@ -24,6 +24,7 @@ import {
 } from "@ant-design/icons";
 import styles from "../../styles/components/ClientPage.module.css";
 import { t } from "../../services/core/i18n";
+import { I18N_KEYS } from "@shared/constants";
 
 interface PermissionItem {
   key: string;
@@ -59,6 +60,7 @@ export default function PermissionsPage() {
   const [loading, setLoading] = useState(true);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const checkVersionRef = useRef(0);
 
   // overlay：商业宿主才有 fullDiskAccess 命名空间（社区版保持基座行为）
   const hasFullDiskAccessApi = !!window.electronAPI?.fullDiskAccess;
@@ -75,6 +77,7 @@ export default function PermissionsPage() {
   }, []);
 
   const checkPermissions = useCallback(async () => {
+    const version = ++checkVersionRef.current;
     try {
       const result = await window.electronAPI?.permissions?.check();
       if (result) {
@@ -82,6 +85,7 @@ export default function PermissionsPage() {
         if (hasFullDiskAccessApi) {
           try {
             const fda = await window.electronAPI!.fullDiskAccess.recheck();
+            if (version !== checkVersionRef.current) return;
             setPermissions(
               result.map((item) =>
                 item.key === "file_access"
@@ -101,18 +105,25 @@ export default function PermissionsPage() {
             );
           }
         }
-        setPermissions(result);
+        if (version === checkVersionRef.current) setPermissions(result);
       }
     } catch (error) {
       console.error("[PermissionsPage] Check failed:", error);
     } finally {
-      setLoading(false);
+      if (version === checkVersionRef.current) setLoading(false);
     }
   }, [hasFullDiskAccessApi]);
 
   useEffect(() => {
     checkPermissions();
-    return clearPollTimers;
+    // 从系统设置返回时静默复查，覆盖在设置中停留超过轮询时限的情况。
+    const onFocus = () => { void checkPermissions(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      checkVersionRef.current++;
+      window.removeEventListener("focus", onFocus);
+      clearPollTimers();
+    };
   }, [checkPermissions, clearPollTimers]);
 
   const handleOpenSettings = async (key: string) => {
@@ -121,7 +132,11 @@ export default function PermissionsPage() {
         // overlay：走 fullDiskAccess.openSettings（面板 URL 失败兜底隐私主面板）
         await window.electronAPI!.fullDiskAccess.openSettings();
       } else {
-        await window.electronAPI?.permissions?.openSettings(key);
+        const result = await window.electronAPI?.permissions?.openSettings(key);
+        if (!result?.success) {
+          message.error(t("Claw.PermissionsPage.cannotOpenSettings"));
+          return;
+        }
       }
       // Poll for changes after user opens settings
       clearPollTimers();
@@ -208,7 +223,11 @@ export default function PermissionsPage() {
                   style={{ margin: 0, fontSize: 11 }}
                 >
                   {t(
-                    STATUS_TAG[perm.status]?.textKey ||
+                    perm.key === "notifications" && perm.status !== "unknown"
+                      ? (perm.status === "granted"
+                        ? I18N_KEYS.PermissionsPage.NOTIFICATIONS_ENABLED
+                        : I18N_KEYS.PermissionsPage.NOTIFICATIONS_DISABLED)
+                      : STATUS_TAG[perm.status]?.textKey ||
                       "Claw.PermissionsPage.unknown",
                   )}
                 </Tag>

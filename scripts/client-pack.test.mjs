@@ -29,6 +29,7 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.equal(result.deb.packageName, 'nuwax');
   assert.equal(result.win.signAndEditExecutable, true);
   assert.equal(result.npmRebuild, false);
+  assert.ok(result.asarUnpack.includes('dist/main/mac-notification-permission.node'));
   assert.throws(() => builderConfig(pkg, { version: 'bad' }), /semver/);
 });
 

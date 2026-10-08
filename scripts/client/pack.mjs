@@ -64,6 +64,10 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   // prepare already probes SQLite under this Electron ABI. Rebuilding it again
   // here would discard the validated native cache on every local package.
   result.npmRebuild = false;
+  result.asarUnpack = [...new Set([
+    ...(Array.isArray(result.asarUnpack) ? result.asarUnpack : result.asarUnpack ? [result.asarUnpack] : []),
+    'dist/main/mac-notification-permission.node',
+  ])];
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
   const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper']);

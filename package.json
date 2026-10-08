@@ -37,7 +37,8 @@
   },
   "devDependencies": {
     "@types/json-bigint": "1.0.4",
-    "@types/ws": "8.18.1"
+    "@types/ws": "8.18.1",
+    "node-api-headers": "1.9.0"
   },
   "pnpm": {
     "overrides": {
