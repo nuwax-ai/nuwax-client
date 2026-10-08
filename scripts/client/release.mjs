@@ -167,6 +167,26 @@ export async function retryGitHubRead(action, { wait = sleep, log = console.log 
   }
 }
 
+async function remotePinFinding(tools, { folder, pin, url, declared }) {
+  const refs = (await tools.git(['ls-remote', '--heads', '--tags', url])).split('\n')
+    .filter(Boolean).map((line) => line.split(/\s+/));
+  const frontend = folder === 'nuwax' || folder === 'nuwax-dist';
+  // Direct mode permits an older bundled frontend. Validate its committed
+  // history, never replace it with a moving branch tip during release.
+  const tip = refs.find(([, ref]) => ref === `refs/heads/${declared}`)?.[0];
+  if (frontend && !shaPattern.test(tip ?? '')) return `${folder} 声明分支 ${declared} 远端无法获取`;
+  if (frontend ? pin === tip : refs.some(([sha]) => sha === pin)) return null;
+  const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1];
+  if (!repo || !declared) return `${folder} pin 远端可达性无法确认`;
+  try {
+    // A fixed remote SHA keeps the ancestry check stable if the branch moves
+    // after ls-remote. "ahead" means the remote includes this historical pin.
+    const compare = await tools.gh(['api', `repos/${repo}/compare/${pin}...${frontend ? tip : encodeURIComponent(declared)}`]);
+    if (!['ahead', 'identical'].includes(compare.status)) return `${folder} pin 不在远端 ${declared} 历史中`;
+  } catch { return `${folder} pin 远端无法获取`; }
+  return null;
+}
+
 async function preflight(root, identity, options, tools, settings) {
   const findings = [];
   try { await tools.exec('gh', ['auth', 'status'], { capture: true }); }
@@ -201,19 +221,12 @@ async function preflight(root, identity, options, tools, settings) {
     try { pin = await tools.git(['rev-parse', `${sha}:${folder}`]); } catch { if (name === 'dist') continue; throw new Error(`缺少 ${folder} gitlink`); }
     if (!shaPattern.test(pin)) { findings.push(`${folder} 不是有效 gitlink`); continue; }
     source[name] = pin;
-    const url = await tools.git(['config', '-f', '.gitmodules', '--get', `submodule.${folder}.url`]);
-    const declared = await tools.git(['config', '-f', '.gitmodules', '--get', `submodule.${folder}.branch`]);
-    const refs = await tools.git(['ls-remote', '--heads', '--tags', url]);
-    if (!refs.split('\n').some((line) => line.startsWith(`${pin}\t`))) {
-      const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1];
-      if (!repo || !declared) findings.push(`${folder} pin 远端可达性无法确认`);
-      else {
-        try {
-          const compare = await tools.gh(['api', `repos/${repo}/compare/${pin}...${encodeURIComponent(declared)}`]);
-          if (!['ahead', 'identical'].includes(compare.status)) findings.push(`${folder} pin 不在远端 ${declared} 历史中`);
-        } catch { findings.push(`${folder} pin 远端无法获取`); }
-      }
-    }
+    // Historical --tag resumes use the target's consumption line and URL,
+    // independently of the newer automation checkout's .gitmodules.
+    const url = await tools.git(['config', '--blob', `${sha}:.gitmodules`, '--get', `submodule.${folder}.url`]);
+    const declared = await tools.git(['config', '--blob', `${sha}:.gitmodules`, '--get', `submodule.${folder}.branch`]);
+    const finding = await remotePinFinding(tools, { folder, pin, url, declared });
+    if (finding) findings.push(finding);
     const directory = path.join(root, folder);
     if (sha === automationSha && fs.existsSync(path.join(directory, '.git'))) {
       if (await tools.git(['rev-parse', 'HEAD'], directory) !== pin) findings.push(`${folder} 当前 HEAD 与发布 pin 不同`);
@@ -356,7 +369,7 @@ export async function release(root, options = {}, injected = {}) {
     signGhPath: process.env.SIGN_GH_PATH ?? options.settings?.signGhPath ?? config.release.signGhPath };
   const tools = { ...defaultAdapters(root, settings), ...injected, ...(options.adapters ?? {}) };
   const state = await preflight(root, identity, options, tools, settings);
-  const steps = ['校验已提交发布说明、远端 HEAD 与子模块 pin', `确保不可变 tag ${identity.tag} 指向 ${state.sha}`,
+  const steps = ['校验已提交发布说明、远端 HEAD 与子模块 pin；前端允许声明分支中的历史 pin，按已提交 pin 构建', `确保不可变 tag ${identity.tag} 指向 ${state.sha}`,
     `跟踪 ${identity.buildWorkflow} 同 tag/SHA 的 push run`, '校验五平台来源及安装资产',
     ...(identity.channel === 'stable' && stage !== 'sync' ? [`在 ${settings.signHost} 使用当前已提交的签名工具下载、签名、上传；SimplySign 手机认证须人工完成`] : []),
     ...(stage === 'sign' ? ['仅签名阶段（--stage sign）：不同步 OSS/S3']
