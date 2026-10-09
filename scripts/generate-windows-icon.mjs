@@ -1,4 +1,4 @@
-/** Windows ICO：保留品牌图案，缩小透明留白，让任务栏有效图形放大约 42/39。 */
+/** Windows ICO：保留品牌图案与透明圆角，让有效图形占满各尺寸画布。 */
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -12,9 +12,9 @@ const sizes = [16, 20, 24, 32, 40, 48, 64, 72, 96, 128, 256];
 const frames = [];
 
 for (const size of sizes) {
-  // 原 ICO 有效图形约占 90%；放大 42/39 后约占 97%。
-  const contentSize = Math.min(size, Math.round(size * 0.9 * 42 / 39));
-  const padding = Math.floor((size - contentSize) / 2);
+  // 97% 占位在 Windows 100% 缩放下仍只显示 23×23px；去掉外缘留白，铺满 24px 格位。
+  const contentSize = size;
+  const padding = 0;
   const radius = contentSize * 0.2;
   const mask = Buffer.from(`<svg width="${contentSize}" height="${contentSize}"><rect width="${contentSize}" height="${contentSize}" rx="${radius}" fill="white"/></svg>`);
   const content = await sharp(path.join(publicDir, 'icon.png'))
