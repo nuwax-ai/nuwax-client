@@ -79,7 +79,7 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['uv', [path.join(r, 'uv/bin', `uv${exe}`)]],
     ['node', [path.join(r, 'node', key, 'bin', `node${exe}`)]],
     ['ripgrep', [path.join(r, 'ripgrep/bin', `rg${exe}`)]],
-    ['lanproxy', [path.join(r, 'lanproxy/bin', `nuwax-lanproxy${exe}`)]],
+    ['lanproxy', [path.join(r, 'lanproxy/bin/lanproxy-client.js')]],
     ['ttyd', [path.join(r, 'ttyd/bin', `ttyd${exe}`)], true],
     ['mcp-proxy', [path.join(r, 'mcp-proxy-ts/dist/index.js'), path.join(r, 'mcp-proxy-ts/dist/lib.bundle.mjs')]],
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
