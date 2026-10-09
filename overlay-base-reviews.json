@@ -6,42 +6,42 @@
       "baseBlob": "100f0aec6bd610ebaf00fdce851b97355b06b82d",
       "baseMode": "100644",
       "overlaySha256": "c68ca164cd726b032b7955b047e5622539c2b0b19c23dac9df9b4734a265204a",
-      "note": "overlay 副本 = 基座 d078bb3 + nuwaxcode 版本/哈希校验。基座 PR #27 将 getLanproxyBinPath（原生二进制定位）替换为 getLanproxyEntryPath（TS 客户端入口 lanproxy-client.js）；该 hunk 已用同一 diff 原样打到 overlay 副本，nuwaxcode 相关商业改动未受影响。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 基座删除 getLanproxyBinPath 并新增 getLanproxyEntryPath；overlay 合并后与基座一致地提供新入口。旧 overlay 放在新基座上 tsc 报 processHandlers.ts、serviceManager.ts 两处缺失导出，已验证。"
     },
     {
       "path": "crates/agent-electron-client/src/main/services/system/dependencies.ts",
       "baseBlob": "caf009f5006d1589846587318b1b64aacaba9ac0",
       "baseMode": "100644",
       "overlaySha256": "7b16c4e712e93893b0147f43426898555090bc04ac727cbd1daf3c86bb1f4fe0",
-      "note": "overlay 副本 = 基座 d078bb3 + checkNuwaxcodeBundled 校验。基座 PR #27 仅把三处导出名 getLanproxyBinPath 改为 getLanproxyEntryPath；已用同一 diff 打到 overlay 副本，nuwaxcode 商业改动未受影响。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 基座将 getLanproxyBinPath 重命名为 getLanproxyEntryPath，共 3 处（导入、命名导出、默认导出）。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/en-US.json",
       "baseBlob": "caa7111ee54cab41b892f2176beeaf5753bfbf2e",
       "baseMode": "100644",
       "overlaySha256": "a77e1fc057d1a3248a7000efbd4f16d69aa487e27f4f70902bd27abc9eab5e1c",
-      "note": "基座 PR #27 仅更新 Claw.Lanproxy.platformNotSupported 一条文案（去掉「二进制 / Tauri」的过时描述，key 不变）；已用同一 diff 打到 overlay 副本，其余商业文案不变。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-CN.json",
       "baseBlob": "a99d40498d709674c652b684e725a608771f3760",
       "baseMode": "100644",
       "overlaySha256": "3187fb99103e8dcaaf06d3583f7a10e3eff51f24ee87aac1c63366266e1931f9",
-      "note": "基座 PR #27 仅更新 Claw.Lanproxy.platformNotSupported 一条文案（去掉「二进制 / Tauri」的过时描述，key 不变）；已用同一 diff 打到 overlay 副本，其余商业文案不变。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-HK.json",
       "baseBlob": "a93d63817568d3d52d1dddc4ad49d9e624c045a7",
       "baseMode": "100644",
       "overlaySha256": "229c22488054e9d980ba5095d9aaf84ae16c1cbbd254e5eef40124c38b7c906f",
-      "note": "基座 PR #27 仅更新 Claw.Lanproxy.platformNotSupported 一条文案（去掉「二进制 / Tauri」的过时描述，key 不变）；已用同一 diff 打到 overlay 副本，其余商业文案不变。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-TW.json",
       "baseBlob": "dacc9da581d423300777a64abe6ceaac1210dde3",
       "baseMode": "100644",
       "overlaySha256": "a71ab0bf6c39ee0ccf0cc77f1d79baa6e4d2b1a958603a74284d8896217b6665",
-      "note": "基座 PR #27 仅更新 Claw.Lanproxy.platformNotSupported 一条文案（去掉「二进制 / Tauri」的过时描述，key 不变）；已用同一 diff 打到 overlay 副本，其余商业文案不变。审查由 Claude 辅助完成，待人工复核。"
+      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
     }
   ]
 }
