@@ -123,7 +123,7 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     },
     unread: (session, signal) => request(session, "/api/instant-message/unread-total", signal),
     onUnread: snapshot => {
-      native.setUnreadCount(snapshot.total + snapshot.dndTotal);
+      native.setUnreadCount(snapshot.total);
       publishUnread(snapshot);
     },
     onClear: clearActions,

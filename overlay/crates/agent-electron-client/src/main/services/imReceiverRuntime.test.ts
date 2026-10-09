@@ -230,7 +230,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     const { business, external, api } = await start(backend);
     const unread = vi.fn();
     const offUnread = api.onIMUnreadChanged(unread);
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11), { timeout: 2500 });
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9), { timeout: 2500 });
     expect(unread).toHaveBeenLastCalledWith(expect.objectContaining({total: 9, dndTotal: 2}));
     expect(backend.requests.find((request) => request.path.endsWith("/devices"))?.body).toEqual({
       deviceId: "machine-123#im-native", platform: "desktop", pushEnabled: false, appVersion: "1.2.3",
@@ -255,7 +255,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     })), { timeout: 2500 });
     await vi.waitFor(() => expect(api.getIMUnreadSnapshot()?.total).toBe(2), { timeout: 2500 });
     expect(api.getIMUnreadSnapshot()!.revision).toBeGreaterThan(previous.revision);
-    expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(3);
+    expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(2);
     expect(unread).toHaveBeenLastCalledWith(api.getIMUnreadSnapshot());
     expect(backend.requests.some((request) => request.path === `/api/instant-message/conversations/${CONV_ID}`)).toBe(true);
     expect(backend.packets.every((packet) => [1000, 2000].includes(packet.op))).toBe(true);
@@ -272,7 +272,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     const backend = await localBackend();
     backend.state.conversation.dnd = true;
     await start(backend);
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
     backend.sendMessage("9223372036854775800");
     await vi.waitFor(() => expect(backend.requests.filter((request) => request.path.includes("/conversations/"))).toHaveLength(1));
     await settled();
@@ -296,7 +296,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     const backend = await localBackend();
     const { main, api } = await start(backend);
     main.isFocused.mockReturnValue(true);
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
     backend.sendMessage();
     await settled();
     expect(mocks.native.showMessage).not.toHaveBeenCalled();
@@ -347,7 +347,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     await settled();
     expect(api.getIMUnreadSnapshot()).toEqual(stopped);
     expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(0);
-    expect(mocks.native.setUnreadCount).not.toHaveBeenCalledWith(78);
+    expect(mocks.native.setUnreadCount).not.toHaveBeenCalledWith(77);
   });
 
   it.each(["auth", "quota"])("halts automatic reconnection for %s rejection and allows explicit retry", async (reason) => {
@@ -364,7 +364,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     backend.state.registerReject = null;
     backend.state.connectReject = null;
     api.retryIMReceiver();
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
     expect(backend.connections).toHaveLength(connections + 1);
   });
 
@@ -386,26 +386,26 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     const oldMirror = new Promise<void>((_resolve, reject) => { rejectOld = reject; });
     mocks.mirrorUpgrade.mockImplementationOnce(() => oldMirror);
     const { api } = await start(backend);
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
     expect(mocks.mirrorUpgrade).toHaveBeenCalledTimes(1);
     api.stopIMReceiver();
     mocks.epoch++;
     mocks.ticket = "synthetic-account-two-ticket";
     backend.state.unread = { total: 12, dndTotal: 1 };
     api.startIMReceiver("account-2");
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(13));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(12));
     const next = api.getIMUnreadSnapshot();
     rejectOld(new Error("Old Cookie write rejected"));
     await settled();
     expect(api.getIMUnreadSnapshot()).toEqual(next);
-    expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(13);
+    expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(12);
     expect(backend.sockets.filter(socket => socket.readyState === WebSocket.OPEN)).toHaveLength(1);
   });
 
   it("invalidates notification callbacks at account boundaries and removes all runtime listeners on quit", async () => {
     const backend = await localBackend();
     const { business, api } = await start(backend);
-    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(11));
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
     const generation = api.getIMUnreadSnapshot()!.sessionGeneration;
     expect(mocks.nativeOptions!.isSessionCurrent(generation)).toBe(true);
     api.stopIMReceiver();

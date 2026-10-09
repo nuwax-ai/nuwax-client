@@ -112,7 +112,6 @@ describe("IMReceiver: independent session and unread aggregation", () => {
     expect(h.deps.unread).toHaveBeenCalledTimes(1);
     const snapshot = h.receiver.getSnapshot()!;
     expect(snapshot).toMatchObject({ total: 2, dndTotal: 3 });
-    expect(snapshot.total + snapshot.dndTotal).toBe(5);
     snapshot.total = 999;
     expect(h.receiver.getSnapshot()!.total).toBe(2);
     expect(h.deps.onMessage).not.toHaveBeenCalled();
@@ -215,7 +214,7 @@ describe("IMReceiver: bounded unread refresh", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(h.receiver.getSnapshot()).toMatchObject({ total: 54, dndTotal: 0 });
     const snapshot = h.receiver.getSnapshot()!;
-    expect(snapshot.total + snapshot.dndTotal).toBe(54);
+    expect(snapshot.total).toBe(54);
   });
 
   it.each([3002, 3004, 6000, 6001, 5001])("refreshes unread for invalidation op %s", async (op) => {
@@ -567,7 +566,7 @@ describe("IMReceiver: pause, offline, recovery and connection ownership", () => 
     const [, generation, isToastCurrent] = h.deps.onMessage.mock.calls[0];
     expect(isToastCurrent()).toBe(true);
     const before = h.receiver.getSnapshot()!;
-    expect(before.total + before.dndTotal).toBe(5);
+    expect(before.total).toBe(2);
     h.deps.onClear.mockClear();
     packet(connection, op, op === 9000 ? { reason } : { code: reason });
 
