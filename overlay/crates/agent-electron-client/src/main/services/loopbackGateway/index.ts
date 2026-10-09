@@ -15,7 +15,7 @@
  * 外层 nuwax-dist 产物子模块）；缺省回落外层根的 nuwax-dist。
  * 打包形态恒为 resources/nuwax-dist（CI extraResources 注入）。
  */
-import { app, session, webContents } from "electron";
+import { app, session } from "electron";
 import log from "electron-log";
 import * as fs from "fs";
 import * as net from "net";
@@ -30,7 +30,7 @@ import {
   DEFAULT_BACKEND_PREFIXES,
   type LoopbackGatewayHandle,
 } from "./gateway";
-import { normalizeGatewayRequestUrl } from "./routingPolicy";
+import { setGatewayRequestRouting } from "../businessRequestRouting";
 import { setGatewayRequestContext } from "./requestContext";
 import { parseTicketSetCookie } from "../ticketCookiePolicy";
 import { httpOrigin } from "../auth/businessOrigins";
@@ -388,70 +388,24 @@ async function ensureLoopbackGatewayNow(): Promise<
 /** dist 模式 URL 归一：文档保持 pathname；可信微应用 frame 的后端资源进入
  *  命名空间。跨 origin fetch 重定向仍受 CORS 检查，session 附的私有 capability
  *  由 gateway 响应层验证；不能把 redirect 当成消除 CORS 的手段。 */
-let normalizationActive = false;
-function startAbsoluteUrlNormalization(
-  gatewayOrigin: string,
-  backendOrigin: string,
-): void {
-  try {
-    const backendPrefixes = [
+function startAbsoluteUrlNormalization(gatewayOrigin: string, backendOrigin: string): void {
+  setGatewayRequestRouting({
+    gatewayOrigin,
+    backendOrigin,
+    backendPrefixes: [
       ...DEFAULT_BACKEND_PREFIXES,
       ...MICROAPP_BACKEND_PREFIXES,
       ...resolveExtraBackendPrefixes(),
-    ];
-    const devFrontendOrigin = app.isPackaged
+    ],
+    devFrontendOrigin: app.isPackaged
       ? undefined
-      : httpOrigin(resolveWebviewOverrideFromEnv()) ?? undefined;
-    session.defaultSession.webRequest.onBeforeRequest(
-      { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
-      (details, callback) => {
-        // 网关 guest 和未打包客户端显式指定的前端源参与归一；策略层验证
-        // page/frame origin。其它页面（包括壳 renderer）不获取业务请求权限。
-        try {
-          const wc = details.webContentsId
-            ? webContents.fromId(details.webContentsId)
-            : null;
-          const redirectURL = normalizeGatewayRequestUrl(
-            {
-              url: details.url,
-              resourceType: details.resourceType,
-              webContentsUrl: wc?.getURL() ?? "",
-              frameUrl: details.frame?.url,
-              parentFrameUrl: details.frame?.parent?.url,
-              referrer: details.referrer,
-            },
-            { gatewayOrigin, backendOrigin, backendPrefixes, devFrontendOrigin },
-          );
-          if (redirectURL) {
-            callback({ redirectURL });
-            return;
-          }
-        } catch {
-          /* webContents 可能已销毁——按非 guest 放行 */
-        }
-        callback({});
-      },
-    );
-    normalizationActive = true;
-    log.info(
-      `[LoopbackGateway] 后端 URL 归一 → ${gatewayOrigin}（${backendOrigin}）`,
-    );
-  } catch (e) {
-    log.warn("[LoopbackGateway] 绝对 URL 归一注册失败:", e);
-  }
+      : httpOrigin(resolveWebviewOverrideFromEnv()) ?? undefined,
+  });
+  log.info(`[LoopbackGateway] Backend URL normalization enabled`);
 }
 
 function stopAbsoluteUrlNormalization(): void {
-  if (!normalizationActive) return;
-  try {
-    session.defaultSession.webRequest.onBeforeRequest(
-      null as never,
-      null as never,
-    );
-  } catch {
-    /* 旧版签名差异时忽略（退出路径） */
-  }
-  normalizationActive = false;
+  setGatewayRequestRouting(null);
 }
 
 async function stopLoopbackGatewayNow(): Promise<void> {

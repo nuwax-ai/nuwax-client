@@ -1,0 +1,322 @@
+{
+  "electron": "40.8.2",
+  "platform": "darwin",
+  "preload": "/tmp/nuwax-direct-deep-link-package-20261009/mac-arm64/Nuwax.app/Contents/Resources/app.asar/dist/preload/webviewPerfBridge.js",
+  "checks": [
+    "主窗口真实 webview 初次 src 深链，首脚本及 hash 恢复",
+    "SPA 进入后整页刷新：首脚本、React Router、侧栏、编码/hash、历史条目",
+    "真实 Ctrl/Cmd+R 输入",
+    "loadURL 消息深链及资料库尾斜杠",
+    "location.assign 搜索兜底",
+    "前进后退含跨文档恢复：历史 URL 无中间标记",
+    "独立窗口深链、刷新和私有标记保持原行为；不串入主窗口路由",
+    "真实 window.open 新开窗口不接管",
+    "相同 pathname 快速导航取消旧请求，当前 hash 保持隔离",
+    "未登录整页进入、登录回跳",
+    "iframe、API、真实 WebSocket、资源、POST 请求不接管",
+    "第三方 origin 不接管",
+    "其他窗口内的 webview 初次 src 和刷新不接管",
+    "实际 NuwaxHostWebview 程序导航及刷新按钮调用 reload handle",
+    "未配置业务 preload 的宿主窗口不接管",
+    "主站失败不退回独立应用、原深链重试",
+    "gateway 原有文档归一及切回 direct，共用监听器",
+    "模式禁用立即生效"
+  ],
+  "requests": [
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/instant-message/conversation/2?_shell=1",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/instant-message/conversation/2?_shell=1",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/popup?view=1",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/login?redirect=%2Frepo%2Fdoc%2Flogin%3FneedsLogin%3D1%23after-login",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/iframe",
+      "dest": "iframe",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/internal/session",
+      "dest": "empty",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/ws",
+      "dest": "empty",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/assets/a.js",
+      "dest": "empty",
+      "method": "GET"
+    },
+    {
+      "url": "/instant-message/ws",
+      "dest": "empty",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/ws?check=direct",
+      "dest": "websocket",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/post",
+      "dest": "empty",
+      "method": "POST"
+    },
+    {
+      "url": "/repo/doc/guest?q=%25",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/guest?q=%25",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/host",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "gateway",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/gateway?view=1",
+      "dest": "gateway",
+      "method": "GET"
+    },
+    {
+      "url": "/home",
+      "dest": "document",
+      "method": "GET"
+    },
+    {
+      "url": "/fixture.js",
+      "dest": "script",
+      "method": "GET"
+    },
+    {
+      "url": "/repo/doc/disabled",
+      "dest": "document",
+      "method": "GET"
+    }
+  ]
+}

@@ -37,6 +37,7 @@ import {
   DEFAULT_WINDOW_MIN_HEIGHT,
   DEFAULT_WINDOW_MIN_WIDTH,
   DEFAULT_WINDOW_WIDTH,
+  DEFAULT_SERVER_HOST,
 } from "@shared/constants";
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
@@ -67,6 +68,9 @@ import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
 import { APP_DATA_DIR_NAME } from "@shared/constants";
 import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
+import { initBusinessRequestRouting } from "./services/businessRequestRouting";
+import { httpOrigin } from "./services/auth/businessOrigins";
+import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
@@ -266,7 +270,15 @@ function createWindow() {
     (event, webPreferences, params) => {
       const targetUrl = String(params.src || "");
       if (APP_NAME_IDENTIFIER === "nuwax") {
-        if (!configureSharedWebview(webPreferences, params)) event.preventDefault();
+        if (!configureSharedWebview(webPreferences, params)) {
+          event.preventDefault();
+        } else {
+          // 仅主窗口 guest 获得私有恢复标记处理；弹窗/独立窗口不继承。
+          webPreferences.additionalArguments = [
+            ...(webPreferences.additionalArguments ?? []).filter((arg) => arg !== SPA_RESTORE_ARGUMENT),
+            SPA_RESTORE_ARGUMENT,
+          ];
+        }
         return;
       }
       if (!shouldInjectWebviewPerfBridge(targetUrl, APP_NAME_IDENTIFIER)) {
@@ -722,6 +734,15 @@ app.whenReady().then(async () => {
   await runStartupTasks();
 
   // 须在 createWindow 之前初始化，否则主窗口 webContents 会错过 did-attach-webview 监听
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    initBusinessRequestRouting(() => {
+      const step1 = readSetting("step1_config") as { serverHost?: string; nuwaxLoadMode?: string } | null;
+      const runtime = readSetting("nuwax.loopback") as { enabled?: boolean } | null;
+      if (runtime?.enabled || (step1?.nuwaxLoadMode ?? (process.env.NUWAX_LOOPBACK === "1" ? "gateway" : "direct")) !== "direct") return null;
+      const host = step1?.serverHost || DEFAULT_SERVER_HOST;
+      return httpOrigin(/^https?:\/\//i.test(host) ? host : `https://${host}`);
+    }, () => mainWindow?.webContents ?? null);
+  }
   initWebviewPolicy(() => mainWindow);
 
   // 休眠控制：powerMonitor 须在 app ready 后注册（锁屏/唤醒沿）

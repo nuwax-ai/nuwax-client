@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { restoreSpaDocumentRoute } from "./spaDocumentRestore";
+import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 import {
   parseComputerServiceStateCommand,
   type ComputerServiceStateCommand,
@@ -50,6 +52,11 @@ function mayExposeIMBridge(): boolean {
     ?.slice("--nuwax-host-product=".length);
   return bridgeAllowed && (runtimeProduct || APP_NAME_IDENTIFIER) === "nuwax"
     && typeof window !== "undefined" && window.top === window;
+}
+
+// Umi 创建路由前同步恢复业务 URL，页面首个脚本即能挂载完整主站布局。
+if (typeof window !== "undefined") {
+  restoreSpaDocumentRoute(mayExposeIMBridge() && process.argv.includes(SPA_RESTORE_ARGUMENT), window);
 }
 
 const im: IMReceiverBridge = {

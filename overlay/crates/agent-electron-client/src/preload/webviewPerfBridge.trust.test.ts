@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildSpaDocumentUrl, SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 
 const expose = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
@@ -19,17 +20,25 @@ afterEach(() => {
   invoke.mockReset();
 });
 
-async function loadAt(href: string, allowlist: string | null = encodeURIComponent(JSON.stringify(["https://business.example"]))) {
+async function loadAt(href: string, allowlist: string | null = encodeURIComponent(JSON.stringify(["https://business.example"])), mainGuest = false) {
   vi.resetModules();
   const product = "--nuwax-host-product=nuwax";
-  const args = [product, ...(allowlist === null ? [] : [`--nuwax-trusted-origins=${allowlist}`])];
+  const args = [product, ...(allowlist === null ? [] : [`--nuwax-trusted-origins=${allowlist}`]), ...(mainGuest ? [SPA_RESTORE_ARGUMENT] : [])];
   process.argv.push(...args);
   addedArgs.push(...args);
-  vi.stubGlobal("window", { location: { href, origin: new URL(href).origin }, addEventListener: vi.fn() });
+  const page = { location: { href, origin: new URL(href).origin }, addEventListener: vi.fn(), history: { state: null, replaceState: vi.fn() }, top: null as unknown };
+  page.top = page;
+  vi.stubGlobal("window", page);
   await import("./webviewPerfBridge");
+  return page;
 }
 
 describe("commercial guest preload origin guard", () => {
+  it.each([true, false])("私有深链恢复仅在主窗口 guest 标记存在时运行：%s", async (mainGuest) => {
+    const page = await loadAt(buildSpaDocumentUrl(new URL("https://business.example/repo/doc/a?q=%25#anchor")), undefined, mainGuest);
+    if (mainGuest) expect(page.history.replaceState).toHaveBeenCalledWith(null, "", "/repo/doc/a?q=%25#anchor");
+    else expect(page.history.replaceState).not.toHaveBeenCalled();
+  });
   it.each(["direct", "gateway"])("NUW-49：%s 企业切域先读取当前文档上下文", async (loadMode) => {
     await loadAt("https://business.example/login");
     const bridge = expose.mock.calls.at(-1)![1];
