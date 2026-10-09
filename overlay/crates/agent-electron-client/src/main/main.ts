@@ -68,6 +68,7 @@ import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
 import { APP_DATA_DIR_NAME } from "@shared/constants";
 import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
+import { attachRendererRecovery } from "./services/rendererRecovery";
 import { initBusinessRequestRouting } from "./services/businessRequestRouting";
 import { httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
@@ -325,6 +326,27 @@ function createWindow() {
       );
     },
   );
+
+  // 壳 renderer 崩溃 / 卡死自愈；放弃自动恢复时让用户选择重启，否则托盘常驻下只剩空白窗口
+  attachRendererRecovery(mainWindow.webContents, {
+    isQuitting: () => isQuitting,
+    onGiveUp: () => {
+      void dialog
+        .showMessageBox({
+          type: "error",
+          title: "Nuwax",
+          message:
+            "界面进程多次异常退出，已停止自动恢复。\nThe window process kept crashing; automatic recovery has stopped.",
+          buttons: ["重启应用 / Restart", "退出 / Quit"],
+          defaultId: 0,
+          cancelId: 1,
+        })
+        .then(({ response }) => {
+          if (response === 0) app.relaunch();
+          app.quit();
+        });
+    },
+  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.maximize();
@@ -885,6 +907,13 @@ function quitOnSignal(signal: NodeJS.Signals): void {
 }
 process.on("SIGINT", () => quitOnSignal("SIGINT"));
 process.on("SIGTERM", () => quitOnSignal("SIGTERM"));
+
+// GPU / utility 子进程异常退出只留诊断日志（Chromium 会自行重启 GPU 进程）
+app.on("child-process-gone", (_event, details) => {
+  log.warn(
+    `[App] Child process gone: type=${details.type} name=${details.name ?? ""} reason=${details.reason} exitCode=${details.exitCode}`,
+  );
+});
 
 app.on("before-quit", (e) => {
   if (isCleaningUp) return;
