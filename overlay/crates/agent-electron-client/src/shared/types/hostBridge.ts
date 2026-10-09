@@ -79,7 +79,6 @@ export interface HostImUnreadSnapshot {
   sessionGeneration: number;
   revision: number;
   total: number;
-  dndTotal: number;
 }
 
 export interface HostImBridge {
