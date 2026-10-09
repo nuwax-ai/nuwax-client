@@ -68,9 +68,10 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
     ...(Array.isArray(result.asarUnpack) ? result.asarUnpack : result.asarUnpack ? [result.asarUnpack] : []),
     'dist/main/mac-notification-permission.node',
   ])];
+  result.files = [...(Array.isArray(result.files) ? result.files : result.files ? [result.files] : ['**/*']), '!node_modules/agent-gui-server/**/*', '!node_modules/@nut-tree-fork/**/*'];
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
-  const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper']);
+  const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp']);
   result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use'].includes(entry.to) && !legacySandboxResources.has(entry.to));
   result.extraResources.push({ from: frontendDist, to: 'nuwax-dist', filter: ['**/*', '!.git', '!.git/**', '!README.md'] });
   if (helperDir) result.extraResources.push({ from: helperDir, to: 'computer-use', filter: ['**/*'] });

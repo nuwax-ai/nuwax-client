@@ -81,8 +81,9 @@ stable` 的兼容壳，真身在 `scripts/client/release.mjs`。`sign:win`/`veri
 二进制）、`prepare:lanproxy`、`prepare:ttyd`、`prepare:node`、`prepare:git`、
 `prepare:ripgrep`、`prepare:mcp-proxy`、`prepare:sandboxed-mcp`（配套
 `verify:sandboxed-mcp`）、`prepare:nuwaxcode`、`prepare:codex-acp-ts`、
-`prepare:claude-code-acp-ts`、`prepare:nuwax-file-server`、`prepare:gui-server`、
-`prepare:windows-mcp`、`prepare:sandbox-runtime`、`build:sandbox-helper` /
+`prepare:claude-code-acp-ts`、`prepare:nuwax-file-server`。商业版跳过社区旧
+`prepare:gui-server`、`prepare:windows-mcp` 和沙箱准备项，computer use 仅使用 CUA helper。
+社区基座还提供 `prepare:sandbox-runtime`、`build:sandbox-helper` /
 `prepare:sandbox-helper-win`、`electron-rebuild`（重编 better-sqlite3）。产物落
 `resources/`，缓存与覆盖规则见 README「缓存」段。
 商业版外层 `prepare` 和发布 CI 跳过旧沙箱 helper、runtime、sandboxed MCP；

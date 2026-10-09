@@ -84,16 +84,9 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['mcp-proxy', [path.join(r, 'mcp-proxy-ts/dist/index.js'), path.join(r, 'mcp-proxy-ts/dist/lib.bundle.mjs')]],
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
     ['codex-acp-ts', [path.join(r, 'nuwax-codex-acp-ts/dist/index.js')]],
-    ['gui-server', [path.join(r, 'agent-gui-server/dist/index.js'), path.join(r, 'agent-gui-server/dist/lib.bundle.cjs')]],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
-    specs.push(
-      { name: 'windows-mcp', script: 'prepare:windows-mcp', files: [path.join(r, 'windows-mcp/manifest.json')], check: () => {
-        const manifest = safeJson(path.join(r, 'windows-mcp/manifest.json'));
-        return manifest?.files?.length > 0 && manifest.files.every((name) => fileReady(path.join(r, 'windows-mcp/wheels', name)));
-      } },
-    );
   }
   return specs;
 }
@@ -280,11 +273,11 @@ export async function prepare(root, options = {}) {
       state.kit = kitKey;
       save();
     } else console.log('[prepare] 复用 agent-kit');
-    const workspaceKey = tools.fingerprint([kitKey, opt.platform, opt.arch, process.versions.node, inputDigest([path.join(p.base, 'package.json'), path.join(p.base, 'pnpm-lock.yaml'), path.join(p.base, 'pnpm-workspace.yaml'), path.join(p.client, 'package.json'), path.join(p.base, 'crates/agent-gui-server/package.json')])]);
-    const dependenciesReady = ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit', 'agent-gui-server'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')));
+    const workspaceKey = tools.fingerprint([kitKey, opt.platform, opt.arch, process.versions.node, inputDigest([path.join(p.base, 'package.json'), path.join(p.base, 'pnpm-lock.yaml'), path.join(p.base, 'pnpm-workspace.yaml'), path.join(p.client, 'package.json')])]);
+    const dependenciesReady = ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')));
     if (state.workspace !== workspaceKey || !dependenciesReady) {
-      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
-      if (!['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit', 'agent-gui-server'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')))) throw new Error('[prepare] 工作区依赖入口缺失');
+      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', '--filter', '!agent-gui-server', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
+      if (!['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')))) throw new Error('[prepare] 工作区依赖入口缺失');
       state.workspace = workspaceKey;
       save();
     } else console.log('[prepare] 复用工作区依赖');
@@ -303,7 +296,7 @@ export async function prepare(root, options = {}) {
     await tools.run(electron, ['-e', "const db = new (require('better-sqlite3'))(':memory:'); db.prepare('select 1').get(); db.close()"], { cwd: p.client, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, capture: true });
     state.native = { key: nativeKey, abi, artifact: inputDigest([native]) };
     save();
-    const scriptsKey = inputDigest([path.join(p.client, 'scripts/prepare'), path.join(p.client, 'scripts/utils'), path.join(p.base, 'crates/agent-gui-server'), ...(process.env.NUWAXCODE_DIST_DIR ? [process.env.NUWAXCODE_DIST_DIR] : [])]);
+    const scriptsKey = inputDigest([path.join(p.client, 'scripts/prepare'), path.join(p.client, 'scripts/utils'), ...(process.env.NUWAXCODE_DIST_DIR ? [process.env.NUWAXCODE_DIST_DIR] : [])]);
     const resourceKey = tools.fingerprint([workspaceKey, scriptsKey, opt.platform, opt.arch]);
     state.resources ??= {};
     for (const spec of resourceSpecs(p.client, opt.platform, opt.arch)) {
@@ -313,12 +306,6 @@ export async function prepare(root, options = {}) {
         continue;
       }
       if (spec.name === 'node' && !ready()) fs.rmSync(path.join(p.client, 'resources/node', `${opt.platform}-${opt.arch}`), { recursive: true, force: true });
-      if (spec.name === 'gui-server') {
-        await tools.npmRun(path.join(p.base, 'crates/agent-gui-server'), 'build', [], { env });
-        // Its inherited prepare script compares package versions only. A source
-        // edit can change the bundle without changing that version.
-        fs.rmSync(path.join(p.client, 'resources/agent-gui-server'), { recursive: true, force: true });
-      }
       await tools.npmRun(p.client, spec.script, [], { env });
       if (!ready() && !spec.optional) throw new Error(`[prepare] ${spec.script} 返回成功但产物缺失: ${spec.files.join(', ')}`);
       const skipped = !ready();

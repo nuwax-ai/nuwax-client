@@ -62,7 +62,7 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
       }
       if (dir === kit && args[0] === 'run') for (const name of ['index.js', 'index.cjs', 'index.d.ts']) write(path.join(kit, 'dist', name));
       if (dir === p.base && args[0] === 'install') {
-        for (const name of ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit', 'agent-gui-server']) write(path.join(p.client, 'node_modules', name, 'package.json'), { version: '1.0.0' });
+        for (const name of ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit']) write(path.join(p.client, 'node_modules', name, 'package.json'), { version: '1.0.0' });
         write(path.join(p.client, 'node_modules/electron/path.txt'), 'electron');
         write(path.join(p.client, 'node_modules/electron/dist/electron'));
       }
@@ -237,9 +237,9 @@ test('managed source resources with local edits are preserved on refresh', async
 test('commercial Windows preparation skips legacy sandbox resources and Rust', async (t) => {
   const f = fixture(t, { platform: 'win32', arch: 'x64' });
   await prepare(f.root, { tools: f.tools, platform: 'win32', arch: 'x64' });
-  const legacy = new Set(['sandboxed-mcp', 'sandbox-runtime', 'sandbox-helper-win']);
+  const legacy = new Set(['sandboxed-mcp', 'sandbox-runtime', 'sandbox-helper-win', 'gui-server', 'windows-mcp']);
   assert.ok(resourceSpecs(f.p.client, 'win32', 'x64').every((spec) => !legacy.has(spec.name)));
-  assert.ok(f.calls.every((call) => !call.some((part) => typeof part === 'string' && /sandbox-helper|sandbox-runtime|sandboxed-mcp/.test(part))));
+  assert.ok(f.calls.every((call) => !call.some((part) => typeof part === 'string' && part !== '!agent-gui-server' && /sandbox-helper|sandbox-runtime|sandboxed-mcp|agent-gui-server|windows-mcp|prepare:gui-server/.test(part))));
   assert.ok(f.calls.every((call) => call[1] !== 'cargo'));
   assert.equal(fs.existsSync(path.join(f.p.cache, 'prepare.lock')), false);
 });

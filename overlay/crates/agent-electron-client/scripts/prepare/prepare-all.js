@@ -19,10 +19,12 @@ const projectRoot = path.resolve(__dirname, '..', '..');
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const dryRun = process.argv.includes('--dry-run');
-const legacySandboxScripts = new Set([
+const legacyCommercialScripts = new Set([
   'prepare:sandboxed-mcp',
   'prepare:sandbox-helper-win',
   'prepare:sandbox-runtime',
+  'prepare:gui-server',
+  'prepare:windows-mcp',
 ]);
 
 /**
@@ -195,7 +197,7 @@ async function main() {
     'prepare:windows-mcp',
     'prepare:nuwax-file-server',
     'prepare:claude-code-acp-ts',
-  ].filter((name) => process.env.NUWAX_APP_IDENTIFIER !== 'nuwax' || !legacySandboxScripts.has(name));
+  ].filter((name) => process.env.NUWAX_APP_IDENTIFIER !== 'nuwax' || !legacyCommercialScripts.has(name));
   console.log(`[prepare-all] Phase 2: 并行执行 ${phase2.length} 个脚本`);
   const r2 = await runParallel(phase2);
   if (r2.code !== 0) {

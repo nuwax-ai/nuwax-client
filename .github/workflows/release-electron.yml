@@ -214,8 +214,8 @@ jobs:
           # 前端 dist 打包来源（基座已中立化移除该条目）：壳根 nuwax/dist →
           # resources/nuwax-dist（dev 形态运行时经 NUWAX_FRONTEND_DIST env 解析）
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.from&&e.from.includes('nuwax/dist'))).concat([{from:'../../../nuwax/dist',to:'nuwax-dist'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
-          # 商业版已停用旧沙箱方案，移除通用与 Windows 专用的资源打包条目。
-          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));fs.writeFileSync(p,JSON.stringify(j,null,2));"
+          # 商业版已停用旧沙箱与 GUI/Windows MCP 方案，移除通用与 Windows 专用的资源打包条目。
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper','agent-gui-server','windows-mcp']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));j.build.files=[...(Array.isArray(j.build.files)?j.build.files:j.build.files?[j.build.files]:['**/*']),'!node_modules/agent-gui-server/**/*','!node_modules/@nut-tree-fork/**/*'];fs.writeFileSync(p,JSON.stringify(j,null,2));"
           echo "package.json version: $(npm pkg get version), appId: $(npm pkg get build.appId), productName: $(npm pkg get build.productName), updaterCache: $(npm pkg get build.extraMetadata.name)-updater, extraResources(nuwax-dist): $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json','utf8')).build.extraResources.filter(e=>e.to==='nuwax-dist').map(e=>e.from).join(','))")"
 
       - name: Configure short output directory for Windows
@@ -265,7 +265,7 @@ jobs:
       # pnpm workspace 根在基座（nuwa-electron-shell/）内
       - name: Install workspace dependencies
         working-directory: nuwa-electron-shell
-        run: pnpm install --filter @nuwax-ai/nuwaclaw...
+        run: pnpm install --filter @nuwax-ai/nuwaclaw... --filter '!agent-gui-server'
 
       - name: Rebuild native modules for Electron
         working-directory: nuwa-electron-shell/crates/agent-electron-client
