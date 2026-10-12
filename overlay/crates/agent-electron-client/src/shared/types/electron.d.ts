@@ -1,5 +1,7 @@
 // Type definitions for Electron API exposed via preload
 import type { HostBridgeContract } from './hostBridge';
+import type { HostCaptureBridge } from '../features/capture/contract';
+import type { NoticesBridge } from '../features/open-source-notices/contract';
 
 /** 业务 webview 契约来自前端 canonical 的生成快照，与宿主 renderer 的 ElectronAPI 分开。 */
 export type NuwaClawBridgeAPI = HostBridgeContract;
@@ -810,6 +812,8 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  capture: HostCaptureBridge;
+  notices: NoticesBridge;
   versions: {
     node: string;
     electron: string;

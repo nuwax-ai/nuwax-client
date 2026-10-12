@@ -87,6 +87,7 @@ vi.mock("../services/contextMenu", () => ({
 }));
 
 vi.mock("../services/i18n", () => ({
+  t: (key: string) => key,
   getMainLang: () => mocks.mainLang,
   setMainLang: (lang: string) => {
     mocks.mainLang = lang.toLowerCase();

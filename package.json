@@ -29,7 +29,8 @@
     "verify:sign:win": "node scripts/client/forward.mjs verify:sign:win",
     "sync:oss": "node scripts/client/forward.mjs sync:oss",
     "doctor": "node scripts/client/cli.mjs doctor",
-    "setup": "node scripts/client/cli.mjs setup"
+    "setup": "node scripts/client/cli.mjs setup",
+    "prepare:capture": "node scripts/prepare-capture-resources.mjs"
   },
   "dependencies": {
     "json-bigint": "1.0.0",

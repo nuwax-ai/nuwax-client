@@ -1,6 +1,8 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
+import { disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
   BrowserWindow,
@@ -9,6 +11,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  screen,
   session,
   webContents,
 } from "electron";
@@ -41,7 +44,7 @@ import {
 } from "@shared/constants";
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
-import { buildMacApplicationMenu } from "./window/applicationMenu";
+import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
@@ -300,7 +303,9 @@ function createWindow() {
       .finally(() => {
         void mainWindow?.loadURL(devUrl);
       });
-    mainWindow.webContents.openDevTools();
+    if (process.env.NUWAX_DEVTOOLS === "1") {
+      mainWindow.webContents.openDevTools({ activate: false });
+    }
   } else {
     // 生产环境：dist 目录被打包到 app.asar 中
     // 用 loadFile 让 Electron 内部走 pathToFileURL，避免 Windows 上路径含空格 / 中文 / 反斜杠时
@@ -349,8 +354,19 @@ function createWindow() {
   });
 
   mainWindow.once("ready-to-show", () => {
-    mainWindow?.maximize();
-    mainWindow?.show();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // 开发验收在当前操作的显示器打开，避免窗口出现在另一块屏幕上。
+    if (isDev) {
+      mainWindow.setBounds(
+        screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
+      );
+    }
+    mainWindow.maximize();
+    mainWindow.show();
+    if (isDev && process.platform === "darwin") {
+      app.focus({ steal: true });
+    }
+    mainWindow.focus();
     log.info("Main window shown (maximized)");
     // macOS 开发模式：窗口显示后再创建托盘，提高菜单栏图标出现概率
     if (process.platform === "darwin" && !app.isPackaged && !trayManager) {
@@ -384,8 +400,23 @@ function createWindow() {
   // 休眠控制：主窗口可见性 + 锁屏状态桥（不可见时通知 webview 暂停后台轮询）
   attachHostActivityWindow(mainWindow);
 
+  if (process.platform === "win32" && isDesktopFeatureRegistered("capture")) {
+    // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
+    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction);
+    mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
+      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction);
+    });
+  }
+
   // Create application menu
   createMenu();
+}
+
+function dispatchCaptureMenuAction(action: CaptureMenuAction) {
+  if (!isDesktopFeatureRegistered("capture") || !mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send(HOST_CAPTURE_MENU_IPC, action);
 }
 
 function createMenu() {
@@ -452,7 +483,8 @@ function createMenu() {
       openLogs: () => {
         void openLogDirectory();
       },
-    }, { newTaskAvailable: isMainNewTaskAvailable() });
+      capture: dispatchCaptureMenuAction,
+    }, { newTaskAvailable: isMainNewTaskAvailable(), captureAvailable: isDesktopFeatureRegistered("capture") });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   } else {
     // Windows/Linux: 去掉菜单栏，功能由界面（自绘顶行菜单栏）和系统托盘提供
@@ -594,6 +626,11 @@ async function cleanupAllProcesses(): Promise<void> {
   await runCleanupStep("Process registry killAll", async () => {
     await processRegistry.killAll();
     log.info("[Cleanup] Process registry cleared");
+  });
+
+  // 桌面特性（截屏/录屏等）：先通知退出再释放，清掉进行中的会话与临时文件。
+  await runCleanupStep("Desktop features dispose", async () => {
+    await disposeDesktopFeatures();
   });
 
   // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。

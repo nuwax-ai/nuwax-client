@@ -59,6 +59,13 @@ export class TrayManager {
   private baseIcon: Electron.NativeImage | null = null;
   private badgeIcon: Electron.NativeImage | null = null;
   private badgeLabel = "";
+  private recordingStopAction: (() => void) | null = null;
+
+  setRecordingStopAction(action: (() => void) | null): void {
+    if (action === this.recordingStopAction) return;
+    this.recordingStopAction = action;
+    this.updateMenu();
+  }
 
   constructor(options: TrayManagerOptions) {
     this.options = options;
@@ -188,6 +195,10 @@ export class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
+      ...(this.recordingStopAction ? [{
+        label: t("Claw.Capture.stopRecording"),
+        click: () => this.recordingStopAction?.(),
+      }, { type: "separator" as const }] : []),
       {
         label: t("Claw.Tray.showWindow"),
         click: () => this.options.onShowWindow(),

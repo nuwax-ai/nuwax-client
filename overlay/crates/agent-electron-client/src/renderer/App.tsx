@@ -74,7 +74,7 @@ import { AppIconLoading } from "./components/AppIconLoading";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
-import AboutPage from "./components/pages/AboutPage";
+import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
 import PermissionsPage from "./components/pages/PermissionsPage";
 import SessionsPage from "./components/pages/SessionsPage";
@@ -83,6 +83,7 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
+import { CaptureLauncher } from "./features/capture";
 import MCPSettings from "./components/settings/MCPSettings";
 import { ModeNavIcon } from "./components/icons/ModeNavIcon";
 import { createLogger } from "./services/utils/rendererLog";
@@ -1900,6 +1901,7 @@ function App() {
                 移除；新版本更新入口迁入工具栏 updateEntry（Agent 运行状态不再展示）；
                 后退/前进/刷新/收起二级菜单/设置由工具栏承载（见 TrafficLightToolbar，浮于 webview 之上）。 */}
             <TrafficLightToolbar
+              captureEntry={APP_NAME_IDENTIFIER === "nuwax" ? (options) => <CaptureLauncher capture={window.electronAPI?.capture} t={t} {...options} /> : undefined}
               menuCollapsed={secondMenuCollapsed}
               menuAvailable={secondMenuAvailable}
               newTaskAvailable={newTaskAvailable}

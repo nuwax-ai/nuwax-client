@@ -1,5 +1,6 @@
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, WebContents } from "electron";
 import { I18N_KEYS } from "@shared/constants";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import type { EditAction } from "../ipc/windowHandlers";
 
 export interface ApplicationMenuActions {
@@ -15,6 +16,7 @@ export interface ApplicationMenuActions {
   back: () => void;
   forward: () => void;
   openLogs: () => void;
+  capture?: (action: CaptureMenuAction) => void;
 }
 
 type TranslateMenu = (key: string, ...values: string[]) => string;
@@ -24,7 +26,7 @@ export function buildMacApplicationMenu(
   t: TranslateMenu,
   appName: string,
   actions: ApplicationMenuActions,
-  options: { newTaskAvailable?: boolean } = {},
+  options: { newTaskAvailable?: boolean; captureAvailable?: boolean } = {},
 ): MenuItemConstructorOptions[] {
   const keys = I18N_KEYS.NativeMenu;
   const editItem = (
@@ -101,9 +103,37 @@ export function buildMacApplicationMenu(
         { role: "front", label: t(keys.FRONT) },
       ],
     },
+    ...(options.captureAvailable && actions.capture ? [{
+      label: t("Claw.Capture.title"),
+      submenu: [
+        { label: t("Claw.Capture.screenshot"), accelerator: "CmdOrCtrl+Alt+S", click: () => actions.capture?.("screenshot") },
+        { type: "separator" as const },
+        ...(["mp4", "webm", "gif"] as const).map((output) => ({
+          label: `${t("Claw.Capture.record")} · ${output.toUpperCase()}`,
+          ...(output === "mp4" ? { accelerator: "CmdOrCtrl+Alt+R" } : {}),
+          click: () => actions.capture?.(output),
+        })),
+      ],
+    }] : []),
     {
       label: t(keys.HELP),
       submenu: [{ label: t(keys.OPENLOGS), click: actions.openLogs }],
     },
   ];
+}
+
+/** Windows 自绘菜单没有 Electron accelerator；在宿主及其 guest 拦截同一组应用内按键。 */
+export function bindCaptureMenuShortcuts(
+  target: Pick<WebContents, "on" | "removeListener">,
+  dispatch: (action: CaptureMenuAction) => void,
+): () => void {
+  const handler = (event: { preventDefault(): void }, input: Electron.Input) => {
+    if (input.type !== "keyDown" || input.isAutoRepeat || !input.control || !input.alt || input.meta || input.shift) return;
+    const action = input.key.toLowerCase() === "s" ? "screenshot" : input.key.toLowerCase() === "r" ? "mp4" : null;
+    if (!action) return;
+    event.preventDefault();
+    dispatch(action);
+  };
+  target.on("before-input-event", handler);
+  return () => target.removeListener("before-input-event", handler);
 }

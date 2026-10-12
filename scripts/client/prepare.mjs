@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 import { ensureCommercialDependencies } from './commercial-dependencies.mjs';
+import { captureSourceLockFile, prepareCaptureResources } from './capture-resources.mjs';
 
 const ignoredInputs = new Set(['node_modules', '.git', 'dist', 'release', '.cache', 'target']);
 export const sourceNames = ['nuwax-file-server', 'claude-code-acp-ts'];
@@ -313,6 +314,10 @@ export async function prepare(root, options = {}) {
       state.resources[spec.name] = { key: resourceKey, skipped, artifact: inputDigest(spec.files) };
       save();
     }
+    let captureDir = null;
+    if (config.features?.capture?.enabled !== false && fs.existsSync(captureSourceLockFile(root))) {
+      captureDir = await (opt.prepareCaptureResources ?? prepareCaptureResources)(root, { tools, platform: opt.platform, arch: opt.arch, refreshResources: opt.refreshResources });
+    }
     const pkg = tools.readJson(path.join(p.client, 'package.json'));
     for (const name of sourceNames) {
       if (!pkg.bundledSources?.[name]) throw new Error(`[prepare] 缺少 bundledSources.${name}`);
@@ -329,6 +334,6 @@ export async function prepare(root, options = {}) {
     }
     sanitizeLinks(path.join(p.client, 'resources'));
     console.log(`[prepare] 就绪 (${opt.platform}-${opt.arch}, Electron ABI ${abi})`);
-    return { ...p, frontend, abi, env };
+    return { ...p, frontend, abi, env, captureDir };
   });
 }
