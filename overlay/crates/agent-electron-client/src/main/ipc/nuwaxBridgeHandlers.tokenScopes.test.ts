@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { session } from "electron";
+import { disposeDesktopFeatures } from "../features";
 
 const settings = new Map<string, unknown>();
 const handlers = new Map<
@@ -104,6 +105,7 @@ vi.mock("electron", () => ({
   app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
   ipcMain: {
+    removeHandler: (channel: string) => handlers.delete(channel),
     handle: (
       channel: string,
       fn: (event: unknown, ...a: unknown[]) => unknown,
@@ -209,7 +211,7 @@ import {
   registerNuwaxBridgeHandlers,
   NUWAX_TOKEN_KEY_PREFIX,
 } from "./nuwaxBridgeHandlers";
-import { DEFAULT_SERVER_HOST } from "../../shared/constants";
+import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST } from "../../shared/constants";
 import { getMainLang, setMainLang } from "../services/i18n";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
 
@@ -232,6 +234,8 @@ async function seedTicket(value: string): Promise<void> {
   const ticket = await import("../services/commercialTicketSession");
   await ticket.mirrorGatewaySetCookies([`ticket=${value}; Path=/; Secure`], HOST_ORIGIN, ticket.ticketEpoch());
 }
+
+afterEach(async () => { await disposeDesktopFeatures(); });
 
 beforeEach(() => {
   for (const mock of [mocks.startIM, mocks.stopIM, mocks.unreadIM, mocks.retryIM, mocks.enabledIM, mocks.ackIM]) mock.mockClear();
@@ -1034,8 +1038,12 @@ describe("trusted runtime auth context and window navigation", () => {
   it("跨域导航后旧 preload 无法触发目录选择、另存、设置或更新主进程状态", async () => {
     const navigated = windowEvent(GW_ORIGIN, "https://external.example");
     expect(handlers.get("auth:getContext")!(navigated)).toBeNull();
-    expect(await handlers.get("localFiles:pickDirectory")!(navigated))
-      .toEqual({ canceled: true, paths: [] });
+    // 产品门控关闭时无该 IPC；商业产品仍在可信文档门拒绝旧 preload。
+    const picker = handlers.get("localFiles:pickDirectory");
+    if (APP_NAME_IDENTIFIER === "nuwax") {
+      expect(picker).toBeTypeOf("function");
+      expect(await picker!(navigated)).toEqual({ canceled: true, paths: [] });
+    } else expect(picker).toBeUndefined();
     expect(await handlers.get("native:saveImage")!(navigated, { url: `${HOST_ORIGIN}/a.png` }))
       .toEqual({ success: false, error: "untrusted sender" });
     expect(handlers.get("native:openClientSettings")!(navigated))

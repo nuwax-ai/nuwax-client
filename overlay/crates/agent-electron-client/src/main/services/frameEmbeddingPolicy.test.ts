@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { App, OnHeadersReceivedListenerDetails, Session } from "electron";
 import { describe, expect, it, vi } from "vitest";
-import { initFrameEmbeddingPolicy, rewriteResponseHeaders } from "./frameEmbeddingPolicy";
+import { initFrameEmbeddingPolicy, rewriteResponseHeaders, allowLocalFileResources } from "./frameEmbeddingPolicy";
 
 const embeddingOptions = { allowFrameEmbedding: true, fixDevCors: false };
 const documentDetails = {
@@ -205,5 +205,21 @@ describe("session response header policy installation", () => {
     initFrameEmbeddingPolicy({ app, defaultSession: primary.target, isCommercial: false, isDev: false });
     expect(primary.onHeadersReceived).not.toHaveBeenCalled();
     expect(events.listenerCount("session-created")).toBe(0);
+  });
+});
+
+describe("本机资源CSP", () => {
+  it("只添加本地scheme，保留原HTTP来源和每个独立策略", () => {
+    const result = allowLocalFileResources("default-src 'self'; connect-src https://api.example; frame-src 'none', default-src https://cdn.example");
+    expect(result).toContain("connect-src https://api.example nuwax-local:");
+    expect(result).toContain("frame-src nuwax-local:");
+    expect(result).toContain("img-src 'self' nuwax-local:");
+    expect(result).toContain("img-src https://cdn.example nuwax-local:");
+    expect(result).not.toContain("https: ");
+  });
+  it("本机来源扩展仅用于可信顶层文档，不改第三方iframe", () => {
+    const responseHeaders = { "Content-Security-Policy": ["default-src 'self'"] };
+    expect(rewriteResponseHeaders({ ...documentDetails, resourceType: "mainFrame", responseHeaders }, { ...embeddingOptions, allowLocalFiles: true })?.["Content-Security-Policy"][0]).toContain("nuwax-local:");
+    expect(rewriteResponseHeaders({ ...documentDetails, responseHeaders }, { ...embeddingOptions, allowLocalFiles: true })).toBeUndefined();
   });
 });

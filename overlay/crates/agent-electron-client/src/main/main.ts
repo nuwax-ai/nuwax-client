@@ -70,8 +70,14 @@ import { APP_DATA_DIR_NAME } from "@shared/constants";
 import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
 import { attachRendererRecovery } from "./services/rendererRecovery";
 import { initBusinessRequestRouting } from "./services/businessRequestRouting";
-import { httpOrigin } from "./services/auth/businessOrigins";
+import { protocol } from "electron";
+import { desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureEnabled } from "./features";
+import { redactLocalFileUrl } from "@shared/features/local-files/contract";
+import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
+
+const featureSchemes = desktopFeatureSchemes(APP_NAME_IDENTIFIER);
+if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
@@ -319,10 +325,10 @@ function createWindow() {
   mainWindow.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL) => {
-      log.error("Failed to load:", validatedURL, errorCode, errorDescription);
+      log.error("Failed to load:", redactLocalFileUrl(validatedURL), errorCode, errorDescription);
       dialog.showErrorBox(
         "Load Error",
-        `Failed to load application: ${errorDescription}\n\nURL: ${validatedURL}`,
+        `Failed to load application: ${errorDescription}\n\nURL: ${redactLocalFileUrl(validatedURL)}`,
       );
     },
   );
@@ -586,6 +592,8 @@ async function cleanupAllProcesses(): Promise<void> {
     });
   }
 
+  await runCleanupStep("Desktop features stop", disposeDesktopFeatures);
+
   await runCleanupStep("Engine processes stop", () => {
     stopAllEngines();
     log.info("[Cleanup] Engine processes stopped");
@@ -653,6 +661,8 @@ app.whenReady().then(async () => {
     defaultSession: session.defaultSession,
     isCommercial: APP_NAME_IDENTIFIER === "nuwax",
     isDev,
+    allowLocalFiles: url => isDesktopFeatureEnabled("local-files") &&
+      businessBridgeOrigins().includes(httpOrigin(url) ?? ""),
   });
   if (APP_NAME_IDENTIFIER === "nuwax") {
     log.info("Frame embedding response header policy enabled for all sessions");

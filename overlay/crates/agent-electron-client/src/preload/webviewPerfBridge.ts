@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { featureNamespaces } from "./features";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import { restoreSpaDocumentRoute } from "./spaDocumentRestore";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
@@ -261,16 +262,6 @@ const native = {
 };
 
 /**
- * localFiles 命名空间：宿主原生目录选择器。
- * 仅返回所选目录的绝对路径；文件数据面由 nuwax 走 file-server（customTargetDir）。
- */
-const localFiles = {
-  pickDirectory(): Promise<{ canceled: boolean; paths: string[] }> {
-    return ipcRenderer.invoke("localFiles:pickDirectory");
-  },
-};
-
-/**
  * updater 命名空间：宿主客户端自身的更新状态与动作（nuwax 前端 logo 旁版本徽标消费）。
  * 与壳关于页共用主进程同一 autoUpdater 单例（不会双下载）；旧宿主无此命名空间，
  * nuwax 侧 feature-detect 后整体隐藏徽标。
@@ -444,7 +435,7 @@ if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   perf,
   auth,
   native,
-  localFiles,
+  ...featureNamespaces(ipcRenderer),
   updater,
   events,
   theme,

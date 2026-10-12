@@ -117,3 +117,11 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 `autoUpdater` 用 `app.getName()` 拼「Uninstall \<name\>.exe」定位卸载程序
 （改中文断更新链），后者派生数据目录 `~/.nuwax` 与 UA token。userData
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
+
+## 本机文件直访特性
+
+`src/main/features/local-files`、`src/preload/features/local-files`、`src/shared/features/local-files` 与 `_kit` 是商业新增模块。公开入口为 main/preload 的 features/index；宿主只在组合根注入登录、本机身份、配置端口和工作区解析。`main/services/localFilesWorkspace` 复用基座目录规则，避免设备 ID 充当用户 ID。
+
+`main.ts` 负责 pre-ready scheme 声明和退出释放；nuwaxBridgeHandlers 负责一次注册及登录代次边界；businessRequestRouting 在既有唯一监听器接授权请求门；sessionAuthInjection 剥离预览来源凭据；frameEmbeddingPolicy 只给可信业务顶层文档补本地scheme CSP来源。关闭功能不安装IPC/handler，惰性scheme声明是Electron时序所需的例外。
+
+桥使用与验收见 `docs/local-file-access-api.md`；新增特性须通过 `scripts/check-feature-boundaries.mjs`。
