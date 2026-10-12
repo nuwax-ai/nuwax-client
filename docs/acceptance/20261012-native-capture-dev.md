@@ -127,3 +127,8 @@ node scripts/generate-third-party-notices.mjs --capture-only --strict --out thir
 16项定向测试通过，覆盖菜单常驻、发起前等待弹窗关闭、重复点击与顶部入口移除；features严格类型检查和renderer构建通过。开发页面已热更新；界面检查过程中用户继续手动截图验收，保留其选择器，不为自动检查关闭。
 
 本轮扩展 App 类型检查仍仅报此前4项存量错误（SetupDependenciesTest、MCPSettings、sessionUrl两项），改动文件无新增诊断。未把该检查称为全库类型通过。
+
+
+关于页底部间距复核：外层组合容器原本 flex 收缩到视口高度，使 AboutPage 内容溢出并裁掉末尾间距。改为 `flex: 0 0 auto`，统一交给 app-content-body 滚动，末尾卡片保留既有20px内边距；实际窗口滚到页底确认留白，用户已确认保持当前效果。
+
+Windows 自绘应用菜单追加：hover 即展开，鼠标移到相邻标题直接切换；离开延迟150ms便于进入子菜单，迟到关闭事件按当前状态判断，避免关闭新菜单。点击/键盘激活和 guest/窗口失焦收起链继续可用。17项定向测试、改动域类型与renderer构建检查完成；Windows实机悬停操作仍待提测。

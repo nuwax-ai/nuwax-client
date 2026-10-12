@@ -100,23 +100,25 @@ const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
 
 /** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。
  * 受控 open：antd 的「点外部收起」只听宿主 document，webview guest 内点击收不到
- * （bug 2427），故订阅主进程收起信号强制闭合；宿主文档内的既有行为（点其他按钮/
- * 再点同按钮）经 onOpenChange 原生保持。 */
+ * （bug 2427），故订阅主进程收起信号强制闭合；悬停即展开，跨菜单移动直接切换，
+ * 点击/键盘激活仍可使用。 */
 const TopMenu: React.FC<{
   menuId: string;
   label: string;
   items: MenuProps["items"];
   activeMenu: string | null;
-  onActiveMenuChange: (label: string | null) => void;
+  onActiveMenuChange: React.Dispatch<React.SetStateAction<string | null>>;
 }> = ({ menuId, label, items, activeMenu, onActiveMenuChange }) => (
   <Dropdown
     menu={{ items, onClick: () => onActiveMenuChange(null) }}
-    trigger={["click"]}
+    trigger={["hover", "click"]}
+    mouseEnterDelay={0}
+    mouseLeaveDelay={0.15}
     open={activeMenu === menuId}
     onOpenChange={(open) => {
       // 旧菜单迟到的关闭事件不得关掉刚打开的新菜单。
       if (open) onActiveMenuChange(menuId);
-      else if (activeMenu === menuId) onActiveMenuChange(null);
+      else onActiveMenuChange(current => current === menuId ? null : current);
     }}
     rootClassName="topbar-app-menu"
   >

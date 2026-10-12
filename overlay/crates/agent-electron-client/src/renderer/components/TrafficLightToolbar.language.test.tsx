@@ -2,10 +2,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiRequest, changeLanguage, renderedMenuItems } = vi.hoisted(() => ({
+const { apiRequest, changeLanguage, renderedMenuItems, renderedDropdowns } = vi.hoisted(() => ({
   apiRequest: vi.fn(async () => ({ code: "0000", data: [] })),
   changeLanguage: vi.fn(async () => undefined),
   renderedMenuItems: [] as Array<{ key?: string; onClick?: () => void }>,
+  renderedDropdowns: [] as Array<{ trigger: string[]; enter: number; leave: number }>,
 }));
 
 vi.mock("../services/core/api", () => ({ apiRequest }));
@@ -25,10 +26,12 @@ vi.mock("antd", async () => {
     Tooltip: ({ title, children }: { title: string; children: React.ReactNode }) => (
       <span data-tooltip={title}>{children}</span>
     ),
-    Dropdown: ({ children, menu }: {
+    Dropdown: ({ children, menu, trigger, mouseEnterDelay, mouseLeaveDelay }: {
       children: React.ReactNode;
       menu: { items: Array<{ key?: string; type?: string; label?: React.ReactNode; onClick?: () => void }> };
+      trigger: string[]; mouseEnterDelay: number; mouseLeaveDelay: number;
     }) => {
+      renderedDropdowns.push({ trigger, enter: mouseEnterDelay, leave: mouseLeaveDelay });
       renderedMenuItems.push(...menu.items);
       return (
         <div>
@@ -64,6 +67,7 @@ beforeEach(() => {
   vi.resetModules();
   changeLanguage.mockClear();
   renderedMenuItems.length = 0;
+  renderedDropdowns.length = 0;
   vi.stubGlobal("navigator", { platform: "Win32" });
   vi.stubGlobal("window", {
     electronAPI: {
@@ -126,6 +130,14 @@ const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
 describe("Windows toolbar language", () => {
+  it("Windows 应用菜单悬停立即展开，离开菜单留出进入子菜单的时间", async () => {
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
+      canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} />);
+    expect(renderedDropdowns).toHaveLength(5);
+    expect(renderedDropdowns.every(menu => menu.trigger.includes("hover") && menu.enter === 0 && menu.leave > 0)).toBe(true);
+  });
   it.each(["Win32", "MacIntel"])("%s 顶部导航不再显示截图相机入口", async (platform) => {
     vi.stubGlobal("navigator", { platform });
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
