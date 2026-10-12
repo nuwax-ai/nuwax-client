@@ -34,7 +34,9 @@ export default function CommercialAboutPage(props: AboutPageProps = {}) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, paddingBottom: 20 }}>
+    // 内容高度交给外层 app-content-body 滚动。这里不能收缩到视口高度，
+    // 否则 AboutPage 的内容溢出会把末尾卡片和底部 padding 一起裁掉。
+    <div style={{ display: "flex", flexDirection: "column", flex: "0 0 auto" }}>
       <AboutPage {...props} />
       <div className={styles.group} style={{ flexShrink: 0, marginBottom: 0 }}>
         <div className={styles.groupCard}>
