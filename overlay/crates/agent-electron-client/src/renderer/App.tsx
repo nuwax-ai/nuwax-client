@@ -31,6 +31,7 @@ import {
   LoadingOutlined,
   RocketOutlined,
   CloseOutlined,
+  CameraOutlined,
 } from "@ant-design/icons";
 import {
   setupService,
@@ -144,6 +145,7 @@ type TabKey =
   | "sessions"
   | "mcp"
   | "settings"
+  | "capture"
   | "dependencies"
   | "permissions"
   | "logs"
@@ -630,6 +632,9 @@ function App() {
   }, []);
   // 系统配置浮层（替代原 mainViewMode=config 整页切换，沉浸式下不打断 webview）
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [captureAvailable, setCaptureAvailable] = useState(false);
+  const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
+  const captureAfterSettingsClose = useRef<(() => void) | null>(null);
   /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
   const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
   // 保持 isAuthLoggedInRef 与 state 同步（restartAllServices 空依赖闭包读 ref）
@@ -1764,6 +1769,9 @@ function App() {
         label: t("Claw.Menu.authorization"),
       });
     }
+    if (APP_NAME_IDENTIFIER === "nuwax" && captureAvailable) {
+      items.push({ key: "capture", icon: <CameraOutlined />, label: t("Claw.Capture.title") });
+    }
     items.push(
       { key: "logs", icon: <FileTextOutlined />, label: t("Claw.Menu.logs") },
       {
@@ -1773,7 +1781,7 @@ function App() {
       },
     );
     return items;
-  }, [isMacOS, i18nLang]);
+  }, [isMacOS, i18nLang, captureAvailable]);
 
   // ============================================
   // i18n Context value
@@ -1901,7 +1909,6 @@ function App() {
                 移除；新版本更新入口迁入工具栏 updateEntry（Agent 运行状态不再展示）；
                 后退/前进/刷新/收起二级菜单/设置由工具栏承载（见 TrafficLightToolbar，浮于 webview 之上）。 */}
             <TrafficLightToolbar
-              captureEntry={APP_NAME_IDENTIFIER === "nuwax" ? (options) => <CaptureLauncher capture={window.electronAPI?.capture} t={t} {...options} /> : undefined}
               menuCollapsed={secondMenuCollapsed}
               menuAvailable={secondMenuAvailable}
               newTaskAvailable={newTaskAvailable}
@@ -2093,6 +2100,7 @@ function App() {
                   左栏为自绘导航（caption + 图标项，「关于」经分隔线钉底）。 */}
               <Modal
                 open={settingsModalOpen}
+                afterClose={() => { captureAfterSettingsClose.current?.(); captureAfterSettingsClose.current = null; }}
                 onCancel={() => setSettingsModalOpen(false)}
                 footer={null}
                 centered
@@ -2243,6 +2251,7 @@ function App() {
                         <MCPSettings isOpen={activeTab === "mcp"} />
                       </div>
                       {activeTab === "settings" && <SettingsPage />}
+                      {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
                       {activeTab === "dependencies" && <DependenciesPage />}
                       {activeTab === "permissions" && <PermissionsPage />}
                       {activeTab === "logs" && <LogViewer />}
@@ -2251,6 +2260,15 @@ function App() {
                   </div>
                 </div>
               </Modal>
+              {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
+                panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
+                onCaptureStart={() => {
+                  if (!settingsModalOpen) return Promise.resolve();
+                  return new Promise<void>((resolve) => {
+                    captureAfterSettingsClose.current = resolve;
+                    setSettingsModalOpen(false);
+                  });
+                }} />}
             </div>
           </div>
         </ThemeContext.Provider>

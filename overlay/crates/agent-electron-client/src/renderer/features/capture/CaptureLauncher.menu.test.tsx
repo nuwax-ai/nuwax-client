@@ -24,7 +24,7 @@ const capabilities = {
   formats: { still: ["png"], video: ["mp4", "webm"], gif: true },
 } as CaptureCapabilities;
 
-function mount(over: Partial<HostCaptureBridge> = {}) {
+function mount(over: Partial<HostCaptureBridge> = {}, onCaptureStart?: () => Promise<void>) {
   let menu: ((action: CaptureMenuAction) => void) | undefined;
   let state: ((value: CaptureState) => void) | undefined;
   const offMenu = vi.fn();
@@ -38,7 +38,7 @@ function mount(over: Partial<HostCaptureBridge> = {}) {
     onStateChange: vi.fn((listener) => { state = listener; return offState; }),
     ...over,
   } as HostCaptureBridge;
-  CaptureLauncher({ capture, t: (key) => key });
+  CaptureLauncher({ capture, t: (key) => key, onCaptureStart });
   const cleanups = effects.map((effect) => effect());
   return { capture, menu: (action: CaptureMenuAction) => menu!(action), state: (next: CaptureState) => state!(next), offMenu, offState,
     unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
@@ -49,6 +49,20 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 beforeEach(() => { effects.length = 0; errors.mockClear(); });
 
 describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
+  it("等待设置弹窗关闭才采集，面板关闭不卸载全局菜单控制器", async () => {
+    let close!: () => void;
+    const onStart = vi.fn(() => new Promise<void>(resolve => { close = resolve; }));
+    const ui = mount({}, onStart);
+    ui.menu("screenshot"); await flush();
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(ui.capture.screenshot).not.toHaveBeenCalled();
+    close(); await flush();
+    expect(ui.capture.screenshot).toHaveBeenCalledOnce();
+    ui.menu("mp4"); await flush(); close(); await flush();
+    expect(ui.capture.record).toHaveBeenCalledOnce();
+    expect(ui.offMenu).not.toHaveBeenCalled();
+    ui.unmount(); expect(ui.offMenu).toHaveBeenCalledOnce();
+  });
   it("四种菜单命令使用现有截图/录制请求和当前质量，卸载清理订阅", async () => {
     const ui = mount();
     ui.menu("screenshot"); await flush();

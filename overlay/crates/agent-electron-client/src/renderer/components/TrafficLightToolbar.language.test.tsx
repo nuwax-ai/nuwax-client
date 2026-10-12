@@ -126,18 +126,15 @@ const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
 describe("Windows toolbar language", () => {
-  it.each(["Win32", "MacIntel"])("%s 捕获入口在对应平台使用菜单标题或相机", async (platform) => {
+  it.each(["Win32", "MacIntel"])("%s 顶部导航不再显示截图相机入口", async (platform) => {
     vi.stubGlobal("navigator", { platform });
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
-    const captureEntry = vi.fn((options: { menuLabel: boolean }) => <button>{options.menuLabel ? "截图与录屏" : "相机"}</button>);
     const markup = renderToStaticMarkup(<TrafficLightToolbar
       menuCollapsed={false} menuAvailable canGoBack={false} canGoForward={false}
       onToggleMenu={vi.fn()} onBack={vi.fn()} onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()}
-      captureEntry={captureEntry}
     />);
-    expect(captureEntry).toHaveBeenCalledOnce();
-    expect(captureEntry.mock.calls[0][0].menuLabel).toBe(platform === "Win32");
-    expect(markup).toContain(platform === "Win32" ? "截图与录屏" : "相机");
+    expect(markup).not.toContain("截图与录屏");
+    expect(markup).not.toContain("相机");
   });
 
   it.each(["Win32", "Linux x86_64"])("%s 按可用状态显隐新建任务，其他菜单与动作不变", async (platform) => {

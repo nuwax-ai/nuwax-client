@@ -1,20 +1,22 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Button, Dropdown, Modal, Select, Space, message } from "antd";
-import { CameraOutlined, CloseOutlined, FileGifOutlined, LoadingOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { createPortal } from "react-dom";
+import { Button, Modal, Select, Space, message } from "antd";
+import { CameraOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { CaptureCapabilities, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
 
 interface Props {
   capture?: HostCaptureBridge;
   t(key: string): string;
-  /** Windows 沿用自绘菜单栏；macOS 保留相机入口并另有系统原生菜单。 */
-  menuLabel?: boolean;
-  open?: boolean;
-  onOpenChange?(open: boolean): void;
+  /** 常驻控制器；仅把操作面板挂到设置页签，不随页签切换卸载。 */
+  panelTarget?: Element | null;
+  onAvailabilityChange?(available: boolean): void;
+  /** 等待设置弹窗实际关闭，避免把其关闭动画采进冻结帧。 */
+  onCaptureStart?(): Promise<void>;
 }
 
 /** 壳上的直接验收入口；业务页继续使用同一服务的独立受信桥。 */
-export const CaptureLauncher: React.FC<Props> = ({ capture, t, menuLabel, open, onOpenChange }) => {
+export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onCaptureStart }) => {
   const [caps, setCaps] = useState<CaptureCapabilities | null>(null);
   const [state, setState] = useState<CaptureState>("idle");
   const [pending, setPending] = useState(false);
@@ -32,8 +34,8 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, menuLabel, open, 
     alive.current = true;
     if (!capture) return;
     void capture.getCapabilities().then((value) => {
-      if (alive.current) setCaps(value);
-    }).catch(() => { if (alive.current) setCaps(null); });
+      if (alive.current) { setCaps(value); onAvailabilityChange?.(value.available); }
+    }).catch(() => { if (alive.current) { setCaps(null); onAvailabilityChange?.(false); } });
     const off = capture.onStateChange((next) => {
       stateRef.current = next;
       if (alive.current) setState(next);
@@ -46,7 +48,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, menuLabel, open, 
       if (current) void capture.release(current.result.resultId);
       previewRef.current = null;
     };
-  }, [capture]);
+  }, [capture, onAvailabilityChange]);
 
   const closePreview = () => {
     const current = previewRef.current;
@@ -74,6 +76,8 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, menuLabel, open, 
         message.error(text("error.encoderUnavailable"));
         return;
       }
+      await onCaptureStart?.();
+      if (!alive.current) return;
       result = output
         ? await capture.record({ output, compression: { quality }, maxDurationMs: 5 * 60 * 1000 })
         : await capture.screenshot({ compression: { quality } });
@@ -117,29 +121,23 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, menuLabel, open, 
 
   if (!capture || !caps?.available) return null;
   const busy = pending || state !== "idle";
-  const menuText = (label: string, shortcut?: string) => menuLabel
-    ? <span className="topbar-menu-row"><span>{label}</span>{shortcut && <span className="topbar-menu-shortcut">{shortcut}</span>}</span>
-    : label;
-  return <>
-    <Dropdown trigger={["click"]} open={open} onOpenChange={onOpenChange} menu={{ onClick: () => onOpenChange?.(false), items: [
-      { key: "screenshot", icon: <CameraOutlined />, label: menuText(text("screenshot"), "Ctrl+Alt+S"), disabled: busy || !!preview, onClick: () => void run() },
-      ...(["mp4", "webm", "gif"] as const).map((output) => ({
-        key: output, icon: output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />, label: menuText(`${text("record")} · ${output.toUpperCase()}`, output === "mp4" ? "Ctrl+Alt+R" : undefined),
-        disabled: busy || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output)),
-        onClick: () => void run(output),
-      })),
-      ...(busy ? [{ key: "cancel", icon: <CloseOutlined />, label: text("cancel"), onClick: () => void capture.cancel() }] : []),
-    ] }} dropdownRender={(menu) => <div style={{ background: "var(--color-bg-elevated, white)", borderRadius: 8, boxShadow: "0 6px 24px #0002" }}>
-      {menu}
-      <Space style={{ padding: "8px 12px" }}><span>{text("quality")}</span>
-        <Select size="small" value={quality} disabled={busy} style={{ width: 105 }} onChange={setQuality}
+  const panel = <div style={{ padding: 20, border: "1px solid var(--color-border)", borderRadius: 12, background: "var(--color-bg-section)" }}>
+    <Space direction="vertical" size={20} style={{ width: "100%" }}>
+      <Space><span>{text("quality")}</span>
+        <Select value={quality} disabled={busy} style={{ width: 120 }} onChange={setQuality}
           options={["lossless", "high", "medium", "low"].map((value) => ({ value, label: text(`quality.${value}`) }))} />
       </Space>
-    </div>}>
-      {menuLabel ? <button type="button" className="topbar-menu-btn" aria-label={text("title")}>{text("title")}</button> : <Button type="text" size="small" aria-label={text("title")} title={text("title")}
-        style={{ width: 26, height: 26, padding: 0, WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        icon={busy ? <LoadingOutlined /> : <CameraOutlined />} />}
-    </Dropdown>
+      <Space wrap size={12}>
+        <Button icon={<CameraOutlined />} disabled={busy || !!preview} onClick={() => void run()}>{text("screenshot")}</Button>
+        {(["mp4", "webm", "gif"] as const).map((output) => <Button key={output}
+          icon={output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />}
+          disabled={busy || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output))}
+          onClick={() => void run(output)}>{text("record")} · {output.toUpperCase()}</Button>)}
+      </Space>
+    </Space>
+  </div>;
+  return <>
+    {panelTarget && createPortal(panel, panelTarget)}
     <Modal open={!!preview} title={text("preview")} onCancel={closePreview} width={880}
       footer={<Space><Button onClick={closePreview} disabled={saving}>{text("close")}</Button>
         <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>{text("save")}</Button></Space>}>

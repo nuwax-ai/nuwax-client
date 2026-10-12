@@ -54,9 +54,9 @@ preload 与类型声明等配套见 `find overlay -type f`）：
 | `src/renderer/components/pages/CommercialAboutPage.tsx` | **新增（非覆写）**：组合基座 `AboutPage` 并追加「开源组件声明」行与弹窗，不分叉基座 790 行的 `AboutPage.tsx`；`App.tsx` 的 `AboutPage` import 指向本文件 |
 | `src/main/ipc/nuwaxBridgeHandlers.ts`（增量） | 另含：一次 `startDesktopFeatures`；`cancelTransfers(reason)` 在每个会话边界（登出/换域/过期/登录切换）调用 `notifyFeatureSessionEnd` |
 | `src/main/main.ts`（增量） | 另含：退出清理一步 `disposeDesktopFeatures()` |
-| `src/main/window/applicationMenu.ts`、`.test.ts`（增量） | macOS 原生「截图与录屏」菜单及应用内快捷键；按实际特性注册结果展示。命令经私有 host 事件进入 CaptureLauncher，业务 IM 桥不扩展；Windows 在既有自绘菜单提供相同入口 |
+| `src/main/window/applicationMenu.ts`、`.test.ts`（增量） | macOS 原生「截图与录屏」菜单及应用内快捷键；按实际特性注册结果展示。命令经私有 host 事件进入 CaptureLauncher，业务 IM 桥不扩展；Windows 在客户端设置页签提供入口，应用内快捷键仍经 host 事件触发 |
 | `src/preload/webviewPerfBridge.ts`、`src/preload/index.ts`（增量） | 另含：业务页展开 `featureNamespaces`（`NuwaClawBridge.capture`）、宿主壳展开 `hostFeatureNamespaces`（`electronAPI.notices`、独立 IPC 的 `electronAPI.capture`） |
-| `src/renderer/App.tsx`、`src/renderer/components/TrafficLightToolbar.tsx`（增量） | 另含：组合 `CommercialAboutPage`；工具栏通过可选插槽挂载截图/录屏入口及 Windows 自绘菜单条目，菜单事件、结果预览与原生保存由 `renderer/features/capture` 自持 |
+| `src/renderer/App.tsx`、`src/renderer/components/TrafficLightToolbar.tsx`（增量） | 另含：组合 `CommercialAboutPage`；客户端设置增加截图/录屏页签，移除顶栏相机；常驻控制器把面板 portal 到页签，菜单事件、结果预览与原生保存由 `renderer/features/capture` 自持 |
 | `src/main/window/trayManager.ts`（增量） | 录屏/暂停期间挂载可选「停止录屏」动作，结束或进入编码后移除 |
 | `scripts/build/build-main-esbuild.js`（增量） | 构建特性隔离 preload：`captureWindow.js`、`captureRecording.js`；无特性源码时跳过，不影响社区构建 |
 | `src/shared/types/electron.d.ts`、`src/shared/types/hostBridge.ts`（增量） | 壳 capture/notices 类型；业务桥 capture 契约快照（从前端事实源生成） |

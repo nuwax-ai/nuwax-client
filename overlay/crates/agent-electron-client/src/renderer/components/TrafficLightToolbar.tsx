@@ -89,7 +89,6 @@ export interface TrafficLightToolbarProps {
   onOpenWorkspace?: () => void;
   /** 服务状态指示器（非绿色时由 App.tsx 注入颜色点，点击打开设置弹窗；全绿不渲染）。 */
   statusEntry?: React.ReactNode;
-  captureEntry?: (options: { menuLabel: boolean; open?: boolean; onOpenChange?: (open: boolean) => void }) => React.ReactNode;
   /** 新版本更新入口（仅当检测到新版本时注入：下载 icon / 下载中百分比 / 待安装；其余不渲染）。 */
   updateEntry?: React.ReactNode;
   /** guest 页面声明的顶部空白矩形；空数组时使用旧前端兼容窄条。 */
@@ -152,7 +151,6 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   onModifyWorkspace,
   onOpenWorkspace,
   statusEntry,
-  captureEntry,
   updateEntry,
   dragRegions = [],
 }) => {
@@ -410,11 +408,6 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           },
         ]}
       />
-      {captureEntry?.({
-        menuLabel: true,
-        open: activeMenu === "capture",
-        onOpenChange: (open) => setActiveMenu(open ? "capture" : null),
-      })}
     </div>
   );
 
@@ -485,7 +478,6 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {settingsBtn}
           {historyNav}
           {statusEntry}
-          {isMac && captureEntry?.({ menuLabel: false })}
           {menuBar}
         </div>
 

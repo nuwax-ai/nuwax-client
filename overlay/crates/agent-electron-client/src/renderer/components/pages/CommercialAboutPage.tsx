@@ -34,9 +34,9 @@ export default function CommercialAboutPage(props: AboutPageProps = {}) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, paddingBottom: 20 }}>
       <AboutPage {...props} />
-      <div className={styles.group} style={{ flexShrink: 0 }}>
+      <div className={styles.group} style={{ flexShrink: 0, marginBottom: 0 }}>
         <div className={styles.groupCard}>
           <div className={styles.row}>
             <div className={styles.rowInfo}>

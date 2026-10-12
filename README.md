@@ -46,7 +46,7 @@
 - **自动更新**：stable / beta 双通道，应用内完成。
 - 默认简体中文，多语言可切换且实时同步到壳。
 - 文件下载、图片另存真实落盘；系统托盘、开机自启、主题与壳同步；`⌘N` 新任务等桌面快捷入口。
-- **原生截图与录屏（当前开发版）**：多屏来源选择、单屏区域和标注、MP4/WebM/GIF、预览保存；macOS 菜单栏及 Windows 自绘菜单提供入口。应用内截图快捷键 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。IM 负责人接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，开发验证与待验项见 [验收记录](docs/acceptance/20261012-native-capture-dev.md)。
+- **原生截图与录屏（当前开发版）**：多屏来源选择、单屏区域和标注、MP4/WebM/GIF、预览保存；客户端设置的「截图与录屏」页签和 macOS 原生菜单提供入口。应用内截图快捷键 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。IM 负责人接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，开发验证与待验项见 [验收记录](docs/acceptance/20261012-native-capture-dev.md)。
 
 ## 下载与安装
 
