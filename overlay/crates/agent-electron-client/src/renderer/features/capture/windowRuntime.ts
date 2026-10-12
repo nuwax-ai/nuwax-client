@@ -1,10 +1,10 @@
-import type { CaptureAnnotation } from './annotations';
+import type { CaptureAnnotation, AnnotationPoint, createAnnotationPainter, createAnnotationHistory } from './annotations';
 import type { CaptureWindowBridge, CaptureRect, RecordingControlState } from '../../../shared/features/capture/windowContract';
 
 /** All native-window UI runs inside this closure; no network, node or shared app state. */
 export async function mountCaptureWindow(
-  makePainter: () => { draw(ctx: CanvasRenderingContext2D, annotation: CaptureAnnotation): void },
-  makeHistory: <T>() => { values(): T[]; push(value: T): void; undo(): boolean; redo(): boolean; clear(): void; canUndo(): boolean; canRedo(): boolean },
+  makePainter: typeof createAnnotationPainter,
+  makeHistory: typeof createAnnotationHistory,
   placeToolbar: (target: CaptureRect | null, area: CaptureRect, size: { width: number; height: number }) => CaptureRect,
   makeIcon: (name: string) => SVGSVGElement,
 ): Promise<void> {
@@ -64,8 +64,11 @@ export async function mountCaptureWindow(
   let image = new Image();
   let mode: 'screen' | 'window' | 'region' = 'region';
   let crop: CaptureRect | null = null;
-  let tool: CaptureAnnotation['tool'] | null = null;
+  let tool: CaptureAnnotation['tool'] | 'select' | null = null;
   let active: CaptureAnnotation | null = null;
+  let selectedIndex: number | null = null;
+  let annotationDrag: { index: number; original: CaptureAnnotation; start: AnnotationPoint; handle: number | null; moved: boolean } | null = null;
+  let propertyChange: { index: number; value: CaptureAnnotation } | null = null;
   let drag: { x: number; y: number } | null = null;
   let busy = false;
   let sourceError = '';
@@ -81,6 +84,9 @@ export async function mountCaptureWindow(
   const dimensions = node('div', 'dimensions');
   const magnifier = node('canvas', 'magnifier'); magnifier.width = 160; magnifier.height = 160;
   const textInput = node('input', 'textInput'); textInput.placeholder = labels.textHint;
+  textInput.style.userSelect = 'text';
+  let pendingText: CaptureAnnotation | null = null;
+  let pendingTextIndex: number | null = null;
   document.body.append(dock, hint, dimensions, magnifier, textInput);
   const sourceGrid = node('div', 'sourceGrid'); document.body.append(sourceGrid);
   const buttons: Record<string, HTMLButtonElement> = {};
@@ -101,6 +107,36 @@ export async function mountCaptureWindow(
   function clipped(p: { x: number; y: number }) {
     if (!crop) return p;
     return { x: Math.max(crop.x, Math.min(crop.x + crop.width, p.x)), y: Math.max(crop.y, Math.min(crop.y + crop.height, p.y)) };
+  }
+  const pixelScale = () => frame.width / bounds().width;
+  function selectedAnnotation() {
+    if (selectedIndex === null) return null;
+    return annotationDrag && active ? active : propertyChange?.value ?? history.values()[selectedIndex] ?? null;
+  }
+  function handles(annotation: CaptureAnnotation) {
+    if (annotation.tool === 'text') return [];
+    if (annotation.tool === 'arrow') return [annotation.points[0], annotation.points[annotation.points.length - 1]];
+    const b = painter.bounds(context, annotation);
+    return [{ x: b.x, y: b.y }, { x: b.x + b.width, y: b.y }, { x: b.x + b.width, y: b.y + b.height }, { x: b.x, y: b.y + b.height }];
+  }
+  function hitHandle(p: AnnotationPoint): number | null {
+    const annotation = selectedAnnotation();
+    if (!annotation) return null;
+    const index = handles(annotation).findIndex(h => Math.hypot(h.x - p.x, h.y - p.y) <= 7 * pixelScale());
+    return index < 0 ? null : index;
+  }
+  function hitAnnotation(p: AnnotationPoint): number | null {
+    if (!crop || p.x < crop.x || p.x > crop.x + crop.width || p.y < crop.y || p.y > crop.y + crop.height) return null;
+    const annotations = history.values();
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      if (painter.hitTest(context, annotations[i], p, 5 * pixelScale())) return i;
+    }
+    return null;
+  }
+  function syncProperties(annotation: CaptureAnnotation) {
+    color.value = annotation.color;
+    width.value = String(annotation.width / pixelScale());
+    if (annotation.tool === 'text') fontSize.value = String(Math.round((annotation.fontSize ?? Math.max(12, annotation.width * 7)) / pixelScale()));
   }
   function placeDock() {
     const r = bounds();
@@ -126,8 +162,11 @@ export async function mountCaptureWindow(
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, frame.width, frame.height);
     if (crop) { context.save(); context.beginPath(); context.rect(crop.x, crop.y, crop.width, crop.height); context.clip(); }
-    for (const annotation of history.values()) painter.draw(context, annotation);
-    if (active) painter.draw(context, active);
+    history.values().forEach((annotation, index) => {
+      if (index === pendingTextIndex) return;
+      painter.draw(context, annotationDrag?.index === index && active ? active : propertyChange?.index === index ? propertyChange.value : annotation);
+    });
+    if (active && !annotationDrag) painter.draw(context, active);
     if (crop) context.restore();
     maskContext.clearRect(0, 0, mask.width, mask.height);
     maskContext.fillStyle = 'rgba(0,0,0,.48)';
@@ -138,11 +177,27 @@ export async function mountCaptureWindow(
       maskContext.strokeRect(crop.x, crop.y, crop.width, crop.height);
       dimensions.textContent = `${crop.width} × ${crop.height} px`;
     }
+    const selected = selectedAnnotation();
+    if (selected && !pendingText) {
+      const b = painter.bounds(context, selected), scale = pixelScale();
+      maskContext.save(); maskContext.strokeStyle = '#36d5ae'; maskContext.lineWidth = scale;
+      maskContext.setLineDash([4 * scale, 3 * scale]); maskContext.strokeRect(b.x, b.y, b.width, b.height);
+      maskContext.setLineDash([]); maskContext.fillStyle = '#fff';
+      for (const handle of handles(selected)) {
+        maskContext.fillRect(handle.x - 3 * scale, handle.y - 3 * scale, 6 * scale, 6 * scale);
+        maskContext.strokeRect(handle.x - 3 * scale, handle.y - 3 * scale, 6 * scale, 6 * scale);
+      }
+      maskContext.restore();
+    }
     dimensions.hidden = !crop;
     toolBar.hidden = !crop || captureMode === 'record';
     buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy;
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
-    for (const key of ['screen', 'window', 'region', 'rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic']) {
+    buttons.deleteAnnotation.disabled = selectedIndex === null;
+    const textStyle = pendingText?.tool === 'text' || selected?.tool === 'text' || !selected && tool === 'text';
+    fontControl.hidden = !textStyle; width.hidden = textStyle;
+    color.disabled = selected?.tool === 'mosaic' || !selected && tool === 'mosaic';
+    for (const key of ['screen', 'window', 'region', 'select', 'rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic']) {
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
     }
@@ -150,7 +205,65 @@ export async function mountCaptureWindow(
     placeDock();
     if (sourceError) hint.hidden = false;
   }
-  function clear() { history.clear(); active = null; tool = null; textInput.style.display = 'none'; }
+  function finishText(commit = true) {
+    const operation = pendingText;
+    if (!operation) return;
+    const index = pendingTextIndex, text = textInput.value;
+    pendingText = null; pendingTextIndex = null;
+    if (commit) {
+      if (index === null && text.trim()) { selectedIndex = history.values().length; history.push({ ...operation, text }); }
+      else if (index !== null) {
+        const original = history.values()[index];
+        if (!text.trim()) { history.replace(index, null); selectedIndex = null; }
+        else if (text !== original.text || operation.fontSize !== original.fontSize || operation.color !== original.color) history.replace(index, { ...operation, text });
+      }
+    }
+    textInput.value = ''; textInput.style.display = 'none'; textInput.blur(); draw();
+  }
+  function placeTextInput() {
+    if (!pendingText) return;
+    const scale = pixelScale(), r = bounds(), point = pendingText.points[0];
+    textInput.style.font = `${(pendingText.fontSize ?? Math.max(12, pendingText.width * 7)) / scale}px sans-serif`;
+    textInput.style.color = pendingText.color;
+    textInput.style.width = `${Math.min(innerWidth - 16, Math.max(180, painter.bounds(context, { ...pendingText, text: textInput.value }).width / scale + 22))}px`;
+    textInput.style.left = `${Math.max(0, Math.min(innerWidth - textInput.offsetWidth, r.x + point.x / scale - 7))}px`;
+    textInput.style.top = `${Math.max(0, Math.min(innerHeight - textInput.offsetHeight, r.y + point.y / scale - 7))}px`;
+  }
+  function beginText(annotation: CaptureAnnotation, index: number | null) {
+    pendingText = { ...annotation }; pendingTextIndex = index; selectedIndex = index; tool = 'text';
+    syncProperties(annotation); textInput.value = annotation.text ?? ''; textInput.style.display = 'block';
+    placeTextInput(); draw(); textInput.focus({ preventScroll: true });
+    if (index !== null) textInput.select();
+  }
+  function finishPropertyChange() {
+    if (!propertyChange) return;
+    const original = history.values()[propertyChange.index], value = propertyChange.value;
+    if (original.color !== value.color || original.width !== value.width || original.fontSize !== value.fontSize) history.replace(propertyChange.index, value);
+    propertyChange = null;
+  }
+  function changeProperties(patch: Partial<Pick<CaptureAnnotation, 'color' | 'width' | 'fontSize'>>) {
+    if (pendingText) { pendingText = { ...pendingText, ...patch }; placeTextInput(); }
+    else if (selectedIndex !== null) propertyChange = { index: selectedIndex, value: { ...(propertyChange?.value ?? history.values()[selectedIndex]), ...patch } };
+    draw();
+  }
+  function stepHistory(redo = false) {
+    finishText(); finishPropertyChange(); selectedIndex = null;
+    redo ? history.redo() : history.undo(); draw();
+  }
+  function deleteSelected() {
+    finishText(); finishPropertyChange();
+    if (selectedIndex !== null) history.replace(selectedIndex, null);
+    selectedIndex = null; draw();
+  }
+  textInput.onblur = () => finishText();
+  textInput.oninput = () => placeTextInput();
+  textInput.onkeydown = (e) => {
+    e.stopPropagation();
+    // 候选词确认的 Enter 必须交给输入法，不能提前结束文字标注。
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finishText(e.key === 'Enter'); }
+  };
+  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
   button(top, 'screen', labels.screen, () => { void chooseDisplay('screen'); });
   button(top, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
@@ -158,6 +271,8 @@ export async function mountCaptureWindow(
   button(top, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
     if (!crop || busy || crop.width < 1 || crop.height < 1) return;
+    finishText();
+    finishPropertyChange();
     busy = true; active = null; draw();
     const output = node('canvas'); output.width = crop.width; output.height = crop.height;
     output.getContext('2d')!.drawImage(canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
@@ -166,13 +281,28 @@ export async function mountCaptureWindow(
   }
   button(top, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
   buttons.confirm.classList.add('primary');
+  button(toolBar, 'select', labels.select, () => { finishText(); finishPropertyChange(); tool = 'select'; draw(); });
   for (const key of ['rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic'] as const) {
-    button(toolBar, key, labels[key], () => { tool = tool === key ? null : key; draw(); });
+    button(toolBar, key, labels[key], () => { finishText(); finishPropertyChange(); selectedIndex = null; tool = tool === key ? 'select' : key; draw(); });
   }
-  const color = node('input'); color.type = 'color'; color.value = '#ff3b52'; color.title = labels.color; toolBar.append(color);
-  const width = node('input'); width.type = 'range'; width.min = '1'; width.max = '8'; width.value = '2'; width.title = labels.lineWidth; toolBar.append(width);
-  button(toolBar, 'undo', labels.undo, () => { history.undo(); draw(); });
-  button(toolBar, 'redo', labels.redo, () => { history.redo(); draw(); });
+  const color = node('input'); color.type = 'color'; color.value = '#ff3b52'; color.title = labels.color; color.setAttribute('aria-label', labels.color); toolBar.append(color);
+  const width = node('input'); width.type = 'range'; width.min = '1'; width.max = '8'; width.value = '2'; width.title = labels.lineWidth; width.setAttribute('aria-label', labels.lineWidth); toolBar.append(width);
+  const fontControl = node('label', 'fontSizeControl'); fontControl.title = labels.fontSize;
+  const fontSize = node('input'); fontSize.type = 'number'; fontSize.min = '8'; fontSize.max = '144'; fontSize.value = '14'; fontSize.dataset.action = 'fontSize'; fontSize.setAttribute('aria-label', labels.fontSize);
+  fontControl.append(node('span', '', 'Aa'), fontSize); toolBar.append(fontControl);
+  color.oninput = () => changeProperties({ color: color.value });
+  width.oninput = () => changeProperties({ width: Number(width.value) * pixelScale() });
+  fontSize.oninput = () => { const value = Number(fontSize.value); if (Number.isFinite(value) && value >= 8 && value <= 144) changeProperties({ fontSize: value * pixelScale() }); };
+  for (const input of [color, width, fontSize]) input.onchange = () => { finishPropertyChange(); draw(); };
+  fontSize.onchange = () => {
+    const selected = selectedAnnotation(), value = Number(fontSize.value);
+    const fallback = selected?.tool === 'text' ? (selected.fontSize ?? Math.max(12, selected.width * 7)) / pixelScale() : 14;
+    const normalized = fontSize.value.trim() && Number.isFinite(value) ? Math.round(Math.max(8, Math.min(144, value))) : fallback;
+    fontSize.value = String(normalized); changeProperties({ fontSize: normalized * pixelScale() }); finishPropertyChange(); draw();
+  };
+  button(toolBar, 'deleteAnnotation', labels.deleteAnnotation, deleteSelected);
+  button(toolBar, 'undo', labels.undo, () => stepHistory());
+  button(toolBar, 'redo', labels.redo, () => stepHistory(true));
   sourceGrid.hidden = true;
   for (const source of config.sources.filter((s) => s.kind === 'window')) {
     const entry = node('button', 'source'); entry.dataset.source = source.id;
@@ -192,7 +322,8 @@ export async function mountCaptureWindow(
     sourceGrid.append(entry);
   }
   function showMagnifier(e: MouseEvent, p: { x: number; y: number }) {
-    if (crop && !drag) { magnifier.hidden = true; return; }
+    const r = bounds();
+    if (crop && !drag || e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) { magnifier.hidden = true; return; }
     magnifier.hidden = false;
     magnifier.style.left = `${Math.max(0, Math.min(innerWidth - 170, e.clientX + 22))}px`;
     magnifier.style.top = `${Math.max(54, Math.min(innerHeight - 170, e.clientY + 22))}px`;
@@ -203,44 +334,91 @@ export async function mountCaptureWindow(
   }
   mask.onpointerdown = (e) => {
     if (busy || mode === 'window' && !sourceGrid.hidden) return;
+    // 阻止画布抢焦点，并在切换标注前提交当前编辑。
+    e.preventDefault(); finishText(); finishPropertyChange();
     mask.setPointerCapture(e.pointerId);
     const p = point(e);
-    if (crop && tool) {
+    const handle = hitHandle(p), hit = hitAnnotation(p);
+    const index = handle !== null ? selectedIndex : hit;
+    const existing = index === null ? null : history.values()[index];
+    if (crop && existing && (handle !== null || tool === 'select' || existing.tool === tool)) {
+      selectedIndex = index; syncProperties(existing);
+      annotationDrag = { index: index!, original: existing, start: p, handle, moved: false };
+    } else if (crop && tool && tool !== 'select') {
+      selectedIndex = null;
       const a = clipped(p); const scale = frame.width / bounds().width;
       active = { tool, points: [a], width: Number(width.value) * scale, color: color.value };
       if (tool === 'text') {
-        const operation = active; active = null;
-        textInput.value = ''; textInput.style.display = 'block'; textInput.style.left = `${e.clientX}px`; textInput.style.top = `${e.clientY}px`; textInput.focus();
-        const commit = () => { if (textInput.value.trim()) { operation.text = textInput.value; history.push(operation); } textInput.style.display = 'none'; textInput.onblur = null; draw(); };
-        textInput.onblur = commit;
-        textInput.onkeydown = (key) => { key.stopPropagation(); if (key.key === 'Enter') textInput.blur(); if (key.key === 'Escape') { textInput.value = ''; textInput.blur(); } };
+        const annotation = { ...active, fontSize: Math.max(8, Math.min(144, Number(fontSize.value) || 14)) * scale };
+        active = null; beginText(annotation, null);
       }
-    } else if (mode === 'region') { drag = p; crop = rect(p, p); clear(); }
+    } else if (!crop && mode === 'region') { drag = p; crop = rect(p, p); clear(); }
+    else selectedIndex = null;
     draw();
   };
   mask.onpointermove = (e) => {
     const p = point(e);
     if (drag) crop = rect(drag, p);
+    else if (annotationDrag && crop) {
+      const { original, start, handle } = annotationDrag;
+      if (Math.hypot(p.x - start.x, p.y - start.y) > 2 * pixelScale()) annotationDrag.moved = true;
+      if (annotationDrag.moved) {
+        const b = painter.bounds(context, original), next = clipped(p);
+        if (handle !== null && original.tool === 'arrow') {
+          active = { ...original, points: original.points.map((point, index) => index === handle ? next : point) };
+        } else if (handle !== null) {
+          const opposite = handles(original)[(handle + 2) % 4];
+          const target = rect(opposite, next);
+          if (target.width >= pixelScale() && target.height >= pixelScale()) active = painter.resize(context, original, target);
+        } else {
+          // 超长文字按锚点限制；其余图形整体保留在当前选区内。
+          const w = Math.min(b.width, crop.width), h = Math.min(b.height, crop.height);
+          const dx = Math.max(crop.x - b.x, Math.min(crop.x + crop.width - b.x - w, p.x - start.x));
+          const dy = Math.max(crop.y - b.y, Math.min(crop.y + crop.height - b.y - h, p.y - start.y));
+          active = { ...original, points: original.points.map(point => ({ x: point.x + dx, y: point.y + dy })) };
+        }
+      }
+    }
     else if (active) {
       const next = clipped(p);
       if (active.tool === 'pen') active.points.push(next);
       else active.points = [active.points[0], next];
     }
     if (drag || active) draw();
+    if (!drag && !annotationDrag && !active) {
+      const handle = hitHandle(p), hit = hitAnnotation(p);
+      const existing = hit === null ? null : history.values()[hit];
+      mask.style.cursor = handle !== null ? (handle % 2 ? 'nesw-resize' : 'nwse-resize')
+        : existing && (tool === 'select' || existing.tool === tool) ? 'move' : tool === 'text' ? 'text' : 'crosshair';
+    }
     showMagnifier(e, p);
   };
+  // 每个显示器有独立的选区窗口；跨屏后旧窗口必须撤掉放大框。
+  mask.onpointerleave = () => { magnifier.hidden = true; };
+  window.addEventListener('blur', () => { magnifier.hidden = true; });
   mask.onpointerup = () => {
     drag = null;
-    if (active) { history.push(active); active = null; }
+    if (annotationDrag) {
+      const current = annotationDrag; annotationDrag = null;
+      if (current.moved && active) history.replace(current.index, active);
+      active = null;
+      if (!current.moved && current.original.tool === 'text') beginText(current.original, current.index);
+    } else if (active) { selectedIndex = history.values().length; history.push(active); active = null; tool = 'select'; }
     if (crop && (crop.width < 1 || crop.height < 1)) crop = null;
+    if (crop && !tool) tool = 'select';
     magnifier.hidden = true; draw();
   };
   document.onkeydown = (e) => {
-    if (e.target === textInput) return;
-    if (e.key === 'Escape') bridge.action('cancel');
+    if (e.target instanceof HTMLInputElement) return;
+    if (e.key === 'Escape') {
+      if (annotationDrag) { annotationDrag = null; active = null; draw(); }
+      else if (selectedIndex !== null) { selectedIndex = null; draw(); }
+      else bridge.action('cancel');
+    }
     else if (e.key === 'Enter') { e.preventDefault(); void confirm(); }
-    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? history.redo() : history.undo(); draw(); }
-    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); history.redo(); draw(); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIndex !== null) { e.preventDefault(); deleteSelected(); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); stepHistory(e.shiftKey); }
+    else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); stepHistory(true); }
   };
   async function chooseDisplay(nextMode: 'screen' | 'region') {
     if (busy) return;

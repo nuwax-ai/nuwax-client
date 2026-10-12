@@ -37,6 +37,7 @@ interface ManagedWindow {
   fail?: (error: Error) => void;
   chosen?: CaptureWindowImage;
   loading?: boolean;
+  rendererInitialized?: boolean;
 }
 
 /** One factory owns its IPC handlers and all windows; dispose is safe during any stage. */
@@ -88,7 +89,8 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     window.webContents.on('will-attach-webview', (event) => event.preventDefault());
     window.webContents.on('page-title-updated', (event) => event.preventDefault());
     window.webContents.on('before-input-event', (event, input) => {
-      if (config.kind === 'selection' && input.type === 'keyDown' && input.key === 'Escape') {
+      // 初始化前提供退出兜底；初始化后由页面区分取消文字编辑和取消截图。
+      if (config.kind === 'selection' && !owned.rendererInitialized && input.type === 'keyDown' && input.key === 'Escape') {
         event.preventDefault(); owned.finish?.(null);
       }
     });
@@ -109,7 +111,12 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     return owned;
   }
 
-  ipcMain.handle(CH.init, (event) => trusted(event)?.config ?? null);
+  ipcMain.handle(CH.init, (event) => {
+    const owned = trusted(event);
+    if (!owned) return null;
+    owned.rendererInitialized = true;
+    return owned.config;
+  });
   ipcMain.handle(CH.source, async (event, rawId: unknown) => {
     const owned = trusted(event);
     if (!owned || owned.config.kind !== 'selection' || owned.loading || typeof rawId !== 'string' || !owned.sourceIds?.has(rawId)) return null;

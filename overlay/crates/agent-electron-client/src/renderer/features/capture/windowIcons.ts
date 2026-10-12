@@ -1,6 +1,8 @@
 /** Small inline line icons: no fonts, external resources, or network in the private window. */
 export function createCaptureIcon(name: string): SVGSVGElement {
   const paths: Record<string, string[]> = {
+    select: ['m5 3 14 10-7 1-4 7z'],
+    deleteAnnotation: ['M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7'],
     screen: ['M3 4h18v13H3z', 'M8 21h8M12 17v4'],
     window: ['M3 5h18v15H3z', 'M3 9h18M6 7h.01M9 7h.01'],
     region: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5', 'M8 8h8v8H8z'],
