@@ -71,6 +71,10 @@ async function capture(sender: Sender, hostChannel = false) {
   if (!result.success) throw new Error(JSON.stringify(result));
   return result;
 }
+// 能力门以 process.platform 判定（darwin/win32 才可用）；CI runner 为 linux，须统一钉 darwin
+beforeEach(() => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+});
 beforeEach(() => {
   vi.clearAllMocks(); mocks.data.clear(); mocks.power.clear(); mocks.screen.clear();
   mocks.captureStill.mockResolvedValue(still); mocks.record.mockResolvedValue(null); mocks.resolveFfmpeg.mockResolvedValue(null);
@@ -85,7 +89,7 @@ beforeEach(() => {
   };
   handle = captureFeature.register(ctx);
 });
-afterEach(async () => { await handle.dispose(); });
+afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
   it.each(['mp4', 'webm', 'gif'])('returns completed %s bytes to the IM caller without opening the standalone save flow', async (output) => {
