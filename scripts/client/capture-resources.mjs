@@ -67,9 +67,8 @@ export async function inspectCaptureResource(root, { platform = process.platform
 export function captureBuildArguments(lock, { platform, arch, prefix, compiler, sdk }) {
   if (!CAPTURE_PLATFORMS.includes(`${platform}-${arch}`)) throw new Error(`[capture] 不支持 ${platform}-${arch}`);
   const cpu = arch === 'arm64' ? 'arm64' : 'x86_64';
-  // darwin 版本须与实际 SDK 一致（arm64 runner=macOS 26/darwin25，intel runner=macos-15/darwin24）
-  const darwinVersion = platform === 'darwin' ? (sdk?.match(/MacOSX(\d+)\.sdk/)?.[1] ?? '25') : null;
-  const vpxTarget = `${cpu}-${platform === 'darwin' ? `darwin${darwinVersion}` : platform === 'win32' ? 'win64' : 'linux'}-gcc`;
+  // libvpx 官方 target 形态不带 darwin 版本号（x86_64-darwin-gcc）；带版本会 Unrecognized target
+  const vpxTarget = `${cpu}-${platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win64' : 'linux'}-gcc`;
   const h264Encoder = platform === 'darwin' ? 'h264_videotoolbox' : platform === 'win32' ? 'h264_mf' : 'libopenh264';
   const libvpx = [`--prefix=${prefix}`, `--target=${vpxTarget}`, '--disable-examples', '--disable-tools', '--disable-docs', '--disable-unit-tests', '--disable-shared', '--enable-static', '--disable-vp8', '--enable-vp9', '--enable-pic'];
   const ffmpeg = [
@@ -186,11 +185,8 @@ async function buildCaptureBinary(root, lock, options) {
   for (const name of ['libvpx', 'ffmpeg']) {
     const cwd = path.join(parent, lock[name].directory);
     console.log(`[capture] 编译 ${name} ${lock[name].version} (${platform}-${arch})`);
-    try {
-      await tools.run(shell, ['./configure', ...args[name]], { cwd, env, capture: true });
-    } catch (error) {
-      throw new Error(`[capture] ${name} configure 失败:\n${error.message}`);
-    }
+    const configure = await tools.run(shell, ['./configure', ...args[name]], { cwd, env, capture: true, allowFailure: true });
+    if (configure.status !== 0) throw new Error(`[capture] ${name} configure 失败 (${configure.status}):\n${configure.stderr || configure.stdout}`);
     // Use the configure shell's make and path semantics. A Windows PATH may
     // otherwise pick mingw32-make or a different Git Bash/WSL installation.
     await tools.run(shell, ['-c', 'exec make "$@"', 'capture-make', `-j${jobs}`], { cwd, env, capture: true });
