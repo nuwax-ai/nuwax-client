@@ -8,7 +8,7 @@
  *      → 设置（注入 onOpenSettings 时渲染；nuwax 宿主入口在 web 用户区，不传不渲染）
  *      → 历史导航（后退/前进）→ statusEntry（服务异常点）；
  *    - 左（仅 Win/Linux，功能区之后）：自绘菜单栏 关于(A)/文件(F)/编辑(E)/窗口(W)/
- *      帮助(H)（antd Dropdown，12px 菜单文字）；Windows 在能力可用时还显示
+ *      帮助(H)（antd Dropdown，12px 菜单文字）；Win/Linux 在能力可用时还显示
  *      「截图与录屏」菜单；文件菜单为 nuwax 快捷键能力
  *      （新建任务/搜索）+ 工作空间目录动作（App 注入回调）；编辑动作经
  *      menu:editAction 路由到焦点 webContents（webview guest 优先），页面/窗口
@@ -46,7 +46,6 @@ import { t } from "../services/core/i18n";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
 const isMac = /mac/i.test(navigator.platform);
-const isWindows = /^win/i.test(navigator.platform);
 
 /** -webkit-app-region 需在 renderer DOM 设置；Electron 专属键，React CSSProperties 未内置，用 any 规避告警。 */
 const DRAG = { WebkitAppRegion: "drag" } as any;
@@ -94,7 +93,7 @@ export interface TrafficLightToolbarProps {
   onModifyWorkspace?: () => void;
   /** 「文件(F) → 打开工作空间目录」：系统文件管理器打开当前目录。 */
   onOpenWorkspace?: () => void;
-  /** 本机采集能力可用时，Windows 自绘菜单提供截图与录屏入口。 */
+  /** 本机采集能力可用时，Win/Linux 自绘菜单提供截图与录屏入口。 */
   captureAvailable?: boolean;
   /** 交由常驻 CaptureLauncher 执行，保留预览和保存流程。 */
   onCapture?: (action: CaptureMenuAction) => void;
@@ -398,7 +397,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           },
         ]}
       />
-      {isWindows && captureAvailable && onCapture && <TopMenu
+      {!isMac && captureAvailable && onCapture && <TopMenu
         activeMenu={activeMenu}
         onActiveMenuChange={setActiveMenu}
         menuId="capture"

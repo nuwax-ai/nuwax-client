@@ -11,9 +11,14 @@ import { buildCaptureWindowHtml } from '../../../renderer/features/capture/windo
 import type { StillCapture, StillEngine } from './captureService';
 import { isValidCaptureCrop, isTrustedCaptureFrame } from './windowSecurity';
 import { recordingBorderBounds, recordingControlBounds } from './windowGeometry';
+import { usesCapturePortal } from './linuxEnvironment';
+import { resolveCaptureWindowPolicy, type CaptureSelectorWindowPolicy, type CaptureWindowPolicy } from './platforms/windowing';
+import { desktopSource, portalSource, type CaptureSourceStrategy } from './platforms/sources';
 
 export interface CaptureWindows extends StillEngine {
   select(mode: 'record', signal: AbortSignal): Promise<CaptureSelection | null>;
+  selectPrepared(mode: 'still', image: CaptureWindowImage, signal: AbortSignal): Promise<StillCapture | null>;
+  selectPrepared(mode: 'record', image: CaptureWindowImage, signal: AbortSignal): Promise<CaptureSelection | null>;
   /** Applied to windows opened for the next capture; active windows keep their initial language. */
   setLabels(labels: Partial<CaptureWindowLabels>): void;
   createRecordingControls(selection: CaptureSelection, onAction: (action: RecordingAction, error?: Error) => void): RecordingControls;
@@ -23,6 +28,11 @@ export interface CaptureWindowOptions {
   preloadPath?: string;
   labels?: Partial<CaptureWindowLabels>;
   log?: { error(...args: unknown[]): void };
+  platform?: NodeJS.Platform;
+  portal?: boolean;
+  windowPolicy?: CaptureWindowPolicy;
+  sourceStrategy?: CaptureSourceStrategy;
+  capturePortalFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage>;
   captureWindowFrame?: (sourceId: string, sourceSize: CaptureSize, signal: AbortSignal) => Promise<{ png: Buffer; width: number; height: number; hdrToneMapped: boolean }>;
 }
 interface ManagedWindow {
@@ -38,10 +48,17 @@ interface ManagedWindow {
   chosen?: CaptureWindowImage;
   loading?: boolean;
   rendererInitialized?: boolean;
+  hiddenForRecording?: boolean;
+  selectorPolicy?: CaptureSelectorWindowPolicy;
+  shown?: boolean;
 }
 
 /** One factory owns its IPC handlers and all windows; dispose is safe during any stage. */
 export function createCaptureWindows(options: CaptureWindowOptions = {}): CaptureWindows {
+  const platform = options.platform ?? process.platform;
+  const portal = options.portal ?? usesCapturePortal(platform);
+  const windowPolicy = options.windowPolicy ?? resolveCaptureWindowPolicy(platform, portal);
+  const sourceStrategy = options.sourceStrategy ?? (portal ? portalSource : desktopSource);
   let labels = { ...DEFAULT_CAPTURE_WINDOW_LABELS, ...options.labels };
   const preloadPath = options.preloadPath ?? path.join(__dirname, '..', 'preload', 'captureWindow.js');
   const windows = new Map<number, ManagedWindow>();
@@ -68,10 +85,14 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   };
   function create(config: CaptureWindowConfiguration, bounds: CaptureRect, controls = false, activate = true): ManagedWindow {
     if (disposed) throw new Error('capture windows have been disposed');
+    const preview = 'presentation' in config && config.presentation === 'preview';
+    const selectorPolicy = windowPolicy.selectionWindow(config, bounds);
     const window = new BrowserWindow({
-      ...bounds, useContentSize: true, show: false, frame: false, transparent: config.kind !== 'selection',
-      resizable: false, minimizable: false, maximizable: false, fullscreenable: false,
-      skipTaskbar: true, alwaysOnTop: true, hasShadow: controls, enableLargerThanScreen: true,
+      ...(preview ? { width: bounds.width, height: bounds.height } : bounds), useContentSize: true, show: false,
+      frame: preview, transparent: !preview && config.kind !== 'selection',
+      resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls, fullscreenable: false,
+      ...selectorPolicy?.options,
+      skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview || controls, enableLargerThanScreen: !preview,
       roundedCorners: config.kind !== 'border',
       title: config.kind === 'selection' ? `${config.mode === 'still' ? labels.screenshot : labels.record}` : config.kind === 'controls' ? labels.record : '',
       backgroundColor: config.kind === 'selection' ? '#12161b' : '#00000000',
@@ -80,13 +101,15 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     // Windows clamps initial window bounds to the work area, excluding the
     // taskbar. Restore the requested bounds before the renderer maps pixels,
     // otherwise a full-screen source is stretched into a shorter viewport.
-    window.setBounds(bounds, false);
+    if (!preview) window.setBounds(bounds, false);
     const nonce = randomBytes(18).toString('hex');
     const url = `data:text/html;charset=utf-8,${encodeURIComponent(buildCaptureWindowHtml(nonce))}`;
-    const owned: ManagedWindow = { window, id: window.webContents.id, url, config };
+    const owned: ManagedWindow = { window, id: window.webContents.id, url, config, selectorPolicy };
     windows.set(window.webContents.id, owned);
-    window.setAlwaysOnTop(true, 'screen-saver');
-    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (!preview) {
+      window.setAlwaysOnTop(true, 'screen-saver');
+      window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());
     window.webContents.on('will-frame-navigate', (event) => event.preventDefault());
@@ -103,8 +126,11 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     if (config.kind === 'border') { window.setIgnoreMouseEvents(true); window.setFocusable(false); }
     window.webContents.once('did-finish-load', () => {
       if (window.isDestroyed()) return;
+      if (owned.hiddenForRecording) return;
       if (activate && config.kind !== 'border') { window.show(); window.focus(); }
       else window.showInactive();
+      owned.shown = true;
+      selectorPolicy?.didShow(window);
     });
     // Defer navigation until the caller has installed this session's result/failure callbacks.
     queueMicrotask(() => {
@@ -118,6 +144,11 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   ipcMain.handle(CH.init, (event) => {
     const owned = trusted(event);
     if (!owned) return null;
+    if (owned.selectorPolicy) return owned.selectorPolicy.waitUntilReady(owned.window, () => windows.has(owned.id), () => owned.shown === true).then(() => {
+      if (!trusted(event)) return null;
+      owned.rendererInitialized = true;
+      return owned.config;
+    }).catch(error => { failWindow(owned, error); return null; });
     owned.rendererInitialized = true;
     return owned.config;
   });
@@ -168,6 +199,11 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   };
   ipcMain.on(CH.action, actionHandler);
 
+  function recordingHint(mode: 'still' | 'record'): { recordingHint?: string } {
+    const hint = mode === 'record' ? windowPolicy.recordingHint(labels) : undefined;
+    return hint ? { recordingHint: hint } : {};
+  }
+
   async function select(mode: 'still' | 'record', signal: AbortSignal): Promise<StillCapture | CaptureSelection | null> {
     if (signal.aborted || disposed) return null;
     if (pending) throw new Error('a capture selector is already open');
@@ -206,7 +242,8 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
             sourceId: source.id, sourceKind: 'screen', sourceSize: size, crop: { x: 0, y: 0, ...size },
             displayBounds: { ...display.bounds }, displayId: String(display.id), hdrToneMapped: false,
           };
-          const owned = create({ kind: 'selection', mode, labels, image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea }, display.bounds, false, display.id === preferredDisplayId);
+          const owned = create({ kind: 'selection', mode, labels, image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
+            ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
           owned.signal = signal; owned.finish = finish; owned.fail = (error) => finish(null, error);
           owned.sourceIds = new Set([source.id, ...sourceCatalog.map((entry) => entry.id)]);
           sessionWindows.push(owned);
@@ -216,29 +253,66 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     });
   }
 
+  function selectPrepared(mode: 'still' | 'record', image: CaptureWindowImage, signal: AbortSignal): Promise<StillCapture | CaptureSelection | null> {
+    if (signal.aborted || disposed) return Promise.resolve(null);
+    if (pending) throw new Error('a capture selector is already open');
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let owned: ManagedWindow | undefined;
+      const finish = (result: StillCapture | CaptureSelection | null, error?: Error) => {
+        if (settled) return;
+        settled = true; pending = null; signal.removeEventListener('abort', abort);
+        if (owned) { owned.finish = undefined; owned.fail = undefined; close(owned); }
+        if (error) reject(error); else resolve(result);
+      };
+      const abort = () => finish(null);
+      pending = abort; signal.addEventListener('abort', abort, { once: true });
+      try {
+        // The compositor positions this ordinary window. Its local viewport is not a display.
+        const viewport = { x: 0, y: 0, width: 1040, height: 740 };
+        owned = create({ kind: 'selection', mode, labels, image, sources: [], workArea: viewport, presentation: 'preview',
+          ...recordingHint(mode) }, viewport);
+        owned.signal = signal; owned.finish = finish; owned.fail = error => finish(null, error);
+        owned.sourceIds = new Set([image.selection.sourceId]);
+        if (signal.aborted) finish(null);
+      } catch (raw) { finish(null, raw instanceof Error ? raw : new Error(String(raw))); }
+    });
+  }
+
   return {
     setLabels(next) { labels = { ...DEFAULT_CAPTURE_WINDOW_LABELS, ...next }; },
-    captureStill: (signal) => select('still', signal) as Promise<StillCapture | null>,
+    captureStill: signal => sourceStrategy.acquireStill<StillCapture>({
+      signal,
+      select: () => select('still', signal) as Promise<StillCapture | null>,
+      selectPrepared: image => selectPrepared('still', image, signal) as Promise<StillCapture | null>,
+      capturePortalFrame: options.capturePortalFrame,
+    }),
     select: (_mode, signal) => select('record', signal) as Promise<CaptureSelection | null>,
+    selectPrepared: selectPrepared as CaptureWindows['selectPrepared'],
     createRecordingControls(selection, onAction) {
-      const display = screen.getAllDisplays().find((entry) => String(entry.id) === selection.displayId) ?? screen.getDisplayMatching(selection.displayBounds);
-      const controlBounds = recordingControlBounds(selection, display.workArea);
+      const policy = windowPolicy.controls;
+      const display = policy.associatedWithDesktop && selection.coordinateSpace !== 'source'
+        ? screen.getAllDisplays().find((entry) => String(entry.id) === selection.displayId) ?? screen.getDisplayMatching(selection.displayBounds) : null;
+      const controlBounds = display ? recordingControlBounds(selection, display.workArea) : { x: 0, y: 0, width: 440, height: 100 };
       const initial: RecordingControlState = { state: 'countdown', elapsedMs: 0, countdown: 3 };
-      const control = create({ kind: 'controls', labels, state: initial }, controlBounds, true);
+      const presentation = policy.presentation === 'preview' ? { presentation: 'preview' as const } : {};
+      const control = create({ kind: 'controls', labels, state: initial, ...presentation }, controlBounds, true);
+      if (display && policy.presentation === 'preview') control.window.setPosition(controlBounds.x, controlBounds.y, false);
       control.onAction = onAction;
       const related = [control];
-      if (selection.sourceKind === 'screen') {
+      if (policy.border && selection.coordinateSpace !== 'source' && selection.sourceKind === 'screen') {
         const border = create({ kind: 'border' }, recordingBorderBounds(selection));
         border.onAction = onAction;
         related.push(border);
       }
-      for (const owned of related) owned.window.setContentProtection(true);
+      if (policy.contentProtection) for (const owned of related) owned.window.setContentProtection(true);
       let closed = false;
       return {
         update(state) {
           if (closed || control.window.isDestroyed()) return;
-          control.config = { kind: 'controls', labels, state };
+          control.config = { kind: 'controls', labels, state, ...presentation };
           control.window.webContents.send(CH.state, state);
+          if (policy.hideDuringRecording && state.state === 'encoding') { control.hiddenForRecording = false; control.window.show(); }
           for (const owned of related) {
             if (owned.config.kind !== 'border' || owned.window.isDestroyed()) continue;
             // Encoding no longer captures pixels; remove the live-area indicator.
@@ -246,7 +320,8 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
             else owned.window.webContents.send(CH.state, state);
           }
         },
-        setContentProtection(enabled) { for (const owned of related) if (!owned.window.isDestroyed()) owned.window.setContentProtection(enabled); },
+        hideForRecording() { if (policy.hideDuringRecording && !control.window.isDestroyed()) { control.hiddenForRecording = true; control.window.hide(); } },
+        setContentProtection(enabled) { if (policy.contentProtection) for (const owned of related) if (!owned.window.isDestroyed()) owned.window.setContentProtection(enabled); },
         dispose() { if (closed) return; closed = true; for (const owned of related) { owned.onAction = undefined; owned.fail = undefined; close(owned); } },
       };
     },

@@ -122,14 +122,25 @@ export function buildMacApplicationMenu(
   ];
 }
 
-/** Windows 自绘菜单没有 Electron accelerator；在宿主及其 guest 拦截同一组应用内按键。 */
+/** Win/Linux 自绘菜单没有 Electron accelerator；在宿主及其 guest 拦截同一组应用内按键。 */
 export function bindCaptureMenuShortcuts(
   target: Pick<WebContents, "on" | "removeListener">,
   dispatch: (action: CaptureMenuAction) => void,
+  options: { platform?: NodeJS.Platform; controlRecording?: (action: "pause" | "stop") => boolean } = {},
 ): () => void {
   const handler = (event: { preventDefault(): void }, input: Electron.Input) => {
     if (input.type !== "keyDown" || input.isAutoRepeat || !input.control || !input.alt || input.meta || input.shift) return;
-    const action = input.key.toLowerCase() === "s" ? "screenshot" : input.key.toLowerCase() === "r" ? "mp4" : null;
+    const key = input.key.toLowerCase();
+    if ((options.platform ?? process.platform) === "linux") {
+      // Linux 不保证窗口内容保护。录制 UI 隐藏后仍可用应用内按键控制；
+      // 空闲时 P 不消费，R 继续原有开始 MP4 行为。
+      const control = key === "r" ? "stop" : key === "p" ? "pause" : null;
+      if (control && options.controlRecording?.(control)) {
+        event.preventDefault();
+        return;
+      }
+    }
+    const action = key === "s" ? "screenshot" : key === "r" ? "mp4" : null;
     if (!action) return;
     event.preventDefault();
     dispatch(action);

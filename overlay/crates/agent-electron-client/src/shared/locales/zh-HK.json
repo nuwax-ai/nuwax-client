@@ -1134,6 +1134,8 @@
   "Claw.Capture.recording": "正在錄製",
   "Claw.Capture.paused": "已暫停",
   "Claw.Capture.encoding": "正在處理",
+  "Claw.Capture.linuxRecordingHint": "錄製時控制列會隱藏。可用系統匣控制，或切回客戶端按 Ctrl+Alt+R 停止、Ctrl+Alt+P 暫停/繼續。",
+  "Claw.Capture.entireSource": "整個來源",
   "Claw.Capture.selectHint": "拖曳選擇區域 · Esc 取消",
   "Claw.Capture.annotationHint": "點擊標註可編輯 · 拖曳移動 · Enter 完成",
   "Claw.Capture.textHint": "輸入文字",

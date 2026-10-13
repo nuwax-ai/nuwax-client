@@ -1134,6 +1134,8 @@
   "Claw.Capture.recording": "正在录制",
   "Claw.Capture.paused": "已暂停",
   "Claw.Capture.encoding": "正在处理",
+  "Claw.Capture.linuxRecordingHint": "录制时控制条会隐藏。可用托盘控制，或切回客户端按 Ctrl+Alt+R 停止、Ctrl+Alt+P 暂停/继续。",
+  "Claw.Capture.entireSource": "整个来源",
   "Claw.Capture.selectHint": "拖动选择区域 · Esc 取消",
   "Claw.Capture.annotationHint": "点击标注可编辑 · 拖动移动 · Enter 完成",
   "Claw.Capture.textHint": "输入文字",

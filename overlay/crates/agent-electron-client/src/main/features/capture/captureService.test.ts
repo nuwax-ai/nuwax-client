@@ -3,7 +3,7 @@
  *
  * 全部依赖用假实现注入。覆盖：
  * - 参数非法 → invalid-argument（且引擎不被调用）；webp 当前编码器不支持 → unsupported
- * - 平台不支持（linux）→ unsupported 且 capabilities.available=false；权限 denied → permission-denied
+ * - 平台不支持（freebsd）→ unsupported 且 capabilities.available=false；权限 denied → permission-denied
  * - 成功路径：状态 selecting→encoding→idle；resultId 可 readChunk 取回同一份字节；release 后取不到
  * - 用户取消（引擎返回 null）→ canceled；调用方 cancel() 中止 → canceled；结果不入库
  * - busy：会话进行中第二次调用被拒绝；结束后可再次发起
@@ -81,9 +81,24 @@ describe("screenshot", () => {
   });
 
   it("平台不支持：unsupported，capabilities.available=false", async () => {
-    const { service } = setup({ platform: "linux" });
+    const { service } = setup({ platform: "freebsd" });
     expect(service.getCapabilities().available).toBe(false);
     expect(await service.screenshot(undefined)).toMatchObject({ success: false, code: "unsupported" });
+  });
+  it('Linux screenshot capability is available without a video encoder', async () => {
+    const { service } = setup({ platform: 'linux' });
+    expect(service.getCapabilities()).toMatchObject({ available: true, platform: 'linux' });
+    expect(await service.screenshot(undefined)).toMatchObject({ success: true });
+  });
+  it('an explicitly disabled backend is unavailable and never invokes any capture engine', async () => {
+    const recordEngine = { formats:vi.fn(() => ({video:[],gif:false})),record:vi.fn(async () => null) };
+    const {service, stillEngine} = setup({ platform:'linux',backendAvailable:() => false,recordEngine });
+    expect(service.getCapabilities()).toMatchObject({available:false});
+    recordEngine.formats.mockClear();
+    expect(await service.screenshot({format:'png'})).toMatchObject({success:false,code:'unsupported'});
+    expect(await service.record({output:'mp4'})).toMatchObject({success:false,code:'unsupported'});
+    expect(stillEngine.captureStill).not.toHaveBeenCalled();
+    expect(recordEngine.formats).not.toHaveBeenCalled(); expect(recordEngine.record).not.toHaveBeenCalled();
   });
 
   it("权限被拒绝：permission-denied，引擎不被调用", async () => {

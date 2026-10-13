@@ -1,7 +1,7 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
-import { disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { configureCaptureBackend, controlDesktopRecording, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
 import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
@@ -78,6 +78,7 @@ import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
+  configureCaptureBackend(app.commandLine);
   app.setName("Nuwax");
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
   app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
@@ -400,11 +401,13 @@ function createWindow() {
   // 休眠控制：主窗口可见性 + 锁屏状态桥（不可见时通知 webview 暂停后台轮询）
   attachHostActivityWindow(mainWindow);
 
-  if (process.platform === "win32" && isDesktopFeatureRegistered("capture")) {
+  if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
     // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
-    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction);
+    // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
+    const shortcutOptions = { platform: process.platform, controlRecording: controlDesktopRecording };
+    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction, shortcutOptions);
     mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
-      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction);
+      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction, shortcutOptions);
     });
   }
 

@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
   };
 });
 vi.mock('electron', () => ({
+  app: { commandLine: { getSwitchValue: () => '' } },
   BrowserWindow: { fromWebContents: () => null }, dialog: { showSaveDialog: mocks.showSaveDialog },
   powerMonitor: mocks.power, screen: mocks.screen,
 }));
@@ -37,6 +38,7 @@ vi.mock('./encodingResources', () => ({ resolveCaptureFfmpeg: mocks.resolveFfmpe
 vi.mock('./selectionWindows', () => ({ createCaptureWindows: () => ({ captureStill: mocks.captureStill, setLabels: vi.fn(), dispose: mocks.windowDispose }) }));
 vi.mock('./recorder', () => ({
   createCaptureSourceStill: () => vi.fn(),
+  createCapturePortalFrame: () => vi.fn(),
   createRecordEngine: () => ({ formats: () => ({ video: ['mp4', 'webm'], gif: true }), record: mocks.record, stop: mocks.recorderStop, dispose: mocks.recorderDispose }),
 }));
 vi.mock('./results', () => ({ createResultStore: () => ({ put: mocks.put, copyTo: mocks.copyTo, readChunk: mocks.readChunk, release: mocks.release, releaseAll: mocks.releaseAll }) }));

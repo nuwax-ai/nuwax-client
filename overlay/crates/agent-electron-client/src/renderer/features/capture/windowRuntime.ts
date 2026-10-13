@@ -36,6 +36,7 @@ export async function mountCaptureWindow(
     const cancel = node('button', '', labels.cancel);
     buttonVisual(stop, 'stop', labels.stop, true); buttonVisual(cancel, 'cancel', labels.cancel);
     bar.append(status, timer, pause, stop, cancel); document.body.append(bar);
+    if (config.presentation === 'preview') document.body.append(node('div', 'dockHint', labels.linuxRecordingHint));
     let current = config.state;
     const update = (state: RecordingControlState) => {
       current = state;
@@ -56,6 +57,7 @@ export async function mountCaptureWindow(
     bridge.onState(update); update(config.state); return;
   }
   const captureMode = config.mode;
+  const previewPresentation = config.presentation === 'preview';
   const workArea = config.workArea;
   const painter = makePainter();
   const history = makeHistory<CaptureAnnotation>();
@@ -98,6 +100,7 @@ export async function mountCaptureWindow(
   let pendingText: CaptureAnnotation | null = null;
   let pendingTextIndex: number | null = null;
   document.body.append(dock, hint, dimensions, magnifier, textInput, tooltip);
+  if (config.recordingHint) document.body.append(node('div', 'recordingNotice', config.recordingHint));
   const sourceGrid = node('div', 'sourceGrid'); document.body.append(sourceGrid);
   const buttons: Record<string, HTMLButtonElement> = {};
   const button = (parent: HTMLElement, key: string, title: string, action: () => void) => {
@@ -115,7 +118,8 @@ export async function mountCaptureWindow(
     const shortcut = button.dataset.action === 'confirm' ? 'Enter' : button.dataset.action === 'cancel' ? 'Esc' : '';
     tooltip.textContent = shortcut ? `${label} · ${shortcut}` : label;
     const display = displayFrame.selection.displayBounds;
-    const area = { ...workArea, x: workArea.x - display.x, y: workArea.y - display.y };
+    const area = previewPresentation ? { x: 0, y: 0, width: innerWidth, height: innerHeight }
+      : { ...workArea, x: workArea.x - (display?.x ?? 0), y: workArea.y - (display?.y ?? 0) };
     tooltip.style.maxWidth = `${Math.max(1, area.width - 16)}px`;
     tooltip.hidden = false;
     const anchor = button.getBoundingClientRect();
@@ -179,7 +183,8 @@ export async function mountCaptureWindow(
     const selected = crop ? { x: r.x + crop.x / frame.width * r.width, y: r.y + crop.y / frame.height * r.height,
       width: crop.width / frame.width * r.width, height: crop.height / frame.height * r.height } : null;
     const display = displayFrame.selection.displayBounds;
-    const area = { ...workArea, x: workArea.x - display.x, y: workArea.y - display.y };
+    const area = previewPresentation ? { x: 0, y: 0, width: innerWidth, height: innerHeight }
+      : { ...workArea, x: workArea.x - (display?.x ?? 0), y: workArea.y - (display?.y ?? 0) };
     dock.style.maxWidth = `${Math.max(1, area.width - 24)}px`;
     const position = placeToolbar(selected, area, { width: dock.offsetWidth, height: dock.offsetHeight });
     dock.style.left = `${position.x}px`; dock.style.top = `${position.y}px`;
@@ -327,8 +332,9 @@ export async function mountCaptureWindow(
   };
   function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
-  button(modeGroup, 'screen', labels.screen, () => { void chooseDisplay('screen'); });
+  button(modeGroup, 'screen', previewPresentation ? labels.entireSource : labels.screen, () => { void chooseDisplay('screen'); });
   button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
+  if (config.presentation === 'preview') buttons.window.hidden = true;
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
   button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
@@ -519,7 +525,10 @@ export async function mountCaptureWindow(
     await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('capture image could not load')); image.src = frame.dataUrl; });
     canvas.width = mask.width = frame.width; canvas.height = mask.height = frame.height;
     // Screens fill their native display; selected windows are fitted without changing the pixels.
-    const screenSource = frame.selection.sourceKind === 'screen';
+    layoutImage();
+  }
+  function layoutImage() {
+    const screenSource = frame.selection.sourceKind === 'screen' && !previewPresentation;
     viewport.classList.toggle('fitted', !screenSource);
     const ratio = frame.width / frame.height;
     const viewWidth = screenSource ? innerWidth : Math.min(innerWidth - 80, (innerHeight - 160) * ratio);
@@ -528,5 +537,6 @@ export async function mountCaptureWindow(
     viewport.style.left = `${(innerWidth - viewWidth) / 2}px`; viewport.style.top = `${(innerHeight - viewHeight) / 2}px`;
   }
   await loadImage();
+  window.addEventListener('resize', () => { layoutImage(); draw(); });
   magnifier.hidden = true; draw();
 }

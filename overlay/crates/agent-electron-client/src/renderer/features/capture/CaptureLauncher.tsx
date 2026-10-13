@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Modal, Select, Space, message } from "antd";
 import { CameraOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
-import type { CaptureCapabilities, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
+import type { CaptureCapabilities, CaptureMenuAction, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
 
 interface Props {
@@ -11,12 +11,14 @@ interface Props {
   /** 常驻控制器；仅把操作面板挂到设置页签，不随页签切换卸载。 */
   panelTarget?: Element | null;
   onAvailabilityChange?(available: boolean): void;
+  /** 壳自绘菜单使用同一个常驻控制器；卸载时清空动作，避免引用失效入口。 */
+  onActionReady?(handler: ((action: CaptureMenuAction) => void) | null): void;
   /** 等待设置弹窗实际关闭，避免把其关闭动画采进冻结帧。 */
   onCaptureStart?(): Promise<void>;
 }
 
 /** 壳上的直接验收入口；业务页继续使用同一服务的独立受信桥。 */
-export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onCaptureStart }) => {
+export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onCaptureStart }) => {
   const [caps, setCaps] = useState<CaptureCapabilities | null>(null);
   const [state, setState] = useState<CaptureState>("idle");
   const [pending, setPending] = useState(false);
@@ -102,9 +104,14 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   };
   runRef.current = run;
 
-  useEffect(() => capture?.onMenuAction?.((action) => {
-    void runRef.current(action === "screenshot" ? undefined : action);
-  }), [capture]);
+  useEffect(() => {
+    const dispatch = (action: CaptureMenuAction) => {
+      void runRef.current(action === "screenshot" ? undefined : action);
+    };
+    onActionReady?.(dispatch);
+    const offMenu = capture?.onMenuAction?.(dispatch);
+    return () => { offMenu?.(); onActionReady?.(null); };
+  }, [capture, onActionReady]);
 
   const save = async () => {
     const current = previewRef.current;

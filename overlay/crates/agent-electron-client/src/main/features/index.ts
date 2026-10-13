@@ -18,6 +18,7 @@ import { createScratchDir } from "./_kit/scratchDir";
 import { createTrustedIpc, type IpcMainLike } from "./_kit/trustedIpc";
 import type { DesktopFeature, FeatureContext, FeatureLogger } from "./_kit/types";
 import { captureFeature } from "./capture";
+export { configureCaptureBackend } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
 
 export type { SessionEndReason };
@@ -41,10 +42,21 @@ export interface StartFeaturesOptions {
   log: FeatureLogger;
   translate?(key: string): string;
   setRecordingStopAction?(action: (() => void) | null): void;
+  setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }
 
 let lifecycle: FeatureLifecycle | null = null;
 let registered: RegisteredFeatures | null = null;
+let recordingStopAction: (() => void) | null = null;
+let recordingPauseAction: (() => void) | null = null;
+
+/** Application-local fallback when a Linux desktop does not show tray controls. */
+export function controlDesktopRecording(action: "pause" | "stop"): boolean {
+  const callback = action === "pause" ? recordingPauseAction : recordingStopAction;
+  if (!callback) return false;
+  callback();
+  return true;
+}
 
 /** 原生宿主入口读取实际注册结果，关闭或注册失败时不显示入口。 */
 export function isDesktopFeatureRegistered(id: string): boolean {
@@ -69,7 +81,14 @@ export function startDesktopFeatures(
     scratch: createScratchDir(nodePath.join(options.dataDir, feature.id)),
     log: options.log,
     translate: options.translate,
-    setRecordingStopAction: options.setRecordingStopAction,
+    setRecordingStopAction: (action) => {
+      recordingStopAction = action;
+      options.setRecordingStopAction?.(action);
+    },
+    setRecordingPauseAction: (action, paused) => {
+      recordingPauseAction = action;
+      options.setRecordingPauseAction?.(action, paused);
+    },
   });
 
   registered = registerDesktopFeatures(features, {
@@ -92,6 +111,8 @@ export async function disposeDesktopFeatures(): Promise<void> {
   const reg = registered;
   lifecycle = null;
   registered = null;
+  recordingStopAction = null;
+  recordingPauseAction = null;
   if (lc) await lc.emitQuit();
   if (reg) await reg.dispose();
 }

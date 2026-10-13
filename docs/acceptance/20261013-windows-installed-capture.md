@@ -35,6 +35,8 @@
 
 Windows 显式准备 MSYS2 原生 x64 工具链及固定 Winpthreads 双包，校验官方归档 SHA 和签名；macOS x64 使用原生 Intel runner；Linux 不携带录屏编码器。capture 声明只描述该模块，不替代其它客户端组件声明。正式 GitHub Actions 五平台构建及签名链尚未执行。
 
+后续同日 Linux 补齐已改变上述平台范围：Linux x64/arm64 也构建并携带固定源码编码器。Linux 桌面及资源证据以 [Linux 实施验收](20261013-linux-native-capture.md) 为准，本记录保留 Windows 现场修复时的事实。
+
 macOS 正式签名先在独立副本中签定编码器、记录最终 SHA 和原始来源 hash，并只对该已签 FFmpeg 禁用 builder 重签。打包后继续绑定来源、校验签名及最终字节，源码缓存不变。已对真实 arm64 FFmpeg 做 ad-hoc 签名、运行和打包目录核验；正式 Developer ID/公证仍待 CI。
 
 资源准备、打包配置、工作流和子进程回归累计 67 项通过；独立 verifier 针对核心路径 49 项通过，原签名/SHA 阻断已关闭。overlay、pin 和差异检查通过。本轮未提交或发布新的安装包。

@@ -65,6 +65,7 @@ export interface RecordEngine {
 
 export interface CaptureServiceDeps {
   platform: NodeJS.Platform;
+  backendAvailable?(): boolean;
   getPermission(): CapturePermission;
   getDisplays(): DisplayLike[];
   stillEngine: StillEngine;
@@ -87,7 +88,7 @@ export interface CaptureService {
   endSession(): void;
 }
 
-const SUPPORTED_PLATFORMS: readonly NodeJS.Platform[] = ["darwin", "win32"];
+const SUPPORTED_PLATFORMS: readonly NodeJS.Platform[] = ["darwin", "win32", "linux"];
 
 export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
   let state: CaptureState = "idle";
@@ -106,11 +107,11 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
     }
   };
 
-  const platformSupported = () => SUPPORTED_PLATFORMS.includes(deps.platform);
+  const platformSupported = () => SUPPORTED_PLATFORMS.includes(deps.platform) && (deps.backendAvailable?.() ?? true);
 
   const preflight = (): CaptureResult | null => {
     if (!platformSupported()) {
-      return { success: false, code: "unsupported", error: `platform ${deps.platform} is not supported` };
+      return { success: false, code: "unsupported", error: `desktop capture is not available on ${deps.platform}` };
     }
     if (state !== "idle") {
       return { success: false, code: "busy", error: "another capture session is in progress" };
@@ -124,7 +125,7 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
   const failure = (error: unknown): CaptureResult => ({
     success: false,
     code: error instanceof Error &&
-      ["permission-denied", "encoder-unavailable", "unsupported"].includes(String((error as Error & { code?: string }).code))
+      ["canceled", "permission-denied", "encoder-unavailable", "unsupported"].includes(String((error as Error & { code?: string }).code))
       ? (error as Error & { code: CaptureErrorCode }).code : "failed",
     error: error instanceof Error ? error.message : String(error),
   });
@@ -196,6 +197,7 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
       const parsed = parseRecordOptions(rawOptions);
       if (!parsed.ok) return { success: false, code: "invalid-argument", error: parsed.error };
       const options = parsed.value;
+      if (!platformSupported()) return { success: false, code: 'unsupported', error: `desktop capture is not available on ${deps.platform}` };
       const engine = deps.recordEngine;
       if (!engine) {
         return { success: false, code: "unsupported", error: "recording is not available" };

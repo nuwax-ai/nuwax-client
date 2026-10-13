@@ -58,7 +58,9 @@ describe("capture encoding", () => {
     expect(recordingFormats(resource, "darwin")).toEqual({ video: ["mp4","webm"], gif: true });
     expect(recordingFormats(resource, "win32")).toEqual({ video: ["webm"], gif: true });
     expect(recordingFormats(null, "darwin")).toEqual({ video: [], gif: false });
-    expect(recordingFormats(resource, "linux")).toEqual({ video: [], gif: false });
+    expect(recordingFormats(resource, "linux")).toEqual({ video: ["webm"], gif: true });
+    expect(recordingFormats({ ...resource, encoders: [...resource.encoders, "libopenh264"] }, "linux")).toEqual({ video: ["mp4", "webm"], gif: true });
+    expect(recordingFormats(resource, "freebsd")).toEqual({ video: [], gif: false });
     expect(recordingFormats({ ...resource, filters: [] }, "darwin")).toEqual({ video: [], gif: false });
     expect(recordingFormats({ ...resource, formats: { mp4: false, webm: false, gif: false } }, "darwin")).toEqual({ video: [], gif: false });
   });
@@ -85,6 +87,32 @@ describe("capture encoding", () => {
     const full = transcodeGeometry({ x: 0, y: 0, width: 101, height: 99 }, { width: 101, height: 99 }, "mp4");
     expect(full).toMatchObject({ width: 102, height: 100, paddedForEvenSize: true });
     expect(full.filter).toContain("pad=102:100:0:0");
+  });
+
+  it("Linux encodes MP4 with software OpenH264 and preserves odd selection pixels at every quality", () => {
+    const geometry = transcodeGeometry({ x: 20, y: 10, width: 301, height: 201 }, { width: 1920, height: 1080 }, "mp4");
+    for (const quality of CAPTURE_QUALITIES) {
+      const args = transcodeArguments("in.webm", "out.mp4", { output: "mp4", fps: 30 }, quality, geometry, "linux");
+      expect(args[args.indexOf("-c:v") + 1]).toBe("libopenh264");
+      expect(args[args.indexOf("-pix_fmt") + 1]).toBe("yuv420p");
+      expect(args[args.indexOf("-rc_mode") + 1]).toBe("bitrate");
+      expect(args[args.indexOf("-vf") + 1]).toContain("crop=302:202:20:10:exact=1");
+      expect(args).not.toContain("-hw_encoding"); expect(args).not.toContain("-allow_sw");
+      expect(args.join(" ")).not.toMatch(/(?:[,;\s])scale=|libx264/);
+      expect(args).toContain("+faststart");
+    }
+  });
+
+  it("rejects an unusably narrow Linux MP4 before spawning or writing an output", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "capture-transcode-")); directories.push(directory);
+    const output = path.join(directory, "small.mp4");
+    const calls: string[][] = [];
+    processFixture.spawn = args => { calls.push(args); throw new Error("encoder must not launch"); };
+    await expect(transcodeRecording({ ...resource, encoders: [...resource.encoders, "libopenh264"] }, "linux", "source.webm", output,
+      { width: 640, height: 480 }, { x: 0, y: 0, width: 14, height: 32 }, { output: "mp4" }, new AbortController().signal))
+      .rejects.toMatchObject({ code: "failed", message: expect.stringContaining("16 × 16 physical pixels") });
+    expect(calls).toEqual([]);
+    await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects invalid geometry without interpolating it into encoder filters", () => {

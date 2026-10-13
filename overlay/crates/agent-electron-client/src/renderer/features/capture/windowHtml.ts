@@ -40,6 +40,7 @@ button.primary:disabled{border-color:#376658;background:#285a4c;color:#a8c9bd;op
 .styleCaption{display:flex;align-items:center;gap:5px;color:#8f9ead;font-size:11px;white-space:nowrap}
 .styleCaption svg{width:14px;height:14px;flex-shrink:0}
 .dockHint{max-width:100%;padding:7px 5px 2px;color:#8f9ead;font-size:11px;line-height:1.5}
+.recordingNotice{position:fixed;top:54px;left:50%;transform:translateX(-50%);z-index:8;width:max-content;max-width:calc(100% - 48px);padding:8px 12px;border-radius:8px;background:#18222ff2;color:#c4d0dc;font-size:12px;line-height:1.5;pointer-events:none}
 .palette{display:flex;align-items:center;gap:7px}
 button.swatch{width:18px;height:18px;min-height:18px;padding:0;flex-shrink:0;border:1px solid #ffffff38;border-radius:50%;box-shadow:0 0 0 2px #1b222c}
 button.swatch:hover:not(:disabled){outline:1px solid #ffffff82;outline-offset:2px}
