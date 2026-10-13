@@ -70,6 +70,21 @@ describe("atomic local saves", () => {
 });
 
 describe("complete workspace ZIP", () => {
+  it("excludes the output and temporary file when the save directory is a symlink alias", async () => {
+    const workspace = path.join(root, "workspace");
+    const alias = path.join(root, "alias");
+    await mkdir(workspace);
+    await symlink(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+    await writeFile(path.join(workspace, "note.txt"), "hello");
+    await writeFile(path.join(workspace, "output.zip"), "old output");
+    await exportWorkspaceAtomic(workspace, path.join(alias, "output.zip"), operation());
+    const zip = new AdmZip(path.join(workspace, "output.zip"));
+    expect(zip.getEntries().map(entry => entry.entryName).sort()).toEqual([
+      "workspace/", "workspace/note.txt",
+    ]);
+    expect((await readdir(workspace)).sort()).toEqual(["note.txt", "output.zip"]);
+  });
+
   it("includes hidden items, hardlinks, symlinks, empty dirs and >100MiB files; excludes output/temp", async () => {
     const workspace = path.join(root, "workspace");
     await mkdir(workspace);

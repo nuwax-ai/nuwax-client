@@ -418,6 +418,50 @@ describe("local files IPC/context ownership", () => {
 });
 
 describe("preview grants and request policy", () => {
+  it("retains preview provenance across opaque document changes and grant revocation", async () => {
+    const h = harness();
+    await writeFile(path.join(root, "index.html"), "preview");
+    const context = await h.resolve();
+    const preview = (await h.invoke(IPC.PREPARE_PREVIEW, h.one.event, {
+      contextId: context.contextId, path: "index.html",
+    })).data;
+    const frame = { processId: 500, routingId: 500, frameTreeNodeId: 900,
+      url: "about:blank", parent: h.one.frame };
+    expect(authorizeLocalFilesRequest(h.details(preview.url, frame as any, h.one.wc, "subFrame"))).toBe(true);
+    // FrameTreeNode identity survives a document/process replacement.
+    const replaced = { ...frame, processId: 700, routingId: 701, url: "data:text/plain,preview" };
+    expect(authorizeLocalFilesRequest(h.details("https://business.example/api/data", replaced as any))).toBe(false);
+    expect(authorizeLocalFilesRequest(h.details("http://127.0.0.1:9999/", replaced as any))).toBe(false);
+    await h.invoke(IPC.RELEASE_PREVIEW, h.one.event, preview.grantId);
+    expect(authorizeLocalFilesRequest(h.details("https://cdn.example/image.png", replaced as any))).toBe(false);
+    expect(authorizeLocalFilesRequest(h.details("https://business.example/api/data", replaced as any, h.two.wc))).toBeUndefined();
+  });
+
+  it("blocks preview document navigation outside its grant before non-HTTP URLs load", async () => {
+    const h = harness();
+    await writeFile(path.join(root, "index.html"), "preview");
+    const context = await h.resolve();
+    const preview = (await h.invoke(IPC.PREPARE_PREVIEW, h.one.event, {
+      contextId: context.contextId, path: "index.html",
+    })).data;
+    const frame = { processId: 500, routingId: 500, frameTreeNodeId: 901,
+      url: preview.url, parent: h.one.frame };
+    for (const eventName of ["will-frame-navigate", "will-redirect"]) {
+      for (const url of ["data:text/plain,preview", "blob:https://business.example/fixture", "https://business.example/page"]) {
+        const event = { url, frame, isMainFrame: false, preventDefault: vi.fn() };
+        h.one.wc.emit(eventName, event);
+        expect(event.preventDefault).toHaveBeenCalledOnce();
+      }
+    }
+    const own = { url: preview.url + "#section", frame, isMainFrame: false, preventDefault: vi.fn() };
+    h.one.wc.emit("will-frame-navigate", own);
+    expect(own.preventDefault).not.toHaveBeenCalled();
+    const top = { url: "https://business.example/page", frame: h.one.frame, initiator: frame,
+      isMainFrame: true, preventDefault: vi.fn() };
+    h.one.wc.emit("will-frame-navigate", top);
+    expect(top.preventDefault).toHaveBeenCalledOnce();
+  });
+
   it("permits the owner document/own resources; rejects foreign windows, remote frames, top-level and cross-grant requests", async () => {
     const h = harness();
     await writeFile(path.join(root, "index.html"), "hello");
