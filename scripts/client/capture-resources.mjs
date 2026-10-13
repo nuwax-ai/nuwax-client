@@ -186,9 +186,11 @@ async function buildCaptureBinary(root, lock, options) {
   for (const name of ['libvpx', 'ffmpeg']) {
     const cwd = path.join(parent, lock[name].directory);
     console.log(`[capture] 编译 ${name} ${lock[name].version} (${platform}-${arch})`);
-    await tools.run(shell, ['./configure', ...args[name]], { cwd, env, capture: true }).catch(error => {
+    try {
+      await tools.run(shell, ['./configure', ...args[name]], { cwd, env, capture: true });
+    } catch (error) {
       throw new Error(`[capture] ${name} configure 失败:\n${error.message}`);
-    });
+    }
     // Use the configure shell's make and path semantics. A Windows PATH may
     // otherwise pick mingw32-make or a different Git Bash/WSL installation.
     await tools.run(shell, ['-c', 'exec make "$@"', 'capture-make', `-j${jobs}`], { cwd, env, capture: true });
