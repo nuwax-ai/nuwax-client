@@ -465,6 +465,12 @@ jobs:
       # Use a native Intel runner for macOS x64, and an explicit MSYS2 toolchain
       # on Windows. The release helper installs the audited Winpthreads split
       # packages (fixed official archives, SHA256 and MSYS2 signatures).
+      - name: Setup Linux capture compiler
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config nasm
+
       - name: Setup Windows capture compiler
         if: runner.os == 'Windows'
         id: capture-msys2
