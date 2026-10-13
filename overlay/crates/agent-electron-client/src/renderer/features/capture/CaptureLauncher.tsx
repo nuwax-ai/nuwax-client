@@ -129,7 +129,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
       </Space>
       <Space wrap size={12}>
         <Button icon={<CameraOutlined />} disabled={busy || !!preview} onClick={() => void run()}>{text("screenshot")}</Button>
-        {(["mp4", "webm", "gif"] as const).map((output) => <Button key={output}
+        {(["mp4", "gif"] as const).map((output) => <Button key={output}
           icon={output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />}
           disabled={busy || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output))}
           onClick={() => void run(output)}>{text("record")} · {output.toUpperCase()}</Button>)}

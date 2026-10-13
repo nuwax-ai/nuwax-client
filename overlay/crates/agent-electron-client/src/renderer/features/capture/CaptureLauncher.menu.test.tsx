@@ -54,7 +54,7 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 beforeEach(() => { effects.length = 0; errors.mockClear(); });
 
 describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
-  it("Windows 自绘菜单复用四种采集动作，卸载时注销入口", async () => {
+  it("桥命令保留 WebM 兼容动作，卸载时注销入口", async () => {
     const ui = mount();
     for (const action of ["screenshot", "mp4", "webm", "gif"] as const) {
       ui.menu(action); await flush();
@@ -103,7 +103,7 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     expect(ui.offMenu).not.toHaveBeenCalled();
     ui.unmount(); expect(ui.offMenu).toHaveBeenCalledOnce();
   });
-  it("四种菜单命令使用现有截图/录制请求和当前质量，卸载清理订阅", async () => {
+  it("包含 WebM 的兼容桥命令使用当前质量，卸载清理订阅", async () => {
     const ui = mount();
     ui.menu("screenshot"); await flush();
     expect(ui.capture.screenshot).toHaveBeenCalledWith({ compression: { quality: "high" } });

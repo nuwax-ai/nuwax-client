@@ -6,7 +6,7 @@
 
 ## 当前交付与职责
 
-客户端已有截图、标注、MP4 / WebM / GIF 录屏，以及客户端设置页签和原生菜单入口。macOS 开发验证已完成；这份文档交付接口与接入方法，IM 业务代码尚未改造或部署，不能把客户端本地保存通过视为 IM 发消息验收通过。
+客户端界面的录屏入口提供 MP4 和 GIF，另有截图、标注、设置页签和原生菜单入口。底层 API 继续兼容 WebM，普通菜单不展示 WebM；IM 的默认菜单也按 MP4 / GIF 接入，并分别按真实 capabilities 判断可用性。macOS 开发验证已完成；这份文档交付接口与接入方法，IM 业务代码尚未改造或部署，不能把客户端本地保存通过视为 IM 发消息验收通过。
 
 | 负责人 | 本次工作 |
 | --- | --- |
@@ -46,7 +46,7 @@ const captureAttachments = createCaptureAttachmentController({
   onStateChange: state => setCaptureState(state),
 });
 
-async function onRecordMenuClick(output: 'mp4' | 'webm' | 'gif') {
+async function onRecordMenuClick(output: 'mp4' | 'gif') {
   const outcome = await captureAttachments.run({
     kind: 'record',
     options: {
@@ -94,7 +94,7 @@ const capture = window.NuwaClawBridge?.capture;
 | --- | --- |
 | `nuwax-im-web/src/components/ChatWindow.tsx` 的 `captureScreen` | 原函数目前直接调用 `getDisplayMedia`；前面加原生能力探测，原生成功后用读取示例生成 File 并 `addPending([file])` |
 | 同文件的 `addPending`、`canUpload` 与会话状态 | 保留上传权限/发送锁门禁；在采集前记住目标会话和组件代次，完成后复核，避免把迟到结果放进另一会话 |
-| `nuwax-im-web/src/components/ComposerToolbar.tsx` 的截图下拉及窄窗 `MORE_ROWS.shot` 平铺入口 | 保留截图和剪贴板入口；两套渲染均按真实 capabilities 增加 MP4 / WebM / GIF 操作、同步 busy 门禁，避免窄窗缺入口 |
+| `nuwax-im-web/src/components/ComposerToolbar.tsx` 的截图下拉及窄窗 `MORE_ROWS.shot` 平铺入口 | 保留截图和剪贴板入口；两套渲染均按真实 capabilities 增加 MP4 / GIF 操作、同步 busy 门禁，避免窄窗缺入口；不直接遍历 API 的全部兼容格式来生成菜单 |
 | `nuwax-im-web/src/lib/attachment.ts` 与现有上传/预览链 | 按 File 的实际 MIME 识别图片、视频或文件；继续复用原消息形态和附件上传，不把 resultId 当服务端文件 ID |
 
 原 `captureScreen` 中 `getDisplayMedia` 的第一段 `catch { return; }` 会把所有采集失败都当取消。保留浏览器降级时也应区分取消与真正失败，不能继续静默吞掉系统/配置错误。
@@ -211,7 +211,7 @@ if (isCurrentCaptureTarget()) addPending([file]);
 当前不支持跨显示器拖一块大区域；外接屏可以单独选取。窗口来源以真正采集帧尺寸为准，不能用列表缩略图尺寸作为最终输出。MP4 为满足偶数宽高可能扩展真实边界 1 个像素，无法扩展时补像素；以结果 width/height/paddedForEvenSize 为准。
 
 - [ ] 新客户端主站内进入 IM，桥探测可用；独立浏览器/旧客户端没有报错，截图降级可用。
-- [ ] 单聊与群聊的截图、MP4、WebM、GIF分别进入待发送区，带说明发送后对端可预览/播放/下载，文件名、MIME 与消息形态正确。
+- [ ] 单聊与群聊的默认菜单只有截图、MP4、GIF；完成后分别进入待发送区，带说明发送后对端可预览/播放/下载，文件名、MIME 与消息形态正确。已有 WebM API 调用继续做兼容回归。
 - [ ] 原生选区有标注、撤销重做；取消不弹失败，也不生成空附件；真正失败有提示。
 - [ ] 客户端设置/原生菜单发起一轮后 IM 再点击得到 busy；不会二次弹采集器或取消已有操作。
 - [ ] 在主屏和副屏分别测试整屏、窗口、区域，包含屏幕在左/右/上/下、负坐标、横竖屏与不同缩放率；四档输出尺寸不因画质缩小。

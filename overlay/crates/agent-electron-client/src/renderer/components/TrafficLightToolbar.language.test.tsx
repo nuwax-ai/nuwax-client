@@ -169,7 +169,7 @@ const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
 describe("Windows toolbar language", () => {
-  it("截图与录屏菜单显示四种动作和快捷键，单击仅调用一次控制器", async () => {
+  it("截图与录屏菜单只显示截图、MP4、GIF 和快捷键，单击仅调用一次控制器", async () => {
     const { setCurrentLang } = await import("../services/core/i18n");
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     await setCurrentLang("zh-cn");
@@ -181,15 +181,15 @@ describe("Windows toolbar language", () => {
     expect(markup).toContain("Ctrl+Alt+S");
     expect(markup).toContain("Ctrl+Alt+R");
     expect(markup).toContain("开始录制 · MP4");
-    expect(markup).toContain("开始录制 · WEBM");
+    expect(markup).not.toContain("WEBM");
     expect(markup).toContain("开始录制 · GIF");
     const captureItems = renderedMenuItems.filter(item => item.key?.startsWith("capture-"));
-    expect(captureItems.map(item => item.key)).toEqual(["capture-screenshot", "capture-mp4", "capture-webm", "capture-gif"]);
+    expect(captureItems.map(item => item.key)).toEqual(["capture-screenshot", "capture-mp4", "capture-gif"]);
     for (const item of captureItems) {
       item.onClick?.();
       paint(); paint();
     }
-    expect(onCapture.mock.calls).toEqual([["screenshot"], ["mp4"], ["webm"], ["gif"]]);
+    expect(onCapture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
   });
 
   it("点击截图先收起无动画菜单并完成绘制，再单次发起采集", async () => {

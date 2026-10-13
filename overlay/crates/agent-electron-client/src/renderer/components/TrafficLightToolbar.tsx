@@ -411,7 +411,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
             onClick: () => startCaptureFromMenu("screenshot"),
           },
           { type: "divider" },
-          ...(["mp4", "webm", "gif"] as const).map((output) => ({
+          ...(["mp4", "gif"] as const).map((output) => ({
             key: `capture-${output}`,
             icon: output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />,
             label: menuRow(`${t("Claw.Capture.record")} · ${output.toUpperCase()}`, output === "mp4" ? "Ctrl+Alt+R" : undefined),

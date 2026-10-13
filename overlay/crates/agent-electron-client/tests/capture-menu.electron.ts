@@ -90,7 +90,9 @@ app.whenReady().then(async () => {
   await hover('截图与录屏');
   await until(menuHas('MP4'), 'Hover Capture opens format menu');
   const captureState = await snapshot();
-  for (const text of ['截图', 'MP4', 'WEBM', 'GIF', 'Ctrl+Alt+S', 'Ctrl+Alt+R']) assert.ok(captureState.menus[0].includes(text), `Capture menu includes ${text}`);
+  for (const text of ['截图', 'MP4', 'GIF', 'Ctrl+Alt+S', 'Ctrl+Alt+R']) assert.ok(captureState.menus[0].includes(text), `Capture menu includes ${text}`);
+  assert.ok(!captureState.menus[0].includes('WEBM'), 'Capture menu only offers MP4 and GIF recording');
+  assert.equal(await script(`(()=>{const menu=[...document.querySelectorAll('.topbar-app-menu')].find(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');return menu.querySelectorAll('.ant-dropdown-menu-item').length})()`), 3, 'Capture menu contains screenshot and two recording formats');
   await check('capture-menu-formats-and-shortcuts');
   writeFileSync(path.join(output, 'capture-menu.png'), (await window.webContents.capturePage()).toPNG());
   const position = await point('.topbar-app-menu [role="menuitem"]', 'Ctrl+Alt+S');

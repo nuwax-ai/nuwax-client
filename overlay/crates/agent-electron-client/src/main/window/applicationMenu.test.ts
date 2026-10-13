@@ -157,10 +157,10 @@ describe("macOS 原生菜单语言与动作", () => {
     const menu = template.find((item) => item.label === title)!;
     expect(menu).toBeDefined();
     const commands = children(menu).filter((item) => item.type !== "separator");
-    expect(commands.map((item) => item.label)).toEqual([screenshot, `${record} · MP4`, `${record} · WEBM`, `${record} · GIF`]);
+    expect(commands.map((item) => item.label)).toEqual([screenshot, `${record} · MP4`, `${record} · GIF`]);
     commands.forEach((item) => item.click?.({} as never, {} as never, {} as never));
-    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["webm"], ["gif"]]);
-    expect(commands.map((item) => item.accelerator)).toEqual(["CmdOrCtrl+Alt+S", "CmdOrCtrl+Alt+R", undefined, undefined]);
+    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
+    expect(commands.map((item) => item.accelerator)).toEqual(["CmdOrCtrl+Alt+S", "CmdOrCtrl+Alt+R", undefined]);
     const accelerators = template.flatMap(children).map((item) => item.accelerator).filter(Boolean);
     expect(new Set(accelerators).size).toBe(accelerators.length);
   });

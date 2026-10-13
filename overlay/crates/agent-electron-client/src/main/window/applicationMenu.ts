@@ -108,7 +108,7 @@ export function buildMacApplicationMenu(
       submenu: [
         { label: t("Claw.Capture.screenshot"), accelerator: "CmdOrCtrl+Alt+S", click: () => actions.capture?.("screenshot") },
         { type: "separator" as const },
-        ...(["mp4", "webm", "gif"] as const).map((output) => ({
+        ...(["mp4", "gif"] as const).map((output) => ({
           label: `${t("Claw.Capture.record")} · ${output.toUpperCase()}`,
           ...(output === "mp4" ? { accelerator: "CmdOrCtrl+Alt+R" } : {}),
           click: () => actions.capture?.(output),
