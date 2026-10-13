@@ -21,3 +21,4 @@ beta.5 Intel 首轮因 notarytool 查询网络无路由失败；第二轮已通�
 - 维护性：公证状态、重试与签名/票据防护集中于一份 macOS 发布脚本；工作流只编排阶段。基座 hook 继续负责原生二进制签名，不复制或修改基座实现。恢复状态无凭据，并放在 app 旁而非公共资产上传根目录。
 - 旧 tag 恢复仍按五个 OS/架构组合判断，不把当前 runner 标签硬套到历史 tag；额外的通过任务也不能补偿任一必需平台失败。相关域最终 58 项通过。
 - 合并前最终脚本全量 334 项通过，overlay/pin/diff 守卫通过。客户端业务、截图/录屏公共 API 与三处子模块工作区改动均不纳入本批提交。
+- [v3.0.14-beta.6 正式构建与发布](https://github.com/nuwax-ai/nuwax-client/actions/runs/38430811829) 已全部成功：Windows x64、Linux x64/arm64、macOS x64/arm64 五端完成；两种 macOS 的完整客户端均通过 Apple 公证、票据校验和 Gatekeeper。发布源码为 `473556cdc5a877ff57cc6a79ff0db4b6ea0db331`；[公开 Release](https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.14-beta.6) 的 29 个 GitHub/S3 资产 SHA256、OSS 更新元数据与 S3/OSS beta 通道指针均通过发布 CLI 校验（北京时间 2026-10-14 01:58 发布）。此处记录构建和发布结果，三端真机功能验收继续按截图与录屏验收文档执行。
