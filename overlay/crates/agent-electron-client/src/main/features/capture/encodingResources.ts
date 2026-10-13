@@ -37,7 +37,9 @@ export interface CaptureEncodingResourceOptions {
 
 /** Real short encodes, rather than trusting codec names in configuration. */
 async function probeCodec(binary: string, format: "mp4" | "webm" | "gif", platform: string): Promise<string | null> {
-  const args = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=128x96:r=15:d=0.15", "-an", "-frames:v", "2"];
+  // Some usable MediaFoundation hardware encoders reject tiny 128×96 frames.
+  // Probe a conventional frame size so that a size limit does not hide the codec.
+  const args = ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=320x240:r=15:d=0.15", "-an", "-frames:v", "2"];
   if (format === "mp4") args.push("-c:v", platform === "darwin" ? "h264_videotoolbox" : "h264_mf", ...(platform === "darwin" ? ["-allow_sw", "0"] : ["-hw_encoding", "1"]), "-pix_fmt", platform === "darwin" ? "yuv420p" : "nv12");
   if (format === "webm") args.push("-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-pix_fmt", "yuv420p");
   if (format === "gif") args.push("-filter_complex", "split[a][b];[a]palettegen[p];[b][p]paletteuse", "-c:v", "gif");

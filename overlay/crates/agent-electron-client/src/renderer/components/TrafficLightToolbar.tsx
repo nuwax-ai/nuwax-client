@@ -8,7 +8,8 @@
  *      → 设置（注入 onOpenSettings 时渲染；nuwax 宿主入口在 web 用户区，不传不渲染）
  *      → 历史导航（后退/前进）→ statusEntry（服务异常点）；
  *    - 左（仅 Win/Linux，功能区之后）：自绘菜单栏 关于(A)/文件(F)/编辑(E)/窗口(W)/
- *      帮助(H)（antd Dropdown，12px 菜单文字）；文件菜单为 nuwax 快捷键能力
+ *      帮助(H)（antd Dropdown，12px 菜单文字）；Windows 在能力可用时还显示
+ *      「截图与录屏」菜单；文件菜单为 nuwax 快捷键能力
  *      （新建任务/搜索）+ 工作空间目录动作（App 注入回调）；编辑动作经
  *      menu:editAction 路由到焦点 webContents（webview guest 优先），页面/窗口
  *      动作复用 App 注入的 onBack/onForward/onReload 与 window:* IPC；
@@ -22,7 +23,8 @@
  *
  * 文案经壳 i18n，随 webview 当前语言更新。
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Button, Dropdown, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import {
@@ -31,15 +33,20 @@ import {
   SettingOutlined,
   LeftOutlined,
   RightOutlined,
+  CameraOutlined,
+  VideoCameraOutlined,
+  FileGifOutlined,
 } from "@ant-design/icons";
 import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import { I18N_KEYS } from "@shared/constants";
 import { t } from "../services/core/i18n";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
 const isMac = /mac/i.test(navigator.platform);
+const isWindows = /^win/i.test(navigator.platform);
 
 /** -webkit-app-region 需在 renderer DOM 设置；Electron 专属键，React CSSProperties 未内置，用 any 规避告警。 */
 const DRAG = { WebkitAppRegion: "drag" } as any;
@@ -87,6 +94,10 @@ export interface TrafficLightToolbarProps {
   onModifyWorkspace?: () => void;
   /** 「文件(F) → 打开工作空间目录」：系统文件管理器打开当前目录。 */
   onOpenWorkspace?: () => void;
+  /** 本机采集能力可用时，Windows 自绘菜单提供截图与录屏入口。 */
+  captureAvailable?: boolean;
+  /** 交由常驻 CaptureLauncher 执行，保留预览和保存流程。 */
+  onCapture?: (action: CaptureMenuAction) => void;
   /** 服务状态指示器（非绿色时由 App.tsx 注入颜色点，点击打开设置弹窗；全绿不渲染）。 */
   statusEntry?: React.ReactNode;
   /** 新版本更新入口（仅当检测到新版本时注入：下载 icon / 下载中百分比 / 待安装；其余不渲染）。 */
@@ -101,7 +112,7 @@ const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
 /** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。
  * 受控 open：antd 的「点外部收起」只听宿主 document，webview guest 内点击收不到
  * （bug 2427），故订阅主进程收起信号强制闭合；悬停即展开，跨菜单移动直接切换，
- * 点击/键盘激活仍可使用。 */
+ * 点击/键盘激活仍可使用。禁用退场动画，避免菜单切换重叠或进入截图。 */
 const TopMenu: React.FC<{
   menuId: string;
   label: string;
@@ -114,6 +125,7 @@ const TopMenu: React.FC<{
     trigger={["hover", "click"]}
     mouseEnterDelay={0}
     mouseLeaveDelay={0.15}
+    transitionName=""
     open={activeMenu === menuId}
     onOpenChange={(open) => {
       // 旧菜单迟到的关闭事件不得关掉刚打开的新菜单。
@@ -152,11 +164,30 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   onOpenSearch,
   onModifyWorkspace,
   onOpenWorkspace,
+  captureAvailable = false,
+  onCapture,
   statusEntry,
   updateEntry,
   dragRegions = [],
 }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const captureFrame = useRef<number | null>(null);
+  const captureHandlerRef = useRef(onCapture);
+  captureHandlerRef.current = onCapture;
+  useEffect(() => () => {
+    if (captureFrame.current !== null) cancelAnimationFrame(captureFrame.current);
+  }, []);
+  const startCaptureFromMenu = (action: CaptureMenuAction) => {
+    if (captureFrame.current !== null) return;
+    // 同步收起无动画的菜单；跨过一次实际绘制，再交给控制器冻结屏幕。
+    flushSync(() => setActiveMenu(null));
+    captureFrame.current = requestAnimationFrame(() => {
+      captureFrame.current = requestAnimationFrame(() => {
+        captureFrame.current = null;
+        captureHandlerRef.current?.(action);
+      });
+    });
+  };
   useEffect(() => {
     const close = () => setActiveMenu(null);
     window.electronAPI?.on(DISMISS_CHANNEL, close);
@@ -269,7 +300,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
     </>
   );
 
-  /** Win/Linux 自绘菜单栏（参考产品同款四项）。 */
+  /** Win/Linux 自绘菜单栏。 */
   const menuBar = !isMac && (
     <div
       style={{
@@ -367,6 +398,27 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           },
         ]}
       />
+      {isWindows && captureAvailable && onCapture && <TopMenu
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="capture"
+        label={t("Claw.Capture.title")}
+        items={[
+          {
+            key: "capture-screenshot",
+            icon: <CameraOutlined />,
+            label: menuRow(t("Claw.Capture.screenshot"), "Ctrl+Alt+S"),
+            onClick: () => startCaptureFromMenu("screenshot"),
+          },
+          { type: "divider" },
+          ...(["mp4", "webm", "gif"] as const).map((output) => ({
+            key: `capture-${output}`,
+            icon: output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />,
+            label: menuRow(`${t("Claw.Capture.record")} · ${output.toUpperCase()}`, output === "mp4" ? "Ctrl+Alt+R" : undefined),
+            onClick: () => startCaptureFromMenu(output),
+          })),
+        ]}
+      />}
       <TopMenu
         activeMenu={activeMenu}
         onActiveMenuChange={setActiveMenu}

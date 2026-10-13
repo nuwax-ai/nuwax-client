@@ -1135,7 +1135,7 @@
   "Claw.Capture.paused": "Paused",
   "Claw.Capture.encoding": "Processing",
   "Claw.Capture.selectHint": "Drag to select · Esc to cancel",
-  "Claw.Capture.annotationHint": "Choose an annotation tool · Enter to confirm · Esc to cancel",
+  "Claw.Capture.annotationHint": "Click to edit · Drag to move · Enter to finish",
   "Claw.Capture.textHint": "Enter text",
   "Claw.Capture.loading": "Loading window…",
   "Claw.Capture.preview": "Capture preview",

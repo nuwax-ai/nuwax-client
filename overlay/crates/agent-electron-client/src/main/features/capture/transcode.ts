@@ -110,13 +110,34 @@ export async function transcodeRecording(resource: CaptureFfmpegResource, platfo
     throw new CaptureRecordingError("encoder-unavailable", `${options.output} encoder is unavailable`);
   }
   const geometry = transcodeGeometry(crop, source, options.output);
+  let softwareMediaFoundation = false;
   const fitted = await fitToMaxBytes(options.compression?.quality ?? "high", options.compression?.maxBytes,
     async quality => {
       if (signal.aborted) throw new Error("capture was canceled");
-      await unlink(output).catch(() => {});
-      // ffmpeg truncates this existing file and preserves the private mode while writing.
-      await writeFile(output, Buffer.alloc(0), { flag: "wx", mode: 0o600 });
-      await runCaptureFfmpeg(resource.path, transcodeArguments(input, output, options, quality, geometry, platform), signal);
+      const resetOutput = async () => {
+        await unlink(output).catch(() => {});
+        // ffmpeg truncates this existing file and preserves the private mode while writing.
+        await writeFile(output, Buffer.alloc(0), { flag: "wx", mode: 0o600 });
+      };
+      const args = transcodeArguments(input, output, options, quality, geometry, platform);
+      const hardwareOption = args.indexOf("-hw_encoding") + 1;
+      if (softwareMediaFoundation) args[hardwareOption] = "0";
+      await resetOutput();
+      try {
+        await runCaptureFfmpeg(resource.path, args, signal);
+      } catch (error) {
+        // A usable hardware encoder can still reject a particular (e.g. tiny) frame size.
+        // Retry only that explicit MediaFoundation error, using the system software encoder
+        // with the identical crop and dimensions. Never turn cancellation or other failures
+        // into an apparently successful fallback.
+        if (signal.aborted || platform !== "win32" || options.output !== "mp4" || softwareMediaFoundation ||
+          !(error instanceof CaptureRecordingError) || error.code !== "failed" ||
+          !/\[h264_mf\b[^\]\r\n]*\][^\r\n]*\bMF_E_INVALIDMEDIATYPE\b/.test(error.message)) throw error;
+        softwareMediaFoundation = true;
+        args[hardwareOption] = "0";
+        await resetOutput();
+        await runCaptureFfmpeg(resource.path, args, signal);
+      }
       await chmod(output, 0o600);
       const encoded = await stat(output);
       if (!encoded.size) throw new CaptureRecordingError("failed", "Video encoder produced an empty output");

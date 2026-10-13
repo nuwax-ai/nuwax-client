@@ -50,7 +50,7 @@ export function normalizeLicenseField(pkg) {
   return null;
 }
 
-const PERMISSIVE = /^(MIT|MIT-0|ISC|BSD-[23]-Clause|0BSD|Apache-2\.0|Unlicense|CC0-1\.0|BlueOak-1\.0\.0|Zlib|Python-2\.0|CC-BY-[34]\.0|WTFPL)$/i;
+const PERMISSIVE = /^(MIT|MIT-0|ISC|BSD-[23]-Clause|BSD-3-Clause-Clear|0BSD|Apache-2\.0|Unlicense|CC0-1\.0|BlueOak-1\.0\.0|Zlib|Python-2\.0|CC-BY-[34]\.0|WTFPL)$/i;
 const WEAK = /^(LGPL-[\d.]+(-only|-or-later)?|MPL-[\d.]+|EPL-[\d.]+|CDDL-[\d.]+)$/i;
 const STRONG = /^(A?GPL-[\d.]+(-only|-or-later)?)$/i;
 
@@ -187,7 +187,7 @@ export function inspectFfmpegConfiguration(configuration) {
  * @param {Array} args.npmComponents collectNpmClosure 的结果
  * @param {(binary:string)=>string|null} [args.readFfmpegVersion] 注入：返回 `ffmpeg -version` 输出
  */
-export function buildNotices({ root, manifest, resourcesDir, resourcePaths, npmComponents, readFfmpegVersion }) {
+export function buildNotices({ root, manifest, resourcesDir, resourcePaths, npmComponents, readFfmpegVersion, platform = process.platform }) {
   const components = [];
   const problems = [];
   const allow = new Map(
@@ -232,6 +232,7 @@ export function buildNotices({ root, manifest, resourcesDir, resourcePaths, npmC
     [dirName, entry], ...(entry.components ?? []).map((component) => [dirName, component]),
   ]);
   for (const [dirName, entry] of entries) {
+    if (Array.isArray(entry.platforms) && !entry.platforms.includes(platform)) continue;
     const dir = resourcePaths ? resourcePaths[dirName] ?? null : resourcesDir ? path.join(resourcesDir, dirName) : null;
     let version = entry.version ?? null;
     let license = entry.license ?? null;
@@ -398,7 +399,7 @@ export function generateThirdPartyNotices(root, { outDir = path.join(root, 'thir
     const run = spawnSync(binary, ['-version'], { encoding: 'utf8', timeout: 15000, windowsHide: true });
     return run.status === 0 ? run.stdout : null;
   });
-  const result = buildNotices({ root, manifest: selected, resourcesDir, resourcePaths: paths, npmComponents, readFfmpegVersion: probe });
+  const result = buildNotices({ root, manifest: selected, resourcesDir, resourcePaths: paths, npmComponents, readFfmpegVersion: probe, platform });
   if (strict && result.problems.length) throw new Error(`[third-party] 严格模式拒绝入包 (${result.problems.length}): ${result.problems.map((p) => `${p.code}:${p.id}`).join(', ')}`);
   const document = writeNotices(result, outDir);
   return { ...result, document, outDir };

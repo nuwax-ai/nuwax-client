@@ -21,6 +21,18 @@ export function readCaptureSourceLock(root) {
   return lock;
 }
 
+function readWindowsRuntimeSource(root, tools = core) {
+  const entry = tools.readJson(path.join(root, 'third-party/manifest.json')).resources?.capture?.components?.find((item) => item.id === 'winpthreads');
+  if (!entry?.version || !entry.toolchainPackageVersion || !/^https:\/\//.test(entry.sourceUrl ?? '') || !/^[a-f0-9]{64}$/.test(entry.sourceSha256 ?? '') || !entry.sourceFile) {
+    throw new Error('[capture] 缺少固定 Winpthreads 版本、工具链包版本、源码 URL 或 SHA256');
+  }
+  return { version: entry.version, toolchainPackageVersion: entry.toolchainPackageVersion, url: entry.sourceUrl, sha256: entry.sourceSha256, archive: path.basename(entry.sourceFile) };
+}
+
+function matchesRuntimeSource(actual, expected) {
+  return !!actual && ['version', 'toolchainPackageVersion', 'url', 'sha256', 'archive'].every((key) => actual[key] === expected[key]);
+}
+
 /** No system/PATH fallback: the only admitted binary is this verified resource. */
 export async function inspectCaptureResource(root, { platform = process.platform, arch = process.arch, tools = core } = {}) {
   if (!CAPTURE_PLATFORMS.includes(`${platform}-${arch}`)) return null;
@@ -35,6 +47,13 @@ export async function inspectCaptureResource(root, { platform = process.platform
     if (record.sources?.[name]?.sha256 !== lock[name].sha256 || record.sources[name].url !== lock[name].url) return null;
     const archive = path.join(root, 'resources/capture/sources', lock[name].archive);
     if (!fs.existsSync(archive) || sha256(archive) !== lock[name].sha256) return null;
+  }
+  if (platform === 'win32') {
+    let runtime;
+    try { runtime = readWindowsRuntimeSource(root, tools); } catch { return null; }
+    if (!matchesRuntimeSource(record.sources?.winpthreads, runtime)) return null;
+    const archive = path.join(root, 'resources/capture/sources', runtime.archive);
+    if (!fs.existsSync(archive) || sha256(archive) !== runtime.sha256) return null;
   }
   const run = await tools.run(binary, ['-version'], { capture: true, allowFailure: true, timeout: 15000 });
   if (run.status !== 0 || !run.stdout.startsWith(`ffmpeg version ${lock.ffmpeg.version} `)) return null;
@@ -55,12 +74,38 @@ export function captureBuildArguments(lock, { platform, arch, prefix, compiler, 
     `--enable-encoder=${platform === 'darwin' ? 'h264_videotoolbox' : 'h264_mf'},libvpx_vp9,gif`,
     '--enable-decoder=vp8,vp9,h264,wrapped_avframe', '--enable-demuxer=matroska,mov', '--enable-muxer=mp4,webm,gif,null',
     '--enable-protocol=file,pipe', '--enable-indev=lavfi', '--enable-filter=crop,pad,scale,format,palettegen,paletteuse,split,fps,null,color,testsrc2,setpts,setsar',
-    `--extra-cflags=-I${prefix}/include`, `--extra-ldflags=-L${prefix}/lib`,
+    `--extra-cflags=-I${prefix}/include`, `--extra-ldflags=-L${prefix}/lib${platform === 'win32' ? ' -static' : ''}`,
   ];
   if (platform === 'darwin') {
     ffmpeg.push(`--cc=${compiler}`, `--host-cc=${compiler}`, `--host-cflags=-isysroot ${sdk}`, `--host-ldflags=-isysroot ${sdk}`, `--sysroot=${sdk}`, `--arch=${arch === 'arm64' ? 'aarch64' : 'x86_64'}`);
-  } else ffmpeg.push('--target-os=mingw32', `--arch=${arch === 'arm64' ? 'aarch64' : 'x86_64'}`);
+  } else ffmpeg.push('--target-os=mingw32', `--arch=${arch === 'arm64' ? 'aarch64' : 'x86_64'}`, '--enable-d3d11va');
   return { libvpx, ffmpeg };
+}
+
+/** Configure and make must see the same MSYS path, including when the checkout
+ * lives on another drive or contains spaces. Never interpolate it into a shell. */
+export async function captureBuildPaths(prefix, { platform, shell, tools = core }) {
+  const buildPrefix = platform === 'win32'
+    ? (await tools.run(shell, ['-c', 'cygpath -u "$1"', 'capture-path', prefix], { capture: true })).stdout.trim()
+    : prefix;
+  if (!buildPrefix.startsWith('/')) throw new Error('[capture] 构建 shell 必须提供绝对 Unix 路径（Windows 需要 MSYS2 cygpath）');
+  return { prefix: buildPrefix, pkgConfigPath: `${buildPrefix}/lib/pkgconfig` };
+}
+
+export async function assertCaptureWindowsToolchain({ shell, arch, tools = core, runtimePackageVersion }) {
+  const probe = await tools.run(shell, ['-c', 'for tool in gcc make pkg-config cygpath; do command -v "$tool" >/dev/null || { echo "Missing $tool"; exit 1; }; done; command -v yasm >/dev/null || command -v nasm >/dev/null || { echo "Missing yasm/nasm"; exit 1; }; gcc -dumpmachine'], { capture: true, allowFailure: true });
+  const target = arch === 'arm64' ? 'aarch64' : 'x86_64';
+  if (probe.status !== 0 || !new RegExp(`^${target}-[^\\s]*mingw`).test(probe.stdout.trim())) {
+    throw new Error(`[capture] Windows 构建需要 MSYS2 MinGW ${arch} GCC、make、pkg-config、cygpath 和 yasm/nasm。请设置 NUWAX_CAPTURE_BUILD_BASH 为 MSYS2 bash，并将对应工具链 bin 与 MSYS2 usr/bin 加入 PATH；仅设置 bash 路径不会配置编译器。${(probe.stderr || probe.stdout).trim()}`);
+  }
+  if (runtimePackageVersion) {
+    const runtime = await tools.run(shell, ['-c', 'library=$(gcc -print-file-name=libwinpthread.a); package=$(pacman -Qoq "$library") || exit 1; pacman -Q "$package"'], { capture: true, allowFailure: true });
+    if (runtime.status !== 0 || runtime.stdout.trim().split(/\s+/).at(-1) !== runtimePackageVersion) {
+      throw new Error(`[capture] Winpthreads 静态运行库必须匹配固定源码包 ${runtimePackageVersion}；当前为 ${(runtime.stdout || runtime.stderr).trim() || '未知'}。请安装匹配的 MSYS2 包或同步审核更新源码/许可证声明。`);
+    }
+    const [toolchainPackage, toolchainPackageVersion] = runtime.stdout.trim().split(/\s+/);
+    return { toolchainPackage, toolchainPackageVersion };
+  }
 }
 
 async function ensureArchive(root, name, source, tools) {
@@ -82,6 +127,13 @@ async function ensureArchive(root, name, source, tools) {
 async function buildCaptureBinary(root, lock, options) {
   const { tools, platform, arch } = options;
   if (platform !== process.platform || arch !== process.arch) throw new Error('[capture] 原生资源必须在对应平台/架构构建；此脚本不隐式交叉编译');
+  const shell = platform === 'win32' ? process.env.NUWAX_CAPTURE_BUILD_BASH || 'bash' : '/bin/bash';
+  let runtimeSource;
+  if (platform === 'win32') {
+    const expected = readWindowsRuntimeSource(root, tools);
+    const actual = await assertCaptureWindowsToolchain({ shell, arch, tools, runtimePackageVersion: expected.toolchainPackageVersion });
+    runtimeSource = { ...expected, ...actual };
+  }
   // Always extract the locked archives afresh. Failed configure runs and local
   // changes in an older build directory can never become a new shipped binary.
   const parent = path.join(core.paths(root).cache, 'capture/build', `${platform}-${arch}`, randomUUID());
@@ -101,19 +153,22 @@ async function buildCaptureBinary(root, lock, options) {
     const xcodeSdk = path.join(developer, 'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk');
     sdk = fs.existsSync(xcodeSdk) ? xcodeSdk : (await tools.run('xcrun', ['--show-sdk-path'], { capture: true })).stdout.trim();
   }
-  const args = captureBuildArguments(lock, { platform, arch, prefix, compiler, sdk });
-  const shell = platform === 'win32' ? process.env.NUWAX_CAPTURE_BUILD_BASH || 'bash' : '/bin/bash';
-  const env = { ...process.env, PKG_CONFIG_PATH: path.join(prefix, 'lib/pkgconfig') };
+  const buildPaths = await captureBuildPaths(prefix, { platform, shell, tools });
+  const args = captureBuildArguments(lock, { platform, arch, prefix: buildPaths.prefix, compiler, sdk });
+  const env = { ...process.env, PKG_CONFIG_PATH: buildPaths.pkgConfigPath };
   if (platform === 'darwin') Object.assign(env, { CC: compiler, CXX: compiler.replace(/clang$/, 'clang++'), SDKROOT: sdk });
   const jobs = String(Math.max(1, Math.min(8, os.cpus().length)));
   for (const name of ['libvpx', 'ffmpeg']) {
     const cwd = path.join(parent, lock[name].directory);
     console.log(`[capture] 编译 ${name} ${lock[name].version} (${platform}-${arch})`);
     await tools.run(shell, ['./configure', ...args[name]], { cwd, env, capture: true });
-    await tools.run('make', [`-j${jobs}`], { cwd, env, capture: true });
-    await tools.run('make', ['install'], { cwd, env, capture: true });
+    // Use the configure shell's make and path semantics. A Windows PATH may
+    // otherwise pick mingw32-make or a different Git Bash/WSL installation.
+    await tools.run(shell, ['-c', 'exec make "$@"', 'capture-make', `-j${jobs}`], { cwd, env, capture: true });
+    await tools.run(shell, ['-c', 'exec make "$@"', 'capture-make', 'install'], { cwd, env, capture: true });
   }
-  return { binary: path.join(prefix, 'bin', platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), archives, sourceDirs: Object.fromEntries(['ffmpeg', 'libvpx'].map((name) => [name, path.join(parent, lock[name].directory)])), args };
+  if (runtimeSource) await assertCaptureWindowsToolchain({ shell, arch, tools, runtimePackageVersion: runtimeSource.toolchainPackageVersion });
+  return { binary: path.join(prefix, 'bin', platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), archives, sourceDirs: Object.fromEntries(['ffmpeg', 'libvpx'].map((name) => [name, path.join(parent, lock[name].directory)])), args, runtimeSource };
 }
 
 /** Separate capture audit never stands in for the complete shipped-resource audit. */
@@ -121,7 +176,7 @@ export async function writeCaptureNotices(root, { tools = core, platform = proce
   const manifest = tools.readJson(path.join(root, 'third-party/manifest.json'));
   const capture = manifest.resources?.capture;
   if (!capture) throw new Error('[capture] 缺少 capture 开源组件声明');
-  const result = buildNotices({ root, manifest: { ...manifest, resources: { capture } }, resourcePaths: { capture: captureResourceDir(root, platform, arch) }, npmComponents: [], readFfmpegVersion: (binary) => core.run(binary, ['-version'], { capture: true, allowFailure: true }).stdout });
+  const result = buildNotices({ root, manifest: { ...manifest, resources: { capture } }, resourcePaths: { capture: captureResourceDir(root, platform, arch) }, npmComponents: [], readFfmpegVersion: (binary) => core.run(binary, ['-version'], { capture: true, allowFailure: true }).stdout, platform });
   if (result.problems.length) throw new Error(`[capture] 开源声明未通过: ${result.problems.map((p) => `${p.code}:${p.id}`).join(', ')}`);
   return writeNotices(result, outDir);
 }
@@ -130,6 +185,17 @@ export async function prepareCaptureResources(root, options = {}) {
   const opt = { tools: core, platform: process.platform, arch: process.arch, ...options };
   if (opt.platform === 'linux') return null;
   if (!CAPTURE_PLATFORMS.includes(`${opt.platform}-${opt.arch}`)) throw new Error(`[capture] 不支持 ${opt.platform}-${opt.arch}`);
+  if (opt.platform === 'win32') {
+    const runtime = readWindowsRuntimeSource(root, opt.tools);
+    const sourceFile = path.join(root, 'resources/capture/sources', runtime.archive);
+    if (fs.existsSync(sourceFile)) {
+      if (sha256(sourceFile) !== runtime.sha256) throw new Error('[capture] Winpthreads 源码归档 SHA256 不匹配');
+    } else {
+      const archive = await ensureArchive(root, 'winpthreads', runtime, opt.tools);
+      fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
+      fs.copyFileSync(archive, sourceFile);
+    }
+  }
   const existing = await inspectCaptureResource(root, opt);
   if (existing && !opt.refreshResources) {
     await writeCaptureNotices(root, opt);
@@ -140,6 +206,9 @@ export async function prepareCaptureResources(root, options = {}) {
   if (fs.existsSync(dir) && !existing) throw new Error(`[capture] 拒绝覆盖未知或已改动的资源目录 ${dir}`);
   const lock = readCaptureSourceLock(root);
   const built = await (opt.buildBinary ?? buildCaptureBinary)(root, lock, opt);
+  if (opt.platform === 'win32' && !matchesRuntimeSource(built.runtimeSource, readWindowsRuntimeSource(root, opt.tools))) {
+    throw new Error('[capture] Windows 构建缺少匹配的实际 Winpthreads 来源记录，拒绝用当前声明补写未知二进制');
+  }
   const version = await opt.tools.run(built.binary, ['-version'], { capture: true });
   const configuration = parseFfmpegConfiguration(version.stdout);
   const problems = inspectFfmpegConfiguration(configuration);
@@ -161,7 +230,7 @@ export async function prepareCaptureResources(root, options = {}) {
     const binary = path.join(staging, opt.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
     fs.copyFileSync(built.binary, binary);
     fs.chmodSync(binary, 0o755);
-    opt.tools.atomicJson(path.join(staging, 'resource.json'), { schema: 1, platform: opt.platform, arch: opt.arch, version: lock.ffmpeg.version, sha256: sha256(binary), configuration, sources: { ffmpeg: lock.ffmpeg, libvpx: lock.libvpx }, buildArguments: built.args });
+    opt.tools.atomicJson(path.join(staging, 'resource.json'), { schema: 1, platform: opt.platform, arch: opt.arch, version: lock.ffmpeg.version, sha256: sha256(binary), configuration, sources: { ffmpeg: lock.ffmpeg, libvpx: lock.libvpx, ...(opt.platform === 'win32' ? { winpthreads: built.runtimeSource } : {}) }, buildArguments: built.args });
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     if (existing) fs.rmSync(dir, { recursive: true });
     fs.renameSync(staging, dir);

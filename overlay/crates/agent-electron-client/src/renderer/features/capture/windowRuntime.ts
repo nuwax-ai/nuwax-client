@@ -34,7 +34,7 @@ export async function mountCaptureWindow(
     const status = node('span', 'status'); const timer = node('strong', 'timer');
     const pause = node('button', '', labels.pause); const stop = node('button', 'danger', labels.stop);
     const cancel = node('button', '', labels.cancel);
-    buttonVisual(stop, 'stop', labels.stop); buttonVisual(cancel, 'cancel', labels.cancel);
+    buttonVisual(stop, 'stop', labels.stop, true); buttonVisual(cancel, 'cancel', labels.cancel);
     bar.append(status, timer, pause, stop, cancel); document.body.append(bar);
     let current = config.state;
     const update = (state: RecordingControlState) => {
@@ -79,15 +79,25 @@ export async function mountCaptureWindow(
   viewport.append(canvas, mask); document.body.append(viewport);
   const top = node('div', 'toolbar top');
   const toolBar = node('div', 'toolbar tools');
-  const dock = node('div', 'selectionDock'); dock.append(toolBar, top);
+  const toolGroup = node('div', 'toolGroup'), historyGroup = node('div', 'historyGroup');
+  toolBar.append(toolGroup, historyGroup);
+  const properties = node('div', 'toolbar properties');
+  const styleCaption = node('span', 'styleCaption');
+  const palette = node('div', 'palette');
+  properties.append(styleCaption, palette);
+  const modeGroup = node('div', 'modeGroup'), actionGroup = node('div', 'actionGroup');
+  top.append(modeGroup, actionGroup);
+  const dockHint = node('div', 'dockHint', labels.annotationHint);
+  const dock = node('div', 'selectionDock'); dock.append(toolBar, properties, top, dockHint);
   const hint = node('div', 'hint', labels.selectHint);
+  const tooltip = node('div', 'tooltip'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip');
   const dimensions = node('div', 'dimensions');
   const magnifier = node('canvas', 'magnifier'); magnifier.width = 160; magnifier.height = 160;
   const textInput = node('input', 'textInput'); textInput.placeholder = labels.textHint;
   textInput.style.userSelect = 'text';
   let pendingText: CaptureAnnotation | null = null;
   let pendingTextIndex: number | null = null;
-  document.body.append(dock, hint, dimensions, magnifier, textInput);
+  document.body.append(dock, hint, dimensions, magnifier, textInput, tooltip);
   const sourceGrid = node('div', 'sourceGrid'); document.body.append(sourceGrid);
   const buttons: Record<string, HTMLButtonElement> = {};
   const button = (parent: HTMLElement, key: string, title: string, action: () => void) => {
@@ -95,6 +105,31 @@ export async function mountCaptureWindow(
     buttonVisual(b, key === 'confirm' && captureMode === 'record' ? 'record' : key, title, ['screen', 'window', 'region', 'confirm'].includes(key));
     buttons[key] = b; parent.append(b); return b;
   };
+  function hideTooltip() { tooltip.hidden = true; }
+  function showTooltip(target: EventTarget | null) {
+    if (!(target instanceof Element) || drag || active || dock.style.visibility === 'hidden') return;
+    const button = target.closest('button');
+    if (!button || !dock.contains(button) || button.disabled) { hideTooltip(); return; }
+    const label = button.getAttribute('aria-label');
+    if (!label) return;
+    const shortcut = button.dataset.action === 'confirm' ? 'Enter' : button.dataset.action === 'cancel' ? 'Esc' : '';
+    tooltip.textContent = shortcut ? `${label} · ${shortcut}` : label;
+    const display = displayFrame.selection.displayBounds;
+    const area = { ...workArea, x: workArea.x - display.x, y: workArea.y - display.y };
+    tooltip.style.maxWidth = `${Math.max(1, area.width - 16)}px`;
+    tooltip.hidden = false;
+    const anchor = button.getBoundingClientRect();
+    const minX = area.x + 8, maxX = area.x + area.width - tooltip.offsetWidth - 8;
+    const minY = area.y + 8, maxY = area.y + area.height - tooltip.offsetHeight - 8;
+    const above = anchor.top - tooltip.offsetHeight - 7;
+    tooltip.style.left = `${Math.max(minX, Math.min(maxX, anchor.x + (anchor.width - tooltip.offsetWidth) / 2))}px`;
+    tooltip.style.top = `${Math.max(minY, Math.min(maxY, above >= minY ? above : anchor.bottom + 7))}px`;
+  }
+  dock.addEventListener('pointerover', (e) => showTooltip(e.target));
+  dock.addEventListener('pointerleave', hideTooltip);
+  dock.addEventListener('pointerdown', hideTooltip);
+  dock.addEventListener('focusin', (e) => showTooltip(e.target));
+  dock.addEventListener('focusout', hideTooltip);
   function bounds() { return canvas.getBoundingClientRect(); }
   function point(e: MouseEvent) {
     const r = bounds();
@@ -139,6 +174,7 @@ export async function mountCaptureWindow(
     if (annotation.tool === 'text') fontSize.value = String(Math.round((annotation.fontSize ?? Math.max(12, annotation.width * 7)) / pixelScale()));
   }
   function placeDock() {
+    hideTooltip();
     const r = bounds();
     const selected = crop ? { x: r.x + crop.x / frame.width * r.width, y: r.y + crop.y / frame.height * r.height,
       width: crop.width / frame.width * r.width, height: crop.height / frame.height * r.height } : null;
@@ -154,8 +190,15 @@ export async function mountCaptureWindow(
     hint.style.top = `${Math.max(area.y + 12, position.y - hint.offsetHeight - 12)}px`;
     hint.hidden = Boolean(crop);
     if (selected) {
-      dimensions.style.left = `${Math.max(area.x + 4, Math.min(area.x + area.width - dimensions.offsetWidth - 4, selected.x))}px`;
-      dimensions.style.top = `${Math.max(area.y + 4, selected.y - dimensions.offsetHeight - 6)}px`;
+      const x = Math.max(area.x + 4, Math.min(area.x + area.width - dimensions.offsetWidth - 4, selected.x));
+      const minY = area.y + 4, maxY = area.y + area.height - dimensions.offsetHeight - 4;
+      const candidates = [selected.y - dimensions.offsetHeight - 6, selected.y + selected.height + 6, selected.y + 6]
+        .map(y => Math.max(minY, Math.min(maxY, y)));
+      const y = candidates.find(y => x + dimensions.offsetWidth <= position.x || x >= position.x + position.width
+        || y + dimensions.offsetHeight <= position.y || y >= position.y + position.height);
+      // 底边选区的面板会翻到上方，尺寸标签同步让位，避免透在工具栏后面。
+      dimensions.hidden = y === undefined;
+      dimensions.style.left = `${x}px`; dimensions.style.top = `${y ?? candidates[0]}px`;
     }
   }
   function draw() {
@@ -194,9 +237,24 @@ export async function mountCaptureWindow(
     buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy;
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
     buttons.deleteAnnotation.disabled = selectedIndex === null;
-    const textStyle = pendingText?.tool === 'text' || selected?.tool === 'text' || !selected && tool === 'text';
-    fontControl.hidden = !textStyle; width.hidden = textStyle;
-    color.disabled = selected?.tool === 'mosaic' || !selected && tool === 'mosaic';
+    const styleTool = pendingText?.tool ?? selected?.tool ?? (tool === 'select' ? null : tool);
+    properties.hidden = !crop || captureMode === 'record' || !styleTool;
+    dockHint.hidden = !crop || captureMode === 'record';
+    if (styleTool && styleCaption.dataset.tool !== styleTool) {
+      styleCaption.dataset.tool = styleTool;
+      styleCaption.replaceChildren(makeIcon(styleTool), node('span', '', labels[styleTool]));
+    }
+    fontControl.hidden = styleTool !== 'text'; widthControl.hidden = styleTool === 'text';
+    palette.hidden = styleTool === 'mosaic'; color.disabled = styleTool === 'mosaic';
+    widthValue.value = `${width.value} px`;
+    for (const swatch of swatches) {
+      const chosen = swatch.dataset.color === color.value;
+      swatch.classList.toggle('selected', chosen); swatch.setAttribute('aria-pressed', String(chosen));
+    }
+    for (const preset of fontPresets) {
+      const chosen = Number(preset.dataset.size) === Number(fontSize.value);
+      preset.classList.toggle('selected', chosen); preset.setAttribute('aria-pressed', String(chosen));
+    }
     for (const key of ['screen', 'window', 'region', 'select', 'rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic']) {
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
@@ -225,6 +283,10 @@ export async function mountCaptureWindow(
     const scale = pixelScale(), r = bounds(), point = pendingText.points[0];
     textInput.style.font = `${(pendingText.fontSize ?? Math.max(12, pendingText.width * 7)) / scale}px sans-serif`;
     textInput.style.color = pendingText.color;
+    const channels = pendingText.color.match(/[a-f\d]{2}/gi)?.map(value => parseInt(value, 16)) ?? [255, 255, 255];
+    const brightness = channels[0] * .299 + channels[1] * .587 + channels[2] * .114;
+    textInput.style.backgroundColor = brightness < 135 ? '#f3f6fa' : '#18222f';
+    textInput.style.textShadow = 'none';
     textInput.style.width = `${Math.min(innerWidth - 16, Math.max(180, painter.bounds(context, { ...pendingText, text: textInput.value }).width / scale + 22))}px`;
     textInput.style.left = `${Math.max(0, Math.min(innerWidth - textInput.offsetWidth, r.x + point.x / scale - 7))}px`;
     textInput.style.top = `${Math.max(0, Math.min(innerHeight - textInput.offsetHeight, r.y + point.y / scale - 7))}px`;
@@ -265,10 +327,10 @@ export async function mountCaptureWindow(
   };
   function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
-  button(top, 'screen', labels.screen, () => { void chooseDisplay('screen'); });
-  button(top, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
-  button(top, 'region', labels.region, () => { void chooseDisplay('region'); });
-  button(top, 'cancel', labels.cancel, () => bridge.action('cancel'));
+  button(modeGroup, 'screen', labels.screen, () => { void chooseDisplay('screen'); });
+  button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
+  button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
+  button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
     if (!crop || busy || crop.width < 1 || crop.height < 1) return;
     finishText();
@@ -279,17 +341,35 @@ export async function mountCaptureWindow(
     try { await bridge.finish({ crop, ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
     finally { busy = false; }
   }
-  button(top, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
+  button(actionGroup, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
   buttons.confirm.classList.add('primary');
-  button(toolBar, 'select', labels.select, () => { finishText(); finishPropertyChange(); tool = 'select'; draw(); });
+  button(toolGroup, 'select', labels.select, () => { finishText(); finishPropertyChange(); tool = 'select'; draw(); });
   for (const key of ['rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic'] as const) {
-    button(toolBar, key, labels[key], () => { finishText(); finishPropertyChange(); selectedIndex = null; tool = tool === key ? 'select' : key; draw(); });
+    button(toolGroup, key, labels[key], () => { finishText(); finishPropertyChange(); selectedIndex = null; tool = tool === key ? 'select' : key; draw(); });
   }
-  const color = node('input'); color.type = 'color'; color.value = '#ff3b52'; color.title = labels.color; color.setAttribute('aria-label', labels.color); toolBar.append(color);
-  const width = node('input'); width.type = 'range'; width.min = '1'; width.max = '8'; width.value = '2'; width.title = labels.lineWidth; width.setAttribute('aria-label', labels.lineWidth); toolBar.append(width);
+  const swatches = ['#ff3b52', '#f6c445', '#36d5ae', '#4d9fff', '#ffffff'].map(value => {
+    const swatch = node('button', 'swatch'); swatch.dataset.color = value;
+    swatch.style.backgroundColor = value; swatch.setAttribute('aria-label', `${labels.color} ${value}`);
+    // 快捷样式按钮保留文字输入焦点，避免点击时先触发 blur 提交文字。
+    swatch.onpointerdown = (e) => e.preventDefault();
+    swatch.onclick = () => { color.value = value; changeProperties({ color: value }); finishPropertyChange(); draw(); };
+    palette.append(swatch); return swatch;
+  });
+  const color = node('input'); color.type = 'color'; color.value = '#ff3b52'; color.title = labels.color; color.setAttribute('aria-label', labels.color); palette.append(color);
+  const widthControl = node('label', 'widthControl'); widthControl.title = labels.lineWidth;
+  const width = node('input'); width.type = 'range'; width.min = '1'; width.max = '8'; width.value = '2'; width.title = labels.lineWidth; width.setAttribute('aria-label', labels.lineWidth);
+  const widthValue = node('output', 'widthValue'); widthControl.append(width, widthValue); properties.append(widthControl);
   const fontControl = node('label', 'fontSizeControl'); fontControl.title = labels.fontSize;
   const fontSize = node('input'); fontSize.type = 'number'; fontSize.min = '8'; fontSize.max = '144'; fontSize.value = '14'; fontSize.dataset.action = 'fontSize'; fontSize.setAttribute('aria-label', labels.fontSize);
-  fontControl.append(node('span', '', 'Aa'), fontSize); toolBar.append(fontControl);
+  fontControl.append(node('span', '', 'Aa'), fontSize);
+  const fontPresets = [14, 24, 36].map(value => {
+    const preset = node('button', 'fontPreset', String(value)); preset.type = 'button'; preset.dataset.size = String(value);
+    preset.setAttribute('aria-label', `${labels.fontSize} ${value}`);
+    preset.onpointerdown = (e) => e.preventDefault();
+    preset.onclick = () => { fontSize.value = String(value); changeProperties({ fontSize: value * pixelScale() }); finishPropertyChange(); draw(); };
+    fontControl.append(preset); return preset;
+  });
+  properties.append(fontControl);
   color.oninput = () => changeProperties({ color: color.value });
   width.oninput = () => changeProperties({ width: Number(width.value) * pixelScale() });
   fontSize.oninput = () => { const value = Number(fontSize.value); if (Number.isFinite(value) && value >= 8 && value <= 144) changeProperties({ fontSize: value * pixelScale() }); };
@@ -300,9 +380,10 @@ export async function mountCaptureWindow(
     const normalized = fontSize.value.trim() && Number.isFinite(value) ? Math.round(Math.max(8, Math.min(144, value))) : fallback;
     fontSize.value = String(normalized); changeProperties({ fontSize: normalized * pixelScale() }); finishPropertyChange(); draw();
   };
-  button(toolBar, 'deleteAnnotation', labels.deleteAnnotation, deleteSelected);
-  button(toolBar, 'undo', labels.undo, () => stepHistory());
-  button(toolBar, 'redo', labels.redo, () => stepHistory(true));
+  button(historyGroup, 'deleteAnnotation', labels.deleteAnnotation, deleteSelected);
+  button(historyGroup, 'undo', labels.undo, () => stepHistory());
+  button(historyGroup, 'redo', labels.redo, () => stepHistory(true));
+  for (const control of dock.querySelectorAll('button')) control.removeAttribute('title');
   sourceGrid.hidden = true;
   for (const source of config.sources.filter((s) => s.kind === 'window')) {
     const entry = node('button', 'source'); entry.dataset.source = source.id;
@@ -334,6 +415,7 @@ export async function mountCaptureWindow(
   }
   mask.onpointerdown = (e) => {
     if (busy || mode === 'window' && !sourceGrid.hidden) return;
+    hideTooltip();
     // 阻止画布抢焦点，并在切换标注前提交当前编辑。
     e.preventDefault(); finishText(); finishPropertyChange();
     mask.setPointerCapture(e.pointerId);
@@ -395,7 +477,7 @@ export async function mountCaptureWindow(
   };
   // 每个显示器有独立的选区窗口；跨屏后旧窗口必须撤掉放大框。
   mask.onpointerleave = () => { magnifier.hidden = true; };
-  window.addEventListener('blur', () => { magnifier.hidden = true; });
+  window.addEventListener('blur', () => { magnifier.hidden = true; hideTooltip(); });
   mask.onpointerup = () => {
     drag = null;
     if (annotationDrag) {

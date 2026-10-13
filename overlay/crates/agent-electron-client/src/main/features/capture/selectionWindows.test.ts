@@ -15,8 +15,15 @@ const mock = vi.hoisted(() => {
   const settings: { loadError: Error | null } = { loadError: null };
   class FakeWindow extends EventEmitter {
     destroyed = false;
+    bounds: { x: number; y: number; width: number; height: number };
     webContents = Object.assign(new EventEmitter(), { id: ++nextId, mainFrame: { url: '' }, isDestroyed: () => this.destroyed, setWindowOpenHandler: vi.fn(), send: vi.fn() });
-    constructor(readonly options: { title: string }) { super(); windows.push(this); }
+    constructor(readonly options: { title: string; x: number; y: number; width: number; height: number }) {
+      super(); windows.push(this);
+      // Model Windows' initial work-area clamp (40px taskbar on this display).
+      this.bounds = { x: options.x, y: options.y, width: options.width, height: Math.min(options.height, 760) };
+    }
+    setBounds(bounds: typeof this.bounds) { this.bounds = { ...bounds }; }
+    getContentBounds() { return { ...this.bounds }; }
     isDestroyed() { return this.destroyed; }
     destroy() { if (this.destroyed) return; this.destroyed = true; this.emit('closed'); }
     loadURL(url: string) { this.webContents.mainFrame.url = url; return settings.loadError ? Promise.reject(settings.loadError) : Promise.resolve(); }
@@ -82,6 +89,14 @@ describe('native capture failure classification', () => {
 });
 
 describe('multi-display selector focus', () => {
+  it('restores full display pixels before initialization despite the native work-area clamp', async () => {
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    expect(mock.windows[0].getContentBounds()).toEqual(mock.display.bounds);
+    expect(mock.windows[0].getContentBounds().height).toBeGreaterThan(mock.display.workArea.height);
+    abort.abort(); expect(await pending).toBeNull();
+  });
   it.each(['preferred-first', 'preferred-last'])('keeps the cursor display focused when loading %s', async (order) => {
     mock.displays.push({ ...mock.display, id: 2, bounds: { ...mock.display.bounds, x: 1200 } });
     const abort = new AbortController();

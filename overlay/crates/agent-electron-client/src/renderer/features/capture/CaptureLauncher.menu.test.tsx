@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CaptureCapabilities, CaptureMenuAction, CaptureState, HostCaptureBridge } from "@shared/features/capture/contract";
+import type { CaptureCapabilities, CaptureMenuAction, CaptureState, CaptureSuccess, HostCaptureBridge } from "@shared/features/capture/contract";
 
 const { effects, errors } = vi.hoisted(() => ({
   effects: [] as Array<() => undefined | (() => void)>,
@@ -25,7 +25,9 @@ const capabilities = {
 } as CaptureCapabilities;
 
 function mount(over: Partial<HostCaptureBridge> = {}, onCaptureStart?: () => Promise<void>) {
+  type MenuHandler = (action: CaptureMenuAction) => void;
   let menu: ((action: CaptureMenuAction) => void) | undefined;
+  let toolbarMenu: MenuHandler | null = null;
   let state: ((value: CaptureState) => void) | undefined;
   const offMenu = vi.fn();
   const offState = vi.fn();
@@ -38,9 +40,11 @@ function mount(over: Partial<HostCaptureBridge> = {}, onCaptureStart?: () => Pro
     onStateChange: vi.fn((listener) => { state = listener; return offState; }),
     ...over,
   } as HostCaptureBridge;
-  CaptureLauncher({ capture, t: (key) => key, onCaptureStart });
+  const onMenuHandlerChange = vi.fn((handler: MenuHandler | null) => { toolbarMenu = handler; });
+  CaptureLauncher({ capture, t: (key) => key, onCaptureStart, onMenuHandlerChange });
   const cleanups = effects.map((effect) => effect());
   return { capture, menu: (action: CaptureMenuAction) => menu!(action), state: (next: CaptureState) => state!(next), offMenu, offState,
+    toolbarMenu: (action: CaptureMenuAction) => toolbarMenu?.(action), onMenuHandlerChange,
     unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
 }
 
@@ -49,11 +53,46 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 beforeEach(() => { effects.length = 0; errors.mockClear(); });
 
 describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
+  it("Windows 自绘菜单复用四种采集动作，卸载时注销入口", async () => {
+    const ui = mount();
+    for (const action of ["screenshot", "mp4", "webm", "gif"] as const) {
+      ui.toolbarMenu(action); await flush();
+    }
+    expect(ui.capture.screenshot).toHaveBeenCalledTimes(1);
+    expect(ui.capture.screenshot).toHaveBeenCalledWith({ compression: { quality: "high" } });
+    expect(vi.mocked(ui.capture.record).mock.calls.map(([value]) => value)).toEqual(
+      ["mp4", "webm", "gif"].map(output => ({ output, compression: { quality: "high" }, maxDurationMs: 300_000 })),
+    );
+    ui.unmount();
+    expect(ui.onMenuHandlerChange).toHaveBeenLastCalledWith(null);
+    ui.toolbarMenu("screenshot"); await flush();
+    expect(ui.capture.screenshot).toHaveBeenCalledOnce();
+  });
+
+  it("Windows 自绘菜单与原生菜单共用并发锁，保留产物等待预览保存", async () => {
+    let finish!: (result: CaptureSuccess) => void;
+    const screenshot = vi.fn(() => new Promise<CaptureSuccess>(resolve => { finish = resolve; }));
+    const ui = mount({ screenshot });
+    ui.toolbarMenu("screenshot"); ui.menu("mp4"); await flush();
+    expect(screenshot).toHaveBeenCalledOnce();
+    expect(ui.capture.record).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenLastCalledWith("Claw.Capture.error.busy");
+    finish({ success: true, resultId: "menu-preview", mime: "image/png", bytes: 0, width: 40, height: 30, qualityUsed: "high", hdrToneMapped: false });
+    await flush();
+    expect(ui.capture.release).not.toHaveBeenCalled();
+    ui.toolbarMenu("gif"); await flush();
+    expect(ui.capture.record).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenLastCalledWith("Claw.Capture.error.busy");
+    ui.unmount();
+    expect(ui.capture.release).toHaveBeenCalledTimes(1);
+    expect(ui.capture.release).toHaveBeenCalledWith("menu-preview");
+  });
+
   it("等待设置弹窗关闭才采集，面板关闭不卸载全局菜单控制器", async () => {
     let close!: () => void;
     const onStart = vi.fn(() => new Promise<void>(resolve => { close = resolve; }));
     const ui = mount({}, onStart);
-    ui.menu("screenshot"); await flush();
+    ui.toolbarMenu("screenshot"); await flush();
     expect(onStart).toHaveBeenCalledOnce();
     expect(ui.capture.screenshot).not.toHaveBeenCalled();
     close(); await flush();
@@ -107,9 +146,9 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     ui.unmount();
   });
 
-  it("特性不可用时如实提示 unsupported，菜单不发起截图", async () => {
+  it.each(["menu", "toolbarMenu"] as const)("特性不可用时如实提示 unsupported，%s 不发起截图", async (entry) => {
     const ui = mount({ getCapabilities: vi.fn(async () => ({ ...capabilities, available: false })) });
-    ui.menu("screenshot"); await flush();
+    ui[entry]("screenshot"); await flush();
     expect(ui.capture.screenshot).not.toHaveBeenCalled();
     expect(errors).toHaveBeenCalledWith("Claw.Capture.error.unsupported");
     ui.unmount();

@@ -1135,7 +1135,7 @@
   "Claw.Capture.paused": "已暂停",
   "Claw.Capture.encoding": "正在处理",
   "Claw.Capture.selectHint": "拖动选择区域 · Esc 取消",
-  "Claw.Capture.annotationHint": "选择标注工具 · Enter 确认 · Esc 取消",
+  "Claw.Capture.annotationHint": "点击标注可编辑 · 拖动移动 · Enter 完成",
   "Claw.Capture.textHint": "输入文字",
   "Claw.Capture.loading": "正在加载窗口…",
   "Claw.Capture.preview": "截图与录屏预览",

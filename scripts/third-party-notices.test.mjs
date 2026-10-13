@@ -53,6 +53,28 @@ test('builder payload audit only includes shipped resources and selects native c
   assert.ok(!Object.hasOwn(mac, 'sandbox-runtime'));
 });
 
+test('Windows capture thread runtime is audited only on Windows with complete source and license text', (t) => {
+  const root = tmp(t);
+  const source = 'fixed winpthreads source';
+  const license = `${MIT}\nLockless Inc.\nRedistribution and use in source and binary forms`;
+  write(path.join(root, 'winpthreads.tar.gz'), source);
+  write(path.join(root, 'winpthreads.txt'), license);
+  const runtime = { id: 'winpthreads', name: 'MinGW-w64 Winpthreads', platforms: ['win32'], usedBy: 'capture', license: 'MIT AND BSD-3-Clause-Clear', licenseFile: 'winpthreads.txt', sourceUrl: 'https://example.test/source', sourceFile: 'winpthreads.tar.gz', sourceArchive: 'sources/winpthreads.tar.gz', sourceSha256: createHash('sha256').update(source).digest('hex') };
+  const run = (platform) => buildNotices({ root, platform, manifest: { resources: { capture: runtime } }, npmComponents: [] });
+  assert.equal(classifyLicense(runtime.license), 'permissive');
+  assert.deepEqual(run('darwin'), { components: [], problems: [] });
+  const result = run('win32');
+  assert.deepEqual(result.problems, []);
+  assert.equal(result.components.length, 1);
+  const out = path.join(root, 'out');
+  writeNotices(result, out);
+  assert.equal(fs.readFileSync(path.join(out, 'licenses/winpthreads.txt'), 'utf8'), license);
+  assert.equal(fs.readFileSync(path.join(out, 'sources/winpthreads.tar.gz'), 'utf8'), source);
+  fs.rmSync(path.join(root, 'winpthreads.txt'));
+  assert.deepEqual(codes(run('win32')), ['MISSING_LICENSE_TEXT:winpthreads']);
+  assert.deepEqual(run('darwin'), { components: [], problems: [] });
+});
+
 test('capture license and source archives must be real and hash verified; transitive libvpx is declared', (t) => {
   const f = noticesFixture(t, { files: { 'capture/ffmpeg': 'binary' } });
   const source = path.join(f.root, 'source.tgz');

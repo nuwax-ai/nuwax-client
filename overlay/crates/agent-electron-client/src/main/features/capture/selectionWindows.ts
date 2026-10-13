@@ -77,6 +77,10 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       backgroundColor: config.kind === 'selection' ? '#12161b' : '#00000000',
       webPreferences: { preload: preloadPath, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, backgroundThrottling: false, devTools: false },
     });
+    // Windows clamps initial window bounds to the work area, excluding the
+    // taskbar. Restore the requested bounds before the renderer maps pixels,
+    // otherwise a full-screen source is stretched into a shorter viewport.
+    window.setBounds(bounds, false);
     const nonce = randomBytes(18).toString('hex');
     const url = `data:text/html;charset=utf-8,${encodeURIComponent(buildCaptureWindowHtml(nonce))}`;
     const owned: ManagedWindow = { window, id: window.webContents.id, url, config };

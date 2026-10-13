@@ -1,6 +1,50 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { CAPTURE_QUALITIES } from "@shared/features/capture/contract";
-import { recordingFormats, transcodeGeometry, transcodeArguments, runCaptureFfmpeg, type CaptureFfmpegResource } from "./transcode";
+import { recordingFormats, transcodeGeometry, transcodeArguments, runCaptureFfmpeg, transcodeRecording, type CaptureFfmpegResource } from "./transcode";
+
+const processFixture = vi.hoisted(() => ({ spawn: undefined as ((args: string[]) => unknown) | undefined }));
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  return { ...actual, spawn: (file: string, args: string[], options: unknown) => processFixture.spawn
+    ? processFixture.spawn(args) : actual.spawn(file, args, options as import("node:child_process").SpawnOptions) };
+});
+const directories: string[] = [];
+afterEach(async () => {
+  processFixture.spawn = undefined;
+  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+});
+
+async function fakeTranscoder(outcomes: Array<string | null>, controller?: AbortController) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "capture-transcode-")); directories.push(directory);
+  const input = path.join(directory, "source.webm"), output = path.join(directory, "result.mp4");
+  await writeFile(input, "unchanged source");
+  const calls: string[][] = [], initialSizes: number[] = [];
+  processFixture.spawn = (args) => {
+    calls.push([...args]);
+    const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill(): boolean };
+    child.stderr = new EventEmitter(); child.kill = () => true;
+    const outcome = outcomes.shift();
+    setImmediate(async () => {
+      try {
+        initialSizes.push((await readFile(output)).length);
+        await writeFile(output, outcome ? "partial failed output" : "complete software MP4");
+        if (outcome) child.stderr.emit("data", Buffer.from(outcome));
+        controller?.abort();
+        child.emit("close", outcome ? 1 : 0);
+      } catch (error) { child.emit("error", error); }
+    });
+    return child;
+  };
+  const run = (platform: NodeJS.Platform = "win32", outputFormat: "mp4" | "webm" = "mp4") => transcodeRecording(
+    { ...resource, encoders: [...resource.encoders, "h264_mf"] }, platform, input, output,
+    { width: 640, height: 480 }, { x: 20, y: 10, width: 128, height: 96 }, { output: outputFormat, fps: 15 },
+    controller?.signal ?? new AbortController().signal);
+  return { run, input, output, calls, initialSizes };
+}
 
 const resource: CaptureFfmpegResource = {
   path: "/private/capture/ffmpeg", version: "test", configuration: "--disable-gpl",
@@ -75,5 +119,44 @@ describe("capture encoding", () => {
     const failed = runCaptureFfmpeg(process.execPath, ["-e", "process.stderr.write('e'.repeat(20000)); process.exit(2)"], new AbortController().signal);
     await expect(failed).rejects.toMatchObject({ code:"failed" });
     try { await failed; } catch (error) { expect((error as Error).message.length).toBeLessThan(16100); }
+  });
+
+  it("retries a Windows hardware frame-size rejection with system software MF without resizing", async () => {
+    const fixture = await fakeTranscoder(["[h264_mf @ 0001] could not set output type (MF_E_INVALIDMEDIATYPE)", null]);
+    const result = await fixture.run();
+    expect(result).toMatchObject({ width: 128, height: 96, mime: "video/mp4", paddedForEvenSize: false });
+    expect(fixture.calls).toHaveLength(2);
+    const hardware = fixture.calls[0], software = fixture.calls[1];
+    expect(hardware[hardware.indexOf("-hw_encoding") + 1]).toBe("1");
+    expect(software[software.indexOf("-hw_encoding") + 1]).toBe("0");
+    const normalized = [...software]; normalized[normalized.indexOf("-hw_encoding") + 1] = "1";
+    expect(normalized).toEqual(hardware);
+    expect(software[software.indexOf("-vf") + 1]).toContain("crop=128:96:20:10:exact=1");
+    expect(fixture.initialSizes).toEqual([0, 0]);
+    expect(await readFile(fixture.input, "utf8")).toBe("unchanged source");
+    expect(await readFile(fixture.output, "utf8")).toBe("complete software MP4");
+  });
+
+  it.each([
+    ["win32", "mp4", "[h264_mf @ 0001] encoder initialization failed (MF_E_TRANSFORM_TYPE_NOT_SET)"],
+    ["win32", "mp4", "[other_decoder @ 0001] failed (MF_E_INVALIDMEDIATYPE)"],
+    ["darwin", "mp4", "[h264_mf @ 0001] failed (MF_E_INVALIDMEDIATYPE)"],
+    ["win32", "webm", "[h264_mf @ 0001] failed (MF_E_INVALIDMEDIATYPE)"],
+  ] as const)("preserves unrelated %s %s errors instead of starting a software retry", async (platform, format, error) => {
+    const fixture = await fakeTranscoder([error]);
+    await expect(fixture.run(platform, format)).rejects.toMatchObject({ code: "failed", message: expect.stringContaining(error) });
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  it("cancellation after the hardware error never launches a software retry", async () => {
+    const fixture = await fakeTranscoder(["[h264_mf @ 0001] failed (MF_E_INVALIDMEDIATYPE)"], new AbortController());
+    await expect(fixture.run()).rejects.toThrow("canceled");
+    expect(fixture.calls).toHaveLength(1);
+  });
+
+  it("reports a failed system software retry without looping or hiding its error", async () => {
+    const fixture = await fakeTranscoder(["[h264_mf @ 0001] failed (MF_E_INVALIDMEDIATYPE)", "[h264_mf @ 0002] software transform unavailable"]);
+    await expect(fixture.run()).rejects.toMatchObject({ code: "failed", message: expect.stringContaining("software transform unavailable") });
+    expect(fixture.calls).toHaveLength(2);
   });
 });

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-const behavior = vi.hoisted(() => ({ calls: [] as string[][], configuration: "--disable-gpl --disable-nonfree --enable-videotoolbox", failMp4: false }));
+const behavior = vi.hoisted(() => ({ calls: [] as string[][], configuration: "--disable-gpl --disable-nonfree --enable-videotoolbox", failMp4: false, rejectSmallMfFrames: false }));
 vi.mock("electron", () => ({ app: { isPackaged: false, getAppPath: () => "/host/client" } }));
 vi.mock("node:child_process", () => {
   const execFile = vi.fn();
@@ -14,6 +14,12 @@ vi.mock("node:child_process", () => {
     if (args.includes("-encoders")) return { stdout: " V..... = Video\n V....D h264_videotoolbox\n V....D libvpx-vp9\n V....D gif\n", stderr: "" };
     if (args.includes("-filters")) return { stdout: " T.. = Timeline\n .. crop V->V\n .. palettegen V->V\n .. paletteuse VV->V\n", stderr: "" };
     if (behavior.failMp4 && args.includes("h264_videotoolbox")) throw Object.assign(new Error("codec unavailable"), { stderr: "VideoToolbox hardware unavailable" });
+    if (behavior.rejectSmallMfFrames && args.includes("h264_mf")) {
+      const size = /:s=(\d+)x(\d+):/.exec(args[args.indexOf("-i") + 1]);
+      if (!size || Number(size[1]) < 320 || Number(size[2]) < 240) {
+        throw Object.assign(new Error("codec rejected probe dimensions"), { stderr: "MF_E_INVALIDMEDIATYPE" });
+      }
+    }
     return { stdout: "", stderr: "" };
   } });
   return { execFile };
@@ -23,7 +29,7 @@ import { resolveCaptureFfmpeg } from "./encodingResources";
 const temporary: string[] = [];
 afterEach(async () => {
   for (const directory of temporary.splice(0)) await fs.rm(directory, { recursive: true, force: true });
-  behavior.calls = []; behavior.configuration = "--disable-gpl --disable-nonfree --enable-videotoolbox"; behavior.failMp4 = false;
+  behavior.calls = []; behavior.configuration = "--disable-gpl --disable-nonfree --enable-videotoolbox"; behavior.failMp4 = false; behavior.rejectSmallMfFrames = false;
 });
 async function fixture(platform: "darwin" | "win32" = "darwin") {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "capture-encoding-")); temporary.push(root);
@@ -78,5 +84,14 @@ describe("capture encoding resources", () => {
     const probe = behavior.calls.find((args) => args.includes("h264_mf"));
     expect(probe).toContain("nv12"); expect(probe).toContain("-hw_encoding");
     expect(probe?.[0]).toBe(f.binary);
+  });
+  it("Windows hardware that rejects tiny frames retains its usable MP4 capability", async () => {
+    const f = await fixture("win32"); behavior.rejectSmallMfFrames = true;
+    const resolved = await f.resolve();
+    expect(resolved?.formats).toEqual({ mp4: true, webm: true, gif: true });
+    expect(resolved?.probeErrors.mp4).toBeUndefined();
+    const probe = behavior.calls.find((args) => args.includes("h264_mf"));
+    expect(probe).toContain("color=c=black:s=320x240:r=15:d=0.15");
+    expect(probe).toContain("nv12"); expect(probe).toContain("-hw_encoding");
   });
 });

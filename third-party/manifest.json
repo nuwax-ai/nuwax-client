@@ -35,6 +35,24 @@
           "modified": false,
           "usedBy": "capture",
           "notes": "FFmpeg 的 VP9 编码器依赖；许可证全文保留 LICENSE 及 PATENTS。"
+        },
+        {
+          "id": "winpthreads",
+          "name": "MinGW-w64 Winpthreads",
+          "version": "13.0.0.r354.g40ab95d18",
+          "toolchainPackageVersion": "13.0.0.r354.g40ab95d18-1",
+          "platforms": ["win32"],
+          "license": "MIT AND BSD-3-Clause-Clear",
+          "licenseFile": "third-party/licenses/winpthreads.txt",
+          "sourceUrl": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/40ab95d18df4cce9c283bf2de275dd32b6ef0e6b",
+          "sourceArchive": "sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceFile": "resources/capture/sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceSha256": "501acc97182abb0559875ca9888e7e0b282b922eb7efe3caa1c76449eaad2322",
+          "homepage": "https://www.mingw-w64.org/",
+          "modified": false,
+          "usedBy": "capture",
+          "checkIntegrity": true,
+          "notes": "仅 Windows：静态链接的 MinGW 线程运行库。许可证全文来自所固定源码的 mingw-w64-libraries/winpthreads/COPYING，与 MSYS2 安装包一致，保留 MinGW-w64 与 Lockless Inc. 声明。构建前核对实际静态库所属包版本，拒绝与固定源码不符的工具链。"
         }
       ]
     }

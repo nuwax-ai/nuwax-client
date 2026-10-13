@@ -6,7 +6,7 @@
  */
 import { app, BrowserWindow, desktopCapturer, nativeImage, screen } from 'electron';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCaptureWindows } from '../src/main/features/capture/selectionWindows';
@@ -14,13 +14,20 @@ import { createCaptureWindows } from '../src/main/features/capture/selectionWind
 const profile = mkdtempSync(path.join(tmpdir(), 'nuwax-capture-ui-'));
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
-app.on('will-quit', () => rmSync(profile, { recursive: true, force: true }));
+const removeProfile = () => {
+  // Windows 可能直到进程退出才释放 Chromium 的 profile 文件句柄。
+  try { rmSync(profile, { recursive: true, force: true }); }
+  catch (error) { console.warn(`Capture UI profile cleanup deferred: ${profile}`, String(error)); }
+};
+app.on('will-quit', removeProfile);
 if (process.platform === 'darwin') app.setActivationPolicy('prohibited');
 const delay = () => new Promise(resolve => setTimeout(resolve, 30));
 const deadline = setTimeout(() => { console.error('Capture UI regression timed out'); app.exit(1); }, 40_000);
 
 app.whenReady().then(async () => {
   app.dock?.hide();
+  const realDisplays = screen.getAllDisplays().map(({ id, bounds, scaleFactor }) => ({ id, bounds, scaleFactor }));
+  const fixtureOrigin = screen.getPrimaryDisplay().workArea;
   // 仅替换此测试进程的展示行为，不操作用户正在验收的客户端或实际显示器。
   BrowserWindow.prototype.show = function () {};
   BrowserWindow.prototype.showInactive = function () {};
@@ -40,12 +47,19 @@ app.whenReady().then(async () => {
     while (BrowserWindow.getAllWindows().length !== 3) await delay();
     const selectors = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id);
     for (const selector of selectors) {
+      // 三屏是配置隔离测试。隐藏窗口重叠放在真实屏内，避免输入测试依赖
+      // 真机桌面的屏幕拓扑；保持各轮原始尺寸，不据此声称做了物理多屏验收。
+      selector.setBounds({ x: fixtureOrigin.x, y: fixtureOrigin.y });
       while (selector.webContents.isLoadingMainFrame()) await delay();
       await selector.webContents.executeJavaScript(`new Promise(resolve=>{const check=()=>document.querySelector('.frame')?.width===1920?resolve(true):setTimeout(check,10);check()})`);
+      // 等待隐藏 renderer 的合成帧，使 Chromium 有可命中的输入 surface。
+      await selector.webContents.capturePage();
+      await selector.webContents.executeJavaScript(`window.__captureInputEvents=[];for(const type of ['pointermove','pointerleave','mousemove','mouseleave','blur'])window.addEventListener(type,event=>{window.__captureInputEvents.push({type,target:event.target?.className,x:event.clientX,y:event.clientY});if(window.__captureInputEvents.length>12)window.__captureInputEvents.shift()},true)`);
     }
     return selectors;
   };
   const mouse = async (selector: BrowserWindow, type: Electron.MouseInputEvent['type'], x: number, y: number) => {
+    selector.webContents.focus();
     selector.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1 });
     await delay();
   };
@@ -63,6 +77,32 @@ app.whenReady().then(async () => {
   const drag = async (selector: BrowserWindow, from: [number, number], to: [number, number]) => {
     await mouse(selector, 'mouseDown', ...from); await mouse(selector, 'mouseMove', ...to); await mouse(selector, 'mouseUp', ...to);
   };
+  const clickControl = async (selector: BrowserWindow, query: string) => {
+    const point = await script(selector, `(()=>{const r=document.querySelector(${JSON.stringify(query)}).getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`);
+    await click(selector, point[0], point[1]);
+  };
+  const visible = (selector: BrowserWindow, query: string) => script(selector, `(()=>{const e=document.querySelector(${JSON.stringify(query)});return Boolean(e&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden')})()`);
+  const checkDock = async (selector: BrowserWindow) => {
+    const layout = await script(selector, `(()=>({width:innerWidth,height:innerHeight,controls:[...document.querySelectorAll('.selectionDock button,.selectionDock input')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>{const r=e.getBoundingClientRect();return {name:e.dataset.action||e.dataset.color||e.dataset.size||e.type,x:r.x,y:r.y,right:r.right,bottom:r.bottom}})}))()`);
+    assert.ok(layout.controls.length > 10, '布局检查必须覆盖实际展开的工具面板');
+    for (const control of layout.controls) {
+      assert.ok(control.x >= 0 && control.y >= 0 && control.right <= layout.width && control.bottom <= layout.height, `工具 ${control.name} 必须留在 ${layout.width}×${layout.height} 视口内: ${JSON.stringify(control)}`);
+    }
+    for (let i = 0; i < layout.controls.length; i++) for (let j = i + 1; j < layout.controls.length; j++) {
+      const a = layout.controls[i], b = layout.controls[j];
+      const overlapWidth = Math.min(a.right, b.right) - Math.max(a.x, b.x);
+      const overlapHeight = Math.min(a.bottom, b.bottom) - Math.max(a.y, b.y);
+      assert.ok(overlapWidth <= 1 || overlapHeight <= 1, `工具 ${a.name} 与 ${b.name} 不能相互遮挡`);
+    }
+  };
+  // 仅在显式指定目录时保存合成画面的截图，不采集用户桌面。
+  const saveScreenshot = async (selector: BrowserWindow, name: string) => {
+    if (!process.env.NUWAX_CAPTURE_UI_SCREENSHOTS) return;
+    await mouse(selector, 'mouseLeave', -1, -1);
+    const directory = path.resolve(process.env.NUWAX_CAPTURE_UI_SCREENSHOTS);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(path.join(directory, `${name}.png`), (await selector.webContents.capturePage()).toPNG());
+  };
 
   let pending = windows.captureStill(new AbortController().signal);
   const selectors = await prepared();
@@ -70,7 +110,9 @@ app.whenReady().then(async () => {
     if (i) await mouse(selectors[i - 1], 'mouseLeave', -1, 100);
     await mouse(selectors[i], 'mouseMove', 100, 100);
     const visible = await Promise.all(selectors.map(selector => script(selector, `!document.querySelector('.magnifier').hidden`)));
-    assert.deepEqual(visible, selectors.map((_, index) => index === i), '跨屏后只能保留当前屏幕的放大框');
+    const diagnostics = await Promise.all(selectors.map(async selector => ({ bounds: selector.getBounds(), contentBounds: selector.getContentBounds(),
+      page: await script(selector, `({width:innerWidth,height:innerHeight,frame:document.querySelector('.frame').getBoundingClientRect().toJSON(),events:window.__captureInputEvents})`) })));
+    assert.deepEqual(visible, selectors.map((_, index) => index === i), `跨屏后只能保留当前屏幕的放大框: ${JSON.stringify({ realDisplays, diagnostics })}`);
   }
   await script(selectors[2], `window.dispatchEvent(new Event('blur'))`);
   assert.equal(await script(selectors[2], `document.querySelector('.magnifier').hidden`), true);
@@ -116,6 +158,12 @@ app.whenReady().then(async () => {
   const next = (await prepared())[0];
   await tool(next, 'screen'); await delay(); await tool(next, 'text'); await click(next, 100, 100);
   await next.webContents.insertText('直接确认');
+  await clickControl(next, '.swatch[data-color="#36d5ae"]');
+  await clickControl(next, '.fontPreset[data-size="24"]');
+  assert.deepEqual(await editing(next), { focused: 'textInput', display: 'block', value: '直接确认' }, '输入中点击颜色/字号快捷按钮应保持输入焦点与未提交文字');
+  await next.webContents.insertText('继续输入');
+  assert.equal((await editing(next)).value, '直接确认继续输入');
+  await clickControl(next, '.swatch[data-color="#ff3b52"]');
   await tool(next, 'confirm');
   const directlyConfirmed = await pending;
   assert.ok(directlyConfirmed);
@@ -149,10 +197,20 @@ app.whenReady().then(async () => {
   const resizedText = await frame(textWindow); assert.notEqual(resizedText, editedText, '字号修改必须改变实际画布');
   await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), editedText);
   await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), resizedText);
+  await click(textWindow, 108, 108); await key(textWindow, 'Enter');
+  await clickControl(textWindow, '.fontPreset[data-size="24"]');
+  const presetText = await frame(textWindow); assert.notEqual(presetText, resizedText, '字号快捷按钮必须修改已选中的文字');
+  assert.equal(await script(textWindow, `document.querySelector('[data-action=fontSize]').value`), '24');
+  await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), resizedText, '字号快捷修改必须可撤销');
+  await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), presetText);
   await drag(textWindow, [108, 108], [158, 138]);
-  const movedText = await frame(textWindow); assert.notEqual(movedText, resizedText, '拖动文字应移动对象而非开启空输入框');
-  await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), resizedText);
+  const movedText = await frame(textWindow); assert.notEqual(movedText, presetText, '拖动文字应移动对象而非开启空输入框');
+  await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), presetText);
   await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), movedText);
+  await click(textWindow, 158, 138); await key(textWindow, 'Enter');
+  assert.equal(await visible(textWindow, '.fontSizeControl'), true);
+  assert.equal(await visible(textWindow, '.widthControl'), false, '文字工具不应显示线宽');
+  await checkDock(textWindow); await saveScreenshot(textWindow, 'annotation-text');
   const expectedText = nativeImage.createFromDataURL(movedText).toBitmap();
   await tool(textWindow, 'confirm');
   const textResult = await pending; assert.ok(textResult);
@@ -182,6 +240,17 @@ app.whenReady().then(async () => {
     await script(shapeWindow, `(()=>{const input=document.querySelector('input[type=range]');input.value='6';input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'));})()`);
     if (name !== 'mosaic') await script(shapeWindow, `(()=>{const input=document.querySelector('input[type=color]');input.value='#0088ff';input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'));})()`);
     const styled = await frame(shapeWindow); assert.notEqual(styled, resized, `${name} should update its style`);
+    if (name === 'rectangle') {
+      await clickControl(shapeWindow, '.swatch[data-color="#36d5ae"]');
+      const recolored = await frame(shapeWindow); assert.notEqual(recolored, styled, '颜色快捷按钮必须修改选中图形的实际像素');
+      const pixels = nativeImage.createFromDataURL(recolored).toBitmap();
+      let green = 0;
+      for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 174 && pixels[i + 1] === 213 && pixels[i + 2] === 54) green++;
+      assert.ok(green > 20, '图形应使用快捷按钮的绿色');
+      await tool(shapeWindow, 'undo'); assert.equal(await frame(shapeWindow), styled, '颜色快捷修改必须可撤销');
+      await click(shapeWindow, 220, 190);
+      await checkDock(shapeWindow); await saveScreenshot(shapeWindow, 'annotation-shape');
+    }
     await tool(shapeWindow, 'deleteAnnotation'); assert.equal(await frame(shapeWindow), blank, `${name} should be removable`);
     await tool(shapeWindow, 'undo'); assert.equal(await frame(shapeWindow), styled, `${name} deletion should undo`);
     const expected = nativeImage.createFromDataURL(styled).toBitmap();
@@ -195,10 +264,71 @@ app.whenReady().then(async () => {
     console.log('PASS edit annotation', name);
   }
 
+  // 独立的窄屏/底边选区场景，不改变前面原始图像尺寸与导出像素断言。
+  for (const display of displays) {
+    display.bounds.width = display.size.width = display.workArea.width = 480;
+  }
   pending = windows.captureStill(new AbortController().signal);
-  await key((await prepared())[2], 'Escape');
+  const narrow = (await prepared())[2];
+  await drag(narrow, [410, 500], [470, 570]);
+  assert.equal(await script(narrow, 'innerWidth'), 480);
+  await tool(narrow, 'select');
+  assert.equal(await visible(narrow, '.toolbar.properties'), false, '未选中对象的选择工具应隐藏样式行');
+  await tool(narrow, 'text');
+  assert.equal(await visible(narrow, '.toolbar.properties'), true);
+  assert.equal(await visible(narrow, '.fontSizeControl'), true);
+  assert.equal(await visible(narrow, '.widthControl'), false);
+  await checkDock(narrow); await saveScreenshot(narrow, 'annotation-narrow');
+  await tool(narrow, 'mosaic');
+  assert.equal(await visible(narrow, '.palette'), false, '马赛克应隐藏颜色选择');
+  assert.equal(await visible(narrow, '.fontSizeControl'), false);
+  assert.equal(await visible(narrow, '.widthControl'), true);
+  await checkDock(narrow);
+  await tool(narrow, 'rectangle');
+  assert.equal(await visible(narrow, '.palette'), true);
+  assert.equal(await visible(narrow, '.fontSizeControl'), false);
+  assert.equal(await visible(narrow, '.widthControl'), true);
+  await checkDock(narrow);
+  await tool(narrow, 'select');
+  await key(narrow, 'Escape');
   assert.equal(await pending, null); assert.equal(BrowserWindow.getAllWindows().length, 0);
+
+  // 只创建隔离的控制条/区域边框，不开启媒体流或真实录屏。
+  const recordingControls = windows.createRecordingControls({
+    sourceId: 'screen:1', sourceKind: 'screen', sourceSize: { width: 1920, height: 1200 },
+    crop: { x: 160, y: 160, width: 1280, height: 640 }, displayBounds: { ...displays[0].bounds },
+    displayId: '1', hdrToneMapped: false,
+  }, () => {});
+  try {
+    await delay(); // 工厂在微任务中导航，先等待这次导航开始。
+    const [controlWindow, borderWindow] = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id);
+    for (const [window, className] of [[controlWindow, 'controlBody'], [borderWindow, 'border']] as const) {
+      while (window.webContents.isLoadingMainFrame()) await delay();
+      await script(window, `new Promise(resolve=>{const check=()=>document.body.classList.contains('${className}')?resolve(true):setTimeout(check,10);check()})`);
+    }
+    assert.equal(await script(borderWindow, `getComputedStyle(document.body).borderRadius`), '0px', '录制区域边框必须保持直角');
+    for (const state of ['recording', 'paused', 'encoding'] as const) {
+      recordingControls.update({ state, elapsedMs: 65_000 });
+      await script(controlWindow, `new Promise(resolve=>{const check=()=>document.querySelector('.controlBar').dataset.state==='${state}'?resolve(true):setTimeout(check,10);check()})`);
+      const controls = await script(controlWindow, `(()=>({width:innerWidth,height:innerHeight,buttons:[...document.querySelectorAll('.controlBar button')].map(e=>{const r=e.getBoundingClientRect();return {disabled:e.disabled,x:r.x,y:r.y,right:r.right,bottom:r.bottom}})}))()`);
+      assert.deepEqual([controls.width, controls.height], [440, 60]);
+      assert.deepEqual(controls.buttons.map((button: { disabled: boolean }) => button.disabled), [state === 'encoding', state === 'encoding', false], `${state} 时暂停/停止/取消按钮状态必须正确`);
+      for (let i = 0; i < controls.buttons.length; i++) {
+        const button = controls.buttons[i];
+        assert.ok(button.right > button.x && button.bottom > button.y && button.x >= 0 && button.y >= 0 && button.right <= 440 && button.bottom <= 60, `${state} 控制条按钮必须完整显示`);
+        for (let j = i + 1; j < controls.buttons.length; j++) {
+          const other = controls.buttons[j];
+          assert.ok(Math.min(button.right, other.right) - Math.max(button.x, other.x) <= 1 || Math.min(button.bottom, other.bottom) - Math.max(button.y, other.y) <= 1, `${state} 控制条按钮不能相互遮挡`);
+        }
+      }
+      if (state === 'recording') await saveScreenshot(controlWindow, 'recording-controls');
+    }
+    assert.equal(borderWindow.isDestroyed(), true, '编码阶段应关闭录制区域边框');
+  } finally {
+    recordingControls.dispose();
+  }
+  assert.equal(BrowserWindow.getAllWindows().length, 0, '控制条回归结束应关闭所有隔离窗口');
   windows.dispose(); clearTimeout(deadline);
-  console.log('PASS capture UI: text re-edit/font size, shape editing, undo/redo, PNG, three-display magnifier');
-  app.quit();
+  console.log('PASS capture UI: text re-edit/font presets, shape/color editing, undo/redo, PNG, narrow-screen layout, recording controls, synthetic three-display magnifier');
+  removeProfile(); app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

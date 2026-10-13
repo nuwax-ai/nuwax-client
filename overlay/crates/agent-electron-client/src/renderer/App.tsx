@@ -85,6 +85,7 @@ import NuwaxHostWebview, {
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
 import { CaptureLauncher } from "./features/capture";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";
 import { ModeNavIcon } from "./components/icons/ModeNavIcon";
 import { createLogger } from "./services/utils/rendererLog";
@@ -635,6 +636,13 @@ function App() {
   const [captureAvailable, setCaptureAvailable] = useState(false);
   const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
   const captureAfterSettingsClose = useRef<(() => void) | null>(null);
+  const captureMenuHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
+  const handleCaptureMenuHandlerChange = useCallback((handler: ((action: CaptureMenuAction) => void) | null) => {
+    captureMenuHandler.current = handler;
+  }, []);
+  const handleCaptureMenu = useCallback((action: CaptureMenuAction) => {
+    captureMenuHandler.current?.(action);
+  }, []);
   /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
   const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
   // 保持 isAuthLoggedInRef 与 state 同步（restartAllServices 空依赖闭包读 ref）
@@ -1935,6 +1943,8 @@ function App() {
               onOpenSearch={handleMenuOpenSearch}
               onModifyWorkspace={handleMenuModifyWorkspace}
               onOpenWorkspace={handleMenuOpenWorkspace}
+              captureAvailable={APP_NAME_IDENTIFIER === "nuwax" && captureAvailable}
+              onCapture={handleCaptureMenu}
               statusEntry={
                 // 单一语义：仅已登录后的确定终态故障显示红点。未登录、启动中、
                 // 主动停止、单轮探测抖动与正常运行均不渲染。
@@ -2262,6 +2272,7 @@ function App() {
               </Modal>
               {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
                 panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
+                onMenuHandlerChange={handleCaptureMenuHandlerChange}
                 onCaptureStart={() => {
                   if (!settingsModalOpen) return Promise.resolve();
                   return new Promise<void>((resolve) => {
