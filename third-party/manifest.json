@@ -1,7 +1,10 @@
 {
   "$comment": "开源组件声明清单。许可证由 scripts/generate-third-party-notices.mjs 从文件/包元数据读取；这里只登记随包的非 npm 组件（resources/* 目录）及策略。严格模式（pack/发版）下，未登记、读不出许可证、缺源码地址的条目都会让构建失败。",
   "schema": 1,
-  "npmRoots": [".", "nuwa-electron-shell/crates/agent-electron-client"],
+  "npmRoots": [
+    ".",
+    "nuwa-electron-shell/crates/agent-electron-client"
+  ],
   "npmExtra": [],
   "resources": {
     "capture": {
@@ -37,7 +40,142 @@
           "notes": "FFmpeg 的 VP9 编码器依赖；许可证全文保留 LICENSE 及 PATENTS。"
         }
       ]
+    },
+    "uv": {
+      "id": "uv",
+      "name": "uv",
+      "version": "0.10.8",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/uv.txt",
+      "sourceUrl": "https://github.com/astral-sh/uv/tree/0.10.8",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "ripgrep": {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "version": "14.1.1",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/ripgrep.txt",
+      "sourceUrl": "https://github.com/BurntSushi/ripgrep/tree/14.1.1",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "node": {
+      "id": "node",
+      "name": "Node.js",
+      "version": "24.14.0",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/node.txt",
+      "sourceUrl": "https://github.com/nodejs/node/tree/v24.14.0",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "ttyd": {
+      "id": "ttyd",
+      "name": "ttyd",
+      "version": "1.7.7",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/ttyd.txt",
+      "sourceUrl": "https://github.com/tsl0922/ttyd/tree/1.7.7",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "lanproxy": {
+      "id": "lanproxy",
+      "name": "Nuwax lanproxy client",
+      "version": "484ff6b3",
+      "license": "Apache-2.0",
+      "licenseFile": "third-party/licenses/nuwax-shell.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/nuwa-electron-shell/tree/484ff6b36e73c21c0a5dc1b01aeae9fb6d07c106/crates/agent-electron-client/src/main/services/lanproxy",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "mcp-proxy-ts": {
+      "id": "mcp-proxy-ts",
+      "name": "Nuwax MCP proxy",
+      "version": "1.5.4",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/mcp-proxy-ts.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/mcp-proxy-ts",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "nuwaxcode": {
+      "id": "nuwaxcode",
+      "name": "Nuwaxcode",
+      "version": "1.17.11",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/nuwaxcode.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/nuwaxcode/tree/67aec2212010d67775c35e696d8b8b54902eb338",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "nuwax-codex-acp-ts": {
+      "id": "nuwax-codex-acp-ts",
+      "name": "Nuwax Codex ACP adapter",
+      "version": "1.2.8",
+      "license": "Apache-2.0",
+      "licenseFile": "third-party/licenses/codex-acp-ts.txt",
+      "sourceUrl": "https://github.com/agentclientprotocol/codex-acp",
+      "modified": true,
+      "checkIntegrity": true
+    },
+    "nuwax-file-server": {
+      "id": "nuwax-file-server",
+      "name": "Nuwax file server",
+      "version": "1.5.5",
+      "license": "Apache-2.0",
+      "licenseFile": "third-party/licenses/nuwax-file-server.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/nuwax-file-server/tree/02bec84f6e749b523936c5a11bb4e6630b4bde49",
+      "modified": false,
+      "checkIntegrity": true,
+      "notes": "The source distribution LICENSE is Apache-2.0; its package.json currently labels the package ISC. This notice includes the actual source LICENSE rather than replacing it with package metadata."
+    },
+    "claude-code-acp-ts": {
+      "id": "claude-code-acp-ts",
+      "name": "Claude ACP adapter",
+      "version": "0.65.0",
+      "license": "Apache-2.0",
+      "licenseFile": "third-party/licenses/claude-code-acp-ts.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/claude-code-acp-ts/tree/6abd56c81b3cbc5613256f4e8301671c2b22cc81",
+      "modified": false,
+      "checkIntegrity": true
+    },
+    "computer-use": {
+      "id": "computer-use",
+      "name": "Nuwax Computer Use helper",
+      "version": "0.28.2",
+      "license": "MIT",
+      "licenseFile": "third-party/licenses/computer-use.txt",
+      "sourceUrl": "https://github.com/trycua/cua/tree/625118a9076e51da2f57b6a5d475972030197443",
+      "modified": true,
+      "checkIntegrity": true,
+      "notes": "Nuwax identity and private-endpoint patches: docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch in the corresponding nuwax-client source revision."
+    },
+    "git": {
+      "id": "git-for-windows",
+      "name": "Git for Windows",
+      "version": "2.54.0.windows.1",
+      "license": "GPL-2.0-only",
+      "licenseFile": "third-party/licenses/git-for-windows.txt",
+      "sourceUrl": "https://github.com/git-for-windows/git/tree/v2.54.0.windows.1",
+      "modified": false,
+      "checkIntegrity": true,
+      "notes": "Existing PortableGit CLI distribution; keep its complete bundled copyright/license directories. The release source is https://github.com/git-for-windows/git/archive/refs/tags/v2.54.0.windows.1.tar.gz ."
     }
   },
-  "allow": []
+  "allow": [
+    {
+      "id": "git-for-windows",
+      "reason": "Existing separately executed Git/Bash CLI payload, not linked into Electron. Preserve its GPL-2.0 terms, complete upstream PortableGit notices and corresponding version source reference; this entry does not relicense Git or waive unknown licenses."
+    }
+  ],
+  "npmEvidence": {
+    "@nuwax-ai/agent-kit@0.4.0": {
+      "licenseFile": "third-party/licenses/nuwax-shell.txt",
+      "sourceUrl": "https://github.com/nuwax-ai/nuwa-electron-shell/tree/484ff6b36e73c21c0a5dc1b01aeae9fb6d07c106/crates/agent-kit",
+      "reason": "Workspace package shipped from the pinned Apache-2.0 monorepo; npm package omits its root license metadata."
+    }
+  }
 }

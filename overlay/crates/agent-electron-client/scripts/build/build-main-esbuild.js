@@ -86,6 +86,7 @@ esbuild
     entryPoints: {
       'main/main': 'src/main/main.ts',
       'preload/index': 'src/preload/index.ts',
+      'preload/cuaControls': 'src/preload/cuaControls.ts',
       'preload/webviewPerfBridge': 'src/preload/webviewPerfBridge.ts',
       ...(fs.existsSync(path.join(root, 'src/preload/features/capture/windowPreload.ts'))
         ? { 'preload/captureWindow': 'src/preload/features/capture/windowPreload.ts' } : {}),

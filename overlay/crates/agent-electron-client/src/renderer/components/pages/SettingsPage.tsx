@@ -13,9 +13,11 @@
  */
 
 import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { CuaControls } from "../CuaControls";
 import {
   AutoComplete,
   Button,
+  Space,
   Input,
   InputNumber,
   Select,
@@ -174,6 +176,7 @@ export default function SettingsPage() {
     baseUrl: string;
     model: string;
     apiKey: string;
+    hasApiKey?: boolean;
   } | null>(null);
   const [cuaVlmTesting, setCuaVlmTesting] = useState(false);
 
@@ -240,17 +243,24 @@ export default function SettingsPage() {
     baseUrl?: string;
     model?: string;
     apiKey?: string;
+    clearApiKey?: boolean;
   }) => {
     try {
-      await window.electronAPI!.computerUse.setVlmConfig(patch);
+      const result = await window.electronAPI!.computerUse.setVlmConfig(patch);
+      if (!result.success) throw new Error("configSaveFailed");
+      const saved = await window.electronAPI!.computerUse.getVlmConfig();
+      setCuaVlm((value) => value ? { ...value, hasApiKey: saved.hasApiKey,
+        apiKey: patch.clearApiKey || value.apiKey === patch.apiKey ? "" : value.apiKey } : value);
+      return true;
     } catch {
       message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+      return false;
     }
   };
 
   const handleVlmTest = async () => {
     // 先落当前草稿再测，避免「看起来填了但没存」的假成功
-    if (cuaVlm) await commitVlm(cuaVlm);
+    if (cuaVlm && !(await commitVlm(cuaVlm))) return;
     setCuaVlmTesting(true);
     try {
       const r = await window.electronAPI!.computerUse.testVlm();
@@ -448,6 +458,12 @@ export default function SettingsPage() {
   useEffect(() => {
     loadCuaStatus();
     loadFdaStatus();
+    const refresh = () => {
+      void window.electronAPI?.computerUse?.getStatus().then(setCuaStatus).catch(() => undefined);
+    };
+    window.electronAPI?.on("cua:runtime", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { window.electronAPI?.off("cua:runtime", refresh); window.removeEventListener("focus", refresh); };
   }, [loadCuaStatus, loadFdaStatus]);
 
   // ========== 服务域名：行内提交 → 确认 → configureServerHost 事务 ==========
@@ -915,6 +931,7 @@ export default function SettingsPage() {
           <div className={styles.groupTitle}>
             {t("Claw.Settings.computerUse.title")}
           </div>
+          <CuaControls api={window.electronAPI?.computerUse} t={t} />
           <div className={styles.groupCard}>
             <SettingsRow
               label={t("Claw.Settings.computerUse.enable")}
@@ -1027,7 +1044,9 @@ export default function SettingsPage() {
               label={t("Claw.Settings.computerUse.vlmApiKey")}
               desc={t("Claw.Settings.computerUse.vlmApiKeyDesc")}
               control={
+                <Space>
                 <Input.Password
+                  placeholder={cuaVlm?.hasApiKey ? t("Claw.Cua.keySaved") : ""}
                   style={{ width: 280 }}
                   value={cuaVlm?.apiKey ?? ""}
                   disabled={!cuaVlm}
@@ -1040,6 +1059,10 @@ export default function SettingsPage() {
                     cuaVlm && commitVlm({ apiKey: cuaVlm.apiKey })
                   }
                 />
+                <Button size="small" disabled={!cuaVlm?.hasApiKey} onClick={() => void commitVlm({ clearApiKey: true })}>
+                  {t("Claw.Cua.clearKey")}
+                </Button>
+                </Space>
               }
             />
             <SettingsRow

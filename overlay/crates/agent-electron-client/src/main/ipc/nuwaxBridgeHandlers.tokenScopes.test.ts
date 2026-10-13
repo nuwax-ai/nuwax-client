@@ -1,3 +1,5 @@
+vi.mock("../services/cua/computerUse", () => ({ suspendCua: vi.fn(async () => undefined), ensureCuaOnBoot: vi.fn(async () => undefined), registerCuaQuitCleanup: vi.fn() }));
+vi.mock("./cuaRuntimeHandlers", () => ({ registerCuaRuntimeHandlers: vi.fn() }));
 /** nuwaxBridgeHandlers 的 cookie 会话、升级和业务域切换回归。 */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

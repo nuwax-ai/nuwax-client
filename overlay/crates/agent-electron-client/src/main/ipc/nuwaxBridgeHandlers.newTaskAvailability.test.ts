@@ -1,3 +1,4 @@
+vi.mock("./cuaRuntimeHandlers", () => ({ registerCuaRuntimeHandlers: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../services/imReceiverRuntime", () => ({
   initIMReceiver: vi.fn(), startIMReceiver: vi.fn(), stopIMReceiver: vi.fn(),

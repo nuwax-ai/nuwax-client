@@ -59,6 +59,14 @@ export class TrayManager {
   private baseIcon: Electron.NativeImage | null = null;
   private badgeIcon: Electron.NativeImage | null = null;
   private badgeLabel = "";
+  private computerUseStopAction: (() => void) | null = null;
+
+  setComputerUseStopAction(action: (() => void) | null): void {
+    if (this.computerUseStopAction === action) return;
+    this.computerUseStopAction = action;
+    this.updateMenu();
+  }
+
   private recordingStopAction: (() => void) | null = null;
 
   setRecordingStopAction(action: (() => void) | null): void {
@@ -195,6 +203,7 @@ export class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
+      ...(this.computerUseStopAction ? [{ label: t("Claw.Cua.stop"), click: () => this.computerUseStopAction?.() }, { type: "separator" as const }] : []),
       ...(this.recordingStopAction ? [{
         label: t("Claw.Capture.stopRecording"),
         click: () => this.recordingStopAction?.(),

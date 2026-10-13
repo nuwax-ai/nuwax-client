@@ -84,6 +84,7 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
+import { CuaControls } from "./components/CuaControls";
 import { CaptureLauncher } from "./features/capture";
 import MCPSettings from "./components/settings/MCPSettings";
 import { ModeNavIcon } from "./components/icons/ModeNavIcon";
@@ -1901,6 +1902,7 @@ function App() {
           value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
         >
           <div className="app-container">
+            {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} compact />}
             {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
                 加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
             {loadingCovered && <AppIconLoading overlay />}

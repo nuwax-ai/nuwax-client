@@ -13,7 +13,7 @@ import { currentTicket } from "../services/commercialTicketSession";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
-import { stopDaemon } from "../services/cua/computerUse";
+import { suspendCua } from "../services/cua/computerUse";
 import {
   AuthLifecycle,
   setCommercialLifecycle,
@@ -340,13 +340,20 @@ export function initializeCommercialAuth(
       trace?.({ attempt: registrationAttempt, stage: "reg-committed", origin: value.origin });
       // 注册返回的 ticket 不覆盖 ACCESS_TOKEN；商业版仅由网页登录建立登录态。
     },
+    invalidated: () => { void suspendCua("sessionEnded").catch(() => undefined); },
     start,
-    stop,
+    stop: async () => {
+      const cuaStop = suspendCua("sessionEnded");
+      const results = await Promise.allSettled([stop(), cuaStop]);
+      if (results[0].status === "rejected") throw results[0].reason;
+      if (results[1].status === "rejected") return { success: false, error: "Computer Use cleanup failed" };
+      return results[0].value;
+    },
     changed,
     // 退出期附加清理：CUA daemon 不随引擎树/进程注册表回收（detached/PPID=1），
     // 由 before-quit 的 cleanupAllProcesses 经本钩子停止（will-quit 钩子在
     // app.exit(0) 主退出路径上不触发，双触发幂等）。
-    stopExtras: () => stopDaemon(),
+    stopExtras: () => suspendCua("appQuit"),
   });
   setCommercialLifecycle(flow);
   return flow;

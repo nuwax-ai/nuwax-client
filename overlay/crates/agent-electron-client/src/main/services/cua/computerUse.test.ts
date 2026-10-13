@@ -6,6 +6,7 @@ import path from "node:path";
 
 const mocks = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
+  settingFailure: false,
   proxySync: vi.fn(),
   spawnCalls: [] as Array<{
     cmd: string;
@@ -48,12 +49,24 @@ vi.mock("electron", () => ({
     on: vi.fn(),
   },
 }));
+vi.mock("../system/binaryLocator", () => ({ getNodeBinPathWithFallback: () => "/bundled/node" }));
+vi.mock("./mcpGateway", () => ({
+  CUA_STDIO_RELAY: "relay",
+  CuaMcpGateway: class {
+    ready = false;
+    async listen(socket: string) { this.ready = true; if (!socket.startsWith("\\\\")) fs.writeFileSync(socket, ""); }
+    async close() { this.ready = false; }
+    cancelPending() {}
+    pauseTransports() {}
+    async resumeTransports() {}
+  },
+}));
 vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../db", () => ({
   readSetting: (k: string) => mocks.settings.get(k) ?? null,
-  writeSetting: (k: string, v: unknown) => void mocks.settings.set(k, v),
+  writeSetting: (k: string, v: unknown) => { if (mocks.settingFailure) return false; mocks.settings.set(k, v); return true; },
   getDb: () => ({
     prepare: () => ({
       // mcp_local_config 原始 JSON 读写与 readSetting/writeSetting 同源（Map 后端）
@@ -117,7 +130,7 @@ vi.mock("node:net", () => ({
           return socket;
         },
         write: (payload: string) => {
-          const request = JSON.parse(payload) as { method: string; args?: { nuwax_nonce?: string } };
+          const request = JSON.parse(payload) as { method: string; name?: string; args?: { nuwax_nonce?: string } };
           let reply: unknown = { ok: false };
           if (request.method === "metadata") {
             if (request.args?.nuwax_nonce) {
@@ -135,6 +148,8 @@ vi.mock("node:net", () => ({
               managed_policy_valid: mocks.policyActive,
               managed_policy_sha256: mocks.policyPath ? policyHash(mocks.policyPath) : "",
             } };
+          } else if (request.method === "call" && request.name === "list_windows") {
+            reply = { ok: true, result: { structuredContent: { windows: [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
           } else if (request.method === "call") {
             reply = mocks.permissionGateAttempts-- > 0
               ? { ok: false, error: "permissions_pending" }
@@ -208,6 +223,7 @@ function readMcpServers(): Record<string, { command?: string; args?: string[]; e
 
 beforeEach(() => {
   mocks.settings.clear();
+  mocks.settingFailure = false;
   mocks.proxySync.mockReset().mockResolvedValue(undefined);
   mocks.spawnCalls.length = 0;
   mocks.execCalls.length = 0;
@@ -234,14 +250,13 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
     await syncCuaMcpConfig(true);
     const entry = readMcpServers().cua;
     expect(entry).toBeTruthy();
-    expect(entry!.command).toBe(
-      path.join(stableHelperPath(), "Contents", "MacOS", "Nuwax Computer Use"),
-    );
-    expect(entry!.args).toEqual(["mcp", "--socket", expect.any(String)]);
+    expect(entry!.command).toBe("/bundled/node");
+    expect(entry!.args).toEqual(["-e", "relay"]);
     expect(entry!.allowTools).toContain("click");
     expect(entry!.allowTools).not.toContain("check_for_update");
-    expect(entry!.denyTools).toEqual(["check_for_update", "install_ffmpeg"]);
-    expect(entry!.env?.CUA_DRIVER_NUWAX_TOKEN_FILE).toBe(endpointTokenFile());
+    expect(entry!.allowTools).not.toContain("replay_trajectory");
+    expect(entry!.denyTools).toEqual(["check_for_update", "install_ffmpeg", "replay_trajectory"]);
+    expect(entry!.env?.NUWAX_CUA_GATEWAY_TOKEN).toBe(endpointTokenFile());
     expect(mocks.proxySync).toHaveBeenCalledTimes(1);
   });
 
@@ -344,7 +359,8 @@ describe("cua 开关与启动收敛", () => {
 
     mocks.permissionGranted = false;
     const revoked = await getCuaStatus();
-    expect(revoked.enabled).toBe(false);
+    expect(revoked.enabled).toBe(true);
+    expect(revoked.running).toBe(false);
     expect(readMcpServers().cua).toBeUndefined();
   });
 
@@ -442,6 +458,48 @@ describe("cua 开关与启动收敛", () => {
     expect(final.mcpInjected).toBe(false);
   });
 
+  it("登录失效在启动队列等待期间同步撤销，并保留用户开关偏好", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.settings.set("step1_config", { computerUseEnabled: true });
+    mocks.permissionGranted = true;
+    mocks.autoReady = true;
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    mocks.proxySync.mockImplementation(async (servers: Record<string, unknown>) => {
+      if (servers.cua) { entered(); await blocked; }
+    });
+    const boot = ensureCuaOnBoot();
+    await reached;
+    const stopping = cuaModule.suspendCua("sessionEnded");
+    expect(cuaModule.getCuaRuntime()).toMatchObject({ phase: "stopped", reason: "sessionEnded", controlPending: true });
+    release();
+    await Promise.all([boot, stopping]);
+    expect(await getCuaStatus()).toMatchObject({ enabled: true, running: false, mcpInjected: false });
+    expect(cuaModule.getCuaRuntime().controlPending).toBe(false);
+  });
+
+  it("恢复就绪的迟到结果不能覆盖更新的停止命令", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.settings.set("step1_config", { computerUseEnabled: true });
+    mocks.permissionGranted = true;
+    mocks.autoReady = true;
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    mocks.proxySync.mockImplementation(async (servers: Record<string, unknown>) => {
+      if (servers.cua) { entered(); await blocked; }
+    });
+    const recovering = cuaModule.recoverCua();
+    await reached;
+    const stopping = cuaModule.stopCuaTask();
+    release();
+    expect((await recovering).success).toBe(false);
+    expect((await stopping).success).toBe(true);
+    expect(cuaModule.getCuaRuntime()).toMatchObject({ phase: "stopped", reason: "userStopped" });
+    expect(await getCuaStatus()).toMatchObject({ enabled: true, running: false, mcpInjected: false });
+  });
+
   it("策略握手未生效→拒绝开启、清理 daemon 和 MCP", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true;
@@ -454,12 +512,13 @@ describe("cua 开关与启动收敛", () => {
     expect(readMcpServers().cua).toBeUndefined();
   });
 
-  it("启动收敛只做无提示探测，撤权时自动关闭", async () => {
+  it("启动收敛只做无提示探测，撤权时停止执行但保留用户偏好", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.settings.set("step1_config", { computerUseEnabled: true });
     mocks.autoReady = true;
     await ensureCuaOnBoot();
-    expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseEnabled).toBe(false);
+    expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseEnabled).toBe(true);
+    expect(readMcpServers().cua).toBeUndefined();
     expect(mocks.spawnCalls.some((c) => c.args.includes("__permissions-host-request"))).toBe(false);
   });
 
@@ -660,7 +719,44 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
     expect(call!.args).toContain("unrestricted");
     expect(call!.args).toContain("--dangerously-bypass-approvals");
     const policy = fs.readFileSync(call!.env!.CUA_DRIVER_MANAGED_POLICY_FILE!, "utf8");
-    expect(policy).toContain("    - click");
-    expect(policy).toContain("    - check_for_update");
+    expect(JSON.parse(policy).allow.tools).toContain("click");
+    expect(JSON.parse(policy).deny.tools).toContain("check_for_update");
+  });
+});
+
+
+describe("cua window selection lifecycle", () => {
+  it("validates a live target, persists only scope kind and rejects a failed preference write", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await import("./computerUse");
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    expect(await cuaModule.listCuaWindows()).toEqual([{ pid: 25, windowId: 50, label: "Fixture — Document" }]);
+    expect((await cuaModule.setCuaScope({ kind: "window", pid: 25, windowId: 999 })).error).toBe("targetClosed");
+    const result = await cuaModule.setCuaScope({ kind: "window", pid: 25, windowId: 50 });
+    expect(result.success).toBe(true);
+    expect(result.runtime.scope).toEqual({ kind: "window", pid: 25, windowId: 50, label: "Fixture — Document" });
+    expect((mocks.settings.get("step1_config") as any).computerUseScopeKind).toBe("window");
+    expect(JSON.stringify(mocks.settings.get("step1_config"))).not.toContain("Document");
+    const policy = JSON.parse(fs.readFileSync(mocks.policyPath, "utf8"));
+    expect(policy.allow.rules[0].constraints.window_id.allowed).toEqual([50]);
+    mocks.settingFailure = true;
+    expect((await cuaModule.setCuaScope({ kind: "desktop" })).error).toBe("scopeSaveFailed");
+    expect(cuaModule.getCuaRuntime().scope?.kind).toBe("window");
+    mocks.settingFailure = false; await setCuaEnabled(false);
+  });
+  it("restores a window preference without reusing old native IDs or broadening to desktop", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await import("./computerUse");
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    mocks.settings.set("step1_config", { computerUseEnabled: true, computerUseScopeKind: "window" });
+    await ensureCuaOnBoot();
+    expect(cuaModule.getCuaRuntime().scope).toEqual({ kind: "window", pid: 0, windowId: 0, label: "" });
+    const policy = JSON.parse(fs.readFileSync(mocks.policyPath, "utf8"));
+    expect(policy.allow.tools).not.toContain("click");
+    expect(policy.allow.rules[0].constraints.pid.allowed).toEqual([0]);
+    await setCuaEnabled(false);
   });
 });

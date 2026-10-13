@@ -45,7 +45,7 @@ vi.mock("../services/system/deviceId", () => ({
 }));
 // stopExtras 钩子引入的传递依赖：mock 掉避免拖入 cua 模块求值链
 vi.mock("../services/cua/computerUse", () => ({
-  stopDaemon: vi.fn(async () => undefined),
+  suspendCua: vi.fn(async () => undefined),
 }));
 vi.mock("os", () => ({
   hostname: () => "fengfei-mac-xx.local",
@@ -419,8 +419,8 @@ describe("stopExtras — 退出期附加清理接线", () => {
   it("flow.stopExtras() 触达 CUA daemon 停止钩子（CUA daemon 不随引擎树回收，须经此钩子）", async () => {
     const { flow } = fixture();
     await flow.stopExtras();
-    const { stopDaemon } = await import("../services/cua/computerUse");
-    expect(stopDaemon).toHaveBeenCalledTimes(1);
+    const { suspendCua } = await import("../services/cua/computerUse");
+    expect(suspendCua).toHaveBeenCalledWith("appQuit");
   });
 });
 
