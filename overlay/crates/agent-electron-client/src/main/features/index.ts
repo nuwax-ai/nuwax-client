@@ -5,7 +5,7 @@ import { registerDesktopFeatures, type RegisteredFeatures } from "./_kit/registe
 import { createScratchDir } from "./_kit/scratchDir";
 import { createTrustedIpc, type IpcMainLike } from "./_kit/trustedIpc";
 import type { DesktopFeature, FeatureContext, FeatureLogger, FeatureWorkspaceServices } from "./_kit/types";
-import { authorizeLocalFilesRequest, localFilesFeature } from "./local-files";
+import { authorizeLocalFilesRequest, isLocalFilesRequestSource, localFilesFeature } from "./local-files";
 
 export const desktopFeatures: readonly DesktopFeature[] = [localFilesFeature];
 export interface StartFeaturesOptions {
@@ -60,3 +60,6 @@ export async function disposeDesktopFeatures(): Promise<void> {
 export function authorizeDesktopFeatureRequest(details: OnBeforeRequestListenerDetails): boolean | undefined {
   return authorizeLocalFilesRequest(details);
 }
+
+/** Share preview provenance with the existing credential-filtering listener. */
+export const isDesktopFeatureRequestSource = isLocalFilesRequestSource;

@@ -2,6 +2,8 @@
 
 日期：2026-10-12。开发已完成，真实业务账户、安装包与 Windows 验收尚未完成。
 
+后续验收新增 5 个问题及其修复、最新提交和验证结果见 [20261013-local-file-access-fixes.md](./20261013-local-file-access-fixes.md)；本文件保留首次实施时的历史记录。
+
 ## 交付与隔离
 
 - 托管 worktree：`/Users/apple/.codex/worktrees/local-file-access/nuwax-client`。

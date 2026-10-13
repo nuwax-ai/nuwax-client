@@ -174,9 +174,10 @@ try {
   assert.ok(playback.duration>=3.9);assert.ok(playback.before>0.1);assert.ok(playback.after>2.5);assert.equal(playback.width,160);assert.equal(playback.height,90);assert.ok(playback.pixel[0]>150&&playback.pixel[1]<80&&playback.pixel[2]<80);
   pass('real video element decodes H.264, plays and seeks through the local protocol',{fixture:'ffmpeg-generated four-second H.264 MP4',duration:playback.duration,playedTo:playback.before,soughtTo:playback.after,decodedPixel:playback.pixel});
   const zipPath=path.join(workspace,'complete.zip');await fs.writeFile(zipPath,'old fixture output');
+  const workspaceAlias=path.join(temp,'workspace-alias');await fs.symlink(workspace,workspaceAlias,process.platform==='win32'?'junction':'dir');
   const originalSaveDialog=dialog.showSaveDialog;
   let exported;
-  try{dialog.showSaveDialog=async()=>({canceled:false,filePath:zipPath});exported=await localCall(owner,'exportWorkspace',bridgeContext.contextId,{fileName:'complete.zip',operationId:'fixture-export'});}finally{dialog.showSaveDialog=originalSaveDialog;}
+  try{dialog.showSaveDialog=async()=>({canceled:false,filePath:path.join(workspaceAlias,'complete.zip')});exported=await localCall(owner,'exportWorkspace',bridgeContext.contextId,{fileName:'complete.zip',operationId:'fixture-export'});}finally{dialog.showSaveDialog=originalSaveDialog;}
   assert.equal(exported.success,true);assert.equal(exported.data.canceled,false);
   const zip=new AdmZip(zipPath);const zipNames=zip.getEntries().map(entry=>entry.entryName);
   assert.equal(zip.readAsText('workspace/.hidden/note.txt'),'hidden fixture');assert.ok(zipNames.includes('workspace/empty/'));
@@ -187,7 +188,7 @@ try {
   assert.equal((await fs.readdir(workspace)).some(name=>name.includes('.nuwax-')),false);
   pass('real Electron export IPC exports a workspace above 100MiB with hidden/hardlink/symlink/empty entries',{saveDialog:'fixture-selected destination; no human installer action',uncompressedLargeFile:110*1024*1024,symlinkVerified:symlinkSupported,entryCount:zipNames.length});
   const html=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'index.html'})).data;
-  await evaluate(owner,'window.fixtureMessages=[];window.addEventListener("message",event=>window.fixtureMessages.push(event.data));const iframe=document.createElement("iframe");iframe.sandbox="allow-scripts allow-downloads";iframe.src='+JSON.stringify(html.url)+';iframe.id="local-preview";document.body.appendChild(iframe);');
+  await evaluate(owner,'window.fixtureMessages=[];window.addEventListener("message",event=>window.fixtureMessages.push(event.data));const iframe=document.createElement("iframe");iframe.sandbox="allow-scripts allow-same-origin";iframe.src='+JSON.stringify(html.url)+';iframe.id="local-preview";document.body.appendChild(iframe);');
   await waitFor(()=>evaluate(owner,'window.fixtureMessages.some(message=>message.type==="local-html-ready")'),'HTML CSS JS relative resources');
   const htmlMessage=await evaluate(owner,'window.fixtureMessages.find(message=>message.type==="local-html-ready")');
   assert.equal(htmlMessage.bridge,'undefined');assert.equal(htmlMessage.electron,'undefined');assert.equal(htmlMessage.color,'rgb(31, 63, 127)');
@@ -196,6 +197,16 @@ try {
   const relativeFetch=await localFrame.executeJavaScript('(async()=>{try{const response=await fetch(new URL("note.txt",location.href));return {status:response.status,text:await response.text()};}catch(error){return {error:String(error)};}})()');assert.equal(relativeFetch.status,200);assert.equal(relativeFetch.text,'0123456789');
   const forbidden=await localFrame.executeJavaScript('(async()=>{try{await fetch('+JSON.stringify(origin+'/api/private')+');return false;}catch{return true;}})()');assert.equal(forbidden,true);
   pass('local HTML cannot call business/loopback endpoints');
+  await localFrame.executeJavaScript('location.href="data:text/plain,preview";');
+  await sleep(150);
+  assert.equal(owner.webContents.mainFrame.frames.find(frame=>frame.frameTreeNodeId===localFrame.frameTreeNodeId)?.url,html.url);
+  pass('production HTML sandbox blocks navigation to an opaque document');
+  if(symlinkSupported){
+    const linked=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'soft.txt'})).data;
+    assert.equal((await request(owner,linked.url)).text,'outside target must not be dereferenced');
+    const relativeLink=await request(owner,new URL('soft.txt',html.url).href);assert.equal(relativeLink.status,403);
+    pass('explicit symlink file reads work while relative resources cannot escape the grant root');
+  }
   await localCall(owner,'releasePreview',preview.grantId);assert.equal((await request(owner,preview.url)).blocked,true);
   pass('release revokes the protocol grant');
   notifyFeatureSessionEnd('logout');assert.equal((await request(owner,big.url,{method:'HEAD'})).blocked,true);

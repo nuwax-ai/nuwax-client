@@ -63,6 +63,10 @@ type Grant = {
   streams: Set<ReadStream>;
 };
 type Operation = FileOperation & { context: Context; id: string };
+type RequestSource = Pick<
+  OnBeforeRequestListenerDetails,
+  "frame" | "referrer" | "webContents" | "webContentsId"
+>;
 type RuntimeDeps = {
   dialog: Pick<typeof dialog, "showOpenDialog" | "showSaveDialog">;
   shell: Pick<typeof shell, "openPath" | "showItemInFolder">;
@@ -131,6 +135,9 @@ export class LocalFilesRuntime {
   private readonly pendingIO = new Set<Promise<void>>();
   private readonly requests = new Map<Context, Set<AbortController>>();
   private readonly observed = new Map<WebContents, () => void>();
+  // FrameTreeNode IDs survive document/process changes. Keep provenance after
+  // grant revocation until the owning top-level document is replaced.
+  private readonly previewFrames = new Map<WebContents, Map<number, string>>();
   private readonly sessions = new Set<Session>();
   private readonly off: Array<() => void> = [];
   private epoch = 0;
@@ -235,6 +242,46 @@ export class LocalFilesRuntime {
     if (!this.valid(context)) throw new LocalFilesFailure("expired");
   }
 
+  private rememberFrame(
+    contents: WebContents,
+    frame: WebFrameMain,
+    id: string
+  ): void {
+    if (!frame.parent || !Number.isSafeInteger(frame.frameTreeNodeId)) return;
+    let frames = this.previewFrames.get(contents);
+    if (!frames) this.previewFrames.set(contents, (frames = new Map()));
+    frames.set(frame.frameTreeNodeId, id);
+  }
+
+  private frameGrant(
+    contents: WebContents | undefined,
+    frame: WebFrameMain | null | undefined
+  ): string | null {
+    try {
+      for (let depth = 0; frame && depth < 64; depth++, frame = frame.parent) {
+        const id =
+          (contents &&
+            this.previewFrames.get(contents)?.get(frame.frameTreeNodeId)) ||
+          localGrantId(frame.url);
+        if (id) return id;
+      }
+      return null;
+    } catch {
+      return "invalid-frame";
+    }
+  }
+
+  sourceGrant(details: RequestSource): string | null {
+    const contents =
+      details.webContents ??
+      [...this.observed.keys()].find(
+        (item) => item.id === details.webContentsId
+      );
+    return (
+      this.frameGrant(contents, details.frame) || localGrantId(details.referrer)
+    );
+  }
+
   private observe(contents: WebContents): void {
     if (this.observed.has(contents)) return;
     const expire = () => {
@@ -263,14 +310,45 @@ export class LocalFilesRuntime {
             this.release(context);
         }
     };
+    const guardNavigation = (
+      event: Electron.Event & {
+        url: string;
+        isMainFrame: boolean;
+        frame: WebFrameMain | null;
+        initiator?: WebFrameMain | null;
+      }
+    ) => {
+      const sourceId =
+        this.frameGrant(contents, event.frame) ||
+        this.frameGrant(contents, event.initiator);
+      if (!sourceId) return;
+      const grant = this.grants.get(sourceId);
+      if (event.frame) this.rememberFrame(contents, event.frame, sourceId);
+      if (
+        !grant ||
+        !this.valid(grant.context) ||
+        grant.context.owner.contents !== contents ||
+        event.isMainFrame ||
+        localGrantId(event.url) !== sourceId
+      )
+        event.preventDefault();
+    };
+    const documentReplaced = () => this.previewFrames.delete(contents);
     const cleanup = () => {
       expire();
+      documentReplaced();
+      contents.removeListener("will-frame-navigate", guardNavigation);
+      contents.removeListener("will-redirect", guardNavigation);
+      contents.removeListener("did-navigate", documentReplaced);
       contents.removeListener("did-start-navigation", navigation);
       contents.removeListener("did-navigate-in-page", inPage);
       contents.removeListener("render-process-gone", expire);
       contents.removeListener("destroyed", cleanup);
       this.observed.delete(contents);
     };
+    contents.on("will-frame-navigate", guardNavigation);
+    contents.on("will-redirect", guardNavigation);
+    contents.on("did-navigate", documentReplaced);
     contents.on("did-start-navigation", navigation);
     contents.on("did-navigate-in-page", inPage);
     contents.on("render-process-gone", expire);
@@ -723,7 +801,7 @@ export class LocalFilesRuntime {
   authorize(details: OnBeforeRequestListenerDetails): boolean | undefined {
     const id = localGrantId(details.url);
     const frame = details.frame;
-    const sourceId = initiatingGrant(details);
+    const sourceId = this.sourceGrant(details);
     if (!id && !sourceId) return undefined;
     const grant = this.grants.get(id ?? sourceId!);
     if (!grant || !this.valid(grant.context)) return false;
@@ -735,6 +813,7 @@ export class LocalFilesRuntime {
         : details.webContentsId !== owner.contents.id
     )
       return false;
+    if (sourceId && frame) this.rememberFrame(owner.contents, frame, sourceId);
     if (id) {
       if (details.resourceType === "mainFrame" || !frame) return false;
       if (sourceId && sourceId !== id) return false;
@@ -756,14 +835,15 @@ export class LocalFilesRuntime {
           return true;
         // The first load of a sandboxed preview iframe starts in about:blank.
         const parent: WebFrameMain | null = frame.parent;
-        return (
+        const allowed =
           details.resourceType === "subFrame" &&
           (frame.url === "about:blank" || !frame.url) &&
           !!parent &&
           parent.processId === owner.processId &&
           parent.routingId === owner.routingId &&
-          originOf(parent.url) === owner.origin
-        );
+          originOf(parent.url) === owner.origin;
+        if (allowed) this.rememberFrame(owner.contents, frame, id);
+        return allowed;
       } catch {
         return false;
       }
@@ -813,6 +893,10 @@ export function authorizeLocalFilesRequest(
   return localGrantId(details.url) || initiatingGrant(details)
     ? false
     : undefined;
+}
+
+export function isLocalFilesRequestSource(details: RequestSource): boolean {
+  return [...active].some((runtime) => !!runtime.sourceGrant(details));
 }
 
 export const localFilesFeature: DesktopFeature = {

@@ -82,6 +82,16 @@ export async function exportWorkspaceAtomic(
   operation: FileOperation
 ): Promise<void> {
   check(operation);
+  // Resolve directory aliases on both sides before excluding our own output.
+  // Preserve the final basename: replacing a destination symlink must not
+  // overwrite the file it points to.
+  const [canonicalRoot, destinationParent] = await Promise.all([
+    realpath(root),
+    realpath(path.dirname(destination)),
+  ]);
+  root = canonicalRoot;
+  destination = path.join(destinationParent, path.basename(destination));
+  check(operation);
   const temporary = temporaryPath(destination);
   const excluded = new Set([path.resolve(destination), temporary]);
   const archive = archiver("zip", { zlib: { level: 6 } });

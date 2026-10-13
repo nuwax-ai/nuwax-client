@@ -40,6 +40,12 @@ await api.releaseContext(contextId);
 
 feature在第一个业务 renderer 导航前注册 protocol handler；首次读取才注册在Electron40会导致已运行renderer不能识别scheme。协议权限必须 pre-ready 声明，关闭特性时仅留下惰性声明，不装IPC/handler，不发放grant。
 
+预览来源按所属 WebContents 与稳定的 frameTreeNodeId 保留，文档地址或 renderer 进程变化不会清除该约束。唯一请求门与凭据过滤器共用这份来源；导航事件在加载前拒绝跳出当前授权的文档（包括 data/blob）。释放 grant 后保留来源限制，顶层文档替换或窗口销毁才清理。
+
+ZIP 在遍历前解析工作区与目标父目录的真实路径，保存目录经过符号链接或 Windows junction 时仍排除本次目标和临时文件。最终目标的 basename 保留，替换目标链接本身而非其指向的文件。
+
+前端搜索遇到本机访问错误时显示错误并允许重试；同一会话切换电脑或本机上下文代次时清空旧结果、丢弃迟到响应。明确选中的本机符号链接可按实际文件预览，代码视图保持只读，自动相对资源仍受授权根限制。
+
 登出/换域/旧文档/关闭预览撤销授权并主动关闭所有流；不能依赖 Electron Request.signal 接收浏览器取消。相同文档内的history/hash变更不等同完整document navigation。
 
 前端统一消费 `features/client-shell/localFileService` 与页面上下文Hook，业务组件不另写宿主身份/目录推导链。

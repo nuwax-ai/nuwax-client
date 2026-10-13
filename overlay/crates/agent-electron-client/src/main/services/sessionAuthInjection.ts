@@ -11,6 +11,7 @@ import { currentTicket } from "./commercialTicketSession";
 import { GATEWAY_REQUEST_HEADER } from "./loopbackGateway/requestContext";
 import { consumeNativeTicketCapability } from "./nativeTicketCapability";
 import { isLocalFileRequestSource } from "@shared/features/local-files/contract";
+import { isDesktopFeatureRequestSource } from "../features";
 
 export interface SessionAuthContext {
   businessOrigin: string;
@@ -135,7 +136,7 @@ export function applySessionAuthHeaders(
 ): Record<string, string> {
   const headers = { ...details.requestHeaders };
   const nativeTicketRequest = consumeNativeTicketCapability(headers);
-  if (isLocalFileRequestSource(details)) {
+  if (isLocalFileRequestSource(details) || isDesktopFeatureRequestSource(details)) {
     for (const key of Object.keys(headers)) {
       if (["cookie", "authorization", "proxy-authorization", "referer", GATEWAY_REQUEST_HEADER.toLowerCase()].includes(key.toLowerCase())) {
         delete headers[key];
