@@ -248,6 +248,9 @@ test('Windows CI pins both official split archives, verifies signatures, install
   }
   const signatures = f.calls.filter((call) => call.args.includes('capture-runtime-signature'));
   assert.equal(signatures.length, 2);
+  const initialize = f.calls.findIndex((call) => call.args.includes('capture-runtime-keyring'));
+  assert.ok(initialize >= 0 && initialize < f.calls.indexOf(signatures[0]));
+  assert.equal(f.calls[initialize].args[1], 'exec pacman-key --init');
   const install = f.calls.findIndex((call) => call.args.includes('capture-runtime-install'));
   assert.ok(install > f.calls.indexOf(signatures[1]));
   assert.equal(f.calls[install].args.slice(-2).length, 2);
@@ -262,4 +265,15 @@ test('Windows declaration drift, changed archive and untrusted signature are rej
     await assert.rejects(configureWindowsCaptureToolchain(f.root, f.options), message);
     assert.equal(f.calls.some((call) => call.args.includes('capture-runtime-install')), false);
   }
+});
+
+test('Windows keyring initialization failure stops before downloading or installing runtime packages', async (t) => {
+  const f = runtimeFixture(t);
+  const run = f.options.tools.run;
+  f.options.tools.run = async (command, args, options) => {
+    if (args.includes('capture-runtime-keyring')) throw new Error('keyring initialization failed');
+    return run(command, args, options);
+  };
+  await assert.rejects(configureWindowsCaptureToolchain(f.root, f.options), /keyring initialization failed/);
+  assert.equal(f.calls.length, 0);
 });

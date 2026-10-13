@@ -35,6 +35,10 @@ export async function configureWindowsCaptureToolchain(root, { location, arch, t
   env[pathKey] = [path.join(location, 'mingw64/bin'), path.join(location, 'usr/bin'), env[pathKey] || ''].join(';');
   env.NUWAX_CAPTURE_BUILD_BASH = shell;
   env.MSYSTEM = 'MINGW64';
+  // setup-msys2 can provide a populated keyring without the gpg.conf options
+  // required by pacman-key --verify. Its official, idempotent init restores
+  // those options without replacing trusted keys or disabling verification.
+  await tools.run(shell, ['-c', 'exec pacman-key --init', 'capture-runtime-keyring'], { env, capture: true });
   const downloads = path.join(core.paths(root).cache, 'capture/windows-runtime');
   fs.mkdirSync(downloads, { recursive: true });
   const files = [];
