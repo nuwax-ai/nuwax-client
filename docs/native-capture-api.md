@@ -10,8 +10,8 @@ IM 项目负责人请先看[接入交接指南](nuwax-im-native-capture-integrat
 | 能力 | 状态 |
 | --- | --- |
 | `screenshot()` | 原生覆盖层：整屏 / 窗口 / 单屏区域选择，矩形、椭圆、箭头、画笔、文字、马赛克，撤销重做、确认 / 取消；物理像素裁剪 |
-| `record()` | 原生来源选择、3 秒倒计时、暂停 / 继续、停止 / 取消、控制条与区域边框；MP4 / WebM / GIF 按本机独立编码器实际探针提供 |
-| 平台 | macOS、Windows；Linux 返回 `unsupported` |
+| `record()` | 原生来源选择、3 秒倒计时、暂停 / 继续、停止 / 取消；macOS/Windows 提供控制条与区域边框，Linux 使用托盘/应用内快捷键；MP4 / WebM / GIF 按本机独立编码器实际探针提供 |
+| 平台 | macOS、Windows、Linux；Linux X11 使用桌面覆盖层，Wayland 使用系统来源选择和来源内预览；正式安装包与桌面环境的验收范围分别记录 |
 | 静态图格式 | `png`、`jpeg`（以 `getCapabilities().formats.still` 为准；`webp` 待后续） |
 
 > 以 `getCapabilities()` 返回的实际能力为准，不要硬编码上表。
@@ -157,18 +157,22 @@ export function createFakeCaptureBridge(overrides: Partial<CaptureBridge> = {}):
 
 ## 已知限制
 
-- 无音频；不支持跨屏选区；窗口选择为缩略图列表（不做悬停高亮）；Linux 不支持。
+- 无音频；不支持跨屏选区；X11/macOS/Windows 窗口选择为缩略图列表（不做悬停高亮）。Wayland 由系统选择屏幕或窗口，再在授权来源内选择区域/标注。
 - HDR 尚未做真实色调映射，`hdrToneMapped` 仍为 `false`；不能把 BT.709 标签当作 HDR 转换验收通过。
 - macOS 单屏整屏录制时，控制条能否完全排除需实机验证；区域录制将边框置于选区之外，控制条贴近选区并留在所选显示器；整屏或没有外部空间时停靠该屏工作区底部。
-- Windows 路径已实现，但尚未经过 Windows 实机与安装包验收。
+- Windows 已有实际安装包 ASAR 验证，见 `acceptance/20261013-windows-installed-capture.md`。Linux 实施与验证见 `acceptance/20261013-linux-native-capture.md`；未经验证的桌面环境不能据此宣称验收通过。
+- Linux 不支持 Electron 的内容保护排除：录制前隐藏控制窗且不创建桌面红框。通过托盘暂停/继续/停止；无托盘图标时切回客户端使用下面的应用内快捷键。
+- Linux Wayland 复用同一次授权的 PipeWire 来源完成预览与录制，不再次选择来源，以来源实际帧构造连续轨道，使静止画面也有可播放的视频；像素尺寸不缩放。X11 保留原始录制输入并等待隐藏后的新帧。`permission:'n/a'` 不代表系统已授予采集；实际请求仍可能返回权限或设备错误。显式禁用 `WebRTCPipeWireCapturer` 时不回退到 Xwayland 抓取，能力为 unavailable。
+- Wayland 系统选择器的取消与拒绝原因由 Chromium 映射：应用取消及 `AbortError` 为 `canceled`，`NotAllowedError/SecurityError` 为 `permission-denied`，其他设备失败为 `failed`，不猜测设备失败等于取消。
 - 将设置项 `features.capture.enabled` 置为 `false` 并重启客户端后，`getCapabilities().available` 为 `false`，其余调用返回 `unsupported`。
 - MP4 为满足 H.264 的偶数尺寸可能多取 1 像素真实内容；仅无法扩展、由编码器补像素时 `paddedForEvenSize` 才为 `true`。
+- Linux MP4 偶数对齐后的选区至少 16×16；更小区域在启动前拒绝。Linux 录制期间阻止自动息屏，完成/取消后释放，不修改用户系统设置。
 
 ## 客户端直接验收入口
 
-窗口顶部的「截图与录屏」按钮可选截图、MP4 / WebM / GIF 和画质。截图确认或录屏停止后显示预览与尺寸、体积、时长，点击「保存」打开系统保存对话框。托盘录制期间也有「停止录屏」入口。
+客户端设置的「截图与录屏」页签和应用菜单提供截图、MP4 / GIF 入口及画质选择。截图确认或录屏停止后显示预览与尺寸、体积、时长，点击「保存」打开系统保存对话框。API 继续兼容 WebM。录制期间托盘提供暂停/继续和停止。
 
-macOS 顶部系统菜单栏新增「截图与录屏」，Windows 沿用自绘菜单栏的同名入口；两者与相机按钮共用流程。应用内截图快捷键为 macOS `⌘⌥S` / Windows `Ctrl+Alt+S`，MP4 录屏为 `⌘⌥R` / `Ctrl+Alt+R`，不是后台全局快捷键。
+macOS 使用系统菜单，Windows/Linux 使用客户端自绘应用菜单。应用内截图快捷键为 macOS `⌘⌥S` / Windows、Linux `Ctrl+Alt+S`；MP4 录屏为 `⌘⌥R` / `Ctrl+Alt+R`。Linux 录制中 `Ctrl+Alt+R` 停止并生成结果，`Ctrl+Alt+P` 暂停/继续。快捷键需要客户端主窗口或业务页获得焦点，不是后台全局快捷键。
 
 该壳入口使用独立的 host IPC 与同一捕获服务，不扩大业务页信任范围。IM 接入仍由 IM 团队负责，现有 IM 按钮不能作为本次原生实现的验收入口。
 

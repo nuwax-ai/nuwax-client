@@ -174,7 +174,7 @@ describe("macOS 原生菜单语言与动作", () => {
   });
 });
 
-describe("Windows 捕获菜单应用内快捷键", () => {
+describe("Win/Linux 捕获菜单应用内快捷键", () => {
   it("宿主和 guest 焦点按键都通过同一个 dispatch，释放时移除监听", () => {
     const target = { on: vi.fn(), removeListener: vi.fn() };
     const dispatch = vi.fn();
@@ -187,6 +187,27 @@ describe("Windows 捕获菜单应用内快捷键", () => {
     expect(preventDefault).toHaveBeenCalledTimes(2);
     off();
     expect(target.removeListener).toHaveBeenCalledWith(channel, handler);
+  });
+
+  it.each([
+    ["linux", "r", true, "stop", null, true],
+    ["linux", "r", false, "stop", "mp4", true],
+    ["linux", "p", true, "pause", null, true],
+    ["linux", "p", false, "pause", null, false],
+    ["linux", "s", true, null, "screenshot", true],
+    ["win32", "r", true, null, "mp4", true],
+    ["win32", "p", true, null, null, false],
+  ] as const)("%s Ctrl+Alt+%s active=%s 路由当前录制或开始动作", (platform, key, active, control, action, consumed) => {
+    const target = { on: vi.fn(), removeListener: vi.fn() };
+    const dispatch = vi.fn();
+    const controlRecording = vi.fn(() => active);
+    bindCaptureMenuShortcuts(target as never, dispatch, { platform, controlRecording });
+    const handler = target.on.mock.calls[0][1];
+    const event = { preventDefault: vi.fn() };
+    handler(event, { key, type: "keyDown", control: true, alt: true });
+    expect(controlRecording.mock.calls).toEqual(control ? [[control]] : []);
+    expect(dispatch.mock.calls).toEqual(action ? [[action]] : []);
+    expect(event.preventDefault).toHaveBeenCalledTimes(consumed ? 1 : 0);
   });
 
   it.each([

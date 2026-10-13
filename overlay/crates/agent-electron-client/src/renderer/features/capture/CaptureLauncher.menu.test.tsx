@@ -14,7 +14,8 @@ vi.mock("react", async (original) => ({
   useEffect: (effect: () => undefined | (() => void)) => effects.push(effect),
 }));
 vi.mock("antd", () => ({
-  Button: vi.fn(), Dropdown: vi.fn(), Modal: vi.fn(), Select: vi.fn(), Space: vi.fn(),
+  Button: vi.fn(), Dropdown: vi.fn(),
+  Modal: vi.fn(), Select: vi.fn(), Space: vi.fn(),
   message: { error: errors, success: vi.fn() },
 }));
 import { CaptureLauncher } from "./CaptureLauncher";
@@ -40,12 +41,11 @@ function mount(over: Partial<HostCaptureBridge> = {}, onCaptureStart?: () => Pro
     onStateChange: vi.fn((listener) => { state = listener; return offState; }),
     ...over,
   } as HostCaptureBridge;
-  // 6bcefc89 起菜单动作统一经 bridge onMenuAction 下发，宿主侧 toolbar handler 通路已移除
-  const onMenuHandlerChange = vi.fn();
-  CaptureLauncher({ capture, t: (key) => key, onCaptureStart });
+  const onActionReady = vi.fn((handler: MenuHandler | null) => { toolbarMenu = handler; });
+  CaptureLauncher({ capture, t: (key) => key, onCaptureStart, onActionReady });
   const cleanups = effects.map((effect) => effect());
   return { capture, menu: (action: CaptureMenuAction) => menu!(action), state: (next: CaptureState) => state!(next), offMenu, offState,
-    onMenuHandlerChange,
+    toolbarMenu: (action: CaptureMenuAction) => toolbarMenu?.(action), onActionReady,
     unmount: () => cleanups.forEach((cleanup) => cleanup?.()) };
 }
 
@@ -54,6 +54,24 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 beforeEach(() => { effects.length = 0; errors.mockClear(); });
 
 describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
+  it.each(["screenshot", "mp4", "gif"] as const)("常驻控制器 %s 动作调用采集 API，不依赖 native 菜单事件", async (action) => {
+    const ui = mount();
+    ui.toolbarMenu(action); await flush();
+    if (action === "screenshot") {
+      expect(ui.capture.screenshot).toHaveBeenCalledOnce();
+      expect(ui.capture.record).not.toHaveBeenCalled();
+    } else {
+      expect(ui.capture.record).toHaveBeenCalledOnce();
+      expect(ui.capture.record).toHaveBeenCalledWith({ output: action, compression: { quality: "high" }, maxDurationMs: 300_000 });
+      expect(ui.capture.screenshot).not.toHaveBeenCalled();
+    }
+    expect(ui.capture.onMenuAction).toHaveBeenCalledOnce();
+    ui.unmount();
+    expect(ui.onActionReady).toHaveBeenLastCalledWith(null);
+    ui.toolbarMenu(action); await flush();
+    expect(vi.mocked(ui.capture.screenshot).mock.calls.length + vi.mocked(ui.capture.record).mock.calls.length).toBe(1);
+  });
+
   it("桥命令保留 WebM 兼容动作，卸载时注销入口", async () => {
     const ui = mount();
     for (const action of ["screenshot", "mp4", "webm", "gif"] as const) {
@@ -70,11 +88,11 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     expect(ui.capture.screenshot).toHaveBeenCalledOnce();
   });
 
-  it("Windows 自绘菜单与原生菜单共用并发锁，保留产物等待预览保存", async () => {
+  it("Win/Linux 自绘菜单与原生菜单共用并发锁，保留产物等待预览保存", async () => {
     let finish!: (result: CaptureSuccess) => void;
     const screenshot = vi.fn(() => new Promise<CaptureSuccess>(resolve => { finish = resolve; }));
     const ui = mount({ screenshot });
-    ui.menu("screenshot"); ui.menu("mp4"); await flush();
+    ui.toolbarMenu("screenshot"); ui.menu("mp4"); await flush();
     expect(screenshot).toHaveBeenCalledOnce();
     expect(ui.capture.record).not.toHaveBeenCalled();
     expect(errors).toHaveBeenLastCalledWith("Claw.Capture.error.busy");

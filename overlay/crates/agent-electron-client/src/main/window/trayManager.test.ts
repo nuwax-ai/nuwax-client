@@ -121,6 +121,24 @@ describe('TrayManager', () => {
     });
   });
 
+  it('录制托盘可暂停/继续和停止，结束后移除动作', async () => {
+    await trayManager.create();
+    const pause = vi.fn(), stop = vi.fn();
+    trayManager.setRecordingStopAction(stop);
+    trayManager.setRecordingPauseAction(pause, false);
+    const current = () => vi.mocked(Menu.buildFromTemplate).mock.calls.at(-1)![0];
+    const pauseItem = current().find(item => item.label === 'Claw.Capture.pause');
+    expect(pauseItem).toBeDefined(); pauseItem!.click!({} as never, {} as never, {} as never);
+    expect(pause).toHaveBeenCalledOnce();
+    trayManager.setRecordingPauseAction(pause, true);
+    expect(current().some(item => item.label === 'Claw.Capture.pause')).toBe(false);
+    expect(current().some(item => item.label === 'Claw.Capture.resume')).toBe(true);
+    const stopItem = current().find(item => item.label === 'Claw.Capture.stopRecording');
+    stopItem!.click!({} as never, {} as never, {} as never); expect(stop).toHaveBeenCalledOnce();
+    trayManager.setRecordingPauseAction(null, false); trayManager.setRecordingStopAction(null);
+    expect(current().some(item => String(item.label).startsWith('Claw.Capture.'))).toBe(false);
+  });
+
   describe('create()', () => {
     it('should create tray and return void', async () => {
       const result = await trayManager.create();

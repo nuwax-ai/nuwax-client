@@ -316,6 +316,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     log,
     translate: t,
     setRecordingStopAction: (action) => getTrayManager()?.setRecordingStopAction(action),
+    setRecordingPauseAction: (action, paused) => getTrayManager()?.setRecordingPauseAction(action, paused),
   });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(

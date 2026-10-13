@@ -220,12 +220,14 @@ if (isCurrentCaptureTarget()) addPending([file]);
 - [ ] 录制中移除显示器、锁屏、登出或换域，操作取消/结果失效，IM 不继续上传旧媒体。
 - [ ] 开始采集后切换聊天：有会话草稿仓库时回填原会话；仅支持当前组件时提示目标失效，绝不附到新会话。关闭 IM 或卸载微应用后不再回填，监听与 Blob URL 不累积。
 - [ ] 权限拒绝、缺编码器、最低档仍超过 maxBytes、上传限制、大文件读块失效等路径按上表处理，finally release 得到覆盖。
-- [ ] Windows、HDR 与正式安装包分别记录实机结果；不能用 macOS 开发记录或模拟双屏测试代替。
+- [ ] Windows、Linux X11、Linux Wayland、HDR 与正式安装包分别记录实机结果；不能用 macOS 开发记录或模拟双屏测试代替。
 
 交付验收时请附：客户端版本/构建来源、IM 提交与部署版本、接入形态、OS/显示器布局与缩放率、格式/画质/输出尺寸/时长、失败 code 和步骤、对端收到附件后的表现。只记录测试媒体，不带账号或 token。
 
 ## 已知限制与联调基线
 
-无音频、无跨屏选区、当前 WebP 不可用。HDR 尚未真实色调映射，hdrToneMapped 为 false；Windows 与真实安装包仍待实机验证。macOS 单屏整屏录制的控制条排除仍须解码画面验证，不能只凭 contentProtection 调用宣称通过。
+无音频、无跨屏选区、当前 WebP 不可用。HDR 尚未真实色调映射，hdrToneMapped 为 false。Windows 安装包 ASAR 验证与 Linux 验证分别记录；正式发行包/IM 联调仍需独立验收。macOS 单屏整屏录制的控制条排除仍须解码画面验证，不能只凭 contentProtection 调用宣称通过。
+
+Linux 接口沿用同一个 `getCapabilities → screenshot/record → readChunk → release` 流程，Promise 完成后回填原会话。X11 仍可多屏选择；Wayland 由系统选择一个屏幕/窗口，在来源预览中框选。不要用 `permission:'n/a'` 代替成功授权，不要假定 `displays` 顺序对应 portal 来源。Linux 录制时控制窗隐藏，可用托盘，或切回客户端按 `Ctrl+Alt+R` 停止、`Ctrl+Alt+P` 暂停/继续。格式按 capabilities 启用 MP4/GIF 菜单；显式关闭 PipeWire 或资源缺失时保留既有 unavailable/encoder-unavailable 处理。
 
 客户端基线和验证记录：[20261012-native-capture-dev.md](acceptance/20261012-native-capture-dev.md)。IM 负责人需独立完成本节清单后，才可把 IM 的截图/录屏按钮标为已接入。

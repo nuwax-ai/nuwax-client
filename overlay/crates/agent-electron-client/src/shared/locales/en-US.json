@@ -1134,6 +1134,8 @@
   "Claw.Capture.recording": "Recording",
   "Claw.Capture.paused": "Paused",
   "Claw.Capture.encoding": "Processing",
+  "Claw.Capture.linuxRecordingHint": "Controls hide while recording. Use the tray, or return to the client: Ctrl+Alt+R stops; Ctrl+Alt+P pauses or resumes.",
+  "Claw.Capture.entireSource": "Entire source",
   "Claw.Capture.selectHint": "Drag to select · Esc to cancel",
   "Claw.Capture.annotationHint": "Click to edit · Drag to move · Enter to finish",
   "Claw.Capture.textHint": "Enter text",

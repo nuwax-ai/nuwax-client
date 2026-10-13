@@ -147,8 +147,9 @@ function resourceRoots(output) {
   return found;
 }
 
-function verifyCopy(source, target) {
+function verifyCopy(source, target, { executable = false } = {}) {
   if (!fs.existsSync(target) || !fs.statSync(target).isFile() || sha256(source) !== sha256(target)) throw new Error(`[release-capture] Packaged resource missing or changed: ${target}`);
+  if (executable && process.platform !== 'win32' && !(fs.statSync(target).mode & 0o111)) throw new Error(`[release-capture] Packaged encoder is not executable: ${target}`);
 }
 
 function verifyTree(source, target) {
@@ -186,7 +187,7 @@ export async function verifyReleaseCaptureOutput(root, output, { platform = proc
   if (!fs.existsSync(noticeFile)) throw new Error('[release-capture] Expected capture notices are missing');
   for (const resources of roots) {
     const capture = path.join(resources, 'capture', `${platform}-${arch}`);
-    verifyCopy(expected.binary, path.join(capture, platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'));
+    verifyCopy(expected.binary, path.join(capture, platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), { executable: platform !== 'win32' });
     verifyCopy(path.join(expected.dir, 'resource.json'), path.join(capture, 'resource.json'));
     verifyTree(noticesDir, path.join(resources, 'third-party/capture'));
   }

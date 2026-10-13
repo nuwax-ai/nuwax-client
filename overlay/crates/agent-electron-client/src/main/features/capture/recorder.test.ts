@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { setTimeout as realDelay } from "node:timers/promises";
 import { RECORDING_IPC } from "@shared/features/capture/recordingContract";
 import { createScratchDir } from "../_kit/scratchDir";
-import { createRecordEngine, createCaptureSourceStill } from "./recorder";
+import { createRecordEngine, createCaptureSourceStill, createCapturePortalFrame } from "./recorder";
 import type { CaptureSelection, RecordingAction } from "@shared/features/capture/windowContract";
 import type { CaptureState } from "@shared/features/capture/contract";
 
-const fake = vi.hoisted(() => ({ handlers: new Map<string, (...args: any[]) => any>(), windows: [] as any[], nextId: 1, autoReady: true, autoSnapshot: false, stallLoad: false }));
+const fake = vi.hoisted(() => ({ handlers: new Map<string, (...args: any[]) => any>(), windows: [] as any[], nextId: 1, autoReady: true, autoSnapshot: false, stallLoad: false, autoStop: true }));
 
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -19,14 +19,15 @@ vi.mock("electron", async () => {
     constructor(readonly options: any) { super(); fake.windows.push(this); }
     webContents = Object.assign(new EventEmitter(), {
       id: fake.nextId++, mainFrame: { url: "" }, isDestroyed: () => this.destroyed,
-      setWindowOpenHandler: vi.fn(), session: { setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn() },
+      setWindowOpenHandler: vi.fn(), executeJavaScript: vi.fn(async () => {}), session: { setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), setDisplayMediaRequestHandler: vi.fn() },
       send: vi.fn((channel, command) => {
         if (channel !== RECORDING_IPC.COMMAND) return;
         const handler = fake.handlers.get(RECORDING_IPC.EVENT)!;
+        if (command === "arm") void handler(this.event(), { type: "armed" });
         if (command === "start") void handler(this.event(), { type: "started" });
         if (command === "pause") void handler(this.event(), { type: "paused" });
         if (command === "resume") void handler(this.event(), { type: "resumed" });
-        if (command === "stop") {
+        if (command === "stop" && fake.autoStop) {
           void fake.handlers.get(RECORDING_IPC.CHUNK)!(this.event(),0,Uint8Array.from([1,2,3]).buffer)
             .then(() => handler(this.event(), { type: "stopped" }));
         }
@@ -40,7 +41,14 @@ vi.mock("electron", async () => {
       if (fake.stallLoad) await new Promise(() => {});
       if (fake.autoReady) {
         const config = await fake.handlers.get(RECORDING_IPC.CONFIG)!(this.event());
-        if (config.mode === "record") await fake.handlers.get(RECORDING_IPC.EVENT)!(this.event(), { type: "ready", width:100,height:80,mime:"video/webm;codecs=vp9" });
+        if (config.mode === "record") {
+          if (config.preview) {
+            const png = Buffer.alloc(24); Buffer.from([137,80,78,71,13,10,26,10]).copy(png);
+            png.writeUInt32BE(100,16); png.writeUInt32BE(80,20);
+            await fake.handlers.get(RECORDING_IPC.SNAPSHOT)!(this.event(),png,100,80);
+          }
+          await fake.handlers.get(RECORDING_IPC.EVENT)!(this.event(), { type: "ready", width:100,height:80,mime:"video/webm;codecs=vp9" });
+        }
         else if (fake.autoSnapshot) {
           const png = Buffer.alloc(24); Buffer.from([137,80,78,71,13,10,26,10]).copy(png);
           png.writeUInt32BE(100,16); png.writeUInt32BE(80,20);
@@ -49,7 +57,7 @@ vi.mock("electron", async () => {
       }
     }
   }
-  return { BrowserWindow: FakeWindow, ipcMain: {
+  return { BrowserWindow: FakeWindow, powerSaveBlocker:{start:vi.fn(() => 1),stop:vi.fn()}, ipcMain: {
     handle: (channel: string, fn: (...args: any[]) => any) => { if (fake.handlers.has(channel)) throw new Error("duplicate IPC"); fake.handlers.set(channel,fn); },
     removeHandler: (channel: string) => fake.handlers.delete(channel),
   } };
@@ -74,7 +82,7 @@ describe("private desktop recorder", () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(),"capture-recorder-"));
     engines = [];
-    fake.windows = []; fake.autoReady = true; fake.autoSnapshot = false; fake.stallLoad = false;
+    fake.windows = []; fake.autoReady = true; fake.autoSnapshot = false; fake.stallLoad = false; fake.autoStop = true;
   });
   afterEach(async () => {
     for (const engine of engines) engine.dispose();
@@ -125,6 +133,16 @@ describe("private desktop recorder", () => {
     expect(fake.windows[0].destroyed).toBe(true);
   });
 
+  it('keeps a confirmed recording alive beyond both setup deadlines', async () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']});
+    const {engine,controls}=deps(); const states: CaptureState[]=[];
+    const pending=engine.record({output:'webm',maxDurationMs:45000},new AbortController().signal,state=>states.push(state));
+    await until(() => controls.update.mock.calls.some(([value]) => value.countdown===3));
+    await vi.advanceTimersByTimeAsync(3000); await vi.advanceTimersByTimeAsync(25000);
+    expect(fake.windows[0].destroyed).toBe(false); expect(states).toEqual(['recording']);
+    engine.stop(); const result=await pending; expect(result?.durationMs).toBe(25000); result?.disposeFile?.();
+  });
+
   it("rejects iframe/foreign IPC and removes handlers on a session abort", async () => {
     fake.autoReady = false;
     const {engine,controls} = deps();
@@ -139,7 +157,7 @@ describe("private desktop recorder", () => {
     controller.abort();
     expect(await capture).toBeNull();
     expect(window.destroyed).toBe(true);
-    expect(controls.dispose).toHaveBeenCalledOnce();
+    expect(controls.dispose).not.toHaveBeenCalled();
     expect(window.webContents.session.setPermissionCheckHandler).toHaveBeenLastCalledWith(null);
     expect(window.webContents.session.setPermissionRequestHandler).toHaveBeenLastCalledWith(null);
   });
@@ -169,6 +187,14 @@ describe("private desktop recorder", () => {
     await expect(promise).rejects.toThrow("canceled");
     expect(fake.windows[0].destroyed).toBe(true);
   });
+  it('closes a stalled snapshot document on acquisition timeout and preserves the failure', async () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); fake.stallLoad = true;
+    const promise = createCaptureSourceStill({scratch:createScratchDir(root)})('window:5:0',{width:20,height:16},new AbortController().signal);
+    const outcome = expect(promise).rejects.toThrow('Desktop snapshot timed out');
+    await until(() => !!fake.windows[0]?.webContents.mainFrame.url);
+    await vi.advanceTimersByTimeAsync(20000); await outcome;
+    expect(fake.windows[0].destroyed).toBe(true);
+  });
 
   it("reports a control-window crash as a failure while aborting capture resources", async () => {
     vi.useFakeTimers({toFake:["setTimeout","clearTimeout","setInterval","clearInterval","performance"]});
@@ -182,5 +208,112 @@ describe("private desktop recorder", () => {
     expect(parent.signal.aborted).toBe(false);
     expect(fake.windows[0].destroyed).toBe(true);
     expect(controls.dispose).toHaveBeenCalledOnce();
+  });
+  it('uses one portal window for the first frame, region preview and recording, then removes its handler', async () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']});
+    const controls = { update: vi.fn(), hideForRecording: vi.fn(), setContentProtection: vi.fn(), dispose: vi.fn() };
+    const selectPrepared = vi.fn(async (_mode, image) => {
+      expect(image.selection).toMatchObject({ coordinateSpace: 'source', sourceSize: {width:100,height:80} });
+      expect(image.selection).not.toHaveProperty('displayId'); expect(image.selection).not.toHaveProperty('displayBounds');
+      return { ...image.selection, crop: {x:10,y:12,width:50,height:40} };
+    });
+    const select = vi.fn();
+    const engine = createRecordEngine({ scratch:createScratchDir(root), log:{warn:vi.fn(),error:vi.fn()}, platform:'linux', portal:true,
+      ffmpeg:{path:'/trusted/ffmpeg',version:'test',configuration:'--disable-gpl',encoders:['libvpx-vp9'],filters:['crop','format','fps'],formats:{mp4:false,webm:true,gif:false}},
+      windows:{select,selectPrepared,createRecordingControls:() => controls} });
+    engines.push(engine); const states: CaptureState[] = [];
+    const pending = engine.record({output:'webm'},new AbortController().signal,state => states.push(state));
+    await until(() => controls.update.mock.calls.some(([value]) => value.countdown === 3));
+    expect(select).not.toHaveBeenCalled(); expect(selectPrepared).toHaveBeenCalledOnce(); expect(fake.windows).toHaveLength(1);
+    expect(fake.windows[0].webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('startNuwaxCapture'),true);
+    await vi.advanceTimersByTimeAsync(3000); expect(controls.hideForRecording).toHaveBeenCalledOnce();
+    engine.pauseOrResume(); await settleIO(); expect(states.at(-1)).toBe('paused');
+    engine.pauseOrResume(); await settleIO(); expect(states.at(-1)).toBe('recording');
+    engine.stop(); const result = await pending;
+    const { transcodeRecording } = await import('./transcode');
+    expect(transcodeRecording).toHaveBeenLastCalledWith(expect.anything(),'linux',expect.any(String),expect.any(String),{width:100,height:80},
+      {x:10,y:12,width:50,height:40},expect.anything(),expect.anything());
+    expect(fake.windows).toHaveLength(1); expect(fake.windows[0].webContents.session.setDisplayMediaRequestHandler).toHaveBeenLastCalledWith(null);
+    result?.disposeFile?.();
+  });
+  it('takes portal snapshots without display coordinates or an encoding resource', async () => {
+    fake.autoSnapshot = true;
+    const image = await createCapturePortalFrame({scratch:createScratchDir(root)})(new AbortController().signal);
+    expect(image).toMatchObject({width:100,height:80,selection:{coordinateSpace:'source'}});
+    expect(image.selection).not.toHaveProperty('displayId'); expect(fake.windows[0].destroyed).toBe(true);
+    expect(fake.windows[0].webContents.session.setDisplayMediaRequestHandler).toHaveBeenLastCalledWith(null);
+  });
+  it.each(['linux','darwin','win32'] as const)('keeps %s controls hidden until the final chunk and stream are closed', async platform => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']}); fake.autoStop = false;
+    const controls = { update:vi.fn(),hideForRecording:vi.fn(),setContentProtection:vi.fn(),dispose:vi.fn() };
+    const visibleWhileCapturing: boolean[] = [];
+    controls.update.mockImplementation(value => {
+      if (value.state === 'encoding') visibleWhileCapturing.push(!fake.windows[0].destroyed);
+    });
+    const engine = createRecordEngine({ scratch:createScratchDir(root),log:{warn:vi.fn(),error:vi.fn()},platform,portal:false,
+      ffmpeg:{path:'/trusted/ffmpeg',version:'test',configuration:'--disable-gpl',encoders:['libvpx-vp9'],filters:['crop','format','fps'],formats:{mp4:false,webm:true,gif:false}},
+      windows:{select:async () => selection,createRecordingControls:() => controls} });
+    engines.push(engine); const states: CaptureState[] = [];
+    const pending = engine.record({output:'webm'},new AbortController().signal,state => states.push(state));
+    await until(() => controls.update.mock.calls.some(([value]) => value.countdown === 3));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(states).toEqual(['recording']); engine.stop(); await settleIO();
+    expect(controls.update.mock.calls.some(([value]) => value.state === 'encoding')).toBe(false);
+    expect(fake.windows[0].destroyed).toBe(false);
+    await fake.handlers.get(RECORDING_IPC.CHUNK)!(fake.windows[0].event(),0,Uint8Array.from([1,2,3]).buffer);
+    await fake.handlers.get(RECORDING_IPC.EVENT)!(fake.windows[0].event(),{type:'stopped'});
+    const result = await pending;
+    expect(visibleWhileCapturing).toEqual([false]); expect(states).toEqual(['recording','encoding']);
+    result?.disposeFile?.();
+  });
+  it.each([{width:2,height:32,accepted:false},{width:32,height:2,accepted:false},{width:16,height:16,accepted:true},{width:15,height:17,accepted:true}])
+    ('validates the real aligned OpenH264 frame size before countdown: $width × $height', async ({width,height,accepted}) => {
+      vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']});
+      const controls = {update:vi.fn(),setContentProtection:vi.fn(),dispose:vi.fn()};
+      const engine = createRecordEngine({scratch:createScratchDir(root),log:{warn:vi.fn(),error:vi.fn()},platform:'linux',portal:false,
+        ffmpeg:{path:'/trusted/ffmpeg',version:'test',configuration:'--disable-gpl',encoders:['libopenh264'],filters:['crop','pad','format','fps'],formats:{mp4:true,webm:false,gif:false}},
+        windows:{select:async () => ({...selection,crop:{x:0,y:0,width,height}}),createRecordingControls:() => controls}});
+      engines.push(engine);
+      const pending = engine.record({output:'mp4'},new AbortController().signal,() => {});
+      if (!accepted) {
+        await expect(pending).rejects.toThrow('selected area is too small');
+        expect(controls.update).not.toHaveBeenCalled(); expect(fake.windows[0].destroyed).toBe(true);
+      } else {
+        await until(() => controls.update.mock.calls.some(([value]) => value.countdown === 3));
+        await vi.advanceTimersByTimeAsync(3000); engine.stop();
+        const result = await pending; expect(result).not.toBeNull(); result?.disposeFile?.();
+      }
+    });
+  it.each(['success','cancel','renderer-crash'])('owns the Linux idle-blanking inhibitor from confirmed source through %s cleanup', async reason => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']});
+    const power = {start:vi.fn(() => 42),stop:vi.fn()};
+    const controls = {update:vi.fn(),setContentProtection:vi.fn(),dispose:vi.fn()};
+    let confirm!: (selection: CaptureSelection | null) => void;
+    const selected = new Promise<CaptureSelection | null>(resolve => { confirm = resolve; });
+    const engine = createRecordEngine({scratch:createScratchDir(root),log:{warn:vi.fn(),error:vi.fn()},platform:'linux',portal:false,powerSaveBlocker:power,
+      ffmpeg:{path:'/trusted/ffmpeg',version:'test',configuration:'--disable-gpl',encoders:['libvpx-vp9'],filters:['crop','format','fps'],formats:{mp4:false,webm:true,gif:false}},
+      windows:{select:async () => selected,createRecordingControls:() => controls}});
+    engines.push(engine); const controller = new AbortController();
+    const pending = engine.record({output:'webm'},controller.signal,() => {});
+    await settleIO(); expect(power.start).not.toHaveBeenCalled();
+    confirm(selection); await until(() => controls.update.mock.calls.some(([value]) => value.countdown === 3));
+    expect(power.start).toHaveBeenCalledOnce(); expect(power.start).toHaveBeenCalledWith('prevent-display-sleep');
+    if (reason === 'cancel') { controller.abort(); expect(await pending).toBeNull(); }
+    else if (reason === 'renderer-crash') {
+      const outcome = expect(pending).rejects.toThrow('Capture renderer exited: crashed');
+      fake.windows[0].webContents.emit('render-process-gone',{}, {reason:'crashed'}); await outcome;
+    } else {
+      await vi.advanceTimersByTimeAsync(3000); engine.stop(); const result = await pending;
+      expect(result).not.toBeNull(); result?.disposeFile?.();
+    }
+    expect(power.stop).toHaveBeenCalledOnce(); expect(power.stop).toHaveBeenCalledWith(42);
+  });
+  it('does not acquire the Linux sleep inhibitor when source selection is canceled', async () => {
+    const power = {start:vi.fn(() => 42),stop:vi.fn()};
+    const engine = createRecordEngine({scratch:createScratchDir(root),log:{warn:vi.fn(),error:vi.fn()},platform:'linux',portal:false,powerSaveBlocker:power,
+      ffmpeg:{path:'/trusted/ffmpeg',version:'test',configuration:'--disable-gpl',encoders:['libvpx-vp9'],filters:['crop','format','fps'],formats:{mp4:false,webm:true,gif:false}},
+      windows:{select:async () => null,createRecordingControls:vi.fn()}});
+    engines.push(engine); expect(await engine.record({output:'webm'},new AbortController().signal,() => {})).toBeNull();
+    expect(power.start).not.toHaveBeenCalled(); expect(power.stop).not.toHaveBeenCalled();
   });
 });

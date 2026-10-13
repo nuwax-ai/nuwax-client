@@ -1,5 +1,5 @@
 /**
- * Run on Windows in an interactive desktop, using an isolated Electron runtime.
+ * Run on Windows/Linux in an interactive desktop, using an isolated Electron runtime.
  * Build from agent-electron-client after overlay sync (output directory must exist):
  * pnpm exec esbuild tests/capture-menu-renderer.tsx --bundle --platform=browser --format=iife --define:process.env.NODE_ENV='"production"' --define:process.env='{"NUWAX_APP_IDENTIFIER":"nuwax","NUWAX_APP_DISPLAY_NAME":"Nuwax","NUWAX_PORT_OFFSET":"1000"}' --outfile=<dir>/capture-menu-renderer.js --tsconfig=tsconfig.json
  * pnpm exec esbuild tests/capture-menu.electron.ts --bundle --platform=node --format=cjs --external:electron --outfile=<dir>/capture-menu.cjs --tsconfig=tsconfig.json
@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { bindCaptureMenuShortcuts } from '@main/window/applicationMenu';
 
 const profile = mkdtempSync(path.join(tmpdir(), 'nuwax-menu-fixture-'));
 const output = path.resolve(process.env.NUWAX_CAPTURE_MENU_OUTPUT || 'menu-results');
@@ -20,6 +21,7 @@ app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
 const report: Record<string, unknown> = { startedAt: new Date().toISOString(), platform: process.platform, versions: process.versions, checks: [] };
 let fixture: BrowserWindow | undefined;
+let unbindShortcuts: (() => void) | undefined;
 let complete = false;
 const finish = (error?: unknown) => {
   if (complete) return;
@@ -29,15 +31,16 @@ const finish = (error?: unknown) => {
   report.finishedAt = new Date().toISOString();
   if (error) report.error = error instanceof Error ? error.stack : String(error);
   writeFileSync(path.join(output, 'menu-results.json'), JSON.stringify(report, null, 2));
+  unbindShortcuts?.();
   fixture?.destroy();
   app.exit(error ? 1 : 0);
 };
-const deadline = setTimeout(() => finish(new Error('Windows menu fixture exceeded 30 seconds')), 30_000);
+const deadline = setTimeout(() => finish(new Error('Desktop menu fixture exceeded 30 seconds')), 30_000);
 app.on('will-quit', () => { try { rmSync(profile, { recursive: true, force: true }); } catch {} });
 const pause = (ms = 40) => new Promise(resolve => setTimeout(resolve, ms));
 
 app.whenReady().then(async () => {
-  assert.equal(process.platform, 'win32', 'This fixture must run on real Windows; navigator.platform is never overridden');
+  assert.ok(['win32', 'linux'].includes(process.platform), 'This fixture must run on Windows/Linux; navigator.platform is never overridden');
   const html = path.join(output, 'capture-menu.html');
   // The external bundle and CSS come from the adjacent build output; no remote resources.
   const renderer = path.join(__dirname, 'capture-menu-renderer.js');
@@ -69,7 +72,7 @@ app.whenReady().then(async () => {
   };
   await until('window.captureMenuFixture?.ready === true && document.querySelectorAll(".topbar-menu-btn").length === 6', 'Real toolbar render');
   report.navigatorPlatform = await script('navigator.platform');
-  assert.match(String(report.navigatorPlatform), /^Win/i);
+  assert.match(String(report.navigatorPlatform), process.platform === 'linux' ? /^Linux/i : /^Win/i);
   const snapshot = () => script(`(() => ({buttons:[...document.querySelectorAll('.topbar-menu-btn')].map(e=>e.textContent),menus:[...document.querySelectorAll('.topbar-app-menu')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>e.innerText),state:window.captureMenuFixture}))()`);
   const check = async (name: string) => { (report.checks as unknown[]).push({ name, ...(await snapshot()) }); };
   const point = (query: string, text: string) => script<[number, number]>(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(query)})].find(e=>e.textContent.includes(${JSON.stringify(text)})&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');if(!e)throw Error('Missing visible target: '+${JSON.stringify(text)});const r=e.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`);
@@ -107,5 +110,49 @@ app.whenReady().then(async () => {
   assert.deepEqual(final.menus, []);
   await check('screenshot-dispatch-after-menu-hidden');
   writeFileSync(path.join(output, 'after-screenshot-menu.png'), (await window.webContents.capturePage()).toPNG());
+  // Exercise the production application shortcut handler against this fixture's
+  // own webContents. No OS/global shortcut is registered or sent.
+  let recordingActive = false;
+  const recordingControls: string[] = [];
+  report.recordingControls = recordingControls;
+  unbindShortcuts = bindCaptureMenuShortcuts(window.webContents, action => {
+    if (action === 'mp4') recordingActive = true;
+    void script(`window.captureMenuDispatch(${JSON.stringify(action)})`).catch(finish);
+  }, {
+    platform: process.platform,
+    controlRecording: action => {
+      if (!recordingActive) return false;
+      recordingControls.push(action);
+      if (action === 'stop') recordingActive = false;
+      return true;
+    },
+  });
+  const key = async (keyCode: string) => {
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: ['control', 'alt'] });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: ['control', 'alt'] });
+    await pause();
+  };
+  await key('S');
+  await until('window.captureMenuFixture.calls.length === 2', 'Ctrl+Alt+S dispatch');
+  await key('R');
+  await until('window.captureMenuFixture.calls.length === 3', 'Ctrl+Alt+R dispatch');
+  await key('Z');
+  await pause(100);
+  const afterKeys = await snapshot();
+  assert.deepEqual(afterKeys.state.calls.map((call: { action: string }) => call.action), ['screenshot', 'screenshot', 'mp4'], 'Only the two capture shortcuts dispatch');
+  assert.ok(afterKeys.state.calls.every((call: { visibleMenus: string[] }) => call.visibleMenus.length === 0), 'Application shortcut dispatch preserves hidden menus');
+  await check('application-capture-shortcuts');
+  if (process.platform === 'linux') {
+    await key('P');
+    await key('R');
+    assert.deepEqual(recordingControls, ['pause', 'stop'], 'Linux active recording shortcuts control pause/stop');
+    assert.equal((await snapshot()).state.calls.length, 3, 'Controlling an active recording never starts a second one');
+    await key('P');
+    assert.deepEqual(recordingControls, ['pause', 'stop'], 'Idle Ctrl+Alt+P does not control a recording');
+    await check('linux-active-recording-shortcuts');
+  } else {
+    await key('P');
+    assert.deepEqual(recordingControls, [], 'Windows capture shortcuts do not use Linux recording controls');
+  }
   finish();
 }).catch(finish);

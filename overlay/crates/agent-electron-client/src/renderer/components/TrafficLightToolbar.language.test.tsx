@@ -168,8 +168,9 @@ const traditional = {
 const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
-describe("Windows toolbar language", () => {
-  it("截图与录屏菜单只显示截图、MP4、GIF 和快捷键，单击仅调用一次控制器", async () => {
+describe("Win/Linux toolbar language", () => {
+  it.each(["Win32", "Linux x86_64", "Linux aarch64"])("%s 截图与录屏菜单只显示截图、MP4、GIF 和快捷键，单击仅调用一次控制器", async (platform) => {
+    vi.stubGlobal("navigator", { platform });
     const { setCurrentLang } = await import("../services/core/i18n");
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     await setCurrentLang("zh-cn");
@@ -216,7 +217,8 @@ describe("Windows toolbar language", () => {
   });
 
   it.each([
-    ["Win32", false, true], ["Win32", true, false], ["MacIntel", true, true], ["Linux x86_64", true, true],
+    ["Win32", false, true], ["Win32", true, false], ["MacIntel", true, true],
+    ["Linux x86_64", false, true], ["Linux x86_64", true, false],
   ] as const)("%s availability=%s handler=%s 不暴露不可用的截图菜单", async (platform, available, hasHandler) => {
     vi.stubGlobal("navigator", { platform });
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
@@ -227,7 +229,8 @@ describe("Windows toolbar language", () => {
     expect(renderedMenuItems.some(item => item.key?.startsWith("capture-"))).toBe(false);
   });
 
-  it("悬停从文件切换到截图菜单时只展开当前菜单，迟到的关闭事件不覆盖新菜单", async () => {
+  it.each(["Win32", "Linux x86_64"])("%s 悬停从文件切换到截图菜单时只展开当前菜单，迟到的关闭事件不覆盖新菜单", async (platform) => {
+    vi.stubGlobal("navigator", { platform });
     const { setCurrentLang } = await import("../services/core/i18n");
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     await setCurrentLang("zh-cn");
@@ -289,6 +292,7 @@ describe("Windows toolbar language", () => {
       onBack: vi.fn(),
       onForward: vi.fn(),
       onReload: vi.fn(),
+      onOpenAbout: vi.fn(),
       onNewTask: vi.fn(),
       onOpenSearch: vi.fn(),
       onModifyWorkspace: vi.fn(),

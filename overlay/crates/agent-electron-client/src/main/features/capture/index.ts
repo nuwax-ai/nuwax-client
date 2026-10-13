@@ -1,5 +1,5 @@
 /** Native capture owns its windows, file results and both narrowly trusted entry points. */
-import { BrowserWindow, dialog, powerMonitor, screen } from "electron";
+import { app, BrowserWindow, dialog, powerMonitor, screen } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import path from "node:path";
 import {
@@ -15,8 +15,11 @@ import { getAllDisplays, getScreenPermission } from "./electronDeps";
 import { createResultStore, type ResultStore } from "./results";
 import { createNativeImageEncoder } from "./stillEncoder";
 import { createCaptureWindows } from "./selectionWindows";
-import { createCaptureSourceStill, createRecordEngine } from "./recorder";
+import { createCaptureSourceStill, createCapturePortalFrame, createRecordEngine } from "./recorder";
 import { resolveCaptureFfmpeg } from "./encodingResources";
+import { captureBackendAvailable } from './linuxEnvironment';
+import { resolveCapturePlatform } from './platforms';
+export { configureCaptureBackend } from './linuxEnvironment';
 
 const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const UNTRUSTED: CaptureResult = { success: false, code: "untrusted" };
@@ -54,6 +57,7 @@ export const captureFeature: DesktopFeature = {
       service?.endSession();
       owners.clear();
       ctx.setRecordingStopAction?.(null);
+      ctx.setRecordingPauseAction?.(null, false);
       for (const entry of watched.values()) entry.cleanup();
       watched.clear();
       documentEpochs.clear();
@@ -90,20 +94,24 @@ export const captureFeature: DesktopFeature = {
         if (disposed) throw new Error("capture feature is disposed");
         const labels = currentLabels();
         const recordingPreload = path.join(__dirname, "..", "preload", "captureRecording.js");
-        windows = createCaptureWindows({
+        const adapter = resolveCapturePlatform();
+        windows = createCaptureWindows({ windowPolicy: adapter.windows, sourceStrategy: adapter.source,
           preloadPath: path.join(__dirname, "..", "preload", "captureWindow.js"), labels,
           log: ctx.log,
           captureWindowFrame: createCaptureSourceStill({ scratch: ctx.scratch, preloadPath: recordingPreload }),
+          capturePortalFrame: createCapturePortalFrame({ scratch: ctx.scratch, preloadPath: recordingPreload }),
         });
-        recorder = createRecordEngine({ windows, scratch: ctx.scratch, log: ctx.log, ffmpeg, preloadPath: recordingPreload });
+        recorder = createRecordEngine({ adapter, windows, scratch: ctx.scratch, log: ctx.log, ffmpeg, preloadPath: recordingPreload });
         results = createResultStore(ctx.scratch);
         service = createCaptureService({ platform: process.platform, getPermission: getScreenPermission,
+          backendAvailable: () => captureBackendAvailable(app.commandLine),
           getDisplays: getAllDisplays, stillEngine: windows, stillEncoder: createNativeImageEncoder(),
           recordEngine: recorder, results, log: ctx.log });
         offState = service.onStateChange((state) => {
           const sender = active?.sender;
           if (sender && !sender.isDestroyed()) sender.send(active!.channel, state);
           ctx.setRecordingStopAction?.(state === "recording" || state === "paused" ? () => recorder?.stop() : null);
+          ctx.setRecordingPauseAction?.(state === "recording" || state === "paused" ? () => recorder?.pauseOrResume() : null, state === 'paused');
           if (state === "idle") active = null;
         });
         return service;

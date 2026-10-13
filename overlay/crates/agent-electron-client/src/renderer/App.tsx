@@ -636,12 +636,12 @@ function App() {
   const [captureAvailable, setCaptureAvailable] = useState(false);
   const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
   const captureAfterSettingsClose = useRef<(() => void) | null>(null);
-  const captureMenuHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
-  const handleCaptureMenuHandlerChange = useCallback((handler: ((action: CaptureMenuAction) => void) | null) => {
-    captureMenuHandler.current = handler;
+  const captureActionHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
+  const handleCaptureActionReady = useCallback((handler: ((action: CaptureMenuAction) => void) | null) => {
+    captureActionHandler.current = handler;
   }, []);
   const handleCaptureMenu = useCallback((action: CaptureMenuAction) => {
-    captureMenuHandler.current?.(action);
+    captureActionHandler.current?.(action);
   }, []);
   /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
   const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
@@ -2272,7 +2272,7 @@ function App() {
               </Modal>
               {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
                 panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
-                onMenuHandlerChange={handleCaptureMenuHandlerChange}
+                onActionReady={handleCaptureActionReady}
                 onCaptureStart={() => {
                   if (!settingsModalOpen) return Promise.resolve();
                   return new Promise<void>((resolve) => {

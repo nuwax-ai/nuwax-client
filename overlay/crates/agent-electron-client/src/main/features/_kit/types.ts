@@ -33,6 +33,7 @@ export interface FeatureContext {
   /** 本轮调用时使用宿主当前语言；未注入时由特性选择默认文案。 */
   translate?(key: string): string;
   setRecordingStopAction?(action: (() => void) | null): void;
+  setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }
 
 export interface DesktopFeature {

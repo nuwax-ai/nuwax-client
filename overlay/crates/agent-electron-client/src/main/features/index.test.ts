@@ -23,6 +23,7 @@ import {
   notifyFeatureSessionEnd,
   startDesktopFeatures,
   isDesktopFeatureRegistered,
+  controlDesktopRecording,
   type StartFeaturesOptions,
 } from "./index";
 import type { DesktopFeature, FeatureContext } from "./_kit/types";
@@ -91,6 +92,32 @@ describe("startDesktopFeatures", () => {
     startDesktopFeatures(options({ ipcMain: ipcMain as never, isBusinessSender: () => false, isHostSender: () => true }), [f]);
     expect(await handlers.get("b:biz")!({})).toBe("biz-denied");
     expect(await handlers.get("b:host")!({})).toBe("host-ok");
+  });
+
+  it("应用内录制控制转发当前动作，暂停状态同步托盘，结束后失效", async () => {
+    let context!: FeatureContext;
+    const stop = vi.fn(), pause = vi.fn();
+    const trayStop = vi.fn(), trayPause = vi.fn();
+    startDesktopFeatures(options({ setRecordingStopAction: trayStop, setRecordingPauseAction: trayPause }), [feature("capture", {
+      register(ctx) { context = ctx; return { dispose() {} }; },
+    })]);
+    expect(controlDesktopRecording("stop")).toBe(false);
+    expect(controlDesktopRecording("pause")).toBe(false);
+    context.setRecordingStopAction!(stop);
+    context.setRecordingPauseAction!(pause, false);
+    expect(controlDesktopRecording("stop")).toBe(true);
+    expect(controlDesktopRecording("pause")).toBe(true);
+    expect(stop).toHaveBeenCalledOnce(); expect(pause).toHaveBeenCalledOnce();
+    expect(trayStop).toHaveBeenLastCalledWith(stop);
+    context.setRecordingPauseAction!(pause, true);
+    expect(trayPause).toHaveBeenLastCalledWith(pause, true);
+    context.setRecordingStopAction!(null); context.setRecordingPauseAction!(null, false);
+    expect(controlDesktopRecording("stop")).toBe(false);
+    expect(controlDesktopRecording("pause")).toBe(false);
+    context.setRecordingStopAction!(stop); context.setRecordingPauseAction!(pause, false);
+    await disposeDesktopFeatures();
+    expect(controlDesktopRecording("stop")).toBe(false);
+    expect(controlDesktopRecording("pause")).toBe(false);
   });
 
   it("按产品与开关过滤；关闭的特性零接触", () => {

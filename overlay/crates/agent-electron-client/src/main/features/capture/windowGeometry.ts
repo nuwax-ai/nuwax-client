@@ -3,6 +3,7 @@ import { placeCaptureToolbar } from '@shared/features/capture/windowPlacement';
 
 /** Source pixels to global desktop DIP, with the actual frame/display ratio on each axis. */
 export function selectionDesktopRect(selection: CaptureSelection): CaptureRect {
+  if (selection.coordinateSpace === 'source') throw new Error('source preview has no global desktop coordinates');
   const { sourceSize, displayBounds, crop } = selection;
   const sx = displayBounds.width / sourceSize.width, sy = displayBounds.height / sourceSize.height;
   return { x: displayBounds.x + crop.x * sx, y: displayBounds.y + crop.y * sy, width: crop.width * sx, height: crop.height * sy };
@@ -14,6 +15,7 @@ export function recordingControlBounds(selection: CaptureSelection, workArea: Ca
   return placeCaptureToolbar(selection.sourceKind === 'screen' ? selectionDesktopRect(selection) : null, workArea, size);
 }
 export function recordingBorderBounds(selection: CaptureSelection, margin = 3): CaptureRect {
+  if (selection.coordinateSpace === 'source') throw new Error('source preview cannot use a desktop recording border');
   const target = selectionDesktopRect(selection);
   // H.264 can expand an odd crop by one source pixel on either edge. Keep the
   // visible stroke outside that extra real content even when OS exclusion fails.
