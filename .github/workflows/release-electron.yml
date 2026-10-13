@@ -115,7 +115,7 @@ jobs:
           - platform: macos-latest
             arch: arm64
             dist_cmd: dist:mac:arm64
-          - platform: macos-15-intel
+          - platform: macos-26-intel
             arch: x64
             dist_cmd: dist:mac:x64
           - platform: windows-latest
@@ -131,6 +131,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
+      - name: Configure macOS compatibility target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -474,9 +478,30 @@ jobs:
           if [ "${{ runner.os }}" = "macOS" ] && [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
             echo "No Apple certificate, building unsigned Mac package for ${{ matrix.arch }}"
             npm run dist:mac:unsigned:${{ matrix.arch }} -- --publish never
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            echo "NUWAX_SIGNED_MAC_BUILD=1" >> "$GITHUB_ENV"
+            APPLE_API_KEY= APPLE_API_KEY_ID= APPLE_ISSUER_ID= \
+              npm run ${{ matrix.dist_cmd }} -- --dir --publish never --config.mac.notarize=false
           else
             npm run ${{ matrix.dist_cmd }} -- --publish never
           fi
+
+      - name: Notarize signed macOS app with resumable retries
+        if: runner.os == 'macOS' && env.NUWAX_SIGNED_MAC_BUILD == '1'
+        timeout-minutes: 45
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: node scripts/release-mac-notarization.mjs --arch "$TARGET_ARCH" --phase notarize
+
+      - name: Package notarized macOS app
+        if: runner.os == 'macOS' && env.NUWAX_SIGNED_MAC_BUILD == '1'
+        timeout-minutes: 45
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          CSC_NAME: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: "1"
+        run: node scripts/release-mac-notarization.mjs --arch "$TARGET_ARCH" --phase package
 
       # Check the actual default runtime paths, not just builder configuration.
       # A missing encoder/record/notices prevents either Release or QA upload.
@@ -547,3 +572,24 @@ jobs:
             echo "Uploading $(basename "$f") ..."
             gh release upload "$TAG" "$f" --clobber --repo "$GITHUB_REPOSITORY"
           done
+
+      - name: Preserve signed macOS app after failure
+        if: failure() && runner.os == 'macOS' && env.NUWAX_SIGNED_MAC_BUILD == '1'
+        env:
+          BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          OUT_DIR="nuwa-electron-shell/crates/agent-electron-client/release/${BUILD_VERSION}"
+          if [ -d "$OUT_DIR" ]; then
+            tar -czf "$RUNNER_TEMP/mac-notary-recovery-${TARGET_ARCH}.tar.gz" -C "$OUT_DIR" .
+          fi
+
+      - name: Upload macOS recovery checkpoint
+        if: failure() && runner.os == 'macOS' && env.NUWAX_SIGNED_MAC_BUILD == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-notary-recovery-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/mac-notary-recovery-${{ matrix.arch }}.tar.gz
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 3

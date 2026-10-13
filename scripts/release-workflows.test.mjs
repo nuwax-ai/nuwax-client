@@ -40,9 +40,10 @@ test('all pointer publications share one queue and current tools verify a separa
 test('stable and beta prepare locked capture payloads and verify real packaged bytes before any upload', () => {
   for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
     const text = workflow(name);
-    assert.match(text, /platform: macos-15-intel\n\s+arch: x64/);
+    assert.match(text, /platform: macos-26-intel\n\s+arch: x64/);
     assert.match(text, /Setup Windows capture compiler\n\s+if: runner.os == 'Windows'/);
     assert.match(text, /Setup macOS capture compiler\n\s+if: runner.os == 'macOS'/);
+    assert.match(text, /MACOSX_DEPLOYMENT_TARGET=12\.0/);
     assert.match(text, /command -v nasm >\/dev\/null \|\| brew install nasm/);
     assert.match(text, /command -v pkg-config >\/dev\/null \|\| brew install pkgconf/);
     assert.ok(text.indexOf('Setup macOS capture compiler') < text.indexOf('Prepare and admit capture release resources'));
@@ -58,6 +59,14 @@ test('stable and beta prepare locked capture payloads and verify real packaged b
     assert.ok(text.indexOf('Import Apple certificate (macOS)') < text.indexOf('Prepare and admit capture release resources'));
     assert.match(text, /NUWAX_CAPTURE_MAC_SIGNING: \$\{\{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' \|\| 'false' \}\}/);
     assert.ok(text.indexOf('- name: Build Electron app') < text.indexOf('Verify packaged capture resources'));
+    assert.match(text, /APPLE_API_KEY= APPLE_API_KEY_ID= APPLE_ISSUER_ID=/);
+    assert.match(text, /--dir --publish never --config.mac.notarize=false/);
+    assert.ok(text.indexOf('Notarize signed macOS app with resumable retries') < text.indexOf('Package notarized macOS app'));
+    assert.ok(text.indexOf('Package notarized macOS app') < text.indexOf('Verify packaged capture resources'));
+    assert.match(text, /--phase notarize/);
+    assert.match(text, /--phase package/);
+    assert.match(text, /Preserve signed macOS app after failure/);
+    assert.match(text, /mac-notary-recovery-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.arch \}\}/);
     assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Upload artifacts to Release'));
     if (name === 'release-electron-dev.yml') assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Stage isolated QA packages'));
     assert.match(text, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
