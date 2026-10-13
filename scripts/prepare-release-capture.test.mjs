@@ -229,7 +229,7 @@ function runtimeFixture(t) {
     readJson: () => ({ resources: { capture: { components: [{ id: 'winpthreads', toolchainPackageVersion: version }] } } }),
     run: async (command, args, options) => {
       calls.push({ command, args, options });
-      if (args.includes('capture-runtime-signature') && signatureError) throw new Error('untrusted signature');
+      if (args.includes('capture-runtime-install') && signatureError) throw new Error('untrusted signature');
       return { status: 0, stdout: args[1]?.includes('gcc -dumpmachine') ? 'x86_64-w64-mingw32\n' : `mingw-w64-x86_64-winpthreads ${WINDOWS_RUNTIME_VERSION}\n` };
     },
   };
@@ -246,34 +246,32 @@ test('Windows CI pins both official split archives, verifies signatures, install
     assert.ok(downloads.some((call) => call.args.includes(`https://repo.msys2.org/mingw/mingw64/${entry.archive}`)));
     assert.ok(downloads.some((call) => call.args.includes(`https://repo.msys2.org/mingw/mingw64/${entry.archive}.sig`)));
   }
-  const signatures = f.calls.filter((call) => call.args.includes('capture-runtime-signature'));
-  assert.equal(signatures.length, 2);
-  const initialize = f.calls.findIndex((call) => call.args.includes('capture-runtime-keyring'));
-  assert.ok(initialize >= 0 && initialize < f.calls.indexOf(signatures[0]));
-  assert.equal(f.calls[initialize].args[1], 'exec pacman-key --init');
   const install = f.calls.findIndex((call) => call.args.includes('capture-runtime-install'));
-  assert.ok(install > f.calls.indexOf(signatures[1]));
-  assert.equal(f.calls[install].args.slice(-2).length, 2);
+  assert.ok(install > f.calls.indexOf(downloads.at(-1)));
+  const args = f.calls[install].args;
+  assert.equal(args.slice(-2).length, 2);
+  const config = fs.readFileSync(args.at(-3), 'utf8');
+  assert.match(config, /^SigLevel = Required TrustedOnly$/m);
+  assert.match(config, /^LocalFileSigLevel = Required TrustedOnly$/m);
+  assert.doesNotMatch(config, /Optional|TrustAll|Never/);
+  assert.match(args[1], /pacman --config "\$config" -U/);
+  assert.ok(f.calls.every(call => !call.args.join(' ').includes('pacman-key')));
   assert.match(f.env.Path, /mingw64\/bin;.*usr\/bin;node-path$/);
   assert.equal(f.env.NUWAX_CAPTURE_BUILD_BASH, '/msys2 with spaces/usr/bin/bash.exe');
   assert.ok(f.calls.slice(install + 1).some((call) => call.args[1]?.includes('pacman -Qoq')));
 });
 
 test('Windows declaration drift, changed archive and untrusted signature are rejected before install', async (t) => {
-  for (const [mutate, message] of [['wrongVersion', /package lock/], ['wrongHash', /SHA256 mismatch/], ['signatureError', /untrusted signature/]]) {
+  for (const [mutate, message] of [['wrongVersion', /package lock/], ['wrongHash', /SHA256 mismatch/]]) {
     const f = runtimeFixture(t); f[mutate]();
     await assert.rejects(configureWindowsCaptureToolchain(f.root, f.options), message);
     assert.equal(f.calls.some((call) => call.args.includes('capture-runtime-install')), false);
   }
 });
 
-test('Windows keyring initialization failure stops before downloading or installing runtime packages', async (t) => {
-  const f = runtimeFixture(t);
-  const run = f.options.tools.run;
-  f.options.tools.run = async (command, args, options) => {
-    if (args.includes('capture-runtime-keyring')) throw new Error('keyring initialization failed');
-    return run(command, args, options);
-  };
-  await assert.rejects(configureWindowsCaptureToolchain(f.root, f.options), /keyring initialization failed/);
-  assert.equal(f.calls.length, 0);
+test('Windows transaction signature rejection prevents compiler admission', async (t) => {
+  const f = runtimeFixture(t); f.signatureError();
+  await assert.rejects(configureWindowsCaptureToolchain(f.root, f.options), /untrusted signature/);
+  assert.equal(f.calls.at(-1).args[2], 'capture-runtime-install');
+  assert.equal(f.calls.some(call => call.args[1]?.includes('gcc -dumpmachine')), false);
 });

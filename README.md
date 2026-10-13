@@ -169,7 +169,7 @@ npm run pack -- --frontend source
 
 Windows 可以在 PowerShell 或 cmd 中直接运行以上 npm 命令，顶层入口无需通过 make 启动；内部源码资源构建仍需要各自工具链。准备 Windows 沙箱 helper 需要 Rust/Cargo 与 MSVC 构建工具；Electron 原生模块需要相应的 Python/C++ 构建环境。打包 Computer Use helper 还需要 Rust/rustup（Windows 使用已准备的 Git Bash；Linux 需平台构建依赖）。缺失工具或真实资源时脚本会退出并报告原因。
 
-Windows 录屏编码资源首次构建需要 MSYS2 MinGW GCC、MSYS make、pkg-config、cygpath 和 yasm 或 nasm。以 x64、MSYS2 安装于 `C:\msys64` 为例，在 PowerShell 配置后运行：
+Windows 录屏编码资源首次构建需要 MSYS2 MinGW GCC、MSYS make、MSYS Perl、pkg-config、cygpath 和 yasm 或 nasm。Perl 应安装在所选 MSYS2 中，避免混用 PATH 中其他 Windows 发行版的 Perl。以 x64、MSYS2 安装于 `C:\msys64` 为例，在 PowerShell 配置后运行：
 
 ```powershell
 $env:NUWAX_CAPTURE_BUILD_BASH = 'C:\msys64\usr\bin\bash.exe'
@@ -180,6 +180,8 @@ npm run prepare:capture
 ```
 
 仅指定 bash 路径不会配置编译器；脚本会预检所选 shell 的工具与目标架构。静态链接的 Winpthreads 包需匹配 `third-party/manifest.json` 固定版本（当前 `13.0.0.r354.g40ab95d18-1`），实际构建来源写入 `resource.json`，源码和许可证随资源核验；更换版本须同步审核声明并重新构建。已有通过 SHA256、配置与开源声明核验的录屏资源会直接复用。旧 Windows 资源若缺少 Winpthreads 来源记录会被拒绝，需备份后干净重建，不能仅用当前声明补写未知产物。
+
+macOS 编码资源原生构建需要 Xcode/Command Line Tools、NASM 和 pkg-config；后两项可通过 `brew install nasm pkgconf` 准备。Intel 和 Apple Silicon 都使用锁定 libvpx 支持的 Darwin target，SDK 和编译器从当前 Xcode 配对选取。
 
 Linux x64/arm64 录屏资源在对应架构原生构建，需要 GCC/G++、make、pkg-config 和 nasm。Ubuntu/Debian 可准备 `build-essential pkg-config nasm` 后运行 `npm run prepare:capture`；`npm run pack` 也会准备并核验资源。固定源码构建的 LGPL FFmpeg 使用 OpenH264 输出 MP4，源码、许可证和 SHA 随资源打包，不使用系统 PATH 中的 FFmpeg。OpenH264 自编译版本与 Cisco 官方二进制的分发授权不同，详情见 [Linux 验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 

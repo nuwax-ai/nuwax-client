@@ -324,6 +324,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config nasm
 
+      - name: Setup macOS capture compiler
+        if: runner.os == 'macOS'
+        run: |
+          command -v nasm >/dev/null || brew install nasm
+          command -v pkg-config >/dev/null || brew install pkgconf
+
       - name: Setup Windows capture compiler
         if: runner.os == 'Windows'
         id: capture-msys2
@@ -335,6 +341,7 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-nasm
+            perl
             make
             diffutils
             curl

@@ -67,8 +67,10 @@ export async function inspectCaptureResource(root, { platform = process.platform
 export function captureBuildArguments(lock, { platform, arch, prefix, compiler, sdk }) {
   if (!CAPTURE_PLATFORMS.includes(`${platform}-${arch}`)) throw new Error(`[capture] 不支持 ${platform}-${arch}`);
   const cpu = arch === 'arm64' ? 'arm64' : 'x86_64';
-  // libvpx 官方 target 形态不带 darwin 版本号（x86_64-darwin-gcc）；带版本会 Unrecognized target
-  const vpxTarget = `${cpu}-${platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win64' : 'linux'}-gcc`;
+  // The locked libvpx accepts unversioned Darwin only for ARM. Darwin 20–25
+  // share the same macOS compiler/SDK rules; use the supported macOS 11 target
+  // for both native architectures rather than guessing from a moving SDK name.
+  const vpxTarget = `${cpu}-${platform === 'darwin' ? 'darwin20' : platform === 'win32' ? 'win64' : 'linux'}-gcc`;
   const h264Encoder = platform === 'darwin' ? 'h264_videotoolbox' : platform === 'win32' ? 'h264_mf' : 'libopenh264';
   const libvpx = [`--prefix=${prefix}`, `--target=${vpxTarget}`, '--disable-examples', '--disable-tools', '--disable-docs', '--disable-unit-tests', '--disable-shared', '--enable-static', '--disable-vp8', '--enable-vp9', '--enable-pic'];
   const ffmpeg = [
@@ -139,6 +141,15 @@ async function ensureArchive(root, name, source, tools) {
   } finally { fs.rmSync(partial, { force: true }); }
 }
 
+export async function extractCaptureArchive(archive, destination, { platform, shell, tools = core }) {
+  if (platform === 'win32') {
+    // GNU tar interprets a native drive colon as a remote host. Keep both
+    // paths in the same MSYS namespace as configure/make, including spaces.
+    return tools.run(shell, ['-c', 'archive=$(cygpath -u "$1"); destination=$(cygpath -u "$2"); exec tar -xf "$archive" -C "$destination"', 'capture-extract', archive, destination], { capture: true });
+  }
+  return tools.run('tar', ['-xf', archive, '-C', destination], { capture: true });
+}
+
 async function buildCaptureBinary(root, lock, options) {
   const { tools, platform, arch } = options;
   if (platform !== process.platform || arch !== process.arch) throw new Error('[capture] 原生资源必须在对应平台/架构构建；此脚本不隐式交叉编译');
@@ -159,7 +170,7 @@ async function buildCaptureBinary(root, lock, options) {
   for (const name of sourceNames) {
     archives[name] = await ensureArchive(root, name, lock[name], tools);
     const source = path.join(parent, lock[name].directory);
-    if (!fs.existsSync(source)) await tools.run('tar', ['-xf', archives[name], '-C', parent], { capture: true });
+    if (!fs.existsSync(source)) await extractCaptureArchive(archives[name], parent, { platform, shell, tools });
   }
   const prefix = path.join(parent, 'prefix');
   let compiler, sdk;

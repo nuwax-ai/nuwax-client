@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertCaptureLinuxToolchain, assertCaptureWindowsToolchain, captureBuildArguments, captureBuildPaths, captureResourceDir, inspectCaptureResource, prepareCaptureResources, readCaptureSourceLock, sha256 } from './client/capture-resources.mjs';
+import { assertCaptureLinuxToolchain, assertCaptureWindowsToolchain, captureBuildArguments, captureBuildPaths, extractCaptureArchive, captureResourceDir, inspectCaptureResource, prepareCaptureResources, readCaptureSourceLock, sha256 } from './client/capture-resources.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const locked = readCaptureSourceLock(root);
@@ -58,6 +58,7 @@ test('the source lock pins HTTPS versions/commits with actual SHA256, never late
 test('native platform recipes disable GPL/nonfree and use OS H264 plus VP9/GIF', () => {
   for (const platform of ['darwin', 'win32']) for (const arch of ['x64', 'arm64']) {
     const args = captureBuildArguments(locked, { platform, arch, prefix: '/prefix', compiler: '/clang', sdk: '/sdk' });
+    assert.ok(args.libvpx.includes(`--target=${arch === 'arm64' ? 'arm64' : 'x86_64'}-${platform === 'darwin' ? 'darwin20' : 'win64'}-gcc`));
     assert.ok(args.ffmpeg.includes('--disable-autodetect'));
     assert.ok(args.ffmpeg.includes('--disable-gpl'));
     assert.ok(args.ffmpeg.includes('--disable-nonfree'));
@@ -210,4 +211,19 @@ test('Windows build results without observed runtime provenance are rejected bef
   fs.rmSync(f.resourceDir, { recursive: true });
   await assert.rejects(prepareCaptureResources(f.dir, { platform: 'win32', arch: 'x64', tools: f.tools, buildBinary: async () => ({}) }), /缺少匹配的实际 Winpthreads 来源记录/);
   assert.equal(fs.existsSync(f.resourceDir), false);
+});
+
+test('Windows archives use positional MSYS paths instead of GNU tar remote-host drive syntax', async () => {
+  const calls = [];
+  const tools = { run: (...args) => { calls.push(args); return { status: 0 }; } };
+  const archive = String.raw`D:\capture sources\encoder.tar.gz`;
+  const destination = String.raw`E:\build space\out`;
+  await extractCaptureArchive(archive, destination, { platform: 'win32', shell: 'msys-bash', tools });
+  assert.equal(calls[0][0], 'msys-bash');
+  assert.deepEqual(calls[0][1].slice(2), ['capture-extract', archive, destination]);
+  assert.match(calls[0][1][1], /cygpath -u "\$1"/);
+  assert.match(calls[0][1][1], /cygpath -u "\$2"/);
+  assert.match(calls[0][1][1], /tar -xf "\$archive" -C "\$destination"/);
+  await extractCaptureArchive('/archive.tar.gz', '/build', { platform: 'darwin', shell: '/bin/bash', tools });
+  assert.deepEqual(calls[1].slice(0, 2), ['tar', ['-xf', '/archive.tar.gz', '-C', '/build']]);
 });

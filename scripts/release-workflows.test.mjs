@@ -42,10 +42,15 @@ test('stable and beta prepare locked capture payloads and verify real packaged b
     const text = workflow(name);
     assert.match(text, /platform: macos-15-intel\n\s+arch: x64/);
     assert.match(text, /Setup Windows capture compiler\n\s+if: runner.os == 'Windows'/);
+    assert.match(text, /Setup macOS capture compiler\n\s+if: runner.os == 'macOS'/);
+    assert.match(text, /command -v nasm >\/dev\/null \|\| brew install nasm/);
+    assert.match(text, /command -v pkg-config >\/dev\/null \|\| brew install pkgconf/);
+    assert.ok(text.indexOf('Setup macOS capture compiler') < text.indexOf('Prepare and admit capture release resources'));
     assert.match(text, /Setup Linux capture compiler\n\s+if: runner.os == 'Linux'/);
     assert.match(text, /sudo apt-get install -y build-essential pkg-config nasm/);
     assert.ok(text.indexOf('Setup Linux capture compiler') < text.indexOf('Prepare and admit capture release resources'));
     assert.match(text, /uses: msys2\/setup-msys2@v2/);
+    assert.match(text, /mingw-w64-x86_64-nasm\n\s+perl\n/);
     assert.match(text, /MSYS2_LOCATION: \$\{\{ steps.capture-msys2.outputs.msys2-location \}\}/);
     assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH"/);
     assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH" --verify-output "\$OUT_DIR"/);

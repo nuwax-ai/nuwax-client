@@ -35,10 +35,6 @@ export async function configureWindowsCaptureToolchain(root, { location, arch, t
   env[pathKey] = [path.join(location, 'mingw64/bin'), path.join(location, 'usr/bin'), env[pathKey] || ''].join(';');
   env.NUWAX_CAPTURE_BUILD_BASH = shell;
   env.MSYSTEM = 'MINGW64';
-  // setup-msys2 can provide a populated keyring without the gpg.conf options
-  // required by pacman-key --verify. Its official, idempotent init restores
-  // those options without replacing trusted keys or disabling verification.
-  await tools.run(shell, ['-c', 'exec pacman-key --init', 'capture-runtime-keyring'], { env, capture: true });
   const downloads = path.join(core.paths(root).cache, 'capture/windows-runtime');
   fs.mkdirSync(downloads, { recursive: true });
   const files = [];
@@ -47,11 +43,15 @@ export async function configureWindowsCaptureToolchain(root, { location, arch, t
     const url = `https://repo.msys2.org/mingw/mingw64/${entry.archive}`;
     for (const suffix of ['', '.sig']) await tools.run('curl', ['--fail', '--location', '--retry', '4', '--retry-all-errors', `${url}${suffix}`, '--output', `${file}${suffix}`], { env, capture: true });
     if (hash(file) !== entry.sha256) throw new Error(`[release-capture] Windows runtime archive SHA256 mismatch: ${entry.archive}`);
-    await tools.run(shell, ['-c', 'signature=$(cygpath -u "$1"); archive=$(cygpath -u "$2"); pacman-key --verify "$signature" "$archive"', 'capture-runtime-signature', `${file}.sig`, file], { env, capture: true });
     files.push(file);
   }
-  // Translate arguments individually: native drive paths are not MSYS paths.
-  await tools.run(shell, ['-c', 'packages=(); for file in "$@"; do packages+=("$(cygpath -u "$file")"); done; exec pacman -U --noconfirm "${packages[@]}"', 'capture-runtime-install', ...files], { env, capture: true });
+  // Use libalpm's transaction signature verification, not pacman-key --verify:
+  // recent MSYS2 keyrings omit lock-never but that wrapper still requires it.
+  // Local packages default to optional signatures, so explicitly require both
+  // valid signatures and trusted keys before the transaction may install either.
+  const signatureConfig = path.join(downloads, 'pacman-capture.conf');
+  fs.writeFileSync(signatureConfig, '[options]\nArchitecture = auto\nSigLevel = Required TrustedOnly\nLocalFileSigLevel = Required TrustedOnly\n');
+  await tools.run(shell, ['-c', 'config=$(cygpath -u "$1"); shift; packages=(); for file in "$@"; do packages+=("$(cygpath -u "$file")"); done; exec pacman --config "$config" -U --noconfirm "${packages[@]}"', 'capture-runtime-install', signatureConfig, ...files], { env, capture: true });
   await assertCaptureWindowsToolchain({ shell, arch, tools, runtimePackageVersion: WINDOWS_RUNTIME_VERSION });
   return shell;
 }
