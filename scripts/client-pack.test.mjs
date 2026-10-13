@@ -101,8 +101,9 @@ test('source pack builds fresh frontend before builder and does not edit base pa
       return { distDir, sourceSha: 'abcdefg' };
     },
     prepareComputerUse: async () => { events.push('helper'); return path.join(p.client, 'resources/computer-use'); },
+    generateNotices: async (_root, options) => { assert.equal(options.strict, true); assert.ok(options.resourcePaths['computer-use']); events.push('notices'); },
   });
-  assert.deepEqual(events, ['prepare', 'frontend', 'helper', 'build', 'builder']);
+  assert.deepEqual(events, ['prepare', 'frontend', 'helper', 'notices', 'build', 'builder']);
   assert.equal(fs.readFileSync(packageFile, 'utf8'), packageText);
 });
 
@@ -133,6 +134,15 @@ test('default pack consumes configured frontend pin and creates complete package
     },
     buildFrontend: async () => { assert.fail('default pack must consume its prepared pin'); },
     prepareComputerUse: async () => path.join(p.client, 'resources/computer-use'),
+    generateNotices: async (_root, options) => { assert.equal(options.strict, true); },
   });
   assert.equal(result.output, path.join(root, config.pack.outputDir, '1.2.3'));
+});
+
+test('capture and notices use independent commercial resource paths and include source archives', () => {
+  const pkg = { build: { extraResources: [{ from: 'stale', to: 'capture' }, { from: 'stale-notices', to: 'third-party' }] } };
+  const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', noticesDir: '/commercial/.cache/notices', frontendDist: '/frontend', output: '/output' });
+  assert.equal(result.extraResources.filter((entry) => entry.to.startsWith('capture')).length, 1);
+  assert.deepEqual(result.extraResources.find((entry) => entry.to.startsWith('capture')), { from: '/commercial/resources/capture/darwin-arm64', to: 'capture/darwin-arm64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json'] });
+  assert.deepEqual(result.extraResources.find((entry) => entry.to === 'third-party').filter, ['third-party-notices.json', 'licenses/**', 'sources/**']);
 });

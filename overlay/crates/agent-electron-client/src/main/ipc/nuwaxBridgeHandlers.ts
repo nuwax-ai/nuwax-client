@@ -27,14 +27,15 @@
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
 import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
-import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
 import { readSetting, writeSetting, getDb } from "../db";
-import { getMainLang, setMainLang } from "../services/i18n";
+import { getMainLang, setMainLang, t } from "../services/i18n";
 import { getTrayManager } from "../window/trayManager";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
@@ -58,6 +59,7 @@ import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicke
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
 import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
+import { notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
 
 import {
   initializeCommercialAuth,
@@ -280,9 +282,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   let authGeneration = 0;
   let authClearHandled = false;
   let transfers = new AbortController();
-  const cancelTransfers = () => {
+  const cancelTransfers = (reason: SessionEndReason = "other") => {
     transfers.abort();
     transfers = new AbortController();
+    // 会话边界（登录切换 / 登出 / 换域 / 过期）：通知各桌面特性取消进行中的工作并清理
+    notifyFeatureSessionEnd(reason);
   };
   let switching = false;
   const documents = new Map<string, number>();
@@ -297,6 +301,22 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     if (isIMSender(event) && typeof enabled === "boolean") setIMNotificationEnabled(enabled);
   });
   registerIMUnreadBridge({ ipc: ipcMain, isAllowed: isIMSender, getSnapshot: getIMUnreadSnapshot, onChange: onIMUnreadChanged });
+  // 桌面特性（截屏/录屏、开源组件声明等）：静态注册，按产品与开关加载，关闭即零痕迹。
+  // isHostSender 在下方才声明，这里用闭包延迟取值（IPC 到达时早已初始化）。
+  startDesktopFeatures({
+    product: APP_NAME_IDENTIFIER,
+    ipcMain,
+    isBusinessSender: isIMSender,
+    isHostSender: (event) => isHostSender(event),
+    dataDir: path.join(os.homedir(), APP_DATA_DIR_NAME),
+    isEnabled: (featureId, enabledByDefault) => {
+      const override = readSetting(`features.${featureId}.enabled`);
+      return typeof override === "boolean" ? override : enabledByDefault;
+    },
+    log,
+    translate: t,
+    setRecordingStopAction: (action) => getTrayManager()?.setRecordingStopAction(action),
+  });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
       webContents.getAllWebContents().map((wc) => wc.session),
@@ -678,7 +698,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const hadTicket = !!currentTicket();
     authGeneration++;
     stopIMReceiver();
-    cancelTransfers();
+    cancelTransfers("logout");
     const stopping = lifecycle.stop();
     const scope = resolveSenderOrigin(event);
     // 升级兼容：清除 sender、业务域和网关范围内残留的旧 token 键。
@@ -734,7 +754,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     switching = true;
     authGeneration++;
     stopIMReceiver();
-    cancelTransfers();
+    cancelTransfers("switch-domain");
     const scopes = nuwaxSessionScopes(resolveSenderOrigin(event));
     invalidateTicketSession([...scopes, origin]);
     // Existing secondary pages retain the trusted-origin list captured in their

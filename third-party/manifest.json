@@ -1,0 +1,61 @@
+{
+  "$comment": "开源组件声明清单。许可证由 scripts/generate-third-party-notices.mjs 从文件/包元数据读取；这里只登记随包的非 npm 组件（resources/* 目录）及策略。严格模式（pack/发版）下，未登记、读不出许可证、缺源码地址的条目都会让构建失败。",
+  "schema": 1,
+  "npmRoots": [".", "nuwa-electron-shell/crates/agent-electron-client"],
+  "npmExtra": [],
+  "resources": {
+    "capture": {
+      "id": "ffmpeg",
+      "name": "FFmpeg",
+      "version": "8.1.3",
+      "license": "LGPL-2.1-or-later",
+      "licenseFile": "third-party/licenses/ffmpeg.txt",
+      "sourceUrl": "https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz",
+      "sourceArchive": "sources/ffmpeg-8.1.3.tar.xz",
+      "sourceFile": "resources/capture/sources/ffmpeg-8.1.3.tar.xz",
+      "sourceSha256": "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3",
+      "homepage": "https://ffmpeg.org/",
+      "modified": false,
+      "usedBy": "capture",
+      "check": "ffmpeg",
+      "checkIntegrity": true,
+      "notes": "独立进程最小 LGPL 构建，无 GPL/nonfree/version3。精确源码归档与构建参数随包；源码 OSS 镜像尚未发布。",
+      "components": [
+        {
+          "id": "libvpx",
+          "name": "libvpx",
+          "version": "1.17.0",
+          "license": "BSD-3-Clause",
+          "licenseFile": "third-party/licenses/libvpx.txt",
+          "sourceUrl": "https://codeload.github.com/webmproject/libvpx/tar.gz/6df3ec34557879fff673706f4a1d9fbd0f3a6f0e",
+          "sourceArchive": "sources/libvpx-1.17.0.tar.gz",
+          "sourceFile": "resources/capture/sources/libvpx-1.17.0.tar.gz",
+          "sourceSha256": "073bd6202e4c55c8cb759abbb123aecd4cc8d99f52ba27af790178cfb1108423",
+          "homepage": "https://chromium.googlesource.com/webm/libvpx/",
+          "modified": false,
+          "usedBy": "capture",
+          "notes": "FFmpeg 的 VP9 编码器依赖；许可证全文保留 LICENSE 及 PATENTS。"
+        },
+        {
+          "id": "winpthreads",
+          "name": "MinGW-w64 Winpthreads",
+          "version": "13.0.0.r354.g40ab95d18",
+          "toolchainPackageVersion": "13.0.0.r354.g40ab95d18-1",
+          "platforms": ["win32"],
+          "license": "MIT AND BSD-3-Clause-Clear",
+          "licenseFile": "third-party/licenses/winpthreads.txt",
+          "sourceUrl": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/40ab95d18df4cce9c283bf2de275dd32b6ef0e6b",
+          "sourceArchive": "sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceFile": "resources/capture/sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceSha256": "501acc97182abb0559875ca9888e7e0b282b922eb7efe3caa1c76449eaad2322",
+          "homepage": "https://www.mingw-w64.org/",
+          "modified": false,
+          "usedBy": "capture",
+          "checkIntegrity": true,
+          "notes": "仅 Windows：静态链接的 MinGW 线程运行库。许可证全文来自所固定源码的 mingw-w64-libraries/winpthreads/COPYING，与 MSYS2 安装包一致，保留 MinGW-w64 与 Lockless Inc. 声明。构建前核对实际静态库所属包版本，拒绝与固定源码不符的工具链。"
+        }
+      ]
+    }
+  },
+  "allow": []
+}

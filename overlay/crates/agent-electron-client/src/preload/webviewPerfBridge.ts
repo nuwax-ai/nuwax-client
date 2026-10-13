@@ -18,6 +18,7 @@ import type {
   HostCommand,
   ShellThemePayload,
 } from "@shared/types/hostBridge";
+import { featureNamespaces } from "./features";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
 function mayExposeBusinessBridge(): boolean {
@@ -453,5 +454,5 @@ if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   i18n,
   meta,
   host,
-  ...(mayExposeIMBridge() ? { im } : {}),
+  ...(mayExposeIMBridge() ? { im, ...featureNamespaces(ipcRenderer) } : {}),
 } satisfies HostBridgeContract);

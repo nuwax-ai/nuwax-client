@@ -13,7 +13,7 @@ vi.mock("electron-log", () => ({
 }));
 
 import { initI18n, onMainLangChanged, setMainLang, t } from "../services/i18n";
-import { buildMacApplicationMenu, type ApplicationMenuActions } from "./applicationMenu";
+import { bindCaptureMenuShortcuts, buildMacApplicationMenu, type ApplicationMenuActions } from "./applicationMenu";
 
 function makeActions(): ApplicationMenuActions {
   return {
@@ -143,5 +143,63 @@ describe("macOS 原生菜单语言与动作", () => {
     [appMenu[0], appMenu[1], appMenu[3], file[0], file[1], file[3], file[4], view[0], window[0], window[1], children(template[5])[0]].forEach(click);
     Object.entries(actions).filter(([name]) => name !== "edit")
       .forEach(([, action]) => expect(action).toHaveBeenCalledOnce());
+  });
+
+  it.each([
+    ["zh-CN", "截图与录屏", "截图", "开始录制"],
+    ["en-US", "Screenshot and recording", "Screenshot", "Record"],
+    ["zh-TW", "截圖與錄屏", "截圖", "開始錄製"],
+    ["zh-HK", "截圖與錄屏", "截圖", "開始錄製"],
+  ])("%s 原生捕获菜单使用对应语言并送入统一动作", (lang, title, screenshot, record) => {
+    setMainLang(lang);
+    const capture = vi.fn();
+    const template = buildMacApplicationMenu(t, "Nuwax", { ...makeActions(), capture }, { captureAvailable: true });
+    const menu = template.find((item) => item.label === title)!;
+    expect(menu).toBeDefined();
+    const commands = children(menu).filter((item) => item.type !== "separator");
+    expect(commands.map((item) => item.label)).toEqual([screenshot, `${record} · MP4`, `${record} · WEBM`, `${record} · GIF`]);
+    commands.forEach((item) => item.click?.({} as never, {} as never, {} as never));
+    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["webm"], ["gif"]]);
+    expect(commands.map((item) => item.accelerator)).toEqual(["CmdOrCtrl+Alt+S", "CmdOrCtrl+Alt+R", undefined, undefined]);
+    const accelerators = template.flatMap(children).map((item) => item.accelerator).filter(Boolean);
+    expect(new Set(accelerators).size).toBe(accelerators.length);
+  });
+
+  it("特性关闭或动作缺失时移除捕获菜单及其 accelerator", () => {
+    const without = buildMacApplicationMenu(t, "Nuwax", makeActions());
+    expect(buildMacApplicationMenu(t, "Nuwax", { ...makeActions(), capture: vi.fn() }, { captureAvailable: false })
+      .map((item) => item.label)).toEqual(without.map((item) => item.label));
+    expect(buildMacApplicationMenu(t, "Nuwax", makeActions(), { captureAvailable: true })
+      .map((item) => item.label)).toEqual(without.map((item) => item.label));
+  });
+});
+
+describe("Windows 捕获菜单应用内快捷键", () => {
+  it("宿主和 guest 焦点按键都通过同一个 dispatch，释放时移除监听", () => {
+    const target = { on: vi.fn(), removeListener: vi.fn() };
+    const dispatch = vi.fn();
+    const off = bindCaptureMenuShortcuts(target as never, dispatch);
+    const [channel, handler] = target.on.mock.calls[0];
+    expect(channel).toBe("before-input-event");
+    const preventDefault = vi.fn();
+    for (const key of ["S", "r"]) handler({ preventDefault }, { key, type: "keyDown", control: true, alt: true });
+    expect(dispatch.mock.calls).toEqual([["screenshot"], ["mp4"]]);
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    off();
+    expect(target.removeListener).toHaveBeenCalledWith(channel, handler);
+  });
+
+  it.each([
+    { control: false }, { alt: false }, { meta: true }, { shift: true },
+    { type: "keyUp" }, { isAutoRepeat: true }, { key: "z" },
+  ])("不消费其它组合和重复按键：%o", (over) => {
+    const target = { on: vi.fn(), removeListener: vi.fn() };
+    const dispatch = vi.fn();
+    bindCaptureMenuShortcuts(target as never, dispatch);
+    const handler = target.on.mock.calls[0][1];
+    const event = { preventDefault: vi.fn() };
+    handler(event, { key: "s", type: "keyDown", control: true, alt: true, ...over });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 });

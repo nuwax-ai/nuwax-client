@@ -83,11 +83,15 @@ const external = [
 
 esbuild
   .build({
-    entryPoints: [
-      'src/main/main.ts',
-      'src/preload/index.ts',
-      'src/preload/webviewPerfBridge.ts',
-    ],
+    entryPoints: {
+      'main/main': 'src/main/main.ts',
+      'preload/index': 'src/preload/index.ts',
+      'preload/webviewPerfBridge': 'src/preload/webviewPerfBridge.ts',
+      ...(fs.existsSync(path.join(root, 'src/preload/features/capture/windowPreload.ts'))
+        ? { 'preload/captureWindow': 'src/preload/features/capture/windowPreload.ts' } : {}),
+      ...(fs.existsSync(path.join(root, 'src/preload/features/capture/recordingPreload.ts'))
+        ? { 'preload/captureRecording': 'src/preload/features/capture/recordingPreload.ts' } : {}),
+    },
     bundle: true,
     platform: 'node',
     format: 'cjs',

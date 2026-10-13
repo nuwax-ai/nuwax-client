@@ -31,6 +31,7 @@ import {
   LoadingOutlined,
   RocketOutlined,
   CloseOutlined,
+  CameraOutlined,
 } from "@ant-design/icons";
 import {
   setupService,
@@ -74,7 +75,7 @@ import { AppIconLoading } from "./components/AppIconLoading";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
-import AboutPage from "./components/pages/AboutPage";
+import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
 import PermissionsPage from "./components/pages/PermissionsPage";
 import SessionsPage from "./components/pages/SessionsPage";
@@ -83,6 +84,8 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
+import { CaptureLauncher } from "./features/capture";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";
 import { ModeNavIcon } from "./components/icons/ModeNavIcon";
 import { createLogger } from "./services/utils/rendererLog";
@@ -143,6 +146,7 @@ type TabKey =
   | "sessions"
   | "mcp"
   | "settings"
+  | "capture"
   | "dependencies"
   | "permissions"
   | "logs"
@@ -629,6 +633,16 @@ function App() {
   }, []);
   // 系统配置浮层（替代原 mainViewMode=config 整页切换，沉浸式下不打断 webview）
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [captureAvailable, setCaptureAvailable] = useState(false);
+  const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
+  const captureAfterSettingsClose = useRef<(() => void) | null>(null);
+  const captureMenuHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
+  const handleCaptureMenuHandlerChange = useCallback((handler: ((action: CaptureMenuAction) => void) | null) => {
+    captureMenuHandler.current = handler;
+  }, []);
+  const handleCaptureMenu = useCallback((action: CaptureMenuAction) => {
+    captureMenuHandler.current?.(action);
+  }, []);
   /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
   const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
   // 保持 isAuthLoggedInRef 与 state 同步（restartAllServices 空依赖闭包读 ref）
@@ -1763,6 +1777,9 @@ function App() {
         label: t("Claw.Menu.authorization"),
       });
     }
+    if (APP_NAME_IDENTIFIER === "nuwax" && captureAvailable) {
+      items.push({ key: "capture", icon: <CameraOutlined />, label: t("Claw.Capture.title") });
+    }
     items.push(
       { key: "logs", icon: <FileTextOutlined />, label: t("Claw.Menu.logs") },
       {
@@ -1772,7 +1789,7 @@ function App() {
       },
     );
     return items;
-  }, [isMacOS, i18nLang]);
+  }, [isMacOS, i18nLang, captureAvailable]);
 
   // ============================================
   // i18n Context value
@@ -1926,6 +1943,8 @@ function App() {
               onOpenSearch={handleMenuOpenSearch}
               onModifyWorkspace={handleMenuModifyWorkspace}
               onOpenWorkspace={handleMenuOpenWorkspace}
+              captureAvailable={APP_NAME_IDENTIFIER === "nuwax" && captureAvailable}
+              onCapture={handleCaptureMenu}
               statusEntry={
                 // 单一语义：仅已登录后的确定终态故障显示红点。未登录、启动中、
                 // 主动停止、单轮探测抖动与正常运行均不渲染。
@@ -2091,6 +2110,7 @@ function App() {
                   左栏为自绘导航（caption + 图标项，「关于」经分隔线钉底）。 */}
               <Modal
                 open={settingsModalOpen}
+                afterClose={() => { captureAfterSettingsClose.current?.(); captureAfterSettingsClose.current = null; }}
                 onCancel={() => setSettingsModalOpen(false)}
                 footer={null}
                 centered
@@ -2241,6 +2261,7 @@ function App() {
                         <MCPSettings isOpen={activeTab === "mcp"} />
                       </div>
                       {activeTab === "settings" && <SettingsPage />}
+                      {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
                       {activeTab === "dependencies" && <DependenciesPage />}
                       {activeTab === "permissions" && <PermissionsPage />}
                       {activeTab === "logs" && <LogViewer />}
@@ -2249,6 +2270,16 @@ function App() {
                   </div>
                 </div>
               </Modal>
+              {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
+                panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
+                onMenuHandlerChange={handleCaptureMenuHandlerChange}
+                onCaptureStart={() => {
+                  if (!settingsModalOpen) return Promise.resolve();
+                  return new Promise<void>((resolve) => {
+                    captureAfterSettingsClose.current = resolve;
+                    setSettingsModalOpen(false);
+                  });
+                }} />}
             </div>
           </div>
         </ThemeContext.Provider>

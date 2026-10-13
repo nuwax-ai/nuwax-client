@@ -5,6 +5,8 @@ import * as core from './core.mjs';
 import { parseReleaseTag } from '../release-version.mjs';
 import { buildFrontend } from './frontend.mjs';
 import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
+import { captureSourceLockFile, inspectCaptureResource } from './capture-resources.mjs';
+import { generateThirdPartyNotices, shippedResourcePaths } from './third-party-notices.mjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 
 const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
@@ -53,7 +55,7 @@ export function validateOutput(root, output, tools = core) {
   return output;
 }
 
-export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, platform = process.platform, env = process.env, builderVersions }) {
+export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, captureDir, noticesDir, platform = process.platform, env = process.env, builderVersions }) {
   if (version && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
   const result = structuredClone(packageJson.build ?? {});
   result.extends = null;
@@ -72,9 +74,11 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
   const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp']);
-  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use'].includes(entry.to) && !legacySandboxResources.has(entry.to));
+  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use', 'capture', 'third-party'].includes(entry.to?.split('/')[0]) && !legacySandboxResources.has(entry.to));
   result.extraResources.push({ from: frontendDist, to: 'nuwax-dist', filter: ['**/*', '!.git', '!.git/**', '!README.md'] });
   if (helperDir) result.extraResources.push({ from: helperDir, to: 'computer-use', filter: ['**/*'] });
+  if (captureDir) result.extraResources.push({ from: captureDir, to: `capture/${path.basename(captureDir)}`, filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json'] });
+  if (noticesDir) result.extraResources.push({ from: noticesDir, to: 'third-party', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] });
   result.mac ??= {};
   result.mac.identity = null;
   result.mac.hardenedRuntime = false;
@@ -147,7 +151,15 @@ export async function pack(root, options = {}) {
   if (!frontend?.distDir || !fileReady(path.join(frontend.distDir, 'index.html'))) throw new Error('[pack] 前端 index.html 缺失');
   const helperDir = await (options.prepareComputerUse ?? prepareComputerUse)(root, { ...options, tools, platform, arch });
   pkg ??= tools.readJson(path.join(p.client, 'package.json'));
-  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, platform, builderVersions });
+  let captureDir = prepared.captureDir ?? null;
+  if (platform !== 'linux' && config.features?.capture?.enabled !== false && fs.existsSync(captureSourceLockFile(root))) {
+    const inspected = await inspectCaptureResource(root, { platform, arch, tools });
+    if (!inspected) throw new Error('[pack] capture 编码资源尚未通过 LGPL、源码与 SHA256 核验，运行 npm run prepare:capture');
+    captureDir = inspected.dir;
+  }
+  const noticesDir = path.join(p.cache, 'third-party', `${platform}-${arch}`);
+  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, noticesDir, platform, builderVersions });
+  await (options.generateNotices ?? generateThirdPartyNotices)(root, { strict: true, outDir: noticesDir, resourcePaths: shippedResourcePaths(generated, p.client, platform), platform, arch });
   fs.mkdirSync(p.cache, { recursive: true });
   const configFile = path.join(p.cache, `electron-builder-${platform}-${arch}.json`);
   tools.atomicJson(configFile, generated);

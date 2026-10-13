@@ -15,3 +15,6 @@ release/
 
 # 本地发行候选包体积很大；保留同目录 source.patch 和 provenance 供复核
 artifacts/
+# 本地可再生的截图/录屏编码资源与声明；源码锁、清单和许可证文本仍跟踪。
+/resources/capture/
+/third-party/generated*/

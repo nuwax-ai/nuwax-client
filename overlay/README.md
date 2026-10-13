@@ -50,6 +50,17 @@ preload 与类型声明等配套见 `find overlay -type f`）：
 | `src/shared/locales/{en-US,zh-CN,zh-TW,zh-HK}.json` | **严格超集**：基座四语言全量 + 换域确认弹窗 3 键（`Claw.Settings.messages.switchDomain{Title,Current,Next,Warn}`）。i18nLocales.test.ts 强制四语言 key 集合与占位符一致，基座新增 key 时须同步合入全部四份 |
 | `src/main/services/fullDiskAccess.ts` + `.test.ts` | **新增（非覆写）**：全磁盘访问（macOS FDA）检测 + 初始化一次性引导（2026-09-21）——探针=open 系统 TCC.db；「暂不」持久化 `nuwax.fullDiskAccessPrompt` 永不再自动弹；聚焦/解锁只静默复查；boot 钩子挂 nuwaxBridgeHandlers（powerPolicy 旁），设置页状态行（仅 mac）为拒绝后唯一再入口 |
 | `src/renderer/components/pages/PermissionsPage.tsx` | 基座超集（2026-09-21）：商业宿主存在 fullDiskAccess 命名空间时，「授权」页全磁盘访问行用 recheck 真值覆盖基座恒 unknown 的状态、前往设置走带兜底的 openSettings；社区版与基座逐字节同行为 |
+| `src/main/features/**`、`src/preload/features/**`、`src/renderer/features/**`、`src/shared/features/**` | **新增（非覆写）**：桌面特性模块（2026-10-12，`specs/native-capture.md`）。静态注册表 `main/features/index.ts` + 最小套件 `_kit`（特性清单、受信 IPC、生命周期、临时目录）；首批特性 `capture`（截屏/录屏）与 `open-source-notices`（「关于」页开源组件声明）。边界由 `scripts/check-feature-boundaries.test.mjs` 强制；开关为清单 `enabledByDefault` + 设置项 `features.<id>.enabled`；关闭零痕迹。新增特性方法见 `docs/feature-modules.md` |
+| `src/renderer/components/pages/CommercialAboutPage.tsx` | **新增（非覆写）**：组合基座 `AboutPage` 并追加「开源组件声明」行与弹窗，不分叉基座 790 行的 `AboutPage.tsx`；`App.tsx` 的 `AboutPage` import 指向本文件 |
+| `src/main/ipc/nuwaxBridgeHandlers.ts`（增量） | 另含：一次 `startDesktopFeatures`；`cancelTransfers(reason)` 在每个会话边界（登出/换域/过期/登录切换）调用 `notifyFeatureSessionEnd` |
+| `src/main/main.ts`（增量） | 另含：退出清理一步 `disposeDesktopFeatures()` |
+| `src/main/window/applicationMenu.ts`、`.test.ts`（增量） | macOS 原生「截图与录屏」菜单及应用内快捷键；按实际特性注册结果展示。命令经私有 host 事件进入 CaptureLauncher，业务 IM 桥不扩展；Windows 在客户端设置页签提供入口，应用内快捷键仍经 host 事件触发 |
+| `src/preload/webviewPerfBridge.ts`、`src/preload/index.ts`（增量） | 另含：业务页展开 `featureNamespaces`（`NuwaClawBridge.capture`）、宿主壳展开 `hostFeatureNamespaces`（`electronAPI.notices`、独立 IPC 的 `electronAPI.capture`） |
+| `src/renderer/App.tsx`、`src/renderer/components/TrafficLightToolbar.tsx`（增量） | 另含：组合 `CommercialAboutPage`；客户端设置增加截图/录屏页签，移除顶栏相机；常驻控制器把面板 portal 到页签，菜单事件、结果预览与原生保存由 `renderer/features/capture` 自持 |
+| `src/main/window/trayManager.ts`（增量） | 录屏/暂停期间挂载可选「停止录屏」动作，结束或进入编码后移除 |
+| `scripts/build/build-main-esbuild.js`（增量） | 构建特性隔离 preload：`captureWindow.js`、`captureRecording.js`；无特性源码时跳过，不影响社区构建 |
+| `src/shared/types/electron.d.ts`、`src/shared/types/hostBridge.ts`（增量） | 壳 capture/notices 类型；业务桥 capture 契约快照（从前端事实源生成） |
+| `src/shared/locales/{en-US,zh-CN,zh-TW,zh-HK}.json`（增量） | 另含：`Claw.About.openSource.*` 与 `Claw.Capture.*` 文案，四语言键与占位符一致 |
 
 维护规则：基座对应文件演进时，先 `overlay:compat` 找出交集，再对照基座 old/new diff，把基座侧改动手工
 合入 overlay 版本（overlay 版本必须是基座版本的严格超集；两类例外——
@@ -117,3 +128,5 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 `autoUpdater` 用 `app.getName()` 拼「Uninstall \<name\>.exe」定位卸载程序
 （改中文断更新链），后者派生数据目录 `~/.nuwax` 与 UA token。userData
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
+
+- 截图/录制浮层定位共用 `shared/features/capture/windowPlacement.ts`；选择器沙箱与主进程使用相同 DIP 定位规则，以所选屏/选区为锚点。

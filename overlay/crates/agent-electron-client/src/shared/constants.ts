@@ -326,6 +326,11 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  Capture: {
+    SELECT: "Claw.Capture.select",
+    FONT_SIZE: "Claw.Capture.fontSize",
+    DELETE_ANNOTATION: "Claw.Capture.deleteAnnotation",
+  },
   PermissionsPage: {
     MACOS_NOTIFICATIONS: "Claw.PermissionsPage.macosNotifications",
     MACOS_NOTIFICATIONS_DESC: "Claw.PermissionsPage.macosNotificationsDesc",
