@@ -36,3 +36,27 @@ test('all pointer publications share one queue and current tools verify a separa
   assert.match(sync, /--source-root release-source/);
   assert.match(sync, /node scripts\/publish-release-pointers.mjs/);
 });
+
+test('stable and beta prepare locked capture payloads and verify real packaged bytes before any upload', () => {
+  for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
+    const text = workflow(name);
+    assert.match(text, /platform: macos-15-intel\n\s+arch: x64/);
+    assert.match(text, /Setup Windows capture compiler\n\s+if: runner.os == 'Windows'/);
+    assert.match(text, /Setup Linux capture compiler\n\s+if: runner.os == 'Linux'/);
+    assert.match(text, /sudo apt-get install -y build-essential pkg-config nasm/);
+    assert.ok(text.indexOf('Setup Linux capture compiler') < text.indexOf('Prepare and admit capture release resources'));
+    assert.match(text, /uses: msys2\/setup-msys2@v2/);
+    assert.match(text, /MSYS2_LOCATION: \$\{\{ steps.capture-msys2.outputs.msys2-location \}\}/);
+    assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH"/);
+    assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH" --verify-output "\$OUT_DIR"/);
+    assert.ok(text.indexOf('Prepare and admit capture release resources') < text.indexOf('- name: Build Electron app'));
+    assert.ok(text.indexOf('Import Apple certificate (macOS)') < text.indexOf('Prepare and admit capture release resources'));
+    assert.match(text, /NUWAX_CAPTURE_MAC_SIGNING: \$\{\{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' \|\| 'false' \}\}/);
+    assert.ok(text.indexOf('- name: Build Electron app') < text.indexOf('Verify packaged capture resources'));
+    assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Upload artifacts to Release'));
+    if (name === 'release-electron-dev.yml') assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Stage isolated QA packages'));
+    assert.match(text, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
+    assert.match(text, /platform: ubuntu-24.04\n\s+arch: x64/);
+    assert.match(text, /platform: ubuntu-24.04-arm\n\s+arch: arm64/);
+  }
+});

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertCaptureWindowsToolchain, captureBuildArguments, captureBuildPaths, captureResourceDir, inspectCaptureResource, prepareCaptureResources, readCaptureSourceLock, sha256 } from './client/capture-resources.mjs';
+import { assertCaptureLinuxToolchain, assertCaptureWindowsToolchain, captureBuildArguments, captureBuildPaths, captureResourceDir, inspectCaptureResource, prepareCaptureResources, readCaptureSourceLock, sha256 } from './client/capture-resources.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const locked = readCaptureSourceLock(root);
@@ -14,7 +14,7 @@ function fixture(t, platform = 'darwin') {
   const lock = structuredClone(locked);
   const sourcesDir = path.join(dir, 'resources/capture/sources');
   fs.mkdirSync(sourcesDir, { recursive: true });
-  for (const name of ['ffmpeg', 'libvpx']) {
+  for (const name of ['ffmpeg', 'libvpx', ...(platform === 'linux' ? ['openh264'] : [])]) {
     const file = path.join(sourcesDir, lock[name].archive);
     fs.writeFileSync(file, `${name} source fixture`);
     lock[name].sha256 = sha256(file);
@@ -25,7 +25,7 @@ function fixture(t, platform = 'darwin') {
   fs.mkdirSync(resourceDir, { recursive: true });
   const binary = path.join(resourceDir, platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
   fs.writeFileSync(binary, 'fixture binary');
-  const record = { schema: 1, platform, arch, version: lock.ffmpeg.version, sha256: sha256(binary), configuration: '--disable-gpl --disable-nonfree --enable-videotoolbox', sources: lock };
+  const record = { schema: 1, platform, arch, version: lock.ffmpeg.version, sha256: sha256(binary), configuration: `--disable-gpl --disable-nonfree --enable-${platform === 'linux' ? 'libopenh264' : 'videotoolbox'}`, sources: lock };
   const manifest = { resources: { capture: { components: [] } } };
   let runtime, runtimeArchive;
   const writeManifest = () => fs.writeFileSync(path.join(dir, 'third-party/manifest.json'), JSON.stringify(manifest));
@@ -47,7 +47,8 @@ function fixture(t, platform = 'darwin') {
 test('the source lock pins HTTPS versions/commits with actual SHA256, never latest assets', () => {
   assert.equal(locked.ffmpeg.version, '8.1.3');
   assert.equal(locked.libvpx.commit.length, 40);
-  for (const source of [locked.ffmpeg, locked.libvpx]) {
+  assert.equal(locked.openh264.commit, '652bdb7719f30b52b08e506645a7322ff1b2cc6f');
+  for (const source of [locked.ffmpeg, locked.libvpx, locked.openh264]) {
     assert.match(source.sha256, /^[a-f0-9]{64}$/);
     assert.match(source.url, /^https:\/\//);
     assert.doesNotMatch(source.url, /latest/);
@@ -68,7 +69,42 @@ test('native platform recipes disable GPL/nonfree and use OS H264 plus VP9/GIF',
     assert.ok(args.ffmpeg.some((arg) => arg.includes('palettegen,paletteuse')));
     assert.doesNotMatch(args.ffmpeg.join(' '), /x264|enable-gpl|enable-nonfree/);
   }
-  assert.throws(() => captureBuildArguments(locked, { platform: 'linux', arch: 'x64', prefix: '/prefix' }), /不支持/);
+  assert.throws(() => captureBuildArguments(locked, { platform: 'linux', arch: 'ia32', prefix: '/prefix' }), /不支持/);
+});
+
+test('Linux native recipes use source-locked BSD OpenH264 with static dependency metadata and no OS hardware assumption', () => {
+  for (const arch of ['x64', 'arm64']) {
+    const args = captureBuildArguments(locked, { platform: 'linux', arch, prefix: '/prefix' });
+    assert.ok(args.libvpx.includes(`--target=${arch === 'arm64' ? 'arm64' : 'x86_64'}-linux-gcc`));
+    assert.ok(args.ffmpeg.includes('--enable-libopenh264'));
+    assert.ok(args.ffmpeg.includes('--enable-encoder=libopenh264,libvpx_vp9,gif'));
+    assert.ok(args.ffmpeg.includes('--pkg-config-flags=--static'));
+    assert.ok(args.ffmpeg.includes('--disable-gpl'));
+    assert.ok(args.ffmpeg.includes('--disable-nonfree'));
+    assert.deepEqual(args.openh264, ['PREFIX=/prefix', 'OS=linux', `ARCH=${arch === 'arm64' ? 'aarch64' : 'x86_64'}`, 'BUILDTYPE=Release']);
+    assert.doesNotMatch(args.ffmpeg.join(' '), /libx264|enable-gpl|enable-nonfree|videotoolbox|mediafoundation/);
+  }
+});
+
+test('Linux toolchain refuses missing C++/assembler tools and mismatched architecture', async () => {
+  const check = (status, stdout, arch = 'arm64') => assertCaptureLinuxToolchain({ arch, tools: { run: async () => ({ status, stdout, stderr: '' }) } });
+  await assert.rejects(check(1, 'Missing g++'), /GCC\/G\+\+.*Missing g\+\+/);
+  await assert.rejects(check(1, 'Missing yasm/nasm'), /Missing yasm\/nasm/);
+  await assert.rejects(check(0, 'x86_64-linux-gnu'), /原生 arm64/);
+  await check(0, 'aarch64-linux-gnu\n');
+  await check(0, 'x86_64-linux-gnu\n', 'x64');
+});
+
+test('Linux resource admission requires the exact linked OpenH264 source and archive', async (t) => {
+  const f = fixture(t, 'linux');
+  const options = { platform: 'linux', arch: 'arm64', tools: f.tools };
+  assert.ok(await inspectCaptureResource(f.dir, options));
+  const source = structuredClone(f.record.sources.openh264);
+  f.record.sources.openh264.sha256 = '0'.repeat(64); f.writeRecord();
+  assert.equal(await inspectCaptureResource(f.dir, options), null);
+  f.record.sources.openh264 = source; f.writeRecord();
+  fs.appendFileSync(path.join(f.dir, 'resources/capture/sources', f.lock.openh264.archive), 'tampered');
+  assert.equal(await inspectCaptureResource(f.dir, options), null);
 });
 
 test('Windows configure uses the chosen MSYS shell to convert native paths without shell interpolation', async () => {
