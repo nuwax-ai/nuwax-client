@@ -18,5 +18,15 @@
     "archive": "libvpx-1.17.0.tar.gz",
     "license": "BSD-3-Clause",
     "licenseFile": "LICENSE"
+  },
+  "openh264": {
+    "version": "2.6.0",
+    "commit": "652bdb7719f30b52b08e506645a7322ff1b2cc6f",
+    "url": "https://codeload.github.com/cisco/openh264/tar.gz/652bdb7719f30b52b08e506645a7322ff1b2cc6f",
+    "sha256": "7a060916a9fcb63ba51d83a4f2388660c0b58797be547c4fa5c52e8d65660a85",
+    "directory": "openh264-652bdb7719f30b52b08e506645a7322ff1b2cc6f",
+    "archive": "openh264-2.6.0.tar.gz",
+    "license": "BSD-2-Clause",
+    "licenseFile": "LICENSE"
   }
 }
