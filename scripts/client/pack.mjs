@@ -152,7 +152,7 @@ export async function pack(root, options = {}) {
   const helperDir = await (options.prepareComputerUse ?? prepareComputerUse)(root, { ...options, tools, platform, arch });
   pkg ??= tools.readJson(path.join(p.client, 'package.json'));
   let captureDir = prepared.captureDir ?? null;
-  if (platform !== 'linux' && config.features?.capture?.enabled !== false && fs.existsSync(captureSourceLockFile(root))) {
+  if (config.features?.capture?.enabled !== false && fs.existsSync(captureSourceLockFile(root))) {
     const inspected = await inspectCaptureResource(root, { platform, arch, tools });
     if (!inspected) throw new Error('[pack] capture 编码资源尚未通过 LGPL、源码与 SHA256 核验，运行 npm run prepare:capture');
     captureDir = inspected.dir;
