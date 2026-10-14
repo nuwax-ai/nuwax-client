@@ -26,7 +26,7 @@
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
-import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
 import * as os from "os";
@@ -41,6 +41,7 @@ import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLan
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
+import { registerCuaRuntimeHandlers } from "./cuaRuntimeHandlers";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
@@ -232,12 +233,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         await import("../services/sandbox/serviceBootstrap");
       await startSandboxService();
       signal.throwIfAborted();
-      const result = await restartAllServicesNow(signal);
-      // Computer Use 幂等收敛（开关开→拉 daemon+保 MCP 条目在位）；不阻塞启动主链
-      void cuaComputerUse.ensureCuaOnBoot().catch((e) =>
-        log.warn("[NuwaxBridge] Cua boot ensure failed", e),
-      );
-      return result;
+      // Replace legacy direct-helper MCP entries before any engine can read local config.
+      // A failed CUA readiness check removes its entry; ordinary services may still start.
+      await cuaComputerUse.ensureCuaOnBoot(signal);
+      signal.throwIfAborted();
+      return restartAllServicesNow(signal);
     },
     stopAllServicesNow,
     (phase, error) => {
@@ -354,24 +354,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           });
       }
   };
-  // localFiles 仅保留宿主原生目录选择器：返回绝对路径，数据面由 nuwax 走
-  // file-server（customTargetDir）HTTP 通道，主进程不做持久化与文件操作。
-  // 注：当前 nuwax 前端已无调用方（「文件树选择非工作空间目录」需求回滚，
-  // 见 nuwax/specs/luodong-delivery.md）。保留为对外桥面，避免前端需要时再动基座。
-  ipcMain.handle("localFiles:pickDirectory", async (event) => {
-    if (!isTrustedSender(event)) return { canceled: true, paths: [] as string[] };
-    const win = ctx.getMainWindow();
-    const options: OpenDialogOptions = {
-      properties: ["openDirectory", "multiSelections"],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    return result.canceled
-      ? { canceled: true, paths: [] as string[] }
-      : { canceled: false, paths: result.filePaths };
-  });
-
   // ---- theme：nuwax 女娲主题 → 壳原生 UI 统一 ----
   // nuwax 主题生效/让位时推送 { active, 调色板 }，转发给壳 renderer 叠加/回落
   // （antd tokens + CSS 变量）。fire-and-forget（send），无返回值语义。
@@ -969,6 +951,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
 
   // ---- cua：Computer Use 配置（设置页开关/状态/授权引导/首用安装；overlay 自持实现） ----
   cuaComputerUse.registerCuaQuitCleanup();
+  registerCuaRuntimeHandlers({ trusted: isHostSender, authenticated: () => !!currentTicket(), getWindow: () => ctx.getMainWindow() });
   // 允许锁屏运行：读库恢复档位并持有断言（registerAllHandlers 在 app ready 且
   // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同 ensureCuaOnBoot 先例）
   initSessionAuthInjection(() => ({
@@ -994,7 +977,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     isHostSender(event) ? cuaComputerUse.getCuaStatus() : null,
   );
   ipcMain.handle("cua:setEnabled", (event, enabled: boolean) =>
-    isHostSender(event) ? cuaComputerUse.setCuaEnabled(enabled === true) : { success: false, error: "untrusted sender" },
+    isHostSender(event) && (enabled !== true || !!currentTicket()) ? cuaComputerUse.setCuaEnabled(enabled === true) : { success: false, error: "untrusted sender" },
   );
   ipcMain.handle("cua:requestPermissions", (event) =>
     isHostSender(event) ? cuaComputerUse.requestCuaPermissions() : null,

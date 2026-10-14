@@ -1,3 +1,4 @@
+vi.mock("./cuaRuntimeHandlers", () => ({ registerCuaRuntimeHandlers: vi.fn() }));
 /**
  * 单元测试：顶栏自绘菜单收起信号（禅道 bug 2427 Win/Linux 工具栏菜单不自动关）
  * plans/20260921-bug2427-toolbar-menu-close-plan.md

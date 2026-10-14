@@ -16,6 +16,8 @@ const LICENSE_FILE = /^(licen[sc]e|copying|unlicen[sc]e|notice)([-_.].*)?$/i;
 /** 从许可证全文识别 SPDX 标识；识别不了返回 null（宁可不认，也不猜）。 */
 export function detectLicense(text) {
   if (!text) return null;
+  // License paragraphs may be line-wrapped in published packages (for example applescript).
+  text = text.replace(/\s+/g, " ");
   if (/GNU AFFERO GENERAL PUBLIC LICENSE/i.test(text)) return 'AGPL-3.0';
   if (/GNU LESSER GENERAL PUBLIC LICENSE/i.test(text)) {
     if (/Version 3/i.test(text)) return 'LGPL-3.0';
@@ -204,6 +206,16 @@ export function buildNotices({ root, manifest, resourcesDir, resourcePaths, npmC
     const files = findLicenseFiles(c.dir);
     if (files.length) licenseFile = files[0];
     if (!license && licenseFile) license = detectLicense(fs.readFileSync(licenseFile, 'utf8'));
+    const evidence = manifest.npmEvidence?.[c.id];
+    if (!license && evidence?.reason && evidence?.licenseFile) {
+      const relative = evidence.licenseFile;
+      const source = path.resolve(root, relative);
+      const withinRoot = path.relative(root, source);
+      if (withinRoot && !withinRoot.startsWith('..') && !path.isAbsolute(withinRoot) && fs.existsSync(source)) {
+        licenseFile = source;
+        license = detectLicense(fs.readFileSync(source, 'utf8'));
+      }
+    }
     components.push({
       id: c.id,
       name: c.name,
@@ -212,7 +224,7 @@ export function buildNotices({ root, manifest, resourcesDir, resourcePaths, npmC
       usedBy: 'core',
       license: license || null,
       homepage: c.homepage,
-      sourceUrl: c.homepage,
+      sourceUrl: c.homepage || evidence?.sourceUrl || null,
       modified: false,
       licenseSourceFile: licenseFile,
     });

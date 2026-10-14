@@ -52,7 +52,7 @@ describe("desktopFeatures 静态注册表", () => {
   it("id 唯一，且包含 capture 与 open-source-notices，均仅限 nuwax", () => {
     const ids = desktopFeatures.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual(expect.arrayContaining(["capture", "open-source-notices"]));
+    expect(ids).toEqual(expect.arrayContaining(["capture", "open-source-notices", "local-files"]));
     for (const f of desktopFeatures) expect(f.products).toEqual(["nuwax"]);
   });
 });

@@ -245,6 +245,7 @@ try {
     alias: {
       "@shared": path.join(source, "shared"),
       "@main": path.join(source, "main"),
+      "@renderer": path.join(source, "renderer"),
     },
     nodePaths: [
       path.join(shell, "node_modules"),

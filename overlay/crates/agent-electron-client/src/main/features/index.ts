@@ -128,8 +128,6 @@ export async function disposeDesktopFeatures(): Promise<void> {
   if (reg) await reg.dispose();
 }
 
-export const isDesktopFeatureEnabled = isDesktopFeatureRegistered;
-
 /** Invoked by the existing single Session request listener, never installs another. */
 export function authorizeDesktopFeatureRequest(details: OnBeforeRequestListenerDetails): boolean | undefined {
   return authorizeLocalFilesRequest(details);

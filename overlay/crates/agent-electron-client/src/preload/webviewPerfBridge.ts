@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { featureNamespaces } from "./features";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 import { restoreSpaDocumentRoute } from "./spaDocumentRestore";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
@@ -432,11 +431,12 @@ const host = {
   },
 };
 
+const businessFeatures = featureNamespaces(ipcRenderer);
 if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   perf,
   auth,
   native,
-  ...featureNamespaces(ipcRenderer),
+  localFiles: businessFeatures.localFiles,
   updater,
   events,
   theme,
@@ -445,5 +445,5 @@ if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
   i18n,
   meta,
   host,
-  ...(mayExposeIMBridge() ? { im, ...featureNamespaces(ipcRenderer) } : {}),
+  ...(mayExposeIMBridge() ? { im, capture: businessFeatures.capture } : {}),
 } satisfies HostBridgeContract);

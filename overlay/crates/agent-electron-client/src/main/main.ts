@@ -1,7 +1,7 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
-import { configureCaptureBackend, controlDesktopRecording, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { configureCaptureBackend, controlDesktopRecording, desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
 import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
@@ -74,7 +74,6 @@ import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
 import { attachRendererRecovery } from "./services/rendererRecovery";
 import { initBusinessRequestRouting } from "./services/businessRequestRouting";
 import { protocol } from "electron";
-import { desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureEnabled } from "./features";
 import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
@@ -627,6 +626,7 @@ async function cleanupAllProcesses(): Promise<void> {
     });
   }
 
+  // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
   await runCleanupStep("Desktop features stop", disposeDesktopFeatures);
 
   await runCleanupStep("Engine processes stop", () => {
@@ -637,11 +637,6 @@ async function cleanupAllProcesses(): Promise<void> {
   await runCleanupStep("Process registry killAll", async () => {
     await processRegistry.killAll();
     log.info("[Cleanup] Process registry cleared");
-  });
-
-  // 桌面特性（截屏/录屏等）：先通知退出再释放，清掉进行中的会话与临时文件。
-  await runCleanupStep("Desktop features dispose", async () => {
-    await disposeDesktopFeatures();
   });
 
   // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
@@ -701,7 +696,7 @@ app.whenReady().then(async () => {
     defaultSession: session.defaultSession,
     isCommercial: APP_NAME_IDENTIFIER === "nuwax",
     isDev,
-    allowLocalFiles: url => isDesktopFeatureEnabled("local-files") &&
+    allowLocalFiles: url => isDesktopFeatureRegistered("local-files") &&
       businessBridgeOrigins().includes(httpOrigin(url) ?? ""),
   });
   if (APP_NAME_IDENTIFIER === "nuwax") {

@@ -1,7 +1,7 @@
 /**
  * 单元测试: preload 特性命名空间汇总
  *
- * 覆盖：业务页命名空间含 capture，宿主壳命名空间含 notices，互不混入。
+ * 覆盖：业务页命名空间含 capture/localFiles，宿主壳命名空间含 notices/capture。
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -11,8 +11,8 @@ import { HOST_CAPTURE_MENU_IPC } from "@shared/features/capture/contract";
 describe("命名空间汇总", () => {
   const ipc = { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() } as never;
 
-  it("业务页命名空间只含 capture", () => {
-    expect(Object.keys(featureNamespaces(ipc))).toEqual(["capture"]);
+  it("业务页命名空间包含 capture 与 localFiles", () => {
+    expect(Object.keys(featureNamespaces(ipc))).toEqual(["capture", "localFiles"]);
   });
 
   it("宿主壳通过独立通道提供 notices 与 capture", () => {

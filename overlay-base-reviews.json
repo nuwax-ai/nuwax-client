@@ -42,6 +42,13 @@
       "baseMode": "100644",
       "overlaySha256": "a71ab0bf6c39ee0ccf0cc77f1d79baa6e4d2b1a958603a74284d8896217b6665",
       "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
+    },
+    {
+      "path": "crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",
+      "baseBlob": "9d373ba4b38e697508795b196eb05b2c554574e4",
+      "baseMode": "100644",
+      "overlaySha256": "be4c8cc7a5439c31c5afb8c490b5aad68a24f874a040483155878aec5c289e58",
+      "note": "2026-10-14 合并 Computer Use 产品控制时核对基座 484ff6b36→e75c9d5c。该文件基座增量仅为 NW-041 对话级取消的 5 行说明，已完整合入；实际对话解析、chatEngineKey 和 acpSessionSetup 继续由 e75c9d5c 基座提供。商业 overlay 只增加 CUA 会话凭据生命周期和有 CUA 权限的 prompt 禁止重试，保留现有对话级取消行为。商业完整回归 2941 通过，含同目录双对话并行、取消不串扰用例。"
     }
   ]
 }

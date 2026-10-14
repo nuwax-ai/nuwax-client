@@ -34,6 +34,7 @@ const GPL3 = 'GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007';
 
 test('detectLicense recognises common license texts and refuses to guess', () => {
   assert.equal(detectLicense(MIT), 'MIT');
+  assert.equal(detectLicense(MIT.replaceAll(' ', '\n  ')), 'MIT');
   assert.equal(detectLicense(APACHE), 'Apache-2.0');
   assert.equal(detectLicense(LGPL21), 'LGPL-2.1');
   assert.equal(detectLicense(GPL3), 'GPL-3.0');
@@ -256,4 +257,18 @@ test('writeNotices publishes JSON plus copied license texts without leaking sour
   const json = fs.readFileSync(path.join(out, 'third-party-notices.json'), 'utf8');
   assert.ok(!json.includes(f.root), 'absolute build paths must not appear in the published file');
   assert.ok(!json.includes('licenseSourceFile'));
+});
+
+
+test('exact-version npm evidence requires a real recognizable license and does not waive unknown licenses', (t) => {
+  const root = tmp(t), pkg = path.join(root, 'package'); fs.mkdirSync(pkg);
+  const component = { id: '@owner/package@1.0.0', name: '@owner/package', version: '1.0.0', dir: pkg, licenseField: null, homepage: null };
+  write(path.join(root, 'root-license.txt'), APACHE);
+  const manifest = { npmEvidence: { [component.id]: { reason: 'Pinned monorepo license omitted from published package', licenseFile: 'root-license.txt', sourceUrl: 'https://example.test/source' } } };
+  const result = buildNotices({ root, manifest, npmComponents: [component] });
+  assert.deepEqual(result.problems, []); assert.equal(result.components[0].license, 'Apache-2.0');
+  write(path.join(root, 'root-license.txt'), 'unknown');
+  assert.equal(buildNotices({ root, manifest, npmComponents: [component] }).problems[0].code, 'UNKNOWN_LICENSE');
+  write(path.join(root, 'root-license.txt'), APACHE);
+  assert.equal(buildNotices({ root, manifest, npmComponents: [{ ...component, id: '@owner/package@2.0.0' }] }).problems[0].code, 'UNKNOWN_LICENSE');
 });

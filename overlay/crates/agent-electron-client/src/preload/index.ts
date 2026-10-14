@@ -587,6 +587,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Computer Use（cua helper；商业版 overlay 注入，基座无此命名空间）
   computerUse: {
+    getRuntime: () => ipcRenderer.invoke("cua:getRuntime"),
+    pause: () => ipcRenderer.invoke("cua:pause"),
+    resume: () => ipcRenderer.invoke("cua:resume"),
+    stop: () => ipcRenderer.invoke("cua:stop"),
+    recover: () => ipcRenderer.invoke("cua:recover"),
+    selfTest: () => ipcRenderer.invoke("cua:selfTest"),
+    exportDiagnostics: () => ipcRenderer.invoke("cua:exportDiagnostics"),
+    clearHistory: () => ipcRenderer.invoke("cua:clearHistory"),
+    listWindows: () => ipcRenderer.invoke("cua:listWindows"),
+    setScope: (scope: import("@shared/types/cuaRuntime").CuaScope) => ipcRenderer.invoke("cua:setScope", scope),
     getStatus: () => ipcRenderer.invoke("cua:getStatus"),
     setEnabled: (enabled: boolean) =>
       ipcRenderer.invoke("cua:setEnabled", enabled),
@@ -594,6 +604,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     installHelper: () => ipcRenderer.invoke("cua:installHelper"),
     getVlmConfig: () => ipcRenderer.invoke("cua:getVlmConfig"),
     setVlmConfig: (patch: {
+      clearApiKey?: boolean;
       baseUrl?: string;
       model?: string;
       apiKey?: string;
@@ -647,6 +658,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "cowork:permission",
       "agent:event",
       "computer:progress",
+      "cua:runtime",
       "update:status",
       "deps:syncCompleted",
       "autolaunch:changed",

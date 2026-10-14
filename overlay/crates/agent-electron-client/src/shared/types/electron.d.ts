@@ -1,3 +1,4 @@
+import type { CuaRuntime, CuaControlResult, CuaCheck, CuaWindow } from "./cuaRuntime";
 // Type definitions for Electron API exposed via preload
 import type { HostBridgeContract } from './hostBridge';
 import type { HostCaptureBridge } from '../features/capture/contract';
@@ -615,6 +616,16 @@ export interface ComputerUseStatus {
 }
 
 export interface ComputerUseAPI {
+  getRuntime: () => Promise<CuaRuntime>;
+  pause: () => Promise<CuaControlResult>;
+  resume: () => Promise<CuaControlResult>;
+  stop: () => Promise<CuaControlResult>;
+  recover: () => Promise<CuaControlResult>;
+  selfTest: () => Promise<{ success: boolean; checks?: CuaCheck[]; error?: string }>;
+  exportDiagnostics: () => Promise<{ success: boolean; cancelled?: boolean }>;
+  clearHistory: () => Promise<{ success: boolean }>;
+  listWindows: () => Promise<{ success: boolean; windows?: CuaWindow[]; error?: string }>;
+  setScope: (scope: { kind: "desktop" } | { kind: "window"; pid: number; windowId: number }) => Promise<CuaControlResult>;
   getStatus: () => Promise<ComputerUseStatus>;
   setEnabled: (
     enabled: boolean,
@@ -638,8 +649,10 @@ export interface ComputerUseAPI {
     baseUrl: string;
     model: string;
     apiKey: string;
+    hasApiKey?: boolean;
   }>;
   setVlmConfig: (patch: {
+    clearApiKey?: boolean;
     baseUrl?: string;
     model?: string;
     apiKey?: string;
