@@ -10,6 +10,7 @@
 - 基座更新前 pin：`d4d0e68c797d8130f9a7cd2ec3e93cb0b60d3692`。
 - PR 已合入基座 main，合并提交及客户端新 pin：`e75c9d5cd334e203520aaee6fecb6c84ed4561e5`，合并树与已验证的 `f937dac0` 完全一致。
 - 已确认源码和自动化回归修复了按共享目录归并对话、导致新对话抢占旧对话的问题。安装包与真实账号的验收范围见下文。
+- 15:24–15:28 已通过 macOS 开发客户端、真实测试账号和 ACP 子进程验收：测试站点 direct 模式下，同常规项目双对话并行、单独停止 B、继续 B 与 A 完整返回均正常。具体证据见「真实开发客户端验收」。
 
 ## 审查发现与补修
 
@@ -48,3 +49,31 @@
 本次没有发布新版本，也没有移动任何发布指针。已在运行的旧客户端进程需要重新启动，安装包需要从新基座重新构建后才包含修复。
 
 真实安装包验收步骤：在同一常规项目创建 A/B 两个对话，让 A 持续执行时启动 B；确认 A/B 均继续输出，session_id 不同、cwd 相同，B 到达时没有针对 A 的 `New chat supersedes in-flight turn` / session/cancel；停止 B 后 A 继续执行；分别切换对话和恢复会话，确认状态、SSE 和停止按钮指向各自对话。macOS / Windows 应各自记录包版本、基座 SHA 和客户端日志证据。
+
+## 真实开发客户端验收
+
+2026-10-14 15:24–15:28（Asia/Shanghai），macOS arm64。客户端工作树 `release/v3.0.x@c2f7df5f692f3d64fd5f7c3a25daf480100fe2b2`，基座 pin 仍为 `e75c9d5c`；已同时合入 Computer Use 与本地文件功能 overlay。主进程按此工作树重新构建，测试引擎为 `claude-code` ACP，页面模型显示 DeepSeek V4.1 Flash。
+
+按用户要求保持 WebView **direct**：实际加载 `https://testagent.xspaceagi.com`，日志 `override: null`、`loopback: null`、`step1ServerHost: https://testagent.xspaceagi.com`。未使用本地前端源码或 loopback 加速页面。测试站点页面上报 `gitHash: 786b93fc9`。本机 HTTP 服务 `61006` 健康。
+
+先前在云端项目中新建对话时，首页选择本机仍被项目绑定覆盖为云端；那些请求未进入客户端，不能计入 NW-041 验收。此次通过「创建常规项目」表单，在项目创建时选定 `DONG-MBP128`，创建专用项目 **NW-041 本机并行验收 1014**（normalProject id `539`），随后两条对话均显示本机且实际请求进入客户端。
+
+| 对话 | conversationId / engine key | ACP session_id | 结果 |
+| --- | --- | --- | --- |
+| A | `1695527` / `normalProject:1695527` | `c3360891-3f03-431b-8825-7c560e37673a` | 前台执行打印标记 + `sleep 180` + 打印完成标记；期间新建 B、停止 B、继续 B，A 始终 Busy，最终 UI 返回 `NW041_DIRECT_A_OK`。 |
+| B | `1695528` / `normalProject:1695528` | `1a4aae5d-396d-41ba-b32f-499c7c024be7` | 首轮前台 `sleep 180` 在执行中通过 UI 停止；后续在原对话前台 `sleep 30`，复用自己的 session，UI 返回 `NW041_DIRECT_B2_OK`。 |
+
+关键证据：
+
+- 15:24:22 / 15:25:17 分别创建 A/B 引擎；两次日志 cwd 均为 `<workspace>/normalProject/539`，session 不同。
+- 15:25:29 左右通过 `/computer/agent/status` 查询，A/B 同时为 Busy。
+- 15:25:59 UI 停止 B，日志只有针对 B session 的 `Cancel succeeded`；紧接查询 A Busy、B Idle。
+- 15:26:36 B 后续 turn 派发 key 为 `normalProject:1695528`、gen=2，返回原 B session，`reloaded=false`；查询 A/B 再次同时为 Busy。
+- 分别切回 A/B，UI 显示各自完成标记；最终状态查询两者均 Idle，session 未串用。
+- 从本轮验收起点截取的日志中，`New chat supersedes in-flight turn` 和 `Engine switch failed` 均为 0。全部终端命令仅打印与等待，没有请求创建、修改或删除文件，也没有请求访问网络。
+
+本地脱敏证据位于 `.cache/client-toolchain/acceptance/nw041/direct-lifecycle.log`、`direct-runtime.jsonl` 与 `direct-start.json`（ignored，不提交原始账号/鉴权日志）。开发客户端继续保持运行，供用户进一步验收。
+
+启动说明：并行合入批次更新了 `nuwax` 源码 pin 至 `7cd54922b`，尚未同步对应 `nuwax-dist` 产物戳；标准 `npm run dev` 的产物一致性预检因此退出。本轮复用已完成 prepare 的资源，通过现有 dev 编排入口启动、重新构建主进程，不修改或发布任何 pin；WebView 直接使用测试站点，未消费不一致的前端产物。该预检问题与 NW-041 会话隔离无关，后续恢复标准入口需对齐产物。
+
+结论：**NW-041 在 macOS 当前开发客户端、测试环境 direct 模式的真实 UI/模型/ACP 验收通过。** 本轮仍不代表新安装包或 Windows 验收，也未创建发布版本。
