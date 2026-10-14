@@ -13,19 +13,23 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const fakeDriver = `
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id===undefined)return;
- if(m.params?.arguments?.hang)return;
- process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:m.params?.arguments?.fail===true,content:[{type:'text',text:'ok'}]}})+'\\n');
+ const a=m.params?.arguments??{};
+ if(a.hang)return;
+ const structuredContent=a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:undefined;
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
-async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string | null) {
+async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string | null,
+  transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cg-"));
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cg-${randomUUID()}` : path.join(root, "s");
   const controller = new CuaTaskController();
   controller.setAvailable(true);
   const failure = vi.fn();
-  const gateway = new CuaMcpGateway({ controller, timeoutMs, onFailure: failure, authorize,
-    allowedTools: ["get_desktop_state", "click", "end_session"],
+  const results = vi.fn();
+  const gateway = new CuaMcpGateway({ controller, timeoutMs, onFailure: failure, authorize, transformCall, onResult: results,
+    allowedTools: ["get_desktop_state", "get_browser_state", "click", "browser_click", "end_session"],
     launch: () => spawn(process.execPath, ["-e", fakeDriver], { stdio: ["pipe", "pipe", "pipe"] }),
   });
   await gateway.listen(socketPath, "test-token");
@@ -59,14 +63,14 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
     if (token === "test-token" && initialize) await peer.request("initialize", {});
     return peer;
   }
-  return { gateway, controller, client, failure };
+  return { gateway, controller, client, failure, results };
 }
 describe("CUA MCP gateway over real local sockets", () => {
   it("forwards initialization and applies observation / ownership gates to real tool traffic", async () => {
     const f = await fixture();
     const a = await f.client(), b = await f.client();
     expect((await a.request("initialize", {})).result.content[0].text).toBe("ok");
-    expect((await a.request("tools/list")).result.tools).toEqual([{ name: "click" }]);
+    expect((await a.request("tools/list")).result.tools.map((tool: { name: string }) => tool.name)).toEqual(["click"]);
     expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
     expect((await a.request("tools/call", { name: "get_desktop_state" })).result.isError).toBe(false);
     expect((await b.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("desktopBusy");
@@ -145,6 +149,49 @@ describe("CUA MCP gateway over real local sockets", () => {
     await a.request("tools/call", { name: "get_desktop_state" });
     expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("noProgress");
     expect(f.failure).toHaveBeenCalledWith("noProgress");
+  });
+  it("does not let a refusal without isError count as an observation, and tells the model it did nothing", async () => {
+    const f = await fixture();
+    const a = await f.client();
+    const tab = { target_id: "bt", tab_id: "t" };
+    const refused = await a.request("tools/call", { name: "get_browser_state", arguments: { ...tab, refuse: true } });
+    expect(refused.result.content.at(-1).text).toContain("refused and had no effect");
+    expect((await a.request("tools/call", { name: "browser_click", arguments: { ...tab, ref: "p1:1" } })).result.structuredContent.code).toBe("observationRequired");
+    await a.request("tools/call", { name: "get_browser_state", arguments: tab });
+    const click = await a.request("tools/call", { name: "browser_click", arguments: { ...tab, ref: "p1:1", refuse: true } });
+    expect(click.result.structuredContent.refusal.code).toBe("browser_binding_stale");
+    expect(f.controller.snapshot().phase).toBe("running");
+    expect(f.failure).not.toHaveBeenCalled();
+    expect(f.results).toHaveBeenCalledWith("browser_click", expect.objectContaining({ ref: "p1:1" }), "refused", expect.anything());
+  });
+  it("adds model guidance to initialize and tool descriptions exactly once", async () => {
+    const f = await fixture();
+    const a = await f.client("test-token", false);
+    const init = await a.request("initialize", {});
+    expect(init.result.instructions).toContain("Look before you act");
+    expect(init.result.instructions).toContain("not allowed in this mode");
+    for (let i = 0; i < 2; i++) {
+      const [click] = (await a.request("tools/list")).result.tools;
+      expect(click.description).toBe("[Nuwax] For web page content prefer browser_click.");
+    }
+  });
+  it("ends the task after repeated violations but not for a closed target", async () => {
+    const f = await fixture(3000, undefined, (tool, args) => {
+      if ((args as { closed?: boolean }).closed) throw new Error("targetClosed");
+      if ((args as { escape?: boolean }).escape) throw new Error("scopeViolation");
+      return { tool, args };
+    });
+    const a = await f.client();
+    await a.request("tools/call", { name: "get_desktop_state" });
+    for (let i = 0; i < 4; i++) {
+      expect((await a.request("tools/call", { name: "click", arguments: { closed: true } })).result.structuredContent.code).toBe("targetClosed");
+    }
+    expect((await a.request("tools/call", { name: "check_for_update" })).result.structuredContent.code).toBe("toolNotAllowed");
+    expect((await a.request("tools/call", { name: "click", arguments: { escape: true } })).result.structuredContent.code).toBe("scopeViolation");
+    expect(f.controller.snapshot().phase).toBe("running");
+    await a.request("tools/call", { name: "click", arguments: { escape: true } });
+    expect(f.controller.snapshot()).toMatchObject({ phase: "stopped", reason: "violationLimit" });
+    expect((await a.request("tools/call", { name: "get_desktop_state" })).result.structuredContent.code).toBe("taskStopped");
   });
 });
 

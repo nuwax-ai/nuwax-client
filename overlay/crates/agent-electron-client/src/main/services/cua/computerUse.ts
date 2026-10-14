@@ -68,6 +68,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       controller: cuaTasks,
       allowedTools: CUA_ALLOWED_TOOLS,
       visibleTools: () => visibleCuaTools(cuaScope, CUA_ALLOWED_TOOLS),
+      scope: () => cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
       transformCall: (tool, args) => scopeCuaCall(cuaScope, tool, args),
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {

@@ -2,7 +2,12 @@ import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
-import { classifyReply } from "./cuaOutcome";
+import { classifyReply, type CuaOutcome } from "./cuaOutcome";
+import { CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
+import type { CuaScope } from "@shared/types/cuaRuntime";
+
+/** Errors `transformCall` may throw that are reported to the model as-is. */
+const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope"]);
 
 /** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
 export const CUA_STDIO_RELAY = `
@@ -14,8 +19,11 @@ process.stdin.on('end',()=>s.end());
 `;
 
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string;
-  params?: { name?: string; arguments?: unknown }; result?: { isError?: boolean; structuredContent?: unknown; tools?: Array<{ name: string; description?: string; [key: string]: unknown }> }; error?: unknown };
-type Pending = { method?: string; permit?: CuaPermit; timer: ReturnType<typeof setTimeout> };
+  params?: { name?: string; arguments?: unknown };
+  result?: { isError?: boolean; structuredContent?: unknown; instructions?: unknown; content?: Array<{ type: string; text?: string }>;
+    tools?: Array<{ name: string; description?: string; [key: string]: unknown }> };
+  error?: unknown };
+type Pending = { method?: string; permit?: CuaPermit; call?: { tool: string; args: unknown }; timer: ReturnType<typeof setTimeout> };
 type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
   grant?: unknown; owner?: string;
   initialization?: Rpc; initialized: boolean;
@@ -46,7 +54,12 @@ export class CuaMcpGateway {
     authorize?: (grant: unknown) => string | null;
     visibleTools?: () => readonly string[];
     transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown };
+    /** Scope the model-facing guidance is written for; desktop when omitted. */
+    scope?: () => CuaScope;
+    /** Sees every finished call (after the controller), e.g. to record browser bindings. */
+    onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown) => void;
   }) {}
+  private scope(): CuaScope { return this.options.scope?.() ?? { kind: "desktop" }; }
 
   async listen(socketPath: string, token: string): Promise<void> {
     if (this.server) return;
@@ -165,19 +178,36 @@ export class CuaMcpGateway {
         if (pending) {
           clearTimeout(pending.timer);
           connection.pending.delete(keyOf(message.id));
-          if (pending.method === "initialize" && !message.error) connection.initialized = true;
+          if (pending.method === "initialize" && !message.error) {
+            connection.initialized = true;
+            if (message.result) {
+              message.result.instructions = cuaMergeInstructions(this.scope(), message.result.instructions);
+              line = JSON.stringify(message);
+            }
+          }
           if (pending.method === "tools/list" && message.result?.tools) {
             const visible = this.options.visibleTools?.() ?? this.options.allowedTools;
-            message.result.tools = message.result.tools.filter((tool) => this.options.allowedTools.includes(tool.name) && visible.includes(tool.name));
+            const scope = this.scope();
+            message.result.tools = message.result.tools
+              .filter((tool) => this.options.allowedTools.includes(tool.name) && visible.includes(tool.name))
+              .map((tool) => ({ ...tool, description: cuaToolDescription(scope, tool.name, tool.description) }));
             line = JSON.stringify(message);
           }
-          if (pending.permit && !this.options.controller.finish(pending.permit,
-            classifyReply(pending.permit.tool, message), message.result?.structuredContent)) {
-            this.reject(socket, message.id, "operationCancelled");
-            continue;
-          }
-          if (pending.permit && this.options.controller.snapshot().phase === "paused") {
-            this.options.onFailure(this.options.controller.snapshot().reason ?? "toolFailed");
+          if (pending.permit) {
+            const outcome = classifyReply(pending.permit.tool, message);
+            const structured = message.result?.structuredContent;
+            if (!this.options.controller.finish(pending.permit, outcome, structured)) {
+              this.reject(socket, message.id, "operationCancelled");
+              continue;
+            }
+            if (pending.call) this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured);
+            if (outcome === "refused" && message.result) {
+              message.result.content = [...(message.result.content ?? []), { type: "text", text: CUA_REFUSED_HINT }];
+              line = JSON.stringify(message);
+            }
+            if (this.options.controller.snapshot().phase === "paused") {
+              this.options.onFailure(this.options.controller.snapshot().reason ?? "uncertainResult");
+            }
           }
         } else if (message.id !== undefined && !message.method) {
           continue; // discard late replies from cancelled/timed-out operations
@@ -241,15 +271,18 @@ export class CuaMcpGateway {
       return;
     }
     socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, result: {
-      isError: true, content: [{ type: "text", text: reason === "observationRequired"
-        ? "Computer Use: observationRequired. Observe the current screen with get_desktop_state, get_window_state, get_accessibility_tree or get_browser_state before choosing the next action."
-        : reason === "scopeViolation" ? "Computer Use: scopeViolation. Window-only mode allows get_window_state/get_accessibility_tree and click/set_value/scroll with an element_index from a fresh observation. The host supplies the selected pid/window_id. Pixel coordinates, keyboard, clipboard and browser tools are unavailable in this mode."
-        : `Computer Use: ${reason}. Do not replay an uncertain action. Ask the user to resolve the condition; after resume, observe the current screen before acting.` }],
+      isError: true, content: [{ type: "text", text: cuaRejectionText(reason) }],
       structuredContent: { code: reason, retryable: false },
     } })}\n`);
   }
+  /** A call refused before reaching the helper; the controller counts it against the task. */
+  private refuse(connection: Connection, owner: string, id: Rpc["id"], reason: string) {
+    this.options.controller.recordRejection(owner, reason);
+    this.reject(connection.socket, id, reason);
+  }
   private forward(connection: Connection, message: Rpc, line: string) {
     let permit: CuaPermit | undefined;
+    let call: { tool: string; args: unknown } | undefined;
     const id = message.id;
     if (id !== undefined && (id === null || !["string", "number"].includes(typeof id))) { connection.close(); return; }
     if (id !== undefined && connection.pending.has(keyOf(id))) { connection.close(); return; }
@@ -264,16 +297,19 @@ export class CuaMcpGateway {
       if (!connection.initialized) {
         this.reject(connection.socket, id, "notInitialized", "initialize"); return;
       }
-      const tool = message.params?.name;
-      if (typeof tool !== "string" || !this.options.allowedTools.includes(tool)) {
-        this.reject(connection.socket, id, "toolNotAllowed"); return;
-      }
       const owner = this.options.authorize ? this.options.authorize(connection.grant) : connection.id;
       if (!owner) { this.reject(connection.socket, id, "sessionRequired"); return; }
       connection.owner = owner;
-      let call: { tool: string; args: unknown } = { tool, args: message.params?.arguments ?? {} };
+      const tool = message.params?.name;
+      if (typeof tool !== "string" || !this.options.allowedTools.includes(tool)) {
+        this.refuse(connection, owner, id, "toolNotAllowed"); return;
+      }
+      call = { tool, args: message.params?.arguments ?? {} };
       try { if (this.options.transformCall) call = this.options.transformCall(tool, call.args); }
-      catch { this.reject(connection.socket, id, "scopeViolation"); return; }
+      catch (error) {
+        const reason = error instanceof Error && CALL_REJECTIONS.has(error.message) ? error.message : "scopeViolation";
+        this.refuse(connection, owner, id, reason); return;
+      }
       const decision = this.options.controller.begin(owner, call.tool, call.args);
       if (decision.error) {
         this.reject(connection.socket, id, decision.error);
@@ -294,7 +330,7 @@ export class CuaMcpGateway {
         this.reject(connection.socket, id, "toolTimeout", message.method);
       }, this.options.timeoutMs ?? 120_000);
       timer.unref();
-      connection.pending.set(keyOf(id), { permit, timer, method: message.method });
+      connection.pending.set(keyOf(id), { permit, call, timer, method: message.method });
     }
     if (!connection.child.stdin.write(`${line}\n`)) connection.socket.pause();
   }
