@@ -8,7 +8,18 @@ export interface CuaStep {
   tool: string;
   startedAt: number;
   durationMs?: number;
-  outcome: "running" | "ok" | "error" | "cancelled";
+  outcome: "running" | "ok" | "refused" | "error" | "cancelled";
+}
+
+/** Counts only; never arguments or content. */
+export interface CuaStats {
+  steps: number;
+  /** Calls refused before taking effect, by the gateway or the helper. */
+  refused: number;
+  uncertain: number;
+  pauses: number;
+  resumes: number;
+  violations: number;
 }
 
 export interface CuaRuntime {
@@ -23,6 +34,7 @@ export interface CuaRuntime {
   needsObservation: boolean;
   /** An observation is evidence of a refreshed screen, not proof of business success. */
   resultObserved: boolean;
+  stats: CuaStats;
   shortcutAvailable?: boolean;
   controlPending?: boolean;
   scope?: CuaScope;

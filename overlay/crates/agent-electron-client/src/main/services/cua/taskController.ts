@@ -1,41 +1,50 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { CuaRuntime, CuaStep } from "@shared/types/cuaRuntime";
+import type { CuaRuntime, CuaStats, CuaStep } from "@shared/types/cuaRuntime";
+import {
+  CUA_ANY, CUA_EXEMPT, CUA_LIFECYCLE, CUA_OBSERVATIONS, CUA_READS,
+  observationDigest, observedTargets, writeTarget, type CuaOutcome,
+} from "./cuaOutcome";
 
-const OBSERVATIONS = new Set([
-  "get_window_state", "get_desktop_state", "get_accessibility_tree", "get_browser_state", "zoom",
-]);
-const READS = new Set([
-  ...OBSERVATIONS, "check_permissions", "get_agent_cursor_state", "get_config", "get_cursor_position",
-  "get_recording_state", "get_screen_size", "get_session", "get_session_state", "health_report",
-  "list_apps", "list_sessions", "list_windows", "debug_window_info", "verify_state",
-]);
-const LIFECYCLE = new Set(["start_session", "end_session"]);
+/** Pauses that resuming must not reset: budgets and repeated policy violations. */
+export const CUA_FINAL_REASONS = ["stepLimit", "timeLimit", "repeatedAction", "violationLimit"];
+/** Limits `begin` can hit; each pauses the task and needs the user to look. */
+export const CUA_PAUSING_LIMITS = ["stepLimit", "timeLimit", "noProgress"];
+/** Gateway-level refusals that count towards the violation limit. */
+export const CUA_VIOLATIONS = new Set(["scopeViolation", "toolNotAllowed", "profileAttachRequiresWindowScope"]);
 
 export interface CuaPermit { epoch: number; sequence: number; owner: string; tool: string }
 type Decision = { permit: CuaPermit; error?: never } | { error: string; permit?: never };
 
-/** Single desktop ownership across MCP connections. Never stores tool arguments. */
+/** Single desktop ownership across MCP connections. Arguments live only while a call is in flight. */
 export class CuaTaskController {
   private owner: string | null = null;
   private epoch = 0;
   private revision = 0;
   private enabled = false;
-  private inFlight: CuaPermit | null = null;
+  private inFlight: (CuaPermit & { args: unknown; target: string }) | null = null;
+  /** Writes still allowed per observed target before the model must look again. */
+  private quota = new Map<string, number>();
+  private digests = new Map<string, string>();
   private lastFingerprint = "";
-  private repetitions = 0;
+  private lastDigest = "";
+  private identical = 0;
+  private stalled = 0;
+  private violations = 0;
   private blockedOwners = new Set<string>();
   private listeners = new Set<(state: CuaRuntime) => void>();
   private state: CuaRuntime;
 
   constructor(private options: {
-    now?: () => number; maxSteps?: number; maxTaskMs?: number; maxRepeated?: number;
+    now?: () => number; maxSteps?: number; maxTaskMs?: number;
+    writesPerObservation?: number; maxStalled?: number; maxIdentical?: number; maxViolations?: number;
   } = {}) {
     this.state = this.empty();
   }
   private now() { return (this.options.now ?? Date.now)(); }
+  private emptyStats(): CuaStats { return { steps: 0, refused: 0, uncertain: 0, pauses: 0, resumes: 0, violations: 0 }; }
   private empty(): CuaRuntime {
     return { revision: this.revision, phase: "idle", taskId: null, startedAt: null, updatedAt: this.now(), steps: [],
-      stepCount: 0, reason: null, needsObservation: true, resultObserved: false };
+      stepCount: 0, reason: null, needsObservation: true, resultObserved: false, stats: this.emptyStats() };
   }
   snapshot(): CuaRuntime { return structuredClone(this.state); }
   subscribe(listener: (state: CuaRuntime) => void): () => void {
@@ -57,6 +66,15 @@ export class CuaTaskController {
     if (this.owner !== owner || this.inFlight || this.state.phase !== "running") return;
     this.owner = null; this.state.phase = "completed"; this.emit();
   }
+  private forgetObservations() {
+    this.quota.clear();
+    this.digests.clear();
+    this.lastFingerprint = "";
+    this.lastDigest = "";
+    this.identical = 0;
+    this.stalled = 0;
+    this.state.needsObservation = true;
+  }
 
   begin(owner: string, tool: string, args: unknown): Decision {
     if (!this.enabled) return { error: "unavailable" };
@@ -68,28 +86,76 @@ export class CuaTaskController {
       this.owner = owner;
       this.epoch++;
       this.state = { ...this.empty(), taskId: randomUUID(), startedAt: this.now(), phase: "running" };
-      this.lastFingerprint = "";
-      this.repetitions = 0;
+      this.forgetObservations();
+      this.violations = 0;
       this.emit();
     }
     if (this.state.stepCount >= (this.options.maxSteps ?? 100)) return this.limit("stepLimit");
     if (this.now() - this.state.startedAt! >= (this.options.maxTaskMs ?? 15 * 60_000)) return this.limit("timeLimit");
-    const write = !READS.has(tool) && !LIFECYCLE.has(tool);
-    if (write && this.state.needsObservation) return { error: "observationRequired" };
-    if (write) {
-      const fingerprint = createHash("sha256").update(JSON.stringify([tool, args])).digest("hex");
-      this.repetitions = fingerprint === this.lastFingerprint ? this.repetitions + 1 : 1;
-      this.lastFingerprint = fingerprint;
-      if (this.repetitions > (this.options.maxRepeated ?? 3)) return this.limit("repeatedAction");
+    const write = !CUA_READS.has(tool) && !CUA_LIFECYCLE.has(tool);
+    const target = write ? writeTarget(tool, args) : "";
+    if (write && target !== CUA_EXEMPT) {
+      const key = this.quotaKey(target);
+      if (!key) return this.reject("observationRequired");
+      const progress = this.progress(tool, args, key);
+      if (progress) return this.limit(progress);
+      this.quota.set(key, this.quota.get(key)! - 1);
       this.state.resultObserved = false;
-      this.state.needsObservation = true;
+      this.state.needsObservation = this.quota.get(key)! <= 0;
     }
     const step: CuaStep = { sequence: ++this.state.stepCount, tool, startedAt: this.now(), outcome: "running" };
     this.state.steps = [...this.state.steps, step].slice(-100);
-    this.inFlight = { epoch: this.epoch, sequence: step.sequence, owner, tool };
+    this.state.stats.steps++;
+    const permit: CuaPermit = { epoch: this.epoch, sequence: step.sequence, owner, tool };
+    this.inFlight = { ...permit, args, target };
     this.emit();
-    return { permit: { ...this.inFlight } };
+    return { permit };
   }
+
+  /** Which observation entitles this write, or null when the model must look first. */
+  private quotaKey(target: string): string | null {
+    const has = (key: string) => (this.quota.get(key) ?? 0) > 0;
+    if (target === CUA_ANY) return has(CUA_ANY) ? CUA_ANY : null;
+    if (has(target)) return target;
+    // A full-desktop observation covers native windows and apps, not browser refs.
+    if (!target.startsWith("b:") && has("desktop")) return "desktop";
+    return null;
+  }
+
+  /** Same write again with nothing observed to have changed is the signal, not repetition itself. */
+  private progress(tool: string, args: unknown, key: string): string | null {
+    const fingerprint = createHash("sha256").update(JSON.stringify([tool, args])).digest("hex");
+    const digest = this.digests.get(key) ?? "";
+    if (fingerprint === this.lastFingerprint) {
+      this.identical++;
+      this.stalled = digest === this.lastDigest ? this.stalled + 1 : 0;
+    } else {
+      this.identical = 1;
+      this.stalled = 0;
+    }
+    this.lastFingerprint = fingerprint;
+    this.lastDigest = digest;
+    if (this.stalled >= (this.options.maxStalled ?? 3) || this.identical > (this.options.maxIdentical ?? 12)) return "noProgress";
+    return null;
+  }
+
+  private reject(error: string): Decision {
+    this.state.stats.refused++;
+    this.emit();
+    return { error };
+  }
+
+  /** A call the gateway refused before it reached the helper; repeated violations end the task. */
+  recordRejection(owner: string, reason: string) {
+    if (this.owner !== owner || this.state.phase !== "running") return;
+    this.state.stats.refused++;
+    if (CUA_VIOLATIONS.has(reason)) {
+      this.state.stats.violations++;
+      if (++this.violations >= (this.options.maxViolations ?? 3)) { this.stop("violationLimit"); return; }
+    }
+    this.emit();
+  }
+
   checkDeadline(): string | null {
     if (!this.owner || this.state.phase !== "running") return null;
     const reason = this.now() - this.state.startedAt! >= (this.options.maxTaskMs ?? 15 * 60_000) ? "timeLimit" :
@@ -99,17 +165,26 @@ export class CuaTaskController {
   }
   private limit(reason: string): Decision { this.pause(reason); return { error: reason }; }
 
-  finish(permit: CuaPermit, success: boolean): boolean {
-    if (permit.epoch !== this.epoch || this.inFlight?.sequence !== permit.sequence || permit.owner !== this.owner) return false;
+  finish(permit: CuaPermit, outcome: CuaOutcome, structured?: unknown): boolean {
+    const flight = this.inFlight;
+    if (!flight || permit.epoch !== this.epoch || flight.sequence !== permit.sequence || permit.owner !== this.owner) return false;
     const step = this.state.steps.find((item) => item.sequence === permit.sequence)!;
-    step.outcome = success ? "ok" : "error";
+    step.outcome = outcome === "ok" ? "ok" : outcome === "refused" ? "refused" : "error";
     step.durationMs = this.now() - step.startedAt;
     this.inFlight = null;
-    if (!success) {
+    if (outcome === "uncertain") {
+      this.state.stats.uncertain++;
+      this.state.stats.pauses++;
       this.state.phase = "paused";
-      this.state.reason = "toolFailed";
-      this.state.needsObservation = true;
-    } else if (OBSERVATIONS.has(permit.tool)) {
+      this.state.reason = "uncertainResult";
+      this.forgetObservations();
+    } else if (outcome === "refused") {
+      this.state.stats.refused++;
+    } else if (CUA_OBSERVATIONS.has(permit.tool)) {
+      const targets = observedTargets(permit.tool, flight.args, structured) ?? [];
+      const digest = observationDigest(structured);
+      const allowance = this.options.writesPerObservation ?? 3;
+      for (const target of [...targets, CUA_ANY]) { this.quota.set(target, allowance); this.digests.set(target, digest); }
       this.state.needsObservation = false;
       this.state.resultObserved = true;
     } else if (permit.tool === "end_session") {
@@ -122,18 +197,20 @@ export class CuaTaskController {
   pause(reason = "userPaused") {
     if (!this.owner) return;
     this.cancelFlight();
+    if (this.state.phase !== "paused") this.state.stats.pauses++;
     this.state.phase = "paused";
     this.state.reason = reason;
-    this.state.needsObservation = true;
+    this.forgetObservations();
     this.emit();
   }
   resume(): boolean {
     if (!this.enabled || !this.owner || this.state.phase !== "paused") return false;
     // Budgets cannot be reset by repeatedly pressing resume.
-    if (["stepLimit", "timeLimit", "repeatedAction"].includes(this.state.reason ?? "")) return false;
+    if (CUA_FINAL_REASONS.includes(this.state.reason ?? "")) return false;
     this.state.phase = "running";
     this.state.reason = null;
-    this.state.needsObservation = true;
+    this.state.stats.resumes++;
+    this.forgetObservations();
     this.emit();
     return true;
   }
@@ -143,7 +220,7 @@ export class CuaTaskController {
     this.owner = null;
     this.state.phase = "stopped";
     this.state.reason = reason;
-    this.state.needsObservation = true;
+    this.forgetObservations();
     this.emit();
   }
   fail(reason: string) {
@@ -155,6 +232,7 @@ export class CuaTaskController {
     this.cancelFlight();
     this.owner = null;
     this.state = this.empty();
+    this.forgetObservations();
     this.emit();
   }
   retire(owner: string) { this.blockedOwners.delete(owner); }

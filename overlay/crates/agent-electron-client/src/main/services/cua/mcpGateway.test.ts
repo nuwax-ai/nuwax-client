@@ -128,19 +128,23 @@ describe("CUA MCP gateway over real local sockets", () => {
     f.controller.pause(); f.gateway.pauseTransports();
     expect((await a.request("tools/list")).error.message).toContain("userPaused");
   });
-  it("stops driver activity on failed tools and repeated-action limits", async () => {
+  it("stops driver activity only on uncertain writes and no-progress limits", async () => {
     const f = await fixture();
     const a = await f.client();
     await a.request("tools/call", { name: "get_desktop_state", arguments: { fail: true } });
-    expect(f.failure).toHaveBeenCalledWith("toolFailed");
+    expect(f.failure).not.toHaveBeenCalled();
+    expect(f.controller.snapshot().phase).toBe("running");
+    await a.request("tools/call", { name: "get_desktop_state" });
+    await a.request("tools/call", { name: "click", arguments: { fail: true } });
+    expect(f.failure).toHaveBeenCalledWith("uncertainResult");
     f.controller.resume();
     for (let i = 0; i < 3; i++) {
       await a.request("tools/call", { name: "get_desktop_state" });
       await a.request("tools/call", { name: "click" });
     }
     await a.request("tools/call", { name: "get_desktop_state" });
-    expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("repeatedAction");
-    expect(f.failure).toHaveBeenCalledWith("repeatedAction");
+    expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("noProgress");
+    expect(f.failure).toHaveBeenCalledWith("noProgress");
   });
 });
 

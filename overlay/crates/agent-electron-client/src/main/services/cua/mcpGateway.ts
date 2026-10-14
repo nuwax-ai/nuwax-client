@@ -1,7 +1,8 @@
 import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CuaTaskController, type CuaPermit } from "./taskController";
+import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
+import { classifyReply } from "./cuaOutcome";
 
 /** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
 export const CUA_STDIO_RELAY = `
@@ -13,7 +14,7 @@ process.stdin.on('end',()=>s.end());
 `;
 
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string;
-  params?: { name?: string; arguments?: unknown }; result?: { isError?: boolean; tools?: Array<{ name: string; description?: string; [key: string]: unknown }> }; error?: unknown };
+  params?: { name?: string; arguments?: unknown }; result?: { isError?: boolean; structuredContent?: unknown; tools?: Array<{ name: string; description?: string; [key: string]: unknown }> }; error?: unknown };
 type Pending = { method?: string; permit?: CuaPermit; timer: ReturnType<typeof setTimeout> };
 type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
   grant?: unknown; owner?: string;
@@ -171,7 +172,7 @@ export class CuaMcpGateway {
             line = JSON.stringify(message);
           }
           if (pending.permit && !this.options.controller.finish(pending.permit,
-            !message.error && message.result?.isError !== true)) {
+            classifyReply(pending.permit.tool, message), message.result?.structuredContent)) {
             this.reject(socket, message.id, "operationCancelled");
             continue;
           }
@@ -276,7 +277,7 @@ export class CuaMcpGateway {
       const decision = this.options.controller.begin(owner, call.tool, call.args);
       if (decision.error) {
         this.reject(connection.socket, id, decision.error);
-        if (["stepLimit", "timeLimit", "repeatedAction"].includes(decision.error)) this.options.onFailure(decision.error);
+        if (CUA_PAUSING_LIMITS.includes(decision.error)) this.options.onFailure(decision.error);
         return;
       }
       permit = decision.permit;

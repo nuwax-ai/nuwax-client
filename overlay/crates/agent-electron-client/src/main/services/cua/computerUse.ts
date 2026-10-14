@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
-import { CuaTaskController } from "./taskController";
+import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
 import { getNodeBinPathWithFallback } from "../system/binaryLocator";
 import { cuaSessionAuthority } from "./sessionAuthority";
@@ -1051,7 +1051,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
 export async function resumeCuaTask(): Promise<CuaControlResult> {
   const runtime = getCuaRuntime();
   if (preparingRuntime || pendingControls || runtime.phase !== "paused" || !readEnabled() ||
-      ["stepLimit", "timeLimit", "repeatedAction"].includes(runtime.reason ?? ""))
+      CUA_FINAL_REASONS.includes(runtime.reason ?? ""))
     return { success: false, error: "cannotResume", runtime: getCuaRuntime() };
   preparingRuntime = true;
   const epoch = cuaDisableEpoch;
