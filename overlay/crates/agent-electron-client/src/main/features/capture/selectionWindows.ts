@@ -92,7 +92,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       frame: preview, transparent: !preview && config.kind !== 'selection',
       resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls, fullscreenable: false,
       ...selectorPolicy?.options,
-      skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview || controls, enableLargerThanScreen: !preview,
+      skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview && !controls, enableLargerThanScreen: !preview,
       roundedCorners: config.kind !== 'border',
       title: config.kind === 'selection' ? `${config.mode === 'still' ? labels.screenshot : labels.record}` : config.kind === 'controls' ? labels.record : '',
       backgroundColor: config.kind === 'selection' ? '#12161b' : '#00000000',

@@ -217,6 +217,9 @@ import {
 import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST } from "../../shared/constants";
 import { getMainLang, setMainLang } from "../services/i18n";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
+import * as bridgeConstants from '@shared/constants';
+import * as desktopFeatures from '../features';
+import { CAN_USE_IPC } from '@shared/hostCapabilities';
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
@@ -312,6 +315,30 @@ describe("host activity read-only IPC", () => {
 });
 
 describe("native IM preference IPC", () => {
+  it('canUse 重新检查受信顶层、文档代次、开关和注册状态；启动 getContext 可先探测', async () => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const registered = vi.spyOn(desktopFeatures, 'isDesktopFeatureRegistered').mockReturnValue(true);
+    const frame = { url: `${GW_ORIGIN}/home`, processId: 100, routingId: 200 };
+    const sender = { id: 300, mainFrame: frame, getURL: () => frame.url };
+    const event = { sender, senderFrame: frame }; const probe = handlers.get(CAN_USE_IPC)!;
+    expect(probe(event, 'auth.getContext')).toBe(true);
+    expect(probe(event, 'capture.record.mp4')).toBe(false);
+    handlers.get('auth:getContext')!(event);
+    expect(probe(event, 'capture.record.mp4')).toBe(true);
+    for (const name of ['unknown', 'auth.getToken', 'auth.persistToken', 'capture.record.unknown']) expect(probe(event, name)).toBe(false);
+    expect(probe({ ...event, senderFrame: { ...frame } }, 'capture')).toBe(false);
+    settings.set('features.capture.enabled', false); expect(probe(event, 'capture')).toBe(false);
+    settings.delete('features.capture.enabled'); registered.mockReturnValue(false); expect(probe(event, 'capture')).toBe(false);
+    registered.mockReturnValue(true);
+    expect(probe(event, 'localFiles.listFiles')).toBe(true);
+    settings.set('features.local-files.enabled', false); expect(probe(event, 'localFiles')).toBe(false);
+    settings.delete('features.local-files.enabled'); registered.mockReturnValue(false); expect(probe(event, 'localFiles')).toBe(false);
+    registered.mockReturnValue(true);
+    await handlers.get('auth:clear')!(event); expect(probe(event, 'native.openWindow')).toBe(false);
+    handlers.get('auth:getContext')!(event); expect(probe(event, 'im')).toBe(true);
+    frame.url = 'https://external.example/home'; expect(probe(event, 'im')).toBe(false);
+    registered.mockRestore(); product.mockRestore();
+  });
   it("unread is available only after auth binding and changes recheck top-frame/account/origin", async () => {
     const frame = {url: `${GW_ORIGIN}/home`, processId: 14, routingId: 24};
     const sender = {id: 34, mainFrame: frame, getURL: () => frame.url, once: vi.fn(), isDestroyed: () => false, send: vi.fn()};

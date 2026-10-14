@@ -15,6 +15,8 @@ import {
   type CaptureBridge,
   type CaptureCapabilities,
   type CaptureResult,
+  type CaptureCopyResult,
+  type CaptureFailure,
   type CaptureState,
 } from "@shared/features/capture/contract";
 import { unavailableCapabilities } from "@shared/features/capture/unavailable";
@@ -23,7 +25,7 @@ type IpcLike = Pick<IpcRenderer, "invoke" | "on" | "removeListener">;
 
 const NO_HANDLER = /No handler registered/i;
 
-function toFailure(error: unknown): CaptureResult {
+function toFailure(error: unknown): CaptureFailure {
   const message = error instanceof Error ? error.message : String(error);
   if (NO_HANDLER.test(message)) {
     return { success: false, code: "unsupported", error: "capture feature is not available" };
@@ -95,6 +97,14 @@ export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CA
         await ipc.invoke(channels.RELEASE, resultId);
       } catch {
         // 同上
+      }
+    },
+
+    async copy(resultId) {
+      try {
+        return await ipc.invoke(channels.COPY, resultId) as CaptureCopyResult;
+      } catch (error) {
+        return toFailure(error);
       }
     },
   };

@@ -46,7 +46,7 @@
 - **自动更新**：stable / beta 双通道，应用内完成。
 - 默认简体中文，多语言可切换且实时同步到壳。
 - 文件下载、图片另存真实落盘；系统托盘、开机自启、主题与壳同步；`⌘N` 新任务等桌面快捷入口。
-- **原生截图与录屏（当前开发版）**：macOS/Windows/Linux 多屏来源选择、区域和标注、MP4/GIF 录制入口、预览保存；底层 API 继续兼容 WebM。Linux X11 使用覆盖层，Wayland 使用系统选择及来源预览。客户端设置页签和应用菜单提供入口；截图 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。Linux 录制时控制条隐藏，托盘或切回客户端按 `Ctrl+Alt+R` 停止、`Ctrl+Alt+P` 暂停/继续。IM 接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，Linux 验证范围见 [验收记录](docs/acceptance/20261013-linux-native-capture.md)。
+- **原生截图与录屏**：macOS/Windows/Linux 多屏来源选择、区域和标注、MP4/GIF 录制入口、预览保存；底层 API 继续兼容 WebM。Linux X11 使用覆盖层，Wayland 使用系统选择及来源预览。客户端设置页签和应用菜单提供入口；截图 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。Linux 录制时控制条隐藏，托盘或切回客户端按 `Ctrl+Alt+R` 停止、`Ctrl+Alt+P` 暂停/继续。基础功能已随 `v3.0.14-beta.6` 发布；新增 `canUse` 和预览复制为开发改动，API 见 [能力目录](docs/host-capabilities-api.md)。IM 接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，Linux 验证范围见 [验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 
 ## 下载与安装
 

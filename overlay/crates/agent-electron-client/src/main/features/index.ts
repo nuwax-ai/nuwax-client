@@ -20,7 +20,7 @@ import { createTrustedIpc, type IpcMainLike } from "./_kit/trustedIpc";
 import type { DesktopFeature, FeatureContext, FeatureLogger, FeatureWorkspaceServices } from "./_kit/types";
 import { authorizeLocalFilesRequest, isLocalFilesRequestSource, localFilesFeature } from "./local-files";
 import { captureFeature } from "./capture";
-export { configureCaptureBackend } from "./capture";
+export { configureCaptureBackend, canCopyCaptureFiles } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
 
 export type { SessionEndReason };

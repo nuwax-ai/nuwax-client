@@ -130,7 +130,7 @@ describe('Linux X11 selector native fullscreen', () => {
     const controls = windows.createRecordingControls(selection, vi.fn());
     expect(mock.windows).toHaveLength(1);
     const control = mock.windows[0];
-    expect(control.options).toMatchObject({ frame: true, width: 440, height: 60 });
+    expect(control.options).toMatchObject({ frame: true, width: 440, height: 60, hasShadow: false });
     expect(control.options).not.toHaveProperty('x');
     expect(control.setPosition).toHaveBeenCalledOnce();
     expect(control.setPosition).toHaveBeenCalledWith(-1020, 156, false);
@@ -294,7 +294,7 @@ describe('capture sources on arbitrary displays', () => {
     const [control, border] = mock.windows;
     expect(border.options).toMatchObject({ roundedCorners: false, hasShadow: false, frame: false });
     const placement = { x: -1020, y: 156, width: 440, height: 60 };
-    expect(control.options).toMatchObject(placement);
+    expect(control.options).toMatchObject({ ...placement, hasShadow: false });
     for (const state of ['countdown', 'recording', 'paused'] as const) {
       controls.update({ state, elapsedMs: 1000 });
       expect(control.options).toMatchObject(placement);

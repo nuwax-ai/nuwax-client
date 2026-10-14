@@ -5,6 +5,8 @@
 
 IM 项目负责人请先看[接入交接指南](nuwax-im-native-capture-integration.md)，其中包含当前 IM 接线位置、独立项目边界、分块读取示例与多屏联调清单。
 
+新增能力探测和复制见 [host-capabilities-api.md](host-capabilities-api.md)。基础采集已随 beta.6 发布；`canUse` / `copy` 尚未进入该安装包，旧客户端可缺失。
+
 ## 当前可用范围（随阶段更新）
 
 | 能力 | 状态 |
@@ -35,6 +37,7 @@ interface CaptureBridge {
   onStateChange(listener: (state: 'idle' | 'selecting' | 'recording' | 'paused' | 'encoding') => void): () => void;
   readChunk(resultId: string, offset: number, length: number): Promise<ArrayBuffer | null>;
   release(resultId: string): Promise<void>;
+  copy?(resultId: string): Promise<{ success: true; kind: 'image' | 'file' } | CaptureFailure>;
 }
 ```
 
@@ -42,7 +45,7 @@ interface CaptureBridge {
 - **支持独立使用与 IM 回填**：IM 菜单直接调用本桥；`screenshot()` 等待确认，`record()` 等待停止和编码完成，成功结果从原 Promise 返回。读取成 File 后由 IM 放入发起会话的待发送附件区，无需先保存本地文件。客户端相机/原生菜单的预览保存由壳自己的入口处理。
 - **结果以 Promise 为准**：状态 `idle` 不等于附件已准备好，不要通过状态事件拼接“录制完成回调”；IM 的 pending 应覆盖读块与回填全过程。会话 ID 留在调用方上下文，不作为本桥的新参数。
 - 渲染进程**拿不到文件路径**，只拿不透明的 `resultId`；用 `readChunk` 分块取回字节（单次最多 4 MiB），用完务必 `release`。
-- 登出、换域、客户端退出都会取消进行中的会话并清空全部结果。
+- 登出、换域、客户端退出都会取消进行中的会话并清空采集结果；已复制文件使用独立的 24 小时缓存，不归原结果 release 删除。
 - 页面导航 / 关闭、锁屏 / 挂起、显示器移除也会取消并清理；结果仅可由原发起页面读取和释放。
 - 参数是**严格校验**的：未知字段、类型或范围不对返回 `invalid-argument`，不会被静默纠正。
 - `compression` 可以省略，但传了就必须包含 `quality`；仅传 `{ maxBytes }` 不合法。`fps` 为整数 1–60（缺省 30），`maxDurationMs` 为整数 1000–3600000（接口缺省 600000 毫秒），`maxBytes` 为安全整数 1–2147483648。
@@ -69,7 +72,7 @@ interface CaptureBridge {
 | code | 含义 | 建议提示 |
 | --- | --- | --- |
 | `canceled` | 用户取消 | 不提示 |
-| `permission-denied` | macOS 未授予「屏幕录制」权限 | 「请在 系统设置 > 隐私与安全性 > 屏幕录制 中允许本应用，然后重试」 |
+| `permission-denied` | 系统拒绝屏幕采集权限（包括 macOS / Linux portal） | 按当前平台提示允许屏幕采集后重试；不要用 Linux permission:n/a 推断已授权 |
 | `busy` | 已有进行中的截屏/录屏 | 「正在截屏/录屏，请先完成当前操作」 |
 | `encoder-unavailable` | 所选输出格式的编码器不可用 | 提示改选其他格式 |
 | `unsupported` | 平台 / 格式 / 功能不支持，或特性被关闭 | 探测缺能力时隐藏入口或按约定降级；原生调用失败后不静默再次唤起浏览器采集 |
@@ -114,46 +117,19 @@ async function captureScreenToFile(maxUploadBytes: number): Promise<File | null>
 }
 ```
 
-`maxUploadBytes` 应来自调用方实际上传限制。IM 可直接复用[完整读取示例](examples/im-native-capture.ts)中的 `readCaptureFile`，它还校验长度、MIME 并统一处理释放。
+`maxUploadBytes` 应来自调用方实际上传限制。IM 按该读取顺序在自己的业务模块实现，并校验长度、MIME 与统一释放；无需拷贝配套类型或引入客户端 SDK。
 
-同一示例的 `createCaptureAttachmentController` 提供从 IM 菜单触发到指定会话草稿回填的完整适配器；支持截图、MP4/WebM/GIF、busy、取消、超限、目标失效和 IM 卸载。业务接线与原会话草稿策略见[接入交接指南](nuwax-im-native-capture-integration.md#两种入口与完成结果的归属)。
+业务回填与原会话草稿策略见[接入交接指南](nuwax-im-native-capture-integration.md)。
 
-`onStateChange` 可用来在「选区中 / 录制中 / 编码中」时禁用入口按钮：
+`onStateChange` 可用来显示「选区中 / 录制中 / 编码中」，另维护覆盖完整调用与回填的 pending：
 
 订阅没有初始快照，仅发起业务 document 收到本次状态，并非全局广播；请在发起前订阅，自己维护 pending。业务桥不提供 pause/resume/stop/save，录制控制使用原生控制条与托盘，IM 读取 File 后复用自己的附件链。
 
 ```ts
-const off = capture.onStateChange((state) => setBusy(state !== 'idle'));
+const off = capture.onStateChange(state => setCaptureState(state));
+// pending 覆盖调用、读块和回填，不能在 state=idle 时提前清除。
 // 组件卸载时 off()
 ```
-
-## 假桥（IM 在客户端能力就绪前并行开发 / 写单测）
-
-```ts
-export function createFakeCaptureBridge(overrides: Partial<CaptureBridge> = {}): CaptureBridge {
-  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
-  return {
-    getCapabilities: async () => ({
-      apiVersion: 1, available: true, platform: 'darwin', permission: 'granted',
-      displays: [{ id: '1', hdr: false, scale: 2 }],
-      formats: { still: ['png', 'jpeg'], video: [], gif: false },
-      tiers: {} as never,
-    }),
-    screenshot: async () => ({
-      success: true, resultId: 'fake0001', mime: 'image/png', bytes: 4,
-      width: 800, height: 600, qualityUsed: 'lossless', hdrToneMapped: false,
-    }),
-    record: async () => ({ success: false, code: 'unsupported' }),
-    cancel: async () => undefined,
-    onStateChange: () => () => undefined,
-    readChunk: async (_id, offset, length) => png.slice(offset, offset + length),
-    release: async () => undefined,
-    ...overrides,
-  };
-}
-```
-
-建议至少覆盖：成功、`canceled`、`permission-denied`、`busy`、桥缺失、`available:false` 这几条路径。
 
 ## 已知限制
 
@@ -170,7 +146,7 @@ export function createFakeCaptureBridge(overrides: Partial<CaptureBridge> = {}):
 
 ## 客户端直接验收入口
 
-客户端设置的「截图与录屏」页签和应用菜单提供截图、MP4 / GIF 入口及画质选择。截图确认或录屏停止后显示预览与尺寸、体积、时长，点击「保存」打开系统保存对话框。API 继续兼容 WebM。录制期间托盘提供暂停/继续和停止。
+客户端设置的「截图与录屏」页签和应用菜单提供截图、MP4 / GIF 入口及画质选择。截图确认或录屏停止后显示预览与尺寸、体积、时长，底部提供「关闭」「复制图片/复制文件」「保存」，点击复制保持预览，点击保存打开系统保存对话框。MP4/GIF 复制原文件，截图复制图片；该新增按钮需包含本次改动的客户端版本。API 继续兼容 WebM。录制期间托盘提供暂停/继续和停止。
 
 macOS 使用系统菜单，Windows/Linux 使用客户端自绘应用菜单。应用内截图快捷键为 macOS `⌘⌥S` / Windows、Linux `Ctrl+Alt+S`；MP4 录屏为 `⌘⌥R` / `Ctrl+Alt+R`。Linux 录制中 `Ctrl+Alt+R` 停止并生成结果，`Ctrl+Alt+P` 暂停/继续。快捷键需要客户端主窗口或业务页获得焦点，不是后台全局快捷键。
 

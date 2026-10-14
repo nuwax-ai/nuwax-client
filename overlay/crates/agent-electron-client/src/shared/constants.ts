@@ -327,6 +327,11 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  */
 export const I18N_KEYS = {
   Capture: {
+    COPY_IMAGE: "Claw.Capture.copyImage",
+    COPY_FILE: "Claw.Capture.copyFile",
+    IMAGE_COPIED: "Claw.Capture.imageCopied",
+    FILE_COPIED: "Claw.Capture.fileCopied",
+    COPY_FAILED: "Claw.Capture.copyFailed",
     SELECT: "Claw.Capture.select",
     FONT_SIZE: "Claw.Capture.fontSize",
     DELETE_ANNOTATION: "Claw.Capture.deleteAnnotation",

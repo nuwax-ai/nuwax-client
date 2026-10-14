@@ -4,7 +4,7 @@ import type { IpcMainInvokeEvent, WebContents } from "electron";
 import path from "node:path";
 import {
   CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC,
-  type CaptureChannels, type CaptureCapabilities, type CaptureResult, type CaptureSuccess,
+  type CaptureChannels, type CaptureCapabilities, type CaptureCopyResult, type CaptureResult, type CaptureSuccess,
 } from "@shared/features/capture/contract";
 import { DEFAULT_CAPTURE_WINDOW_LABELS, type CaptureWindowLabels } from "@shared/features/capture/windowContract";
 import { unavailableCapabilities } from "@shared/features/capture/unavailable";
@@ -19,7 +19,11 @@ import { createCaptureSourceStill, createCapturePortalFrame, createRecordEngine 
 import { resolveCaptureFfmpeg } from "./encodingResources";
 import { captureBackendAvailable } from './linuxEnvironment';
 import { resolveCapturePlatform } from './platforms';
+import { createScratchDir } from '../_kit/scratchDir';
+import { createCaptureClipboard } from './clipboard';
+import { createCaptureClipboardPlatform } from './platforms/clipboard';
 export { configureCaptureBackend } from './linuxEnvironment';
+export { canCopyCaptureFiles } from './platforms/clipboard';
 
 const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const UNTRUSTED: CaptureResult = { success: false, code: "untrusted" };
@@ -36,6 +40,8 @@ export const captureFeature: DesktopFeature = {
     let results: ResultStore | null = null;
     let windows: ReturnType<typeof createCaptureWindows> | null = null;
     let recorder: ReturnType<typeof createRecordEngine> | null = null;
+    let captureClipboard: ReturnType<typeof createCaptureClipboard> | null = null;
+    const pendingCopies = new Map<AbortController, number>();
     let active: { sender: WebContents; channel: string } | null = null;
     let offState: (() => void) | null = null;
     let generation = 0;
@@ -54,6 +60,7 @@ export const captureFeature: DesktopFeature = {
 
     const clearSession = () => {
       generation++;
+      for (const controller of pendingCopies.keys()) controller.abort();
       service?.endSession();
       owners.clear();
       ctx.setRecordingStopAction?.(null);
@@ -66,6 +73,7 @@ export const captureFeature: DesktopFeature = {
     const watchSender = (sender: WebContents) => {
       if (watched.has(sender.id)) return;
       const end = () => {
+        for (const [controller, senderId] of pendingCopies) if (senderId === sender.id) controller.abort();
         documentEpochs.set(sender.id, (documentEpochs.get(sender.id) ?? 0) + 1);
         if (active?.sender === sender) service?.cancel();
         for (const [id, owner] of owners) if (owner.senderId === sender.id) {
@@ -103,6 +111,7 @@ export const captureFeature: DesktopFeature = {
         });
         recorder = createRecordEngine({ adapter, windows, scratch: ctx.scratch, log: ctx.log, ffmpeg, preloadPath: recordingPreload });
         results = createResultStore(ctx.scratch);
+        captureClipboard = createCaptureClipboard(results, createScratchDir(path.join(ctx.scratch.root, '.clipboard')), createCaptureClipboardPlatform());
         service = createCaptureService({ platform: process.platform, getPermission: getScreenPermission,
           backendAvailable: () => captureBackendAvailable(app.commandLine),
           getDisplays: getAllDisplays, stillEngine: windows, stillEncoder: createNativeImageEncoder(),
@@ -163,6 +172,20 @@ export const captureFeature: DesktopFeature = {
           service?.release(id); owners.delete(id);
         }
       }, undefined);
+      ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureCopyResult> | CaptureCopyResult>(channels.COPY, async (event, id) => {
+        if (typeof id !== 'string') return { success: false, code: 'invalid-argument' };
+        const owner = owners.get(id);
+        if (!owner || owner.senderId !== event.sender.id || !captureClipboard) return { success: false, code: 'invalid-argument' };
+        const epoch = generation;
+        const frame = event.senderFrame;
+        const controller = new AbortController();
+        pendingCopies.set(controller, event.sender.id);
+        try {
+          return await captureClipboard.copy(owner.result, controller.signal, () =>
+            !disposed && generation === epoch && owners.get(id) === owner &&
+            !event.sender.isDestroyed() && frame === event.sender.mainFrame);
+        } finally { pendingCopies.delete(controller); }
+      }, { success: false, code: 'untrusted' });
     };
     registerBridge(ctx.ipc, CAPTURE_IPC);
     registerBridge(ctx.hostIpc, HOST_CAPTURE_IPC);
@@ -199,7 +222,7 @@ export const captureFeature: DesktopFeature = {
       offSessionEnd(); offQuit(); offState?.();
       powerMonitor.removeListener("lock-screen", interrupt); powerMonitor.removeListener("suspend", interrupt);
       screen.removeListener("display-removed", interrupt);
-      ctx.ipc.dispose(); ctx.hostIpc.dispose(); recorder?.dispose(); windows?.dispose();
+      ctx.ipc.dispose(); ctx.hostIpc.dispose(); recorder?.dispose(); windows?.dispose(); captureClipboard?.dispose();
       if (pendingService) await pendingService.catch(() => undefined);
     } };
   },

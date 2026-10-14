@@ -60,7 +60,8 @@ import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicke
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
 import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
-import { notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import { canCopyCaptureFiles, isDesktopFeatureRegistered, notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
 import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
 import { getConfiguredPorts } from "../services/startupPorts";
 
@@ -299,6 +300,21 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     documents.get(documentKey(event)) === authGeneration;
   const isIMSender = (event: IpcMainInvokeEvent) =>
     event.senderFrame === event.sender.mainFrame && isCurrentDocument(event);
+  ipcMain.handle(CAN_USE_IPC, (event, name: unknown) => {
+    const capability = resolveHostCapability(name);
+    if (!capability || APP_NAME_IDENTIFIER !== 'nuwax') return false;
+    // getContext 本身是绑定当前文档代次的启动入口，不能要求它先完成自身。
+    const bootstrap = name === 'auth.getContext';
+    if (bootstrap ? switching || event.senderFrame !== event.sender.mainFrame ||
+      !isTrustedBusinessSender(event, trustedOrigins()) : !isIMSender(event)) return false;
+    if (capability.namespace === 'capture') {
+      if (!isDesktopFeatureRegistered('capture') || readSetting('features.capture.enabled') === false) return false;
+      if (name === 'capture.copy.file' && !canCopyCaptureFiles()) return false;
+    }
+    if (capability.namespace === 'localFiles' && (!isDesktopFeatureRegistered('local-files') ||
+      readSetting('features.local-files.enabled') === false)) return false;
+    return true;
+  });
   ipcMain.handle(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, (event, enabled: unknown) => {
     if (isIMSender(event) && typeof enabled === "boolean") setIMNotificationEnabled(enabled);
   });
