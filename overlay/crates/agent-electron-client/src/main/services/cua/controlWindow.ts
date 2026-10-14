@@ -74,7 +74,7 @@ export function controlWindowHtml(t: (key: string) => string): string {
     "phase.idle", "phase.running", "phase.paused", "phase.stopped", "phase.failed", "phase.completed", "reason.generic", "latestAction",
     ...CUA_REASON_KEYS.map((key) => `reason.${key}`),
     ...["observe", "browser", "clipboard", "session", "application", "input", "other"].map((key) => `action.${key}`),
-    ...["running", "ok", "error", "cancelled"].map((key) => `outcome.${key}`)];
+    ...["running", "ok", "refused", "error", "cancelled"].map((key) => `outcome.${key}`)];
   const labels = JSON.stringify(Object.fromEntries(keys.map((key) => [key, t(`Claw.Cua.${key}`)]))).replace(/</g, "\\u003c");
   const nonce = randomBytes(16).toString("hex");
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>

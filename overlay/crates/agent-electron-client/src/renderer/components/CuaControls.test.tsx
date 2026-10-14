@@ -44,6 +44,13 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "completed", resultObserved: false };
     expect(render()).toContain("Claw.Cua.unobservedResult");
   });
+  it("explains a resumable no-progress pause and labels refused steps", () => {
+    harness.states[0] = { ...harness.states[0], phase: "paused", reason: "noProgress",
+      steps: [{ sequence: 1, tool: "browser_click", startedAt: 0, outcome: "refused" }] };
+    const html = render(false);
+    expect(html).toContain("Claw.Cua.reason.noProgress");
+    expect(html).toContain("Claw.Cua.outcome.refused");
+  });
   it("ignores stale snapshots and removes subscriptions on unmount", async () => {
     let resolve!: (value: unknown) => void;
     api.getRuntime.mockReturnValue(new Promise((done) => { resolve = done; }));
