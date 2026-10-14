@@ -24,7 +24,7 @@ import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
 import { getNodeBinPathWithFallback } from "../system/binaryLocator";
 import { cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/types/cuaRuntime";
-import { cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
+import { CuaBrowserBindings, cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
 import log from "electron-log";
 import { getDb, readSetting, writeSetting } from "../../db";
 import { APP_DATA_DIR_NAME } from "../constants";
@@ -42,6 +42,7 @@ const HELPER_BIN_NAME = "NuwaxComputerUse";
 const MCP_SERVER_ID = "cua";
 const cuaTasks = new CuaTaskController();
 let cuaGateway: CuaMcpGateway | null = null;
+const cuaBindings = new CuaBrowserBindings();
 let runtimeSuspended = false;
 let shortcutAvailable = false;
 let pendingControls = 0;
@@ -70,7 +71,8 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       visibleTools: () => visibleCuaTools(cuaScope, CUA_ALLOWED_TOOLS),
       scope: () => cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
-      transformCall: (tool, args) => scopeCuaCall(cuaScope, tool, args),
+      transformCall: (tool, args) => scopeCuaCall(cuaScope, tool, args, cuaBindings),
+      onResult: (tool, args, outcome, structured) => cuaBindings.record(cuaScope, tool, args, outcome, structured),
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
       }),
@@ -103,7 +105,7 @@ const CUA_ALLOWED_TOOLS = [
   "bring_to_front", "browser_click", "browser_dialog", "browser_download",
   "browser_navigate", "browser_pointer", "browser_prepare", "browser_set_input_files",
   "browser_type", "check_permissions", "click", "clipboard_read", "clipboard_write",
-  "debug_window_info", "double_click", "drag", "end_session", "escalate_session",
+  "double_click", "drag", "end_session", "escalate_session",
   "get_accessibility_tree", "get_agent_cursor_state", "get_browser_state", "get_config",
   "get_cursor_position", "get_desktop_state", "get_recording_state", "get_screen_size",
   "get_session", "get_session_state", "get_window_state", "health_report", "hotkey",
@@ -1012,6 +1014,7 @@ export function suspendCua(reason = "sessionEnded"): Promise<void> {
   runtimeSuspended = true;
   cuaTasks.setAvailable(false);
   cuaTasks.stop(reason);
+  cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   return serializeCua(suspendCuaRuntimeResources).finally(() => { pendingControls--; cuaTasks.notify(); });
 }
@@ -1035,6 +1038,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
   cuaDisableEpoch++;
   runtimeSuspended = true;
   cuaTasks.pause(reason);
+  cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   cuaGateway?.pauseTransports();
   try {
