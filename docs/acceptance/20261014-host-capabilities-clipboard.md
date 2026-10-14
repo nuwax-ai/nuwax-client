@@ -46,12 +46,18 @@
 
 | 问题 | 结论与证据 |
 | --- | --- |
-| 功能内聚 | 复制副本、TTL、并发与原件保留在 `main/features/capture/clipboard.ts`；结果归属及会话取消在 capture/index.ts 的 COPY 通道。组件只持预览与交互状态 |
-| 分层 | shared/hostCapabilities.ts 为统一白名单，preload/canUse.ts 为消费探测，nuwaxBridgeHandlers.ts 为主进程信任门禁；各端命令封装在 platforms/clipboard，通过 features 公共入口汇合。公共类型由前端事实源生成，IM 文档不要求导入宿主模块 |
-| 维护性 | 未知能力、缺方法、旧宿主、查询失败均关闭能力；原生 copy 验证原件释放后的粘贴；输入通过固定参数/JSON stdin，生命周期和重入有真实测试。新增平台只改适配器，IM 的会话 ID 不进入客户端协议 |
+| 功能内聚 | 复制副本、TTL、并发与原件保留在 `src/main/features/capture/clipboard.ts:16`；结果归属及会话取消在 `src/main/features/capture/index.ts:175` 的 COPY 通道。组件在 `src/renderer/features/capture/CaptureLauncher.tsx:134` 只持预览与交互状态 |
+| 分层 | `src/shared/hostCapabilities.ts:9` 为统一白名单，`src/preload/canUse.ts:5` 为消费探测，`src/main/ipc/nuwaxBridgeHandlers.ts:303` 为主进程信任门禁；各端命令封装在 `src/main/features/capture/platforms/clipboard/index.ts:15`，通过 features 公共入口汇合。公共类型由前端事实源生成，IM 文档不要求导入宿主模块 |
+| 维护性 | `src/preload/canUse.ts:7` 拒绝未知能力、缺方法和查询失败，等待格式查询后再次授权；`src/main/features/capture/clipboard.ts:37` 保留复制原件与取消 guard。原生 copy 验证原件释放后的粘贴；输入通过固定参数/JSON stdin，生命周期和重入有真实测试。新增平台只改适配器，IM 的会话 ID 不进入客户端协议 |
 
 三问自查通过，测试门禁通过，可供后续代码评审；这是 writer 自查，不是 PR 批准。交接见 [IM 指南](../nuwax-im-native-capture-integration.md) 与 [能力目录](../host-capabilities-api.md)。
 
 ## 提交与交接
 
-代码提交到 codex/host-capabilities-clipboard，未合入 release/v3.0.x、未推送或发布新安装包。预览按钮是客户端菜单/设置发起采集后弹层里的复制入口；现有 beta.6 仍没有此按钮。交接仅提供能力/API/IM 指南，不要求同事 Agent 使用配套示例或类型文件。
+2026-10-14 按用户整体提测要求，`release/v3.0.x` 已从 `37686275` 快进合入实现 `bf51f20e` 与前端 pin 同步 `af7b6931`；前端 `93f8fcb823` 已推送到对应契约分支。没有改写 release 历史。
+
+合并前重新运行商业测试 2967 通过、18 跳过，脚本测试 335 通过；公开类型、契约、overlay、pin 和空白检查通过。主工作区原有 21 个未提交文件经备份及三方内容比较保留，前端 IM/repo-web 两项未提交子模块指针也保留；这些改动没有纳入本批次提交。合并后同步开发 overlay，主进程/preload 与 renderer 构建通过。
+
+主工作区连同未提交窗口自动识别改动一起测试：2988 通过、18 跳过、1 失败；失败为 `src/main/features/capture/windowRegions/readers.test.ts:49` 的 macOS 窗口列表断言，收到空数组。该文件属于保留的未提交工作，不在上述已通过的 release 提交中；整体提测须区分提交代码与本地 WIP，不能宣称当前脏工作区全量测试通过。
+
+以上源码路径均相对 `overlay/crates/agent-electron-client/`。预览按钮是客户端菜单/设置发起采集后弹层里的复制入口；未发布新安装包，现有 beta.6 仍没有此按钮。交接仅提供能力/API/IM 指南，不要求同事 Agent 使用配套示例或类型文件。
