@@ -2,7 +2,7 @@
 
 日期：2026-10-14，Asia/Shanghai。实现分支：`codex/host-capabilities-clipboard`。收尾时已快进到 `release/v3.0.x@37686275`，以纳入刚合入的本地文件 API 和 Computer Use 基线；没有改写 release 历史或替换已安装客户端。
 
-基座 pin：`e75c9d5cd334e203520aaee6fecb6c84ed4561e5`；前端基线 pin：`7cd54922b58ed68b80141db1932a5d153ac41548`。公共类型已提交到前端分支 codex/host-capabilities-clipboard（282a0def4f），本批次客户端提交同步生成快照并更新该源码 pin。新增 canUse/copy/预览复制尚未发布，已发布的 beta.6 不包含这些改动。
+基座 pin：`e75c9d5cd334e203520aaee6fecb6c84ed4561e5`；前端公共类型提交为 `282a0def4f`，合并当前前端已提交基线 `64f16dea2a` 后，源码 pin 为 `93f8fcb823`，分支为 codex/host-capabilities-clipboard。契约生成快照与公共类型一致。新增 canUse/copy/预览复制尚未发布，已发布的 beta.6 不包含这些改动。
 
 ## 实现范围
 
