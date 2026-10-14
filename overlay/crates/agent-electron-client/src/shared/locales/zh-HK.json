@@ -1238,5 +1238,9 @@
   "Claw.Cua.reason.scopeBusy": "請先停止目前工作，再切換操作範圍。",
   "Claw.Cua.reason.scopeViolation": "此操作超出選定範圍。限定視窗請使用介面元素；需要其他能力時由你切換至整個桌面。",
   "Claw.Cua.reason.targetClosed": "目標視窗已關閉或尚未選擇，請重新整理並再次選擇。",
-  "Claw.Cua.reason.scopeSaveFailed": "操作範圍未能儲存，請恢復就緒後重試。"
+  "Claw.Cua.reason.scopeSaveFailed": "操作範圍未能儲存，請恢復就緒後重試。",
+  "Claw.AutoUpdater.linuxAuthTitle": "安裝更新需要管理員密碼",
+  "Claw.AutoUpdater.linuxAuthFailed": "未獲得管理員授權，更新未安裝",
+  "Claw.AutoUpdater.linuxManualInstall": "未找到圖形化密碼輸入工具（zenity），請在終端機執行以下命令完成更新：sudo apt install \"{0}\"",
+  "Claw.AutoUpdater.linuxInstallFailed": "更新安裝失敗，詳細輸出見 {0}"
 }

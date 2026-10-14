@@ -17,31 +17,31 @@
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/en-US.json",
-      "baseBlob": "caa7111ee54cab41b892f2176beeaf5753bfbf2e",
+      "baseBlob": "ad4c4caa226988bad410c79761c881ca8e4928de",
       "baseMode": "100644",
-      "overlaySha256": "a77e1fc057d1a3248a7000efbd4f16d69aa487e27f4f70902bd27abc9eab5e1c",
-      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
+      "overlaySha256": "4f4681f8ed27dfa17fccc2e0e58c8aa4d8da5ed78a4cdb3d42e2bf65809372c5",
+      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-CN.json",
-      "baseBlob": "a99d40498d709674c652b684e725a608771f3760",
+      "baseBlob": "0d704d724504186f6d46ebd1c64f01cddfcc390e",
       "baseMode": "100644",
-      "overlaySha256": "3187fb99103e8dcaaf06d3583f7a10e3eff51f24ee87aac1c63366266e1931f9",
-      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
+      "overlaySha256": "633b130d27d9d9c903aee4968b4c3343009ec12ef6eda54b59c81b69701edda2",
+      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-HK.json",
-      "baseBlob": "a93d63817568d3d52d1dddc4ad49d9e624c045a7",
+      "baseBlob": "583c5408f1bfda8018e0b27d31d0baf8d15f88a3",
       "baseMode": "100644",
-      "overlaySha256": "229c22488054e9d980ba5095d9aaf84ae16c1cbbd254e5eef40124c38b7c906f",
-      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
+      "overlaySha256": "755e0351d88bda566b05397347a4a68cc317bca37199d2e8a3d1bc154c1fd923",
+      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-TW.json",
-      "baseBlob": "dacc9da581d423300777a64abe6ceaac1210dde3",
+      "baseBlob": "45018c15d1ef533af381aceda319c7f812642593",
       "baseMode": "100644",
-      "overlaySha256": "a71ab0bf6c39ee0ccf0cc77f1d79baa6e4d2b1a958603a74284d8896217b6665",
-      "note": "2026-10-09 人工对照基座 d078bb3cd→f5bcd1018（基座 PR #27：lanproxy 客户端改 TS，不再随包携带原生可执行文件）old/new diff，用 git merge-file 三方合并（基准=d078bb3cd 基座版，己方=当前 overlay，对方=f5bcd1018 基座版），0 冲突，商业改动原样保留。在 f5bcd1018 基座上 tsc（仅余 autoUpdater.ts:224 既有错误，由基座 PR #28 修复）与全量测试（183 文件/2420 项）通过。 仅 Claw.Lanproxy.platformNotSupported 文案随基座更新（4 语言各 1 行）。严格超集校验：基座 931 键在 overlay 中一个不缺，四语言键集合对齐（各 1083）；ttydDesc、loopbackDesc 为原有商业文案，非本次引入。"
+      "overlaySha256": "f1069c4cbde0fb8999fdf1f7245ec00d7c6024655b279c2d6d0e31e3f85ae23a",
+      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
     },
     {
       "path": "crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",

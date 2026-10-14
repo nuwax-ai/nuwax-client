@@ -1238,5 +1238,9 @@
   "Claw.Cua.reason.scopeBusy": "Stop the current task before changing scope.",
   "Claw.Cua.reason.scopeViolation": "This action is outside the selected scope. Use window elements, or manually switch to the entire desktop.",
   "Claw.Cua.reason.targetClosed": "The target window is closed or not selected. Refresh and choose again.",
-  "Claw.Cua.reason.scopeSaveFailed": "Could not save the operation scope. Recover readiness and try again."
+  "Claw.Cua.reason.scopeSaveFailed": "Could not save the operation scope. Recover readiness and try again.",
+  "Claw.AutoUpdater.linuxAuthTitle": "Administrator password required to install the update",
+  "Claw.AutoUpdater.linuxAuthFailed": "Administrator authorization was not granted. The update was not installed.",
+  "Claw.AutoUpdater.linuxManualInstall": "No graphical password prompt (zenity) was found. Run this command in a terminal to finish the update: sudo apt install \"{0}\"",
+  "Claw.AutoUpdater.linuxInstallFailed": "Failed to install the update. See {0} for details."
 }
