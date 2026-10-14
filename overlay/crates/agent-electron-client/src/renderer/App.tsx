@@ -2262,7 +2262,7 @@ function App() {
                       >
                         <MCPSettings isOpen={activeTab === "mcp"} />
                       </div>
-                      {activeTab === "settings" && <SettingsPage />}
+                      {activeTab === "settings" && <SettingsPage onOpenAuthorization={isMacOS ? () => setActiveTab("permissions") : undefined} />}
                       {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
                       {activeTab === "dependencies" && <DependenciesPage />}
                       {activeTab === "permissions" && <PermissionsPage />}
@@ -2273,6 +2273,7 @@ function App() {
                 </div>
               </Modal>
               {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
+                settings={window.electronAPI?.settings}
                 panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
                 onActionReady={handleCaptureActionReady}
                 onCaptureStart={() => {

@@ -5,6 +5,7 @@ import {
   shell,
   systemPreferences,
   BrowserWindow,
+  desktopCapturer,
 } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import * as path from "path";
@@ -424,6 +425,16 @@ export function registerAppHandlers(ctx: HandlerContext): void {
       try {
         if (!isMacPrivacyPane(permissionKey)) {
           return { success: false, error: "Unknown permission" };
+        }
+        // macOS lists an app under Screen Recording only after it has requested capture once.
+        if (
+          permissionKey === "screen_recording" &&
+          process.platform === "darwin" &&
+          systemPreferences.getMediaAccessStatus("screen") !== "granted"
+        ) {
+          await desktopCapturer
+            .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+            .catch((error) => log.warn("[IPC] screen recording request failed:", error));
         }
         const ok = await openMacPrivacySettings(permissionKey);
         return ok

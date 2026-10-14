@@ -44,6 +44,7 @@ export interface StartFeaturesOptions {
   isEnabled(featureId: string, enabledByDefault: boolean): boolean;
   log: FeatureLogger;
   translate?(key: string): string;
+  getSetting?(key: string): unknown;
   workspace?: FeatureWorkspaceServices;
   setRecordingStopAction?(action: (() => void) | null): void;
   setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
@@ -91,6 +92,7 @@ export function startDesktopFeatures(
     scratch: createScratchDir(nodePath.join(options.dataDir, feature.id)),
     log: options.log,
     translate: options.translate,
+    getSetting: options.getSetting,
     workspace: options.workspace,
     setRecordingStopAction: (action) => {
       recordingStopAction = action;

@@ -73,6 +73,22 @@
           "usedBy": "capture",
           "checkIntegrity": true,
           "notes": "仅 Windows：静态链接的 MinGW 线程运行库。许可证全文来自所固定源码的 mingw-w64-libraries/winpthreads/COPYING，与 MSYS2 安装包一致，保留 MinGW-w64 与 Lockless Inc. 声明。构建前核对实际静态库所属包版本，拒绝与固定源码不符的工具链。"
+        },
+        {
+          "id": "koffi",
+          "name": "Koffi",
+          "version": "3.3.3",
+          "license": "MIT",
+          "licenseFile": "third-party/licenses/koffi.txt",
+          "sourceUrl": "https://registry.npmjs.org/koffi/-/koffi-3.3.3.tgz",
+          "sourceArchive": "sources/koffi-3.3.3.tgz",
+          "sourceFile": "resources/capture/sources/koffi-3.3.3.tgz",
+          "sourceSha256": "c53f8da8e3c916ae8d666256650916768c7c4e8a579f188d794e8371b5773308",
+          "homepage": "https://koffi.dev/",
+          "modified": false,
+          "usedBy": "capture",
+          "checkIntegrity": true,
+          "notes": "只读原生窗口枚举。按平台携带预编译模块，归档与模块均锁定 SHA256，放在 asar 外。"
         }
       ]
     },

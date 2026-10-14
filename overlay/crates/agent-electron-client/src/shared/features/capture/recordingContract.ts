@@ -9,7 +9,7 @@ export const RECORDING_IPC = {
 
 export const RECORDING_CHUNK_LIMIT = 8 * 1024 * 1024;
 export const RECORDING_SNAPSHOT_LIMIT = 96 * 1024 * 1024;
-export const DEFAULT_RECORDING_DURATION_MS = 10 * 60 * 1000;
+export { DEFAULT_RECORDING_DURATION_MS } from './recordingPreferences';
 
 export interface RecordingConfig {
   sourceId: string;

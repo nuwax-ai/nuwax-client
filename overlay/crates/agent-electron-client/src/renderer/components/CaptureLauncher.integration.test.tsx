@@ -24,7 +24,7 @@ vi.mock("antd", () => ({
     toolbarItems.push(...menu.items);
     return children;
   },
-  Modal: vi.fn(), Select: vi.fn(), Space: vi.fn(),
+  Modal: vi.fn(), InputNumber: vi.fn(), Select: vi.fn(), Space: vi.fn(),
   message: { error: vi.fn(), success: vi.fn() },
 }));
 
@@ -96,7 +96,7 @@ describe("壳菜单与原生采集控制器集成", () => {
       expect(ui.capture.record).not.toHaveBeenCalled();
     } else {
       expect(ui.capture.record).toHaveBeenCalledOnce();
-      expect(ui.capture.record).toHaveBeenCalledWith({ output: action, compression: { quality: "high" }, maxDurationMs: 300_000 });
+      expect(ui.capture.record).toHaveBeenCalledWith({ output: action, compression: { quality: "high" }, maxDurationMs: 1_800_000 });
       expect(ui.capture.screenshot).not.toHaveBeenCalled();
     }
     expect(ui.capture.onMenuAction).toHaveBeenCalledOnce();

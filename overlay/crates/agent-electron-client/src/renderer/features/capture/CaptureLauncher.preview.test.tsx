@@ -15,7 +15,7 @@ vi.mock('react', async original => ({
   },
   useEffect(effect: () => void | (() => void)) { hooks.effects.push(effect); },
 }));
-vi.mock('antd', () => ({ Button: vi.fn(), Modal: vi.fn(), Select: vi.fn(), Space: vi.fn(), message: { error: hooks.error, success: hooks.success } }));
+vi.mock('antd', () => ({ Button: vi.fn(), Modal: vi.fn(), InputNumber: vi.fn(), Select: vi.fn(), Space: vi.fn(), message: { error: hooks.error, success: hooks.success } }));
 import { CaptureLauncher } from './CaptureLauncher';
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 beforeEach(() => { hooks.values.length = 0; hooks.effects.length = 0; hooks.cursor = 0; vi.clearAllMocks(); });

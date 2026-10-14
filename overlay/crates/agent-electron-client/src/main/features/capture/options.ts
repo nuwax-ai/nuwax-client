@@ -13,6 +13,7 @@ import type {
   StillFormat,
 } from "@shared/features/capture/contract";
 import { isCaptureQuality } from "./tiers";
+import { MAX_RECORDING_DURATION_MINUTES } from "@shared/features/capture/recordingPreferences";
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -23,7 +24,7 @@ export const MAX_BYTES_LIMIT = 2 * 1024 * 1024 * 1024;
 export const MIN_FPS = 1;
 export const MAX_FPS = 60;
 export const MIN_DURATION_MS = 1_000;
-export const MAX_DURATION_MS = 60 * 60 * 1000;
+export const MAX_DURATION_MS = MAX_RECORDING_DURATION_MINUTES * 60_000;
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
 

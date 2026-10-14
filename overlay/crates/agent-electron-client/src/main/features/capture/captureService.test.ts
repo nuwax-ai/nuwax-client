@@ -67,6 +67,62 @@ function setup(overrides: Partial<CaptureServiceDeps> = {}, engine?: StillEngine
   return { service: createCaptureService(deps), deps, stillEngine };
 }
 
+describe('client visibility lifecycle', () => {
+  it.each(['screenshot', 'record'] as const)('hides before %s and restores only after success, cancel or failure', async kind => {
+    for (const result of ['success', 'cancel', 'failure'] as const) {
+      const timeline: string[] = [];
+      const windowVisibility = { hide: vi.fn(async () => { timeline.push('hide'); }), restore: vi.fn(() => { timeline.push('restore'); }) };
+      const run = async () => {
+        timeline.push('capture'); expect(windowVisibility.restore).not.toHaveBeenCalled();
+        if (result === 'failure') throw new Error('capture failure');
+        if (result === 'cancel') return null;
+        return kind === 'screenshot' ? { image: image(), hdrToneMapped: false }
+          : { data: Buffer.from('video'), mime: 'video/mp4', width: 800, height: 600, durationMs: 1000, qualityUsed: 'standard' as const, hdrToneMapped: false };
+      };
+      const { service } = setup({ windowVisibility,
+        stillEngine: { captureStill: run as never },
+        recordEngine: { formats: () => ({ video: ['mp4'], gif: true }), record: run as never } });
+      const out = await service[kind](kind === 'record' ? { output: 'mp4' } : undefined);
+      expect(out).toMatchObject(result === 'success' ? { success: true } : { success: false, code: result === 'cancel' ? 'canceled' : 'failed' });
+      expect(timeline).toEqual(['hide', 'capture', 'restore']); expect(service.getState()).toBe('idle');
+    }
+  });
+
+  it('invalid, denied and busy calls never hide or restore another session', async () => {
+    const windowVisibility = { hide: vi.fn(async () => {}), restore: vi.fn() };
+    const denied = setup({ windowVisibility, getPermission: () => 'denied' });
+    await denied.service.screenshot({ scale: 0 }); await denied.service.screenshot(undefined);
+    expect(windowVisibility.hide).not.toHaveBeenCalled(); expect(windowVisibility.restore).not.toHaveBeenCalled();
+    let ready!: () => void;
+    windowVisibility.hide.mockImplementation(() => new Promise<void>(resolve => { ready = resolve; }));
+    const active = setup({ windowVisibility });
+    const pending = active.service.screenshot(undefined);
+    expect(await active.service.screenshot(undefined)).toMatchObject({ code: 'busy' });
+    expect(windowVisibility.hide).toHaveBeenCalledOnce(); expect(windowVisibility.restore).not.toHaveBeenCalled();
+    active.service.cancel(); ready();
+    expect(await pending).toMatchObject({ code: 'canceled' });
+    expect(active.stillEngine.captureStill).not.toHaveBeenCalled(); expect(windowVisibility.restore).toHaveBeenCalledOnce();
+  });
+});
+
+describe('recording duration preferences', () => {
+  it('uses the saved maximum for every request and only allows callers to shorten it', async () => {
+    let maximum = 30 * 60_000;
+    const record = vi.fn(async (..._args: unknown[]) => null);
+    const { service } = setup({ getRecordingDurationLimit: () => maximum,
+      recordEngine: { formats: () => ({ video: ['mp4'], gif: true }), record } });
+    await service.record({ output: 'mp4' });
+    expect(record.mock.calls[0][0]).toMatchObject({ maxDurationMs: 1_800_000 });
+    await service.record({ output: 'mp4', maxDurationMs: 60 * 60_000 });
+    expect(record.mock.calls[1][0]).toMatchObject({ maxDurationMs: 1_800_000 });
+    await service.record({ output: 'mp4', maxDurationMs: 10_000 });
+    expect(record.mock.calls[2][0]).toMatchObject({ maxDurationMs: 10_000 });
+    maximum = 45 * 60_000;
+    await service.record({ output: 'gif' });
+    expect(record.mock.calls[3][0]).toMatchObject({ maxDurationMs: 2_700_000 });
+  });
+});
+
 describe("screenshot", () => {
   it("非法参数：invalid-argument，且引擎不被调用", async () => {
     const { service, stillEngine } = setup();
@@ -105,6 +161,16 @@ describe("screenshot", () => {
     const { service, stillEngine } = setup({ getPermission: () => "denied" });
     expect(await service.screenshot(undefined)).toMatchObject({ success: false, code: "permission-denied" });
     expect(stillEngine.captureStill).not.toHaveBeenCalled();
+  });
+
+  it("权限被拒绝时触发授权引导，结果照常立即返回；已授权不触发", async () => {
+    const onPermissionDenied = vi.fn();
+    const denied = setup({ getPermission: () => "denied", onPermissionDenied });
+    expect(await denied.service.screenshot(undefined)).toMatchObject({ success: false, code: "permission-denied" });
+    expect(onPermissionDenied).toHaveBeenCalledOnce();
+    const granted = setup({ getPermission: () => "granted", onPermissionDenied });
+    await granted.service.screenshot(undefined);
+    expect(onPermissionDenied).toHaveBeenCalledOnce();
   });
 
   it("成功：状态流转、字节可经 readChunk 取回、release 后取不到", async () => {
