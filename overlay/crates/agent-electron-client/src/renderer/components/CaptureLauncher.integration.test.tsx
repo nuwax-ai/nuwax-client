@@ -86,7 +86,7 @@ describe("壳菜单与原生采集控制器集成", () => {
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
       onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={ui.onCapture} />);
     expect(toolbarItems.some(item => item.key?.startsWith("capture-"))).toBe(false);
-    vi.mocked(ui.capture.onMenuAction).mock.calls[0][0](action);
+    vi.mocked(ui.capture.onMenuAction!).mock.calls[0][0](action);
     await flush();
     expect(action === "screenshot" ? ui.capture.screenshot : ui.capture.record).toHaveBeenCalledOnce();
     ui.unmount();
