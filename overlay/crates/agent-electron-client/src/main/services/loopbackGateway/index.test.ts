@@ -260,7 +260,7 @@ describe("loopbackGateway runtime key carries backend", () => {
       await mod.ensureLoopbackGateway();
       const [filter, listener] = onBeforeRequest.mock.calls.at(-1)!;
       expect(filter).toEqual({
-        urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"],
+        urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*", "nuwax-local://*/*"],
       });
       if (typeof listener !== "function") throw new Error("normalizer missing");
       const callback = vi.fn();

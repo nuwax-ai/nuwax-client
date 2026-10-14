@@ -60,6 +60,8 @@ import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabl
 import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
 import { notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
+import { getConfiguredPorts } from "../services/startupPorts";
 
 import {
   initializeCommercialAuth,
@@ -315,6 +317,25 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     log,
     translate: t,
+    workspace: {
+      getIdentity: () => {
+        const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
+        const sandboxId = normalizeComputerSandboxId(registration?.id);
+        if (!currentTicket() || switching || !["starting", "ready"].includes(serviceState.phase) ||
+            registration?.currentDomain !== currentBusinessOrigin() || !sandboxId) return null;
+        return { sandboxId, businessOrigins: [...trustedOrigins()] };
+      },
+      getFileServerPort: () => getConfiguredPorts().fileServer,
+      isCurrentDocument: event => isIMSender(event as IpcMainInvokeEvent),
+      resolveRoot: async input => {
+        const step = readSetting("step1_config") as { workspaceDir?: string } | null;
+        const { agentService } = await import("../services/engines/unifiedAgent");
+        return resolveLocalFilesWorkspace(input, {
+          base: step?.workspaceDir || path.join(os.homedir(), APP_DATA_DIR_NAME, "workspace"),
+          getSessionDirectory: id => agentService.getWorkspaceDirForProject(id),
+        });
+      },
+    },
     setRecordingStopAction: (action) => getTrayManager()?.setRecordingStopAction(action),
     setRecordingPauseAction: (action, paused) => getTrayManager()?.setRecordingPauseAction(action, paused),
   });

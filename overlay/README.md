@@ -130,3 +130,11 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
 
 - 截图/录制浮层定位共用 `shared/features/capture/windowPlacement.ts`；选择器沙箱与主进程使用相同 DIP 定位规则，以所选屏/选区为锚点。
+
+## 本机文件直访特性
+
+`src/main/features/local-files`、`src/preload/features/local-files`、`src/shared/features/local-files` 与 `_kit` 是商业新增模块。公开入口为 main/preload 的 features/index；宿主只在组合根注入登录、本机身份、配置端口和工作区解析。`main/services/localFilesWorkspace` 复用基座目录规则，避免设备 ID 充当用户 ID。
+
+`main.ts` 负责 pre-ready scheme 声明和退出释放；nuwaxBridgeHandlers 负责一次注册及登录代次边界；businessRequestRouting 在既有唯一监听器接授权请求门；sessionAuthInjection 剥离预览来源凭据；frameEmbeddingPolicy 只给可信业务顶层文档补本地 scheme CSP 来源。关闭功能不安装 IPC/handler，惰性 scheme 声明是 Electron 时序所需的例外。
+
+桥使用与验收见 `docs/local-file-access-api.md`；新增特性须通过 `scripts/check-feature-boundaries.mjs`。

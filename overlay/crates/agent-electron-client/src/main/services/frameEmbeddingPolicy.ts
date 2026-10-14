@@ -9,6 +9,25 @@ type ResponseHeaderDetails = Pick<
 interface ResponseHeaderPolicyOptions {
   allowFrameEmbedding: boolean;
   fixDevCors: boolean;
+  allowLocalFiles?: boolean;
+}
+
+/** Add only the local resource scheme; keep each policy's existing HTTP restrictions. */
+export function allowLocalFileResources(value: string): string {
+  return value.split(",").map(policy => {
+    const directives = policy.split(";").map(part => part.trim()).filter(Boolean);
+    const sources = (name: string) => directives.find(part => part.split(/\s+/)[0].toLowerCase() === name)?.split(/\s+/).slice(1);
+    const defaults = sources("default-src");
+    for (const name of ["connect-src", "img-src", "media-src", "font-src", "frame-src"]) {
+      const index = directives.findIndex(part => part.split(/\s+/)[0].toLowerCase() === name);
+      const inherited = name === "frame-src" ? sources("child-src") ?? defaults : defaults;
+      const existing = index >= 0 ? directives[index].split(/\s+/).slice(1) : inherited;
+      if (!existing || existing.includes("nuwax-local:")) continue;
+      const next = `${name} ${[...existing.filter(source => source !== "'none'"), "nuwax-local:"].join(" ")}`;
+      if (index >= 0) directives[index] = next; else directives.push(next);
+    }
+    return directives.join("; ");
+  }).join(", ");
 }
 
 const installedSessions = new WeakSet<Session>();
@@ -43,6 +62,7 @@ export function rewriteResponseHeaders(
     options.allowFrameEmbedding &&
     /^https?:\/\//i.test(details.url) &&
     (details.resourceType === "mainFrame" || details.resourceType === "subFrame");
+  const allowLocalFiles = options.allowLocalFiles && details.resourceType === "mainFrame";
   let modified: ResponseHeaders | undefined;
   const writable = () => (modified ??= { ...original });
 
@@ -53,11 +73,14 @@ export function rewriteResponseHeaders(
       continue;
     }
     if (
-      allowFrameEmbedding &&
+      (allowFrameEmbedding || allowLocalFiles) &&
       (name === "content-security-policy" ||
         name === "content-security-policy-report-only")
     ) {
-      const rewritten = values.map(removeFrameAncestors);
+      const rewritten = values.map(value => {
+        const embedded = allowFrameEmbedding ? removeFrameAncestors(value) : value;
+        return allowLocalFiles ? allowLocalFileResources(embedded) : embedded;
+      });
       if (rewritten.some((value, index) => value !== values[index])) {
         const remaining = rewritten.filter((value) => value.trim() !== "");
         if (remaining.length) writable()[key] = remaining;
@@ -83,6 +106,7 @@ export function initFrameEmbeddingPolicy(options: {
   defaultSession: Session;
   isCommercial: boolean;
   isDev: boolean;
+  allowLocalFiles?(url: string): boolean;
 }): void {
   const { app, defaultSession, isCommercial, isDev } = options;
   if ((!isCommercial && !isDev) || initializedApps.has(app)) return;
@@ -96,6 +120,7 @@ export function initFrameEmbeddingPolicy(options: {
       const responseHeaders = rewriteResponseHeaders(details, {
         allowFrameEmbedding: isCommercial,
         fixDevCors,
+        allowLocalFiles: target === defaultSession && isCommercial && options.allowLocalFiles?.(details.url),
       });
       // 不回写未变化的头，避免影响 Chromium 原本的 Cookie 入库路径。
       callback(responseHeaders ? { responseHeaders } : {});

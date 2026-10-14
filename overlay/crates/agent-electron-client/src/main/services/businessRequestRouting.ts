@@ -1,4 +1,5 @@
 import { app, session, webContents } from "electron";
+import { authorizeDesktopFeatureRequest } from "../features";
 import type { Session, WebContents, OnBeforeRequestListenerDetails } from "electron";
 import {
   buildSpaDocumentUrl,
@@ -68,8 +69,13 @@ export function resolveDirectDocumentRequest(
 function installRequestListener(ses: Session): void {
   if (installed.has(ses)) return;
   ses.webRequest.onBeforeRequest(
-    { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"] },
+    { urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*", "nuwax-local://*/*"] },
     (details, callback) => {
+      const featureDecision = authorizeDesktopFeatureRequest(details);
+      if (featureDecision !== undefined) {
+        callback(featureDecision ? {} : { cancel: true });
+        return;
+      }
       let redirectURL: string | null = null;
       try {
         const contents = details.webContents ?? (details.webContentsId ? webContents.fromId(details.webContentsId) : null);

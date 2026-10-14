@@ -5,6 +5,7 @@
  * 第二个特性出现、确有新需求时再增补，不预建平台。静态注册，不做动态插件加载。
  */
 
+import type { CustomScheme } from "electron";
 import type { FeatureLifecycle } from "./lifecycle";
 import type { ScratchDir } from "./scratchDir";
 import type { TrustedIpc } from "./trustedIpc";
@@ -17,6 +18,13 @@ export interface FeatureLogger {
 
 export interface FeatureHandle {
   dispose(): void | Promise<void>;
+}
+
+export interface FeatureWorkspaceServices {
+  getIdentity(): { sandboxId: string; businessOrigins: string[] } | null;
+  resolveRoot(input: { cId: string; workspacePath?: string; projectId?: string; serviceType?: string; userId?: string }): string | null | Promise<string | null>;
+  getFileServerPort(): number;
+  isCurrentDocument(event: unknown): boolean;
 }
 
 export interface FeatureContext {
@@ -32,6 +40,7 @@ export interface FeatureContext {
   log: FeatureLogger;
   /** 本轮调用时使用宿主当前语言；未注入时由特性选择默认文案。 */
   translate?(key: string): string;
+  workspace?: FeatureWorkspaceServices;
   setRecordingStopAction?(action: (() => void) | null): void;
   setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }
@@ -42,6 +51,8 @@ export interface DesktopFeature {
   products: readonly string[];
   /** 构建期默认开关；运行期可被设置项 `features.<id>.enabled` 覆盖。 */
   enabledByDefault: boolean;
+  /** 仅启动前声明；handler 仍由运行期开关控制。 */
+  schemes?: readonly CustomScheme[];
   /** 同步且轻量；重活必须懒初始化，不得拖慢启动。 */
   register(ctx: FeatureContext): FeatureHandle;
 }
