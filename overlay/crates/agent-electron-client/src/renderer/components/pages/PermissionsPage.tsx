@@ -217,7 +217,7 @@ export default function PermissionsPage() {
                 </div>
               </div>
 
-              <div className={styles.serviceActions}>
+              <div className={styles.serviceActions} style={{ alignItems: "center" }}>
                 <Tag
                   color={STATUS_TAG[perm.status]?.color || "default"}
                   style={{ margin: 0, fontSize: 11 }}
