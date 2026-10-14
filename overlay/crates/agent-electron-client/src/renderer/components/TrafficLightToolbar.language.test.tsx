@@ -177,7 +177,7 @@ describe("Win/Linux toolbar language", () => {
     const onCapture = vi.fn();
     const markup = renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
-      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={onCapture} />);
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureMenuVisible captureAvailable onCapture={onCapture} />);
     expect(markup).toContain("截图与录屏");
     expect(markup).toContain("Ctrl+Alt+S");
     expect(markup).toContain("Ctrl+Alt+R");
@@ -201,7 +201,7 @@ describe("Win/Linux toolbar language", () => {
     const onCapture = vi.fn();
     renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
-      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={onCapture} />);
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureMenuVisible captureAvailable onCapture={onCapture} />);
     renderedDropdowns.find(menu => menu.label === "截图与录屏")!.onOpenChange(true);
     expect(stateHarness.values[0]).toBe("capture");
     expect(renderedDropdowns.every(menu => menu.transitionName === "")).toBe(true);
@@ -225,7 +225,7 @@ describe("Win/Linux toolbar language", () => {
     renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
       onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()}
-      captureAvailable={available} onCapture={hasHandler ? vi.fn() : undefined} />);
+      captureMenuVisible captureAvailable={available} onCapture={hasHandler ? vi.fn() : undefined} />);
     expect(renderedMenuItems.some(item => item.key?.startsWith("capture-"))).toBe(false);
   });
 
@@ -240,7 +240,7 @@ describe("Win/Linux toolbar language", () => {
       renderedDropdowns.length = 0;
       renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
         canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
-        onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={vi.fn()} />);
+        onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureMenuVisible captureAvailable onCapture={vi.fn()} />);
     };
     render();
     const file = renderedDropdowns.find(menu => menu.label === "文件(F)")!;

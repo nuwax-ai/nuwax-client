@@ -8,10 +8,13 @@ import {
 } from "@shared/features/capture/contract";
 import { DEFAULT_CAPTURE_WINDOW_LABELS, type CaptureWindowLabels } from "@shared/features/capture/windowContract";
 import { unavailableCapabilities } from "@shared/features/capture/unavailable";
+import { RECORDING_DURATION_SETTING, recordingDurationMinutes } from "@shared/features/capture/recordingPreferences";
 import type { DesktopFeature, FeatureContext, FeatureHandle } from "../_kit/types";
 import type { TrustedIpc } from "../_kit/trustedIpc";
 import { createCaptureService, type CaptureService } from "./captureService";
 import { getAllDisplays, getScreenPermission } from "./electronDeps";
+import { createScreenPermissionPrompt } from "./permissionPrompt";
+import { createCaptureWindowVisibility } from "./windowVisibility";
 import { createResultStore, type ResultStore } from "./results";
 import { createNativeImageEncoder } from "./stillEncoder";
 import { createCaptureWindows } from "./selectionWindows";
@@ -46,6 +49,13 @@ export const captureFeature: DesktopFeature = {
     let offState: (() => void) | null = null;
     let generation = 0;
     let disposed = false;
+    let quitting = false;
+    const windowVisibility = createCaptureWindowVisibility({
+      getWindow: () => active && !active.sender.isDestroyed()
+        ? BrowserWindow.fromWebContents(active.sender.hostWebContents ?? active.sender) : null,
+      canRestore: () => !disposed && !quitting,
+      log: ctx.log,
+    });
     const owners = new Map<string, { senderId: number; result: CaptureSuccess }>();
     const watched = new Map<number, { sender: WebContents; cleanup: () => void }>();
     const documentEpochs = new Map<number, number>();
@@ -57,6 +67,24 @@ export const captureFeature: DesktopFeature = {
       }
       return labels;
     };
+    const PERMISSION_PROMPT_DEFAULTS = {
+      title: "需要屏幕录制权限",
+      detail: "截图与录屏需要 macOS 屏幕录制权限。请在「系统设置 → 隐私与安全性 → 屏幕与系统录音」中开启「{0}」，并按系统提示重启应用后重试。也可在客户端「授权」页查看状态。",
+      openSettings: "打开系统设置",
+      cancel: "取消",
+    };
+    const promptScreenPermission = createScreenPermissionPrompt({
+      log: ctx.log,
+      labels: () => {
+        const labels = { ...PERMISSION_PROMPT_DEFAULTS };
+        for (const key of Object.keys(labels) as Array<keyof typeof labels>) {
+          const id = `Claw.Capture.permissionPrompt.${key}`;
+          const translated = ctx.translate?.(id);
+          if (translated && translated !== id) labels[key] = translated;
+        }
+        return labels;
+      },
+    });
 
     const clearSession = () => {
       generation++;
@@ -113,6 +141,9 @@ export const captureFeature: DesktopFeature = {
         results = createResultStore(ctx.scratch);
         captureClipboard = createCaptureClipboard(results, createScratchDir(path.join(ctx.scratch.root, '.clipboard')), createCaptureClipboardPlatform());
         service = createCaptureService({ platform: process.platform, getPermission: getScreenPermission,
+          onPermissionDenied: () => { void promptScreenPermission(); },
+          windowVisibility,
+          getRecordingDurationLimit: () => recordingDurationMinutes(ctx.getSetting?.(RECORDING_DURATION_SETTING)) * 60_000,
           backendAvailable: () => captureBackendAvailable(app.commandLine),
           getDisplays: getAllDisplays, stillEngine: windows, stillEncoder: createNativeImageEncoder(),
           recordEngine: recorder, results, log: ctx.log });
@@ -212,7 +243,7 @@ export const captureFeature: DesktopFeature = {
       }, { success: false, error: "untrusted sender" });
 
     const offSessionEnd = ctx.lifecycle.onSessionEnd(clearSession);
-    const offQuit = ctx.lifecycle.onQuit(clearSession);
+    const offQuit = ctx.lifecycle.onQuit(() => { quitting = true; clearSession(); });
     const interrupt = () => clearSession();
     powerMonitor.on("lock-screen", interrupt);
     powerMonitor.on("suspend", interrupt);

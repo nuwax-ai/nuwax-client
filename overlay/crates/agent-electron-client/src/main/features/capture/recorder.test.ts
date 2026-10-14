@@ -143,6 +143,23 @@ describe("private desktop recorder", () => {
     engine.stop(); const result=await pending; expect(result?.durationMs).toBe(25000); result?.disposeFile?.();
   });
 
+  it('automatically stops at the configured duration, closes the stream and produces a file', async () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','performance']});
+    const {engine,controls} = deps(); const states: CaptureState[] = [];
+    const pending = engine.record({output:'webm',maxDurationMs:1000},new AbortController().signal,state => states.push(state));
+    await until(() => controls.update.mock.calls.some(([value]) => value.countdown === 3));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(controls.update).toHaveBeenCalledWith({state:'recording',elapsedMs:0,maxDurationMs:1000});
+    await vi.advanceTimersByTimeAsync(900);
+    expect(states).toEqual(['recording']);
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await pending;
+    expect(result).toMatchObject({durationMs:1000});
+    expect(await readFile(result!.filePath!)).toEqual(Buffer.from('encoded'));
+    expect(states).toEqual(['recording','encoding']);
+    expect(controls.dispose).toHaveBeenCalledOnce(); result?.disposeFile?.();
+  });
+
   it("rejects iframe/foreign IPC and removes handlers on a session abort", async () => {
     fake.autoReady = false;
     const {engine,controls} = deps();

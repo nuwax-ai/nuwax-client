@@ -1,6 +1,7 @@
 import type { MenuItemConstructorOptions, WebContents } from "electron";
 import { I18N_KEYS } from "@shared/constants";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
+import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
 import type { EditAction } from "../ipc/windowHandlers";
 
 export interface ApplicationMenuActions {
@@ -105,12 +106,13 @@ export function buildMacApplicationMenu(
     },
     ...(options.captureAvailable && actions.capture ? [{
       label: t("Claw.Capture.title"),
+      visible: CAPTURE_APPLICATION_MENU_VISIBLE,
       submenu: [
-        { label: t("Claw.Capture.screenshot"), accelerator: "CmdOrCtrl+Alt+S", click: () => actions.capture?.("screenshot") },
+        { label: t("Claw.Capture.screenshot"), accelerator: "CmdOrCtrl+Alt+S", acceleratorWorksWhenHidden: true, click: () => actions.capture?.("screenshot") },
         { type: "separator" as const },
         ...(["mp4", "gif"] as const).map((output) => ({
           label: `${t("Claw.Capture.record")} · ${output.toUpperCase()}`,
-          ...(output === "mp4" ? { accelerator: "CmdOrCtrl+Alt+R" } : {}),
+          ...(output === "mp4" ? { accelerator: "CmdOrCtrl+Alt+R", acceleratorWorksWhenHidden: true } : {}),
           click: () => actions.capture?.(output),
         })),
       ],

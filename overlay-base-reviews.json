@@ -19,29 +19,29 @@
       "path": "crates/agent-electron-client/src/shared/locales/en-US.json",
       "baseBlob": "ad4c4caa226988bad410c79761c881ca8e4928de",
       "baseMode": "100644",
-      "overlaySha256": "4f4681f8ed27dfa17fccc2e0e58c8aa4d8da5ed78a4cdb3d42e2bf65809372c5",
-      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
+      "overlaySha256": "3cdaf8e41266fe4339663f468bec7c763b47285d529e676e602ec11de2639710",
+      "note": "2026-10-14 合并截图/录制增强到 release 时重新核对 e75c9d5c→eb0eeaca：基座仅新增 Linux 更新授权 4 键，值与目标基座完全一致；当前 overlay 包含全部 935 个基座键，保留截图功能分支全部翻译，各语言共 1254 键。更新绑定 SHA256，未改基座实现。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-CN.json",
       "baseBlob": "0d704d724504186f6d46ebd1c64f01cddfcc390e",
       "baseMode": "100644",
-      "overlaySha256": "633b130d27d9d9c903aee4968b4c3343009ec12ef6eda54b59c81b69701edda2",
-      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
+      "overlaySha256": "90d86017d2fa0ea180737ff8daa4dd8b069d3742c1b1370e1131dcf7f354df81",
+      "note": "2026-10-14 合并截图/录制增强到 release 时重新核对 e75c9d5c→eb0eeaca：基座仅新增 Linux 更新授权 4 键，值与目标基座完全一致；当前 overlay 包含全部 935 个基座键，保留截图功能分支全部翻译，各语言共 1254 键。更新绑定 SHA256，未改基座实现。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-HK.json",
       "baseBlob": "583c5408f1bfda8018e0b27d31d0baf8d15f88a3",
       "baseMode": "100644",
-      "overlaySha256": "755e0351d88bda566b05397347a4a68cc317bca37199d2e8a3d1bc154c1fd923",
-      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
+      "overlaySha256": "8fff914c6189c05736d97e9e40c72425ff9fb8098eb681b8f2432d394b95fab5",
+      "note": "2026-10-14 合并截图/录制增强到 release 时重新核对 e75c9d5c→eb0eeaca：基座仅新增 Linux 更新授权 4 键，值与目标基座完全一致；当前 overlay 包含全部 935 个基座键，保留截图功能分支全部翻译，各语言共 1254 键。更新绑定 SHA256，未改基座实现。"
     },
     {
       "path": "crates/agent-electron-client/src/shared/locales/zh-TW.json",
       "baseBlob": "45018c15d1ef533af381aceda319c7f812642593",
       "baseMode": "100644",
-      "overlaySha256": "f1069c4cbde0fb8999fdf1f7245ec00d7c6024655b279c2d6d0e31e3f85ae23a",
-      "note": "2026-10-14 人工对照基座 e75c9d5cd→eb0eeaca9（Linux 更新器管理员授权安装），基座新增 Claw.AutoUpdater.linuxAuth* 4 键合入 overlay 四语言；严格超集校验通过（base 935 键全含），四语言键集合对齐（各 1244）。"
+      "overlaySha256": "ac766bcddfac4e229b40a3c1ac2c8e27bb4b13058cec1384cbf7f61fcb2249da",
+      "note": "2026-10-14 合并截图/录制增强到 release 时重新核对 e75c9d5c→eb0eeaca：基座仅新增 Linux 更新授权 4 键，值与目标基座完全一致；当前 overlay 包含全部 935 个基座键，保留截图功能分支全部翻译，各语言共 1254 键。更新绑定 SHA256，未改基座实现。"
     },
     {
       "path": "crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",

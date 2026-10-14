@@ -54,6 +54,7 @@ vi.mock('electron', () => ({
   },
   app: {
     getVersion: vi.fn(() => '0.7.4'),
+    getAppPath: vi.fn(() => '/development/client'),
     get isPackaged() { return state.packaged; },
     dock: {
       show: vi.fn(),
@@ -100,6 +101,7 @@ describe('TrayManager', () => {
   let trayManager: TrayManager;
   const mockOptions = {
     onShowWindow: vi.fn(),
+    onOpenSettings: vi.fn(),
     onRestartServices: vi.fn().mockResolvedValue(undefined),
     onStopServices: vi.fn().mockResolvedValue(undefined),
   };
@@ -119,6 +121,21 @@ describe('TrayManager', () => {
     it('should create TrayManager instance', () => {
       expect(trayManager).toBeDefined();
     });
+  });
+
+  it('开发托盘图标从应用根目录读取，兼容 esbuild 和独立应用启动', async () => {
+    await trayManager.create();
+    expect(nativeImage.createFromPath).toHaveBeenCalledWith('/development/client/public/tray/tray@2x.png');
+  });
+
+  it.each(['darwin', 'win32', 'linux'] as const)('托盘设置入口在 %s 调用打开设置动作', async platform => {
+    trayManager = new TrayManager({ ...mockOptions, platform });
+    await trayManager.create();
+    const items = vi.mocked(Menu.buildFromTemplate).mock.calls.at(-1)![0];
+    const settings = items.find(item => item.label === 'Claw.Menu.settings');
+    expect(settings).toBeDefined(); settings!.click!({} as never, {} as never, {} as never);
+    expect(mockOptions.onOpenSettings).toHaveBeenCalledOnce();
+    expect(mockOptions.onShowWindow).not.toHaveBeenCalled();
   });
 
   it('录制托盘可暂停/继续和停止，结束后移除动作', async () => {

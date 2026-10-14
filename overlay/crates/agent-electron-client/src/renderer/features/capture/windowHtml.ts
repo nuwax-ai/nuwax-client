@@ -83,6 +83,8 @@ button.source:hover:not(:disabled){border-color:#5cddbb88;background:#2cd7ac0c}
 .controlBar[data-state=encoding]::before{background:#9cabb9;box-shadow:0 0 0 3px #9cabb91c}
 .controlBar .status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#a8b7c8}
 .controlBar .timer{min-width:50px;margin-right:4px;font:500 16px ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;color:#f0f5fb}
+.controlBar .timing{display:flex;flex-direction:column;align-items:center;flex-shrink:0;line-height:18px;white-space:nowrap}
+.controlBar .remainingTime{font-size:10px;color:#a8b7c8}
 .controlBar button{padding:7px 8px;flex-shrink:0;-webkit-app-region:no-drag}
 .controlBar button.iconOnly{padding:7px}
 button.danger{border-color:#f6647530;background:#f6647520;color:#ff9ca7}

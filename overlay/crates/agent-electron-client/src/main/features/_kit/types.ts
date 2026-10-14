@@ -40,6 +40,8 @@ export interface FeatureContext {
   log: FeatureLogger;
   /** 本轮调用时使用宿主当前语言；未注入时由特性选择默认文案。 */
   translate?(key: string): string;
+  /** 只读本机偏好，由宿主注入；特性不直接访问客户端数据库。 */
+  getSetting?(key: string): unknown;
   workspace?: FeatureWorkspaceServices;
   setRecordingStopAction?(action: (() => void) | null): void;
   setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;

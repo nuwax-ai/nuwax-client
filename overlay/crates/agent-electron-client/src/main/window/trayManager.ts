@@ -26,6 +26,7 @@ export type TrayStatus = "running" | "stopped" | "error" | "starting";
 export interface TrayManagerOptions {
   platform?: NodeJS.Platform;
   onShowWindow: () => void;
+  onOpenSettings?: () => void;
   onRestartServices: () => Promise<void>;
   onStopServices: () => Promise<void>;
 }
@@ -225,6 +226,10 @@ export class TrayManager {
         label: t("Claw.Tray.showWindow"),
         click: () => this.options.onShowWindow(),
       },
+      ...(this.options.onOpenSettings ? [{
+        label: t("Claw.Menu.settings"),
+        click: () => this.options.onOpenSettings?.(),
+      }] : []),
       { type: "separator" },
       {
         label: t("Claw.Tray.restartServices"),
@@ -297,23 +302,13 @@ export class TrayManager {
 
   /**
    * 获取托盘图标路径
-   * 开发模式：使用 __dirname 相对路径，避免 process.cwd() 在 monorepo 或从其他目录启动时指向错误目录导致图标加载失败、托盘不显示。
-   * 编译后 main 在 dist/main/，window 在 dist/main/window/，故 ../../../ 为包根目录。
+   * 开发模式：使用应用根目录，不依赖启动工作目录或 esbuild 合并模块后的 __dirname。
    */
   private getIconPath(fileName: string): string {
     if (app.isPackaged) {
       return path.join(process.resourcesPath, "tray", fileName);
     }
-    const devPath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "..",
-      "public",
-      "tray",
-      fileName,
-    );
-    return devPath;
+    return path.join(app.getAppPath(), "public", "tray", fileName);
   }
 
   /**

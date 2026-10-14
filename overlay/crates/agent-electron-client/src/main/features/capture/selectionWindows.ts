@@ -14,6 +14,7 @@ import { recordingBorderBounds, recordingControlBounds } from './windowGeometry'
 import { usesCapturePortal } from './linuxEnvironment';
 import { resolveCaptureWindowPolicy, type CaptureSelectorWindowPolicy, type CaptureWindowPolicy } from './platforms/windowing';
 import { desktopSource, portalSource, type CaptureSourceStrategy } from './platforms/sources';
+import { createNativeWindowLister, physicalDisplayBounds, projectWindowsToDisplay, type NativeWindowInfo, type NativeWindowLister } from './windowRegions';
 
 export interface CaptureWindows extends StillEngine {
   select(mode: 'record', signal: AbortSignal): Promise<CaptureSelection | null>;
@@ -34,6 +35,8 @@ export interface CaptureWindowOptions {
   sourceStrategy?: CaptureSourceStrategy;
   capturePortalFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage>;
   captureWindowFrame?: (sourceId: string, sourceSize: CaptureSize, signal: AbortSignal) => Promise<{ png: Buffer; width: number; height: number; hdrToneMapped: boolean }>;
+  /** Desktop windows for hover detection; defaults to the native list on the host OS, never for portal sources. */
+  listWindows?: NativeWindowLister;
 }
 interface ManagedWindow {
   window: BrowserWindow;
@@ -59,6 +62,8 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   const portal = options.portal ?? usesCapturePortal(platform);
   const windowPolicy = options.windowPolicy ?? resolveCaptureWindowPolicy(platform, portal);
   const sourceStrategy = options.sourceStrategy ?? (portal ? portalSource : desktopSource);
+  const listWindows: NativeWindowLister = options.listWindows
+    ?? (!portal && platform === process.platform ? createNativeWindowLister({ platform, log: options.log ?? console }) : () => null);
   let labels = { ...DEFAULT_CAPTURE_WINDOW_LABELS, ...options.labels };
   const preloadPath = options.preloadPath ?? path.join(__dirname, '..', 'preload', 'captureWindow.js');
   const windows = new Map<number, ManagedWindow>();
@@ -218,6 +223,9 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       const size = source.thumbnail.getSize();
       return { display, source, size };
     }));
+    // Read the stacking order right after the freeze, before any overlay exists to appear in it.
+    let desktopWindows: NativeWindowInfo[] | null = null;
+    try { desktopWindows = listWindows(); } catch (error) { (options.log ?? console).error('[Capture] window detection failed', error); }
     const allSources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false });
     sourceCatalog = allSources.filter((source) => !source.thumbnail.isEmpty()).map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), kind: 'window' }));
     if (signal.aborted || disposed) return null;
@@ -242,8 +250,10 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
             sourceId: source.id, sourceKind: 'screen', sourceSize: size, crop: { x: 0, y: 0, ...size },
             displayBounds: { ...display.bounds }, displayId: String(display.id), hdrToneMapped: false,
           };
+          const regions = desktopWindows
+            ? { regions: projectWindowsToDisplay(desktopWindows, { bounds: display.bounds, physicalBounds: physicalDisplayBounds(display, platform) }, size) } : {};
           const owned = create({ kind: 'selection', mode, labels, image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
-            ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
+            ...regions, ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
           owned.signal = signal; owned.finish = finish; owned.fail = (error) => finish(null, error);
           owned.sourceIds = new Set([source.id, ...sourceCatalog.map((entry) => entry.id)]);
           sessionWindows.push(owned);

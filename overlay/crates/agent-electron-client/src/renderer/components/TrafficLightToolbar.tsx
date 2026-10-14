@@ -8,7 +8,7 @@
  *      → 设置（注入 onOpenSettings 时渲染；nuwax 宿主入口在 web 用户区，不传不渲染）
  *      → 历史导航（后退/前进）→ statusEntry（服务异常点）；
  *    - 左（仅 Win/Linux，功能区之后）：自绘菜单栏 关于(A)/文件(F)/编辑(E)/窗口(W)/
- *      帮助(H)（antd Dropdown，12px 菜单文字）；Win/Linux 在能力可用时还显示
+ *      帮助(H)（antd Dropdown，12px 菜单文字）；Win/Linux 在菜单展示允许且能力可用时还显示
  *      「截图与录屏」菜单；文件菜单为 nuwax 快捷键能力
  *      （新建任务/搜索）+ 工作空间目录动作（App 注入回调）；编辑动作经
  *      menu:editAction 路由到焦点 webContents（webview guest 优先），页面/窗口
@@ -41,6 +41,7 @@ import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
+import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
 import { I18N_KEYS } from "@shared/constants";
 import { t } from "../services/core/i18n";
 
@@ -95,6 +96,8 @@ export interface TrafficLightToolbarProps {
   onOpenWorkspace?: () => void;
   /** 本机采集能力可用时，Win/Linux 自绘菜单提供截图与录屏入口。 */
   captureAvailable?: boolean;
+  /** 应用菜单展示策略，与采集能力及快捷键开关独立。 */
+  captureMenuVisible?: boolean;
   /** 交由常驻 CaptureLauncher 执行，保留预览和保存流程。 */
   onCapture?: (action: CaptureMenuAction) => void;
   /** 服务状态指示器（非绿色时由 App.tsx 注入颜色点，点击打开设置弹窗；全绿不渲染）。 */
@@ -164,6 +167,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   onModifyWorkspace,
   onOpenWorkspace,
   captureAvailable = false,
+  captureMenuVisible = CAPTURE_APPLICATION_MENU_VISIBLE,
   onCapture,
   statusEntry,
   updateEntry,
@@ -397,7 +401,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           },
         ]}
       />
-      {!isMac && captureAvailable && onCapture && <TopMenu
+      {!isMac && captureMenuVisible && captureAvailable && onCapture && <TopMenu
         activeMenu={activeMenu}
         onActiveMenuChange={setActiveMenu}
         menuId="capture"

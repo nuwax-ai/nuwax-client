@@ -32,10 +32,12 @@ export async function mountCaptureWindow(
     document.body.className = 'controlBody';
     const bar = node('div', 'controlBar');
     const status = node('span', 'status'); const timer = node('strong', 'timer');
+    const timing = node('div', 'timing'); const remainingTime = node('small', 'remainingTime');
+    timing.append(timer, remainingTime);
     const pause = node('button', '', labels.pause); const stop = node('button', 'danger', labels.stop);
     const cancel = node('button', '', labels.cancel);
     buttonVisual(stop, 'stop', labels.stop, true); buttonVisual(cancel, 'cancel', labels.cancel);
-    bar.append(status, timer, pause, stop, cancel); document.body.append(bar);
+    bar.append(status, timing, pause, stop, cancel); document.body.append(bar);
     if (config.presentation === 'preview') document.body.append(node('div', 'dockHint', labels.linuxRecordingHint));
     let current = config.state;
     const update = (state: RecordingControlState) => {
@@ -44,6 +46,11 @@ export async function mountCaptureWindow(
       status.textContent = labels[state.state];
       const seconds = Math.floor(Math.max(0, state.elapsedMs) / 1000);
       timer.textContent = state.state === 'countdown' ? String(state.countdown ?? 3) : `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      remainingTime.textContent = '';
+      if (state.state !== 'countdown' && state.state !== 'encoding' && state.maxDurationMs !== undefined) {
+        const remaining = Math.ceil(Math.max(0, state.maxDurationMs - state.elapsedMs) / 1000);
+        remainingTime.textContent = `${labels.remaining} ${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
+      }
       const pauseIcon = state.state === 'paused' ? 'resume' : 'pause';
       if (pause.dataset.icon !== pauseIcon) {
         buttonVisual(pause, pauseIcon, labels[pauseIcon]); pause.dataset.icon = pauseIcon;
@@ -72,6 +79,10 @@ export async function mountCaptureWindow(
   let annotationDrag: { index: number; original: CaptureAnnotation; start: AnnotationPoint; handle: number | null; moved: boolean } | null = null;
   let propertyChange: { index: number; value: CaptureAnnotation } | null = null;
   let drag: { x: number; y: number } | null = null;
+  // Window rectangles of this display's frozen frame; undefined where desktop geometry is unknown.
+  const regions = previewPresentation ? undefined : config.regions;
+  let hover: CaptureRect | null = null;
+  let press: { point: { x: number; y: number }; clientX: number; clientY: number } | null = null;
   let busy = false;
   let sourceError = '';
   const viewport = node('div', 'viewport');
@@ -180,8 +191,9 @@ export async function mountCaptureWindow(
   function placeDock() {
     hideTooltip();
     const r = bounds();
-    const selected = crop ? { x: r.x + crop.x / frame.width * r.width, y: r.y + crop.y / frame.height * r.height,
-      width: crop.width / frame.width * r.width, height: crop.height / frame.height * r.height } : null;
+    const toClient = (target: CaptureRect | null) => target ? { x: r.x + target.x / frame.width * r.width, y: r.y + target.y / frame.height * r.height,
+      width: target.width / frame.width * r.width, height: target.height / frame.height * r.height } : null;
+    const selected = toClient(crop);
     const display = displayFrame.selection.displayBounds;
     const area = previewPresentation ? { x: 0, y: 0, width: innerWidth, height: innerHeight }
       : { ...workArea, x: workArea.x - (display?.x ?? 0), y: workArea.y - (display?.y ?? 0) };
@@ -194,10 +206,11 @@ export async function mountCaptureWindow(
     hint.style.left = `${area.x + area.width / 2}px`;
     hint.style.top = `${Math.max(area.y + 12, position.y - hint.offsetHeight - 12)}px`;
     hint.hidden = Boolean(crop);
-    if (selected) {
-      const x = Math.max(area.x + 4, Math.min(area.x + area.width - dimensions.offsetWidth - 4, selected.x));
+    const labelled = toClient(crop ?? hover);
+    if (labelled) {
+      const x = Math.max(area.x + 4, Math.min(area.x + area.width - dimensions.offsetWidth - 4, labelled.x));
       const minY = area.y + 4, maxY = area.y + area.height - dimensions.offsetHeight - 4;
-      const candidates = [selected.y - dimensions.offsetHeight - 6, selected.y + selected.height + 6, selected.y + 6]
+      const candidates = [labelled.y - dimensions.offsetHeight - 6, labelled.y + labelled.height + 6, labelled.y + 6]
         .map(y => Math.max(minY, Math.min(maxY, y)));
       const y = candidates.find(y => x + dimensions.offsetWidth <= position.x || x >= position.x + position.width
         || y + dimensions.offsetHeight <= position.y || y >= position.y + position.height);
@@ -224,6 +237,13 @@ export async function mountCaptureWindow(
       maskContext.strokeStyle = '#36d5ae'; maskContext.lineWidth = Math.max(1, frame.width / bounds().width);
       maskContext.strokeRect(crop.x, crop.y, crop.width, crop.height);
       dimensions.textContent = `${crop.width} × ${crop.height} px`;
+    } else if (hover) {
+      // Inset so a full-display candidate keeps its whole outline on screen.
+      const line = 3 * pixelScale();
+      maskContext.clearRect(hover.x, hover.y, hover.width, hover.height);
+      maskContext.strokeStyle = '#36d5ae'; maskContext.lineWidth = line;
+      maskContext.strokeRect(hover.x + line / 2, hover.y + line / 2, Math.max(0, hover.width - line), Math.max(0, hover.height - line));
+      dimensions.textContent = `${hover.width} × ${hover.height} px`;
     }
     const selected = selectedAnnotation();
     if (selected && !pendingText) {
@@ -237,7 +257,7 @@ export async function mountCaptureWindow(
       }
       maskContext.restore();
     }
-    dimensions.hidden = !crop;
+    dimensions.hidden = !crop && !hover;
     toolBar.hidden = !crop || captureMode === 'record';
     buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy;
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
@@ -264,7 +284,7 @@ export async function mountCaptureWindow(
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
     }
-    hint.textContent = sourceError || (crop ? labels.annotationHint : labels.selectHint);
+    hint.textContent = sourceError || (crop ? labels.annotationHint : detecting() ? labels.windowSelectHint : labels.selectHint);
     placeDock();
     if (sourceError) hint.hidden = false;
   }
@@ -330,7 +350,15 @@ export async function mountCaptureWindow(
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finishText(e.key === 'Enter'); }
   };
-  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; }
+  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; }
+  /** Hover detection runs only over this display's own frozen frame, before any selection exists. */
+  function detecting() { return regions !== undefined && mode === 'region' && !crop && !drag && frame.selection.sourceId === displayFrame.selection.sourceId; }
+  function updateHover(p: { x: number; y: number }) {
+    const next = regions!.find(r => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height)
+      ?? { x: 0, y: 0, width: frame.width, height: frame.height };
+    if (hover && hover.x === next.x && hover.y === next.y && hover.width === next.width && hover.height === next.height) return;
+    hover = next; draw();
+  }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
   button(modeGroup, 'screen', previewPresentation ? labels.entireSource : labels.screen, () => { void chooseDisplay('screen'); });
   button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
@@ -440,12 +468,17 @@ export async function mountCaptureWindow(
         const annotation = { ...active, fontSize: Math.max(8, Math.min(144, Number(fontSize.value) || 14)) * scale };
         active = null; beginText(annotation, null);
       }
-    } else if (!crop && mode === 'region') { drag = p; crop = rect(p, p); clear(); }
+    } else if (!crop && mode === 'region' && detecting()) { updateHover(p); press = { point: p, clientX: e.clientX, clientY: e.clientY }; }
+    else if (!crop && mode === 'region') { drag = p; crop = rect(p, p); clear(); }
     else selectedIndex = null;
     draw();
   };
   mask.onpointermove = (e) => {
     const p = point(e);
+    // A click adopts the highlighted window; moving past the slop starts a free region instead.
+    if (press && Math.hypot(e.clientX - press.clientX, e.clientY - press.clientY) > 4) {
+      drag = press.point; crop = rect(drag, p); clear();
+    }
     if (drag) crop = rect(drag, p);
     else if (annotationDrag && crop) {
       const { original, start, handle } = annotationDrag;
@@ -473,6 +506,7 @@ export async function mountCaptureWindow(
       else active.points = [active.points[0], next];
     }
     if (drag || active) draw();
+    if (!press && detecting()) updateHover(p);
     if (!drag && !annotationDrag && !active) {
       const handle = hitHandle(p), hit = hitAnnotation(p);
       const existing = hit === null ? null : history.values()[hit];
@@ -482,9 +516,13 @@ export async function mountCaptureWindow(
     showMagnifier(e, p);
   };
   // 每个显示器有独立的选区窗口；跨屏后旧窗口必须撤掉放大框。
-  mask.onpointerleave = () => { magnifier.hidden = true; };
+  mask.onpointerleave = () => { magnifier.hidden = true; if (hover && !press) { hover = null; draw(); } };
   window.addEventListener('blur', () => { magnifier.hidden = true; hideTooltip(); });
   mask.onpointerup = () => {
+    if (press) {
+      press = null;
+      if (hover) { const chosen = hover; clear(); crop = { ...chosen }; }
+    }
     drag = null;
     if (annotationDrag) {
       const current = annotationDrag; annotationDrag = null;

@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "version": "3.3.3",
+  "source": {
+    "package": "koffi",
+    "url": "https://registry.npmjs.org/koffi/-/koffi-3.3.3.tgz",
+    "archive": "koffi-3.3.3.tgz",
+    "sha256": "c53f8da8e3c916ae8d666256650916768c7c4e8a579f188d794e8371b5773308",
+    "licenseFile": "package/LICENSE.txt"
+  },
+  "targets": {
+    "darwin-arm64": {
+      "package": "@koromix/koffi-darwin-arm64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-darwin-arm64/-/koffi-darwin-arm64-3.3.3.tgz",
+      "archive": "koffi-darwin-arm64-3.3.3.tgz",
+      "sha256": "6195d71398107c38a74c39c416905d5ae61625709f2ac2da09d06bdac40b84fd",
+      "binary": "package/darwin_arm64/koffi.node",
+      "binarySha256": "9e4814a0593d95cd3fa1531fe5f06a9908a7505caefd8ccdce2ca758cdf0b5dc"
+    },
+    "darwin-x64": {
+      "package": "@koromix/koffi-darwin-x64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-darwin-x64/-/koffi-darwin-x64-3.3.3.tgz",
+      "archive": "koffi-darwin-x64-3.3.3.tgz",
+      "sha256": "67e0ff5067d46429227dd9c70b107519c864d24cd5cc701884d3bda4a08dc1a5",
+      "binary": "package/darwin_x64/koffi.node",
+      "binarySha256": "dc7261083a68bd05ed542a8cb9ab0c3eb8cee28c3e31164546d640d9c99a69ad"
+    },
+    "win32-x64": {
+      "package": "@koromix/koffi-win32-x64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-win32-x64/-/koffi-win32-x64-3.3.3.tgz",
+      "archive": "koffi-win32-x64-3.3.3.tgz",
+      "sha256": "6f3601e24e865ede500dad7fefdc545bf305862185430ecd078ffca4c2962da4",
+      "binary": "package/win32_x64/koffi.node",
+      "binarySha256": "f7af4982457657d2e7ad46acb076614ed7122d6efbdbfbc75f21ec12681fa121"
+    },
+    "win32-arm64": {
+      "package": "@koromix/koffi-win32-arm64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-win32-arm64/-/koffi-win32-arm64-3.3.3.tgz",
+      "archive": "koffi-win32-arm64-3.3.3.tgz",
+      "sha256": "9aaeca3ca9827e3fee3e5873b5f42c0a54ace2cdee02622b83d36218fd43e186",
+      "binary": "package/win32_arm64/koffi.node",
+      "binarySha256": "902e5e1a5d949b8ff361ffd5897f87863e3506747ac701875250988cf930bdf3"
+    },
+    "linux-x64": {
+      "package": "@koromix/koffi-linux-x64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-linux-x64/-/koffi-linux-x64-3.3.3.tgz",
+      "archive": "koffi-linux-x64-3.3.3.tgz",
+      "sha256": "ea8e7d52314cd19711af798c35016d5e40f30bd68c7289b22b849b9575d099af",
+      "binary": "package/linux_x64/koffi.node",
+      "binarySha256": "2fcc0e86bc8f4244303e01a0878c2738cb768b84c40f1cd31694fa9c2d16baf1"
+    },
+    "linux-arm64": {
+      "package": "@koromix/koffi-linux-arm64",
+      "url": "https://registry.npmjs.org/@koromix/koffi-linux-arm64/-/koffi-linux-arm64-3.3.3.tgz",
+      "archive": "koffi-linux-arm64-3.3.3.tgz",
+      "sha256": "de78b1e65e4a5149610e89d5053bc2a2ad0754cde75ea2120b22735282936694",
+      "binary": "package/linux_arm64/koffi.node",
+      "binarySha256": "d408ad4e95575e82e4b5117e2f9acaf1415651ceb350eb6f717230e24b3bae9f"
+    }
+  }
+}

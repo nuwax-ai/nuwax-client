@@ -4,6 +4,7 @@ import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import * as core from './core.mjs';
 import { buildNotices, inspectFfmpegConfiguration, parseFfmpegConfiguration, writeNotices } from './third-party-notices.mjs';
+import { captureWindowSourceLockFile, prepareCaptureWindowResources } from './capture-window-resources.mjs';
 
 export const CAPTURE_PLATFORMS = ['darwin-arm64', 'darwin-x64', 'win32-x64', 'win32-arm64', 'linux-x64', 'linux-arm64'];
 export const captureSourceLockFile = (root) => path.join(root, 'third-party/capture-sources.json');
@@ -233,6 +234,7 @@ export async function prepareCaptureResources(root, options = {}) {
   }
   const existing = await inspectCaptureResource(root, opt);
   if (existing && !opt.refreshResources) {
+    if (fs.existsSync(captureWindowSourceLockFile(root))) await prepareCaptureWindowResources(root, opt);
     await writeCaptureNotices(root, opt);
     console.log(`[capture] 复用已核验 LGPL FFmpeg ${existing.record.version}`);
     return existing.dir;
@@ -270,6 +272,7 @@ export async function prepareCaptureResources(root, options = {}) {
     if (existing) fs.rmSync(dir, { recursive: true });
     fs.renameSync(staging, dir);
   } finally { fs.rmSync(staging, { recursive: true, force: true }); }
+  if (fs.existsSync(captureWindowSourceLockFile(root))) await prepareCaptureWindowResources(root, opt);
   await writeCaptureNotices(root, opt);
   if (!await inspectCaptureResource(root, opt)) throw new Error('[capture] 构建结果核验失败');
   return dir;

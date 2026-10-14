@@ -152,6 +152,8 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         ready.reject(error); preview.reject(error); armed.reject(error); done.reject(error);
       };
       const durationLimit = options.maxDurationMs ?? DEFAULT_RECORDING_DURATION_MS;
+      const updateControls = (value: Parameters<NonNullable<typeof controls>['update']>[0]) =>
+        controls?.update({ ...value, maxDurationMs: durationLimit });
       const action = (command: RecordingAction, error?: Error) => {
         if (error) { fail(error); return; }
         if (command === "cancel") { controller.abort(); return; }
@@ -204,13 +206,13 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
               if (state !== "ready") throw new Error("unexpected recorder start event");
               state = "recording"; runningSince = now(); firstStartedAt = runningSince;
               clearTimeout(acquisitionTimer);
-              onState("recording"); controls?.update({ state: "recording", elapsedMs: 0 }); return;
+              onState("recording"); updateControls({ state: "recording", elapsedMs: 0 }); return;
             }
             if (event.type === "paused") {
               if (state === "stopping") return;
               if (state !== "recording") throw new Error("unexpected recorder pause event");
               activeMs += now() - runningSince; state = "paused";
-              onState("paused"); controls?.update({ state: "paused", elapsedMs: elapsed() }); return;
+              onState("paused"); updateControls({ state: "paused", elapsedMs: elapsed() }); return;
             }
             if (event.type === "resumed") {
               if (state === "stopping") return;
@@ -242,7 +244,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         acquisitionTimer = setTimeout(() => fail(new Error("Desktop recorder frame preparation timed out")), 20000);
         engineWindow!.send("arm");
         for (let countdown = 3; countdown >= 1; countdown--) {
-          controls.update({ state: "countdown", elapsedMs: 0, countdown });
+          updateControls({ state: "countdown", elapsedMs: 0, countdown });
           await wait(1000, signal);
         }
         if (signal.aborted) throw fatalError ?? canceled();
@@ -254,7 +256,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         engineWindow!.send("start");
         tick = setInterval(() => {
           if (state === "recording" || state === "paused") {
-            const duration = elapsed(); controls?.update({ state, elapsedMs: duration });
+            const duration = elapsed(); updateControls({ state, elapsedMs: duration });
             if (duration >= durationLimit) action("stop");
             // A pause cannot keep devices open indefinitely; bound the wall-clock session too.
             if (firstStartedAt && now() - firstStartedAt > Math.max(durationLimit * 2, 60000)) action("stop");
@@ -265,7 +267,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         engineWindow!.dispose(); engineWindow = undefined;
         if (signal.aborted) throw fatalError ?? canceled();
         if (!sink.bytes) throw new CaptureRecordingError("failed", "No desktop recording frames were written");
-        onState("encoding"); controls.update({ state: "encoding", elapsedMs: Math.round(activeMs) });
+        onState("encoding"); updateControls({ state: "encoding", elapsedMs: Math.round(activeMs) });
         const crop = selection.crop;
         const encoded = await transcodeRecording(deps.ffmpeg, platform, join(dir, "source.webm"),
           join(dir, `result.${options.output}`), actualSize, crop, options, signal);
