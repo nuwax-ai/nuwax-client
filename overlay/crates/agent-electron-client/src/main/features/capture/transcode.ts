@@ -3,6 +3,11 @@ import { chmod, stat, unlink, writeFile } from "node:fs/promises";
 import type { CaptureQuality, RecordOptions, RecordOutput } from "@shared/features/capture/contract";
 import { toEvenSize, type Rect, type Size } from "./geometry";
 import { fitToMaxBytes, getTierParams } from "./tiers";
+import { CaptureRecordingError } from "./captureErrors";
+import { resolveCaptureEncodingProfile, validateCaptureEncodingGeometry, type CaptureEncodingMode } from "./encoding";
+
+export { CaptureRecordingError } from "./captureErrors";
+export { resolveCaptureEncodingProfile, validateCaptureEncodingGeometry } from "./encoding";
 
 export interface CaptureFfmpegResource {
   path: string;
@@ -13,19 +18,13 @@ export interface CaptureFfmpegResource {
   formats: { mp4: boolean; webm: boolean; gif: boolean };
 }
 
-export class CaptureRecordingError extends Error {
-  constructor(readonly code: "encoder-unavailable" | "permission-denied" | "failed", message: string) {
-    super(message);
-    this.name = "CaptureRecordingError";
-  }
-}
-
 export function recordingFormats(resource: CaptureFfmpegResource | null, platform: NodeJS.Platform) {
   const video: Array<"mp4" | "webm"> = [];
-  if (!resource || !["darwin", "win32"].includes(platform)) return { video, gif: false };
+  const profile = resolveCaptureEncodingProfile(platform);
+  if (!resource || !profile) return { video, gif: false };
   const hasFilters = ["crop", "format", "fps"].every(name => resource.filters.includes(name));
   if (!hasFilters) return { video, gif: false };
-  if (resource.formats.mp4 && resource.filters.includes("pad") && resource.encoders.includes(platform === "darwin" ? "h264_videotoolbox" : "h264_mf")) video.push("mp4");
+  if (resource.formats.mp4 && resource.filters.includes("pad") && resource.encoders.includes(profile.h264Encoder)) video.push("mp4");
   if (resource.formats.webm && resource.encoders.includes("libvpx-vp9")) video.push("webm");
   const gif = resource.formats.gif && resource.encoders.includes("gif") &&
     ["fps", "split", "palettegen", "paletteuse"].every(name => resource.filters.includes(name));
@@ -57,7 +56,7 @@ export function transcodeGeometry(crop: Rect, source: Size, output: RecordOutput
 
 /** Builds argv only: never a shell command; no scaling at any quality level. */
 export function transcodeArguments(input: string, output: string, options: RecordOptions,
-  quality: CaptureQuality, geometry: TranscodeGeometry, platform: NodeJS.Platform): string[] {
+  quality: CaptureQuality, geometry: TranscodeGeometry, platform: NodeJS.Platform, mode: CaptureEncodingMode = "preferred"): string[] {
   const tier = getTierParams(quality);
   const fps = options.fps ?? 30;
   const common = ["-hide_banner", "-nostdin", "-y", "-i", input, "-an"];
@@ -74,12 +73,10 @@ export function transcodeArguments(input: string, output: string, options: Recor
       ...color, "-f", "webm", output];
   }
   const bitrate = Math.max(64000, Math.round(geometry.width * geometry.height * fps * tier.videoBitsPerPixel));
-  // MediaFoundation hardware transforms commonly accept NV12; use the same format as its runtime probe.
-  const pixelFormat = platform === "win32" ? "nv12" : "yuv420p";
-  return [...common, "-map", "0:v:0", "-vf", `${geometry.filter},fps=${fps},format=${pixelFormat}`, "-c:v", platform === "darwin" ? "h264_videotoolbox" : "h264_mf",
-    ...(platform === "darwin" ? ["-allow_sw", "0"] : ["-hw_encoding", "1"]),
-    "-b:v", String(bitrate), "-maxrate", String(bitrate * 2), "-bufsize", String(bitrate * 4),
-    "-pix_fmt", pixelFormat, ...color, "-movflags", "+faststart", "-f", "mp4", output];
+  const profile = resolveCaptureEncodingProfile(platform);
+  if (!profile) throw new CaptureRecordingError("encoder-unavailable", `Recording on ${platform} is unavailable`);
+  return [...common, "-map", "0:v:0", "-vf", `${geometry.filter},fps=${fps},format=${profile.pixelFormat}`,
+    ...profile.h264Arguments(bitrate, mode), ...color, "-movflags", "+faststart", "-f", "mp4", output];
 }
 
 /** Kill the independent encoder on abort; bound stderr and never inherit a terminal. */
@@ -106,17 +103,34 @@ export function runCaptureFfmpeg(path: string, args: readonly string[], signal: 
 export async function transcodeRecording(resource: CaptureFfmpegResource, platform: NodeJS.Platform,
   input: string, output: string, source: Size, crop: Rect, options: RecordOptions, signal: AbortSignal) {
   const formats = recordingFormats(resource, platform);
-  if (options.output === "gif" ? !formats.gif : !formats.video.includes(options.output)) {
+  const profile = resolveCaptureEncodingProfile(platform);
+  if (!profile || (options.output === "gif" ? !formats.gif : !formats.video.includes(options.output))) {
     throw new CaptureRecordingError("encoder-unavailable", `${options.output} encoder is unavailable`);
   }
   const geometry = transcodeGeometry(crop, source, options.output);
+  validateCaptureEncodingGeometry(platform, options.output, geometry);
+  let mode: CaptureEncodingMode = "preferred";
   const fitted = await fitToMaxBytes(options.compression?.quality ?? "high", options.compression?.maxBytes,
     async quality => {
       if (signal.aborted) throw new Error("capture was canceled");
-      await unlink(output).catch(() => {});
-      // ffmpeg truncates this existing file and preserves the private mode while writing.
-      await writeFile(output, Buffer.alloc(0), { flag: "wx", mode: 0o600 });
-      await runCaptureFfmpeg(resource.path, transcodeArguments(input, output, options, quality, geometry, platform), signal);
+      const resetOutput = async () => {
+        await unlink(output).catch(() => {});
+        // ffmpeg truncates this existing file and preserves the private mode while writing.
+        await writeFile(output, Buffer.alloc(0), { flag: "wx", mode: 0o600 });
+      };
+      let args = transcodeArguments(input, output, options, quality, geometry, platform, mode);
+      await resetOutput();
+      try {
+        await runCaptureFfmpeg(resource.path, args, signal);
+      } catch (error) {
+        // Profiles admit only their known compatibility error. Keep the same crop
+        // and dimensions, retry at most once, and preserve cancellation/other failures.
+        if (signal.aborted || options.output !== "mp4" || mode === "software" || !profile.softwareRetry?.accepts(error)) throw error;
+        mode = "software";
+        args = transcodeArguments(input, output, options, quality, geometry, platform, mode);
+        await resetOutput();
+        await runCaptureFfmpeg(resource.path, args, signal);
+      }
       await chmod(output, 0o600);
       const encoded = await stat(output);
       if (!encoded.size) throw new CaptureRecordingError("failed", "Video encoder produced an empty output");

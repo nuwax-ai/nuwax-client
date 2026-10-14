@@ -446,7 +446,8 @@ test('Beta Mac build commands override maximum with the stable compression level
       const run = script('Build Electron app').replaceAll('${{ runner.os }}', osName)
         .replaceAll('${{ matrix.arch }}', arch).replaceAll('${{ matrix.dist_cmd }}', `dist:mac:${arch}`)
         .replaceAll("${{ secrets.APPLE_CERTIFICATE || '' }}", 'fixture').replaceAll('${{ secrets.APPLE_SIGNING_IDENTITY }}', 'fixture');
-      const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ARCHIVE_LEVEL_CAPTURE: capture };
+      const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ARCHIVE_LEVEL_CAPTURE: capture,
+        GITHUB_ENV: path.join(directory, 'github-env') };
       delete env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
       const result = spawnSync('bash', ['-e', '-u', '-o', 'pipefail', '-c', run], { cwd: directory, env, encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);

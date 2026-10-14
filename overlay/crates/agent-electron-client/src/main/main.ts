@@ -1,7 +1,7 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
-import { disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { configureCaptureBackend, controlDesktopRecording, desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
 import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
@@ -73,11 +73,17 @@ import { APP_DATA_DIR_NAME } from "@shared/constants";
 import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
 import { attachRendererRecovery } from "./services/rendererRecovery";
 import { initBusinessRequestRouting } from "./services/businessRequestRouting";
-import { httpOrigin } from "./services/auth/businessOrigins";
+import { protocol } from "electron";
+import { redactLocalFileUrl } from "@shared/features/local-files/contract";
+import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
+
+const featureSchemes = desktopFeatureSchemes(APP_NAME_IDENTIFIER);
+if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
+  configureCaptureBackend(app.commandLine);
   app.setName("Nuwax");
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
   app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
@@ -324,10 +330,10 @@ function createWindow() {
   mainWindow.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL) => {
-      log.error("Failed to load:", validatedURL, errorCode, errorDescription);
+      log.error("Failed to load:", redactLocalFileUrl(validatedURL), errorCode, errorDescription);
       dialog.showErrorBox(
         "Load Error",
-        `Failed to load application: ${errorDescription}\n\nURL: ${validatedURL}`,
+        `Failed to load application: ${errorDescription}\n\nURL: ${redactLocalFileUrl(validatedURL)}`,
       );
     },
   );
@@ -400,11 +406,13 @@ function createWindow() {
   // 休眠控制：主窗口可见性 + 锁屏状态桥（不可见时通知 webview 暂停后台轮询）
   attachHostActivityWindow(mainWindow);
 
-  if (process.platform === "win32" && isDesktopFeatureRegistered("capture")) {
+  if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
     // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
-    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction);
+    // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
+    const shortcutOptions = { platform: process.platform, controlRecording: controlDesktopRecording };
+    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction, shortcutOptions);
     mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
-      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction);
+      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction, shortcutOptions);
     });
   }
 
@@ -618,6 +626,9 @@ async function cleanupAllProcesses(): Promise<void> {
     });
   }
 
+  // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
+  await runCleanupStep("Desktop features stop", disposeDesktopFeatures);
+
   await runCleanupStep("Engine processes stop", () => {
     stopAllEngines();
     log.info("[Cleanup] Engine processes stopped");
@@ -626,11 +637,6 @@ async function cleanupAllProcesses(): Promise<void> {
   await runCleanupStep("Process registry killAll", async () => {
     await processRegistry.killAll();
     log.info("[Cleanup] Process registry cleared");
-  });
-
-  // 桌面特性（截屏/录屏等）：先通知退出再释放，清掉进行中的会话与临时文件。
-  await runCleanupStep("Desktop features dispose", async () => {
-    await disposeDesktopFeatures();
   });
 
   // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
@@ -690,6 +696,8 @@ app.whenReady().then(async () => {
     defaultSession: session.defaultSession,
     isCommercial: APP_NAME_IDENTIFIER === "nuwax",
     isDev,
+    allowLocalFiles: url => isDesktopFeatureRegistered("local-files") &&
+      businessBridgeOrigins().includes(httpOrigin(url) ?? ""),
   });
   if (APP_NAME_IDENTIFIER === "nuwax") {
     log.info("Frame embedding response header policy enabled for all sessions");

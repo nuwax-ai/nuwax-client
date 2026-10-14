@@ -7,6 +7,7 @@
  * 3. 文件下载（导出等场景，支持进度条）
  */
 
+import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { app, session as electronSession, BrowserWindow, dialog } from "electron";
 import type { HandlerDetails, BrowserWindowConstructorOptions, Session, WebContents, WebPreferences, WindowOpenHandlerResponse } from "electron";
 import * as path from "path";
@@ -375,7 +376,7 @@ function guardBusinessNavigation(contents: WebContents): void {
   const handleTarget = (event: Electron.Event, targetUrl: string, isMainFrame: boolean) => {
     if (!isMainFrame || parseHttpUrl(targetUrl)) return;
     event.preventDefault();
-    log.warn(`[WebviewPolicy] Blocked non-HTTP top-level navigation: ${targetUrl}`);
+    log.warn(`[WebviewPolicy] Blocked non-HTTP top-level navigation: ${redactLocalFileUrl(targetUrl)}`);
   };
   // will-frame-navigate covers _self / location changes, including named-frame
   // targeting the top frame. will-redirect covers server redirects from loadURL

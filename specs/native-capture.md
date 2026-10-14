@@ -78,6 +78,8 @@ CaptureResult = { success: true; resultId; mime; bytes; width; height; durationM
 
 ## 平台矩阵
 
+2026-10-13 增量：Linux 支持按 `specs/linux-native-capture.md` 实施；以下表格保留首版设计基线，不再代表当前 Linux 能力。实际环境验收见 `docs/acceptance/20261013-linux-native-capture.md`。
+
 | 项 | macOS | Windows | Linux |
 | --- | --- | --- | --- |
 | 截图 / 录屏 | 支持，需屏幕录制授权 | 支持 | `unsupported` |

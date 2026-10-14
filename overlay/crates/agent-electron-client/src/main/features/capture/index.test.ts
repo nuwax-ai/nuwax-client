@@ -23,12 +23,14 @@ const mocks = vi.hoisted(() => {
     captureStill: vi.fn(), record: vi.fn(), resolveFfmpeg: vi.fn(), showSaveDialog: vi.fn(),
     windowDispose: vi.fn(), recorderDispose: vi.fn(), recorderStop: vi.fn(),
     copyTo: vi.fn(() => true), release: vi.fn((id: string) => { data.delete(id); }),
+    copy: vi.fn(),
     releaseAll: vi.fn(() => { data.clear(); }),
     put: vi.fn((bytes: Buffer, mime: string) => { const resultId = `capture-${++sequence}`; data.set(resultId, bytes); return { resultId, bytes: bytes.length, mime }; }),
     readChunk: vi.fn((id: string, offset: number, length: number) => data.get(id)?.subarray(offset, offset + length) ?? null),
   };
 });
 vi.mock('electron', () => ({
+  app: { commandLine: { getSwitchValue: () => '' } },
   BrowserWindow: { fromWebContents: () => null }, dialog: { showSaveDialog: mocks.showSaveDialog },
   powerMonitor: mocks.power, screen: mocks.screen,
 }));
@@ -37,9 +39,11 @@ vi.mock('./encodingResources', () => ({ resolveCaptureFfmpeg: mocks.resolveFfmpe
 vi.mock('./selectionWindows', () => ({ createCaptureWindows: () => ({ captureStill: mocks.captureStill, setLabels: vi.fn(), dispose: mocks.windowDispose }) }));
 vi.mock('./recorder', () => ({
   createCaptureSourceStill: () => vi.fn(),
+  createCapturePortalFrame: () => vi.fn(),
   createRecordEngine: () => ({ formats: () => ({ video: ['mp4', 'webm'], gif: true }), record: mocks.record, stop: mocks.recorderStop, dispose: mocks.recorderDispose }),
 }));
 vi.mock('./results', () => ({ createResultStore: () => ({ put: mocks.put, copyTo: mocks.copyTo, readChunk: mocks.readChunk, release: mocks.release, releaseAll: mocks.releaseAll }) }));
+vi.mock('./clipboard', () => ({ createCaptureClipboard: () => ({ copy: mocks.copy, dispose: vi.fn() }) }));
 import { captureFeature } from './index';
 
 function deferred<T>() {
@@ -71,10 +75,15 @@ async function capture(sender: Sender, hostChannel = false) {
   if (!result.success) throw new Error(JSON.stringify(result));
   return result;
 }
+// 能力门以 process.platform 判定（darwin/win32 才可用）；CI runner 为 linux，须统一钉 darwin
+beforeEach(() => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+});
 beforeEach(() => {
   vi.clearAllMocks(); mocks.data.clear(); mocks.power.clear(); mocks.screen.clear();
   mocks.captureStill.mockResolvedValue(still); mocks.record.mockResolvedValue(null); mocks.resolveFfmpeg.mockResolvedValue(null);
   mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/fixture/saved.png' });
+  mocks.copy.mockResolvedValue({ success: true, kind: 'image' });
   channels = new Map(); lifecycle = createFeatureLifecycle();
   const ipcMain = { handle(channel: string, handler: (event: never, ...args: never[]) => unknown) { channels.set(channel, handler); }, removeHandler(channel: string) { channels.delete(channel); } };
   const trust = (role: Sender['role']) => (event: ReturnType<typeof frameEvent>) => event.sender.role === role && !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame;
@@ -85,9 +94,31 @@ beforeEach(() => {
   };
   handle = captureFeature.register(ctx);
 });
-afterEach(async () => { await handle.dispose(); });
+afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
+  it('copy 拒绝外域、子 frame、其他页面和失效句柄，仅原结果所有者可导出', async () => {
+    const sender = business(); const result = await capture(sender);
+    expect(await invoke(CAPTURE_IPC.COPY, new Sender(40, 'other'), result.resultId)).toMatchObject({ code: 'untrusted' });
+    expect(await channels.get(CAPTURE_IPC.COPY)!(frameEvent(sender, { ...sender.mainFrame }) as never, result.resultId as never)).toMatchObject({ code: 'untrusted' });
+    expect(await invoke(CAPTURE_IPC.COPY, new Sender(21, 'business'), result.resultId)).toMatchObject({ code: 'invalid-argument' });
+    expect(await invoke(HOST_CAPTURE_IPC.COPY, host(), result.resultId)).toMatchObject({ code: 'invalid-argument' });
+    expect(mocks.copy).not.toHaveBeenCalled();
+    expect(await invoke(CAPTURE_IPC.COPY, sender, result.resultId)).toEqual({ success: true, kind: 'image' });
+    expect(mocks.copy.mock.calls[0][0]).toEqual(result); expect(mocks.copy.mock.calls[0][2]()).toBe(true);
+    await invoke(CAPTURE_IPC.RELEASE, sender, result.resultId);
+    expect(await invoke(CAPTURE_IPC.COPY, sender, result.resultId)).toMatchObject({ code: 'invalid-argument' });
+    expect(mocks.copy).toHaveBeenCalledOnce();
+  });
+  it.each(['navigation', 'logout'])('copy 期间 %s 会取消子进程并使所有权检查失效', async cause => {
+    const sender = business(); const result = await capture(sender); const done = deferred<unknown>();
+    mocks.copy.mockReturnValueOnce(done.promise);
+    const pending = invoke(CAPTURE_IPC.COPY, sender, result.resultId);
+    const [, signal, isCurrent] = mocks.copy.mock.calls[0];
+    if (cause === 'navigation') sender.navigate(); else lifecycle.emitSessionEnd('logout');
+    expect(signal.aborted).toBe(true); expect(isCurrent()).toBe(false);
+    done.resolve({ success: false, code: 'canceled' }); expect(await pending).toMatchObject({ code: 'canceled' });
+  });
   it.each(['mp4', 'webm', 'gif'])('returns completed %s bytes to the IM caller without opening the standalone save flow', async (output) => {
     const b = business(), h = host(), other = new Sender(21, 'business');
     const completed = deferred<RecordCapture>();

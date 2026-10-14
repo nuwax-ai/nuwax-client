@@ -68,6 +68,15 @@ export class TrayManager {
   }
 
   private recordingStopAction: (() => void) | null = null;
+  private recordingPauseAction: (() => void) | null = null;
+  private recordingPaused = false;
+
+  setRecordingPauseAction(action: (() => void) | null, paused: boolean): void {
+    if (action === this.recordingPauseAction && paused === this.recordingPaused) return;
+    this.recordingPauseAction = action;
+    this.recordingPaused = paused;
+    this.updateMenu();
+  }
 
   setRecordingStopAction(action: (() => void) | null): void {
     if (action === this.recordingStopAction) return;
@@ -204,6 +213,10 @@ export class TrayManager {
 
     const contextMenu = Menu.buildFromTemplate([
       ...(this.computerUseStopAction ? [{ label: t("Claw.Cua.stop"), click: () => this.computerUseStopAction?.() }, { type: "separator" as const }] : []),
+      ...(this.recordingPauseAction ? [{
+        label: t(this.recordingPaused ? "Claw.Capture.resume" : "Claw.Capture.pause"),
+        click: () => this.recordingPauseAction?.(),
+      }] : []),
       ...(this.recordingStopAction ? [{
         label: t("Claw.Capture.stopRecording"),
         click: () => this.recordingStopAction?.(),

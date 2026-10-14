@@ -415,8 +415,13 @@ export async function release(root, options = {}, injected = {}) {
   if (identity.channel === 'stable') requireSuccess(buildResult, build.databaseId);
   else if (buildResult.conclusion !== 'success') {
     const result = buildResult.jobs ? buildResult : await tools.gh(['run', 'view', String(build.databaseId), '--repo', settings.repo, '--json', 'jobs']);
-    const expectedJobs = ['macos-latest arm64', 'macos-latest x64', 'windows-latest x64', 'ubuntu-24.04 x64', 'ubuntu-24.04-arm arm64'];
-    if (!expectedJobs.every((suffix) => result.jobs?.some((job) => job.name === `Build Electron (${suffix})` && job.status === 'completed' && job.conclusion === 'success')))
+    // Runner image labels change across immutable historical tags. Require the
+    // five platform/architecture pairs rather than today's exact image names.
+    const passed = new Set((result.jobs || []).filter(job => job.status === 'completed' && job.conclusion === 'success').flatMap(job => {
+      const match = /^Build Electron \((macos|windows|ubuntu)-[^ ()]+ (x64|arm64)\)$/.exec(job.name);
+      return match ? [`${match[1] === 'ubuntu' ? 'linux' : match[1]}-${match[2]}`] : [];
+    }));
+    if (!platforms.every(platform => passed.has(platform)))
       throw new Error(`beta 五平台构建未全部成功：run ${build.databaseId}`);
     tools.log('[release] beta 构建完成，自动同步失败；继续同步重试');
   }

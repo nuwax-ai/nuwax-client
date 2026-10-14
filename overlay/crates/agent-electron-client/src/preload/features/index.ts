@@ -11,9 +11,11 @@ import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type Ca
 import type { NoticesBridge } from "@shared/features/open-source-notices/contract";
 import { createCaptureBridge } from "./capture";
 import { createNoticesBridge } from "./open-source-notices";
+import { createLocalFilesBridge } from "./local-files";
 
 export interface FeatureNamespaces {
   capture: CaptureBridge;
+  localFiles: ReturnType<typeof createLocalFilesBridge>;
 }
 
 export interface HostFeatureNamespaces {
@@ -24,7 +26,7 @@ export interface HostFeatureNamespaces {
 export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
-  return { capture: createCaptureBridge(ipc) };
+  return { capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
 }
 
 export function hostFeatureNamespaces(

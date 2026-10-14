@@ -1,15 +1,16 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ onBeforeRequest: vi.fn(), contents: new Map(), appOn: vi.fn() }));
+const mocks = vi.hoisted(() => ({ onBeforeRequest: vi.fn(), contents: new Map(), appOn: vi.fn(), featurePolicy: vi.fn() }));
 vi.mock("electron", () => ({
   app: { on: mocks.appOn },
   session: { defaultSession: { webRequest: { onBeforeRequest: mocks.onBeforeRequest } } },
   webContents: { fromId: (id: number) => mocks.contents.get(id) },
 }));
+vi.mock("../features", () => ({ authorizeDesktopFeatureRequest: mocks.featurePolicy }));
 const origin = "https://business.example:8443";
 const mainHost = { isDestroyed: () => false };
-beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); mocks.contents.clear(); });
+beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); mocks.contents.clear(); mocks.featurePolicy.mockReset(); });
 
 function guest(id: number, type = "webview", hostWebContents: unknown = mainHost) {
   const contents = Object.assign(new EventEmitter(), {
@@ -109,5 +110,21 @@ describe("商业文档请求分发", () => {
     contents.hostWebContents = nextHost; expect(dispatch().redirectURL).toBeTruthy();
     currentHost = { isDestroyed: () => true };
     contents.hostWebContents = currentHost; expect(dispatch()).toEqual({});
+  });
+});
+
+describe("本机协议接入唯一请求门", () => {
+  it("本机授权决定先于业务重定向，并保留同一监听器", async () => {
+    const mod = await import("./businessRequestRouting");
+    mod.initBusinessRequestRouting(() => origin, () => mainHost as never);
+    expect(mocks.onBeforeRequest.mock.calls[0][0].urls).toContain("nuwax-local://*/*");
+    mocks.featurePolicy.mockReturnValue(false);
+    expect(dispatch(request({ url: "nuwax-local://foreign/doc.txt", resourceType: "xhr" }))).toEqual({ cancel: true });
+    mocks.featurePolicy.mockReturnValue(true);
+    expect(dispatch(request({ url: "nuwax-local://owner/doc.txt", resourceType: "xhr" }))).toEqual({});
+    mocks.featurePolicy.mockReturnValue(undefined);
+    guest(1);
+    expect(dispatch().redirectURL).toContain("__nuwax_spa_restore");
+    expect(mocks.onBeforeRequest).toHaveBeenCalledTimes(1);
   });
 });

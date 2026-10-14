@@ -46,7 +46,7 @@
 - **自动更新**：stable / beta 双通道，应用内完成。
 - 默认简体中文，多语言可切换且实时同步到壳。
 - 文件下载、图片另存真实落盘；系统托盘、开机自启、主题与壳同步；`⌘N` 新任务等桌面快捷入口。
-- **原生截图与录屏（当前开发版）**：多屏来源选择、单屏区域和标注、MP4/WebM/GIF、预览保存；客户端设置的「截图与录屏」页签和 macOS 原生菜单提供入口。应用内截图快捷键 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。IM 负责人接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，开发验证与待验项见 [验收记录](docs/acceptance/20261012-native-capture-dev.md)。
+- **原生截图与录屏**：macOS/Windows/Linux 多屏来源选择、区域和标注、MP4/GIF 录制入口、预览保存；底层 API 继续兼容 WebM。Linux X11 使用覆盖层，Wayland 使用系统选择及来源预览。客户端设置页签和应用菜单提供入口；截图 `⌘⌥S` / `Ctrl+Alt+S`，MP4 录屏 `⌘⌥R` / `Ctrl+Alt+R`。Linux 录制时控制条隐藏，托盘或切回客户端按 `Ctrl+Alt+R` 停止、`Ctrl+Alt+P` 暂停/继续。基础功能已随 `v3.0.14-beta.6` 发布；新增 `canUse` 和预览复制为开发改动，API 见 [能力目录](docs/host-capabilities-api.md)。IM 接入见 [交接指南](docs/nuwax-im-native-capture-integration.md)，Linux 验证范围见 [验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 
 ## 下载与安装
 
@@ -167,7 +167,23 @@ npm run pack -- --frontend source
 
 本地打包使用独立商业配置，输出到 `release/<version>/`；默认版本来自最近可达的发布 tag 并加 `-dev`，无 tag 时用 `0.0.0-dev`。可用 `--version X.Y.Z`、`--output <目录>` 覆盖，`--dir` 只生成解包应用目录；输出目标不得占用仓库根、源码/子模块目录或工具链缓存，符号链接也会核对真实目标。配置不改基座 `package.json`，包含商业品牌、前端载荷及 Computer Use helper，不发布资产。
 
-Windows 可以在 PowerShell 或 cmd 中直接运行以上 npm 命令，无需 make。准备 Windows 沙箱 helper 需要 Rust/Cargo 与 MSVC 构建工具；Electron 原生模块需要相应的 Python/C++ 构建环境。打包 Computer Use helper 还需要 Rust/rustup（Windows 使用已准备的 Git Bash；Linux 需平台构建依赖）。缺失工具或真实资源时脚本会退出并报告原因。
+Windows 可以在 PowerShell 或 cmd 中直接运行以上 npm 命令，顶层入口无需通过 make 启动；内部源码资源构建仍需要各自工具链。准备 Windows 沙箱 helper 需要 Rust/Cargo 与 MSVC 构建工具；Electron 原生模块需要相应的 Python/C++ 构建环境。打包 Computer Use helper 还需要 Rust/rustup（Windows 使用已准备的 Git Bash；Linux 需平台构建依赖）。缺失工具或真实资源时脚本会退出并报告原因。
+
+Windows 录屏编码资源首次构建需要 MSYS2 MinGW GCC、MSYS make、MSYS Perl、pkg-config、cygpath 和 yasm 或 nasm。Perl 应安装在所选 MSYS2 中，避免混用 PATH 中其他 Windows 发行版的 Perl。以 x64、MSYS2 安装于 `C:\msys64` 为例，在 PowerShell 配置后运行：
+
+```powershell
+$env:NUWAX_CAPTURE_BUILD_BASH = 'C:\msys64\usr\bin\bash.exe'
+$env:Path = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:Path"
+$env:MSYSTEM = 'MINGW64'
+$env:CHERE_INVOKING = '1'
+npm run prepare:capture
+```
+
+仅指定 bash 路径不会配置编译器；脚本会预检所选 shell 的工具与目标架构。静态链接的 Winpthreads 包需匹配 `third-party/manifest.json` 固定版本（当前 `13.0.0.r354.g40ab95d18-1`），实际构建来源写入 `resource.json`，源码和许可证随资源核验；更换版本须同步审核声明并重新构建。已有通过 SHA256、配置与开源声明核验的录屏资源会直接复用。旧 Windows 资源若缺少 Winpthreads 来源记录会被拒绝，需备份后干净重建，不能仅用当前声明补写未知产物。
+
+macOS 编码资源原生构建需要 Xcode/Command Line Tools、NASM 和 pkg-config；后两项可通过 `brew install nasm pkgconf` 准备。Intel 和 Apple Silicon 都使用锁定 libvpx 支持的 Darwin target，SDK 和编译器从当前 Xcode 配对选取。
+
+Linux x64/arm64 录屏资源在对应架构原生构建，需要 GCC/G++、make、pkg-config 和 nasm。Ubuntu/Debian 可准备 `build-essential pkg-config nasm` 后运行 `npm run prepare:capture`；`npm run pack` 也会准备并核验资源。固定源码构建的 LGPL FFmpeg 使用 OpenH264 输出 MP4，源码、许可证和 SHA 随资源打包，不使用系统 PATH 中的 FFmpeg。OpenH264 自编译版本与 Cisco 官方二进制的分发授权不同，详情见 [Linux 验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 
 旧入口 `base:dev`、`base:bundle` 转发到统一 CLI。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将三个子模块对齐已提交 pin；普通开发只初始化缺失子模块。
 

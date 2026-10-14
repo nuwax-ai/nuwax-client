@@ -4,16 +4,23 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 
-const behavior = vi.hoisted(() => ({ calls: [] as string[][], configuration: "--disable-gpl --disable-nonfree --enable-videotoolbox", failMp4: false }));
+const behavior = vi.hoisted(() => ({ calls: [] as string[][], configuration: "--disable-gpl --disable-nonfree --enable-videotoolbox", failMp4: false, rejectSmallMfFrames: false }));
 vi.mock("electron", () => ({ app: { isPackaged: false, getAppPath: () => "/host/client" } }));
 vi.mock("node:child_process", () => {
   const execFile = vi.fn();
   Object.defineProperty(execFile, Symbol.for("nodejs.util.promisify.custom"), { value: async (file: string, args: string[]) => {
     behavior.calls.push([file, ...args]);
     if (args[0] === "-version") return { stdout: `ffmpeg version 8.1.3 test\nconfiguration: ${behavior.configuration}\n`, stderr: "" };
-    if (args.includes("-encoders")) return { stdout: " V..... = Video\n V....D h264_videotoolbox\n V....D libvpx-vp9\n V....D gif\n", stderr: "" };
+    if (args.includes("-encoders")) return { stdout: ` V..... = Video\n V....D ${file.includes("linux-") ? "libopenh264" : file.includes("win32-") ? "h264_mf" : "h264_videotoolbox"}\n V....D libvpx-vp9\n V....D gif\n`, stderr: "" };
     if (args.includes("-filters")) return { stdout: " T.. = Timeline\n .. crop V->V\n .. palettegen V->V\n .. paletteuse VV->V\n", stderr: "" };
     if (behavior.failMp4 && args.includes("h264_videotoolbox")) throw Object.assign(new Error("codec unavailable"), { stderr: "VideoToolbox hardware unavailable" });
+    if (behavior.failMp4 && args.includes("libopenh264")) throw Object.assign(new Error("codec unavailable"), { stderr: "OpenH264 encoder initialization failed" });
+    if (behavior.rejectSmallMfFrames && args.includes("h264_mf")) {
+      const size = /:s=(\d+)x(\d+):/.exec(args[args.indexOf("-i") + 1]);
+      if (!size || Number(size[1]) < 320 || Number(size[2]) < 240) {
+        throw Object.assign(new Error("codec rejected probe dimensions"), { stderr: "MF_E_INVALIDMEDIATYPE" });
+      }
+    }
     return { stdout: "", stderr: "" };
   } });
   return { execFile };
@@ -23,14 +30,16 @@ import { resolveCaptureFfmpeg } from "./encodingResources";
 const temporary: string[] = [];
 afterEach(async () => {
   for (const directory of temporary.splice(0)) await fs.rm(directory, { recursive: true, force: true });
-  behavior.calls = []; behavior.configuration = "--disable-gpl --disable-nonfree --enable-videotoolbox"; behavior.failMp4 = false;
+  behavior.calls = []; behavior.configuration = "--disable-gpl --disable-nonfree --enable-videotoolbox"; behavior.failMp4 = false; behavior.rejectSmallMfFrames = false;
 });
-async function fixture(platform: "darwin" | "win32" = "darwin") {
+async function fixture(platform: "darwin" | "win32" | "linux" = "darwin") {
+  if (platform === "linux") behavior.configuration = "--disable-gpl --disable-nonfree --enable-libopenh264";
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "capture-encoding-")); temporary.push(root);
   const directory = path.join(root, `${platform}-arm64`); await fs.mkdir(directory);
   const binary = path.join(directory, platform === "win32" ? "ffmpeg.exe" : "ffmpeg"); await fs.writeFile(binary, "verified fixture");
   const record = { schema: 1, platform, arch: "arm64", version: "8.1.3", sha256: createHash("sha256").update("verified fixture").digest("hex"), configuration: behavior.configuration,
-    sources: { ffmpeg: { sha256: "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3" }, libvpx: { sha256: "073bd6202e4c55c8cb759abbb123aecd4cc8d99f52ba27af790178cfb1108423" } } };
+    sources: { ffmpeg: { sha256: "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3" }, libvpx: { sha256: "073bd6202e4c55c8cb759abbb123aecd4cc8d99f52ba27af790178cfb1108423" },
+      ...(platform === "linux" ? { openh264: { version: "2.6.0", sha256: "7a060916a9fcb63ba51d83a4f2388660c0b58797be547c4fa5c52e8d65660a85" } } : {}) } };
   const save = () => fs.writeFile(path.join(directory, "resource.json"), JSON.stringify(record)); await save();
   const resolve = () => resolveCaptureFfmpeg({ resourceRoot: root, platform, arch: "arm64" });
   return { root, record, binary, save, resolve };
@@ -69,14 +78,44 @@ describe("capture encoding resources", () => {
     expect(resolved?.formats).toEqual({ mp4: false, webm: true, gif: true });
     expect(resolved?.probeErrors.mp4).toContain("VideoToolbox hardware unavailable");
   });
-  it("Linux never probes capture resources", async () => {
-    expect(await resolveCaptureFfmpeg({ platform: "linux" })).toBeNull();
-    expect(behavior.calls).toEqual([]);
+  it("Linux probes its source-locked software H264 without hardware requirements", async () => {
+    const f = await fixture("linux");
+    const resolved = await f.resolve();
+    expect(resolved?.formats).toEqual({ mp4: true, webm: true, gif: true });
+    expect(resolved?.encoders).toEqual(["libopenh264", "libvpx-vp9", "gif"]);
+    const probe = behavior.calls.find((args) => args.includes("libopenh264"));
+    expect(probe).toContain("yuv420p"); expect(probe).toContain("128000"); expect(probe).toContain("-rc_mode");
+    expect(probe).not.toContain("-hw_encoding"); expect(probe).not.toContain("-allow_sw");
+  });
+  it("Linux rejects absent, outdated or relabeled OpenH264 sources before probing", async () => {
+    const f = await fixture("linux");
+    f.record.sources.openh264!.sha256 = "0".repeat(64); await f.save();
+    expect(await f.resolve()).toBeNull();
+    f.record.sources.openh264!.sha256 = "7a060916a9fcb63ba51d83a4f2388660c0b58797be547c4fa5c52e8d65660a85";
+    f.record.sources.openh264!.version = "2.5.0"; await f.save();
+    expect(await f.resolve()).toBeNull();
+    delete f.record.sources.openh264; await f.save();
+    expect(await f.resolve()).toBeNull(); expect(behavior.calls).toEqual([]);
+  });
+  it("Linux retains GIF and WebM when the actual software H264 probe fails", async () => {
+    const f = await fixture("linux"); behavior.failMp4 = true;
+    const resolved = await f.resolve();
+    expect(resolved?.formats).toEqual({ mp4: false, webm: true, gif: true });
+    expect(resolved?.probeErrors.mp4).toContain("OpenH264 encoder initialization failed");
   });
   it("Windows H264 probes hardware MediaFoundation with NV12 input", async () => {
     const f = await fixture("win32"); await f.resolve();
     const probe = behavior.calls.find((args) => args.includes("h264_mf"));
     expect(probe).toContain("nv12"); expect(probe).toContain("-hw_encoding");
     expect(probe?.[0]).toBe(f.binary);
+  });
+  it("Windows hardware that rejects tiny frames retains its usable MP4 capability", async () => {
+    const f = await fixture("win32"); behavior.rejectSmallMfFrames = true;
+    const resolved = await f.resolve();
+    expect(resolved?.formats).toEqual({ mp4: true, webm: true, gif: true });
+    expect(resolved?.probeErrors.mp4).toBeUndefined();
+    const probe = behavior.calls.find((args) => args.includes("h264_mf"));
+    expect(probe).toContain("color=c=black:s=320x240:r=15:d=0.15");
+    expect(probe).toContain("nv12"); expect(probe).toContain("-hw_encoding");
   });
 });

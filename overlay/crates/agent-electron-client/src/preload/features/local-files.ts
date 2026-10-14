@@ -1,0 +1,21 @@
+import type { IpcRenderer } from "electron";
+import { LOCAL_FILES_API_VERSION, LOCAL_FILES_IPC as CH, type HostLocalFilesBridge } from "@shared/features/local-files/contract";
+
+export function createLocalFilesBridge(ipc: Pick<IpcRenderer, "invoke">): HostLocalFilesBridge {
+  return {
+    pickDirectory: () => ipc.invoke(CH.PICK_DIRECTORY),
+    getCapabilities: () => ipc.invoke(CH.GET_CAPABILITIES).catch(() => ({ apiVersion: LOCAL_FILES_API_VERSION, available: false })),
+    resolveContext: input => ipc.invoke(CH.RESOLVE_CONTEXT, input),
+    releaseContext: id => ipc.invoke(CH.RELEASE_CONTEXT, id).catch(() => undefined),
+    listFiles: (id, options) => ipc.invoke(CH.LIST_FILES, id, options),
+    searchFiles: (id, options) => ipc.invoke(CH.SEARCH_FILES, id, options),
+    stat: target => ipc.invoke(CH.STAT, target),
+    preparePreview: target => ipc.invoke(CH.PREPARE_PREVIEW, target),
+    releasePreview: id => ipc.invoke(CH.RELEASE_PREVIEW, id).catch(() => undefined),
+    openPath: target => ipc.invoke(CH.OPEN_PATH, target),
+    revealInFolder: target => ipc.invoke(CH.REVEAL_IN_FOLDER, target),
+    saveFile: (target, options) => ipc.invoke(CH.SAVE_FILE, target, options),
+    exportWorkspace: (id, options) => ipc.invoke(CH.EXPORT_WORKSPACE, id, options),
+    cancel: id => ipc.invoke(CH.CANCEL, id).catch(() => undefined),
+  };
+}

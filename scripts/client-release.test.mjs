@@ -531,21 +531,33 @@ test('beta reuses successful automatic publishing and never signs', async () => 
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && (command === 'ssh' || first === 'workflow')), false);
 });
 
-test('beta automatic sync failure resumes only after all five build jobs passed', async () => {
-  const f = fixture({ channel: 'beta', publicRelease: false });
-  f.state.builds[0].conclusion = 'failure';
-  f.state.buildResult = { jobs: ['macos-latest arm64', 'macos-latest x64', 'windows-latest x64', 'ubuntu-24.04 x64', 'ubuntu-24.04-arm arm64']
-    .map((suffix) => ({ name: `Build Electron (${suffix})`, status: 'completed', conclusion: 'success' })) };
-  const result = await f.run();
-  assert.equal(result.tag, f.identity.tag);
-  assert.equal(f.calls.some(([type, cmd]) => type === 'exec' && cmd === 'ssh'), false);
-  assert.equal(f.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
+test('beta sync recovery requires five platform pairs across current and historical Mac runner labels', async () => {
+  for (const intel of ['macos-26-intel x64', 'macos-15-intel x64', 'macos-latest x64']) {
+    const f = fixture({ channel: 'beta', publicRelease: false });
+    f.state.builds[0].conclusion = 'failure';
+    f.state.buildResult = { jobs: ['macos-latest arm64', intel, 'windows-latest x64', 'ubuntu-24.04 x64', 'ubuntu-24.04-arm arm64']
+      .map((suffix) => ({ name: `Build Electron (${suffix})`, status: 'completed', conclusion: 'success' })) };
+    const result = await f.run();
+    assert.equal(result.tag, f.identity.tag);
+    assert.equal(f.calls.some(([type, cmd]) => type === 'exec' && cmd === 'ssh'), false);
+    assert.equal(f.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
+  }
 });
 
 test('a failed beta platform does not publish existing assets', async () => {
   const f = fixture({ channel: 'beta', publicRelease: false });
   f.state.builds[0].conclusion = 'failure';
   f.state.buildResult = { jobs: [] };
+  await assert.rejects(f.run(), /五平台构建未全部成功/);
+  assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
+});
+
+test('an extra passing Mac job cannot compensate for a failed Windows build during beta recovery', async () => {
+  const f = fixture({ channel: 'beta', publicRelease: false });
+  f.state.builds[0].conclusion = 'failure';
+  f.state.buildResult = { jobs: ['macos-latest arm64', 'macos-26-intel x64', 'ubuntu-24.04 x64', 'ubuntu-24.04-arm arm64', 'macos-15-intel x64']
+    .map(suffix => ({ name: `Build Electron (${suffix})`, status: 'completed', conclusion: 'success' })) };
+  f.state.buildResult.jobs.push({ name: 'Build Electron (windows-latest x64)', status: 'completed', conclusion: 'failure' });
   await assert.rejects(f.run(), /五平台构建未全部成功/);
   assert.equal(f.calls.some(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow'), false);
 });

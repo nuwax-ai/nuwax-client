@@ -2,12 +2,28 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { apiRequest, changeLanguage, renderedMenuItems, renderedDropdowns } = vi.hoisted(() => ({
+const { apiRequest, changeLanguage, renderedMenuItems, renderedDropdowns, stateHarness } = vi.hoisted(() => ({
   apiRequest: vi.fn(async () => ({ code: "0000", data: [] })),
   changeLanguage: vi.fn(async () => undefined),
   renderedMenuItems: [] as Array<{ key?: string; onClick?: () => void }>,
-  renderedDropdowns: [] as Array<{ trigger: string[]; enter: number; leave: number }>,
+  renderedDropdowns: [] as Array<{ label: string; open: boolean; trigger: string[]; enter: number; leave: number; transitionName?: string; onOpenChange: (open: boolean) => void; onClick: () => void }>,
+  stateHarness: { enabled: false, index: 0, values: [] as unknown[] },
 }));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useState: (initial: unknown) => {
+      if (!stateHarness.enabled) return actual.useState(initial);
+      const index = stateHarness.index++;
+      if (index >= stateHarness.values.length) stateHarness.values.push(initial);
+      return [stateHarness.values[index], (next: unknown) => {
+        stateHarness.values[index] = typeof next === "function" ? next(stateHarness.values[index]) : next;
+      }];
+    },
+  };
+});
 
 vi.mock("../services/core/api", () => ({ apiRequest }));
 vi.mock("../services/i18n", () => ({ default: { changeLanguage } }));
@@ -26,12 +42,14 @@ vi.mock("antd", async () => {
     Tooltip: ({ title, children }: { title: string; children: React.ReactNode }) => (
       <span data-tooltip={title}>{children}</span>
     ),
-    Dropdown: ({ children, menu, trigger, mouseEnterDelay, mouseLeaveDelay }: {
-      children: React.ReactNode;
-      menu: { items: Array<{ key?: string; type?: string; label?: React.ReactNode; onClick?: () => void }> };
+    Dropdown: ({ children, menu, trigger, mouseEnterDelay, mouseLeaveDelay, transitionName, open, onOpenChange }: {
+      children: React.ReactElement<{ children: string }>;
+      menu: { items: Array<{ key?: string; type?: string; label?: React.ReactNode; onClick?: () => void }>; onClick: () => void };
       trigger: string[]; mouseEnterDelay: number; mouseLeaveDelay: number;
+      transitionName?: string;
+      open: boolean; onOpenChange: (open: boolean) => void;
     }) => {
-      renderedDropdowns.push({ trigger, enter: mouseEnterDelay, leave: mouseLeaveDelay });
+      renderedDropdowns.push({ label: children.props.children, open, trigger, enter: mouseEnterDelay, leave: mouseLeaveDelay, transitionName, onOpenChange, onClick: menu.onClick });
       renderedMenuItems.push(...menu.items);
       return (
         <div>
@@ -55,6 +73,9 @@ vi.mock("@ant-design/icons", async () => {
     SettingOutlined: Icon,
     LeftOutlined: Icon,
     RightOutlined: Icon,
+    CameraOutlined: Icon,
+    VideoCameraOutlined: Icon,
+    FileGifOutlined: Icon,
   };
 });
 vi.mock("./captionGlyphs", async () => {
@@ -63,11 +84,29 @@ vi.mock("./captionGlyphs", async () => {
   return { MinGlyph: Glyph, MaxGlyph: Glyph, RestoreGlyph: Glyph, CloseGlyph: Glyph };
 });
 
+const paintFrames = new Map<number, FrameRequestCallback>();
+let frameId = 0;
+const paint = () => {
+  const callbacks = [...paintFrames.values()];
+  paintFrames.clear();
+  callbacks.forEach(callback => callback(0));
+};
+
 beforeEach(() => {
   vi.resetModules();
   changeLanguage.mockClear();
   renderedMenuItems.length = 0;
   renderedDropdowns.length = 0;
+  stateHarness.enabled = false;
+  stateHarness.index = 0;
+  stateHarness.values.length = 0;
+  paintFrames.clear();
+  frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+    paintFrames.set(++frameId, callback);
+    return frameId;
+  }));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn((id: number) => paintFrames.delete(id)));
   vi.stubGlobal("navigator", { platform: "Win32" });
   vi.stubGlobal("window", {
     electronAPI: {
@@ -129,7 +168,97 @@ const traditional = {
 const getAttributeValues = (markup: string, attribute: string): string[] =>
   [...markup.matchAll(new RegExp(`${attribute}="([^"]*)"`, "g"))].map((match) => match[1]);
 
-describe("Windows toolbar language", () => {
+describe("Win/Linux toolbar language", () => {
+  it.each(["Win32", "Linux x86_64", "Linux aarch64"])("%s 截图与录屏菜单只显示截图、MP4、GIF 和快捷键，单击仅调用一次控制器", async (platform) => {
+    vi.stubGlobal("navigator", { platform });
+    const { setCurrentLang } = await import("../services/core/i18n");
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    await setCurrentLang("zh-cn");
+    const onCapture = vi.fn();
+    const markup = renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
+      canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={onCapture} />);
+    expect(markup).toContain("截图与录屏");
+    expect(markup).toContain("Ctrl+Alt+S");
+    expect(markup).toContain("Ctrl+Alt+R");
+    expect(markup).toContain("开始录制 · MP4");
+    expect(markup).not.toContain("WEBM");
+    expect(markup).toContain("开始录制 · GIF");
+    const captureItems = renderedMenuItems.filter(item => item.key?.startsWith("capture-"));
+    expect(captureItems.map(item => item.key)).toEqual(["capture-screenshot", "capture-mp4", "capture-gif"]);
+    for (const item of captureItems) {
+      item.onClick?.();
+      paint(); paint();
+    }
+    expect(onCapture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
+  });
+
+  it("点击截图先收起无动画菜单并完成绘制，再单次发起采集", async () => {
+    const { setCurrentLang } = await import("../services/core/i18n");
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    await setCurrentLang("zh-cn");
+    stateHarness.enabled = true;
+    const onCapture = vi.fn();
+    renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
+      canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={onCapture} />);
+    renderedDropdowns.find(menu => menu.label === "截图与录屏")!.onOpenChange(true);
+    expect(stateHarness.values[0]).toBe("capture");
+    expect(renderedDropdowns.every(menu => menu.transitionName === "")).toBe(true);
+    renderedMenuItems.find(item => item.key === "capture-screenshot")!.onClick!();
+    renderedMenuItems.find(item => item.key === "capture-mp4")!.onClick!();
+    expect(stateHarness.values[0]).toBeNull();
+    expect(onCapture).not.toHaveBeenCalled();
+    paint();
+    expect(onCapture).not.toHaveBeenCalled();
+    paint();
+    expect(onCapture).toHaveBeenCalledTimes(1);
+    expect(onCapture).toHaveBeenCalledWith("screenshot");
+  });
+
+  it.each([
+    ["Win32", false, true], ["Win32", true, false], ["MacIntel", true, true],
+    ["Linux x86_64", false, true], ["Linux x86_64", true, false],
+  ] as const)("%s availability=%s handler=%s 不暴露不可用的截图菜单", async (platform, available, hasHandler) => {
+    vi.stubGlobal("navigator", { platform });
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
+      canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
+      onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()}
+      captureAvailable={available} onCapture={hasHandler ? vi.fn() : undefined} />);
+    expect(renderedMenuItems.some(item => item.key?.startsWith("capture-"))).toBe(false);
+  });
+
+  it.each(["Win32", "Linux x86_64"])("%s 悬停从文件切换到截图菜单时只展开当前菜单，迟到的关闭事件不覆盖新菜单", async (platform) => {
+    vi.stubGlobal("navigator", { platform });
+    const { setCurrentLang } = await import("../services/core/i18n");
+    const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
+    await setCurrentLang("zh-cn");
+    stateHarness.enabled = true;
+    const render = () => {
+      stateHarness.index = 0;
+      renderedDropdowns.length = 0;
+      renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
+        canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
+        onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={vi.fn()} />);
+    };
+    render();
+    const file = renderedDropdowns.find(menu => menu.label === "文件(F)")!;
+    const capture = renderedDropdowns.find(menu => menu.label === "截图与录屏")!;
+    expect(capture.trigger).toEqual(["hover", "click"]);
+    expect(capture.enter).toBe(0);
+    file.onOpenChange(true);
+    render();
+    expect(renderedDropdowns.filter(menu => menu.open).map(menu => menu.label)).toEqual(["文件(F)"]);
+    capture.onOpenChange(true);
+    file.onOpenChange(false);
+    render();
+    expect(renderedDropdowns.filter(menu => menu.open).map(menu => menu.label)).toEqual(["截图与录屏"]);
+    capture.onClick();
+    render();
+    expect(renderedDropdowns.some(menu => menu.open)).toBe(false);
+  });
+
   it("Windows 应用菜单悬停立即展开，离开菜单留出进入子菜单的时间", async () => {
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
@@ -163,6 +292,7 @@ describe("Windows toolbar language", () => {
       onBack: vi.fn(),
       onForward: vi.fn(),
       onReload: vi.fn(),
+      onOpenAbout: vi.fn(),
       onNewTask: vi.fn(),
       onOpenSearch: vi.fn(),
       onModifyWorkspace: vi.fn(),

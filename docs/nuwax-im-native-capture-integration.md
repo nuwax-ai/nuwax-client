@@ -1,231 +1,110 @@
 # nuwax-im 原生截图与录屏接入交接
 
-面向：nuwax-im 项目负责人、IM Web 开发与联调同事。更新日期：2026-10-12。接口版本：1。
+面向 nuwax-im 项目负责人及其开发 Agent。更新：2026-10-14。本文是接入依据，不要求安装客户端 SDK、拷贝示例代码或类型文件。接口版本为 v1，canUse/copy 是兼容增量。
 
-目标：让 IM 的截图入口优先使用 Nuwax 客户端的原生选区、标注和录屏能力，把结果转为 `File` 后放入现有待发送附件区。用户确认发送后，继续走 IM 原有上传与消息链。
+## 功能与版本
 
-## 当前交付与职责
+客户端应用菜单和设置「截图与录屏」页签提供截图、MP4、GIF。菜单发起的操作完成后，客户端弹出结果预览；底部保留「关闭」「保存」，增加带图标的「复制图片」或「复制文件」。截图写图片剪贴板，MP4/GIF 写原文件，GIF 保留动画。复制成功不关闭预览，仍可保存。
 
-客户端已有截图、标注、MP4 / WebM / GIF 录屏，以及客户端设置页签和原生菜单入口。macOS 开发验证已完成；这份文档交付接口与接入方法，IM 业务代码尚未改造或部署，不能把客户端本地保存通过视为 IM 发消息验收通过。
+基础采集已在 v3.0.14-beta.6 发布；新增 canUse、copy 和预览复制按钮尚未公开发布。IM 业务菜单仍需按本文接线，不能把客户端预览验收视为 IM 已接入。
 
-| 负责人 | 本次工作 |
+能力目录：[host-capabilities-api.md](host-capabilities-api.md)。完整采集参数、返回字段及限制：[native-capture-api.md](native-capture-api.md)。验证范围：[验收记录](acceptance/20261014-host-capabilities-clipboard.md)。
+
+## 职责和入口
+
+| 发起入口 | 结果归属 |
 | --- | --- |
-| Nuwax 客户端 | 多屏选择、物理像素采集、标注、原生录制控制、编码、权限/信任校验、结果读写与会话清理 |
-| nuwax 主站 | 将 IM 加载到客户端的受信业务 document，维持主站登录与宿主桥初始化 |
-| nuwax-im | 可选能力探测、按钮接线、错误提示、结果转 File、待发送附件预览、上传限制、组件生命周期与发送验收 |
+| 客户端应用菜单／设置页签 | 客户端自己的预览弹层，复制或保存到本地 |
+| IM 会话框菜单 | 这次 screenshot/record Promise 返回给 IM，读取为 File 后加入发起会话的待发送附件区 |
 
-IM 保持独立项目：不引入 Electron、qiankun、nuwax 前端路径别名或客户端 SDK。IM 后端、WebSocket 消息协议与登录注册链无需为此新增接口。
+IM 的完整链路：菜单点击 → 固定目标会话 → 选择来源/区域 → 用户截图确认或录制停止 → 编码完成 → Promise 返回 → 读取为 File → 原会话附件草稿 → 用户点击发送 → 原上传和消息流程。
 
-完整 API 说明：[native-capture-api.md](native-capture-api.md)。可复制的独立 TypeScript 读取示例：[examples/im-native-capture.ts](examples/im-native-capture.ts)。示例采用最小结构类型，完整契约事实源仍是 nuwax 前端的 `src/types/interfaces/hostBridge.ts`。
+客户端负责多屏来源、物理像素、标注、原生录制控制、编码、权限和结果清理；主站负责受信业务 document、既有登录和桥初始化；IM 负责菜单接线、草稿归属、上传限制、提示及真正发送。客户端不认识 IM 会话 ID，不自动上传或发送消息。
 
-## 两种入口与完成结果的归属
+## 宿主入口与能力判断
 
-| 发起入口 | 完成后的行为 |
+每次点击时重新读取 `window.NuwaClawBridge?.capture`，不在模块加载时缓存。主站目前以 qiankun 同 document 沙箱加载 IM；`props.host`／`window.NuwaxHost` 是导航桥，不能写成 NuwaxHost.capture。IM 保持独立项目，不导入 Electron、qiankun、主站源码路径或客户端 SDK。
+
+新客户端先调用 `NuwaClawBridge.canUse(name)`，返回 Promise<boolean>。IM 菜单使用精确名称：
+
+| 操作 | 能力名 |
 | --- | --- |
-| 客户端设置页签 / 客户端原生菜单 | 壳自己的结果预览，可选择保存到本地 |
-| IM 会话框菜单 | IM 调用 `window.NuwaClawBridge.capture.screenshot/record`，完成后结果回到该次 Promise，读取为 File 并进入发起会话的待发送附件区 |
+| 截图 | capture.screenshot 或 capture.screenshot.png/jpeg |
+| MP4 | capture.record.mp4 |
+| GIF | capture.record.gif |
+| 复制截图 | capture.copy.image |
+| 复制录屏 | capture.copy.file |
 
-**IM 菜单 → 选择屏幕/区域 → 开始录制 → 停止并完成编码 → Promise 返回 → File → 发起会话的附件草稿 → 用户确认发送**。业务调用不要求先保存本地文件，也不会弹壳的独立预览/保存框。暂停、继续、停止用客户端原生 UI，IM 无需重复实现录制工具条。
+无桥、未知能力、未启用/未注册功能、外部页面、子 frame、过期 document 或查询失败均为 false。true 不保证系统授权、设备空闲或结果句柄有效，实际调用仍需处理失败。主站先按现有流程 auth.getContext 绑定文档代次；IM 不重建认证或设备注册链。
 
-`record()` 的 Promise 代表完整录制流程；不是开始录制后立即返回。结果由这次调用返回，不通过全局“完成事件”分发。`onStateChange('idle')` 只用于状态显示，**不能当作附件完成通知**；此时结果读取/回填可能尚未完成，菜单 busy 必须持续到回填结束。
+旧客户端缺 canUse 时，基础截图/录屏可按方法存在性与 capture.getCapabilities 兼容；新的 canUse 存在时必须尊重 false，不能再按方法存在性绕过。copy 缺失时隐藏复制入口，不禁用旧采集功能。分别检查 formats.still、formats.video 和 formats.gif，普通菜单只展示 MP4/GIF；WebM 仅保留兼容 API。
 
-IM 会话 ID 和草稿代次由 IM 保存在调用上下文，不传入 `record()`（未知参数会被拒绝）。返回的 resultId 已绑定发起页面；客户端不认识 IM 会话 ID，也不会替 IM 上传、发消息或寻找当前聊天窗口。
+普通浏览器没有客户端桥，截图可保留原 getDisplayMedia 降级；若未实现浏览器录屏则隐藏录屏项。原生操作已经取消、拒绝权限、busy 或失败时，不再自动打开浏览器采集弹窗。
 
-独立示例现在提供 `createCaptureAttachmentController`，把能力探测、完整流程等待、分块读取、释放、重复点击门禁、迟到结果与会话回填串起来。建议 IM 应用层只保留一份控制器，宽窄两套菜单共用。下面的会话/草稿函数为 **IM 需要接入的业务适配点**，不是新增的客户端 API：
+仅客户端当前受信顶层业务 document 可使用采集。不要通过 window.top、postMessage 或自建 IPC 绕过边界。联调从开发客户端配置的测试业务域 https://testagent.xspaceagi.com 进入主站 IM；独立 localhost IM 页面不因处在 Electron 中就受信。
 
-```ts
-import { createCaptureAttachmentController } from './lib/nativeCapture';
+## IM Agent 的实施位置
 
-const captureAttachments = createCaptureAttachmentController({
-  // 返回值必须是不可变快照；只保存 ID 不保存会变化的 ref 对象。
-  getTarget: () => snapshotCaptureDraft(), // { conversationId, draftRevision } | null
-  isTargetValid: target => canAppendToDraft(target),
-  getMaxUploadBytes: () => UPLOAD_MAX_MB * 1024 * 1024,
-  addPending: (target, files) => appendToDraft(target, files),
-  onBusyChange: busy => setCapturePending(busy),
-  onStateChange: state => setCaptureState(state),
-});
+以下按 nuwax-im@518be4d 核对；实施前以当前源码复核。
 
-async function onRecordMenuClick(output: 'mp4' | 'webm' | 'gif') {
-  const outcome = await captureAttachments.run({
-    kind: 'record',
-    options: {
-      output,
-      maxDurationMs: recordingLimitMs,
-      compression: { quality: 'high', maxBytes: UPLOAD_MAX_MB * 1024 * 1024 },
-    },
-  });
-  if (outcome.status === 'failed') showCaptureErrorByCode(outcome.code);
-  if (outcome.status === 'unavailable') showCaptureUnavailable();
-  if (outcome.status === 'invalid-target') showCaptureDraftExpired();
-  // attached：附件已回填；canceled：静默结束；均不要再次调用 addPending。
-}
-
-// 截图菜单共用控制器：
-// await captureAttachments.run({ kind: 'screenshot', options: { format: 'png' } });
-// IM 应用卸载：captureAttachments.dispose();
-```
-
-`appendToDraft(target, files)` 必须同步写到指定草稿，不能内部重新读取当前 conversationId。若 IM 有按会话维护的草稿，录制中从 A 切到 B 后仍回填 A 的草稿，并提示用户；不要擅自切换正在阅读的 B。若现有 `addPending` 仅面向当前 ChatWindow，`canAppendToDraft` 必须额外核对当前会话、组件代次和权限，切换后返回 invalid-target 并提示重新录制，不能错放到 B。业务接线完成前不宣称当前 IM 已有跨会话草稿存储。
-
-`dispose()` 停止后续回填并退订状态，迟到的成功结果仍释放；它不会对共享业务 document 无条件调用 cancel。控制器返回 File 前后均检查目标有效性。File 入队后 Blob URL、附件移除、上传和发送仍由 IM 管理。
-
-## 正确的宿主入口
-
-每次点击时重新读取：
-
-```ts
-const capture = window.NuwaClawBridge?.capture;
-```
-
-普通浏览器、旧客户端或关闭特性的客户端可能没有该桥，或返回 `available:false`。IM 必须可独立运行，不能在模块顶层缓存桥，也不能因为桥不存在就导致 IM 页面报错。
-
-当前主站以 qiankun 的同 document 沙箱加载 IM，宿主注入的可选全局桥可读取。`props.host` / `window.NuwaxHost` 当前是导航桥，只有 `navigate`，不能写成 `NuwaxHost.capture`。
-
-此接口只授权客户端内当前受信的顶层业务 document。独立 localhost IM、普通浏览器、iframe 子 document 和过期页面不因“在 Electron 内”就获得权限。不要用 `window.top`、跨源访问、postMessage 代理或自建 IPC 绕过边界。若接入形态仍是旧 iframe，先与主站确认切换到当前微应用集成方式。
-
-联调应在 Nuwax 开发客户端中打开配置的测试业务域 `https://testagent.xspaceagi.com`，再从主站进入 IM；由主站完成既有登录和桥初始化。`untrusted` 应反馈主站/客户端检查当前页面代次与受信来源，IM 不自行注册设备、改服务域名或重建认证链。
-
-## IM 需要改的接线位置
-
-以下位置根据 2026-10-12 的 IM 工作树核对，负责人实施时以当时源码为准：
-
-| 位置（nuwax-im 仓库内） | 改造方式 |
+| 位置 | 改造要求 |
 | --- | --- |
-| `nuwax-im-web/src/components/ChatWindow.tsx` 的 `captureScreen` | 原函数目前直接调用 `getDisplayMedia`；前面加原生能力探测，原生成功后用读取示例生成 File 并 `addPending([file])` |
-| 同文件的 `addPending`、`canUpload` 与会话状态 | 保留上传权限/发送锁门禁；在采集前记住目标会话和组件代次，完成后复核，避免把迟到结果放进另一会话 |
-| `nuwax-im-web/src/components/ComposerToolbar.tsx` 的截图下拉及窄窗 `MORE_ROWS.shot` 平铺入口 | 保留截图和剪贴板入口；两套渲染均按真实 capabilities 增加 MP4 / WebM / GIF 操作、同步 busy 门禁，避免窄窗缺入口 |
-| `nuwax-im-web/src/lib/attachment.ts` 与现有上传/预览链 | 按 File 的实际 MIME 识别图片、视频或文件；继续复用原消息形态和附件上传，不把 resultId 当服务端文件 ID |
+| nuwax-im-web/src/components/ChatWindow.tsx 的 captureScreen | 从直接 getDisplayMedia 改为先探测原生能力；结果转 File 后回填固定目标草稿 |
+| 同文件 addPending、canUpload、composerLocked | 复用原文件校验与发送权限/禁言门禁；增加指定会话追加附件的方法及业务草稿代次 |
+| ComposerToolbar.tsx 截图下拉与窄窗 MORE_ROWS.shot | 两套入口都接截图、MP4、GIF；保留既有粘贴入口；共用 pending 锁 |
+| api/upload.ts、lib/attachment.ts | 复用已有上传配置和 MIME 识别；不增加消息类型、后端接口或第二条上传链 |
 
-原 `captureScreen` 中 `getDisplayMedia` 的第一段 `catch { return; }` 会把所有采集失败都当取消。保留浏览器降级时也应区分取消与真正失败，不能继续静默吞掉系统/配置错误。
+现有 addPending 只写当前会话，但 pendingByConvRef 已保存非当前会话的附件草稿。抽取指定会话追加函数：目标是当前会话时仅更新 pending/pendingRef，目标不是当前会话时仅更新 pendingByConvRef，不重复写两个桶。复用文件大小、数量、空文件和权限校验，不直接绕开 addPending 的规则。
 
-客户端原生菜单启动的是客户端自己的本地预览和保存流程，不会自动把文件放进 IM。IM 发附件必须由 IM 自己调用业务桥取得结果；不要监听客户端菜单的结果并自动发送到当前聊天。
+在第一个 await 前保存不可变目标：conversationId（保持 string）和 IM 自己的登录/草稿操作代次。能力查询后、采集返回后、读块完成后分别复核目标和发送权限。A 会话发起后切到 B，回填 A 的草稿并提示，不切换用户正在阅读的 B；若暂时只支持当前草稿，切换后应丢弃迟到结果并提示，不能回填 B。
 
-## 能力探测与调用顺序
+IM 应用层统一管理 pending 和订阅，宽窄菜单共用；聊天切换不卸载整个采集控制器，真正 IM 卸载才终止回填。React Hook 放在 early return 之前，异步完成提示前检查组件仍挂载。不要在聊天组件卸载时无条件调用共享 document 的 cancel，避免取消其他入口的采集。
 
-1. 先做 IM 既有 `canUpload`、会话可发送和 busy 检查。
-2. 点击时取桥，检查方法存在性，再调用 `getCapabilities()`。
-3. `available:true` 只表示特性可用，不代表屏幕录制已授权，也不代表所有格式均可用；分别看 `permission`、`formats.still`、`formats.video`、`formats.gif`。
-4. 调用前订阅状态并设置本地 pending；进行中不能重复发起。
-5. `screenshot()` 等待用户选区、标注、确认；`record()` 等待用户选择、倒计时、录制、停止与编码完成。
-6. 失败按 code 处理；成功后检查目标会话、组件代次和文件大小，分块读取为 File，并释放客户端临时原件。
-7. 再次复核发起会话的草稿仍有效，放入该草稿的待发送附件区；用户点击发送后才上传/发送消息。只有当前组件附件列表的实现必须额外确认会话未切换。
-8. `finally` 退订状态并清本地 pending。若创建 Blob URL，在移除附件或组件卸载时 revoke。
+## 调用、读块与清理
 
-缺桥或 `available:false` 时，截图可保留现有浏览器 `getDisplayMedia` 降级；当前 IM 若没有浏览器录屏实现，应隐藏或禁用原生录屏项，不承诺凭空可用的录制降级。原生调用已经返回取消、权限拒绝、busy 或失败时，不要偷偷再打开浏览器采集弹窗。
+1. 检查 canUpload、composerLocked、菜单 pending，固定目标会话并置 pending。
+2. 探测精确能力，再读取 getCapabilities；订阅 onStateChange。
+3. 截图调用 screenshot；录屏调用 record，output 为 mp4/gif。record Promise 要等待停止及编码完成，并非开始录制后立即返回。
+4. success:false 按 code 处理；success:true 先检查目标有效性、bytes、mime 和上传限制。无效或放弃的结果也必须 release。
+5. readChunk(resultId, offset, length) 每次不超过 4 MiB，按实际 byteLength 推进并要求长度完整；null、短块或未知 MIME 拒绝生成附件。
+6. 用真实 MIME 和对应扩展名组装 File，finally release 原结果。随后复核目标并加入原会话草稿，不自动发送。
+7. finally 退订监听并清 pending；附件移除/退出时由 IM 释放自己的 Blob URL。
 
-## 调用参数与结果
+resultId 是客户端临时句柄，不是 URL、路径或服务端文件 ID。它仅属于发起业务页面，导航、关闭、登出、换域、锁屏、挂起或显示器移除可令其失效。onStateChange 只发给发起 document；idle 不等于 File 已读完，pending 必须持续到回填完成。全客户端仅允许一个采集会话，仍需处理 busy。
 
-接口签名见完整 API 文档；常用调用：
+当前 IM 前端限制来自 api/upload.ts 的 UPLOAD_MAX_MB：VITE_IM_UPLOAD_MAX_MB 可覆盖，缺省 100 MB。这只是前端占位限制，不是后端保证；与上传服务确认后复用现有配置。转换为整数 bytes，native maxBytes 范围 1–2147483648。现有上传路径缺省 /api/file/upload，用户点发送时才上传。
 
-```ts
-await capture.screenshot({
-  format: 'jpeg',
-  compression: { quality: 'high', maxBytes: imageUploadLimitBytes },
-});
+compression 可以省略；若传入则 quality 必填。maxBytes 为质量逐档下探的目标，最低档仍超限会返回 exceedsMaxBytes:true，IM 应拒绝入队并提示缩短录制或降低画质；不能把它当硬体积保证。尺寸不缩放，GIF/视频的 lossless 档也不承诺数学无损。
 
-await capture.record({
-  output: 'mp4', // 或 capabilities 已声明支持的 webm / gif
-  fps: 30,
-  maxDurationMs: recordingLimitMs,
-  compression: { quality: 'high', maxBytes: videoUploadLimitBytes },
-});
-```
+## 复制与 IM 回填的区别
 
-上传和录制限制由 IM 产品及现有上传服务给定，上面变量不是客户端或后端固定限额。
+客户端菜单完成后的复制按钮已经由壳实现，IM 不需要为此实现按钮。按钮把截图写为图片、MP4/GIF 写为原文件；目标应用需支持相应粘贴。文件副本独立于预览句柄，复制完成后关闭预览仍可粘贴，缓存按 24 小时清理，不能当长期保存。
 
-当前 IM 的已有上传大小约束来自 `nuwax-im-web/src/api/upload.ts` 的 `UPLOAD_MAX_MB`，实施时复用该事实源并转换为字节，避免在截图/录屏适配器里另外写一套不一致上限。
+若 IM 自己需要复制结果，可在 release 前调用 capture.copy(resultId)。成功返回 success:true 与 kind:image/file，失败返回 success:false 和 CaptureErrorCode；失败保留原结果可重试。copy 不返回路径、不释放原件、不上传或发送。
 
-| 参数 | 实际规则 |
+IM 主接入流程直接 File 回填草稿，不依赖剪贴板。若同时需要复制和回填，先 await copy，再读块并 release；否则释放后 copy 将因句柄失效失败。业务桥不提供 save、pause、resume 或 stop；停止/暂停由客户端原生 UI、托盘或应用内快捷键处理，cancel 表示丢弃。
+
+## 失败处理与验收
+
+| 场景 | IM 行为 |
 | --- | --- |
-| `compression` | 可以完全省略，此时默认 high；传入后 quality 必填，不能仅写 `{ maxBytes }` |
-| `quality` | lossless / high / medium / low；只改质量，不缩小像素尺寸 |
-| `maxBytes` | 安全整数 1–2147483648；从指定档下探，最低档仍超限则成功结果带 `exceedsMaxBytes:true`，不是硬限额保证 |
-| 静态格式缺省 | lossless 默认 PNG，其他档默认 JPEG；当前只有 PNG/JPEG，WebP 为类型预留 |
-| `record.output` | 必填 mp4 / webm / gif，并先按 capabilities 探测 |
-| `fps` | 整数 1–60，缺省 30；GIF 还受所选画质档的帧率上限约束 |
-| `maxDurationMs` | 整数 1000–3600000，接口缺省 600000（10 分钟）；客户端设置入口目前显式设置 5 分钟，IM 可设置自己的限制 |
-| 未知字段 | 严格拒绝，返回 invalid-argument |
+| canceled | 静默结束，不生成附件 |
+| permission-denied | 提示当前平台允许屏幕采集后重试；Linux n/a 不表示已授权 |
+| busy | 提示先完成当前采集 |
+| encoder-unavailable / unsupported | 按能力隐藏或禁用格式，实际失败时提示，不再触发第二个采集弹窗 |
+| untrusted | 提示刷新并反馈主站/客户端检查受信来源和文档代次 |
+| invalid-argument / failed | 稳定提示并记录必要诊断，不静默吞错或展示全部内部错误 |
+| 超限、读块失效、目标失效 | 不回填/发送，释放句柄并提示 |
 
-PNG 在所有档位仍严格无损，不能靠换档保证更小体积。JPEG、视频和 GIF 的 lossless 档表示最高质量档，不承诺数学无损。录制有效时长不含暂停；另有墙钟时限防止一直暂停占用设备，暂停也不能无限期保持。
+IM Agent 完成接线后必须验收：
 
-成功结果含不透明 `resultId`、真实 `mime`、`bytes`、物理像素 `width/height`、`qualityUsed` 和 `hdrToneMapped`，录制另含 `durationMs`。还可能包含 `exceedsMaxBytes`、`paddedForEvenSize`。`resultId` 不是路径、URL 或服务器文件 ID。
+- 普通浏览器和旧客户端不报错，截图降级可用；新客户端分别按 MP4/GIF 能力显示入口。
+- 菜单只发起一次，取消没有附件；停止并编码完成才回填，idle 后读块期间也不能重复发起。
+- 截图、MP4、动画 GIF 进入原会话草稿，用户发送后对端内容正确；录制中切到另一会话不误回填。
+- 卸载、登出、换域、权限变化、超限和失效句柄均不继续发送，监听和 Blob URL 不累积。
+- 客户端菜单的预览底部有复制按钮，复制不关预览；关闭预览后图片/文件仍可粘贴，GIF 保留动画。
+- macOS、Windows、Linux 的安装包、实际 IM 和目标粘贴应用分别记录验收，不以隔离 runtime 或另一平台代替。
 
-业务桥没有 `save`、`pause`、`resume` 或 `stop` 方法。暂停、继续与停止通过原生控制条/托盘完成；`cancel()` 直接丢弃进行中的采集。`window.electronAPI.capture.save()` 仅属于壳自己的接口，IM 不应调用它。
+无音频、无跨屏选区、当前 WebP 不可用，HDR 真实色调映射仍未实现。Linux X11 使用覆盖层；Wayland 使用系统来源选择和授权来源预览。Linux 录制时控制窗隐藏，托盘或切回客户端按 Ctrl+Alt+R 停止、Ctrl+Alt+P 暂停/继续。实际格式以 capabilities 为准。
 
-## 分块读取与生命周期
-
-可复制示例的 `readCaptureFile(capture, result, maxUploadBytes)` 会：
-
-- 在读大文件前检查 IM 上传限额及 exceedsMaxBytes。
-- 每次请求不超过 4 MiB，按实际 byteLength 推进，要求长度与请求一致。
-- 根据真实 MIME 选择 PNG/JPG/WebP/MP4/WebM/GIF 扩展名。
-- 无论成功、超限或读取失败，均在 finally 释放结果。
-
-`readChunk` 超过 4 MiB 会被截断；null 表示失效、无权或读取失败，不能继续拼出空附件。文件组装会占用 renderer 内存，IM 必须先限制 bytes，不能承诺无限时长或无限大录像可发送。
-
-```ts
-import { readCaptureFile } from './lib/nativeCapture'; // 将独立示例复制到 IM 自己的 lib
-
-// 下面展示接线顺序；isCurrentCaptureTarget、上传限制和提示函数由 IM 现有状态提供。
-const result = await capture.screenshot({ compression: { quality: 'high' } });
-if (!result.success) {
-  if (result.code !== 'canceled') showNativeCaptureError(result.code);
-  return;
-}
-if (!isCurrentCaptureTarget()) {
-  await capture.release(result.resultId).catch(() => undefined);
-  return;
-}
-const file = await readCaptureFile(capture, result, imageUploadLimitBytes);
-if (isCurrentCaptureTarget()) addPending([file]);
-```
-
-`isCurrentCaptureTarget()` 至少检查组件仍挂载、目标会话未变、仍有发送权限、操作代次未过期；读取异常由外层 catch 显示稳定提示。截图/录屏结果进入待发送区，不自动发送。
-
-`onStateChange` 没有初始快照，也不是全局广播；仅发起业务 document 收到本次会话的 selecting / recording / paused / encoding / idle。客户端设置页签发起的操作不会广播给 IM，所以本地 pending 和 busy 返回仍需处理。
-
-整个客户端只能有一个采集会话。所有权以 WebContents 为单位，qiankun IM 与主站同页共享该身份。IM 应集中管理操作与 owner token，只有确认是自己发起、仍进行中的操作才允许取消；不要在每个聊天组件卸载时无条件 `cancel()`，否则可能取消同页其他入口。
-
-整页导航/关闭、登出、换域、会话过期、锁屏/挂起、显示器移除或退出会取消并清理。SPA 路由和 qiankun 卸载不会被主进程当作整页导航：IM 需退订、释放已有句柄和预览 URL；迟到结果仅清理，不能附到新聊天里。
-
-## 错误提示
-
-| code | IM 处理 |
-| --- | --- |
-| canceled | 安静返回，清 pending，不生成附件 |
-| permission-denied | 显示屏幕录制权限指引；macOS 在系统设置的隐私与安全性中授权后重试 |
-| busy | 提示先完成当前截图/录屏；不再发起第二轮，不取消别人的操作 |
-| encoder-unavailable | 提示当前格式不可用，刷新能力后选其他格式 |
-| unsupported | 提示该能力/格式不可用；仅在预先探测缺能力时走约定的浏览器降级 |
-| untrusted | 提示页面或登录会话已失效，刷新后重试；反馈主站/客户端检查信任初始化 |
-| invalid-argument | 提示操作失败并记录接入参数问题，负责人修正调用 |
-| failed | 显示截图/录屏失败，可重试；诊断只记录 code、阶段、格式、尺寸/体积等必要字段 |
-
-不要将 resultId、媒体字节、屏幕内容、账号凭据或 token 写入诊断日志；界面提示以稳定 code 文案为主，不直接展示底层编码器的全部错误文本。
-
-## 多屏联调与验收清单
-
-来源选择由客户端完成，IM 无需指定 displayId、猜测主屏或自己转换 DPI。每个显示器有自己的冻结覆盖层，可以在任一屏选择整屏、窗口或单屏区域；Esc/取消结束整轮覆盖层。物理像素按实际采集帧及各屏缩放率计算。
-
-当前不支持跨显示器拖一块大区域；外接屏可以单独选取。窗口来源以真正采集帧尺寸为准，不能用列表缩略图尺寸作为最终输出。MP4 为满足偶数宽高可能扩展真实边界 1 个像素，无法扩展时补像素；以结果 width/height/paddedForEvenSize 为准。
-
-- [ ] 新客户端主站内进入 IM，桥探测可用；独立浏览器/旧客户端没有报错，截图降级可用。
-- [ ] 单聊与群聊的截图、MP4、WebM、GIF分别进入待发送区，带说明发送后对端可预览/播放/下载，文件名、MIME 与消息形态正确。
-- [ ] 原生选区有标注、撤销重做；取消不弹失败，也不生成空附件；真正失败有提示。
-- [ ] 客户端设置/原生菜单发起一轮后 IM 再点击得到 busy；不会二次弹采集器或取消已有操作。
-- [ ] 在主屏和副屏分别测试整屏、窗口、区域，包含屏幕在左/右/上/下、负坐标、横竖屏与不同缩放率；四档输出尺寸不因画质缩小。
-- [ ] 区域录屏控制条/边框未进入结果，包括 MP4 奇数选区与边缘扩展；副屏开始后控制条应跟随该屏的选区，靠底部区域自动翻到上方；暂停/继续/停止保持位置，不跳回主屏。窗口模式控制条位于执行窗口选择的屏幕，暂不跟随目标窗口的跨屏移动。
-- [ ] 按 Esc 或在任一显示器取消，所有覆盖层消失，再次发起可用。
-- [ ] 录制中移除显示器、锁屏、登出或换域，操作取消/结果失效，IM 不继续上传旧媒体。
-- [ ] 开始采集后切换聊天：有会话草稿仓库时回填原会话；仅支持当前组件时提示目标失效，绝不附到新会话。关闭 IM 或卸载微应用后不再回填，监听与 Blob URL 不累积。
-- [ ] 权限拒绝、缺编码器、最低档仍超过 maxBytes、上传限制、大文件读块失效等路径按上表处理，finally release 得到覆盖。
-- [ ] Windows、HDR 与正式安装包分别记录实机结果；不能用 macOS 开发记录或模拟双屏测试代替。
-
-交付验收时请附：客户端版本/构建来源、IM 提交与部署版本、接入形态、OS/显示器布局与缩放率、格式/画质/输出尺寸/时长、失败 code 和步骤、对端收到附件后的表现。只记录测试媒体，不带账号或 token。
-
-## 已知限制与联调基线
-
-无音频、无跨屏选区、当前 WebP 不可用。HDR 尚未真实色调映射，hdrToneMapped 为 false；Windows 与真实安装包仍待实机验证。macOS 单屏整屏录制的控制条排除仍须解码画面验证，不能只凭 contentProtection 调用宣称通过。
-
-客户端基线和验证记录：[20261012-native-capture-dev.md](acceptance/20261012-native-capture-dev.md)。IM 负责人需独立完成本节清单后，才可把 IM 的截图/录屏按钮标为已接入。
+交付记录应含客户端版本、IM 提交/部署版本、接入形态、OS/屏幕布局与缩放率、格式/画质/尺寸/时长、失败 code 与复现步骤，以及对端接收表现；不附账号或凭据。

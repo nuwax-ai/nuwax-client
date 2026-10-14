@@ -17,13 +17,20 @@ export interface RecordingConfig {
   sourceSize: { width: number; height: number };
   fps: number;
   mode: "record" | "snapshot";
+  acquisition?: 'portal';
+  /** Keep the granted stream after its first frame; the recording command reuses it. */
+  preview?: boolean;
+  /** Repeat decoded native pixels at the requested rate for damage-driven sources. */
+  framePipeline?: 'source' | 'guarded-source' | 'repeat-last-frame';
+  /** Minimum refresh requested only after the user has authorized the source. */
+  sourceFrameRateFloor?: number;
 }
 
-export type RecordingCommand = "start" | "pause" | "resume" | "stop" | "cancel";
+export type RecordingCommand = "arm" | "start" | "pause" | "resume" | "stop" | "cancel";
 export type RecordingEvent =
   | { type: "ready"; width: number; height: number; mime: string }
-  | { type: "started" | "paused" | "resumed" | "stopped" }
-  | { type: "error"; message: string; permissionDenied?: boolean };
+  | { type: "armed" | "started" | "paused" | "resumed" | "stopped" }
+  | { type: "error"; message: string; permissionDenied?: boolean; canceled?: boolean };
 
 export interface RecordingWindowBridge {
   config(): Promise<RecordingConfig>;

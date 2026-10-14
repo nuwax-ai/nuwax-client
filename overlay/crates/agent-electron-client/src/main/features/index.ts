@@ -11,13 +11,16 @@
  * 本文件不 import electron / 数据库，所有宿主能力由调用方注入，便于单测。
  */
 
+import type { CustomScheme, OnBeforeRequestListenerDetails } from "electron";
 import * as nodePath from "node:path";
 import { createFeatureLifecycle, type FeatureLifecycle, type SessionEndReason } from "./_kit/lifecycle";
 import { registerDesktopFeatures, type RegisteredFeatures } from "./_kit/register";
 import { createScratchDir } from "./_kit/scratchDir";
 import { createTrustedIpc, type IpcMainLike } from "./_kit/trustedIpc";
-import type { DesktopFeature, FeatureContext, FeatureLogger } from "./_kit/types";
+import type { DesktopFeature, FeatureContext, FeatureLogger, FeatureWorkspaceServices } from "./_kit/types";
+import { authorizeLocalFilesRequest, isLocalFilesRequestSource, localFilesFeature } from "./local-files";
 import { captureFeature } from "./capture";
+export { configureCaptureBackend, canCopyCaptureFiles } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
 
 export type { SessionEndReason };
@@ -25,6 +28,7 @@ export type { SessionEndReason };
 export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   openSourceNoticesFeature,
+  localFilesFeature,
 ];
 
 export interface StartFeaturesOptions {
@@ -40,11 +44,29 @@ export interface StartFeaturesOptions {
   isEnabled(featureId: string, enabledByDefault: boolean): boolean;
   log: FeatureLogger;
   translate?(key: string): string;
+  workspace?: FeatureWorkspaceServices;
   setRecordingStopAction?(action: (() => void) | null): void;
+  setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }
 
 let lifecycle: FeatureLifecycle | null = null;
 let registered: RegisteredFeatures | null = null;
+let recordingStopAction: (() => void) | null = null;
+let recordingPauseAction: (() => void) | null = null;
+
+/** Electron requires a single declaration before app.ready; handlers remain gated. */
+export function desktopFeatureSchemes(product: string): CustomScheme[] {
+  return desktopFeatures.filter(feature => feature.products.includes(product))
+    .flatMap(feature => [...(feature.schemes ?? [])]);
+}
+
+/** Application-local fallback when a Linux desktop does not show tray controls. */
+export function controlDesktopRecording(action: "pause" | "stop"): boolean {
+  const callback = action === "pause" ? recordingPauseAction : recordingStopAction;
+  if (!callback) return false;
+  callback();
+  return true;
+}
 
 /** 原生宿主入口读取实际注册结果，关闭或注册失败时不显示入口。 */
 export function isDesktopFeatureRegistered(id: string): boolean {
@@ -69,7 +91,15 @@ export function startDesktopFeatures(
     scratch: createScratchDir(nodePath.join(options.dataDir, feature.id)),
     log: options.log,
     translate: options.translate,
-    setRecordingStopAction: options.setRecordingStopAction,
+    workspace: options.workspace,
+    setRecordingStopAction: (action) => {
+      recordingStopAction = action;
+      options.setRecordingStopAction?.(action);
+    },
+    setRecordingPauseAction: (action, paused) => {
+      recordingPauseAction = action;
+      options.setRecordingPauseAction?.(action, paused);
+    },
   });
 
   registered = registerDesktopFeatures(features, {
@@ -82,7 +112,7 @@ export function startDesktopFeatures(
 }
 
 /** 登出 / 换域：通知各特性取消进行中的工作并清理。 */
-export function notifyFeatureSessionEnd(reason: SessionEndReason): void {
+export function notifyFeatureSessionEnd(reason: SessionEndReason = "other"): void {
   lifecycle?.emitSessionEnd(reason);
 }
 
@@ -92,6 +122,16 @@ export async function disposeDesktopFeatures(): Promise<void> {
   const reg = registered;
   lifecycle = null;
   registered = null;
+  recordingStopAction = null;
+  recordingPauseAction = null;
   if (lc) await lc.emitQuit();
   if (reg) await reg.dispose();
 }
+
+/** Invoked by the existing single Session request listener, never installs another. */
+export function authorizeDesktopFeatureRequest(details: OnBeforeRequestListenerDetails): boolean | undefined {
+  return authorizeLocalFilesRequest(details);
+}
+
+/** Share preview provenance with the existing credential-filtering listener. */
+export const isDesktopFeatureRequestSource = isLocalFilesRequestSource;

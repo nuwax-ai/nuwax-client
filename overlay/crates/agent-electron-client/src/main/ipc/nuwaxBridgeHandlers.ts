@@ -26,7 +26,7 @@
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
-import type { IpcMainInvokeEvent, OpenDialogOptions } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import * as fs from "fs";
 import * as os from "os";
@@ -60,7 +60,10 @@ import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicke
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
 import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
-import { notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import { canCopyCaptureFiles, isDesktopFeatureRegistered, notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
+import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
+import { getConfiguredPorts } from "../services/startupPorts";
 
 import {
   initializeCommercialAuth,
@@ -297,6 +300,21 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     documents.get(documentKey(event)) === authGeneration;
   const isIMSender = (event: IpcMainInvokeEvent) =>
     event.senderFrame === event.sender.mainFrame && isCurrentDocument(event);
+  ipcMain.handle(CAN_USE_IPC, (event, name: unknown) => {
+    const capability = resolveHostCapability(name);
+    if (!capability || APP_NAME_IDENTIFIER !== 'nuwax') return false;
+    // getContext 本身是绑定当前文档代次的启动入口，不能要求它先完成自身。
+    const bootstrap = name === 'auth.getContext';
+    if (bootstrap ? switching || event.senderFrame !== event.sender.mainFrame ||
+      !isTrustedBusinessSender(event, trustedOrigins()) : !isIMSender(event)) return false;
+    if (capability.namespace === 'capture') {
+      if (!isDesktopFeatureRegistered('capture') || readSetting('features.capture.enabled') === false) return false;
+      if (name === 'capture.copy.file' && !canCopyCaptureFiles()) return false;
+    }
+    if (capability.namespace === 'localFiles' && (!isDesktopFeatureRegistered('local-files') ||
+      readSetting('features.local-files.enabled') === false)) return false;
+    return true;
+  });
   ipcMain.handle(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, (event, enabled: unknown) => {
     if (isIMSender(event) && typeof enabled === "boolean") setIMNotificationEnabled(enabled);
   });
@@ -315,7 +333,27 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     log,
     translate: t,
+    workspace: {
+      getIdentity: () => {
+        const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
+        const sandboxId = normalizeComputerSandboxId(registration?.id);
+        if (!currentTicket() || switching || !["starting", "ready"].includes(serviceState.phase) ||
+            registration?.currentDomain !== currentBusinessOrigin() || !sandboxId) return null;
+        return { sandboxId, businessOrigins: [...trustedOrigins()] };
+      },
+      getFileServerPort: () => getConfiguredPorts().fileServer,
+      isCurrentDocument: event => isIMSender(event as IpcMainInvokeEvent),
+      resolveRoot: async input => {
+        const step = readSetting("step1_config") as { workspaceDir?: string } | null;
+        const { agentService } = await import("../services/engines/unifiedAgent");
+        return resolveLocalFilesWorkspace(input, {
+          base: step?.workspaceDir || path.join(os.homedir(), APP_DATA_DIR_NAME, "workspace"),
+          getSessionDirectory: id => agentService.getWorkspaceDirForProject(id),
+        });
+      },
+    },
     setRecordingStopAction: (action) => getTrayManager()?.setRecordingStopAction(action),
+    setRecordingPauseAction: (action, paused) => getTrayManager()?.setRecordingPauseAction(action, paused),
   });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
@@ -332,24 +370,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           });
       }
   };
-  // localFiles 仅保留宿主原生目录选择器：返回绝对路径，数据面由 nuwax 走
-  // file-server（customTargetDir）HTTP 通道，主进程不做持久化与文件操作。
-  // 注：当前 nuwax 前端已无调用方（「文件树选择非工作空间目录」需求回滚，
-  // 见 nuwax/specs/luodong-delivery.md）。保留为对外桥面，避免前端需要时再动基座。
-  ipcMain.handle("localFiles:pickDirectory", async (event) => {
-    if (!isTrustedSender(event)) return { canceled: true, paths: [] as string[] };
-    const win = ctx.getMainWindow();
-    const options: OpenDialogOptions = {
-      properties: ["openDirectory", "multiSelections"],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    return result.canceled
-      ? { canceled: true, paths: [] as string[] }
-      : { canceled: false, paths: result.filePaths };
-  });
-
   // ---- theme：nuwax 女娲主题 → 壳原生 UI 统一 ----
   // nuwax 主题生效/让位时推送 { active, 调色板 }，转发给壳 renderer 叠加/回落
   // （antd tokens + CSS 变量）。fire-and-forget（send），无返回值语义。

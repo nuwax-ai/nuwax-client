@@ -19,6 +19,8 @@ import type {
   ShellThemePayload,
 } from "@shared/types/hostBridge";
 import { featureNamespaces } from "./features";
+import { CAN_USE_IPC } from "@shared/hostCapabilities";
+import { createCanUse } from "./canUse";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
 function mayExposeBusinessBridge(): boolean {
@@ -262,16 +264,6 @@ const native = {
 };
 
 /**
- * localFiles 命名空间：宿主原生目录选择器。
- * 仅返回所选目录的绝对路径；文件数据面由 nuwax 走 file-server（customTargetDir）。
- */
-const localFiles = {
-  pickDirectory(): Promise<{ canceled: boolean; paths: string[] }> {
-    return ipcRenderer.invoke("localFiles:pickDirectory");
-  },
-};
-
-/**
  * updater 命名空间：宿主客户端自身的更新状态与动作（nuwax 前端 logo 旁版本徽标消费）。
  * 与壳关于页共用主进程同一 autoUpdater 单例（不会双下载）；旧宿主无此命名空间，
  * nuwax 侧 feature-detect 后整体隐藏徽标。
@@ -441,18 +433,25 @@ const host = {
   },
 };
 
-if (bridgeAllowed) contextBridge.exposeInMainWorld("NuwaClawBridge", {
-  perf,
-  auth,
-  native,
-  localFiles,
-  updater,
-  events,
-  theme,
-  layout,
-  titlebar,
-  i18n,
-  meta,
-  host,
-  ...(mayExposeIMBridge() ? { im, ...featureNamespaces(ipcRenderer) } : {}),
-} satisfies HostBridgeContract);
+const businessFeatures = featureNamespaces(ipcRenderer);
+if (bridgeAllowed) {
+  const bridge = {
+    perf,
+    auth,
+    native,
+    localFiles: businessFeatures.localFiles,
+    updater,
+    events,
+    theme,
+    layout,
+    titlebar,
+    i18n,
+    meta,
+    host,
+    ...(mayExposeIMBridge() ? { im, capture: businessFeatures.capture } : {}),
+  } satisfies HostBridgeContract;
+  contextBridge.exposeInMainWorld("NuwaClawBridge", {
+    ...bridge,
+    canUse: createCanUse(bridge, name => ipcRenderer.invoke(CAN_USE_IPC, name)),
+  } satisfies HostBridgeContract);
+}

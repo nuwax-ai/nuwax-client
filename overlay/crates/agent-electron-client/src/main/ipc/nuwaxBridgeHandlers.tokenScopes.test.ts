@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { session } from "electron";
+import { disposeDesktopFeatures } from "../features";
 
 const settings = new Map<string, unknown>();
 const handlers = new Map<
@@ -107,6 +108,7 @@ vi.mock("electron", () => ({
   app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
   ipcMain: {
+    removeHandler: (channel: string) => handlers.delete(channel),
     handle: (
       channel: string,
       fn: (event: unknown, ...a: unknown[]) => unknown,
@@ -212,9 +214,12 @@ import {
   registerNuwaxBridgeHandlers,
   NUWAX_TOKEN_KEY_PREFIX,
 } from "./nuwaxBridgeHandlers";
-import { DEFAULT_SERVER_HOST } from "../../shared/constants";
+import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST } from "../../shared/constants";
 import { getMainLang, setMainLang } from "../services/i18n";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
+import * as bridgeConstants from '@shared/constants';
+import * as desktopFeatures from '../features';
+import { CAN_USE_IPC } from '@shared/hostCapabilities';
 
 const GW_ORIGIN = "http://127.0.0.1:46800";
 const HOST_ORIGIN = "https://testagent.xspaceagi.com";
@@ -235,6 +240,8 @@ async function seedTicket(value: string): Promise<void> {
   const ticket = await import("../services/commercialTicketSession");
   await ticket.mirrorGatewaySetCookies([`ticket=${value}; Path=/; Secure`], HOST_ORIGIN, ticket.ticketEpoch());
 }
+
+afterEach(async () => { await disposeDesktopFeatures(); });
 
 beforeEach(() => {
   for (const mock of [mocks.startIM, mocks.stopIM, mocks.unreadIM, mocks.retryIM, mocks.enabledIM, mocks.ackIM]) mock.mockClear();
@@ -308,6 +315,30 @@ describe("host activity read-only IPC", () => {
 });
 
 describe("native IM preference IPC", () => {
+  it('canUse 重新检查受信顶层、文档代次、开关和注册状态；启动 getContext 可先探测', async () => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const registered = vi.spyOn(desktopFeatures, 'isDesktopFeatureRegistered').mockReturnValue(true);
+    const frame = { url: `${GW_ORIGIN}/home`, processId: 100, routingId: 200 };
+    const sender = { id: 300, mainFrame: frame, getURL: () => frame.url };
+    const event = { sender, senderFrame: frame }; const probe = handlers.get(CAN_USE_IPC)!;
+    expect(probe(event, 'auth.getContext')).toBe(true);
+    expect(probe(event, 'capture.record.mp4')).toBe(false);
+    handlers.get('auth:getContext')!(event);
+    expect(probe(event, 'capture.record.mp4')).toBe(true);
+    for (const name of ['unknown', 'auth.getToken', 'auth.persistToken', 'capture.record.unknown']) expect(probe(event, name)).toBe(false);
+    expect(probe({ ...event, senderFrame: { ...frame } }, 'capture')).toBe(false);
+    settings.set('features.capture.enabled', false); expect(probe(event, 'capture')).toBe(false);
+    settings.delete('features.capture.enabled'); registered.mockReturnValue(false); expect(probe(event, 'capture')).toBe(false);
+    registered.mockReturnValue(true);
+    expect(probe(event, 'localFiles.listFiles')).toBe(true);
+    settings.set('features.local-files.enabled', false); expect(probe(event, 'localFiles')).toBe(false);
+    settings.delete('features.local-files.enabled'); registered.mockReturnValue(false); expect(probe(event, 'localFiles')).toBe(false);
+    registered.mockReturnValue(true);
+    await handlers.get('auth:clear')!(event); expect(probe(event, 'native.openWindow')).toBe(false);
+    handlers.get('auth:getContext')!(event); expect(probe(event, 'im')).toBe(true);
+    frame.url = 'https://external.example/home'; expect(probe(event, 'im')).toBe(false);
+    registered.mockRestore(); product.mockRestore();
+  });
   it("unread is available only after auth binding and changes recheck top-frame/account/origin", async () => {
     const frame = {url: `${GW_ORIGIN}/home`, processId: 14, routingId: 24};
     const sender = {id: 34, mainFrame: frame, getURL: () => frame.url, once: vi.fn(), isDestroyed: () => false, send: vi.fn()};
@@ -1037,8 +1068,12 @@ describe("trusted runtime auth context and window navigation", () => {
   it("跨域导航后旧 preload 无法触发目录选择、另存、设置或更新主进程状态", async () => {
     const navigated = windowEvent(GW_ORIGIN, "https://external.example");
     expect(handlers.get("auth:getContext")!(navigated)).toBeNull();
-    expect(await handlers.get("localFiles:pickDirectory")!(navigated))
-      .toEqual({ canceled: true, paths: [] });
+    // 产品门控关闭时无该 IPC；商业产品仍在可信文档门拒绝旧 preload。
+    const picker = handlers.get("localFiles:pickDirectory");
+    if (APP_NAME_IDENTIFIER === "nuwax") {
+      expect(picker).toBeTypeOf("function");
+      expect(await picker!(navigated)).toEqual({ canceled: true, paths: [] });
+    } else expect(picker).toBeUndefined();
     expect(await handlers.get("native:saveImage")!(navigated, { url: `${HOST_ORIGIN}/a.png` }))
       .toEqual({ success: false, error: "untrusted sender" });
     expect(handlers.get("native:openClientSettings")!(navigated))

@@ -17,6 +17,7 @@ export const CAPTURE_IPC = {
   CANCEL: "capture:cancel",
   READ_CHUNK: "capture:readChunk",
   RELEASE: "capture:release",
+  COPY: "capture:copy",
   STATE_CHANGED: "capture:stateChanged",
 } as const;
 
@@ -29,6 +30,7 @@ export const HOST_CAPTURE_IPC: CaptureChannels = {
   CANCEL: "capture:host:cancel",
   READ_CHUNK: "capture:host:readChunk",
   RELEASE: "capture:host:release",
+  COPY: "capture:host:copy",
   STATE_CHANGED: "capture:host:stateChanged",
 };
 export const HOST_CAPTURE_SAVE_IPC = "capture:host:save";
@@ -145,6 +147,11 @@ export interface CaptureFailure {
 
 export type CaptureResult = CaptureSuccess | CaptureFailure;
 
+/** 截图复制位图；录屏（含 GIF）复制原始文件，不返回本地路径。 */
+export type CaptureCopyResult =
+  | { success: true; kind: 'image' | 'file' }
+  | CaptureFailure;
+
 export type CaptureState =
   | "idle"
   | "selecting"
@@ -165,4 +172,6 @@ export interface CaptureBridge {
     length: number,
   ): Promise<ArrayBuffer | null>;
   release(resultId: string): Promise<void>;
+  /** 增量能力，旧客户端可缺失；成功复制后可 release 原结果。 */
+  copy?(resultId: string): Promise<CaptureCopyResult>;
 }

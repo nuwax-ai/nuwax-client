@@ -54,10 +54,10 @@ preload 与类型声明等配套见 `find overlay -type f`）：
 | `src/renderer/components/pages/CommercialAboutPage.tsx` | **新增（非覆写）**：组合基座 `AboutPage` 并追加「开源组件声明」行与弹窗，不分叉基座 790 行的 `AboutPage.tsx`；`App.tsx` 的 `AboutPage` import 指向本文件 |
 | `src/main/ipc/nuwaxBridgeHandlers.ts`（增量） | 另含：一次 `startDesktopFeatures`；`cancelTransfers(reason)` 在每个会话边界（登出/换域/过期/登录切换）调用 `notifyFeatureSessionEnd` |
 | `src/main/main.ts`（增量） | 另含：退出清理一步 `disposeDesktopFeatures()` |
-| `src/main/window/applicationMenu.ts`、`.test.ts`（增量） | macOS 原生「截图与录屏」菜单及应用内快捷键；按实际特性注册结果展示。命令经私有 host 事件进入 CaptureLauncher，业务 IM 桥不扩展；Windows 在客户端设置页签提供入口，应用内快捷键仍经 host 事件触发 |
+| `src/main/window/applicationMenu.ts`、`.test.ts`（增量） | macOS 原生「截图与录屏」菜单；Windows/Linux 在壳应用菜单与客户端设置页签提供入口。按实际特性能力显示截图、MP4、GIF，菜单 hover 即展开/切换；应用内快捷键经私有 host 事件进入 CaptureLauncher，业务 IM 桥不扩展。Linux 录制中另支持应用内暂停/停止 |
 | `src/preload/webviewPerfBridge.ts`、`src/preload/index.ts`（增量） | 另含：业务页展开 `featureNamespaces`（`NuwaClawBridge.capture`）、宿主壳展开 `hostFeatureNamespaces`（`electronAPI.notices`、独立 IPC 的 `electronAPI.capture`） |
 | `src/renderer/App.tsx`、`src/renderer/components/TrafficLightToolbar.tsx`（增量） | 另含：组合 `CommercialAboutPage`；客户端设置增加截图/录屏页签，移除顶栏相机；常驻控制器把面板 portal 到页签，菜单事件、结果预览与原生保存由 `renderer/features/capture` 自持 |
-| `src/main/window/trayManager.ts`（增量） | 录屏/暂停期间挂载可选「停止录屏」动作，结束或进入编码后移除 |
+| `src/main/window/trayManager.ts`（增量） | 录屏/暂停期间挂载「暂停/继续录屏」「停止录屏」动作，结束或进入编码后移除；Linux 控制条录制时隐藏，避免录入来源 |
 | `scripts/build/build-main-esbuild.js`（增量） | 构建特性隔离 preload：`captureWindow.js`、`captureRecording.js`；无特性源码时跳过，不影响社区构建 |
 | `src/shared/types/electron.d.ts`、`src/shared/types/hostBridge.ts`（增量） | 壳 capture/notices 类型；业务桥 capture 契约快照（从前端事实源生成） |
 | `src/shared/locales/{en-US,zh-CN,zh-TW,zh-HK}.json`（增量） | 另含：`Claw.About.openSource.*` 与 `Claw.Capture.*` 文案，四语言键与占位符一致 |
@@ -130,3 +130,11 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
 
 - 截图/录制浮层定位共用 `shared/features/capture/windowPlacement.ts`；选择器沙箱与主进程使用相同 DIP 定位规则，以所选屏/选区为锚点。
+
+## 本机文件直访特性
+
+`src/main/features/local-files`、`src/preload/features/local-files`、`src/shared/features/local-files` 与 `_kit` 是商业新增模块。公开入口为 main/preload 的 features/index；宿主只在组合根注入登录、本机身份、配置端口和工作区解析。`main/services/localFilesWorkspace` 复用基座目录规则，避免设备 ID 充当用户 ID。
+
+`main.ts` 负责 pre-ready scheme 声明和退出释放；nuwaxBridgeHandlers 负责一次注册及登录代次边界；businessRequestRouting 在既有唯一监听器接授权请求门；sessionAuthInjection 剥离预览来源凭据；frameEmbeddingPolicy 只给可信业务顶层文档补本地 scheme CSP 来源。关闭功能不安装 IPC/handler，惰性 scheme 声明是 Electron 时序所需的例外。
+
+桥使用与验收见 `docs/local-file-access-api.md`；新增特性须通过 `scripts/check-feature-boundaries.mjs`。

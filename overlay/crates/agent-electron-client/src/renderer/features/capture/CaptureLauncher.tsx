@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Modal, Select, Space, message } from "antd";
-import { CameraOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
-import type { CaptureCapabilities, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
+import { CameraOutlined, CopyOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import type { CaptureCapabilities, CaptureMenuAction, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
 
 interface Props {
@@ -11,12 +11,14 @@ interface Props {
   /** 常驻控制器；仅把操作面板挂到设置页签，不随页签切换卸载。 */
   panelTarget?: Element | null;
   onAvailabilityChange?(available: boolean): void;
+  /** 壳自绘菜单使用同一个常驻控制器；卸载时清空动作，避免引用失效入口。 */
+  onActionReady?(handler: ((action: CaptureMenuAction) => void) | null): void;
   /** 等待设置弹窗实际关闭，避免把其关闭动画采进冻结帧。 */
   onCaptureStart?(): Promise<void>;
 }
 
 /** 壳上的直接验收入口；业务页继续使用同一服务的独立受信桥。 */
-export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onCaptureStart }) => {
+export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onCaptureStart }) => {
   const [caps, setCaps] = useState<CaptureCapabilities | null>(null);
   const [state, setState] = useState<CaptureState>("idle");
   const [pending, setPending] = useState(false);
@@ -28,6 +30,8 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   const stateRef = useRef<CaptureState>("idle");
   const runRef = useRef<(output?: RecordOutput) => Promise<void>>(async () => undefined);
   const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const previewAction = useRef(false);
   const text = (key: string) => t(`Claw.Capture.${key}`);
 
   useEffect(() => {
@@ -51,6 +55,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   }, [capture, onAvailabilityChange]);
 
   const closePreview = () => {
+    if (previewAction.current) return;
     const current = previewRef.current;
     previewRef.current = null;
     setPreview(null);
@@ -102,21 +107,43 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   };
   runRef.current = run;
 
-  useEffect(() => capture?.onMenuAction?.((action) => {
-    void runRef.current(action === "screenshot" ? undefined : action);
-  }), [capture]);
+  useEffect(() => {
+    const dispatch = (action: CaptureMenuAction) => {
+      void runRef.current(action === "screenshot" ? undefined : action);
+    };
+    onActionReady?.(dispatch);
+    const offMenu = capture?.onMenuAction?.(dispatch);
+    return () => { offMenu?.(); onActionReady?.(null); };
+  }, [capture, onActionReady]);
 
   const save = async () => {
     const current = previewRef.current;
-    if (!capture || !current || saving) return;
+    if (!capture || !current || previewAction.current) return;
+    previewAction.current = true;
     setSaving(true);
     try {
       const result = await capture.save(current.result.resultId);
-      if (result.success) { message.success(text("saved")); closePreview(); }
+      if (!alive.current || previewRef.current !== current) return;
+      if (result.success) { message.success(text("saved")); previewAction.current = false; closePreview(); }
       else if (!result.canceled) message.error(`${text("saveFailed")} · ${result.error || ""}`);
     } catch (error) {
-      message.error(`${text("saveFailed")} · ${error instanceof Error ? error.message : String(error)}`);
-    } finally { if (alive.current) setSaving(false); }
+      if (alive.current && previewRef.current === current) message.error(`${text("saveFailed")} · ${error instanceof Error ? error.message : String(error)}`);
+    } finally { previewAction.current = false; if (alive.current) setSaving(false); }
+  };
+
+  const copy = async () => {
+    const current = previewRef.current;
+    if (!capture?.copy || !current || previewAction.current) return;
+    previewAction.current = true;
+    setCopying(true);
+    try {
+      const result = await capture.copy(current.result.resultId);
+      if (!alive.current || previewRef.current !== current) return;
+      if (result.success) message.success(text(result.kind === 'image' ? 'imageCopied' : 'fileCopied'));
+      else message.error(text('copyFailed'));
+    } catch {
+      if (alive.current && previewRef.current === current) message.error(text('copyFailed'));
+    } finally { previewAction.current = false; if (alive.current) setCopying(false); }
   };
 
   if (!capture || !caps?.available) return null;
@@ -129,7 +156,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
       </Space>
       <Space wrap size={12}>
         <Button icon={<CameraOutlined />} disabled={busy || !!preview} onClick={() => void run()}>{text("screenshot")}</Button>
-        {(["mp4", "webm", "gif"] as const).map((output) => <Button key={output}
+        {(["mp4", "gif"] as const).map((output) => <Button key={output}
           icon={output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />}
           disabled={busy || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output))}
           onClick={() => void run(output)}>{text("record")} · {output.toUpperCase()}</Button>)}
@@ -139,8 +166,11 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   return <>
     {panelTarget && createPortal(panel, panelTarget)}
     <Modal open={!!preview} title={text("preview")} onCancel={closePreview} width={880}
-      footer={<Space><Button onClick={closePreview} disabled={saving}>{text("close")}</Button>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void save()}>{text("save")}</Button></Space>}>
+      closable={!saving && !copying} maskClosable={!saving && !copying} keyboard={!saving && !copying}
+      footer={<Space><Button onClick={closePreview} disabled={saving || copying}>{text("close")}</Button>
+        {capture.copy && <Button icon={<CopyOutlined />} loading={copying} disabled={saving} onClick={() => void copy()}>
+          {text(preview?.result.mime.startsWith('image/') && preview.result.mime !== 'image/gif' ? 'copyImage' : 'copyFile')}</Button>}
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={copying} onClick={() => void save()}>{text("save")}</Button></Space>}>
       {preview && <>
         {preview.url ? preview.result.mime.startsWith("video/")
           ? <video src={preview.url} controls style={{ maxWidth: "100%", maxHeight: "65vh" }} />

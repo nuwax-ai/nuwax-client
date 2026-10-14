@@ -37,6 +37,7 @@ describe("特性关闭（主进程未注册 IPC）", () => {
     expect(caps.formats).toEqual({ still: [], video: [], gif: false });
     expect(await bridge.screenshot()).toMatchObject({ success: false, code: "unsupported" });
     expect(await bridge.record({ output: "mp4" })).toMatchObject({ success: false, code: "unsupported" });
+    expect(await bridge.copy!("id")).toMatchObject({ success: false, code: "unsupported" });
     expect(await bridge.readChunk("id", 0, 1)).toBeNull();
     await expect(bridge.cancel()).resolves.toBeUndefined();
     await expect(bridge.release("id")).resolves.toBeUndefined();
@@ -57,6 +58,8 @@ describe("正常路径", () => {
     const bridge = createCaptureBridge(ipc as never);
     expect(await bridge.screenshot({ format: "png" })).toBe(ok);
     expect(ipc.invoke).toHaveBeenCalledWith(CAPTURE_IPC.SCREENSHOT, { format: "png" });
+    expect(await bridge.copy!("r1")).toBe(ok);
+    expect(ipc.invoke).toHaveBeenLastCalledWith(CAPTURE_IPC.COPY, 'r1');
   });
 
   it("readChunk：返回独立的 ArrayBuffer；Buffer 池中带偏移的视图被正确切片", async () => {

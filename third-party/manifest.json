@@ -38,6 +38,41 @@
           "modified": false,
           "usedBy": "capture",
           "notes": "FFmpeg 的 VP9 编码器依赖；许可证全文保留 LICENSE 及 PATENTS。"
+        },
+        {
+          "id": "openh264",
+          "name": "OpenH264",
+          "version": "2.6.0",
+          "platforms": ["linux"],
+          "license": "BSD-2-Clause",
+          "licenseFile": "third-party/licenses/openh264.txt",
+          "sourceUrl": "https://codeload.github.com/cisco/openh264/tar.gz/652bdb7719f30b52b08e506645a7322ff1b2cc6f",
+          "sourceArchive": "sources/openh264-2.6.0.tar.gz",
+          "sourceFile": "resources/capture/sources/openh264-2.6.0.tar.gz",
+          "sourceSha256": "7a060916a9fcb63ba51d83a4f2388660c0b58797be547c4fa5c52e8d65660a85",
+          "homepage": "https://www.openh264.org/",
+          "modified": false,
+          "usedBy": "capture",
+          "checkIntegrity": true,
+          "notes": "仅 Linux：固定源码自行构建的 BSD-2-Clause H.264 软件编码器，静态链接入独立 LGPL FFmpeg。此构建不是 Cisco 分发的二进制模块，不适用 Cisco 对其官方下载模块的 AVC/H.264 专利费用覆盖；源码许可和专利授权为不同事项。"
+        },
+        {
+          "id": "winpthreads",
+          "name": "MinGW-w64 Winpthreads",
+          "version": "13.0.0.r354.g40ab95d18",
+          "toolchainPackageVersion": "13.0.0.r354.g40ab95d18-1",
+          "platforms": ["win32"],
+          "license": "MIT AND BSD-3-Clause-Clear",
+          "licenseFile": "third-party/licenses/winpthreads.txt",
+          "sourceUrl": "https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/40ab95d18df4cce9c283bf2de275dd32b6ef0e6b",
+          "sourceArchive": "sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceFile": "resources/capture/sources/mingw-w64-winpthreads-13.0.0.r354.tar.gz",
+          "sourceSha256": "501acc97182abb0559875ca9888e7e0b282b922eb7efe3caa1c76449eaad2322",
+          "homepage": "https://www.mingw-w64.org/",
+          "modified": false,
+          "usedBy": "capture",
+          "checkIntegrity": true,
+          "notes": "仅 Windows：静态链接的 MinGW 线程运行库。许可证全文来自所固定源码的 mingw-w64-libraries/winpthreads/COPYING，与 MSYS2 安装包一致，保留 MinGW-w64 与 Lockless Inc. 声明。构建前核对实际静态库所属包版本，拒绝与固定源码不符的工具链。"
         }
       ]
     },

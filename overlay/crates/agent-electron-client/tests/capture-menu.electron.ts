@@ -1,0 +1,158 @@
+/**
+ * Run on Windows/Linux in an interactive desktop, using an isolated Electron runtime.
+ * Build from agent-electron-client after overlay sync (output directory must exist):
+ * pnpm exec esbuild tests/capture-menu-renderer.tsx --bundle --platform=browser --format=iife --define:process.env.NODE_ENV='"production"' --define:process.env='{"NUWAX_APP_IDENTIFIER":"nuwax","NUWAX_APP_DISPLAY_NAME":"Nuwax","NUWAX_PORT_OFFSET":"1000"}' --outfile=<dir>/capture-menu-renderer.js --tsconfig=tsconfig.json
+ * pnpm exec esbuild tests/capture-menu.electron.ts --bundle --platform=node --format=cjs --external:electron --outfile=<dir>/capture-menu.cjs --tsconfig=tsconfig.json
+ * electron <dir>/capture-menu.cjs
+ * NUWAX_CAPTURE_MENU_OUTPUT controls JSON/PNG evidence directory (default cwd/menu-results).
+ * Sends Chromium input only to this fixture's own webContents. No OS input injection.
+ */
+import { app, BrowserWindow } from 'electron';
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { bindCaptureMenuShortcuts } from '@main/window/applicationMenu';
+
+const profile = mkdtempSync(path.join(tmpdir(), 'nuwax-menu-fixture-'));
+const output = path.resolve(process.env.NUWAX_CAPTURE_MENU_OUTPUT || 'menu-results');
+mkdirSync(output, { recursive: true });
+app.setPath('userData', profile);
+app.on('window-all-closed', () => {});
+const report: Record<string, unknown> = { startedAt: new Date().toISOString(), platform: process.platform, versions: process.versions, checks: [] };
+let fixture: BrowserWindow | undefined;
+let unbindShortcuts: (() => void) | undefined;
+let complete = false;
+const finish = (error?: unknown) => {
+  if (complete) return;
+  complete = true;
+  clearTimeout(deadline);
+  report.ok = !error;
+  report.finishedAt = new Date().toISOString();
+  if (error) report.error = error instanceof Error ? error.stack : String(error);
+  writeFileSync(path.join(output, 'menu-results.json'), JSON.stringify(report, null, 2));
+  unbindShortcuts?.();
+  fixture?.destroy();
+  app.exit(error ? 1 : 0);
+};
+const deadline = setTimeout(() => finish(new Error('Desktop menu fixture exceeded 30 seconds')), 30_000);
+app.on('will-quit', () => { try { rmSync(profile, { recursive: true, force: true }); } catch {} });
+const pause = (ms = 40) => new Promise(resolve => setTimeout(resolve, ms));
+
+app.whenReady().then(async () => {
+  assert.ok(['win32', 'linux'].includes(process.platform), 'This fixture must run on Windows/Linux; navigator.platform is never overridden');
+  const html = path.join(output, 'capture-menu.html');
+  // The external bundle and CSS come from the adjacent build output; no remote resources.
+  const renderer = path.join(__dirname, 'capture-menu-renderer.js');
+  const css = path.join(__dirname, 'capture-menu-renderer.css');
+  const { pathToFileURL } = await import('node:url');
+  writeFileSync(html, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src data:; connect-src 'none'"><title>Nuwax menu fixture</title><link rel="stylesheet" href="${pathToFileURL(css).href}"></head><body><div id="root"></div><script src="${pathToFileURL(renderer).href}"></script></body></html>`);
+  fixture = new BrowserWindow({ width: 1040, height: 600, frame: false, show: false, backgroundColor: '#f8f9fa', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+  const window = fixture;
+  const consoleMessages: unknown[] = [];
+  report.rendererConsole = consoleMessages;
+  window.webContents.on('console-message', event => {
+    consoleMessages.push({ level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId });
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  await window.loadFile(html);
+  window.showInactive();
+  const script = <T = any>(source: string): Promise<T> => window.webContents.executeJavaScript(source);
+  const until = async (source: string, label: string) => {
+    const started = Date.now();
+    while (!await script(source)) {
+      if (Date.now() - started >= 3000) {
+        report.failureDOM = await script('({platform:navigator.platform,body:document.body.innerHTML,state:window.captureMenuFixture})');
+        writeFileSync(path.join(output, 'failure.png'), (await window.webContents.capturePage()).toPNG());
+        throw new Error(`${label} timed out`);
+      }
+      await pause();
+    }
+  };
+  await until('window.captureMenuFixture?.ready === true && document.querySelectorAll(".topbar-menu-btn").length === 6', 'Real toolbar render');
+  report.navigatorPlatform = await script('navigator.platform');
+  assert.match(String(report.navigatorPlatform), process.platform === 'linux' ? /^Linux/i : /^Win/i);
+  const snapshot = () => script(`(() => ({buttons:[...document.querySelectorAll('.topbar-menu-btn')].map(e=>e.textContent),menus:[...document.querySelectorAll('.topbar-app-menu')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>e.innerText),state:window.captureMenuFixture}))()`);
+  const check = async (name: string) => { (report.checks as unknown[]).push({ name, ...(await snapshot()) }); };
+  const point = (query: string, text: string) => script<[number, number]>(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(query)})].find(e=>e.textContent.includes(${JSON.stringify(text)})&&e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');if(!e)throw Error('Missing visible target: '+${JSON.stringify(text)});const r=e.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`);
+  const mouse = async (type: Electron.MouseInputEvent['type'], [x, y]: [number, number]) => {
+    window.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1 });
+    await pause();
+  };
+  const hover = async (text: string) => mouse('mouseMove', await point('.topbar-menu-btn', text));
+  const menuHas = (text: string) => `(()=>{const menus=[...document.querySelectorAll('.topbar-app-menu')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');return menus.length===1&&menus[0].innerText.includes(${JSON.stringify(text)})})()`;
+  await hover('文件');
+  await until(menuHas('新建任务'), 'Hover File opens menu without click');
+  await check('hover-file-without-click');
+  await hover('编辑');
+  await until(menuHas('Ctrl+Z'), 'Hover switches File to Edit');
+  await pause(220); // A delayed close from File must not close Edit.
+  assert.ok(await script(menuHas('Ctrl+Z')), 'Previous popup delayed close must preserve newly hovered menu');
+  await check('hover-switch-file-to-edit');
+  await hover('截图与录屏');
+  await until(menuHas('MP4'), 'Hover Capture opens format menu');
+  const captureState = await snapshot();
+  for (const text of ['截图', 'MP4', 'GIF', 'Ctrl+Alt+S', 'Ctrl+Alt+R']) assert.ok(captureState.menus[0].includes(text), `Capture menu includes ${text}`);
+  assert.ok(!captureState.menus[0].includes('WEBM'), 'Capture menu only offers MP4 and GIF recording');
+  assert.equal(await script(`(()=>{const menu=[...document.querySelectorAll('.topbar-app-menu')].find(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');return menu.querySelectorAll('.ant-dropdown-menu-item').length})()`), 3, 'Capture menu contains screenshot and two recording formats');
+  await check('capture-menu-formats-and-shortcuts');
+  writeFileSync(path.join(output, 'capture-menu.png'), (await window.webContents.capturePage()).toPNG());
+  const position = await point('.topbar-app-menu [role="menuitem"]', 'Ctrl+Alt+S');
+  await mouse('mouseMove', position);
+  await mouse('mouseDown', position);
+  await mouse('mouseUp', position);
+  await until('window.captureMenuFixture.calls.length === 1', 'Screenshot dispatch');
+  await pause(200);
+  const final = await snapshot();
+  assert.deepEqual(final.state.calls, [{ action: 'screenshot', visibleMenus: [] }], 'Single callback only after popup hidden');
+  assert.deepEqual(final.state.errors, []);
+  assert.deepEqual(final.menus, []);
+  await check('screenshot-dispatch-after-menu-hidden');
+  writeFileSync(path.join(output, 'after-screenshot-menu.png'), (await window.webContents.capturePage()).toPNG());
+  // Exercise the production application shortcut handler against this fixture's
+  // own webContents. No OS/global shortcut is registered or sent.
+  let recordingActive = false;
+  const recordingControls: string[] = [];
+  report.recordingControls = recordingControls;
+  unbindShortcuts = bindCaptureMenuShortcuts(window.webContents, action => {
+    if (action === 'mp4') recordingActive = true;
+    void script(`window.captureMenuDispatch(${JSON.stringify(action)})`).catch(finish);
+  }, {
+    platform: process.platform,
+    controlRecording: action => {
+      if (!recordingActive) return false;
+      recordingControls.push(action);
+      if (action === 'stop') recordingActive = false;
+      return true;
+    },
+  });
+  const key = async (keyCode: string) => {
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers: ['control', 'alt'] });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers: ['control', 'alt'] });
+    await pause();
+  };
+  await key('S');
+  await until('window.captureMenuFixture.calls.length === 2', 'Ctrl+Alt+S dispatch');
+  await key('R');
+  await until('window.captureMenuFixture.calls.length === 3', 'Ctrl+Alt+R dispatch');
+  await key('Z');
+  await pause(100);
+  const afterKeys = await snapshot();
+  assert.deepEqual(afterKeys.state.calls.map((call: { action: string }) => call.action), ['screenshot', 'screenshot', 'mp4'], 'Only the two capture shortcuts dispatch');
+  assert.ok(afterKeys.state.calls.every((call: { visibleMenus: string[] }) => call.visibleMenus.length === 0), 'Application shortcut dispatch preserves hidden menus');
+  await check('application-capture-shortcuts');
+  if (process.platform === 'linux') {
+    await key('P');
+    await key('R');
+    assert.deepEqual(recordingControls, ['pause', 'stop'], 'Linux active recording shortcuts control pause/stop');
+    assert.equal((await snapshot()).state.calls.length, 3, 'Controlling an active recording never starts a second one');
+    await key('P');
+    assert.deepEqual(recordingControls, ['pause', 'stop'], 'Idle Ctrl+Alt+P does not control a recording');
+    await check('linux-active-recording-shortcuts');
+  } else {
+    await key('P');
+    assert.deepEqual(recordingControls, [], 'Windows capture shortcuts do not use Linux recording controls');
+  }
+  finish();
+}).catch(finish);
