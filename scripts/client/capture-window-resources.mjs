@@ -65,9 +65,12 @@ export async function prepareCaptureWindowResources(root, { platform = process.p
   const staging = path.join(core.paths(root).cache, 'capture-koffi', randomUUID());
   fs.mkdirSync(staging, { recursive: true });
   try {
-    // 系统 tar 仅解开两个固定成员；Windows 使用系统自带的 BSD tar，路径无需 MSYS 转换。
-    await tools.run('tar', ['-xf', sourceArchive, '-C', staging, lock.source.licenseFile], { capture: true });
-    await tools.run('tar', ['-xf', targetArchive, '-C', staging, target.binary], { capture: true });
+    // Git Bash 的 GNU tar 会把盘符当作远程主机；Windows 必须明确调用系统 BSD tar。
+    const tar = platform === 'win32'
+      ? path.win32.join(process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'tar.exe')
+      : 'tar';
+    await tools.run(tar, ['-xf', sourceArchive, '-C', staging, lock.source.licenseFile], { capture: true });
+    await tools.run(tar, ['-xf', targetArchive, '-C', staging, target.binary], { capture: true });
     const license = path.join(staging, lock.source.licenseFile), native = path.join(staging, target.binary);
     if (detectLicense(fs.readFileSync(license, 'utf8')) !== 'MIT' || digest(native) !== target.binarySha256) throw new Error('[capture] Koffi extracted payload failed verification');
     fs.mkdirSync(dir, { recursive: true });

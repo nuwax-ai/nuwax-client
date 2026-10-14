@@ -25,7 +25,7 @@ function fixture(t) {
   const tools = { ...core, run: async (command, args) => {
     calls.push({ command, args });
     if (command === 'curl') fs.copyFileSync(archives.get(args.at(-3)), args.at(-1));
-    else if (command === 'tar') {
+    else if (command === 'tar' || command.endsWith('\\System32\\tar.exe')) {
       const member = args.at(-1), output = path.join(args[3], member); fs.mkdirSync(path.dirname(output), { recursive: true });
       if (member.endsWith('LICENSE.txt')) fs.writeFileSync(output, 'Permission is hereby granted, free of charge, to any person obtaining a copy');
       else fs.copyFileSync(binaries.get(member), output);
@@ -49,7 +49,16 @@ test('preparation selects only the requested target and keeps the encoder untouc
   for (const target of Object.keys(f.lock.targets)) {
     const [platform, arch] = target.split('-'), dir = path.join(f.root, 'resources/capture', target);
     fs.mkdirSync(dir, { recursive: true }); const encoder = path.join(dir, 'ffmpeg'); fs.writeFileSync(encoder, 'existing encoder');
+    const callStart = f.calls.length;
     await prepareCaptureWindowResources(f.root, { platform, arch, tools: f.tools });
+    const extracts = f.calls.slice(callStart).filter(call => call.args[0] === '-xf');
+    assert.equal(extracts.length, 2);
+    for (const call of extracts) {
+      if (platform === 'win32') {
+        assert.ok(path.win32.isAbsolute(call.command));
+        assert.equal(call.command, path.win32.join(process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'tar.exe'));
+      } else assert.equal(call.command, 'tar');
+    }
     assert.ok(inspectCaptureWindowResource(f.root, { platform, arch }));
     assert.equal(fs.readFileSync(encoder, 'utf8'), 'existing encoder');
     assert.deepEqual(fs.readdirSync(dir).sort(), ['ffmpeg', 'koffi.json', 'koffi.node']);

@@ -64,3 +64,10 @@
 - 子模块更新完成：前端源码 `d7d0ff622a5c416162dc95b686fbaeff3fd79796`，产物 `0bf94615a304472155db5b994da8f0f362aa8112` 已推送产物仓，版本戳 `d7d0ff622` 一致；消息微应用 `b3ca206f40b535cabe998240b4247b68b1f5a29e`，资料库 `d223ab9e7ac9f70c1e613503d901d6cbedc98dc1`。
 - 前端发布门禁：4029 项通过、6 项跳过（按 CI 排除既有支付结算专项）；类型门禁自测 19 项通过，四个受管类型域零诊断，架构检查无新增违规。壳代码本轮应用菜单/捕获新增文件 TypeScript 零诊断；全仓仍有既有诊断。
 - 资源核验：实际构建的 nuwax-file-server `1.6.0` 记录来源 `69c9d199302a87e0f9b2a387ac3d41de84706cc2`，运行入口存在；原始工作区未升级或覆盖开发者资源。
+
+
+## Windows 打包修复与新正式版号
+
+- `v3.0.14@dd483a01` 的正式流水线 `38556492076` 在 Windows 的「Prepare and admit capture release resources」失败：Git Bash 的 GNU tar 将 `D:` 盘符识别成远程主机。源自窗口识别资源提取时对 PATH 中 tar 类型的错误假设。
+- Windows 改为明确执行 `%SystemRoot%\System32\tar.exe`，macOS/Linux 继续使用各自的 tar。所有目标仍只提取锁定的两个成员，归档及模块 SHA256 校验不变。六目标准备回归同时检查 Windows 调用为系统 tar 绝对路径，资源/打包专项 43 项通过。
+- 遵守不可变 tag 规则：保留 `v3.0.14`，修复后的正式版本改为 `3.0.15`。多会话修复、子模块 pin、file-server 1.6.0、应用菜单隐藏范围与原候选一致。
