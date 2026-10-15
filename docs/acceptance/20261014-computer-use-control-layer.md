@@ -2,37 +2,45 @@
 
 - 规格：`specs/computer-use-control-layer.md`；计划：`plans/20261014-computer-use-control-layer-plan.md`
 - 分支：`codex/computer-use-product`
+- 环境：本机 macOS，Nuwax Computer Use 0.28.2（`/Applications`，正式签名，已授权）；网页任务使用另起的独立 Chrome 实例，没有碰用户自己的浏览器
+- 方法：`scripts/computer-use/bench/README.md`；原始结果：`docs/acceptance/computer-use-bench/*.json`
 
-## 一、基准测试：改造前（基线）
+## 一、基准测试结果（改造前后对比）
 
-- 代码：`6ac61ca2`（改造前的控制层）
-- 时间：2026-10-14，本机 macOS，Nuwax Computer Use 0.28.2（`/Applications`，正式签名，已授权）
-- 方法与任务说明：`scripts/computer-use/bench/README.md`
-- 原始结果：`docs/acceptance/computer-use-bench/results-baseline-*.json`
+改造前用 `6ac61ca2` 的控制层（结果文件 `results-baseline-v2-*`，因为是从导出副本运行，文件里的 commit 字段为空）；改造后用 `b277525a`（`results-after-*`）。两边跑的是同一套任务脚本，每边两轮，两轮结果一致。
 
-| 任务 | 第 1 轮 | 第 2 轮 | Agent 调用 | 被"先观察"拒绝 | 驱动拒绝 | 暂停原因 | 人工恢复 |
-|---|---|---|---|---|---|---|---|
-| N1 计算器 6×7 | 成功 | 成功 | 19 / 19 | 5 / 5 | 0 / 0 | 无 | 0 / 0 |
-| N2 原生滚动长页面 | **失败** | **失败** | 15 / 15 | 1 / 1 | 0 / 3 | 第 1 轮：重复动作；第 2 轮：报错停机 ×3、重复动作 | 1 / 4 |
-| W1 表单 | 成功 | 成功 | 19 / 19 | 4 / 4 | 1 / 1 | 无 | 0 / 0 |
-| W2 浏览器滚动 | 成功 | 成功 | 10 / 10 | 1 / 1 | 0 / 0 | 无 | 0 / 0 |
-| W3 跳转后用旧引用 | 成功 | 成功 | 13 / 13 | 2 / 2 | 1 / 1 | 无 | 0 / 0 |
+| 任务 | 改造前 | 改造后 | Agent 调用（前→后） | 被"先观察"拒绝（前→后） | 人工恢复（前→后） |
+|---|---|---|---|---|---|
+| N1 计算器 6×7 | 成功 | 成功 | 19 → 11 | 5 → 1 | 0 → 0 |
+| N2 原生滚动长页面 | **失败**（第 4 次滚动被判"重复动作"，不可恢复） | 成功 | 15 → 27～29 | 1 → 1 | 1 → 0 |
+| W1 浏览器表单 | 成功 | 成功 | 19 → 15 | 4 → 2 | 0 → 0 |
+| W2 浏览器滚动 | 成功 | 成功 | 10 → 10 | 1 → 1 | 0 → 0 |
+| W3 跳转后用旧引用 | 成功 | 成功 | 13 → 11 | 2 → 1 | 0 → 0 |
+| **合计** | 4/5 | **5/5** | 76 → 74～76 | 13 → 6 | 1 → 0 |
 
-观察：
+N2 改造后调用变多，是因为它一路滚到了按钮所在位置（改造前在中途被终止）。
 
-1. **N2 两轮都失败**：页面每次滚动都有进展，但第 4 次相同参数的滚动被判定为"重复动作"，并且不能恢复，任务直接终止。
-2. **N2 第 2 轮**：Nuwax Computer Use 有 3 次拒绝带了 `isError`，每次都让任务暂停、等待人工恢复（"报错就停机"）。
-3. **W1 和 W3 的浏览器拒绝**（可信输入路径不可用、引用过期）都没有设置 `isError`，被现有网关当成了成功。规格 R2 描述的就是这个问题。
-4. **"先观察"门禁的开销**：N1 有 5 次、W1 有 4 次调用因为"每次写操作后都必须重新观察"被拒绝，要额外再观察一次。连打开应用（`launch_app`）也要求先观察。
+窗口模式（结果文件 `results-window-*`）：WS 任务两轮都成功。Agent 在不指定任何 id 的情况下接管并绑定选中的测试浏览器窗口，填表提交；中途故意越界两次（操作未绑定的标签页、另开隔离浏览器），都被拒绝为 `scopeViolation`，任务没有中断。
+
+说明：改造后，整个桌面模式会拒绝接管已有浏览器配置（规格 R4）。为了和改造前同口径对比，网页任务用 `--bench-allow-attach` 放行了对测试实例的接管；这个开关只存在于测试脚本里，产品代码没有。
 
 ## 二、实测确认的事实
 
-- **T7 第一部分（R4 的前提）**：在当前启动参数（`--permission-mode unrestricted --dangerously-bypass-approvals`）下，`browser_prepare` 带上 `strategy.kind=existing_profile` 就能直接接管一个已打开调试端口的 Chrome 实例。回复是 `action:"attached_existing_profile"`、`displayed_consent_prompt:false`，没有经过宿主审批。验证对象是另起的独立测试实例，没有动用户的浏览器。
-- **另开隔离浏览器在常见的 Mac 上不可用**：本机的 Chrome 是拖拽安装的（属主是当前用户），`browser_prepare` 的隔离启动返回 `browser_route_unavailable`，原因是"no vendor-signed system Chromium executable is available for isolated launch"。cua 只接受系统管理员拥有的安装位置。
+- **R4 的前提成立**：改造前的启动参数（`--permission-mode unrestricted --dangerously-bypass-approvals`）下，`browser_prepare` 带上 `strategy.kind=existing_profile` 就能直接接管一个已打开调试端口的 Chrome。回复为 `attached_existing_profile`、`displayed_consent_prompt:false`，没有经过宿主审批。
+- **另开隔离浏览器在常见的 Mac 上不可用**：Chrome 是拖拽安装的（属主为当前用户）时，`browser_prepare` 隔离启动返回 `browser_route_unavailable`（no vendor-signed system Chromium executable）。因此浏览器通道在多数 Mac 上的主路径是**窗口模式**。
+- 窗口模式下生成的策略文件（包括对 `browser_prepare` 的 pid/window_id 约束）被 Nuwax Computer Use 接受：`managed_policy_active` 和 `managed_policy_valid` 均为 true。
 - 浏览器绑定回复的字段：`target_id`，以及 `tabs[].tab_id` / `tabs[].active`。
-- `semantic_v2` 快照里每个元素带有 `visibility`（`in_viewport` / `offscreen`），可以作为"是否有进展"的依据；默认的 `dom_refs_v1` 快照不带视口信息。
-- macOS 上，浏览器默认的可信输入路径会被拒绝（`browser_input_trust_unavailable`），需要改用 `input_route:"dom_event"`；成功后回复是 `effect:"unverifiable"`。
+- `semantic_v2` 快照带 `visibility`（`in_viewport` / `offscreen`），默认 `dom_refs_v1` 不带视口信息；窗口元素树里屏幕外的网页元素会被压到窗口底边，高度为 1。
+- macOS 上浏览器默认的可信输入路径会被拒绝（`browser_input_trust_unavailable`），需改用 `input_route:"dom_event"`；只有声明了 pointer 动作的引用才能滚动。
+- 不带目标的按键滚动，在浏览器有多个窗口时会被拒绝（`same_pid_keyboard_ambiguity`）；带坐标的滚轮路径可用。
+- 拒绝回复结构的回归脚本 `scripts/computer-use/verify-helper-refusals.cjs` 对 0.28.2 的 8 项检查全部通过。
 
-## 三、基准测试：改造后
+## 三、测试中遇到的一次异常
 
-（待第 1 到第 5 步完成后填写）
+改造后第 2 轮第一次运行时，Nuwax Computer Use 守护进程中途退出（进程消失、socket 文件残留），没有崩溃报告，系统日志里也没有记录。重启守护进程后重跑，全部通过，之后没有复现。它发生在网关之外，和本次改动的关系待观察；产品里守护进程退出会被现有的健康巡检发现并暂停任务。
+
+## 四、仍需在正式安装包上验收
+
+- 设置页里选择浏览器窗口进入窗口模式，用真实模型完成网页任务（本轮只用了程序化 Agent）。
+- 控制条显示"无进展""结果不确定""越权次数过多"三个新原因，以及"已拒绝"的步骤。
+- Windows 和 Linux 上浏览器工具的行为（本轮只在 macOS 上验证）。

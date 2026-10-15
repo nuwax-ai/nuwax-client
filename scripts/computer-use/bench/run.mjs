@@ -7,7 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../../..");
-const esbuild = path.join(root, "nuwa-electron-shell/crates/agent-electron-client/node_modules/.bin/esbuild");
+// CU_ESBUILD lets a baseline copy of the repo (no installed dependencies) reuse another checkout's esbuild.
+const esbuild = process.env.CU_ESBUILD ?? path.join(root, "nuwa-electron-shell/crates/agent-electron-client/node_modules/.bin/esbuild");
 const outDir = "/tmp/cu-bench";
 fs.mkdirSync(outDir, { recursive: true });
 const outfile = path.join(outDir, "harness.cjs");

@@ -13,9 +13,11 @@ import fs from "node:fs";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
 import type { CallResult } from "./harness";
+import type { CuaScope } from "../../../overlay/crates/agent-electron-client/src/shared/types/cuaRuntime";
 
 export interface BenchContext {
   root: string;
+  scope: CuaScope;
   call(tool: string, args?: Record<string, unknown>): Promise<CallResult>;
   sleep(ms: number): Promise<void>;
 }
@@ -128,7 +130,7 @@ export const TASKS: Record<string, (ctx: BenchContext) => Promise<Outcome>> = {
     return { success: /"42"/.test(line), detail: line.trim() };
   },
 
-  /** N2: Long page in a native window via desktop scroll (same args each time) + AX click. */
+  /** N2: Long page in a native window via the pixel wheel path (identical args each time) + AX click. */
   async N2(ctx) {
     const url = `${await fixtures()}/long`;
     const b = await bindBrowser(ctx);
@@ -142,7 +144,8 @@ export const TASKS: Record<string, (ctx: BenchContext) => Promise<Outcome>> = {
     const visible = () => (st.sc?.elements ?? []).find((e: any) => e.label === "Pick me" && e.role === "AXButton" &&
       bounds && e.frame && e.frame.h > 5 && e.frame.y >= bounds.y + 80 && e.frame.y + e.frame.h <= bounds.y + bounds.height);
     for (let i = 0; i < 12 && !visible(); i++) {
-      await act(ctx, "scroll", () => ({ pid: b.pid, window_id: b.windowId, direction: "down", by: "page", amount: 1 }), observe);
+      // Without a target, key-based scrolling is refused when the browser owns another window.
+      await act(ctx, "scroll", () => ({ pid: b.pid, window_id: b.windowId, direction: "down", x: 300, y: 400, amount: 3 }), observe);
       await observe();
     }
     const button = visible();
@@ -225,5 +228,35 @@ export const TASKS: Record<string, (ctx: BenchContext) => Promise<Outcome>> = {
     await act(ctx, "browser_click", () => ({ target_id: b.target, tab_id: b.tab, ref: confirm(), input_route: "dom_event" }), observe);
     await ctx.sleep(500);
     return { success: !!took("/confirmed") && !took("/wrong"), detail: `slip=${slip.kind}:${slip.code ?? ""}` };
+  },
+};
+
+/**
+ * Window-scope tasks: the user selected the (test) browser window in Computer Use. The agent
+ * attaches and binds it without naming ids, works on its tab, and twice tries to leave it.
+ */
+export const WINDOW_TASKS: Record<string, (ctx: BenchContext) => Promise<Outcome>> = {
+  async WS(ctx) {
+    const url = `${await fixtures()}/form`;
+    const look = () => ctx.call("get_window_state", {});
+    await act(ctx, "browser_prepare", () => ({ strategy: { kind: "existing_profile" } }), look);
+    const bind = await ctx.call("get_browser_state", {});
+    if (bind.kind !== "ok") return { success: false, detail: `bind: ${bind.kind} ${bind.code ?? ""}` };
+    const b = { target: bind.sc.target_id as string, tab: (bind.sc.tabs.find((t: any) => t.active) ?? bind.sc.tabs[0]).tab_id as string };
+    let snap!: CallResult;
+    const observe = async () => { snap = await ctx.call("get_browser_state", { target_id: b.target, tab_id: b.tab }); };
+    await act(ctx, "browser_navigate", () => ({ target_id: b.target, tab_id: b.tab, url }), observe);
+    await observe();
+    for (const [field, text] of Object.entries({ name: "Grace", email: "grace@example.com", city: "Oslo" })) {
+      await act(ctx, "browser_type", () => ({ target_id: b.target, tab_id: b.tab, ref: refFor(snap, (r) => r.label === `name=${field}`)?.ref, text, replace: true }), observe);
+    }
+    const escapeTab = await ctx.call("browser_click", { target_id: "bt-not-bound", tab_id: "tab-x", ref: "p1:1" });
+    const escapeLaunch = await ctx.call("browser_prepare", { allow_launch: true, profile: { mode: "isolated_new" } });
+    await observe();
+    await act(ctx, "browser_click", () => ({ target_id: b.target, tab_id: b.tab, ref: refFor(snap, (r) => r.label === "type=submit")?.ref, input_route: "dom_event" }), observe);
+    await ctx.sleep(800);
+    const posted = took("/submitted?name=Grace");
+    const escapesRefused = escapeTab.code === "scopeViolation" && escapeLaunch.code === "scopeViolation";
+    return { success: !!posted && escapesRefused, detail: `posted=${!!posted} escapes=${escapeTab.code},${escapeLaunch.code}` };
   },
 };

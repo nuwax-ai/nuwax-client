@@ -1,57 +1,52 @@
 {
-  "label": "baseline",
-  "commit": "6ac61ca2",
-  "at": "2026-10-14T09:07:17.499Z",
+  "label": "after",
+  "commit": "b277525a",
+  "at": "2026-10-14T09:59:02.554Z",
+  "scope": "desktop",
+  "allowAttach": true,
   "results": [
     {
       "task": "N1",
       "success": true,
-      "agentCalls": 19,
-      "controllerSteps": 14,
+      "agentCalls": 11,
+      "controllerSteps": 10,
       "driverRefused": 0,
       "driverErrors": 0,
       "gatewayRejects": {
-        "observationRequired": 5
+        "observationRequired": 1
       },
       "pauses": [],
       "interventions": 0,
-      "ms": 30042,
+      "ms": 17057,
       "detail": "- AXStaticText = \"42\" (编辑字段)"
     },
     {
       "task": "N2",
-      "success": false,
-      "agentCalls": 15,
-      "controllerSteps": 13,
-      "driverRefused": 3,
+      "success": true,
+      "agentCalls": 29,
+      "controllerSteps": 28,
+      "driverRefused": 0,
       "driverErrors": 0,
       "gatewayRejects": {
-        "observationRequired": 1,
-        "repeatedAction": 1
+        "observationRequired": 1
       },
-      "pauses": [
-        "toolFailed",
-        "toolFailed",
-        "toolFailed",
-        "repeatedAction"
-      ],
-      "interventions": 4,
-      "ms": 2806,
-      "abortedReason": "cannotResume:repeatedAction"
+      "pauses": [],
+      "interventions": 0,
+      "ms": 57627
     },
     {
       "task": "W1",
       "success": true,
-      "agentCalls": 19,
-      "controllerSteps": 15,
+      "agentCalls": 15,
+      "controllerSteps": 13,
       "driverRefused": 1,
       "driverErrors": 0,
       "gatewayRejects": {
-        "observationRequired": 4
+        "observationRequired": 2
       },
       "pauses": [],
       "interventions": 0,
-      "ms": 14287,
+      "ms": 14591,
       "detail": "/submitted?name=Ada&email=ada%40example.com&city=Paris"
     },
     {
@@ -66,21 +61,21 @@
       },
       "pauses": [],
       "interventions": 0,
-      "ms": 8647
+      "ms": 8751
     },
     {
       "task": "W3",
       "success": true,
-      "agentCalls": 13,
-      "controllerSteps": 11,
+      "agentCalls": 11,
+      "controllerSteps": 10,
       "driverRefused": 1,
       "driverErrors": 0,
       "gatewayRejects": {
-        "observationRequired": 2
+        "observationRequired": 1
       },
       "pauses": [],
       "interventions": 0,
-      "ms": 9843,
+      "ms": 9908,
       "detail": "slip=refused:route_unavailable"
     }
   ]

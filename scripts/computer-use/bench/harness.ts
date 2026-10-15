@@ -16,8 +16,13 @@ import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { CuaMcpGateway } from "../../../overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway";
 import { CuaTaskController } from "../../../overlay/crates/agent-electron-client/src/main/services/cua/taskController";
-import { cuaPolicy, scopeCuaCall, visibleCuaTools } from "../../../overlay/crates/agent-electron-client/src/main/services/cua/windowScope";
-import { TASKS, type BenchContext } from "./tasks";
+import * as windowScopeModule from "../../../overlay/crates/agent-electron-client/src/main/services/cua/windowScope";
+import type { CuaScope } from "../../../overlay/crates/agent-electron-client/src/shared/types/cuaRuntime";
+import { TASKS, WINDOW_TASKS, type BenchContext } from "./tasks";
+
+// The harness also runs against older control layers (for baselines) that predate these exports.
+const { cuaPolicy, scopeCuaCall, visibleCuaTools } = windowScopeModule;
+const Bindings: any = (windowScopeModule as any).CuaBrowserBindings ?? class { has() { return false; } record() {} clear() {} };
 
 type Daemon = { socketPath: string; tokenFile: string; dataHome: string; bin: string };
 type Rpc = { id?: unknown; result?: { isError?: boolean; structuredContent?: any; content?: Array<{ type: string; text?: string }> }; error?: unknown };
@@ -92,7 +97,8 @@ class AgentClient {
   close() { this.socket?.destroy(); }
 }
 
-async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] }, name: string): Promise<TaskMetrics> {
+async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] }, name: string,
+  catalog: typeof TASKS, windowScope?: CuaScope, allowAttach = false): Promise<TaskMetrics> {
   const controller = new CuaTaskController();
   controller.setAvailable(true);
   const pauses: string[] = [];
@@ -105,16 +111,19 @@ async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] 
     gateway.cancelPending(reason);
     gateway.pauseTransports();
   };
-  const desktop = { kind: "desktop" as const };
+  const scope: CuaScope = windowScope ?? { kind: "desktop" };
+  const bindings = new Bindings();
   const env = { ...process.env, CUA_DRIVER_NUWAX_TOKEN_FILE: daemon.tokenFile, CUA_DRIVER_DATA_HOME: daemon.dataHome, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false" };
   gateway = new CuaMcpGateway({
     controller,
     allowedTools: lists.allowed,
-    visibleTools: () => visibleCuaTools(desktop, lists.allowed),
-    transformCall: (tool, args) => scopeCuaCall(desktop, tool, args),
+    visibleTools: () => visibleCuaTools(scope, lists.allowed),
+    transformCall: (tool, args) => allowAttach && tool === "browser_prepare" ? { tool, args } : (scopeCuaCall as any)(scope, tool, args, bindings),
+    scope: () => scope,
+    onResult: (tool, args, outcome, structured) => bindings.record(scope, tool, args, outcome, structured),
     launch: () => spawn(daemon.bin, ["mcp", "--socket", daemon.socketPath], { env, stdio: ["pipe", "pipe", "pipe"] }) as any,
     onFailure,
-  } as any);
+  });
   const gwDir = fs.mkdtempSync(path.join(os.tmpdir(), "cu-gw-"));
   const gwSocket = path.join(gwDir, "g");
   const token = randomBytes(32).toString("hex");
@@ -137,6 +146,7 @@ async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] 
 
   const ctx: BenchContext = {
     root,
+    scope,
     async call(tool, args = {}) {
       m.agentCalls++;
       const res = classify(await client.rpc("tools/call", { name: tool, arguments: args }));
@@ -152,7 +162,7 @@ async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] 
   };
 
   try {
-    const outcome = await TASKS[name](ctx);
+    const outcome = await catalog[name](ctx);
     m.success = outcome.success; m.detail = outcome.detail;
   } catch (error) {
     m.abortedReason = error instanceof TaskAborted ? error.message : `harness:${(error as Error).message}`;
@@ -170,24 +180,32 @@ async function runTask(root: string, daemon: Daemon, lists: { allowed: string[] 
 export async function main(argv: string[]) {
   const root = path.resolve(__dirname_compat(), "../../..");
   const lists = toolLists(root);
-  if (argv.includes("--policy-out")) {
-    // Same managed policy the product hands the daemon in desktop scope.
-    fs.writeFileSync(argv[argv.indexOf("--policy-out") + 1], cuaPolicy({ kind: "desktop" }, lists.allowed, lists.denied), { mode: 0o600 });
+  const opt = (name: string) => argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
+  // --window <pid>:<windowId> runs the window-scope tasks against that (test browser) window.
+  const [pid, windowId] = (opt("--window") ?? "").split(":").map(Number);
+  const windowScope: CuaScope | undefined = pid && windowId ? { kind: "window", pid, windowId, label: "bench" } : undefined;
+  if (opt("--policy-out")) {
+    // Same managed policy the product hands the daemon for this scope.
+    fs.writeFileSync(opt("--policy-out")!, cuaPolicy(windowScope ?? { kind: "desktop" }, lists.allowed, lists.denied), { mode: 0o600 });
     return;
   }
   const daemon = JSON.parse(fs.readFileSync("/tmp/cu-bench/daemon.json", "utf8")) as Daemon;
-  const pick = argv.includes("--tasks") ? argv[argv.indexOf("--tasks") + 1].split(",") : Object.keys(TASKS);
-  const label = argv.includes("--label") ? argv[argv.indexOf("--label") + 1] : "run";
+  const catalog = windowScope ? WINDOW_TASKS : TASKS;
+  // Desktop mode refuses attaching to an existing browser profile (spec R4). For a like-for-like
+  // comparison with runs made before R4, this lets the agent attach the separate test instance.
+  const allowAttach = argv.includes("--bench-allow-attach");
+  const pick = opt("--tasks")?.split(",") ?? Object.keys(catalog);
+  const label = opt("--label") ?? "run";
   const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root }).stdout.toString().trim();
   const results: TaskMetrics[] = [];
   for (const name of pick) {
     process.stdout.write(`[bench] ${name} ... `);
-    const r = await runTask(root, daemon, lists, name);
+    const r = await runTask(root, daemon, lists, name, catalog, windowScope, allowAttach);
     results.push(r);
     console.log(r.success ? "OK" : `FAIL ${r.abortedReason ?? r.detail ?? ""}`, JSON.stringify({ calls: r.agentCalls, pauses: r.pauses, interventions: r.interventions }));
   }
   const out = `/tmp/cu-bench/results-${label}-${Date.now()}.json`;
-  fs.writeFileSync(out, JSON.stringify({ label, commit, at: new Date().toISOString(), results }, null, 2));
+  fs.writeFileSync(out, JSON.stringify({ label, commit, at: new Date().toISOString(), scope: windowScope?.kind ?? "desktop", allowAttach, results }, null, 2));
   console.log(`[bench] results -> ${out}`);
 }
 

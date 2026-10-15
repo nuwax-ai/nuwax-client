@@ -1,0 +1,25 @@
+{
+  "label": "window",
+  "commit": "b277525a",
+  "at": "2026-10-14T10:00:15.019Z",
+  "scope": "window",
+  "allowAttach": false,
+  "results": [
+    {
+      "task": "WS",
+      "success": true,
+      "agentCalls": 13,
+      "controllerSteps": 10,
+      "driverRefused": 0,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 1,
+        "scopeViolation": 2
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 14273,
+      "detail": "posted=true escapes=scopeViolation,scopeViolation"
+    }
+  ]
+}
