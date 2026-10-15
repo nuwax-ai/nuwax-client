@@ -13,6 +13,7 @@ import { terminalCompatLockFile, inspectTerminalCompatResource } from './termina
 import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
 import updater from '../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+import { configureSystemAppName } from './system-app-name.mjs';
 
 const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
 
@@ -60,12 +61,11 @@ export function validateOutput(root, output, tools = core) {
   return output;
 }
 
-export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, captureDir, noticesDir, platform = process.platform, env = process.env, builderVersions }) {
+export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, captureDir, noticesDir, platform = process.platform, arch = process.arch, env = process.env, builderVersions }) {
   if (version && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
   const result = structuredClone(packageJson.build ?? {});
   result.extends = null;
   result.appId = product.appId;
-  result.productName = product.name;
   result.afterSign = undefined;
   // prepare already probes SQLite under this Electron ABI. Rebuilding it again
   // here would discard the validated native cache on every local package.
@@ -75,7 +75,7 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
     'dist/main/mac-notification-permission.node',
   ])];
   result.files = [...(Array.isArray(result.files) ? result.files : result.files ? [result.files] : ['**/*']), '!node_modules/agent-gui-server/**/*', '!node_modules/@nut-tree-fork/**/*'];
-  result.extraMetadata = { ...result.extraMetadata, name: product.identifier, productName: product.name, ...(version ? { version } : {}) };
+  result.extraMetadata = { ...result.extraMetadata, name: product.identifier, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
   const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp']);
   result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use', 'capture', 'third-party'].includes(entry.to?.split('/')[0]) && !legacySandboxResources.has(entry.to));
@@ -92,17 +92,16 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.mac.identity = null;
   result.mac.hardenedRuntime = false;
   result.mac.notarize = false;
-  result.mac.extendInfo = { ...result.mac.extendInfo, CFBundleName: product.name, CFBundleDisplayName: product.displayName };
-  delete result.mac.extendInfo.CFBundleIdentifier;
-  result.nsis = { ...result.nsis, shortcutName: product.displayName, warningsAsErrors: false };
+  result.nsis = { ...result.nsis, warningsAsErrors: false };
   // Keep rcedit metadata/icon updates for branding; certificate discovery is
   // disabled by unsignedEnv, so this does not enable code signing.
   result.win = { ...result.win, signAndEditExecutable: true, signDlls: false };
   result.win.extraResources = (result.win.extraResources ?? []).filter((entry) => typeof entry === 'string' || !legacySandboxResources.has(entry.to));
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
-  result.linux = { ...result.linux, desktop: { ...result.linux?.desktop, entry: { ...result.linux?.desktop?.entry, Name: product.displayName } } };
-  return applyInstallerArchivePolicy(updater.configureUpdater(result, {
+  return applyInstallerArchivePolicy(updater.configureUpdater(configureSystemAppName(result, { platform, arch, product,
+    macStringsFile: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/build/InfoPlist.strings', import.meta.url)),
+  }), {
     feedBase: product.feedBase,
     hook: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs', import.meta.url)),
   }), { env, platform, builderVersions });
@@ -176,7 +175,7 @@ export async function pack(root, options = {}) {
   if (platform === 'win32' && fs.existsSync(terminalCompatLockFile(root)) && !inspectTerminalCompatResource(root, { platform, arch, tools })) {
     throw new Error('[pack] Windows 10 1511 terminal resources are missing or changed; run npm run prepare:terminal-compat');
   }
-  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, noticesDir, platform, builderVersions });
+  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, noticesDir, platform, arch, builderVersions });
   await (options.generateNotices ?? generateThirdPartyNotices)(root, { strict: true, outDir: noticesDir, resourcePaths: shippedResourcePaths(generated, p.client, platform), platform, arch });
   fs.mkdirSync(p.cache, { recursive: true });
   const configFile = path.join(p.cache, `electron-builder-${platform}-${arch}.json`);

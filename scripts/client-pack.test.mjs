@@ -20,7 +20,12 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.equal(result.extraMetadata.productName, 'Nuwax');
   assert.equal(result.extraMetadata.version, '1.2.3');
   assert.equal(result.mac.extendInfo.CFBundleIdentifier, undefined);
-  assert.equal(result.mac.extendInfo.CFBundleDisplayName, '女娲Nuwax');
+  assert.equal(result.mac.extendInfo.CFBundleDisplayName, 'Nuwax');
+  assert.equal(result.mac.extendInfo.CFBundleName, 'Nuwax');
+  assert.equal(result.nsis.shortcutName, '女娲Nuwax');
+  assert.equal(result.msi.shortcutName, '女娲Nuwax');
+  assert.equal(result.linux.desktop.Name, '女娲Nuwax');
+  if (process.platform === 'darwin') assert.ok(result.mac.extraResources.some(entry => entry.to === 'en.lproj/InfoPlist.strings'));
   assert.equal(result.extraResources.filter((entry) => entry.to === 'nuwax-dist').length, 1);
   assert.equal(result.extraResources.find((entry) => entry.to === 'nuwax-dist').from, '/client/nuwax-dist');
   assert.ok(result.extraResources.some((entry) => entry.to === 'computer-use'));
