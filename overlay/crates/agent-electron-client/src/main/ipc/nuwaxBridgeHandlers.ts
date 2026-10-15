@@ -40,8 +40,6 @@ import { getTrayManager } from "../window/trayManager";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
-import * as cuaComputerUse from "../services/cua/computerUse";
-import { registerCuaRuntimeHandlers } from "./cuaRuntimeHandlers";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
@@ -60,7 +58,11 @@ import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicke
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
 import { registerIMUnreadBridge } from "./imUnreadBridge";
 import { IM_IPC_CHANNELS } from "@shared/types/imReceiver";
-import { canCopyCaptureFiles, isDesktopFeatureRegistered, notifyFeatureSessionEnd, startDesktopFeatures, type SessionEndReason } from "../features";
+import {
+  isDesktopFeatureRegistered, notifyFeatureSessionEnd, startDesktopFeatures,
+  runFeatureServicesStarting, isFeatureCapabilityAvailable, type SessionEndReason,
+} from "../features";
+import { createFeatureAgentHost } from "../services/featureHost";
 import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
 import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
 import { getConfiguredPorts } from "../services/startupPorts";
@@ -234,9 +236,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         await import("../services/sandbox/serviceBootstrap");
       await startSandboxService();
       signal.throwIfAborted();
-      // Replace legacy direct-helper MCP entries before any engine can read local config.
-      // A failed CUA readiness check removes its entry; ordinary services may still start.
-      await cuaComputerUse.ensureCuaOnBoot(signal);
+      // 桌面特性就绪（清理未启用特性残留 MCP 条目）须先于任何引擎读取本地配置。
+      await runFeatureServicesStarting(signal);
       signal.throwIfAborted();
       return restartAllServicesNow(signal);
     },
@@ -307,12 +308,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     const bootstrap = name === 'auth.getContext';
     if (bootstrap ? switching || event.senderFrame !== event.sender.mainFrame ||
       !isTrustedBusinessSender(event, trustedOrigins()) : !isIMSender(event)) return false;
-    if (capability.namespace === 'capture') {
-      if (!isDesktopFeatureRegistered('capture') || readSetting('features.capture.enabled') === false) return false;
-      if (name === 'capture.copy.file' && !canCopyCaptureFiles()) return false;
-    }
-    if (capability.namespace === 'localFiles' && (!isDesktopFeatureRegistered('local-files') ||
-      readSetting('features.local-files.enabled') === false)) return false;
+    // 特性归属的能力由注册结果 + 运行期开关 + 特性声明判定；其余命名空间沿用宿主自身规则。
+    const featureAvailable = isFeatureCapabilityAvailable(capability.namespace, name);
+    if (featureAvailable !== undefined) return featureAvailable;
     return true;
   });
   ipcMain.handle(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, (event, enabled: unknown) => {
@@ -333,7 +331,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     log,
     translate: t,
-    getSetting: readSetting,
+    host: {
+      settings: { read: readSetting, write: writeSetting },
+      session: { isAuthenticated: () => !!currentTicket() },
+      windows: { getMain: () => ctx.getMainWindow() },
+      agent: createFeatureAgentHost(),
+    },
     workspace: {
       getIdentity: () => {
         const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
@@ -353,8 +356,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         });
       },
     },
-    setRecordingStopAction: (action) => getTrayManager()?.setRecordingStopAction(action),
-    setRecordingPauseAction: (action, paused) => getTrayManager()?.setRecordingPauseAction(action, paused),
   });
   const clearSiteStorage = async (scopes: string[], full = false) => {
     const sessions = new Set(
@@ -966,11 +967,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     return { success: true };
   });
 
-  // ---- cua：Computer Use 配置（设置页开关/状态/授权引导/首用安装；overlay 自持实现） ----
-  cuaComputerUse.registerCuaQuitCleanup();
-  registerCuaRuntimeHandlers({ trusted: isHostSender, authenticated: () => !!currentTicket(), getWindow: () => ctx.getMainWindow() });
   // 允许锁屏运行：读库恢复档位并持有断言（registerAllHandlers 在 app ready 且
-  // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同 ensureCuaOnBoot 先例）
+  // initDatabase 之后执行，此入口即 overlay 的 boot 钩子，同特性服务启动先例）
   initSessionAuthInjection(() => ({
     businessOrigin: currentBusinessOrigin(),
     trustedOrigins: trustedOrigins(),
@@ -990,29 +988,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   app.on("browser-window-created", (_event, win) => {
     setImmediate(() => applyMainWindowMinSize(win));
   });
-  ipcMain.handle("cua:getStatus", (event) =>
-    isHostSender(event) ? cuaComputerUse.getCuaStatus() : null,
-  );
-  ipcMain.handle("cua:setEnabled", (event, enabled: boolean) =>
-    isHostSender(event) && (enabled !== true || !!currentTicket()) ? cuaComputerUse.setCuaEnabled(enabled === true) : { success: false, error: "untrusted sender" },
-  );
-  ipcMain.handle("cua:requestPermissions", (event) =>
-    isHostSender(event) ? cuaComputerUse.requestCuaPermissions() : null,
-  );
-  ipcMain.handle("cua:installHelper", (event) =>
-    isHostSender(event) ? cuaComputerUse.installCuaHelper() : { success: false, error: "untrusted sender" },
-  );
-  ipcMain.handle("cua:getVlmConfig", (event) =>
-    isHostSender(event) ? cuaComputerUse.getVlmConfig() : null,
-  );
-  ipcMain.handle("cua:setVlmConfig", (event, patch: unknown) =>
-    isHostSender(event) ? cuaComputerUse.setVlmConfig(
-      (patch ?? {}) as { baseUrl?: string; model?: string; apiKey?: string },
-    ) : { success: false, error: "untrusted sender" },
-  );
-  ipcMain.handle("cua:testVlm", (event) =>
-    isHostSender(event) ? cuaComputerUse.testVlm() : { success: false, error: "untrusted sender" },
-  );
 
   // ---- powerPolicy：允许锁屏运行（电源保活档位；overlay 自持实现） ----
   ipcMain.handle("powerPolicy:get", (event) =>

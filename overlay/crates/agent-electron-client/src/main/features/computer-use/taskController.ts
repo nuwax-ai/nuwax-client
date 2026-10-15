@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { CuaRuntime, CuaStats, CuaStep } from "@shared/types/cuaRuntime";
+import type { CuaRuntime, CuaStats, CuaStep } from "@shared/features/computer-use/contract";
 import {
   CUA_ANY, CUA_EXEMPT, CUA_LIFECYCLE, CUA_OBSERVATIONS, CUA_READS,
   observationDigest, observedTargets, writeTarget, type CuaOutcome,

@@ -1,4 +1,4 @@
-import type { CuaScope } from "@shared/types/cuaRuntime";
+import type { CuaScope } from "@shared/features/computer-use/contract";
 import { CUA_WRITES_PER_OBSERVATION as N } from "./taskController";
 
 /** Model-facing text. Kept in one place so tool descriptions, instructions and refusals agree. */

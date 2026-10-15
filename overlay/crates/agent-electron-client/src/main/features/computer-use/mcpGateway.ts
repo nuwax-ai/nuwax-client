@@ -4,7 +4,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
 import { classifyReply, type CuaOutcome } from "./cuaOutcome";
 import { CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
-import type { CuaScope } from "@shared/types/cuaRuntime";
+import type { CuaScope } from "@shared/features/computer-use/contract";
 
 /** Errors `transformCall` may throw that are reported to the model as-is. */
 const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope"]);

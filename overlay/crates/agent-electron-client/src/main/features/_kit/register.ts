@@ -1,8 +1,8 @@
 /**
  * 特性注册：按「产品 + 开关」过滤后依次注册，统一释放。
  *
- * - 不在 `products` 内、或被关闭的特性：`register` 与 `createContext` 都**不会被调用**
- *   （关闭即零痕迹：不注册 IPC、不建临时目录、不监听任何事件）；
+ * - 不在 `products` 内、被清单 `lockedOff` 强关、或被关闭的特性：`register` 与 `createContext`
+ *   都**不会被调用**（关闭即零痕迹：不注册 IPC、不建临时目录、不监听任何事件）；
  * - 单个特性注册抛错只记录日志并跳过，不影响客户端启动与其他特性。
  */
 
@@ -37,6 +37,10 @@ export function registerDesktopFeatures(
 
   for (const feature of features) {
     if (!feature.products.includes(deps.product)) continue;
+    if (feature.lockedOff) {
+      deps.log.info(`[Features] ${feature.id} locked off: ${feature.lockedOff}`);
+      continue;
+    }
     let enabled: boolean;
     try {
       enabled = deps.isEnabled(feature.id, feature.enabledByDefault);

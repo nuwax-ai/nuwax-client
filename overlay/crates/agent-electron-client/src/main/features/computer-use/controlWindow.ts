@@ -2,8 +2,8 @@ import { BrowserWindow, ipcMain, screen } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { CUA_REASON_KEYS, actionKind } from "@shared/cuaPresentation";
-import type { CuaRuntime } from "@shared/types/cuaRuntime";
+import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
+import type { CuaRuntime } from "@shared/features/computer-use/contract";
 
 type Action = "pause" | "resume" | "stop" | "dismiss";
 export function createCuaControlWindow(options: {

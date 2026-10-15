@@ -84,7 +84,7 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
-import { CuaControls } from "./components/CuaControls";
+import { CuaControls } from "./features/computer-use";
 import { CaptureLauncher } from "./features/capture";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";

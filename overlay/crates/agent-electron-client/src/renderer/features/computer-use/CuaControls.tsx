@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { Button, Select, Space, Tag, message, theme } from "antd";
-import type { ComputerUseAPI } from "@shared/types/electron";
-import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/types/cuaRuntime";
+import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
+import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
 
-import { CUA_REASON_KEYS, actionKind } from "@shared/cuaPresentation";
+import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
 const REASONS = new Set(CUA_REASON_KEYS);
 type T = (key: string, ...args: any[]) => string;
 const reasonText = (t: T, reason: string) => t(`Claw.Cua.reason.${REASONS.has(reason) ? reason : "generic"}`);

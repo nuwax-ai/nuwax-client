@@ -49,7 +49,6 @@ vi.mock("electron", () => ({
     on: vi.fn(),
   },
 }));
-vi.mock("../system/binaryLocator", () => ({ getNodeBinPathWithFallback: () => "/bundled/node" }));
 vi.mock("./mcpGateway", () => ({
   CUA_STDIO_RELAY: "relay",
   CuaMcpGateway: class {
@@ -63,20 +62,6 @@ vi.mock("./mcpGateway", () => ({
 }));
 vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-vi.mock("../../db", () => ({
-  readSetting: (k: string) => mocks.settings.get(k) ?? null,
-  writeSetting: (k: string, v: unknown) => { if (mocks.settingFailure) return false; mocks.settings.set(k, v); return true; },
-  getDb: () => ({
-    prepare: () => ({
-      // mcp_local_config 原始 JSON 读写与 readSetting/writeSetting 同源（Map 后端）
-      get: (k: string) =>
-        mocks.settings.has(k)
-          ? { value: mocks.settings.get(k) }
-          : undefined,
-      run: (k: string, v: string) => void mocks.settings.set(k, v),
-    }),
-  }),
 }));
 vi.mock("node:child_process", () => ({
   // 元数无关：pexec(cmd,args) 与 pexec(cmd,args,opts) 两种调用形态，回调总在末位
@@ -167,9 +152,37 @@ vi.mock("node:net", () => ({
     },
   },
 }));
-vi.mock("../packages/mcp", () => ({
-  syncMcpConfigToProxyAndReload: mocks.proxySync,
-}));
+
+/** 测试宿主双实现：与原 db/mcp mock 同一 Map 后端，断言形态不变。 */
+function testHostPorts() {
+  return {
+    get dataHome() { return path.join(mocks.userDataURL, "computer-use"); },
+    readSetting: (k: string) => mocks.settings.get(k) ?? null,
+    writeSetting: (k: string, v: unknown) => {
+      if (mocks.settingFailure) return false;
+      mocks.settings.set(k, v);
+      return true;
+    },
+    setLocalMcpServer: async (id: string, entry: unknown | null) => {
+      const raw = mocks.settings.get("mcp_local_config") as string | undefined;
+      const config = raw ? (JSON.parse(raw) as { mcpServers?: Record<string, unknown> }) : {};
+      const servers = { ...(config.mcpServers ?? {}) };
+      if (entry) servers[id] = entry;
+      else delete servers[id];
+      mocks.settings.set("mcp_local_config", JSON.stringify({ ...config, mcpServers: servers }));
+      await mocks.proxySync(servers);
+    },
+    hasLocalMcpServer: (id: string) => !!readMcpServers()[id],
+    resolveNodeBinary: () => "/bundled/node",
+  };
+}
+
+async function loadCua(): Promise<CuaModule> {
+  const mod = await import("./computerUse");
+  const { configureComputerUseHost } = await import("./ports");
+  configureComputerUseHost(testHostPorts());
+  return mod;
+}
 
 type CuaModule = typeof import("./computerUse");
 let cuaModule: CuaModule;
@@ -189,7 +202,7 @@ beforeAll(async () => {
   // The main suite exercises the macOS helper app and TCC flow on every runner.
   // Windows and Linux behavior is covered by the isolated platform suites below.
   Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
-  cuaModule = await import("./computerUse");
+  cuaModule = await loadCua();
 });
 afterAll(() => {
   Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
@@ -375,7 +388,7 @@ describe("cua 开关与启动收敛", () => {
     expect(readMcpServers().cua).toBeUndefined();
 
     vi.resetModules();
-    const reopened = await import("./computerUse");
+    const reopened = await loadCua();
     expect((await reopened.getCuaStatus()).consentPending).toBe(true);
     mocks.captureReady = true;
     mocks.autoReady = true;
@@ -631,7 +644,7 @@ describe("Windows 语义回归（stopDaemon 兜底通配须匹配命名管道路
       configurable: true,
     });
 
-    const mod = await import("./computerUse");
+    const mod = await loadCua();
     await mod.stopDaemon();
 
     const psCall = mocks.execCalls.find((c) => c.cmd === "powershell");
@@ -678,7 +691,7 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
     fs.mkdirSync(bundledDir, { recursive: true });
     fs.writeFileSync(path.join(bundledDir, "NuwaxComputerUse"), "#!/bin/sh\n");
 
-    const mod = await import("./computerUse");
+    const mod = await loadCua();
     const r = await mod.installCuaHelper();
     expect(r.success).toBe(true);
 
@@ -705,7 +718,7 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
     fs.writeFileSync(path.join(bundledDir, "NuwaxComputerUse"), "#!/bin/sh\n");
     mocks.autoReady = true;
 
-    const mod = await import("./computerUse");
+    const mod = await loadCua();
     const r = await mod.setCuaEnabled(true);
     expect(r.success).toBe(true);
 
@@ -728,7 +741,7 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
 describe("cua window selection lifecycle", () => {
   it("validates a live target, persists only scope kind and rejects a failed preference write", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
-    vi.resetModules(); cuaModule = await import("./computerUse");
+    vi.resetModules(); cuaModule = await loadCua();
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true; mocks.autoReady = true;
     expect((await setCuaEnabled(true)).success).toBe(true);
@@ -748,7 +761,7 @@ describe("cua window selection lifecycle", () => {
   });
   it("restores a window preference without reusing old native IDs or broadening to desktop", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
-    vi.resetModules(); cuaModule = await import("./computerUse");
+    vi.resetModules(); cuaModule = await loadCua();
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true; mocks.autoReady = true;
     mocks.settings.set("step1_config", { computerUseEnabled: true, computerUseScopeKind: "window" });

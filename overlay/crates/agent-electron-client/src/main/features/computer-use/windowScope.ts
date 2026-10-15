@@ -1,4 +1,4 @@
-import type { CuaScope } from "@shared/types/cuaRuntime";
+import type { CuaScope } from "@shared/features/computer-use/contract";
 import type { CuaOutcome } from "./cuaOutcome";
 
 const WINDOW_READS = ["get_window_state", "get_accessibility_tree"];

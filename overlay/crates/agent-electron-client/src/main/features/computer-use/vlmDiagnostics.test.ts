@@ -1,13 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ data: {} as Record<string, any>, secure: true }));
-vi.mock("../../db", () => ({ readSetting: (key: string) => state.data[key], writeSetting: (key: string, value: any) => { state.data[key] = value; return true; } }));
 vi.mock("electron", () => ({ safeStorage: {
   isEncryptionAvailable: () => state.secure, getSelectedStorageBackend: () => "keychain",
   encryptString: (value: string) => Buffer.from("encrypted:" + value),
   decryptString: (value: Buffer) => value.toString().slice(10),
 } }));
 import { getVlmConfig, setVlmConfig, testVlm, visionProbeImage } from "./vlmDiagnostics";
-beforeEach(() => { state.data = {}; state.secure = true; vi.unstubAllGlobals(); });
+import { configureComputerUseHost } from "./ports";
+beforeEach(() => {
+  state.data = {}; state.secure = true; vi.unstubAllGlobals();
+  configureComputerUseHost({
+    dataHome: "/tmp",
+    readSetting: (key: string) => state.data[key] ?? null,
+    writeSetting: (key: string, value: unknown) => { state.data[key] = value; return true; },
+    setLocalMcpServer: async () => undefined,
+    hasLocalMcpServer: () => false,
+    resolveNodeBinary: () => null,
+  });
+});
 describe("vision endpoint diagnostics", () => {
   it("migrates legacy plaintext and never returns an existing key to the renderer", () => {
     state.data.step1_config = { unrelated: 3, computerUseVlm: { apiKey: "secret", model: "vision" } };
