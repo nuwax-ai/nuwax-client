@@ -19,6 +19,16 @@ function putConfig(resources, bytes = updater.configBytes(feed)) {
   fs.mkdirSync(resources, { recursive: true });
   fs.writeFileSync(path.join(resources, 'app-update.yml'), bytes);
 }
+function installedBuilder(t) {
+  const require = createRequire(import.meta.url);
+  const client = core.paths(path.resolve(import.meta.dirname, '..')).client;
+  let builderFile;
+  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; t.skip('Builder dependencies unavailable'); return; }
+  const builderRequire = createRequire(builderFile);
+  builderRequire('app-builder-lib');
+  return builderRequire;
+}
 
 test('all commercial routes configure the same provider, isolate cache, and reject unrelated hooks', t => {
   const client = fixture(t);
@@ -42,17 +52,58 @@ test('all commercial routes configure the same provider, isolate cache, and reje
   assert.throws(() => prepareReleaseUpdater(client), /Commercial application identity/);
 });
 
+test('installed builder reproduces missing macOS config with --dir followed by --prepackaged', async t => {
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) return;
+  const { PublishManager } = builderRequire('app-builder-lib/out/publish/PublishManager.js');
+  const { Packager } = builderRequire('app-builder-lib/out/packager.js');
+  const { MacPackager } = builderRequire('app-builder-lib/out/macPackager.js');
+  const { CancellationToken } = builderRequire('builder-util-runtime');
+  const { Platform } = builderRequire('app-builder-lib');
+  const output = fixture(t);
+  const app = path.join(output, 'Nuwax.app');
+  const resources = path.join(app, 'Contents/Resources');
+  fs.mkdirSync(resources, { recursive: true });
+  const file = path.join(resources, 'app-update.yml');
+  const build = updater.configureUpdater({}, { feedBase: feed,
+    hook: path.resolve(import.meta.dirname, '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs') });
+  const afterPackHandlers = [];
+  // Use the installed PublishManager's real callback, rather than duplicating
+  // its target predicate. --publish never alone does not suppress this file.
+  new PublishManager({
+    addAfterPackHandler: handler => afterPackHandlers.push(handler),
+    artifactCreated() {}, cancellationToken: new CancellationToken(),
+  }, { publish: 'never' });
+  assert.equal(afterPackHandlers.length, 1);
+  const packager = { config: build, platform: Platform.MAC,
+    appInfo: { updaterCacheDirName: updater.CACHE_NAME, channel: null },
+    platformSpecificBuildOptions: {}, info: { config: build, appInfo: { channel: null } },
+    expandMacro: value => value, getResourcesDir: () => resources };
+  const context = { packager, appOutDir: output, arch: 1, targets: [], electronPlatformName: 'darwin' };
+  const original = { appInfo: { type: 'commonjs' }, config: {}, afterPackHandlers };
+  await Packager.prototype.afterPack.call(original, context);
+  assert.equal(fs.existsSync(file), false, '--dir skips the built-in macOS updater config');
+  await Packager.prototype.afterPack.call(original, { ...context, targets: [{ name: 'zip' }] });
+  updater.verifyResources(resources, feed);
+  fs.rmSync(file);
+  let packaged = false;
+  await MacPackager.prototype.pack.call({
+    packagerOptions: { prepackaged: app },
+    doPack() { assert.fail('--prepackaged must bypass doPack and afterPack'); },
+    packageInDistributableFormat(appPath) { assert.equal(appPath, app); packaged = true; },
+  }, output, 1, [{ name: 'zip' }], {});
+  assert.equal(packaged, true);
+  assert.equal(fs.existsSync(file), false, '--prepackaged does not repair the missing config');
+  await Packager.prototype.afterPack.call({ ...original, config: build }, context);
+  updater.verifyResources(resources, feed);
+});
+
 test('real builder afterPack runs commercial hook last even when --dir supplies no archive targets', async t => {
   const output = fixture(t);
   const resources = path.join(output, 'Nuwax.app/Contents/Resources');
   fs.mkdirSync(resources, { recursive: true });
-  const require = createRequire(import.meta.url);
-  const client = core.paths(path.resolve(import.meta.dirname, '..')).client;
-  let builderFile;
-  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); }
-  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; t.skip('Builder dependencies unavailable'); return; }
-  const builderRequire = createRequire(builderFile);
-  builderRequire('app-builder-lib');
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) return;
   const { Packager } = builderRequire('app-builder-lib/out/packager.js');
   const build = updater.configureUpdater({}, { feedBase: feed,
     hook: path.resolve(import.meta.dirname, '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs') });
