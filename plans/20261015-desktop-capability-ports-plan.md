@@ -23,3 +23,20 @@
 ## 不在本期
 
 打包资源注册表、统一权限端口、本地文件缓存实现、acpEngine 去整份覆写（需基座钩子）。
+
+
+## 验证记录（2026-10-15）
+
+- 基线：`codex/computer-use-product@2dbc6221`（含 release/v3.0.x `b6be7b42`）；基线商业门 246 文件、3073 通过、18 跳过（59 个 mcp.test 失败为 worktree 缺 ignored 产物 `resources/mcp-proxy-ts/dist`，补齐后全绿，非代码问题）。
+- 本批商业门 `npm run test:commercial`：245 文件、3079 通过、1 跳过文件、18 跳过用例，0 失败。
+- 社区门（隔离干净基座 `eb0eeaca`，无 overlay）：135 文件、1640 通过、18 跳过，0 失败。
+- 脚本门 `npm run test:scripts`：341 通过（含边界检查 R5 与注册表入口收紧的新增用例）。
+- `npm run overlay:check` 一致 334 文件；`npm run check:pin` 基座脏文件 334 个全部为 overlay 产物；`npm run host-bridge:check` 快照一致。
+- 商业 main/preload esbuild（`build:main`）与壳 renderer vite（`build:renderer`）构建成功。
+- 真实安装包、真机 Computer Use（daemon/TCC/浮窗）与真实账户验收仍待执行，不以单测替代。
+
+## 实施偏离记录
+
+1. canUse 的 capture/localFiles 运行判定（注册 + `features.<id>.enabled`）从主进程 handler 下沉到 `isFeatureCapabilityAvailable`，tokenScopes 对应用例改为可控门模拟（聚合语义由 features/index.test 归属用例覆盖）。
+2. `acpEngine.cua.test.ts` 改用记录式假参与者经公共注册口驱动引擎时序；真实凭据语义由特性内 sessionAuthority.test.ts 覆盖（原有覆盖保留）。
+3. 特性未启动（startDesktopFeatures 未调用）时不剥离任何 MCP 条目——「未启用特性残留清理」只在启动后生效。
