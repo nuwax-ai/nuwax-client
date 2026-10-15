@@ -85,6 +85,7 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['mcp-proxy', [path.join(r, 'mcp-proxy-ts/dist/index.js'), path.join(r, 'mcp-proxy-ts/dist/lib.bundle.mjs')]],
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
     ['codex-acp-ts', [path.join(r, 'nuwax-codex-acp-ts/dist/index.js')]],
+    ['pi-acp', [path.join(r, 'pi-acp/dist/index.js'), path.join(r, 'pi-acp/node_modules/pi/bin/pi.js')], true],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
