@@ -13,9 +13,8 @@
  *   3. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
  *   NUWAX_APP_IDENTIFIER=nuwax        → 数据目录 ~/.nuwax（历史目录迁移链已被
  *                                       overlay 覆写 migrate.ts 阻断，全新开始）
- *   NUWAX_APP_DISPLAY_NAME=Nuwax      → 客户端展示名（窗口标题/设置「关于」/
- *                                       UA token Nuwax/<ver>）；刻意 ASCII——
- *                                       女娲Nuwax 为营销名，只出现在 README/发布文案
+ *   NUWAX_APP_DISPLAY_NAME=女娲Nuwax  → 客户端展示名（窗口标题/菜单/托盘/设置「关于」）；
+ *                                       UA、文件名与数据目录使用独立的 ASCII 技术标识
  *   NUWAX_UPDATE_FEED_BASE            → 独立更新通道 nuwax-electron
  *   NUWAX_DOWNLOAD_PAGE_URL           → 官网下载页（不支持自动更新的安装形态引导；
  *                                       商业暂无产品页，先指官网首页）
@@ -83,7 +82,7 @@ const env = noInject || noEnv
   : {
       ...process.env,
       NUWAX_APP_IDENTIFIER: process.env.NUWAX_APP_IDENTIFIER || 'nuwax',
-      NUWAX_APP_DISPLAY_NAME: process.env.NUWAX_APP_DISPLAY_NAME || 'Nuwax',
+      NUWAX_APP_DISPLAY_NAME: process.env.NUWAX_APP_DISPLAY_NAME || '女娲Nuwax',
       NUWAX_UPDATE_FEED_BASE:
         process.env.NUWAX_UPDATE_FEED_BASE ||
         'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',

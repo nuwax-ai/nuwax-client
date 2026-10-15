@@ -614,7 +614,7 @@ jobs:
           # 商业版品牌注入（构建期经 esbuild/vite define 固化）：
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
-          NUWAX_APP_DISPLAY_NAME: "Nuwax"
+          NUWAX_APP_DISPLAY_NAME: "女娲Nuwax"
           # 新安装且未显式设置更新通道时默认 beta；业务服务域与更新通道独立。
           NUWAX_RELEASE_CHANNEL: beta
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）

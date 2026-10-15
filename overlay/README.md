@@ -116,7 +116,8 @@ overlay 文件的目标路径只支持普通文件（`100644`/`100755`）或不�
 
 商业身份要求**文件名/包名一律 ASCII**（`Nuwax-Setup-*.exe` / `Nuwax.app` /
 deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产物文件名，
-故中文营销名「女娲Nuwax」只能在各平台的**显示名字段**单独覆盖：
+故应用名「女娲Nuwax」在各平台的**显示名字段**单独覆盖，客户端界面由
+`NUWAX_APP_DISPLAY_NAME` 注入；本地入口、stable/beta CI 均使用该显示名：
 
 | 平台 | 显示名载体 | 保持 ASCII 的部分 |
 |---|---|---|
@@ -128,6 +129,9 @@ deb 包名 `nuwax`），而 `productName` 一个值同时决定显示名与产�
 `autoUpdater` 用 `app.getName()` 拼「Uninstall \<name\>.exe」定位卸载程序
 （改中文断更新链），后者派生数据目录 `~/.nuwax` 与 UA token。userData
 （`app.setName("Nuwax")`）与工作空间（`~/Nuwax`）均为硬编码字面量，不受影响。
+
+UA 使用 `@nuwax-ai/<identifier>/<version>`，不使用中文显示名；Linux 自启动
+沿用原有 `Nuwax.desktop` 注册项，避免升级改显示名后产生重复启动项。
 
 - 截图/录制浮层定位共用 `shared/features/capture/windowPlacement.ts`；选择器沙箱与主进程使用相同 DIP 定位规则，以所选屏/选区为锚点。
 

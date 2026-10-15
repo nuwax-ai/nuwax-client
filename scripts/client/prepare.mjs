@@ -37,7 +37,7 @@ export function commercialEnv(root, overrides = {}) {
   return {
     ...process.env,
     NUWAX_APP_IDENTIFIER: config.product.identifier,
-    NUWAX_APP_DISPLAY_NAME: config.product.name,
+    NUWAX_APP_DISPLAY_NAME: config.product.displayName,
     NUWAX_UPDATE_FEED_BASE: config.product.feedBase,
     NUWAX_DOWNLOAD_PAGE_URL: config.product.downloadUrl,
     NUWAX_PORT_OFFSET: String(config.product.portOffset),

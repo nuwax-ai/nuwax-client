@@ -33,7 +33,7 @@ import { getBundledDistVersion } from "../services/frontendDistVersion";
 import { getTrayManager } from "../window/trayManager";
 import { getAutoLaunchManager } from "../window/autoLaunchManager";
 import { t } from "../services/i18n";
-import { APP_NAME_IDENTIFIER, I18N_KEYS } from "@shared/constants";
+import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, I18N_KEYS } from "@shared/constants";
 import { checkMacNotificationPermission } from "../services/system/macNotificationPermission";
 import { canUseUpdater as canUseUpdaterFrom } from "./bridgeTrust";
 
@@ -353,9 +353,8 @@ export function registerAppHandlers(ctx: HandlerContext): void {
         arch: process.arch,
         isPackaged: app.isPackaged,
         appVersion: app.getVersion(),
-        // dev 下 app.getName() 读 crate package.json name（@nuwax-ai/nuwaclaw）；
-        // 商业构建由产品壳 CI 覆写顶层 productName（如 Nuwax 壳），app.getName() 优先读它
-        appName: app.getName(),
+        // 关于页展示产品名称；app.getName() 的 ASCII 值仍供更新程序定位卸载文件。
+        appName: APP_DISPLAY_NAME,
         appPath: app.getAppPath(),
         exePath: app.getPath("exe"),
         installerType,

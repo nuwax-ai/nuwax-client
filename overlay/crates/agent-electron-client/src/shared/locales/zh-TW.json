@@ -279,7 +279,7 @@
   "Claw.Client.regSyncFailed": "設備註冊失敗，代理服務暫無法啟動（其餘服務照常啟動）",
   "Claw.Client.proxyConfigMissing": "代理服務配置缺失（設備註冊未完成），暫無法啟動",
   "Claw.Client.loginInNuwax": "未登入",
-  "Claw.Client.loginInNuwaxHint": "請在女娲 Nuwax 主視窗完成登入",
+  "Claw.Client.loginInNuwaxHint": "請在女娲Nuwax主視窗完成登入",
   "Claw.Client.gotoLogin": "前往登入",
   "Claw.Client.missingDeps": "存在缺失依賴，請先安裝",
   "Claw.Client.allServicesRunning": "所有可自動啟動的服務已在運行",

@@ -345,7 +345,7 @@ function createWindow() {
       void dialog
         .showMessageBox({
           type: "error",
-          title: "Nuwax",
+          title: APP_DISPLAY_NAME,
           message:
             "界面进程多次异常退出，已停止自动恢复。\nThe window process kept crashing; automatic recovery has stopped.",
           buttons: ["重启应用 / Restart", "退出 / Quit"],

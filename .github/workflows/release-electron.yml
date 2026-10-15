@@ -460,7 +460,7 @@ jobs:
           CSC_NAME: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           # 商业版品牌/端口注入（构建期经 esbuild/vite define 固化）：
           NUWAX_APP_IDENTIFIER: nuwax
-          NUWAX_APP_DISPLAY_NAME: "Nuwax"
+          NUWAX_APP_DISPLAY_NAME: "女娲Nuwax"
           # 新安装默认正式业务域；esbuild 静态固化，不受安装机环境变量影响。
           NUWAX_RELEASE_CHANNEL: stable
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
