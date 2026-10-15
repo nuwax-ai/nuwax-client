@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { notarizeSignedApp, packageNotarizedApp, macAppPaths, transientAppleError } from './release-mac-notarization.mjs';
+import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import config from '../client.config.mjs';
 
 const id = '36bad44d-20b0-465a-a9f2-3a114ee0b282';
 const cdhash = 'a'.repeat(40);
@@ -19,7 +21,10 @@ function fixture(t, behavior = () => undefined) {
     if (args[0] === 'notarytool') return { status: 0, stdout: JSON.stringify({ id, status: 'Accepted' }) };
     return { status: 0, stdout: '', stderr: '' };
   } };
-  const options = { app: '/signed path/Nuwax.app', stateFile: path.join(root, 'state.json'), auth: { key: '/not-read.p8', keyId: 'KEY1234', issuer: 'issuer' },
+  const app = path.join(root, 'signed path/Nuwax.app');
+  fs.mkdirSync(path.join(app, 'Contents/Resources'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'Contents/Resources/app-update.yml'), updater.configBytes(config.product.feedBase));
+  const options = { app, stateFile: path.join(root, 'state.json'), auth: { key: '/not-read.p8', keyId: 'KEY1234', issuer: 'issuer' },
     tools, wait: async ms => waits.push(ms) };
   return { root, calls, waits, tools, options };
 }
@@ -87,7 +92,7 @@ test('packaging requires a valid ticket and uses the app without another signing
   const f = fixture(t);
   await packageNotarizedApp({ client: '/client', app: f.options.app, arch: 'x64', builderCli: '/builder.js', tools: f.tools, wait: f.options.wait });
   const packaged = f.calls.find(c => c.command === process.execPath);
-  assert.deepEqual(packaged.args.slice(0, 4), ['/builder.js', '--prepackaged', '/signed path/Nuwax.app', '--mac']);
+  assert.deepEqual(packaged.args.slice(0, 4), ['/builder.js', '--prepackaged', f.options.app, '--mac']);
   assert.ok(packaged.args.includes('--x64'));
   assert.ok(f.calls.findIndex(c => c.args[1] === 'validate') < f.calls.indexOf(packaged));
   assert.equal(f.calls.filter(c => c.args[1] === 'validate').length, 2);
@@ -128,4 +133,14 @@ test('an unchanged app with a validated ticket resumes without re-submitting or 
   assert.equal(f.calls.filter(c => c.args[0] === 'notarytool').length, 0);
   assert.equal(f.calls.filter(c => c.args[1] === 'staple').length, 0);
   assert.equal(f.calls.filter(c => c.args[1] === 'validate').length, 1);
+});
+
+test('missing updater config prevents notarization or repackaging without modifying the signed app', async t => {
+  const f = fixture(t);
+  const file = path.join(f.options.app, 'Contents/Resources/app-update.yml');
+  fs.rmSync(file);
+  await assert.rejects(notarizeSignedApp(f.options), /Missing or incorrect/);
+  await assert.rejects(packageNotarizedApp({ client: '/client', app: f.options.app, arch: 'x64', builderCli: '/builder.js', tools: f.tools }), /Missing or incorrect/);
+  assert.equal(f.calls.length, 0);
+  assert.equal(fs.existsSync(file), false);
 });

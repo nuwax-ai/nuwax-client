@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 
 if (process.platform !== 'win32') throw new Error('Run this acceptance test on Windows');
 const resources = path.resolve(process.argv[2] ?? 'nuwa-electron-shell/crates/agent-electron-client/resources/ttyd/legacy/win32-x64');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-terminal-2675-'));
+// GitHub Windows runners expose TEMP through an 8.3/upper-case alias, while
+// PowerShell resolves it to its long path before starting CMD.
+const temporary = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-terminal-2675-')));
 const dirs = [path.join(temporary, '中文 工作区 A'), path.join(temporary, '中文 工作区 B')];
 dirs.forEach(dir => fs.mkdirSync(dir));
 const wrapper = path.join(temporary, 'terminal-wrapper.ps1');
@@ -40,6 +42,7 @@ const waitFor = async (check, label, timeout = 15000) => {
   throw new Error(`Timed out: ${label}\n${serviceLog}`);
 };
 const clean = text => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\r/g, '');
+const samePathText = text => clean(text).toLowerCase();
 const clients = [];
 async function connect(dir) {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?arg=--cwd&arg=${encodeURIComponent(dir)}`, 'tty');
@@ -58,8 +61,8 @@ async function connect(dir) {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', reject, { once: true });
   });
-  socket.send(JSON.stringify({ columns: 100, rows: 30 }));
-  await waitFor(() => clean(state.output).includes(dir), 'shell prompt in requested directory');
+  socket.send(JSON.stringify({ columns: 200, rows: 30 }));
+  await waitFor(() => samePathText(state.output).includes(dir.toLowerCase()), `shell prompt in requested directory: ${dir}`);
   return state;
 }
 function command(client, text) {
@@ -76,7 +79,7 @@ try {
   command(first, 'echo 中文回显2675');
   await waitFor(() => /(?:^|\n)中文回显2675\s*\n/.test(clean(first.output)), 'Chinese input/output');
   command(second, 'cd');
-  await waitFor(() => clean(second.output).includes('\n' + dirs[1]), 'second session directory');
+  await waitFor(() => samePathText(second.output).includes('\n' + dirs[1].toLowerCase()), 'second session directory');
   first.socket.send('1' + JSON.stringify({ columns: 133, rows: 43 }));
   command(first, 'powershell -NoProfile -Command "Write-Output (\'__SIZE__=\'+[Console]::WindowWidth+\'x\'+[Console]::WindowHeight)"');
   await waitFor(() => clean(first.output).includes('__SIZE__=133x43'), 'terminal resize');

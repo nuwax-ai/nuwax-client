@@ -455,6 +455,9 @@ jobs:
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.to&&e.to==='computer-use')).concat([{from:'resources/computer-use',to:'computer-use'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
           test -d resources/computer-use && echo "computer-use extraResources injected: $(ls resources/computer-use)"
 
+      - name: Configure commercial update package
+        run: node scripts/prepare-release-updater.mjs
+
       - name: Clean previous build artifacts
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -530,6 +533,7 @@ jobs:
             OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+          node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
           if [ "${{ runner.os }}" = Windows ]; then
             node scripts/prepare-terminal-compat.mjs --platform win32 --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
           fi

@@ -38,14 +38,17 @@ function runLegacy(projectRoot, argv, env = {}, platform = 'darwin') {
   const commands = [];
   const module = { exports: {} };
   const mockRequire = (name) => {
-    if (name === 'child_process') return { execSync: (command, options) => commands.push({ command, options }) };
+    if (name === 'child_process') return {
+      execSync: (command, options) => commands.push({ command, options }),
+      execFileSync: (command, args, options) => commands.push({ command, args, options }),
+    };
     if (name === '../utils/project-paths') return { getProjectRoot: () => projectRoot };
     if (name === './installer-archive-policy.cjs') return policy;
     return require(name);
   };
   mockRequire.main = module;
   try {
-    vm.runInNewContext(wrapperSource, { module, require: mockRequire, process: { argv: ['node', wrapperPath, ...argv], env, platform, arch: 'arm64' }, console: { log() {} } }, { filename: wrapperPath });
+    vm.runInNewContext(wrapperSource, { module, require: mockRequire, process: { execPath: process.execPath, argv: ['node', wrapperPath, ...argv], env, platform, arch: 'arm64' }, console: { log() {} } }, { filename: wrapperPath });
   } catch (error) {
     error.commands = commands;
     throw error;
@@ -164,6 +167,15 @@ test('legacy explicit ZIP forwards only the paired options, including a native W
     assert.equal(commands[0].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} --config.nsis.differentialPackage=false --config.nsis.useZip=true`);
   }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).build, pkg.build);
+});
+
+test('commercial legacy dist configures updater before builder even when preparation is skipped', t => {
+  const dir = temporaryClient(t);
+  const commands = runLegacy(dir, ['--mac', '--arm64', '--dir', '--publish', 'never'], { NUWAX_APP_IDENTIFIER: 'nuwax', SKIP_PREPARE: '1' });
+  assert.equal(commands.length, 2);
+  assert.equal(commands[0].command, process.execPath);
+  assert.deepEqual(Array.from(commands[0].args), [path.resolve(dir, '../../../scripts/prepare-release-updater.mjs'), '--client', dir]);
+  assert.match(commands[1].command, /electron-builder.*--dir/);
 });
 
 test('ZIP legacy missing or conflicting publishing fails before any prepare or builder command', (t) => {
