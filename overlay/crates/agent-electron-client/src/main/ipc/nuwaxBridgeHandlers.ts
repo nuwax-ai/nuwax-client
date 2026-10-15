@@ -333,6 +333,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     log,
     translate: t,
+    getSetting: readSetting,
     workspace: {
       getIdentity: () => {
         const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;

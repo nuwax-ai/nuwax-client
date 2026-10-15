@@ -516,6 +516,19 @@ async function initTrayManager() {
   });
 
   trayManager = createTrayManager({
+    onOpenSettings: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      const openSettings = () => {
+        if (!window.isDestroyed()) window.webContents.send("nuwax:open-client-settings", {});
+      };
+      if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", openSettings);
+      else openSettings();
+    },
     onShowWindow: () => {
       if (mainWindow) {
         mainWindow.show();

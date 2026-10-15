@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, Modal, Select, Space, message } from "antd";
+import { Button, InputNumber, Modal, Select, Space, message } from "antd";
 import { CameraOutlined, CopyOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { CaptureCapabilities, CaptureMenuAction, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
+import { DEFAULT_RECORDING_DURATION_MINUTES, MAX_RECORDING_DURATION_MINUTES, RECORDING_DURATION_SETTING, recordingDurationMinutes } from "@shared/features/capture/recordingPreferences";
 
 interface Props {
   capture?: HostCaptureBridge;
@@ -15,14 +16,22 @@ interface Props {
   onActionReady?(handler: ((action: CaptureMenuAction) => void) | null): void;
   /** 等待设置弹窗实际关闭，避免把其关闭动画采进冻结帧。 */
   onCaptureStart?(): Promise<void>;
+  settings?: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<unknown> };
 }
 
 /** 壳上的直接验收入口；业务页继续使用同一服务的独立受信桥。 */
-export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onCaptureStart }) => {
+export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onCaptureStart, settings }) => {
   const [caps, setCaps] = useState<CaptureCapabilities | null>(null);
   const [state, setState] = useState<CaptureState>("idle");
   const [pending, setPending] = useState(false);
   const [quality, setQuality] = useState<CaptureQuality>("high");
+  const [maxDurationMinutes, setMaxDurationMinutes] = useState(DEFAULT_RECORDING_DURATION_MINUTES);
+  const durationRef = useRef(DEFAULT_RECORDING_DURATION_MINUTES);
+  const savedDurationRef = useRef(DEFAULT_RECORDING_DURATION_MINUTES);
+  const durationSaveVersion = useRef(0);
+  const settingsReady = useRef<Promise<unknown>>(Promise.resolve());
+  const [savingDuration, setSavingDuration] = useState(false);
+  const [durationReady, setDurationReady] = useState(!settings);
   const [preview, setPreview] = useState<{ result: CaptureSuccess; url: string | null } | null>(null);
   const previewRef = useRef<typeof preview>(null);
   const alive = useRef(true);
@@ -33,6 +42,42 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   const [copying, setCopying] = useState(false);
   const previewAction = useRef(false);
   const text = (key: string) => t(`Claw.Capture.${key}`);
+
+  useEffect(() => {
+    let mounted = true;
+    settingsReady.current = settings?.get(RECORDING_DURATION_SETTING).then(value => {
+      if (!mounted) return;
+      durationRef.current = recordingDurationMinutes(value);
+      savedDurationRef.current = durationRef.current;
+      setMaxDurationMinutes(durationRef.current);
+    }).catch(() => undefined).finally(() => { if (mounted) setDurationReady(true); }) ?? Promise.resolve();
+    return () => { mounted = false; };
+  }, [settings]);
+
+  const changeDuration = (value: number | null) => {
+    if (value === null || recordingDurationMinutes(value) !== value) return;
+    durationRef.current = value;
+    setMaxDurationMinutes(value);
+    setSavingDuration(true);
+    const previous = settingsReady.current;
+    const version = ++durationSaveVersion.current;
+    const save = async () => {
+      // 顺序持久化；保存期间保持输入可用，避免多位数输入被禁用/失焦打断。
+      await previous;
+      try {
+        const result = await settings?.set(RECORDING_DURATION_SETTING, value);
+        if (result === false || (result && typeof result === 'object' && 'success' in result && result.success === false)) throw new Error('preference write failed');
+        savedDurationRef.current = value;
+      } catch {
+        if (alive.current && version === durationSaveVersion.current) {
+          durationRef.current = savedDurationRef.current;
+          setMaxDurationMinutes(savedDurationRef.current);
+          message.error(text('durationSaveFailed'));
+        }
+      } finally { if (alive.current && version === durationSaveVersion.current) setSavingDuration(false); }
+    };
+    settingsReady.current = save();
+  };
 
   useEffect(() => {
     alive.current = true;
@@ -82,13 +127,16 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
         return;
       }
       await onCaptureStart?.();
+      let ready: Promise<unknown>;
+      do { ready = settingsReady.current; await ready; } while (ready !== settingsReady.current);
       if (!alive.current) return;
       result = output
-        ? await capture.record({ output, compression: { quality }, maxDurationMs: 5 * 60 * 1000 })
+        ? await capture.record({ output, compression: { quality }, maxDurationMs: durationRef.current * 60_000 })
         : await capture.screenshot({ compression: { quality } });
       if (!result.success) {
         const errorKey = result.code.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-        if (alive.current && result.code !== "canceled") message.error(`${text(`error.${errorKey}`)}${result.error ? ` · ${result.error}` : ""}`);
+        // The host shows a native authorization dialog for permission-denied; a toast would repeat it.
+        if (alive.current && result.code !== "canceled" && result.code !== "permission-denied") message.error(`${text(`error.${errorKey}`)}${result.error ? ` · ${result.error}` : ""}`);
         return;
       }
       if (!alive.current) { await capture.release(result.resultId); return; }
@@ -154,11 +202,19 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
         <Select value={quality} disabled={busy} style={{ width: 120 }} onChange={setQuality}
           options={["lossless", "high", "medium", "low"].map((value) => ({ value, label: text(`quality.${value}`) }))} />
       </Space>
+      <Space direction="vertical" size={6}>
+        <Space><span>{text('maxDuration')}</span>
+          <InputNumber aria-label={text('maxDuration')} min={1} max={MAX_RECORDING_DURATION_MINUTES} step={1} precision={0}
+            value={maxDurationMinutes} disabled={busy || !durationReady} onChange={changeDuration} style={{ width: 100 }} />
+          <span>{text('minutes')}</span>
+        </Space>
+        <span style={{ color: 'var(--color-text-secondary)' }}>{text('maxDurationHint')}</span>
+      </Space>
       <Space wrap size={12}>
-        <Button icon={<CameraOutlined />} disabled={busy || !!preview} onClick={() => void run()}>{text("screenshot")}</Button>
+        <Button icon={<CameraOutlined />} disabled={busy || savingDuration || !!preview} onClick={() => void run()}>{text("screenshot")}</Button>
         {(["mp4", "gif"] as const).map((output) => <Button key={output}
           icon={output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />}
-          disabled={busy || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output))}
+          disabled={busy || savingDuration || !!preview || (output === "gif" ? !caps.formats.gif : !caps.formats.video.includes(output))}
           onClick={() => void run(output)}>{text("record")} · {output.toUpperCase()}</Button>)}
       </Space>
     </Space>

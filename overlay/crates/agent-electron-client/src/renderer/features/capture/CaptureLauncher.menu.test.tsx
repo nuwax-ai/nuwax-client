@@ -15,7 +15,7 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("antd", () => ({
   Button: vi.fn(), Dropdown: vi.fn(),
-  Modal: vi.fn(), Select: vi.fn(), Space: vi.fn(),
+  Modal: vi.fn(), InputNumber: vi.fn(), Select: vi.fn(), Space: vi.fn(),
   message: { error: errors, success: vi.fn() },
 }));
 import { CaptureLauncher } from "./CaptureLauncher";
@@ -62,7 +62,7 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
       expect(ui.capture.record).not.toHaveBeenCalled();
     } else {
       expect(ui.capture.record).toHaveBeenCalledOnce();
-      expect(ui.capture.record).toHaveBeenCalledWith({ output: action, compression: { quality: "high" }, maxDurationMs: 300_000 });
+      expect(ui.capture.record).toHaveBeenCalledWith({ output: action, compression: { quality: "high" }, maxDurationMs: 1_800_000 });
       expect(ui.capture.screenshot).not.toHaveBeenCalled();
     }
     expect(ui.capture.onMenuAction).toHaveBeenCalledOnce();
@@ -80,7 +80,7 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     expect(ui.capture.screenshot).toHaveBeenCalledTimes(1);
     expect(ui.capture.screenshot).toHaveBeenCalledWith({ compression: { quality: "high" } });
     expect(vi.mocked(ui.capture.record).mock.calls.map(([value]) => value)).toEqual(
-      ["mp4", "webm", "gif"].map(output => ({ output, compression: { quality: "high" }, maxDurationMs: 300_000 })),
+      ["mp4", "webm", "gif"].map(output => ({ output, compression: { quality: "high" }, maxDurationMs: 1_800_000 })),
     );
     ui.unmount();
     expect(ui.offMenu).toHaveBeenCalled();
@@ -127,7 +127,7 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     expect(ui.capture.screenshot).toHaveBeenCalledWith({ compression: { quality: "high" } });
     for (const output of ["mp4", "webm", "gif"] as const) { ui.menu(output); await flush(); }
     expect(vi.mocked(ui.capture.record).mock.calls.map(([value]) => value)).toEqual(
-      ["mp4", "webm", "gif"].map((output) => ({ output, compression: { quality: "high" }, maxDurationMs: 300_000 })),
+      ["mp4", "webm", "gif"].map((output) => ({ output, compression: { quality: "high" }, maxDurationMs: 1_800_000 })),
     );
     expect(errors).not.toHaveBeenCalled();
     ui.unmount();

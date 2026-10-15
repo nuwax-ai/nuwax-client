@@ -165,6 +165,18 @@ describe("macOS 原生菜单语言与动作", () => {
     expect(new Set(accelerators).size).toBe(accelerators.length);
   });
 
+  it("本次发布隐藏捕获菜单，保留菜单动作和 macOS 快捷键", () => {
+    const capture = vi.fn();
+    const template = buildMacApplicationMenu(t, "Nuwax", { ...makeActions(), capture }, { captureAvailable: true });
+    const menu = template.find((item) => item.label === "截图与录屏")!;
+    expect(menu.visible).toBe(false);
+    expect(template.filter((item) => item.visible !== false).map((item) => item.label)).not.toContain("截图与录屏");
+    const commands = children(menu).filter((item) => item.type !== "separator");
+    expect(commands.filter((item) => item.accelerator).every((item) => item.acceleratorWorksWhenHidden)).toBe(true);
+    commands.forEach((item) => item.click?.({} as never, {} as never, {} as never));
+    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
+  });
+
   it("特性关闭或动作缺失时移除捕获菜单及其 accelerator", () => {
     const without = buildMacApplicationMenu(t, "Nuwax", makeActions());
     expect(buildMacApplicationMenu(t, "Nuwax", { ...makeActions(), capture: vi.fn() }, { captureAvailable: false })

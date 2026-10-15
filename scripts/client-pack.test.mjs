@@ -143,6 +143,6 @@ test('capture and notices use independent commercial resource paths and include 
   const pkg = { build: { extraResources: [{ from: 'stale', to: 'capture' }, { from: 'stale-notices', to: 'third-party' }] } };
   const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', noticesDir: '/commercial/.cache/notices', frontendDist: '/frontend', output: '/output' });
   assert.equal(result.extraResources.filter((entry) => entry.to.startsWith('capture')).length, 1);
-  assert.deepEqual(result.extraResources.find((entry) => entry.to.startsWith('capture')), { from: '/commercial/resources/capture/darwin-arm64', to: 'capture/darwin-arm64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json'] });
+  assert.deepEqual(result.extraResources.find((entry) => entry.to.startsWith('capture')), { from: '/commercial/resources/capture/darwin-arm64', to: 'capture/darwin-arm64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json', 'koffi.node', 'koffi.json'] });
   assert.deepEqual(result.extraResources.find((entry) => entry.to === 'third-party').filter, ['third-party-notices.json', 'licenses/**', 'sources/**']);
 });

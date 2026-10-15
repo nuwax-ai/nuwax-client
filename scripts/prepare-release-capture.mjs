@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as core from './client/core.mjs';
 import { assertCaptureWindowsToolchain, inspectCaptureResource, prepareCaptureResources, sha256, writeCaptureNotices } from './client/capture-resources.mjs';
+import { CAPTURE_RESOURCE_FILES } from './client/capture-window-resources.mjs';
 
 export const WINDOWS_RUNTIME_VERSION = '13.0.0.r354.g40ab95d18-1';
 // Downloaded from the official archive and checked against .PKGINFO. Pacman's
@@ -62,7 +63,7 @@ function isCaptureEntry(entry) {
 
 export function captureMacSignIgnore(arch) {
   if (!['arm64', 'x64'].includes(arch)) throw new Error('[release-capture] Unsupported macOS signing architecture');
-  return `/Contents/Resources/capture/darwin-${arch}/ffmpeg$`;
+  return `/Contents/Resources/capture/darwin-${arch}/(?:ffmpeg|koffi\\.node)$`;
 }
 
 /** Signing changes Mach-O bytes. Sign only an independent copy, then record
@@ -85,6 +86,18 @@ export async function stageSignedCaptureResource(root, admitted, { arch, identit
   if (sha256(admitted.binary) !== sourceHash || sha256(sourceRecordFile) !== sourceRecordHash) throw new Error('[release-capture] Source cache changed during signing');
   const record = { ...admitted.record, sha256: sha256(binary), signing: { sourceHash, identity } };
   tools.atomicJson(path.join(signingDir, 'resource.json'), record);
+  const nativeSource = path.join(admitted.dir, 'koffi.node');
+  if (fs.existsSync(nativeSource)) {
+    const nativeRecord = tools.readJson(path.join(admitted.dir, 'koffi.json'));
+    const sourceHash = sha256(nativeSource);
+    if (nativeRecord.schema !== 1 || nativeRecord.sha256 !== sourceHash) throw new Error('[release-capture] Koffi source changed before signing');
+    const native = path.join(signingDir, 'koffi.node');
+    fs.copyFileSync(nativeSource, native);
+    await tools.run('codesign', [...args, native], { capture: true });
+    await tools.run('codesign', ['--verify', '--strict', '--verbose=2', native], { capture: true });
+    if (sha256(nativeSource) !== sourceHash) throw new Error('[release-capture] Koffi source changed during signing');
+    tools.atomicJson(path.join(signingDir, 'koffi.json'), { ...nativeRecord, sha256: sha256(native), signing: { sourceHash, identity } });
+  }
   return { dir: signingDir, binary, record };
 }
 
@@ -104,7 +117,7 @@ export function injectReleaseCapture(builder, { captureDir, noticesDir, platform
   }
   result.extraResources ??= [];
   result.extraResources.push(
-    { from: captureDir, to: `capture/${platform}-${arch}`, filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json'] },
+    { from: captureDir, to: `capture/${platform}-${arch}`, filter: CAPTURE_RESOURCE_FILES },
     { from: noticesDir, to: 'third-party/capture', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] },
   );
   return result;
@@ -193,6 +206,15 @@ export async function verifyReleaseCaptureOutput(root, output, { platform = proc
     const capture = path.join(resources, 'capture', `${platform}-${arch}`);
     verifyCopy(expected.binary, path.join(capture, platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), { executable: platform !== 'win32' });
     verifyCopy(path.join(expected.dir, 'resource.json'), path.join(capture, 'resource.json'));
+    if (fs.existsSync(path.join(admitted.dir, 'koffi.node'))) {
+      const record = tools.readJson(path.join(expected.dir, 'koffi.json'));
+      const native = path.join(expected.dir, 'koffi.node');
+      const source = tools.readJson(path.join(admitted.dir, 'koffi.json'));
+      if (sha256(native) !== record.sha256 || record.version !== source.version || record.platform !== platform || record.arch !== arch
+        || (expected.dir !== admitted.dir && record.signing?.sourceHash !== source.sha256)) throw new Error('[release-capture] Koffi staging no longer matches admitted source');
+      verifyCopy(native, path.join(capture, 'koffi.node'));
+      verifyCopy(path.join(expected.dir, 'koffi.json'), path.join(capture, 'koffi.json'));
+    }
     verifyTree(noticesDir, path.join(resources, 'third-party/capture'));
   }
   return { roots, capture: true };

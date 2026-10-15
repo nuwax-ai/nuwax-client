@@ -27,6 +27,7 @@ import {
   type StartFeaturesOptions,
 } from "./index";
 import type { DesktopFeature, FeatureContext } from "./_kit/types";
+import { createLocalFilesBridge } from "../../preload/features/local-files";
 
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
@@ -128,6 +129,27 @@ describe("startDesktopFeatures", () => {
     expect(out.ids).toEqual(["n"]);
     expect(wrongProduct.register).not.toHaveBeenCalled();
     expect(off.register).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("本次上线关闭本机文件直访，历史开关 %s 不得恢复能力", async (override) => {
+    const localFiles = desktopFeatures.find((f) => f.id === "local-files")!;
+    const register = vi.spyOn(localFiles, "register").mockReturnValue({ dispose: vi.fn() });
+    const readEnabled = vi.fn(() => override);
+    const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
+    const capture = feature("capture");
+    try {
+      const out = startDesktopFeatures(options({ ipcMain, isEnabled: readEnabled }), [localFiles, capture]);
+      expect(out.ids).toEqual(override ? ["capture"] : []);
+      expect(isDesktopFeatureRegistered("local-files")).toBe(false);
+      expect(register).not.toHaveBeenCalled();
+      expect(ipcMain.handle).not.toHaveBeenCalled();
+      expect(readEnabled).not.toHaveBeenCalledWith("local-files", expect.anything());
+      expect(capture.register).toHaveBeenCalledTimes(override ? 1 : 0);
+      const bridge = createLocalFilesBridge({ invoke: vi.fn().mockRejectedValue(new Error("No handler registered")) });
+      expect(await bridge.getCapabilities()).toEqual({ apiVersion: 1, available: false });
+    } finally {
+      register.mockRestore();
+    }
   });
 
   it("重复启动幂等：返回同一个注册结果，不重复注册", () => {

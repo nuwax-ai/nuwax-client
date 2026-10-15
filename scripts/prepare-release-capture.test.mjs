@@ -47,7 +47,7 @@ test('release injection preserves other resources, notices and signing, replacin
   assert.deepEqual(result.mac.extraResources, []);
   assert.deepEqual(result.extraResources.slice(0, 2), [{ to: 'third-party' }, { to: 'nuwax-dist' }]);
   assert.deepEqual(result.extraResources.slice(2), [
-    { from: '/verified/win32-x64', to: 'capture/win32-x64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json'] },
+    { from: '/verified/win32-x64', to: 'capture/win32-x64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json', 'koffi.node', 'koffi.json'] },
     { from: '/notices', to: 'third-party/capture', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] },
   ]);
   assert.equal(old.win.extraResources.length, 2);
@@ -149,6 +149,23 @@ function fakeSigner() {
   } };
   return { tools, calls };
 }
+
+test('Mac pre-signing preserves Koffi provenance and packaged verification rejects a missing native module', async t => {
+  const f = fixture(t, 'darwin', 'arm64'), signer = fakeSigner();
+  const source = path.join(f.captureDir, 'koffi.node'); fs.writeFileSync(source, 'native Koffi fixture');
+  const sourceHash = sha256(source);
+  core.atomicJson(path.join(f.captureDir, 'koffi.json'), { schema: 1, platform: 'darwin', arch: 'arm64', version: '3.3.3', sha256: sourceHash });
+  const staged = await stageSignedCaptureResource(f.root, f.admitted, { arch: 'arm64', identity: 'test', tools: signer.tools });
+  const record = core.readJson(path.join(staged.dir, 'koffi.json'));
+  assert.equal(record.signing.sourceHash, sourceHash);
+  assert.equal(sha256(source), sourceHash);
+  assert.equal(record.sha256, sha256(path.join(staged.dir, 'koffi.node')));
+  f.pkg.build = injectReleaseCapture(f.pkg.build, { captureDir: staged.dir, noticesDir: f.files.noticesDir, platform: 'darwin', arch: 'arm64', macPreSigned: true });
+  core.atomicJson(f.files.packageFile, f.pkg); f.copy(staged.dir);
+  await verifyReleaseCaptureOutput(f.root, f.output, { platform: 'darwin', arch: 'arm64', inspect: f.inspect, tools: signer.tools });
+  fs.rmSync(path.join(f.resources, 'capture/darwin-arm64/koffi.node'));
+  await assert.rejects(verifyReleaseCaptureOutput(f.root, f.output, { platform: 'darwin', arch: 'arm64', inspect: f.inspect, tools: signer.tools }), /missing or changed/);
+});
 
 test('Mac pre-signing records final bytes and unsigned provenance without changing admitted source', async (t) => {
   const f = fixture(t, 'darwin', 'arm64'), signer = fakeSigner();

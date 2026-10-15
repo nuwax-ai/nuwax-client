@@ -1,5 +1,7 @@
 # 本机文件直访桥
 
+当前上线状态（2026-10-14）：本机文件直访尚未提测，已在 `startDesktopFeatures` 中强制关闭。即使历史设置 `features.local-files.enabled=true` 也不会注册 IPC、协议 handler 或创建授权；能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出继续走原 API 路线，本机打开/定位入口不显示。源码与桥契约保留，完成验收后再移除该门控。启动前的惰性 scheme 声明不提供文件访问能力。
+
 Nuwax 客户端 `NuwaClawBridge.localFiles` 可选扩展，`apiVersion=1`。旧壳只有 pickDirectory，必须先探测 getCapabilities。桥只接受当前受信顶层文档、有效登录、本机注册身份及当前登录代次。
 
 ## 调用

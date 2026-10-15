@@ -22,10 +22,12 @@ import {
   type RecordOptions,
 } from "@shared/features/capture/contract";
 import { summarizeDisplays, type DisplayLike } from "./hdr";
+import { DEFAULT_RECORDING_DURATION_MS } from "@shared/features/capture/recordingPreferences";
 import { parseRecordOptions, parseScreenshotOptions } from "./options";
 import type { ResultStore } from "./results";
 import { encodeStill, type NativeImageLike, type StillEncoder } from "./stillEncoder";
 import { describeTiers } from "./tiers";
+import type { CaptureWindowVisibility } from "./windowVisibility";
 
 export interface StillCapture {
   image: NativeImageLike;
@@ -67,6 +69,10 @@ export interface CaptureServiceDeps {
   platform: NodeJS.Platform;
   backendAvailable?(): boolean;
   getPermission(): CapturePermission;
+  /** Guides the user to grant access; fire-and-forget so the caller still gets its result immediately. */
+  onPermissionDenied?(): void;
+  windowVisibility?: CaptureWindowVisibility;
+  getRecordingDurationLimit?(): number;
   getDisplays(): DisplayLike[];
   stillEngine: StillEngine;
   stillEncoder: StillEncoder;
@@ -117,6 +123,7 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
       return { success: false, code: "busy", error: "another capture session is in progress" };
     }
     if (deps.getPermission() === "denied") {
+      deps.onPermissionDenied?.();
       return { success: false, code: "permission-denied", error: "screen recording permission denied" };
     }
     return null;
@@ -164,6 +171,8 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
       controller = abort;
       setState("selecting");
       try {
+        if (deps.windowVisibility) await deps.windowVisibility.hide(abort.signal);
+        if (abort.signal.aborted) return { success: false, code: "canceled" };
         const capture = await deps.stillEngine.captureStill(abort.signal);
         if (abort.signal.aborted || capture === null) {
           return { success: false, code: "canceled" };
@@ -188,6 +197,7 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
         deps.log.error("[Capture] screenshot failed", error);
         return failure(error);
       } finally {
+        deps.windowVisibility?.restore();
         controller = null;
         setState("idle");
       }
@@ -197,6 +207,8 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
       const parsed = parseRecordOptions(rawOptions);
       if (!parsed.ok) return { success: false, code: "invalid-argument", error: parsed.error };
       const options = parsed.value;
+      const durationLimit = deps.getRecordingDurationLimit?.() ?? DEFAULT_RECORDING_DURATION_MS;
+      options.maxDurationMs = Math.min(options.maxDurationMs ?? durationLimit, durationLimit);
       if (!platformSupported()) return { success: false, code: 'unsupported', error: `desktop capture is not available on ${deps.platform}` };
       const engine = deps.recordEngine;
       if (!engine) {
@@ -215,6 +227,8 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
       controller = abort;
       setState("selecting");
       try {
+        if (deps.windowVisibility) await deps.windowVisibility.hide(abort.signal);
+        if (abort.signal.aborted) return { success: false, code: "canceled" };
         const capture = await engine.record(options, abort.signal, setState);
         try {
           if (abort.signal.aborted || capture === null) {
@@ -245,6 +259,7 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
         deps.log.error("[Capture] record failed", error);
         return failure(error);
       } finally {
+        deps.windowVisibility?.restore();
         controller = null;
         setState("idle");
       }

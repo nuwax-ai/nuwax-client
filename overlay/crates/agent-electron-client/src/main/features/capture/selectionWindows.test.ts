@@ -281,6 +281,51 @@ describe('multi-display selector focus', () => {
 });
 
 
+describe('hover window detection', () => {
+  const init = (window: any) => mock.handlers.get(CH.init)!({ sender: window.webContents, senderFrame: window.webContents.mainFrame }) as { regions?: unknown };
+
+  it('sends each display its own window regions in frozen-frame pixels, taken after the freeze', async () => {
+    mock.displays.push({ ...mock.display, id: 2, scaleFactor: 1, size: { width: 1200, height: 800 }, bounds: { x: 1200, y: 0, width: 1200, height: 800 } });
+    const listWindows = vi.fn(() => { mock.timeline.push('windows'); return [
+      { bounds: { x: 100, y: 50, width: 400, height: 300 }, space: 'dip' as const },
+      { bounds: { x: 1100, y: 0, width: 300, height: 200 }, space: 'dip' as const },
+    ]; });
+    windows.dispose(); windows = createCaptureWindows({ platform: 'darwin', portal: false, log: mock.log, listWindows });
+    const abort = new AbortController(); const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(2));
+    expect(mock.timeline.slice(0, 4)).toEqual(['freeze', 'freeze', 'windows', 'catalog']);
+    expect(init(mock.windows[0]).regions).toEqual([{ x: 200, y: 100, width: 800, height: 600 }, { x: 2200, y: 0, width: 200, height: 400 }]);
+    expect(init(mock.windows[1]).regions).toEqual([{ x: 0, y: 0, width: 200, height: 200 }]);
+    expect(listWindows).toHaveBeenCalledOnce();
+    abort.abort(); expect(await pending).toBeNull();
+  });
+
+  it('keeps the existing manual selector when detection is unavailable or throws', async () => {
+    for (const listWindows of [() => null, () => { throw new Error('native failure'); }]) {
+      mock.windows.length = 0; mock.log.error.mockClear();
+      windows.dispose(); windows = createCaptureWindows({ platform: 'win32', portal: false, log: mock.log, listWindows });
+      const abort = new AbortController(); const pending = windows.captureStill(abort.signal);
+      await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+      expect(init(mock.windows[0])).not.toHaveProperty('regions');
+      abort.abort(); expect(await pending).toBeNull();
+    }
+    expect(mock.log.error).toHaveBeenCalledOnce();
+  });
+
+  it('never enumerates desktop windows for a portal source preview', async () => {
+    const listWindows = vi.fn(() => []);
+    windows.dispose(); windows = createCaptureWindows({ platform: 'linux', portal: true, log: mock.log, listWindows });
+    const image = { dataUrl: 'data:image/png;base64,frame', width: 100, height: 80,
+      selection: { sourceId: 'screen:portal', sourceKind: 'screen' as const, sourceSize: { width: 100, height: 80 },
+        crop: { x: 0, y: 0, width: 100, height: 80 }, coordinateSpace: 'source' as const, hdrToneMapped: false } };
+    const abort = new AbortController(); const pending = windows.selectPrepared('record', image, abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    expect(init(mock.windows[0])).not.toHaveProperty('regions');
+    expect(listWindows).not.toHaveBeenCalled();
+    abort.abort(); expect(await pending).toBeNull();
+  });
+});
+
 describe('capture sources on arbitrary displays', () => {
   it('keeps countdown, recording and paused controls beside the chosen secondary-screen region', async () => {
     const second = { ...mock.display, id: 2, bounds: { x: -1280, y: -256, width: 1280, height: 1024 }, workArea: { x: -1280, y: -232, width: 1280, height: 960 } };
