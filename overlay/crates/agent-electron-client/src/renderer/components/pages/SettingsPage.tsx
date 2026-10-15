@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { CuaSettingsRows } from "../CuaControls";
 import {
   AutoComplete,
   Button,
@@ -933,6 +934,9 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
                 </Button>
               }
             />
+            )}
+            {cuaStatus?.enabled && (
+              <CuaSettingsRows api={window.electronAPI?.computerUse} t={t} Row={SettingsRow} />
             )}
             <SettingsRow
               label={t("Claw.Settings.computerUse.vlmModel")}

@@ -655,6 +655,12 @@ export const CUA_I18N_KEYS = {
   OUTCOME_OK: "Claw.Cua.outcome.ok",
   OUTCOME_ERROR: "Claw.Cua.outcome.error",
   OUTCOME_CANCELLED: "Claw.Cua.outcome.cancelled",
+  OUTCOME_REFUSED: "Claw.Cua.outcome.refused",
+  REASON_NOPROGRESS: "Claw.Cua.reason.noProgress",
+  REASON_UNCERTAINRESULT: "Claw.Cua.reason.uncertainResult",
+  REASON_VIOLATIONLIMIT: "Claw.Cua.reason.violationLimit",
+  SETTINGS_SCOPE: "Claw.Settings.computerUse.scope",
+  SETTINGS_DIAGNOSTICS: "Claw.Settings.computerUse.diagnostics",
 
   IDLE_TIMEOUT: "Claw.Cua.reason.idleTimeout",
   KEY_SAVED: "Claw.Cua.keySaved",
