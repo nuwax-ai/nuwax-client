@@ -219,7 +219,8 @@ jobs:
           rm -f "${ASSETS_DIR}"/*.yml
 
           RELEASE_JSON=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,createdAt)
-          NOTES=$(echo "$RELEASE_JSON" | jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' | head -c 500)
+          # 保留完整说明；按字节截断会切断 UTF-8 中文，并丢失旧版升级指引。
+          NOTES=$(jq -r '.body // "女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。"' <<< "$RELEASE_JSON")
           PUB_DATE=$(echo "$RELEASE_JSON" | jq -r '.createdAt // empty')
           [ -n "$PUB_DATE" ] || { echo "::error::缺少固定 Release 创建时间，禁止生成不可重试的元数据"; exit 1; }
 
