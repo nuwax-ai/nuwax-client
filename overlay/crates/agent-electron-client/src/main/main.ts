@@ -65,6 +65,7 @@ import {
 import { openLogDirectory } from "./ipc/appHandlers";
 import { shouldInjectWebviewPerfBridge } from "./ipc/bridgeTrust";
 import { migrateDataDir, migrateSettingsPaths } from "./bootstrap/migrate";
+import { configureCommercialAppIdentity } from "./bootstrap/appIdentity";
 import { getDeviceId, logSystemInfo } from "./services/system/deviceId";
 import { initWebviewPolicy, configureSharedWebview } from "./services/system/webviewPolicy";
 import { stopAllEngines } from "./services/engines/engineManager";
@@ -84,9 +85,7 @@ if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
   configureCaptureBackend(app.commandLine);
-  app.setName("Nuwax");
-  if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
-  app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
+  configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
 }
 
 // 处理 EPIPE 错误（社区最佳实践）

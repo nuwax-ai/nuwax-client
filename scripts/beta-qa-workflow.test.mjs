@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import archivePolicy from '../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+import { prepareReleaseSystemName } from './prepare-release-system-name.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const workflow = readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8');
@@ -171,6 +172,7 @@ test('QA native package fields remain numeric while the full app version and pub
       QA_BUILD: String(qa), NATIVE_VERSION: '3.0.9', TARGET_ARCH: arch, npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false',
     } });
     assert.equal(result.status, 0, result.stderr);
+    prepareReleaseSystemName(directory, { platform: 'darwin', arch });
     const pkg = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
     assert.equal(pkg.version, version);
     assert.equal(pkg.build.buildVersion, qa ? '3.0.9' : undefined);
@@ -220,6 +222,7 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
           QA_BUILD: 'false', NATIVE_VERSION: '3.0.11', TARGET_ARCH: arch, npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false',
         } });
         assert.equal(result.status, 0, result.stderr);
+        prepareReleaseSystemName(directory, { platform: 'darwin', arch });
         const pkg = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8'));
         assert.equal(pkg.version, version, 'Application/ASAR version must keep the complete Beta identity');
         assert.ok(pkg.build.extraResources.some((entry) => entry.to === 'node'), 'Complete integrated resources must remain present');
@@ -326,10 +329,11 @@ test('artifact-only QA retains the full macOS secret and signature gates before 
   for (const qa of ['true', 'false']) {
     const passed = runRecordStep(t, { qa, osName: 'macOS' });
     assert.equal(passed.status, 0, passed.stderr);
-    assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'codesign', 'codesign', 'spctl', 'node']);
+    assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'codesign', 'codesign', 'spctl', 'node', 'node']);
     assert.deepEqual(passed.calls[0].slice(2, 5), ['-verify_arch', 'arm64', 'x86_64']);
     assert.match(passed.calls[1][3], /app\.asar\.unpacked\/dist\/main\/mac-notification-permission\.node$/);
-    assert.equal(passed.calls[4][2], qa === 'true' ? 'record-qa' : 'record');
+    assert.deepEqual(passed.calls[4].slice(1, 3), ['scripts/prepare-release-system-name.mjs', '--verify-app']);
+    assert.equal(passed.calls[5][2], qa === 'true' ? 'record-qa' : 'record');
     const missing = runRecordStep(t, { qa, osName: 'macOS', missingCertificate: true });
     assert.notEqual(missing.status, 0);
     assert.deepEqual(missing.calls, []);
