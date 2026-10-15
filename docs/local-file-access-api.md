@@ -1,6 +1,6 @@
 # 本机文件直访桥
 
-当前上线状态（2026-10-14）：本机文件直访尚未提测，已在 `startDesktopFeatures` 中强制关闭。即使历史设置 `features.local-files.enabled=true` 也不会注册 IPC、协议 handler 或创建授权；能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出继续走原 API 路线，本机打开/定位入口不显示。源码与桥契约保留，完成验收后再移除该门控。启动前的惰性 scheme 声明不提供文件访问能力。
+上线状态：仅商业版 Nuwax（社区版 NuwaClaw 无此能力）。release 在 2026-10-14（`672ca584`）为 3.0.14/3.0.15 强制关闭了本机文件直访；本能力仍在开发分支 `codex/local-file-access`、未提测，合入前 release 保持关闭。该分支（2026-10-15）已移除门控，恢复 `features.local-files.enabled` 设置覆盖 ?? 默认开启；设置为 `false` 时不注册 IPC、协议 handler 或授权，能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出走原 API 路线，本机打开/定位入口不显示。启动前的惰性 scheme 声明不提供文件访问能力。验收记录见 [20261015-local-file-access-reenable.md](./acceptance/20261015-local-file-access-reenable.md)。
 
 Nuwax 客户端 `NuwaClawBridge.localFiles` 可选扩展，`apiVersion=1`。旧壳只有 pickDirectory，必须先探测 getCapabilities。桥只接受当前受信顶层文档、有效登录、本机注册身份及当前登录代次。
 
@@ -54,6 +54,7 @@ ZIP 在遍历前解析工作区与目标父目录的真实路径，保存目录�
 
 ## 验证入口
 
-- `node scripts/acceptance/local-files-electron.mjs`：跨平台真实 Electron runtime smoke，隔离 profile、本机 metadata fixture、H.264 播放/seek 和完整 ZIP。需要已安装的 ffmpeg（可用 `NUWAX_QA_FFMPEG` 指定路径）；Electron 可用 `NUWAX_QA_ELECTRON` 指定。保存对话框使用 fixture 路径，报告写 `.cache/acceptance/local-files-electron.json`。
+- `node scripts/acceptance/local-files-electron.mjs`：跨平台真实 Electron runtime smoke，隔离 profile、本机 metadata fixture、H.264 播放/seek、完整 ZIP 与宿主路径语义。需要已安装的 ffmpeg（可用 `NUWAX_QA_FFMPEG` 指定路径）；Electron 可用 `NUWAX_QA_ELECTRON` 指定。保存对话框使用 fixture 路径，报告写 `.cache/acceptance/local-files-electron.json`。`NUWAX_QA_REAL_FILE_SERVER_PORT` 额外经真实 IPC 对运行中的 nuwax-file-server 列表/搜索。
+- Windows 等无仓库检出的主机：开发机执行 `--bundle-only <dir>`，把目录与 `scripts/acceptance/local-files-electron-windows.ps1` 复制过去后以 `-BundleDir <dir>` 运行。
 - `npm run test:commercial` / 独立社区副本 `npm run base:test`；`npm run check:pin`、`npm run host-bridge:check`、feature boundaries。
 - 本工作分支的开发/打包使用 `--frontend source`。真实账户、签名安装包与 Windows 真机验收须分别记录。
