@@ -24,3 +24,11 @@
 3. 维护：路径解析集中覆盖各平台/架构；缺失、损坏、错误 feed/cache、真实 builder hook 顺序和 DMG 失败清理均有测试，上传前验证实际文件而非仅检查配置声明。
 
 待新 Beta CI 全部通过后交付；Win10 目标系统兼容性仍由原反馈人复测。
+
+## beta.3 Linux 后段重写修正
+
+run `38710424539` / job `116349449865` 已完成 Linux x64 的 AppImage/deb/rpm 构建，但新增校验失败。源码确认 builder 25.1.8 的 `FpmTarget.build` 会晚于 afterPack 再调用 `getAppUpdatePublishConfiguration` 和 `serializeToYaml`：URL 使用 plain scalar，并自动给预发布追加 channel。此前只检查 afterPack 输出，未覆盖这个后段改写。
+
+beta.4 保留严格缺失/错误拦截，生成字节改为与已锁定 builder 一致，并在根及平台配置关闭 detectUpdateChannel；客户端服务仍按既有 latest.json 规则选择通道。测试现在使用真实 PublishManager 配置生成函数及 builder serializer，覆盖 stable/Beta/QA/dev，并验证内置 handler 先写错误配置后由商业 hook 覆盖。未修改原 tag、未发布半成品。
+
+修正后全量脚本 355 项通过、无跳过；真实原生 arm64 builder --dir 构建及真实 ZIP/只读 DMG 校验再次通过；基座 worktree/origin/main 纯净守卫通过。

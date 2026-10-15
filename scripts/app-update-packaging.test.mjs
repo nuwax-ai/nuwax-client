@@ -60,11 +60,29 @@ test('real builder afterPack runs commercial hook last even when --dir supplies 
   const packager = { config: build, appInfo: { updaterCacheDirName: updater.CACHE_NAME }, getResourcesDir: () => resources };
   const context = { packager, appOutDir: output, targets: [], electronPlatformName: 'darwin' };
   await Packager.prototype.afterPack.call({ appInfo: { type: 'commonjs' }, config: build,
-    afterPackHandlers: [async () => { builtInRan = true; }] }, context);
+    afterPackHandlers: [async () => {
+      builtInRan = true;
+      fs.writeFileSync(path.join(resources, 'app-update.yml'), 'provider: github\n');
+    }] }, context);
   assert.equal(builtInRan, true);
   assert.ok(fs.existsSync(verifyUpdaterApp(path.join(output, 'Nuwax.app'))));
   const yaml = builderRequire('js-yaml').load(fs.readFileSync(path.join(resources, 'app-update.yml'), 'utf8'));
   assert.deepEqual(yaml, updater.updateConfig(feed));
+  // FpmTarget.build uses this exact installed builder serializer after the
+  // afterPack hook. Validate the late rewrite too, not only the hook's output.
+  const { getAppUpdatePublishConfiguration } = builderRequire('app-builder-lib/out/publish/PublishManager.js');
+  const { Platform } = builderRequire('app-builder-lib');
+  for (const channel of [null, 'beta', 'qa', 'dev']) {
+    const linux = { ...packager, platform: Platform.LINUX,
+      appInfo: { ...packager.appInfo, channel }, platformSpecificBuildOptions: build.linux ?? {},
+      info: { config: build, appInfo: { channel } }, expandMacro: value => value };
+    const actual = await getAppUpdatePublishConfiguration(linux, 1, false);
+    assert.deepEqual(actual, updater.updateConfig(feed));
+    const rewritten = builderRequire('builder-util').serializeToYaml(actual);
+    assert.deepEqual(Buffer.from(rewritten), updater.configBytes(feed));
+    fs.writeFileSync(path.join(resources, 'app-update.yml'), rewritten);
+    updater.verifyResources(resources, feed);
+  }
   packager.appInfo.updaterCacheDirName = 'community-updater';
   await assert.rejects(updater(context), /isolated nuwax-updater/);
 });

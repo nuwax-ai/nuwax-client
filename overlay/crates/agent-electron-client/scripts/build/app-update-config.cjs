@@ -14,17 +14,23 @@ function updateConfig(feedBase) {
 
 function configBytes(feedBase) {
   const config = updateConfig(feedBase);
-  return Buffer.from(`provider: generic\nurl: ${JSON.stringify(config.url)}\nupdaterCacheDirName: ${CACHE_NAME}\n`);
+  // FpmTarget rewrites this file after afterPack for deb/rpm. Match the locked
+  // builder's serializeToYaml output so equivalent bytes survive that phase.
+  // URL() normalizes whitespace; public HTTPS URLs are safe YAML plain scalars.
+  return Buffer.from(`provider: generic\nurl: ${config.url}\nupdaterCacheDirName: ${CACHE_NAME}\n`);
 }
 
 function configureUpdater(build, { feedBase, hook = HOOK } = {}) {
   if (build.afterPack && build.afterPack !== hook && build.afterPack !== HOOK) throw new Error('[app-update] Compose the existing afterPack hook before replacing it');
   const config = updateConfig(feedBase);
-  const result = { ...build, publish: [{ provider: config.provider, url: config.url }], afterPack: hook };
+  // Runtime chooses its channel from latest.json and sets updater.channel itself.
+  // Builder's prerelease inference would add channel=beta/dev during late FPM
+  // rewrites, producing different app-update.yml on different platforms.
+  const result = { ...build, detectUpdateChannel: false, publish: [{ provider: config.provider, url: config.url }], afterPack: hook };
   // A platform override must not replace the commercial provider/cache identity.
   for (const platform of ['mac', 'win', 'linux']) {
-    if (result[platform]?.publish !== undefined) {
-      result[platform] = { ...result[platform] };
+    if (result[platform]) {
+      result[platform] = { ...result[platform], detectUpdateChannel: false };
       delete result[platform].publish;
     }
   }
