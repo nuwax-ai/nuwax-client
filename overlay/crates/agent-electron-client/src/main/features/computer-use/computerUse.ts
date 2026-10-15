@@ -1212,12 +1212,16 @@ export async function requestCuaPermissions(): Promise<CuaPermissionsResult> {
           screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
         };
         fs.rmSync(resultFile, { force: true });
+        // Grants are present, but the probe did not run as our helper: an outdated or unpatched
+        // helper build. Asking the user to grant again would not help.
+        if (sc.accessibility && sc.screen_recording &&
+            (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== HELPER_BUNDLE_ID)) {
+          return { success: false, error: "helperIdentityUnverified", ...lastPermissionHint };
+        }
         if (!sc.accessibility || !sc.screen_recording ||
             sc.screen_recording_capturable !== true ||
             sc.direct_capture_verification_error != null ||
-            sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID ||
-            sc.source?.attribution !== "driver-daemon" ||
-            sc.source.bundle_id !== HELPER_BUNDLE_ID) {
+            sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID) {
           return { success: false, error: "permissionsRequired", ...lastPermissionHint };
         }
         return { success: true, ...lastPermissionHint };
