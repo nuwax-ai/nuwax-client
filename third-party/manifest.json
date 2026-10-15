@@ -130,7 +130,43 @@
       "licenseFile": "third-party/licenses/ttyd.txt",
       "sourceUrl": "https://github.com/tsl0922/ttyd/tree/1.7.7",
       "modified": false,
-      "checkIntegrity": true
+      "checkIntegrity": true,
+      "components": [
+        {
+          "id": "winpty",
+          "name": "WinPTY",
+          "version": "0.4.3",
+          "platforms": ["win32"],
+          "license": "MIT",
+          "licenseFile": "third-party/licenses/winpty.txt",
+          "sourceUrl": "https://github.com/rprichard/winpty/tree/3e1ab962d5262dd76159870c6dc0724927ca6a9d",
+          "modified": false,
+          "checkIntegrity": true,
+          "notes": "Windows 10 1511 terminal backend; native DLL and agent pinned by third-party/terminal-compat-sources.json. No Cygwin/MSYS runtime dependency."
+        },
+        {
+          "id": "gorilla-websocket",
+          "name": "Gorilla WebSocket",
+          "version": "1.5.3",
+          "platforms": ["win32"],
+          "license": "BSD-2-Clause",
+          "licenseFile": "third-party/licenses/gorilla-websocket.txt",
+          "sourceUrl": "https://github.com/gorilla/websocket/tree/v1.5.3",
+          "modified": false,
+          "checkIntegrity": true
+        },
+        {
+          "id": "go-runtime-terminal",
+          "name": "Go runtime (terminal compatibility service)",
+          "version": "1.25.6",
+          "platforms": ["win32"],
+          "license": "BSD-3-Clause",
+          "licenseFile": "third-party/licenses/go.txt",
+          "sourceUrl": "https://github.com/golang/go/tree/go1.25.6",
+          "modified": false,
+          "checkIntegrity": true
+        }
+      ]
     },
     "lanproxy": {
       "id": "lanproxy",

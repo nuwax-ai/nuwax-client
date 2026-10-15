@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "goToolchain": "go1.25.6",
+  "source": {
+    "version": "0.4.3",
+    "url": "https://github.com/rprichard/winpty/releases/download/0.4.3/winpty-0.4.3-msvc2015.zip",
+    "archive": "winpty-0.4.3-msvc2015.zip",
+    "sha256": "35a48ece2ff4acdcbc8299d4920de53eb86b1fb41e64d2fe5ae7898931bcee89",
+    "licenseSha256": "c39e428064b4f3e4fe81a975bf0fd3b845922b431bc4d9a7ffc8bfb091981836"
+  },
+  "files": {
+    "winpty.dll": {
+      "archivePath": "x64/bin/winpty.dll",
+      "sha256": "936f611c2129600d35ab7aad45546a837f4f3a9ca7f673e5d66b48c313b9cd75"
+    },
+    "winpty-agent.exe": {
+      "archivePath": "x64/bin/winpty-agent.exe",
+      "sha256": "9add1a61155ec47cf6f347faf776b746eebbde1dc9360d81b8a909da34650642"
+    }
+  }
+}
