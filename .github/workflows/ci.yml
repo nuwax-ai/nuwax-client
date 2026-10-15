@@ -28,6 +28,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  terminal-compat:
+    name: terminal compatibility protocol and WinPTY regression
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache-dependency-path: native/legacy-terminal/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test terminal wire protocol
+        working-directory: native/legacy-terminal
+        run: go test ./...
+      - name: Check concurrent session lifecycle
+        if: runner.os == 'Linux'
+        working-directory: native/legacy-terminal
+        run: go test -race ./...
+      - name: Prepare Windows compatibility backend
+        if: runner.os == 'Windows'
+        run: node scripts/prepare-terminal-compat.mjs --platform win32 --arch x64
+      - name: Regress WinPTY on the current Windows runner
+        if: runner.os == 'Windows'
+        run: node scripts/acceptance/terminal-compat.mjs
+
   community:
     name: community gate (base:test)
     runs-on: ubuntu-latest

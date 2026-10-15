@@ -318,6 +318,18 @@ jobs:
         run: npm run prepare:all
         timeout-minutes: 15
 
+      - name: Setup Windows terminal compatibility compiler
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache-dependency-path: native/legacy-terminal/go.sum
+
+      - name: Prepare Windows 10 1511 terminal compatibility resources
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/prepare-terminal-compat.mjs --platform win32 --arch "${{ matrix.arch }}"
+
       # Capture is a commercial resource: base prepare:all does not prepare it.
       # Use a native Intel runner for macOS x64, and an explicit MSYS2 toolchain
       # on Windows. The release helper installs the audited Winpthreads split
@@ -530,6 +542,14 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
         run: node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+
+      - name: Verify packaged Windows terminal compatibility resources
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/prepare-terminal-compat.mjs --platform win32 --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
 
       - name: Record platform source and verify macOS signature
         shell: bash

@@ -23,6 +23,7 @@ electron-builder 打包与运行资源准备。本页是完整清单；日常速
 | `npm run verify:sign:win` | 转发基座本地验签 |
 | `npm run sync:oss -- <tag> <stable\|beta>` | 转发基座 OSS 同步（自动注入 `SYNC_OSS_REPO`、`SYNC_OSS_REF=当前分支`）；手动兜底用 |
 | `npm run doctor` | 只读报告环境/依赖/资源/pin 就绪状态，`--json` 机读 |
+| `npm run prepare:terminal-compat -- --platform win32 --arch x64` | 使用固定 Go 1.25.6 构建早期 Win10 的 WinPTY 终端资源；固定上游 SHA256，Windows prepare/pack 自动调用。其他平台跳过；构建机需安装 Go，运行客户端无需安装 Go |
 
 门禁与治理：
 

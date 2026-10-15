@@ -5,6 +5,7 @@ import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 import { ensureCommercialDependencies } from './commercial-dependencies.mjs';
 import { captureSourceLockFile, prepareCaptureResources } from './capture-resources.mjs';
+import { terminalCompatLockFile, prepareTerminalCompatResources } from './terminal-compat-resources.mjs';
 
 const ignoredInputs = new Set(['node_modules', '.git', 'dist', 'release', '.cache', 'target']);
 export const sourceNames = ['nuwax-file-server', 'claude-code-acp-ts'];
@@ -315,6 +316,10 @@ export async function prepare(root, options = {}) {
       save();
     }
     let captureDir = null;
+    let terminalCompatDir = null;
+    if (fs.existsSync(terminalCompatLockFile(root))) {
+      terminalCompatDir = await (opt.prepareTerminalCompatResources ?? prepareTerminalCompatResources)(root, { tools, platform: opt.platform, arch: opt.arch, refreshResources: opt.refreshResources });
+    }
     if (config.features?.capture?.enabled !== false && fs.existsSync(captureSourceLockFile(root))) {
       captureDir = await (opt.prepareCaptureResources ?? prepareCaptureResources)(root, { tools, platform: opt.platform, arch: opt.arch, refreshResources: opt.refreshResources });
     }
@@ -334,6 +339,6 @@ export async function prepare(root, options = {}) {
     }
     sanitizeLinks(path.join(p.client, 'resources'));
     console.log(`[prepare] 就绪 (${opt.platform}-${opt.arch}, Electron ABI ${abi})`);
-    return { ...p, frontend, abi, env, captureDir };
+    return { ...p, frontend, abi, env, captureDir, terminalCompatDir };
   });
 }
