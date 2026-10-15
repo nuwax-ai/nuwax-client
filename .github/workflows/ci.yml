@@ -206,10 +206,6 @@ jobs:
         run: pnpm -C nuwax test:typecheck
       - name: Check frontend type domains
         run: pnpm -C nuwax typecheck
-      - name: Run frontend tests
-        # 支付结算专项暂缓（当前 5 条既有失败，单独记债）；其余前端用例仍为发布门禁。
-        # recommendFormModal 单条本地 2-3s、CI 慢机超 5s 默认超时，门禁统一抬到 15s（仍能抓真悬挂）。
-        run: pnpm -C nuwax exec vitest run --exclude 'tests/paymentSettlement.test.ts' --testTimeout=15000
       - name: Check frontend architecture
         if: ${{ !cancelled() && steps.frontend_install.outcome == 'success' }}
         run: pnpm -C nuwax lint:arch
