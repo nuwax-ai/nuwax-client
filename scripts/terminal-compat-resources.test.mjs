@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import * as core from './client/core.mjs';
 import { prepareTerminalCompatResources, inspectTerminalCompatResource, terminalCompatDirectory, verifyPackagedTerminalCompat } from './client/terminal-compat-resources.mjs';
 import { builderConfig } from './client/pack.mjs';
@@ -138,4 +139,22 @@ test('CI and release builders use the locked Go toolchain and Windows regression
   const gates = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
   assert.ok(gates.includes('node scripts/acceptance/terminal-compat.mjs'));
   assert.ok(gates.includes('go test -race ./...'));
+});
+
+test('Windows Git checkout preserves the upstream license SHA256', t => {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-license-checkout-'));
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const file = 'third-party/licenses/winpty.txt';
+  fs.mkdirSync(path.join(temporary, path.dirname(file)), { recursive: true });
+  fs.copyFileSync(path.join(root, file), path.join(temporary, file));
+  fs.copyFileSync(path.join(root, '.gitattributes'), path.join(temporary, '.gitattributes'));
+  const git = args => execFileSync('git', ['-C', temporary, '-c', 'core.autocrlf=true', ...args], { stdio: 'pipe' });
+  git(['init', '-q']);
+  git(['add', '.gitattributes', file]);
+  const checkout = path.join(temporary, 'windows-checkout');
+  fs.mkdirSync(checkout);
+  git(['checkout-index', '--force', '--prefix=' + checkout.replaceAll('\\', '/') + '/', '--all']);
+  const expected = core.readJson(path.join(root, 'third-party/terminal-compat-sources.json')).source.licenseSha256;
+  assert.equal(core.fileHash(path.join(checkout, file)), expected);
 });
