@@ -279,6 +279,9 @@ export class CuaMcpGateway {
   private refuse(connection: Connection, owner: string, id: Rpc["id"], reason: string) {
     this.options.controller.recordRejection(owner, reason);
     this.reject(connection.socket, id, reason);
+    const state = this.options.controller.snapshot();
+    // Same as a user stop: a call still in flight must not report success later.
+    if (state.phase === "stopped" && state.reason === "violationLimit") this.cancelPending("violationLimit");
   }
   private forward(connection: Connection, message: Rpc, line: string) {
     let permit: CuaPermit | undefined;

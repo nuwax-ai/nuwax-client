@@ -1,11 +1,12 @@
 import type { CuaScope } from "@shared/types/cuaRuntime";
+import { CUA_WRITES_PER_OBSERVATION as N } from "./taskController";
 
 /** Model-facing text. Kept in one place so tool descriptions, instructions and refusals agree. */
 const MARK = "[Nuwax]";
 
 const COMMON = [
   "Nuwax Computer Use operates this computer for the user.",
-  "- Look before you act: get_window_state for an app window, get_browser_state for a web page, get_desktop_state for the whole screen. Each observation allows up to three actions on what it showed; then observe again.",
+  `- Look before you act: get_window_state for an app window, get_browser_state for a web page, get_desktop_state for the whole screen. Each observation allows up to ${N} actions on what it showed; then observe again.`,
   "- Web pages: prefer get_browser_state with browser_* tools, using refs from the latest snapshot. On macOS, when the trusted input route is refused, pass input_route=\"dom_event\".",
   "- Native apps: use element_token or element_index from the latest get_window_state. Use pixel coordinates only for canvas-like surfaces.",
   "- The browser's own UI (permission prompts, native file pickers, extensions) is native UI: use window tools for it.",
@@ -29,8 +30,8 @@ const TOOL_NOTES: Record<string, (scope: CuaScope) => string | null> = {
   browser_prepare: (scope) => scope.kind === "window"
     ? "Only strategy existing_profile on the selected window is allowed."
     : "Attaching to the user's own browser profile is refused in this mode; ask the user to select the browser window in Computer Use.",
-  get_window_state: () => "Observing refreshes your allowance of three actions on this window.",
-  get_desktop_state: () => "Observing refreshes your allowance of three actions on native windows (not web page refs).",
+  get_window_state: () => `Observing refreshes your allowance of ${N} actions on this window.`,
+  get_desktop_state: () => `Observing refreshes your allowance of ${N} actions on native windows (not web page refs).`,
   click: () => "For web page content prefer browser_click.",
   type_text: () => "For web page content prefer browser_type.",
 };
@@ -49,7 +50,7 @@ export function cuaMergeInstructions(scope: CuaScope, existing: unknown): string
 }
 
 const REJECTIONS: Record<string, string> = {
-  observationRequired: "Observe the target first (get_window_state, get_browser_state or get_desktop_state), then act on what you saw. Each observation allows up to three actions on that target.",
+  observationRequired: `Observe the target first (get_window_state, get_browser_state or get_desktop_state), then act on what you saw. Each observation allows up to ${N} actions on that target.`,
   scopeViolation: "Window-only mode allows the selected window and, if it is a browser, its bound tabs. Keyboard shortcuts, pixel coordinates, the clipboard and other apps are unavailable. Repeated violations end the task.",
   profileAttachRequiresWindowScope: "Attaching to the user's own browser profile is not allowed in desktop mode. Ask the user to select that browser window in Computer Use (window mode).",
   toolNotAllowed: "This tool is not available. Repeated violations end the task.",

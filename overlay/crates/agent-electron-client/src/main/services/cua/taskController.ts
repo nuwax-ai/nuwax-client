@@ -9,6 +9,8 @@ import {
 export const CUA_FINAL_REASONS = ["stepLimit", "timeLimit", "repeatedAction", "violationLimit"];
 /** Limits `begin` can hit; each pauses the task and needs the user to look. */
 export const CUA_PAUSING_LIMITS = ["stepLimit", "timeLimit", "noProgress"];
+/** Model guidance quotes this number; keep them in one place. */
+export const CUA_WRITES_PER_OBSERVATION = 3;
 /** Gateway-level refusals that count towards the violation limit. */
 export const CUA_VIOLATIONS = new Set(["scopeViolation", "toolNotAllowed", "profileAttachRequiresWindowScope"]);
 
@@ -183,7 +185,7 @@ export class CuaTaskController {
     } else if (CUA_OBSERVATIONS.has(permit.tool)) {
       const targets = observedTargets(permit.tool, flight.args, structured) ?? [];
       const digest = observationDigest(structured);
-      const allowance = this.options.writesPerObservation ?? 3;
+      const allowance = this.options.writesPerObservation ?? CUA_WRITES_PER_OBSERVATION;
       for (const target of [...targets, CUA_ANY]) { this.quota.set(target, allowance); this.digests.set(target, digest); }
       this.state.needsObservation = false;
       this.state.resultObserved = true;

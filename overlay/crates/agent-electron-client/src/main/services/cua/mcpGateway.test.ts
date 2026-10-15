@@ -193,6 +193,18 @@ describe("CUA MCP gateway over real local sockets", () => {
     expect(f.controller.snapshot()).toMatchObject({ phase: "stopped", reason: "violationLimit" });
     expect((await a.request("tools/call", { name: "get_desktop_state" })).result.structuredContent.code).toBe("taskStopped");
   });
+  it("cancels a call still in flight when violations end the task", async () => {
+    const f = await fixture(3000, undefined, (tool, args) => {
+      if ((args as { escape?: boolean }).escape) throw new Error("scopeViolation");
+      return { tool, args };
+    });
+    const a = await f.client();
+    await a.request("tools/call", { name: "get_desktop_state" });
+    const pending = a.request("tools/call", { name: "click", arguments: { hang: true } });
+    await vi.waitFor(() => expect(f.controller.snapshot().steps.at(-1)?.tool).toBe("click"));
+    for (let i = 0; i < 3; i++) await a.request("tools/call", { name: "click", arguments: { escape: true } });
+    expect((await pending).result.structuredContent.code).toBe("violationLimit");
+  });
 });
 
 
