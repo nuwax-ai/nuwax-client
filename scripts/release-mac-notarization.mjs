@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as core from './client/core.mjs';
+import { verifyUpdaterApp } from './prepare-release-updater.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -46,6 +47,7 @@ function authArguments(auth) {
 }
 
 export async function notarizeSignedApp({ app, stateFile, auth, tools = { ...core, log: console.log }, wait = sleep, maxPolls = 60 }) {
+  verifyUpdaterApp(app);
   const identity = await signature(app, tools);
   const authorization = authArguments(auth);
   let state;
@@ -110,6 +112,8 @@ export function macAppPaths(client, arch) {
 
 export async function packageNotarizedApp({ client, app, arch, builderCli, tools = core, wait = sleep }) {
   if (!['arm64', 'x64'].includes(arch)) throw new Error('[mac-notary] Unsupported architecture');
+  // Resume and --prepackaged may only verify: writing here breaks the seal.
+  verifyUpdaterApp(app);
   const original = await signature(app, tools);
   await command(tools, 'xcrun', ['stapler', 'validate', '-v', app], { stage: 'distribution ticket validation', retry: true, wait });
   const cli = builderCli || createRequire(import.meta.url).resolve('electron-builder/out/cli/cli.js', { paths: [client] });
@@ -120,6 +124,7 @@ export async function packageNotarizedApp({ client, app, arch, builderCli, tools
   if (result.status !== 0) throw new Error(`[mac-notary] Distribution packaging failed (${result.status})`);
   const final = await signature(app, tools);
   if (final.cdhash !== original.cdhash || final.team !== original.team) throw new Error('[mac-notary] Packaging changed the signed app');
+  verifyUpdaterApp(app);
   await command(tools, 'xcrun', ['stapler', 'validate', '-v', app], { stage: 'final ticket validation', retry: true, wait });
 }
 

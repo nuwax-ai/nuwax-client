@@ -596,6 +596,9 @@ jobs:
 
       # 若用户看到「已损坏」：请确认已配置 APPLE_CERTIFICATE / APPLE_SIGNING_IDENTITY 及公证用 APPLE_API_KEY 等，且构建日志中有签名与公证成功
       # Windows 签名已废弃，改为本地手签方案
+      - name: Configure commercial update package
+        run: node scripts/prepare-release-updater.mjs
+
       - name: Clean previous build artifacts
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -680,6 +683,7 @@ jobs:
             OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+          node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
 
       - name: Record platform source and verify macOS signature
         shell: bash

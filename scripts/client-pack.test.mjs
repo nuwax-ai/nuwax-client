@@ -6,6 +6,8 @@ import path from 'node:path';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import { builderConfig, pack, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
+import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import { packagedResources } from './prepare-release-updater.mjs';
 
 test('independent builder config contains commercial identity/payload and leaves package unchanged', () => {
   const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'resources/agent-gui-server', to: 'agent-gui-server' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }, { from: 'stale/dist', to: 'nuwax-dist' }, { from: 'resources/sandbox-runtime', to: 'sandbox-runtime' }, { from: 'resources/sandboxed-bash-mcp', to: 'sandboxed-bash-mcp' }, { from: 'resources/sandboxed-fs-mcp', to: 'sandboxed-fs-mcp' }], win: { extraResources: [{ from: 'resources/sandbox-helper', to: 'sandbox-helper' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
@@ -27,7 +29,8 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.ok(result.extraResources.every((entry) => !['sandbox-runtime', 'sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'agent-gui-server', 'windows-mcp'].includes(entry.to)));
   assert.deepEqual(result.win.extraResources, []);
   assert.equal(result.afterSign, undefined);
-  assert.equal(result.publish, null);
+  assert.deepEqual(result.publish, [{ provider: 'generic', url: config.product.feedBase }]);
+  assert.ok(path.isAbsolute(result.afterPack));
   assert.equal(result.deb.packageName, 'nuwax');
   assert.equal(result.win.signAndEditExecutable, true);
   assert.equal(result.npmRebuild, false);
@@ -87,8 +90,9 @@ test('source pack builds fresh frontend before builder and does not edit base pa
       assert.equal(options.env.CSC_IDENTITY_AUTO_DISCOVERY, 'false');
       const generated = core.readJson(args[args.indexOf('--config') + 1]);
       assert.equal(generated.extraResources.find((entry) => entry.to === 'nuwax-dist').from, path.join(p.frontend, 'dist'));
-      fs.mkdirSync(generated.directories.output, { recursive: true });
-      fs.writeFileSync(path.join(generated.directories.output, 'Nuwax.app'), 'fixture');
+      const resources = packagedResources(generated.directories.output, 'darwin', 'arm64');
+      fs.mkdirSync(resources, { recursive: true });
+      fs.writeFileSync(path.join(resources, 'app-update.yml'), updater.configBytes(config.product.feedBase));
       return { status: 0, stdout: '', stderr: '' };
     },
   };
@@ -135,6 +139,11 @@ test('default pack consumes configured frontend pin and creates complete package
     buildFrontend: async () => { assert.fail('default pack must consume its prepared pin'); },
     prepareComputerUse: async () => path.join(p.client, 'resources/computer-use'),
     generateNotices: async (_root, options) => { assert.equal(options.strict, true); },
+    verifyUpdaterOutput: async (output, options) => {
+      assert.equal(output, path.join(root, config.pack.outputDir, '1.2.3'));
+      assert.equal(options.archives, true);
+      assert.equal(options.platform, 'darwin');
+    },
   });
   assert.equal(result.output, path.join(root, config.pack.outputDir, '1.2.3'));
 });

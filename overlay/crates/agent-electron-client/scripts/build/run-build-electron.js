@@ -7,7 +7,7 @@
  * - CI：workflow 通过 TARGET_ARCH 传入 matrix.arch
  * - 本地：从 electron-builder 的 --x64 / --arm64 参数推导并注入 TARGET_ARCH
  */
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { getProjectRoot } = require('../utils/project-paths');
@@ -80,6 +80,12 @@ function main() {
 
   const skipPrepare =
     process.env.SKIP_PREPARE === '1' || process.env.SKIP_PREPARE === 'true';
+
+  if (process.env.NUWAX_APP_IDENTIFIER === 'nuwax') {
+    execFileSync(process.execPath, [path.resolve(projectRoot, '../../../scripts/prepare-release-updater.mjs'), '--client', projectRoot], {
+      cwd: projectRoot, stdio: 'inherit',
+    });
+  }
 
   const prepareEnv = {
     ...process.env,

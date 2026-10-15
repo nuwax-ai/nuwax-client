@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
 import { parseReleaseTag } from '../release-version.mjs';
@@ -8,6 +9,8 @@ import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
 import { captureSourceLockFile, inspectCaptureResource } from './capture-resources.mjs';
 import { CAPTURE_RESOURCE_FILES, captureWindowSourceLockFile, inspectCaptureWindowResource } from './capture-window-resources.mjs';
 import { generateThirdPartyNotices, shippedResourcePaths } from './third-party-notices.mjs';
+import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
+import updater from '../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 
 const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
@@ -63,7 +66,6 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.appId = product.appId;
   result.productName = product.name;
   result.afterSign = undefined;
-  result.publish = null;
   // prepare already probes SQLite under this Electron ABI. Rebuilding it again
   // here would discard the validated native cache on every local package.
   result.npmRebuild = false;
@@ -94,7 +96,10 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
   result.linux = { ...result.linux, desktop: { ...result.linux?.desktop, entry: { ...result.linux?.desktop?.entry, Name: product.displayName } } };
-  return applyInstallerArchivePolicy(result, { env, platform, builderVersions });
+  return applyInstallerArchivePolicy(updater.configureUpdater(result, {
+    feedBase: product.feedBase,
+    hook: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs', import.meta.url)),
+  }), { env, platform, builderVersions });
 }
 
 export async function prepareComputerUse(root, { tools = core, platform = process.platform, arch = process.arch, refreshResources = false } = {}) {
@@ -172,6 +177,7 @@ export async function pack(root, options = {}) {
   const target = platform === 'darwin' ? '--mac' : platform === 'win32' ? '--win' : '--linux';
   await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...((options.dir ?? config.pack.dir) ? ['--dir'] : [])], { env });
   if (!fs.existsSync(output) || fs.readdirSync(output).length === 0) throw new Error(`[pack] 打包完成但输出目录为空: ${output}`);
+  await (options.verifyUpdaterOutput ?? verifyUpdaterOutput)(output, { platform, arch, archives: !(options.dir ?? config.pack.dir), tools });
   console.log(`[pack] Nuwax 无签名包: ${output}；前端 ${frontend.stamp ?? frontend.sourceSha} (${frontendMode})`);
   return { output, configFile, frontend, platform, arch, version };
 }
