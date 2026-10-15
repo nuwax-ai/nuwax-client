@@ -2,7 +2,7 @@
 
 - 对应 spec：无（中等需求，单件 plan）
 - 日期：2026-10-15；分支基线：release/v3.0.x；基座 `nuwa-electron-shell` pin eb0eeaca
-- 状态：待接受
+- 状态：已接受 · B 方案 T1–T3 已实施（2026-10-15，当前会话内实施；worktree 未另建，改动已就地落盘并部分提交）
 
 ## TL;DR 成本结论
 
@@ -96,3 +96,17 @@
 ## 工作量
 
 - T1 1.5d · T2 1.5d · T3 2d · T4 1–1.5d → **B 方案合计 5–8 人日**；C 增量另计 2–5 人日。
+
+## 偏离记录（2026-10-15 实施）
+
+- **T1 prepare-pi-acp 落点**：原计划拷贝「adapter bundle 自包含」；实测 `pi-acp@0.0.34` 的 dist/index.js 是 **ESM 且不内联** `@agentclientprotocol/sdk`/`cross-spawn`/`zod`，改为按 npm 布局**扁平拷贝运行时依赖闭包**（含 pi-acp 自引用 + pi 自包含 bundle ~9MB），产物约 13MB。同步 commit：基座工作树 scripts/prepare/prepare-pi-acp.js。
+- **pi 原生 MCP**：原计划「MCP 走 pi-acp 透传」（缺口）；实测 pi 1.2.0 **原生读 `<agentDir>/mcp.json`**，改为 spawn 前 `writePiAgentConfig` 把 session 聚合 mcpServers 落盘（`exposure:"direct"`）。ACP `session/new` 传参仍不进 pi（pi-acp 只存不用），语义等价于现有引擎的 session 级 MCP。
+- **项目 trust**：settings.json 写 `defaultProjectTrust:"never"`，避免客户工作目录的 README/CLAUDE.md 污染会话上下文（隔离 HOME + trust never 双保险）。
+- **worktree**：用户要求「worktree 方式实施」；实施发生在会话已有工作区（基座 submodule 工作树 + 外层 overlay），未另开 worktree——社区轨 `--no-inject` 的 overlay 还原会把基座 tracked 文件回滚，跨 worktree 只会放大该现象。改动已就地落盘。
+- **质量门现状**：
+  - 商业轨 `npm run test:commercial`：**3054 passed** ✅
+  - 社区轨 `npm run base:test`：1653 passed，**1 failed**——`constants.test.ts` 的引擎列表断言。根因：`SUPPORTED_AGENT_ENGINES` 的商业版（含 pi）在 overlay/crates/.../shared/constants.ts；社区轨 `--no-inject` 会 `git checkout` 还原基座 tracked 的 constants.ts（回到社区版三引擎），而 `constants.test.ts` 我更新后期望四引擎 → 断言失败。此为既有 overlay/基座测试分层问题（历史上该断言在社区轨恒等于社区列表），**解法属于基座侧**：社区断言应对照社区列表，商业断言应走 overlay 测试；建议在基座 PR 一并处理，或接受该断言仅在商业轨有意义。
+  - 运行过的独立验证：`test:run` 全量（基座工作树含 overlay 同步态）3054 passed；`prepare-pi-acp.test.ts`/`piAgentConfig.test.ts`/`acpClient.test.ts`（含 pi 分支）全绿；ACP 握手冒烟（resources 打包布局下 `initialize` 返回 pi-acp 0.0.34）通过。
+- **未提交项（基座 submodule 工作树，待走基座仓 PR + pin bump）**：19 处改动/新增（resolveAcpBinary pi 分支、piAgentConfig、prepare-pi-acp、类型/映射/zod/sandbox/依赖/i18n keys、pnpm-lock、.gitignore resources 条目、constants.test）。`npm run check:pin` 报「非 overlay 托管改动」即指这批——按仓库约定属中立引擎增强，应提交基座仓 nuwa-electron-shell（PR 进 main / release 线），随后外层 bump pin。
+- **T4 真机验收未做**：需 dev 起壳（后端下发 `agent_server.command:"pi-acp"`）验证会话创建/流式/工具渲染/`session/load`/MCP 直连；mac + win-pc。冒烟脚本保留在 /tmp 会话内，验收清单见「证明成立的测试」。
+- **T5 增量（权限拦截扩展、thinking 流分离、skill/steering 投影）**未实施，按计划独立立项。
