@@ -37,6 +37,26 @@ test('all pointer publications share one queue and current tools verify a separa
   assert.match(sync, /node scripts\/publish-release-pointers.mjs/);
 });
 
+test('published update notes preserve complete UTF-8 text and old-version recovery instructions', () => {
+  const assignment = workflow('sync-electron-to-oss.yml').split('\n').find(line => line.trimStart().startsWith('NOTES='));
+  assert.ok(assignment, 'workflow extracts release notes');
+  // 将中文与 emoji 放在旧 500 字节边界两侧，直接执行实际发布命令。
+  const body = `${'修复客户端更新与中文显示。'.repeat(30)}🚀\n已安装且缺升级文件的 macOS 旧版，请下载完整 DMG 覆盖安装本版。`;
+  assert.ok(Buffer.byteLength(body) > 500);
+  for (const [release, expected] of [
+    [{ body }, body],
+    [{ body: null }, '女娲Nuwax 功能优化和问题修复。建议更新到最新版本以获得更好的体验。'],
+    [{ body: '' }, ''],
+  ]) {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${assignment}\nprintf '%s' "$NOTES"`], {
+      encoding: 'utf8', env: { ...process.env, RELEASE_JSON: JSON.stringify(release) },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, expected);
+    assert.ok(!result.stdout.includes('\uFFFD'));
+  }
+});
+
 test('stable and beta prepare locked capture payloads and verify real packaged bytes before any upload', () => {
   for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
     const text = workflow(name);
