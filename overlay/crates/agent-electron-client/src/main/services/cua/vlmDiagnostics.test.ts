@@ -44,6 +44,16 @@ describe("vision endpoint diagnostics", () => {
     fetcher.mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "I cannot view images" } }] })));
     expect((await testVlm()).error).toBe("visionVerificationFailed");
   });
+  it("leaves room for reasoning models and reads GLM boxed answers", async () => {
+    setVlmConfig({ apiKey: "secret", model: "glm" });
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop",
+      message: { content: "<|begin_of_box|>Red<|end_of_box|>", reasoning_content: "The image is uniformly red." } }] })));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await testVlm()).success).toBe(true);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).max_tokens).toBeGreaterThanOrEqual(1024);
+    fetcher.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "" } }] })));
+    expect((await testVlm()).error).toBe("answerTruncated");
+  });
   it("does not echo server content or credentials in errors", async () => {
     setVlmConfig({ apiKey: "secret", model: "vision" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("secret echoed", { status: 401 })));

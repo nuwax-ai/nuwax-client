@@ -108,6 +108,16 @@ function cuaErrorText(error?: string): string {
   return t("Claw.Settings.computerUse.errors." + (error && known.has(error) ? error : "generic"));
 }
 
+/** Image endpoint test errors; HTTP status codes are shown as-is, since they are what users can look up. */
+function vlmTestErrorText(error?: string): string {
+  if (error?.startsWith("HTTP ")) return error;
+  const known = new Set([
+    "vlmNotConfigured", "answerTruncated", "visionVerificationFailed", "requestFailed",
+    "timeout", "invalidResponse", "invalidConfig", "secureStorageUnavailable",
+  ]);
+  return t("Claw.Settings.computerUse.vlmErrors." + (error && known.has(error) ? error : "generic"));
+}
+
 export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorization?: () => void } = {}) {
   // 主题
   const { themeMode, setThemeMode } = useTheme();
@@ -263,10 +273,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       } else {
         message.error(
           t("Claw.Settings.computerUse.vlmTestFail", {
-            err:
-              r.error === "vlm-not-configured"
-                ? t("Claw.Settings.computerUse.errors.vlm-not-configured")
-                : r.error ?? "unknown",
+            err: vlmTestErrorText(r.error),
           }),
         );
       }
