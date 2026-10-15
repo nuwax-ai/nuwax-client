@@ -88,7 +88,8 @@ export async function testVlm(): Promise<{ success: boolean; error?: string; lat
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST", redirect: "error", signal: ctrl.signal,
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: cfg.model, max_tokens: 24, stream: false, messages: [{ role: "user", content: [
+      // Reasoning models spend completion tokens on thinking first; a tight cap leaves the answer empty.
+      body: JSON.stringify({ model: cfg.model, max_tokens: 1024, stream: false, messages: [{ role: "user", content: [
         { type: "text", text: "What is the solid background color of this image? Reply with one English color word only." },
         { type: "image_url", image_url: { url: visionProbeImage() } },
       ] }] }),
@@ -106,9 +107,13 @@ export async function testVlm(): Promise<{ success: boolean; error?: string; lat
       chunks.push(value.value);
     }
     const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    const answer = data?.choices?.[0]?.message?.content;
-    const success = typeof answer === "string" && /^\s*red[.!]?\s*$/i.test(answer);
-    return { success, ...(success ? {} : { error: "visionVerificationFailed" }), latencyMs: Date.now() - start };
+    const choice = data?.choices?.[0];
+    const raw = choice?.message?.content;
+    // GLM vision models wrap the final answer in <|begin_of_box|>…<|end_of_box|>.
+    const answer = typeof raw === "string" ? raw.replace(/<\|(begin|end)_of_box\|>/g, "") : "";
+    const success = /^\s*red[.!]?\s*$/i.test(answer);
+    const error = success ? undefined : !answer.trim() && choice?.finish_reason === "length" ? "answerTruncated" : "visionVerificationFailed";
+    return { success, ...(error ? { error } : {}), latencyMs: Date.now() - start };
   } catch {
     return { success: false, error: ctrl.signal.aborted ? "timeout" : "requestFailed" };
   } finally { clearTimeout(timer); }
