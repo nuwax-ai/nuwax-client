@@ -92,3 +92,21 @@
 3. 退出等待会不会变短？不会；stopExtras 仍以 8 s 等待同一收尾 Promise，且开始得更早。
 4. 托盘顺序？注册表把 computer-use 排在 capture 前，渲染结果与原菜单一致。
 5. 设置页如何得知关闭？新增宿主壳通道 `features:registered`；preload 无法得知开关。
+
+
+## 附：Computer Use 旧→新路径映射（移植 CUA 分支后续提交时对照）
+
+| 旧 | 新 |
+| --- | --- |
+| `main/services/cua/*`（computerUse/taskController/mcpGateway/sessionAuthority/controlWindow/windowScope/cuaOutcome/cuaGuidance/vlmDiagnostics） | `main/features/computer-use/*` 同名文件 |
+| `main/ipc/cuaRuntimeHandlers.ts` | `main/features/computer-use/index.ts` 的 `register()` |
+| `main/services/cua/ports`（新增） | `main/features/computer-use/ports.ts`（宿主接缝） |
+| `shared/types/cuaRuntime.ts` | `shared/features/computer-use/contract.ts` |
+| `shared/cuaPresentation.ts` | `shared/features/computer-use/presentation.ts` |
+| `preload/cuaControls.ts` | `preload/features/computer-use/controlPreload.ts`（esbuild 输出名不变） |
+| `preload/index.ts` 的 `computerUse` 命名空间 | `preload/features/computer-use.ts` |
+| `renderer/components/CuaControls.tsx` | `renderer/features/computer-use/CuaControls.tsx`（经 `index.ts` 公开） |
+| SettingsPage 内联 Computer Use 区块 | `renderer/features/computer-use/ComputerUseSettings.tsx` |
+| `computerUse.ts` 的 db/binaryLocator/packages-mcp 依赖 | `ports.ts` 宿主接缝（实现见 `main/services/featureHost.ts`） |
+| `commercialAuth` 直连 `suspendCua` | `../features` 生命周期 v2 汇合点 |
+| `acpEngine` 的 `CuaEngineSessions` 字段 | `createDesktopAgentSessions()` 组合对象（`agentSessions`） |
