@@ -61,6 +61,8 @@ test('build verifies upstream files, pins Go toolchain and reuses identical reso
   assert.equal(build.options.env.GOTOOLCHAIN, 'go1.25.6');
   assert.equal(build.options.env.CGO_ENABLED, '0');
   assert.equal(build.options.env.GOOS, 'windows');
+  assert.equal(build.options.env.GOAMD64, 'v1');
+  assert.equal(build.options.env.GOWORK, 'off');
   assert.ok(build.args.includes('-mod=readonly'));
   f.calls.length = 0;
   await prepareTerminalCompatResources(f.root, f.options);

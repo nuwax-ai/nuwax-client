@@ -100,7 +100,7 @@ export async function prepareTerminalCompatResources(root, options = {}) {
       }
       await tools.run('go', ['build', '-mod=readonly', '-trimpath', '-buildvcs=false', '-ldflags=-s -w -buildid=', '-o', path.join(output, 'ttyd-legacy.exe'), '.'], {
         cwd: path.join(root, 'native/legacy-terminal'),
-        env: { GOOS: 'windows', GOARCH: 'amd64', CGO_ENABLED: '0', GOTOOLCHAIN: lock.goToolchain },
+        env: { GOOS: 'windows', GOARCH: 'amd64', GOAMD64: 'v1', CGO_ENABLED: '0', GOWORK: 'off', GOTOOLCHAIN: lock.goToolchain },
       });
       const executableSha256 = tools.fileHash(path.join(output, 'ttyd-legacy.exe'));
       if (!executableSha256) throw new Error('[terminal] Compatibility executable was not built');
