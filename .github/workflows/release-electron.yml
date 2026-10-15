@@ -509,6 +509,7 @@ jobs:
       # Check the actual default runtime paths, not just builder configuration.
       # A missing encoder/record/notices prevents either Release or QA upload.
       - name: Verify packaged capture resources
+        id: packaged_resources
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.arch }}
@@ -521,7 +522,14 @@ jobs:
             OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
-          node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+          echo "output_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verify packaged updater configuration
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
 
       - name: Record platform source and verify macOS signature
         shell: bash

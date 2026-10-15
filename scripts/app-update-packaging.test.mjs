@@ -184,8 +184,12 @@ test('stable, beta and QA configure before signing and verify package bytes befo
   for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
     const text = fs.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
     assert.ok(text.indexOf('Configure commercial update package') < text.indexOf('- name: Build Electron app'));
+    const gate = text.indexOf('- name: Verify packaged updater configuration');
     const verify = text.indexOf('node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"');
-    assert.ok(verify > text.indexOf('- name: Package notarized macOS app'));
+    assert.ok(gate > text.indexOf('- name: Verify packaged capture resources'));
+    assert.ok(gate > text.indexOf('- name: Package notarized macOS app'));
+    assert.ok(verify > gate && verify < text.indexOf('\n      - name:', gate + 1));
+    assert.ok(text.includes('OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}'));
     assert.ok(verify < text.indexOf('- name: Upload artifacts to Release'));
     if (name.includes('-dev')) assert.ok(verify < text.indexOf('- name: Stage isolated QA packages'));
   }
