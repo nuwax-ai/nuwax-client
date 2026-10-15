@@ -110,3 +110,14 @@
 - **未提交项（基座 submodule 工作树，待走基座仓 PR + pin bump）**：19 处改动/新增（resolveAcpBinary pi 分支、piAgentConfig、prepare-pi-acp、类型/映射/zod/sandbox/依赖/i18n keys、pnpm-lock、.gitignore resources 条目、constants.test）。`npm run check:pin` 报「非 overlay 托管改动」即指这批——按仓库约定属中立引擎增强，应提交基座仓 nuwa-electron-shell（PR 进 main / release 线），随后外层 bump pin。
 - **T4 真机验收未做**：需 dev 起壳（后端下发 `agent_server.command:"pi-acp"`）验证会话创建/流式/工具渲染/`session/load`/MCP 直连；mac + win-pc。冒烟脚本保留在 /tmp 会话内，验收清单见「证明成立的测试」。
 - **T5 增量（权限拦截扩展、thinking 流分离、skill/steering 投影）**未实施，按计划独立立项。
+
+
+## 独立分支保存（2026-10-16）
+
+用户明确要求 Pi Agent 不进入当前 release 与本轮 beta，后续单独实现。本轮只保存现有实现，不视为验收完成。
+
+- 外层独立分支：`codex/pi-agent-acp-wip`，保留原有外层 Pi 提交。
+- 基座独立分支：`codex/pi-agent-acp-wip`，WIP 提交 `a5a83e59`，保存原工作区的 19 个中立改动/新增；提交前 staged 纯净检查通过，无 overlay 托管路径。
+- 外层 gitlink 仅在该开发分支引用上述 WIP；当前 `release/v3.0.x` 继续使用原正式基座 pin，且不包含外层 Pi 引擎声明。
+- 原工作区 19 个文件已逐个验证与已推送基座提交字节相同后移出 release 工作区；生成的 Pi 资源缓存仅本地保留，不进入发布输入。
+- 社区断言、双轨测试、真实会话/工具/MCP/跨平台验收仍需按前述计划完成；此 WIP 不具备发布结论，也未合入基座 main。
