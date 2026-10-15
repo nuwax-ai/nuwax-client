@@ -20,7 +20,7 @@ import React, {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import { APP_DISPLAY_NAME, DEFAULT_SERVER_HOST } from "@shared/constants";
+import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST } from "@shared/constants";
 import { normalizeServerHost } from "../../services/core/auth";
 import { buildHomeUrl } from "../../services/utils/sessionUrl";
 import { logger } from "../../services/utils/logService";
@@ -81,14 +81,12 @@ const NuwaxHostWebview = forwardRef<
   const [webviewEpoch, setWebviewEpoch] = useState(0);
   const webviewRef = useRef<HTMLElement | null>(null);
 
-  // 自定义 UA：保留产品/<version> 标识，便于 nuwax 侧识别客户端环境。
-  // 主进程可能已把默认 UA 的 @nuwax-ai/nuwaclaw/<ver> 替换为产品名——追加前
-  // 查重，避免同一 token 出现两次（社区版含空格名走此追加路径不变）
+  // 与主进程使用相同的 ASCII 产品标识；中文显示名不能进入 HTTP User-Agent。
   useEffect(() => {
     window.electronAPI?.app
       .getVersion()
       .then((v) => {
-        const token = `${APP_DISPLAY_NAME}/${v}`;
+        const token = `@nuwax-ai/${APP_NAME_IDENTIFIER}/${v}`;
         const next = navigator.userAgent.includes(token)
           ? navigator.userAgent
           : `${navigator.userAgent} ${token}`;

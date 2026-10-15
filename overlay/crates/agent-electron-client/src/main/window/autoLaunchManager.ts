@@ -1,7 +1,7 @@
 /** 开机自启动：系统状态为展示依据，本地选择用于防止默认值覆盖用户关闭。 */
 import { app } from "electron";
 import log from "electron-log";
-import { APP_DISPLAY_NAME } from "@shared/constants";
+import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 
 const PREFERENCE_KEY = "nuwax.autoLaunch.enabled";
@@ -51,7 +51,8 @@ export class AutoLaunchManager {
       throw new Error("Auto-launch is not available");
     }
     return new AutoLaunch({
-      name: APP_DISPLAY_NAME,
+      // auto-launch 用 name 生成 .desktop 文件名；改显示名时仍读写原有注册项。
+      name: APP_NAME_IDENTIFIER === "nuwax" ? "Nuwax" : APP_DISPLAY_NAME,
       // AppImage 挂载目录会随启动变化，应注册原始包路径。
       path: process.env.APPIMAGE || process.execPath,
       isHidden: true,
