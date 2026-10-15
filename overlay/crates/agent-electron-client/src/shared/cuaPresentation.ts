@@ -1,6 +1,6 @@
 export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "toolTimeout", "stepLimit", "timeLimit",
   "repeatedAction", "connectionClosed", "daemonNotReady", "permissionsRequired", "policyNotActive", "helperStillRunning",
-  "idleTimeout", "helperNotInstalled", "sessionEnded", "userStopped", "disabled", "cannotResume", "observationRequired", "gatewayFailed", "scopeBusy", "scopeViolation", "targetClosed", "scopeSaveFailed",
+  "idleTimeout", "helperNotInstalled", "sessionEnded", "userStopped", "disabled", "cannotResume", "observationRequired", "gatewayFailed", "scopeBusy", "scopeViolation", "targetClosed", "scopeSaveFailed", "helperIdentityUnverified",
   "noProgress", "uncertainResult", "violationLimit"];
 
 export function actionKind(tool: string): string {

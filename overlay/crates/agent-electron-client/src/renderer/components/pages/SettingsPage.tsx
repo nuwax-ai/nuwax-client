@@ -103,7 +103,7 @@ function cuaErrorText(error?: string): string {
   const known = new Set([
     "permissionsRequired", "permissionHostFailed", "timeout", "daemonNotReady",
     "bundledNotFound", "helperNotInstalled", "helperStillRunning", "databaseNotReady",
-    "disableFailed", "policyNotActive",
+    "disableFailed", "policyNotActive", "helperIdentityUnverified",
   ]);
   return t("Claw.Settings.computerUse.errors." + (error && known.has(error) ? error : "generic"));
 }

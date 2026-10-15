@@ -661,6 +661,8 @@ export const CUA_I18N_KEYS = {
   REASON_VIOLATIONLIMIT: "Claw.Cua.reason.violationLimit",
   SETTINGS_SCOPE: "Claw.Settings.computerUse.scope",
   SETTINGS_DIAGNOSTICS: "Claw.Settings.computerUse.diagnostics",
+  ERROR_HELPER_IDENTITY_UNVERIFIED: "Claw.Settings.computerUse.errors.helperIdentityUnverified",
+  REASON_HELPER_IDENTITY_UNVERIFIED: "Claw.Cua.reason.helperIdentityUnverified",
   VLM_ERROR_NOT_CONFIGURED: "Claw.Settings.computerUse.vlmErrors.vlmNotConfigured",
   VLM_ERROR_ANSWER_TRUNCATED: "Claw.Settings.computerUse.vlmErrors.answerTruncated",
   VLM_ERROR_VISION_FAILED: "Claw.Settings.computerUse.vlmErrors.visionVerificationFailed",

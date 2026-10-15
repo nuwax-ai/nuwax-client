@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   policyPath: "",
   captureReady: true,
   captureVerificationError: false,
+  callerAttribution: false,
   endpointProofValid: true,
   permissionGateAttempts: 0,
 }));
@@ -112,7 +113,8 @@ vi.mock("node:child_process", () => ({
           ? { bundle_id: "com.nuwax-ai.nuwax-computer-use" } : undefined,
         direct_capture_verification_error: mocks.captureVerificationError
           ? { code: "direct_capture_verification_store_failed" } : undefined,
-        source: { attribution: "driver-daemon", bundle_id: "com.nuwax-ai.nuwax-computer-use" },
+        source: mocks.callerAttribution ? { attribution: "caller", bundle_id: null }
+          : { attribution: "driver-daemon", bundle_id: "com.nuwax-ai.nuwax-computer-use" },
       } }));
     }
     return { unref: vi.fn(), on: vi.fn() };
@@ -235,6 +237,7 @@ beforeEach(() => {
   mocks.policyPath = "";
   mocks.captureReady = true;
   mocks.captureVerificationError = false;
+  mocks.callerAttribution = false;
   mocks.endpointProofValid = true;
   mocks.permissionGateAttempts = 0;
   // 测试进程无 resourcesPath：指到临时 bundled 目录（可按用例放置假 bundled helper）
@@ -402,6 +405,17 @@ describe("cua 开关与启动收敛", () => {
     const result = await setCuaEnabled(true);
     expect(result.success).toBe(false);
     expect(result.error).toBe("permissionsRequired");
+    expect(mocks.spawnCalls.some((call) => call.args.includes("serve"))).toBe(false);
+  });
+
+  it("权限已授予但助手身份无法确认时，报身份问题而不是让用户再去授权", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true;
+    mocks.callerAttribution = true;
+    mocks.autoReady = true;
+    const result = await setCuaEnabled(true);
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("helperIdentityUnverified");
     expect(mocks.spawnCalls.some((call) => call.args.includes("serve"))).toBe(false);
   });
 
