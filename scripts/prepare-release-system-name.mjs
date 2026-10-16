@@ -19,14 +19,22 @@ export function prepareReleaseSystemName(client, options = {}) {
 
 export async function verifyMacSystemName(app, tools = core) {
   const source = `ObjC.import('Foundation');function run(args){const b=$.NSBundle.bundleWithPath(args[0]);return JSON.stringify({fileName:ObjC.unwrap($.NSFileManager.defaultManager.displayNameAtPath(args[0])),bundleName:ObjC.unwrap(b.objectForInfoDictionaryKey('CFBundleName')),displayName:ObjC.unwrap(b.objectForInfoDictionaryKey('CFBundleDisplayName'))});}`;
-  const result = await tools.run('osascript', ['-l', 'JavaScript', '-e', source, app], { capture: true });
-  const names = JSON.parse(result.stdout);
-  if (names.fileName?.replace(/\.app$/, '') !== config.product.displayName ||
-      names.bundleName !== config.product.displayName || names.displayName !== config.product.displayName) {
-    throw new Error(`[branding] Incorrect native macOS application name: ${JSON.stringify(names)}`);
+  // CI runners use English. Verify the actual Finder lookup under Chinese
+  // preferences too; NSBundle's localized keys alone missed the empty locales.
+  const preferences = [null, '(en-US)', '(zh-Hans-CN,en-CN,zh-Hant-HK)', '(zh-Hant-TW,en-US)', '(zh-Hant-HK,en-US)'];
+  let systemNames;
+  for (const languages of preferences) {
+    const result = await tools.run('osascript', ['-l', 'JavaScript', '-e', source, app,
+      ...(languages ? ['-AppleLanguages', languages] : [])], { capture: true });
+    const names = JSON.parse(result.stdout);
+    if (names.fileName?.replace(/\.app$/, '') !== config.product.displayName ||
+        names.bundleName !== config.product.displayName || names.displayName !== config.product.displayName) {
+      throw new Error(`[branding] Incorrect native macOS application name (${languages ?? 'system'}): ${JSON.stringify(names)}`);
+    }
+    if (!languages) systemNames = names;
   }
-  console.log(`[branding] Native macOS application name verified: ${config.product.displayName}`);
-  return names;
+  console.log(`[branding] Native macOS application name verified in system, English and Chinese locales: ${config.product.displayName}`);
+  return systemNames;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

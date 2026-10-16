@@ -27,3 +27,11 @@
 - overlay 同步检查、`npm run check:pin` 和 `git diff --check` 通过；子模块 pin 无改动，本次不提交测试环境依赖链接。
 
 生效范围：本次是后续打包使用的代码修复。已经公开的 v3.0.16 仍使用冻结源码，不能将本次原生名称验证结果解释为该安装包已包含修复。
+
+## 中文 Finder 名称回归修复（2026-10-16）
+
+用户安装后反馈 Finder 仍显示 Nuwax。本机实际复现：系统语言 `zh-Hans-CN / en-CN / zh-Hant-HK` 优先选择 Electron 创建的空 `zh_CN.lproj`，繁体系统优先选择空 `zh_TW.lproj`。NSBundle 的单个名称字段会回退到 zh-Hans/zh-Hant 而返回女娲Nuwax，NSFileManager 的 Finder 文件名称却仍为 Nuwax；原先英文 CI 和没有空目录的 fixture 遗漏了这一组合。
+
+修复：名称生成器为 `zh_CN`、`zh_TW` 及所有已声明 electronLanguages 输出同一名称文件；发布校验分别启动默认语言、英文、简体、台湾繁体和香港繁体的原生名称查询，避免英文 runner 掩盖中文缺失。不修改已安装签名应用；通过下一版 beta 安装包交付。
+
+验证：先新增测试复现两项失败，再修代码；系统名称、pack、QA、更新配置和终端兼容相关 43 项测试通过，无跳过。旧安装包被新校验正确拒绝；包含空 Electron 语言目录的修复后 fixture 在中英文下均返回女娲Nuwax。三问复查：locale 生成集中在原属主、验证保持只读、实际 Finder 解析与全部声明语言目录均有回归覆盖。
