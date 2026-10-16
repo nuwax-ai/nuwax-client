@@ -16,6 +16,11 @@ $scriptPath = [IO.Path]::GetFullPath($RecoveryScript)
 if (-not [IO.File]::Exists($scriptPath)) {
   throw 'Recovery script does not exist.'
 }
+$sourceBytes = [IO.File]::ReadAllBytes($scriptPath)
+$hasUtf8Bom = $sourceBytes.Length -ge 3 -and $sourceBytes[0] -eq 0xEF -and $sourceBytes[1] -eq 0xBB -and $sourceBytes[2] -eq 0xBF
+if (-not $hasUtf8Bom -and @($sourceBytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
+  throw 'Windows PowerShell 5.1 requires ASCII or UTF-8 with BOM; ANSI decoding can swallow a newline after a non-ASCII comment.'
+}
 foreach ($parsePath in @($scriptPath, $PSCommandPath)) {
   $parseTokens = $null
   $parseErrors = $null
@@ -200,10 +205,97 @@ function Test-RestoreConflict([string]$CaseName, [bool]$PartialRestore) {
   return [pscustomobject]@{ case = $CaseName; passed = $true; blockedPrepareUsesFreshStatePath = $true; dataHashesPreserved = $true; restoreRetryCompleted = $true }
 }
 
+function Test-InterruptedUpgrade([string]$CaseName, [bool]$Workspace, [bool]$Conflict, [bool]$CompletePreservation = $true) {
+  $caseRoot = [IO.Path]::Combine($fixtureRoot, $CaseName)
+  $install = [IO.Path]::Combine($caseRoot, 'fake-install')
+  $state = [IO.Path]::Combine($caseRoot, 'old-plugin-state.txt')
+  $freshState = [IO.Path]::Combine($caseRoot, 'new-plugin-state.txt')
+  $appFile = [IO.Path]::Combine($install, 'Nuwax.exe')
+  $workspaceFile = [IO.Path]::Combine($install, 'workspace', 'user.bin')
+  Write-FixtureFile ([IO.Path]::Combine($install, 'Uninstall Nuwax.exe')) 'NOT AN EXECUTABLE: fixture only'
+  Write-FixtureFile $appFile 'original application'
+  Write-FixtureFile ([IO.Path]::Combine($install, 'resources', 'app.asar')) 'original resources'
+  $workspaceHash = $null
+  if ($Workspace) {
+    Write-FixtureFile $workspaceFile 'workspace must survive interrupted upgrade'
+    $workspaceHash = Get-FixtureHash $workspaceFile
+  }
+  $prepared = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($prepared.ExitCode -eq 0) "Initial Prepare failed: $($prepared.Output)"
+  $oldRecovery = [IO.File]::ReadAllText($state).Trim()
+  $oldManifest = [IO.Path]::Combine($oldRecovery, 'manifest.jsonl')
+  $oldRecords = @(Read-FixtureManifest $oldManifest)
+  $oldApp = @($oldRecords | Where-Object { $_.status -eq 'planned' -and $_.original -eq $appFile })[0].backup
+  $oldAppHash = Get-FixtureHash $oldApp
+  $workspaceBackup = $null
+  if ($Workspace) {
+    $workspaceBackup = [IO.Path]::Combine([string](@($oldRecords | Where-Object { $_.status -eq 'planned' -and $_.original -eq [IO.Path]::GetDirectoryName($workspaceFile) })[0].backup), 'user.bin')
+  }
+  if (-not $CompletePreservation) {
+    # Model a process interruption before the durable complete record.
+    $lines = [IO.File]::ReadAllLines($oldManifest)
+    [IO.File]::WriteAllLines($oldManifest, [string[]]$lines[0..($lines.Count - 2)], [Text.UTF8Encoding]::new($false))
+  }
+
+  # The installer died after Prepare. A reinstall or partial extraction has
+  # repopulated the app directory without ever running customInstall/Restore.
+  Write-FixtureFile $appFile 'repopulated application'
+  Write-FixtureFile ([IO.Path]::Combine($install, 'resources', 'app.asar')) 'repopulated resources'
+  $repopulatedHash = Get-FixtureHash $appFile
+  $collision = [IO.Path]::Combine($install, 'workspace', 'new-owner.bin')
+  if ($Conflict) { Write-FixtureFile $collision 'do not overwrite this destination' }
+
+  $retry = Invoke-Recovery 'Prepare' $freshState $install
+  $markers = @([IO.Directory]::GetFiles($caseRoot, 'Nuwax-installer-recovery-active-*.txt'))
+  Assert-True ($markers.Count -eq 1) 'Retry lost the active recovery marker.'
+  Assert-True ((Get-FixtureHash $oldApp) -eq $oldAppHash) 'Retry changed the prior application backup.'
+  if (-not $CompletePreservation) {
+    Assert-True ($retry.ExitCode -ne 0) 'Retry accepted duplicate payloads without a completed preservation record.'
+    Assert-True ((Get-FixtureHash $appFile) -eq $repopulatedHash) 'Incomplete preservation overwrote the repopulated payload.'
+    $records = @(Read-FixtureManifest $oldManifest)
+    Assert-True (@($records | Where-Object { $_.status -eq 'restore-complete' }).Count -eq 0) 'Incomplete preservation was finalized as a completed restore.'
+    if ($Workspace) {
+      $remainingWorkspace = if ([IO.File]::Exists($workspaceFile)) { $workspaceFile } else { $workspaceBackup }
+      Assert-True ((Get-FixtureHash $remainingWorkspace) -eq $workspaceHash) 'Incomplete preservation lost workspace bytes.'
+    }
+  } elseif ($Conflict) {
+    Assert-True ($retry.ExitCode -eq 3) "Retry did not stop for a real workspace collision: $($retry.Output)"
+    Assert-True (([IO.File]::ReadAllText($markers[0]).Trim()) -eq $oldRecovery) 'Conflict replaced the previous recovery marker.'
+    Assert-True ((Get-FixtureHash $workspaceBackup) -eq $workspaceHash) 'Conflict changed the preserved workspace.'
+    Assert-True ((Get-FixtureHash $appFile) -eq $repopulatedHash) 'Conflict changed the repopulated app.'
+    Assert-True ([IO.File]::ReadAllText($collision) -eq 'do not overwrite this destination') 'Conflict overwrote destination bytes.'
+    Assert-True (-not [IO.File]::Exists($freshState)) 'Conflict published a new installer state.'
+  } else {
+    Assert-True ($retry.ExitCode -eq 0) "Interrupted upgrade retry failed: $($retry.Output)"
+    $newRecovery = [IO.File]::ReadAllText($freshState).Trim()
+    Assert-True ($newRecovery -ne $oldRecovery) 'Retry reused the previous payload transaction.'
+    Assert-True (([IO.File]::ReadAllText($markers[0]).Trim()) -eq $newRecovery) 'Retry did not publish the new transaction marker.'
+    $oldRecords = @(Read-FixtureManifest $oldManifest)
+    Assert-True ($oldRecords[-1].status -eq 'restore-complete') 'Retry did not finish the previous workspace restore.'
+    $records = @(Read-FixtureManifest ([IO.Path]::Combine($newRecovery, 'manifest.jsonl')))
+    $newApp = @($records | Where-Object { $_.status -eq 'planned' -and $_.original -eq $appFile })[0].backup
+    Assert-True ((Get-FixtureHash $newApp) -eq $repopulatedHash) 'Retry did not preserve the current payload in the new transaction.'
+    $again = Invoke-Recovery 'Prepare' $freshState $install
+    Assert-True ($again.ExitCode -eq 0) "Repeated prepared retry failed: $($again.Output)"
+    Assert-True (([IO.File]::ReadAllText($freshState).Trim()) -eq $newRecovery) 'Idempotent Prepare changed the transaction.'
+    Write-FixtureFile $appFile 'final installed app'
+    $restored = Invoke-Recovery 'Restore' $freshState
+    Assert-True ($restored.ExitCode -eq 0) "Final Restore failed: $($restored.Output)"
+    Assert-True ([IO.File]::ReadAllText($appFile) -eq 'final installed app') 'Restore changed the new application.'
+    if ($Workspace) { Assert-True ((Get-FixtureHash $workspaceFile) -eq $workspaceHash) 'Retry lost workspace data across the two transactions.' }
+    Assert-True (-not [IO.File]::Exists($markers[0])) 'Final Restore did not clear the active marker.'
+  }
+  return [pscustomobject]@{ case = $CaseName; passed = $true; priorBackupPreserved = $true; workspaceConflictBlocked = $Conflict }
+}
+
 try {
   $cases = @(
     (Test-RestoreConflict 'all-conflicts' $false),
-    (Test-RestoreConflict 'partial-restore' $true)
+    (Test-RestoreConflict 'partial-restore' $true),
+    (Test-InterruptedUpgrade 'interrupted-app-only' $false $false),
+    (Test-InterruptedUpgrade 'interrupted-with-workspace' $true $false),
+    (Test-InterruptedUpgrade 'interrupted-workspace-conflict' $true $true),
+    (Test-InterruptedUpgrade 'interrupted-incomplete-prepare' $true $false $false)
   )
 } finally {
   if (-not $KeepFixture) {

@@ -30,6 +30,19 @@
   Quit
 !macroend
 
+; nsExec captures the useful PowerShell error in R1. Keep it after the wizard
+; exits, including failures before a recovery directory has been created.
+!macro nuwaxLogRecoveryFailure ACTION
+  DetailPrint "${ACTION} failed: exit=$R0"
+  DetailPrint "$R1"
+  ClearErrors
+  FileOpen $R2 "$TEMP\Nuwax-installer-recovery.log" a
+  ${ifNot} ${Errors}
+    FileWrite $R2 "$\r$\n${VERSION} ${ACTION} exit=$R0$\r$\n$R1$\r$\n"
+    FileClose $R2
+  ${endif}
+!macroend
+
 ; The vendor standalone branch ignores RMDir errors and then removes the
 ; registration. Keep a retry entry when files remain; its uninstaller may have
 ; been deleted before a locked payload made RMDir fail. The --updated branch
@@ -162,7 +175,8 @@
     Pop $R0
     Pop $R1
     ${if} $R0 != 0
-      MessageBox MB_OK|MB_ICONSTOP "旧版安装文件保全失败，升级已停止。原文件或备份保留在旧安装目录旁的 Nuwax-installer-recovery 目录。错误码：$R0"
+      !insertmacro nuwaxLogRecoveryFailure Prepare
+      MessageBox MB_OK|MB_ICONSTOP "旧版安装文件保全失败，升级已停止。原文件或备份保留在旧安装目录旁的 Nuwax-installer-recovery 目录。错误码：$R0。详情：$TEMP\Nuwax-installer-recovery.log"
       SetErrorLevel 2
       Quit
     ${endif}
@@ -179,6 +193,7 @@
     Pop $R0
     Pop $R1
     ${if} $R0 != 0
+      !insertmacro nuwaxLogRecoveryFailure Restore
       MessageBox MB_OK|MB_ICONSTOP "新版已安装，但旧版工作区自动恢复失败。旧文件保留在旧安装目录旁的 Nuwax-installer-recovery 目录，请联系支持。错误码：$R0"
       SetErrorLevel 2
       Quit

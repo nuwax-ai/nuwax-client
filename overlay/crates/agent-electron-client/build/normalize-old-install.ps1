@@ -305,7 +305,56 @@ if ($Action -eq 'Rollback') {
   exit 3
 }
 
-if ($Action -eq 'Restore') {
+$resumeRestoreBeforePrepare = $false
+if ($Action -eq 'Prepare' -and $recoveryDir) {
+  $lastTerminal = -1
+  $lastPartialRestore = -1
+  $lastPrepareChange = -1
+  $lastComplete = -1
+  for ($index = 0; $index -lt $records.Count; $index++) {
+    $status = [string]$records[$index].status
+    if ($status -in @('restore-complete', 'rollback-complete')) {
+      $lastTerminal = $index
+    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
+      $lastPartialRestore = $index
+    } elseif ($status -in @('planned', 'moved')) {
+      $lastPrepareChange = $index
+    } elseif ($status -eq 'complete') {
+      $lastComplete = $index
+    }
+  }
+  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
+    # A prior Restore/Rollback finished but marker cleanup was interrupted.
+    if ([System.IO.File]::Exists($extendedMarker)) {
+      [System.IO.File]::Delete($extendedMarker)
+    }
+    if ([System.IO.File]::Exists($stateFile)) {
+      [System.IO.File]::Delete($stateFile)
+    }
+    $recoveryDir = $null
+    $manifestPath = $null
+    $plans.Clear()
+    $planByOriginal.Clear()
+    $usedBackups.Clear()
+  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
+    throw 'Recovery has an unfinished Restore/Rollback; refusing to mix a new installation into it.'
+  } elseif ($lastComplete -gt $lastPrepareChange) {
+    # Prepare completed, but extraction or a later reinstall repopulated the
+    # application before Restore ran. Finish the previous workspace restore
+    # first, then preserve the current install in a separate transaction.
+    # Restore keeps old payload backups and refuses workspace collisions.
+    foreach ($plan in $plans) {
+      if ($appEntryNames -contains [System.IO.Path]::GetFileName([string]$plan.original)) {
+        if (Test-EntryExists (Get-ExtendedPath ([string]$plan.original))) {
+          $resumeRestoreBeforePrepare = $true
+          break
+        }
+      }
+    }
+  }
+}
+
+if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare) {
   if (-not $recoveryDir) {
     exit 0
   }
@@ -367,7 +416,7 @@ if ($Action -eq 'Restore') {
     $restored++
   }
   if ($conflicts -gt 0) {
-    # 即使所有条目都冲突，也要保留 marker 和可重试的未完成状态。
+    # Keep the marker and unfinished state even when every entry conflicts.
     Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-incomplete'; restored = $restored; conflicts = $conflicts })
     Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
     exit 3
@@ -377,39 +426,19 @@ if ($Action -eq 'Restore') {
     [System.IO.File]::Delete($extendedMarker)
   }
   Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
-  exit 0
-}
-
-if ($recoveryDir) {
-  $lastTerminal = -1
-  $lastPartialRestore = -1
-  $lastPrepareChange = -1
-  for ($index = 0; $index -lt $records.Count; $index++) {
-    $status = [string]$records[$index].status
-    if ($status -in @('restore-complete', 'rollback-complete')) {
-      $lastTerminal = $index
-    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
-      $lastPartialRestore = $index
-    } elseif ($status -in @('planned', 'moved')) {
-      $lastPrepareChange = $index
-    }
+  if (-not $resumeRestoreBeforePrepare) {
+    exit 0
   }
-  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
-    # A prior Restore/Rollback finished but marker cleanup was interrupted.
-    if ([System.IO.File]::Exists($extendedMarker)) {
-      [System.IO.File]::Delete($extendedMarker)
-    }
-    if ([System.IO.File]::Exists($stateFile)) {
-      [System.IO.File]::Delete($stateFile)
-    }
-    $recoveryDir = $null
-    $manifestPath = $null
-    $plans.Clear()
-    $planByOriginal.Clear()
-    $usedBackups.Clear()
-  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
-    throw 'Recovery has an unfinished Restore/Rollback; refusing to mix a new installation into it.'
+  if ([System.IO.File]::Exists($stateFile)) {
+    [System.IO.File]::Delete($stateFile)
   }
+  $recoveryDir = $null
+  $manifestPath = $null
+  $plans.Clear()
+  $planByOriginal.Clear()
+  $usedBackups.Clear()
+  $restoredWorkspaces.Clear()
+  $restoreIntents.Clear()
 }
 
 if (-not [System.IO.Directory]::Exists($extendedRoot)) {
