@@ -166,7 +166,7 @@
   "Claw.AutoUpdater.alreadyLatest": "Already the Latest Version",
   "Claw.AutoUpdater.unsupportedInstall": "The current installation method does not support automatic updates. Please visit the download page on the official website to get the latest installer.",
   "Claw.AutoUpdater.downloadInstallNow": "Would you like to download and install the update now?",
-  "Claw.AutoUpdater.downloadNow": "Download Now",
+  "Claw.AutoUpdater.downloadNow": "Update Now",
   "Claw.AutoUpdater.later": "Later",
   "Claw.AutoUpdater.close": "Close",
   "Claw.AutoUpdater.downloadPage": "Go to Download Page",

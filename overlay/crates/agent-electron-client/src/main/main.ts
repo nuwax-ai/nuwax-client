@@ -676,6 +676,26 @@ async function cleanupAllProcesses(): Promise<void> {
   log.info("[Cleanup] All processes stopped");
 }
 
+// 更新入口须在 Windows 窗口/IPC 可调用前完成策略和清理回调初始化。
+function initializeClientUpdater(): void {
+  initAutoUpdater(
+    () => mainWindow,
+    cleanupAllProcesses,
+    () => {
+      // 在 quitAndInstall 前被调用：
+      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
+      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
+      //   保留 Squirrel.Mac 的正常退出流程
+      isQuitting = true;
+      isInstallingUpdate = true;
+      log.info(
+        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
+      );
+    },
+    { installAfterDownload: process.platform === "win32" },
+  );
+}
+
 // App lifecycle
 
 /**
@@ -796,6 +816,8 @@ app.whenReady().then(async () => {
       : (readSetting("i18n.active_lang") as string | undefined);
   setMainLang(savedLang || DEFAULT_MAIN_LANG);
 
+  if (process.platform === "win32") initializeClientUpdater();
+
   const ctx: HandlerContext = {
     getMainWindow: () => mainWindow,
     lanproxy,
@@ -907,21 +929,7 @@ app.whenReady().then(async () => {
     await initTrayManager();
   }
 
-  initAutoUpdater(
-    () => mainWindow,
-    cleanupAllProcesses,
-    () => {
-      // 在 quitAndInstall 前被调用：
-      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
-      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
-      //   保留 Squirrel.Mac 的正常退出流程
-      isQuitting = true;
-      isInstallingUpdate = true;
-      log.info(
-        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
-      );
-    },
-  );
+  if (process.platform !== "win32") initializeClientUpdater();
 });
 
 app.on("window-all-closed", () => {

@@ -323,11 +323,72 @@
 ; instance. That is the process that actually uninstalls an all-users copy, so
 ; perform the same close and directory preflight before it reaches the section.
 !macro customInit
+  ${if} ${isUpdated}
+    SetAutoClose true
+  ${endif}
   ${if} ${UAC_IsInnerInstance}
     !insertmacro setInstallModePerAllUsers
     InitPluginsDir
     !insertmacro customCheckAppRunning
   ${endif}
+!macroend
+
+; 更新沿用正在运行副本的范围，首次安装仍由向导选择。/D 由更新器传入，
+; initMultiUser 已将其解析到 INSTDIR；注册表同时存在两种安装时也不能换副本。
+!macro customInstallMode
+  ${if} ${isUpdated}
+    ${if} $perMachineInstallationFolder != ""
+    ${andIf} $INSTDIR == $perMachineInstallationFolder
+      StrCpy $isForceMachineInstall "1"
+    ${elseif} $perUserInstallationFolder != ""
+    ${andIf} $INSTDIR == $perUserInstallationFolder
+      StrCpy $isForceCurrentInstall "1"
+    ${elseif} $installMode == "all"
+      StrCpy $isForceMachineInstall "1"
+    ${else}
+      StrCpy $isForceCurrentInstall "1"
+    ${endif}
+  ${endif}
+!macroend
+
+; builder 的目录规整回调在跳过目录页后仍运行，会给自定义旧路径追加产品名。
+; 更新必须保持原目录；首装继续执行原模板的规整逻辑。
+!macro customPageAfterChangeDir
+  !ifdef allowToChangeInstallationDirectory
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define MUI_PAGE_CUSTOMFUNCTION_PRE nuwaxInstFilesPre
+    Function nuwaxInstFilesPre
+      ${ifNot} ${isUpdated}
+        Call instFilesPre
+      ${endif}
+    FunctionEnd
+  !endif
+!macroend
+
+; 只有成功安装后才进入完成页。升级直接以原桌面用户打开新版并跳过此页；
+; 首装保留默认的运行复选框和完成按钮。静默更新仍由 vendor 的 installSection 启动。
+!macro customFinishPage
+  Function nuwaxStartApp
+    ${if} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${else}
+      StrCpy $1 ""
+    ${endif}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  Function nuwaxFinishPagePre
+    ${if} ${isUpdated}
+      HideWindow
+      Call nuwaxStartApp
+      Abort
+    ${endif}
+  FunctionEnd
+
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE nuwaxFinishPagePre
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION nuwaxStartApp
+  !insertmacro MUI_PAGE_FINISH
 !macroend
 
 ; installSection invokes this after the old uninstaller, new payload extraction,
