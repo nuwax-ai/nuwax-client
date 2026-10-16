@@ -2,7 +2,7 @@
 
 - 初稿 2026-09-21，评审修订 2026-09-22；用户已授权独立 worktree 实施。
 - 需求：`plans/20260922-loopback-login-sync-intent.md`。
-- 规范性方案：`specs/loopback-login-sync-header-channel.md`。
+- 规范性方案：[历史记录](https://github.com/nuwax-ai/nuwax-client/blob/a65c537a143c167e774feb18c22ceccab24b0b69/specs/loopback-login-sync-header-channel.md)。
 - 历史调研：`docs/20260921-loopback-login-sync-research.md`，原全量 namespace/仅网关剥 cookie 方案以本次修订为准。
 
 ## WS1：网关

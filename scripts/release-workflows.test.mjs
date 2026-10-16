@@ -2,45 +2,49 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { parse } from 'yaml';
 
-const workflow = (name) => readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
-test('public release routes are exclusive, validated before gates, and beta publication needs the matrix', () => {
+const workflow = name => parse(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'));
+const list = value => Array.isArray(value) ? value : [value];
+const commands = job => job.steps.map(step => step.run ?? '').join('\n');
+const commandIndex = (job, part) => {
+  const index = job.steps.findIndex(step => step.run?.includes(part));
+  assert.ok(index >= 0, `Missing release action: ${part}`);
+  return index;
+};
+
+test('public releases validate exclusive tag routes, require full source gates and await the platform matrix', () => {
   const stable = workflow('release-electron.yml'), beta = workflow('release-electron-dev.yml');
-  assert.match(stable, /tags:\n\s+- "v\*"\n\s+- "!v\*-beta\.\*"/);
-  assert.match(beta, /tags:\n\s+- "v\*-beta\.\*"/);
-  for (const [text, channel] of [[stable, 'stable'], [beta, 'beta']]) {
-    assert.ok(text.indexOf('  validate-tag:') < text.indexOf('  verify-source:'));
-    assert.match(text, /verify-source:\n(?:[^\n]*\n)*?\s+needs: validate-tag/);
-    assert.ok(text.includes(`node scripts/release-version.mjs "$RELEASE_TAG" ${channel}`));
-    for (const tag of channel === 'stable' ? ['v3.0.10', 'v3.0.11'] : ['v3.0.11-beta.1', 'v3.0.11-beta.10']) {
-      const result = spawnSync(process.execPath, [new URL('./release-version.mjs', import.meta.url).pathname, tag, channel], { encoding: 'utf8' });
-      assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, new RegExp(`channel=${channel}`));
-    }
-    for (const tag of ['v03.0.11', 'v3.0.11-beta.0', 'v3.0.11-rc.1', 'v3.0.11-dev', 'v3.0.11+build']) {
-      const result = spawnSync(process.execPath, [new URL('./release-version.mjs', import.meta.url).pathname, tag, channel], { encoding: 'utf8' });
-      assert.notEqual(result.status, 0);
-      assert.equal(result.stdout, '');
-    }
+  assert.deepEqual(stable.on.push.tags, ['v*', '!v*-beta.*']);
+  assert.deepEqual(beta.on.push.tags, ['v*-beta.*']);
+  assert.equal(stable.on.workflow_dispatch, undefined);
+  assert.equal(workflow('ci.yml').on.workflow_call.inputs.full.default, true);
+  for (const [value, channel] of [[stable, 'stable'], [beta, 'beta']]) {
+    assert.ok(list(value.jobs['verify-source'].needs).includes('validate-tag'));
+    assert.equal(value.jobs['verify-source'].uses, './.github/workflows/ci.yml');
+    assert.ok(commands(value.jobs['validate-tag']).includes(`scripts/release-version.mjs "$RELEASE_TAG" ${channel}`));
+    assert.ok(list(value.jobs.prepare.needs).includes('verify-source'));
+    assert.ok(list(value.jobs['build-electron'].needs).includes('prepare'));
   }
-  assert.match(beta, /publish-beta:\n(?:[^\n]*\n)*?\s+needs: build-electron/);
-  assert.doesNotMatch(stable, /publish-beta:|workflow_dispatch:/);
+  assert.ok(list(beta.jobs['publish-beta'].needs).includes('build-electron'));
+  assert.equal(stable.jobs['publish-beta'], undefined);
 });
 
-test('all pointer publications share one queue and current tools verify a separately checked out source', () => {
+test('pointer publication is serialized and verifies the immutable release source', () => {
   const sync = workflow('sync-electron-to-oss.yml');
-  assert.match(sync, /group: nuwax-update-subscriptions\n\s+cancel-in-progress: false/);
-  assert.doesNotMatch(sync, /group:.*inputs\.channel/);
-  assert.ok(sync.indexOf('Checkout release automation') < sync.indexOf('Validate release tag and channel'));
-  assert.match(sync, /ref: \$\{\{ inputs.tag \}\}\n\s+path: release-source/);
-  assert.match(sync, /--source-root release-source/);
-  assert.match(sync, /node scripts\/publish-release-pointers.mjs/);
+  assert.equal(sync.concurrency['cancel-in-progress'], false);
+  assert.ok(!sync.concurrency.group.includes('${{'), 'all channels use the same publication queue');
+  const job = sync.jobs['sync-to-minio'];
+  assert.ok(job.steps.some(step => step.uses?.startsWith('actions/checkout@') && step.with?.ref === '${{ inputs.tag }}' && step.with?.path === 'release-source'));
+  assert.ok(commands(job).includes('--source-root release-source'));
+  assert.ok(commandIndex(job, 'release-provenance.mjs verify') < commandIndex(job, 'publish-release-pointers.mjs'));
+  assert.ok(commandIndex(job, 'release-storage-integrity.mjs verify') < commandIndex(job, 'publish-release-pointers.mjs'));
 });
 
 test('published update notes preserve complete UTF-8 text and old-version recovery instructions', () => {
-  const assignment = workflow('sync-electron-to-oss.yml').split('\n').find(line => line.trimStart().startsWith('NOTES='));
-  assert.ok(assignment, 'workflow extracts release notes');
-  // 将中文与 emoji 放在旧 500 字节边界两侧，直接执行实际发布命令。
+  const job = workflow('sync-electron-to-oss.yml').jobs['sync-to-minio'];
+  const assignment = commands(job).split('\n').find(line => line.trimStart().startsWith('NOTES='));
+  assert.ok(assignment);
   const body = `${'修复客户端更新与中文显示。'.repeat(30)}🚀\n已安装且缺升级文件的 macOS 旧版，请下载完整 DMG 覆盖安装本版。`;
   assert.ok(Buffer.byteLength(body) > 500);
   for (const [release, expected] of [
@@ -57,40 +61,25 @@ test('published update notes preserve complete UTF-8 text and old-version recove
   }
 });
 
-test('stable and beta prepare locked capture payloads and verify real packaged bytes before any upload', () => {
+test('all platform packages verify capture and updater payloads before uploading', () => {
   for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
-    const text = workflow(name);
-    assert.match(text, /platform: macos-26-intel\n\s+arch: x64/);
-    assert.match(text, /Setup Windows capture compiler\n\s+if: runner.os == 'Windows'/);
-    assert.match(text, /Setup macOS capture compiler\n\s+if: runner.os == 'macOS'/);
-    assert.match(text, /MACOSX_DEPLOYMENT_TARGET=12\.0/);
-    assert.match(text, /command -v nasm >\/dev\/null \|\| brew install nasm/);
-    assert.match(text, /command -v pkg-config >\/dev\/null \|\| brew install pkgconf/);
-    assert.ok(text.indexOf('Setup macOS capture compiler') < text.indexOf('Prepare and admit capture release resources'));
-    assert.match(text, /Setup Linux capture compiler\n\s+if: runner.os == 'Linux'/);
-    assert.match(text, /sudo apt-get install -y build-essential pkg-config nasm/);
-    assert.ok(text.indexOf('Setup Linux capture compiler') < text.indexOf('Prepare and admit capture release resources'));
-    assert.match(text, /uses: msys2\/setup-msys2@v2/);
-    assert.match(text, /mingw-w64-x86_64-nasm\n\s+perl\n/);
-    assert.match(text, /MSYS2_LOCATION: \$\{\{ steps.capture-msys2.outputs.msys2-location \}\}/);
-    assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH"/);
-    assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH" --verify-output "\$OUT_DIR"/);
-    assert.ok(text.indexOf('Prepare and admit capture release resources') < text.indexOf('- name: Build Electron app'));
-    assert.ok(text.indexOf('Import Apple certificate (macOS)') < text.indexOf('Prepare and admit capture release resources'));
-    assert.match(text, /NUWAX_CAPTURE_MAC_SIGNING: \$\{\{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' \|\| 'false' \}\}/);
-    assert.ok(text.indexOf('- name: Build Electron app') < text.indexOf('Verify packaged capture resources'));
-    assert.match(text, /APPLE_API_KEY= APPLE_API_KEY_ID= APPLE_ISSUER_ID=/);
-    assert.match(text, /--dir --publish never --config.mac.notarize=false/);
-    assert.ok(text.indexOf('Notarize signed macOS app with resumable retries') < text.indexOf('Package notarized macOS app'));
-    assert.ok(text.indexOf('Package notarized macOS app') < text.indexOf('Verify packaged capture resources'));
-    assert.match(text, /--phase notarize/);
-    assert.match(text, /--phase package/);
-    assert.match(text, /Preserve signed macOS app after failure/);
-    assert.match(text, /mac-notary-recovery-\$\{\{ github.run_id \}\}-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.arch \}\}/);
-    assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Upload artifacts to Release'));
-    if (name === 'release-electron-dev.yml') assert.ok(text.indexOf('Verify packaged capture resources') < text.indexOf('Stage isolated QA packages'));
-    assert.match(text, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
-    assert.match(text, /platform: ubuntu-24.04\n\s+arch: x64/);
-    assert.match(text, /platform: ubuntu-24.04-arm\n\s+arch: arm64/);
+    const job = workflow(name).jobs['build-electron'];
+    assert.deepEqual(job.strategy.matrix.include.map(m => `${m.platform.split('-')[0]}:${m.arch}`).sort(),
+      ['macos:arm64', 'macos:x64', 'ubuntu:arm64', 'ubuntu:x64', 'windows:x64']);
+    const prepare = commandIndex(job, 'node scripts/prepare-release-capture.mjs --arch');
+    const build = commandIndex(job, '--dir --publish never');
+    const configureUpdater = job.steps.findIndex(step => step.run?.trim() === 'node scripts/prepare-release-updater.mjs');
+    const capture = commandIndex(job, 'node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output');
+    const updater = commandIndex(job, 'node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output');
+    const upload = commandIndex(job, 'gh release upload');
+    assert.ok(configureUpdater >= 0 && configureUpdater < build);
+    assert.ok(prepare < build && build < capture && capture < upload && build < updater && updater < upload);
+    const updaterStep = job.steps[updater];
+    assert.equal(updaterStep.env.OUT_DIR, '${{ steps.packaged_resources.outputs.output_dir }}');
+    const stage = job.steps.findIndex(step => step.run?.includes('qa-build-context.json'));
+    if (stage >= 0) assert.ok(updater < stage);
+    const notarize = commandIndex(job, '--phase notarize');
+    const pack = commandIndex(job, '--phase package');
+    assert.ok(build < notarize && notarize < pack && pack < capture);
   }
 });

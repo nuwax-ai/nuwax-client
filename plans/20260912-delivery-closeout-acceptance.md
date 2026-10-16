@@ -2,7 +2,7 @@
 
 > 最新包为 **QA.4**；QA.3 存在真实 302 另存失败。以 [QA.4 验收记录](20260912-qa4-redirect-acceptance.md) 为准；本文早轮哈希与“可提测”结论仅供追溯。
 
-- 对应计划：`plans/20260912-delivery-closeout-plan.md`（登录/启停/隔离/文件/动画收尾）、`plans/20260912-remove-experimental-features-plan.md`（移除两个实验功能）
+- 对应计划：`plans/20260912-delivery-closeout-plan.md`（登录/启停/隔离/文件/动画收尾）、[历史记录](https://github.com/nuwax-ai/nuwax-client/blob/a65c537a143c167e774feb18c22ceccab24b0b69/plans/20260912-remove-experimental-features-plan.md)（移除两个实验功能）
 - 版本：**1.0.4-qa.20260912**，仅预发布测试包，**未更新正式渠道**
 - 记录时间：2026-09-12 13:20（CST）
 

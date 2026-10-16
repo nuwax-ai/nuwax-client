@@ -1,14 +1,6 @@
 {
   "name": "nuwax-client",
-  "srcPaths": [
-    "overlay/"
-  ],
-  "plansDirs": [
-    "plans",
-    "specs"
-  ],
   "protectedWrite": [],
   "envPrefix": "NUWACLAW",
-  "test": "npm run base:test",
-  "grillExtra": []
+  "test": "npm run test:scripts"
 }

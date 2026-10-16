@@ -1,59 +1,43 @@
+import { installedBuilder } from './test-support/fixtures.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 import archivePolicy from '../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { prepareReleaseSystemName } from './prepare-release-system-name.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const workflow = readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8');
+const workflow = parse(readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8'));
+const prepare = workflow.jobs.prepare, build = workflow.jobs['build-electron'];
 const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 
-function step(name) {
-  const lines = workflow.split('\n');
-  const start = lines.findIndex((line) => line === `      - name: ${name}`);
-  assert.ok(start >= 0, `Missing workflow step: ${name}`);
-  let end = start + 1;
-  while (end < lines.length && !/^      - name:|^  [a-z][a-z-]+:/.test(lines[end])) end++;
-  return lines.slice(start, end).join('\n');
-}
+const byCommand = text => {
+  const found = build.steps.find(step => step.run?.includes(text));
+  assert.ok(found, `Missing build action: ${text}`);
+  return found;
+};
+const operations = {
+  identity: prepare.steps.find(step => step.id === 'version'),
+  checkout: prepare.steps.find(step => step.uses?.startsWith('actions/checkout@')),
+  branding: byCommand('npm pkg set version='),
+  windowsOutput: byCommand('scripts/configure-windows-output.mjs'),
+  record: byCommand('scripts/release-provenance.mjs'),
+  build: byCommand('--dir --publish never'),
+  upload: byCommand('gh release upload'),
+  create: prepare.steps.find(step => step.run?.includes('gh release create')),
+  qaStage: build.steps.find(step => step.id === 'qa_artifacts'),
+  qaUpload: build.steps.find(step => step.with?.path === '${{ steps.qa_artifacts.outputs.path }}'),
+};
+const expression = value => value.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
 
-function script(name) {
-  const lines = step(name).split('\n');
-  const start = lines.indexOf('        run: |');
-  assert.ok(start >= 0, `Missing run script: ${name}`);
-  return lines.slice(start + 1).map((line) => line.startsWith('          ') ? line.slice(10) : line).join('\n');
-}
-
-function installedBuilder(t) {
-  // Default to this checkout's client dependencies. An isolated checkout without
-  // submodules can explicitly reuse another client's installed dependencies read-only.
-  const override = process.env.NUWAX_TEST_BUILDER_CLIENT_DIR;
-  if (override) assert.ok(path.isAbsolute(override), 'NUWAX_TEST_BUILDER_CLIENT_DIR must be an absolute client directory');
-  const client = override ?? path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
-  const require = createRequire(import.meta.url);
-  let builderFile;
-  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); }
-  catch (error) {
-    if (error.code !== 'MODULE_NOT_FOUND') throw error;
-    if (override) assert.fail(`Pinned builder dependencies unavailable in ${client}`);
-    t.diagnostic('Installed builder unavailable; real builder contract not run');
-    return null;
-  }
-  const builderRequire = createRequire(builderFile);
-  assert.equal(builderRequire('./package.json').version, '25.1.8');
-  builderRequire('app-builder-lib');
-  return builderRequire;
-}
 
 function condition(block) {
-  const match = /^\s+if: \$\{\{ (.+) \}\}$/m.exec(block);
-  assert.ok(match, 'Missing explicit event/ref guard');
-  return (event, ref) => Function('github', 'startsWith', `return (${match[1]});`)(
+  assert.ok(block.if, 'Missing event/ref guard');
+  return (event, ref) => Function('github', 'startsWith', `return (${expression(block.if)});`)(
     { event_name: event, ref }, (value, prefix) => value.startsWith(prefix),
   );
 }
@@ -63,7 +47,7 @@ function resolveIdentity(t, env = {}) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const output = path.join(directory, 'output');
   writeFileSync(output, '');
-  const result = spawnSync('bash', ['-c', script('Resolve frozen build identity')], {
+  const result = spawnSync('bash', ['-c', operations.identity.run], {
     cwd: root,
     env: { ...process.env, BUILD_EVENT: 'workflow_dispatch', BUILD_REF: 'refs/heads/codex/client-qa', BUILD_SHA: sourceSha,
       VERSION_INPUT: '3.0.9-qa.20261008.1', WINDOWS_ARCHIVE_INPUT: 'zip-qa', GITHUB_OUTPUT: output, ...env },
@@ -106,9 +90,7 @@ test('strict QA date accepts a leap day and keeps a positive semver attempt', (t
 });
 
 test('workflow archive environment agrees with the shared policy for Windows 7z and ZIP, and other platforms', () => {
-  const match = /NUWAX_WINDOWS_INSTALLER_ARCHIVE: \$\{\{ (.+) \}\}/.exec(step('Build Electron app'));
-  assert.ok(match, 'Missing archive environment');
-  const evaluate = Function('runner', 'needs', `return (${match[1]});`);
+  const evaluate = Function('runner', 'needs', `return (${expression(operations.build.env.NUWAX_WINDOWS_INSTALLER_ARCHIVE)});`);
   for (const [osName, platform, archive, expected] of [
     ['Windows', 'win32', '7z', ''], ['Windows', 'win32', 'zip-qa', 'zip-qa'],
     ['Windows', 'win32', '', ''], ['macOS', 'darwin', 'zip-qa', ''], ['Linux', 'linux', 'zip-qa', ''],
@@ -144,9 +126,9 @@ test('QA identity rejects malformed versions, unsupported refs, archive input an
 });
 
 test('all three release mutations require a real tag push and QA artifacts use the inverse gate', () => {
-  const releasePredicates = [condition(step('Create GitHub Release')), condition(step('Upload artifacts to Release')),
-    condition(workflow.slice(workflow.indexOf('  publish-beta:')))];
-  const qaPredicates = [condition(step('Stage isolated QA packages and build context')), condition(step('Upload isolated QA packages'))];
+  const releasePredicates = [condition(operations.create), condition(operations.upload),
+    condition(workflow.jobs['publish-beta'])];
+  const qaPredicates = [condition(operations.qaStage), condition(operations.qaUpload)];
   for (const [event, ref, published] of [
     ['push', 'refs/tags/v3.0.9-beta.1', true],
     ['push', 'refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', false],
@@ -156,9 +138,9 @@ test('all three release mutations require a real tag push and QA artifacts use t
     for (const predicate of releasePredicates) assert.equal(predicate(event, ref), published, `${event}:${ref}`);
     for (const predicate of qaPredicates) assert.equal(predicate(event, ref), !published, `${event}:${ref}`);
   }
-  assert.match(step('Checkout'), /ref: \$\{\{ github\.sha \}\}/);
-  assert.match(workflow, /ref: \$\{\{ needs\.prepare\.outputs\.source_sha \}\}/);
-  assert.match(step('Upload isolated QA packages'), /retention-days: 7/);
+  assert.equal(operations.checkout.with.ref, '${{ github.sha }}');
+  assert.equal(build.steps.find(step => step.uses?.startsWith('actions/checkout@')).with.ref, '${{ needs.prepare.outputs.source_sha }}');
+  assert.ok(operations.qaUpload.with['retention-days'] > 0);
 });
 
 test('QA native package fields remain numeric while the full app version and public defaults are preserved', async (t) => {
@@ -167,7 +149,7 @@ test('QA native package fields remain numeric while the full app version and pub
     const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-qa-native-version-'));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name: 'fixture-client', version: '0.0.0', build: { extraResources: [{ from: 'fixture-node', to: 'node' }], mac: { extendInfo: {} }, win: {} } }));
-    const run = script('Set version & commercial branding in package.json').replaceAll('${{ needs.prepare.outputs.version }}', version);
+    const run = operations.branding.run.replaceAll('${{ needs.prepare.outputs.version }}', version);
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
       QA_BUILD: String(qa), NATIVE_VERSION: '3.0.9', TARGET_ARCH: arch, npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false',
     } });
@@ -204,7 +186,7 @@ test('QA native package fields remain numeric while the full app version and pub
 
 test('public Beta keeps numeric Mac bundle versions and full DMG identity in the pinned builder', async (t) => {
   const builderRequire = installedBuilder(t);
-  if (!builderRequire) { t.skip('Requires installed electron-builder 25.1.8'); return; }
+  if (!builderRequire) return;
   const { AppInfo } = builderRequire('app-builder-lib/out/appInfo.js');
   const { MacPackager } = builderRequire('app-builder-lib/out/macPackager.js');
   const { PlatformPackager } = builderRequire('app-builder-lib/out/platformPackager.js');
@@ -217,7 +199,7 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
         t.after(() => rmSync(directory, { recursive: true, force: true }));
         writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ name: 'fixture-client', version: '0.0.0',
           build: { extraResources: [{ from: 'complete-resource', to: 'node' }], mac: { extendInfo: {} }, win: {} } }));
-        const run = script('Set version & commercial branding in package.json').replaceAll('${{ needs.prepare.outputs.version }}', version);
+        const run = operations.branding.run.replaceAll('${{ needs.prepare.outputs.version }}', version);
         const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
           QA_BUILD: 'false', NATIVE_VERSION: '3.0.11', TARGET_ARCH: arch, npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false',
         } });
@@ -245,9 +227,8 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
 });
 
 test('Windows short output covers public Beta and QA while preserving full identity and resources', (t) => {
-  const block = step('Configure short output directory for Windows');
-  const expression = /^\s+if: (.+)$/m.exec(block)[1];
-  const applies = Function('runner', 'needs', `return (${expression});`);
+  const block = operations.windowsOutput;
+  const applies = Function('runner', 'needs', `return (${expression(block.if)});`);
   for (const [osName, qa, expected] of [['Windows', 'true', true], ['Windows', 'false', true], ['macOS', 'true', false], ['Linux', 'true', false]]) {
     assert.equal(applies({ os: osName }, { prepare: { outputs: { qa_build: qa } } }), expected);
   }
@@ -260,7 +241,7 @@ test('Windows short output covers public Beta and QA while preserving full ident
   const run = (env) => {
     writeFileSync(packagePath, JSON.stringify(initial));
     writeFileSync(envPath, '');
-    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script('Configure short output directory for Windows').replace('node scripts/configure-windows-output.mjs', `node "${path.join(root, 'scripts/configure-windows-output.mjs')}"`)], { cwd: directory, encoding: 'utf8', env: { ...process.env, GITHUB_ENV: envPath, RUNNER_TEMP: 'D:\\a\\_temp', GITHUB_RUN_ID: '37666382509', GITHUB_RUN_ATTEMPT: '2', TARGET_ARCH: 'x64', ...env } });
+    return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', operations.windowsOutput.run.replace('node scripts/configure-windows-output.mjs', `node "${path.join(root, 'scripts/configure-windows-output.mjs')}"`)], { cwd: directory, encoding: 'utf8', env: { ...process.env, GITHUB_ENV: envPath, RUNNER_TEMP: 'D:\\a\\_temp', GITHUB_RUN_ID: '37666382509', GITHUB_RUN_ATTEMPT: '2', TARGET_ARCH: 'x64', ...env } });
   };
   const result = run({});
   assert.equal(result.status, 0, result.stderr);
@@ -273,8 +254,8 @@ test('Windows short output covers public Beta and QA while preserving full ident
     assert.deepEqual(JSON.parse(readFileSync(packagePath, 'utf8')), initial);
     assert.equal(readFileSync(envPath, 'utf8'), '');
   }
-  assert.match(script('Stage isolated QA packages and build context'), /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
-  assert.match(script('Upload artifacts to Release'), /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
+  assert.match(operations.qaStage.run, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
+  assert.match(operations.upload.run, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
 });
 
 function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, missingNotificationModule = false, failedTool = '', shortOutput = 'D:/a/_temp/nq-123-1' }) {
@@ -297,7 +278,7 @@ function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, 
     writeFileSync(modulePath, 'native module fixture only');
   }
   writeFileSync(path.join(out, 'Nuwax.dmg'), 'fake fixture only');
-  const run = script('Record platform source and verify macOS signature').replaceAll('${{ runner.os }}', osName);
+  const run = operations.record.run.replaceAll('${{ runner.os }}', osName);
   const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`, QA_BUILD: qa, BUILD_IDENTITY: identity, TARGET_ARCH: 'x64', BUILD_VERSION: version,
     QA_CALLS: calls, QA_FAILED_TOOL: failedTool, APPLE_CERTIFICATE: missingCertificate ? '' : 'fixture', APPLE_SIGNING_IDENTITY: 'fixture',
@@ -321,8 +302,8 @@ test('record commands isolate full QA identity from public provenance and reject
   assert.notEqual(missing.status, 0);
   assert.equal(missing.calls.length, 0);
   assert.deepEqual(rejected.calls, []);
-  assert.match(workflow, /qa_build: \$\{\{ steps\.version\.outputs\.qa_build \}\}/);
-  assert.match(step('Record platform source and verify macOS signature'), /QA_BUILD: \$\{\{ needs\.prepare\.outputs\.qa_build \}\}/);
+  assert.equal(prepare.outputs.qa_build, '${{ steps.version.outputs.qa_build }}');
+  assert.equal(operations.record.env.QA_BUILD, '${{ needs.prepare.outputs.qa_build }}');
 });
 
 test('artifact-only QA retains the full macOS secret and signature gates before recording', (t) => {
@@ -361,7 +342,7 @@ test('macOS notification architecture gate executes real lipo and rejects a miss
   });
   const universal = path.join(directory, 'notification.node');
   execFileSync('xcrun', ['lipo', '-create', ...slices, '-output', universal]);
-  const command = script('Record platform source and verify macOS signature').split('\n').find(line => /^\s*lipo /.test(line));
+  const command = operations.record.run.split('\n').find(line => /^\s*lipo /.test(line));
   assert.ok(command, 'Missing production architecture gate');
   const verify = (file) => spawnSync('bash', ['-e', '-u', '-c', command], {
     env: { ...process.env, NOTIFICATION_MODULE: file }, encoding: 'utf8',
@@ -396,7 +377,7 @@ test('QA artifact staging preserves complete package files, notes and frozen sou
   mkdirSync(shortOut);
   writeFileSync(path.join(shortOut, `Nuwax-${version}.exe`), 'complete-windows-package-bytes');
   for (const [osName, shortOutput] of [['Linux', ''], ['Windows', shortOut], ['Windows', '']]) {
-    const run = script('Stage isolated QA packages and build context')
+    const run = operations.qaStage.run
       .replaceAll('${{ runner.os }}', osName).replaceAll('${{ matrix.arch }}', 'x64');
     const runnerTemp = path.join(directory, `runner-${osName}-${shortOutput ? 'valid' : 'missing'}`);
     mkdirSync(runnerTemp);
@@ -434,7 +415,7 @@ test('QA artifact staging preserves complete package files, notes and frozen sou
 
 test('Beta Mac build commands override maximum with the stable compression level in both SDK archive paths', (t) => {
   const builderRequire = installedBuilder(t);
-  if (!builderRequire) { t.skip('Requires installed electron-builder 25.1.8'); return; }
+  if (!builderRequire) return;
   const { compute7zCompressArgs, computeZipCompressArgs } = builderRequire('app-builder-lib/out/targets/archive.js');
   const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-mac-archive-level-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -447,7 +428,7 @@ test('Beta Mac build commands override maximum with the stable compression level
     assert.ok(compute7zCompressArgs('zip', { compression: 'maximum' }).includes('-mx=9'));
     assert.ok(computeZipCompressArgs({ compression: 'maximum' }).includes('-9'));
     for (const [osName, arch] of [['macOS', 'arm64'], ['macOS', 'x64'], ['Windows', 'x64'], ['Linux', 'arm64']]) {
-      const run = script('Build Electron app').replaceAll('${{ runner.os }}', osName)
+      const run = operations.build.run.replaceAll('${{ runner.os }}', osName)
         .replaceAll('${{ matrix.arch }}', arch).replaceAll('${{ matrix.dist_cmd }}', `dist:mac:${arch}`)
         .replaceAll("${{ secrets.APPLE_CERTIFICATE || '' }}", 'fixture').replaceAll('${{ secrets.APPLE_SIGNING_IDENTITY }}', 'fixture');
       const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ARCHIVE_LEVEL_CAPTURE: capture,

@@ -1,30 +1,14 @@
+import { installedBuilder as builder, temporaryDirectory as fixture } from './test-support/fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import config from '../client.config.mjs';
 import { configureSystemAppName } from './client/system-app-name.mjs';
 import { prepareReleaseSystemName, verifyMacSystemName } from './prepare-release-system-name.mjs';
 
 const strings = path.resolve(import.meta.dirname, '../overlay/crates/agent-electron-client/build/InfoPlist.strings');
-function fixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-system-name-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
-function builder(t) {
-  const require = createRequire(import.meta.url);
-  const client = path.resolve(import.meta.dirname, '../nuwa-electron-shell/crates/agent-electron-client');
-  let file;
-  try { file = require.resolve('electron-builder/package.json', { paths: [client] }); }
-  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; t.skip('Builder dependencies unavailable'); return; }
-  const result = createRequire(file);
-  result('app-builder-lib');
-  return result;
-}
 function branded(platform) {
   return configureSystemAppName({ appId: config.product.appId, extraMetadata: { name: 'nuwax' },
     electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'zh_TW', 'zh-TW'],

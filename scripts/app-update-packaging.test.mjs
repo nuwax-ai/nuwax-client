@@ -1,33 +1,17 @@
+import { installedBuilder as installedBuilder, temporaryDirectory as fixture } from './test-support/fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
-import { createRequire } from 'node:module';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { prepareReleaseUpdater, verifyUpdaterApp, verifyUpdaterOutput, packagedResources } from './prepare-release-updater.mjs';
 
 const feed = config.product.feedBase;
-function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'app-update-test-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
-}
 function putConfig(resources, bytes = updater.configBytes(feed)) {
   fs.mkdirSync(resources, { recursive: true });
   fs.writeFileSync(path.join(resources, 'app-update.yml'), bytes);
-}
-function installedBuilder(t) {
-  const require = createRequire(import.meta.url);
-  const client = core.paths(path.resolve(import.meta.dirname, '..')).client;
-  let builderFile;
-  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); }
-  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; t.skip('Builder dependencies unavailable'); return; }
-  const builderRequire = createRequire(builderFile);
-  builderRequire('app-builder-lib');
-  return builderRequire;
 }
 
 test('all commercial routes configure the same provider, isolate cache, and reject unrelated hooks', t => {
@@ -178,19 +162,4 @@ test('macOS verifies actual ZIP bytes and mounted DMG, detaches on failure, and 
     assert.equal(calls.filter(([command, phase]) => command === 'hdiutil' && phase === 'detach').length, failure === 'zip' ? 0 : 1);
   }
   assert.equal(fs.statSync(file).mtimeMs, before);
-});
-
-test('stable, beta and QA configure before signing and verify package bytes before uploading', () => {
-  for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
-    const text = fs.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
-    assert.ok(text.indexOf('Configure commercial update package') < text.indexOf('- name: Build Electron app'));
-    const gate = text.indexOf('- name: Verify packaged updater configuration');
-    const verify = text.indexOf('node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"');
-    assert.ok(gate > text.indexOf('- name: Verify packaged capture resources'));
-    assert.ok(gate > text.indexOf('- name: Package notarized macOS app'));
-    assert.ok(verify > gate && verify < text.indexOf('\n      - name:', gate + 1));
-    assert.ok(text.includes('OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}'));
-    assert.ok(verify < text.indexOf('- name: Upload artifacts to Release'));
-    if (name.includes('-dev')) assert.ok(verify < text.indexOf('- name: Stage isolated QA packages'));
-  }
 });

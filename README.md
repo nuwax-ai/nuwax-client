@@ -121,7 +121,7 @@ nuwax-client/（main = 商业产品壳）
 ├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
 ├── scripts/client/        # 跨平台统一 CLI：自动准备、前端构建、开发、打包、更新、发布和诊断
 ├── client.config.mjs      # 非敏感产品身份、端口和发布目标；凭据来自主机登录态/env
-├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
+├── .github/workflows/     # 发布编排（release / sync）+ 按改动域检查（ci.yml）
 ├── release-notes/  docs/
 └── package.json
 ```
@@ -203,14 +203,14 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 
 ### 分支模型与双轨门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push 按改动域运行检查，发布 tag 运行完整源码门禁；触发规则见 [脚本参考](docs/npm-scripts.md)。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
 | 社区基线 | `npm run base:test` | `--no-inject`：干净基座 + 社区默认值（会还原工作树 overlay） | ci.yml · community job |
 | 商业门禁 | `npm run test:commercial` | `--no-env`：同步 overlay、不注 env，全量 vitest | ci.yml · commercial job |
 | 守卫自测 | `npm run test:scripts` | pin、overlay、来源清单及本地诊断用例 | ci.yml · commercial job |
-| 前端源码 | `pnpm -C nuwax exec vitest run`、`pnpm -C nuwax lint:arch` | tag 锁定的前端源码 | ci.yml · frontend job |
+| 前端源码 | `pnpm -C nuwax test:typecheck`、`pnpm -C nuwax typecheck`、`pnpm -C nuwax lint:arch` | tag 锁定的前端源码 | ci.yml · frontend job |
 
 `base:test` 会把 overlay 产物清出基座工作树，须在隔离副本运行；商业门禁另行同步 overlay 执行。脚本测试、商业测试和真实安装包验收分别报告。
 

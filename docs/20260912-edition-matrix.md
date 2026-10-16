@@ -142,7 +142,7 @@ nuwa-electron-shell（基座，公开仓）
 
 ## 九、治理轮更新（2026-09-12 下午）
 
-本文「提交映射」与各节 SHA 为合并前快照。同日下午的治理轮（`plans/20260912-repo-governance-plan.md`）完成：两仓 feat/electron-1.0.4-fixes 经 PR rebase 合并进 main（基座 ae7e21aa→f0ddd9fe、外层链 tip→209bdacf，树等价）；pin/nuwawork 线退役（.gitmodules 改 branch=main，单主干模型）；外层仓新增 ci.yml 双轨门禁与 check-base-purity 防泄回守卫；基座远端收敛至 main + archive + dependabot。§五 门禁表的本地口径不变，双轨已由 CI 强制。
+本文「提交映射」与各节 SHA 为合并前快照。同日下午的治理轮（[历史记录](https://github.com/nuwax-ai/nuwax-client/blob/a65c537a143c167e774feb18c22ceccab24b0b69/plans/20260912-repo-governance-plan.md)）完成：两仓 feat/electron-1.0.4-fixes 经 PR rebase 合并进 main（基座 ae7e21aa→f0ddd9fe、外层链 tip→209bdacf，树等价）；pin/nuwawork 线退役（.gitmodules 改 branch=main，单主干模型）；外层仓新增 ci.yml 双轨门禁与 check-base-purity 防泄回守卫；基座远端收敛至 main + archive + dependabot。§五 门禁表的本地口径不变，双轨已由 CI 强制。
 
 ## 十、增补（2026-09-13）：社区 0.14 线落地 + webview 加载链路差异
 

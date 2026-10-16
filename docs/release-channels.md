@@ -30,10 +30,10 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-b
 
 | 入口 | 正式发布触发 | 成功后的行为 |
 | --- | --- | --- |
-| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 三轨门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
-| `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 三轨门禁 → 五平台 → 自动调用同步，公开 prerelease |
+| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 完整源码门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
+| `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 完整源码门禁 → 五平台 → 自动调用同步，公开 prerelease |
 | `sync-electron-to-oss.yml` | beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
-| `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
+| `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 普通提交按改动域选择，发布调用完整检查；不发布安装包 |
 
 beta workflow 的手动与 `codex/beta-qa/**` 分支入口只产隔离 QA artifacts，不创建正式 tag/Release，不更新订阅入口。正式打包只用 tag push。非法 tag 在版本校验处失败，不进入测试门禁或五平台矩阵；有效 tag 只触发一套发布构建。
 

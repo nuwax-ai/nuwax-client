@@ -1,30 +1,10 @@
 #!/usr/bin/env node
 /**
- * 在基座（nuwa-electron-shell/ submodule，main 分支）内执行命令，并预注入商业构建环境变量。
- *
- * 用法：
- *   node scripts/in-base.js [--no-inject | --no-env] -- <command> [args...]
- *   npm run base:install / base:dev / base:test / base:bundle / test:commercial
- *
- * 执行顺序：
- *   1. overlay 同步（scripts/sync-overlay.js）——把 overlay/ 商业自有代码覆写进基座
- *      工作树（当前为空即 no-op）；--no-inject 跳过（社区基线须用干净基座源码跑）。
- *   2. 仅商业入口准备壳根依赖，社区 --no-inject 不安装、不修改基座依赖。
- *   3. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
- *   NUWAX_APP_IDENTIFIER=nuwax        → 数据目录 ~/.nuwax（历史目录迁移链已被
- *                                       overlay 覆写 migrate.ts 阻断，全新开始）
- *   NUWAX_APP_DISPLAY_NAME=女娲Nuwax  → 客户端展示名（窗口标题/菜单/托盘/设置「关于」）；
- *                                       UA、文件名与数据目录使用独立的 ASCII 技术标识
- *   NUWAX_UPDATE_FEED_BASE            → 独立更新通道 nuwax-electron
- *   NUWAX_DOWNLOAD_PAGE_URL           → 官网下载页（不支持自动更新的安装形态引导；
- *                                       商业暂无产品页，先指官网首页）
- *   NUWAX_PORT_OFFSET=1000             → 默认端口整体 +1000（19099/61002~61009/61173），
- *                                         与社区版 nuwaclaw、nuwa-cli 同机双开不冲突
- *   NUWAX_FRONTEND_DIST                → dev 模式前端产物位置（壳根 nuwax-dist/ 子模块）
- *   --no-env：同步 overlay 但不注入 env——测试门禁口径（test:commercial）。测试套件
- *   断言「未注入 env 时为社区缺省身份」，env 只供构建/打包；商业行为由 overlay 文件
- *   在场 + 专项 env 测试（vi.stubEnv，如 migrate.commercial.test.ts）覆盖。
- * 机制详见基座 crates/agent-electron-client/src/shared/constants.ts 头注（构建期 define 注入）。
+ * node scripts/in-base.js [--no-inject | --no-env] -- <command> [args...]
+ * 默认同步商业 overlay、准备壳依赖并注入产品环境。
+ * --no-env 同步 overlay 但不注入环境，供商业测试使用。
+ * --no-inject 还原 overlay 后使用社区默认值，必须在隔离副本运行。
+ * 构建参数与各入口见 docs/npm-scripts.md；身份 define 机制见共享 constants。
  */
 const { spawnSync } = require('child_process');
 const path = require('path');
@@ -32,11 +12,6 @@ const path = require('path');
 const rootDir = path.join(__dirname, '..');
 const baseDir = path.join(rootDir, 'nuwa-electron-shell');
 
-// 解析参数：[--no-inject | --no-env] -- <command> [args...]
-// --no-inject：不注入商业 env；并先还原已同步的 overlay 文件（社区基线须用
-//              干净基座源码 + 社区默认值跑，商业行为由专项 env 测试覆盖，如
-//              migrate.commercial.test.ts / constants.port-offset.test.ts）
-// --no-env   ：同步 overlay 但不注入 env（商业测试门禁 test:commercial 口径）
 const argv = process.argv.slice(2);
 const noInject = argv[0] === '--no-inject';
 if (noInject) argv.shift();

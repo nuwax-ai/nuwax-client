@@ -44,7 +44,9 @@
     "@types/json-bigint": "1.0.4",
     "@types/mime-types": "3.0.1",
     "@types/ws": "8.18.1",
-    "node-api-headers": "1.9.0"
+    "node-api-headers": "1.9.0",
+    "typescript": "5.7.3",
+    "yaml": "2.8.1"
   },
   "pnpm": {
     "overrides": {

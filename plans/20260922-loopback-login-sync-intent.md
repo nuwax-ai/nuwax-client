@@ -1,7 +1,7 @@
 # 需求说明：客户端 loopback 登录态与资源路由
 
 - 日期：2026-09-22；来源：20260921 调研/计划、代码复核及用户授权独立 worktree 实施。
-- 规格：`specs/loopback-login-sync-header-channel.md`。
+- 规格：[历史记录](https://github.com/nuwax-ai/nuwax-client/blob/a65c537a143c167e774feb18c22ceccab24b0b69/specs/loopback-login-sync-header-channel.md)。
 
 ## 背景和目标
 

@@ -1,20 +1,13 @@
-# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
-# 外层仓测试 CI：双轨门禁 + 基座纯净守卫
-#
-# 此前本仓 4 个 workflow（smoke/release×2/sync）均无测试步骤——商业侧 1309 条
-# 测试门禁只存在于本地。本 CI 把两轨都机制化：
-#   community  = base:test 口径（--no-inject：干净基座 + 社区默认值）
-#   commercial = test:commercial 口径（in-base 注入：sync-overlay + 商业 env）
-# 两轨 vitest 排除项与基座仓 .github/workflows/ci.yml 对齐（sandbox-integration
-# 的 linux-bwrap 需真实 bwrap 环境，ubuntu runner 不可用；两文件平台不符时自跳过）。
-# commercial 另跑 check-base-purity：基座远端 main 上 overlay 托管路径不得与
-# overlay/ 商业版字节相同（防商业代码泄回中立基座）。
 name: CI (gates)
 
 # main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
 # 普通 feat/** 分支仅在 PR 时执行，避免每次推送都触发全量测试。
 on:
   workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
   push:
     branches: [main, 'release/**']
   pull_request:
@@ -28,7 +21,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Select affected checks
+    runs-on: ubuntu-latest
+    outputs:
+      community: ${{ steps.scope.outputs.community }}
+      commercial: ${{ steps.scope.outputs.commercial }}
+      compatibility: ${{ steps.scope.outputs.compatibility }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      terminal: ${{ steps.scope.outputs.terminal }}
+      host_bridge: ${{ steps.scope.outputs.host_bridge }}
+      scripts: ${{ steps.scope.outputs.scripts }}
+      script_tests: ${{ steps.scope.outputs.script_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Select checks from committed changes
+        id: scope
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          FULL_RUN: ${{ inputs.full || startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          if [ "$FULL_RUN" = true ]; then
+            node scripts/ci-scope.mjs --full
+          else
+            node scripts/ci-scope.mjs --base "$BASE_REF" --head "$HEAD_REF"
+          fi
+
   terminal-compat:
+    needs: scope
+    if: needs.scope.outputs.terminal == 'true'
     name: terminal compatibility protocol and WinPTY regression
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -59,6 +90,8 @@ jobs:
         run: node scripts/acceptance/terminal-compat.mjs
 
   community:
+    needs: scope
+    if: needs.scope.outputs.community == 'true'
     name: community gate (base:test)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -108,6 +141,8 @@ jobs:
         run: node scripts/in-base.js --no-inject -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
 
   commercial:
+    needs: scope
+    if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true' || needs.scope.outputs.host_bridge == 'true'
     name: commercial gate (test:commercial + purity)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -117,18 +152,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Init base and host contract source submodules
+      - name: Init base submodule
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
         run: |
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          git submodule update --init nuwa-electron-shell nuwax
+          git submodule update --init nuwa-electron-shell
           # purity --remote 需要 origin/main 可达（submodule clone 不保证带全量分支引用）
           git -C nuwa-electron-shell fetch origin '+refs/heads/main:refs/remotes/origin/main'
 
+      - name: Init host contract source
+        if: needs.scope.outputs.host_bridge == 'true' || needs.scope.outputs.scripts == 'true'
+        run: git submodule update --init nuwax
+
       - name: Check overlay compatibility with base pin changes
+        if: needs.scope.outputs.compatibility == 'true'
         shell: bash
         env:
           COMPARISON_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -158,51 +199,73 @@ jobs:
           node-version: lts/*
 
       - name: Install pnpm
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
           package_json_file: nuwa-electron-shell/package.json
 
       - name: Install setuptools for node-gyp
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools
 
       - name: Build agent-kit (before install)
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         run: |
           node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit install --ignore-workspace --prefer-offline
           node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit run build
 
       - name: Install workspace dependencies
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         run: node scripts/in-base.js --no-inject -- pnpm install --filter @nuwax-ai/nuwaclaw...
 
       - name: Prepare test resources (mcp-proxy)
+        if: needs.scope.outputs.commercial == 'true' || needs.scope.outputs.scripts == 'true'
         run: node scripts/in-base.js --no-inject -- bash -c "cd crates/agent-electron-client && npm run prepare:mcp-proxy"
 
-      - name: Guard scripts self-test
-        run: npm run test:scripts
+      - name: Install client test dependencies
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Related script tests
+        if: needs.scope.outputs.scripts == 'true'
+        env:
+          SCRIPT_TESTS: ${{ needs.scope.outputs.script_tests }}
+        run: node scripts/ci-scope.mjs --run-scripts "$SCRIPT_TESTS"
 
       - name: Check host bridge contract snapshot
+        if: needs.scope.outputs.host_bridge == 'true'
         run: npm run host-bridge:check
 
       - name: Sync commercial overlay for static gates
+        if: needs.scope.outputs.commercial == 'true'
         run: npm run overlay:sync
 
       - name: Verify overlay matches the tested base worktree
+        if: needs.scope.outputs.commercial == 'true'
         run: npm run overlay:check
 
       - name: Check Electron source boundaries and app directory literals
+        if: needs.scope.outputs.commercial == 'true'
         run: |
+          node scripts/check-feature-boundaries.mjs
           node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:boundaries"
           node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:appdir"
 
       - name: Purity guard (base worktree + origin/main)
+        if: needs.scope.outputs.commercial == 'true'
         run: |
           npm run check:pin
           npm run check:pin -- --remote origin/main
 
       - name: Run commercial tests
+        if: needs.scope.outputs.commercial == 'true'
         run: node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
 
   frontend:
+    needs: scope
+    if: needs.scope.outputs.frontend == 'true'
     name: frontend source gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
