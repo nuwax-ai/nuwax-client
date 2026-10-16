@@ -22,7 +22,10 @@ export function configureSystemAppName(build, { platform = process.platform, arc
     // Finder localizes only when the base CFBundleDisplayName matches Nuwax.app.
     // The localized keys provide the real system label; helpers retain their
     // matching ASCII CFBundleName and existing update/install paths.
-    const targets = ['Base', 'en', 'zh-Hans', 'zh-Hant'].map(locale => `${locale}.lproj/InfoPlist.strings`);
+    // Electron also creates zh_CN/zh_TW. Finder may prefer those directories
+    // over zh-Hans/zh-Hant and ignores the fallback name when they are empty.
+    const locales = new Set(['Base', 'en', 'zh-Hans', 'zh-Hant', 'zh_CN', 'zh_TW', ...(build.electronLanguages ?? [])]);
+    const targets = [...locales].map(locale => `${locale}.lproj/InfoPlist.strings`);
     const existing = build.mac?.extraResources ?? [];
     result.mac.extraResources = [...(Array.isArray(existing) ? existing : [existing])
       .filter(entry => typeof entry === 'string' || !targets.includes(entry.to)),

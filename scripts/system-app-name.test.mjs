@@ -27,6 +27,7 @@ function builder(t) {
 }
 function branded(platform) {
   return configureSystemAppName({ appId: config.product.appId, extraMetadata: { name: 'nuwax' },
+    electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'zh_TW', 'zh-TW'],
     linux: { desktop: { entry: { Name: 'Nuwax' }, Categories: 'Utility;' } } }, { platform, macStringsFile: strings });
 }
 
@@ -41,6 +42,12 @@ test('system names are repeatable and preserve executable, cache and installer i
     assert.equal(build.msi.shortcutName, '女娲Nuwax');
     assert.equal(build.linux.desktop.Name, '女娲Nuwax');
     assert.equal(build.linux.desktop.entry, undefined);
+    if (platform === 'darwin') {
+      const destinations = new Set(build.mac.extraResources.map(resource => resource.to));
+      for (const locale of build.electronLanguages) {
+        assert.ok(destinations.has(`${locale}.lproj/InfoPlist.strings`), `Missing name for Electron locale ${locale}`);
+      }
+    }
     if (validate) {
       await validate(build, { isEnabled: false });
       const info = new AppInfo({ config: build, metadata: { name: 'nuwax', version: '3.0.17', productName: 'Nuwax' } });
@@ -88,15 +95,32 @@ test('macOS resolves the real Finder and bundle names through native localizatio
     execFileSync('plutil', ['-convert', 'xml1', plist]);
   };
   const source = `ObjC.import('Foundation');function run(args){const b=$.NSBundle.bundleWithPath(args[0]);return JSON.stringify({fileName:ObjC.unwrap($.NSFileManager.defaultManager.displayNameAtPath(args[0])),bundleName:ObjC.unwrap(b.objectForInfoDictionaryKey('CFBundleName')),displayName:ObjC.unwrap(b.objectForInfoDictionaryKey('CFBundleDisplayName'))});}`;
-  const resolve = bundle => JSON.parse(execFileSync('osascript', ['-l', 'JavaScript', '-e', source, bundle], { encoding: 'utf8', timeout: 15000 }));
+  const resolve = (bundle, languages) => JSON.parse(execFileSync('osascript', ['-l', 'JavaScript', '-e', source, bundle,
+    ...(languages ? ['-AppleLanguages', languages] : [])], { encoding: 'utf8', timeout: 15000 }));
   writePlist(app, { CFBundleName: 'Nuwax', CFBundleDisplayName: '女娲Nuwax' });
   assert.equal(resolve(app).fileName, 'Nuwax', 'Reproduce the previous raw-plist-only fix');
   await assert.rejects(verifyMacSystemName(app), /Incorrect native macOS/);
   const build = branded('darwin');
+  // Electron creates these empty locale directories. Finder selects zh_CN or
+  // zh_TW before zh-Hans/zh-Hant, unlike NSBundle's fallback for individual keys.
+  const incomplete = path.join(dir, 'incomplete/Nuwax.app');
+  writePlist(incomplete, build.mac.extendInfo);
+  for (const locale of ['Base', 'en', 'zh-Hans', 'zh-Hant', 'zh_CN', 'zh_TW']) {
+    const resource = path.join(incomplete, 'Contents/Resources', `${locale}.lproj`);
+    fs.mkdirSync(resource, { recursive: true });
+    if (!['zh_CN', 'zh_TW'].includes(locale)) fs.copyFileSync(strings, path.join(resource, 'InfoPlist.strings'));
+  }
+  assert.equal(resolve(incomplete, '(en-US)').fileName, '女娲Nuwax', 'English CI alone passed the incomplete localization');
+  assert.equal(resolve(incomplete, '(zh-Hans-CN,en-CN,zh-Hant-HK)').fileName, 'Nuwax');
+  assert.equal(resolve(incomplete, '(zh-Hant-TW,en-US)').fileName, 'Nuwax');
+  await assert.rejects(verifyMacSystemName(incomplete), /Incorrect native macOS/);
   // Resolve a fresh replacement bundle; macOS caches names of existing paths.
   const replacement = path.join(dir, 'replacement/Nuwax.app');
   const contents = path.join(replacement, 'Contents');
   writePlist(replacement, build.mac.extendInfo);
+  for (const locale of build.electronLanguages) {
+    fs.mkdirSync(path.join(contents, 'Resources', `${locale}.lproj`), { recursive: true });
+  }
   for (const resource of build.mac.extraResources) {
     const to = path.join(contents, 'Resources', resource.to);
     fs.mkdirSync(path.dirname(to), { recursive: true });
