@@ -20,9 +20,11 @@
 | 前端生产构建 / 分层门 | 通过；分层门沿用 97 项既有基线，零新增 |
 | 桥契约快照 / git diff --check | 通过 |
 
-原真包验收结束时，基座还有本功能四项及其他任务的未提交改动，默认 `check:pin` 未通过，未将该门禁记为通过。后续清理将中立实现和商业 overlay 分别保存到本地 `codex/windows-one-click-update` 分支；基座仍须经 PR 合入 main，再推进产品发布线 pin，没有将商业 overlay 提交到基座。
+原真包验收结束时，基座还有本功能四项及其他任务的未提交改动，默认 `check:pin` 未通过，未将该门禁记为通过。后续清理将中立实现和商业 overlay 分别提交，没有将商业 overlay 提交到基座。基座 [PR #32](https://github.com/nuwax-ai/nuwa-electron-shell/pull/32) 和 [PR #33](https://github.com/nuwax-ai/nuwa-electron-shell/pull/33) 已通过 CI 并合入 main，客户端发布线 pin 对齐合并提交 `e245b3095`，其代码树与已验证的 `44131922` 完全相同。
 
 清理提交复核：基座中立提交 `44131922`；重跑更新服务 83 项、商业轨 3,065 项、隔离社区轨 1,648 项（两轨各跳过 18 项）及相关脚本 22 项，全部通过。主进程/renderer 生产构建、桥快照、overlay 一致性及兼容性检查通过；基座 staged 检查确认四个源码文件均不属于 overlay，提交后的工作树纯净守卫也通过。此次未重跑 Windows 安装，沿用下述真包证据。
+
+发布线集成复核：前端 [PR #190](https://github.com/nuwax-ai/nuwax/pull/190) 已合入声明分支 `feat-2026.9.30`，合并冲突仅涉及测试精简，相关 211 项测试及 CI 类型门通过。保留真包验收源码 pin `3aa6484eb`；核验本地构建版本文件与原 QA 来源记录的 SHA256 一致后，将对应产物作为 `8597fb3` 推送到 nuwax-dist/main。子模块更新脚本 26 项测试通过。
 
 ## Windows 真包环境与方法
 
