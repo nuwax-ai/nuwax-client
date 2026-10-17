@@ -72,7 +72,20 @@ try {
   $oldConflictHash = FileHash "$install\resources\icon.png"
   $data = @("$env:USERPROFILE\.nuwax-restore-qa", "$env:APPDATA\NuwaxRestoreQA", "$env:LOCALAPPDATA\nuwax-restore-qa-updater")
   foreach ($target in $data) {
-    Assert (!(Test-Path $target)) 'Refuse existing QA data namespace'
+    if (Test-Path -LiteralPath $target) {
+      Assert (([IO.File]::GetAttributes($target) -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Refuse redirected QA data namespace'
+      # NSIS caches its installer during first installation. A seed retry may
+      # also encounter our own sentinel. Validate both before reusing them.
+      foreach ($entry in Get-ChildItem -LiteralPath $target -Force) {
+        Assert (!$entry.PSIsContainer -and ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Refuse unrelated QA data entry'
+        if ($entry.Name -eq 'qa.txt') {
+          Assert ([IO.File]::ReadAllText($entry.FullName) -eq 'Generated QA local data only') 'Refuse unrelated QA data sentinel'
+        } else {
+          Assert ($target -eq $data[2] -and $entry.Name -eq 'installer.exe') 'Refuse unrelated QA data file'
+          Assert ((FileHash $entry.FullName) -eq $first.sha256) 'QA installer cache does not match initial installer'
+        }
+      }
+    }
     [IO.Directory]::CreateDirectory($target) | Out-Null
     [IO.File]::WriteAllText("$target\qa.txt", 'Generated QA local data only')
   }
