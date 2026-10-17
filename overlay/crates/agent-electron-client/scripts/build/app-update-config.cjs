@@ -57,6 +57,9 @@ async function afterPack(context) {
   const resources = packager.getResourcesDir(appOutDir);
   fs.writeFileSync(path.join(resources, 'app-update.yml'), configBytes(publish[0].url));
   verifyResources(resources, publish[0].url);
+  if (context.electronPlatformName === 'win32') {
+    require('./uninstall-payload.cjs').writeUninstallPayload(context);
+  }
 }
 
 module.exports = afterPack;

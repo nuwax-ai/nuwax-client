@@ -17,8 +17,16 @@
 ; NSIS Unicode 默认开启（nsis.unicode !== false），中文字面量安全。
 ; ---------------------------------------------------------------------------
 
+!include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
+
 !macro customHeader
   Name "女娲Nuwax"
+  !insertmacro nuwaxUninstallStrings
+  ; Cleanup is an explicit, default-off choice; never inherit builder's
+  ; unconditional data deletion, including while an old version is updated.
+  !ifdef DELETE_APP_DATA_ON_UNINSTALL
+    !undef DELETE_APP_DATA_ON_UNINSTALL
+  !endif
 !macroend
 
 !macro nuwaxStopStandaloneUninstall MESSAGE
@@ -43,10 +51,8 @@
   ${endif}
 !macroend
 
-; The vendor standalone branch ignores RMDir errors and then removes the
-; registration. Keep a retry entry when files remain; its uninstaller may have
-; been deleted before a locked payload made RMDir fail. The --updated branch
-; retains the vendor atomic rename/restore behavior used by the parent installer.
+; Standalone failures stop before registration cleanup and keep the uninstaller
+; for retry. Updates retain the atomic rename/restore path of the parent installer.
 !macro customRemoveFiles
   ${if} ${isUpdated}
     CreateDirectory "$PLUGINSDIR\old-install"
@@ -67,36 +73,7 @@
 
     RMDir /r $INSTDIR
   ${else}
-    InitPluginsDir
-    ClearErrors
-    CopyFiles /SILENT "$INSTDIR\${UNINSTALL_FILENAME}" "$PLUGINSDIR\nuwax-uninstaller-backup.exe"
-    ${if} ${Errors}
-      !insertmacro nuwaxStopStandaloneUninstall "无法保存卸载程序，卸载已停止，原安装文件和卸载登记未删除。"
-    ${endif}
-
-    ; un.onInit sets the current directory to INSTDIR. Move out before removing
-    ; it, otherwise our own directory handle can leave an empty install root.
-    SetOutPath "$PLUGINSDIR"
-    ClearErrors
-    RMDir /r $INSTDIR
-    StrCpy $R0 0
-    ${if} ${Errors}
-      StrCpy $R0 1
-    ${endif}
-    ${if} ${FileExists} "$INSTDIR\*.*"
-      StrCpy $R0 1
-    ${endif}
-
-    ${if} $R0 != 0
-      ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
-        ClearErrors
-        CopyFiles /SILENT "$PLUGINSDIR\nuwax-uninstaller-backup.exe" "$INSTDIR\${UNINSTALL_FILENAME}"
-        ${if} ${Errors}
-          !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，且无法恢复卸载程序。系统卸载登记已保留，请使用原安装包修复后重试。"
-        ${endif}
-      ${endif}
-      !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，部分文件可能被占用或权限不足。卸载入口已保留，请解除占用或权限限制后重试。"
-    ${endif}
+    !insertmacro nuwaxRemoveOwnedFiles
   ${endif}
 !macroend
 

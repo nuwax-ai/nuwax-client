@@ -1,0 +1,78 @@
+{
+  "base": "7503d15c",
+  "branch": "codex/windows-uninstall-data",
+  "qaHost": "UTM Windows 11 ARM64 with x64 NSIS/runtime",
+  "nodeChecks": {
+    "tests": 8,
+    "passed": true,
+    "command": "node --test scripts/uninstall-payload.test.mjs scripts/app-update-packaging.test.mjs"
+  },
+  "powershellChecks": {
+    "passed": true,
+    "cases": [
+      "default-keeps-data",
+      "checked",
+      "locked-preflight-and-retry",
+      "escaping-inventory",
+      "linked-program-directory",
+      "linked-data-root",
+      "nested-data-link",
+      "overlapping-install-data"
+    ],
+    "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-uninstall-data-513f6122a6aa4869be39e779308e35ab",
+    "source": "Observed SSH stdout from test-uninstall-data.ps1 after final overlap protection"
+  },
+  "guiCandidate": {
+    "version": "3.0.17-qa.u1.1",
+    "sha256": "2cb4ddcbd1e9ec4283b6a96cdefb44383266c8da65e22b9ad1b14b298ce5cefa",
+    "size": 761288301,
+    "cancel": "Program, uninstaller, data, unknown workspace and registration retained",
+    "default": {
+      "programRemoved": true,
+      "uninstallerRemoved": true,
+      "profileRetained": true,
+      "roamingRetained": true,
+      "cacheRetained": true,
+      "unknownWorkspaceRetained": true,
+      "unknownNestedRetained": true,
+      "outsideRetained": true,
+      "registrationRemoved": true
+    },
+    "checked": {
+      "programRemoved": true,
+      "uninstallerRemoved": true,
+      "profileRemoved": true,
+      "roamingRemoved": true,
+      "cacheRemoved": true,
+      "unknownWorkspaceRetained": true,
+      "unknownNestedRetained": true,
+      "outsideRetained": true,
+      "registrationRemoved": true
+    },
+    "screenshotLocation": "/Users/apple/workspace/nuwax-client-u1-uninstall/.cache/u1-20261018"
+  },
+  "finalCandidate": {
+    "version": "3.0.17-qa.u1.2",
+    "sha256": "665efce074ef696b5066712dedb97ed539a111aa2028e5554e6d47b8aeff04d2",
+    "size": 761288443,
+    "change": "Added overlap refusal before local-data deletion",
+    "location": "D:\\nuwax-qa\\u1-20261018-offload\\installers\\NuwaxU1QA-3.0.17-qa.u1.2.exe",
+    "sameVersionUpgrade": "Installed successfully; local data and top-level unknown workspace retained",
+    "knownUpgradeGap": "Unknown resources/user-added.txt retained in recovery, not restored in place. Its generated QA sentinel was restored for further standalone tests.",
+    "silentLockRetry": "Pending final package verification; first launcher attempt only exposed NSIS bootstrap exit code, not actual child outcome"
+  },
+  "sources": {
+    "overlay/crates/agent-electron-client/build/installer.nsh": "d39fb5619027bd246ab0d570cd75e9ca34150870709b957fbf293f0f7b45064c",
+    "overlay/crates/agent-electron-client/build/uninstall-options.nsh": "5582d00b9d41a63b90d8fc490e60b64483a78abb0a6b9a6f16ec6bc6564befed",
+    "overlay/crates/agent-electron-client/build/uninstall-data.ps1": "83de5d1e53c98097512c56cb06722ed1cb23ad835f7b58cdf3d12d4f460ac055",
+    "overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs": "2c09295943eb6b19d1d1ee4907fb3b2be753dcebbcbe72c2b5626196066037ed"
+  },
+  "limits": [
+    "First GUI package predates final overlap guard; final guard verified by Windows script cases",
+    "All-user/UAC, MSI, physical x64 and Windows 10 not exercised",
+    "UTM subsequently stopped at firmware Synchronous Exception; SSH/RDP unavailable, further machine checks pending",
+    "QA runtime ASAR reused beta.5, only installer source changed; no production package built or published"
+  ],
+  "dailyDataTouched": false,
+  "sourceCommitsOnlyInClient": true
+}
