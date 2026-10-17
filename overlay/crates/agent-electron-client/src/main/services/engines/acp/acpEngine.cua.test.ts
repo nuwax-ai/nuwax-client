@@ -8,6 +8,17 @@ import * as dependencies from "@main/services/system/dependencies";
 import * as sandboxPolicy from "@main/services/sandbox/policy";
 import * as opencodeAcpSandbox from "./sandbox/opencodeAcpSandbox";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
+import type { ServerResponse } from "http";
+import type { HandlerContext } from "@shared/types/ipc";
+
+vi.mock("../unifiedAgent", async () => {
+  const { EventEmitter } = await import("events");
+  return { agentService: new EventEmitter() };
+});
+vi.mock("../../computerServer", async () => {
+  const { pushSseEvent } = await import("../../computer/sseManager");
+  return { pushSseEvent };
+});
 
 vi.mock("electron", () => ({
   app: {
@@ -179,6 +190,81 @@ function setupEngineForCreateSession(
 
 
 import { cuaSessionAuthority } from "../../cua/sessionAuthority";
+import { agentService } from "../unifiedAgent";
+import { attachEngineEventForwarders } from "../engineEventForwarder";
+import { registerEventForwarders, unregisterEventForwarders } from "../../../ipc/eventForwarders";
+import { closeAndClearAllSseClients, registerSseClient, sseClients } from "../../computer/sseManager";
+
+describe("NW-050 terminal errors through the client SSE pipeline", () => {
+  afterEach(() => {
+    unregisterEventForwarders();
+    closeAndClearAllSseClients();
+    agentService.removeAllListeners();
+    vi.useRealTimers();
+  });
+
+  it.each(["HTTP 400", "max_tokens", "refusal", "streamed error", "end_turn", "cancelled"])(
+    "writes the terminal %s frame before closing the stream",
+    async (outcome) => {
+      const { engine, sessionId, acpConnection } = setupEngine();
+      const frames: string[] = [];
+      const sentAtClose: string[][] = [];
+      const response = {
+        write: vi.fn((frame: string) => { frames.push(frame); return true; }),
+        end: vi.fn(() => sentAtClose.push([...frames])),
+      };
+      const send = vi.fn();
+      registerEventForwarders({
+        getMainWindow: () => ({ webContents: { send } }),
+      } as unknown as HandlerContext);
+      attachEngineEventForwarders(engine, Object.assign(agentService, {
+        assistantTextBuffers: new Map<string, string>(),
+      }));
+      registerSseClient(sessionId, response as unknown as ServerResponse);
+
+      if (outcome === "HTTP 400") {
+        // A recent MCP reconnect must not turn a deterministic model rejection
+        // into a retried prompt and an indefinitely open progress connection.
+        vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+        acpConnection.prompt.mockRejectedValue(new Error("HTTP 400: context length exceeded"));
+      } else {
+        acpConnection.prompt.mockImplementation(async () => {
+          (engine as any).handleAcpSessionUpdate(sessionId, {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "partial output" },
+          });
+          if (outcome === "streamed error") {
+            (engine as any).handleAcpSessionUpdate(sessionId, {
+              sessionUpdate: "error", message: "HTTP 400: context length exceeded",
+            });
+          }
+          return { stopReason: outcome === "streamed error" ? "end_turn" : outcome };
+        });
+      }
+      vi.useFakeTimers();
+      const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+      await vi.advanceTimersByTimeAsync(1201);
+      await prompting;
+
+      const expectedReason = ["end_turn", "cancelled"].includes(outcome) ? outcome : "error";
+      const envelopes = frames.map((frame) => JSON.parse(frame.split("\ndata: ")[1]));
+      const terminal = envelopes.filter((event) => event.messageType === "sessionPromptEnd");
+      expect(terminal).toHaveLength(1);
+      expect(terminal[0]).toMatchObject({ subType: expectedReason, data: { reason: expectedReason } });
+      expect(response.end).toHaveBeenCalledTimes(1);
+      expect(sentAtClose[0]).toEqual(frames);
+      expect(sseClients.has(sessionId)).toBe(false);
+      expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
+      if (expectedReason === "error") {
+        expect(terminal[0].data.description).toContain(outcome === "streamed error" ? "HTTP 400" : outcome);
+        expect(send).toHaveBeenCalledWith("agent:event", expect.objectContaining({ type: "session.error" }));
+        expect(send).not.toHaveBeenCalledWith("agent:event", expect.objectContaining({ type: "session.idle" }));
+      }
+      if (outcome !== "HTTP 400") {
+        expect(envelopes.some((event) => event.data?.content?.text === "partial output")).toBe(true);
+      }
+    },
+  );
+});
 
 describe("AcpEngine prompt failure reporting", () => {
   it.each(["max_tokens", "max_turn_requests", "refusal", "error", "unknown", undefined])(
@@ -207,16 +293,30 @@ describe("AcpEngine prompt failure reporting", () => {
     },
   );
 
-  it("keeps HTTP 400 rejection details in the terminal error event without retry", async () => {
+  it.each([
+    new Error("HTTP 400: context length exceeded"),
+    new Error("API Error: 400 context length exceeded"),
+    new Error("400 Bad Request"),
+    Object.assign(new Error("Bad Request"), { status: 400 }),
+    Object.assign(new Error("Bad Request"), { statusCode: "400" }),
+  ])("keeps bad-request details without retry during an MCP reconnect: %s", async (error) => {
     const { engine, sessionId, acpConnection } = setupEngine();
     const ended = vi.fn();
     engine.on("computer:promptEnd", ended);
-    acpConnection.prompt.mockRejectedValueOnce(new Error("HTTP 400: context length exceeded"));
+    vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+    acpConnection.prompt.mockRejectedValue(error);
 
-    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    vi.useFakeTimers();
+    try {
+      const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+      await vi.advanceTimersByTimeAsync(1201);
+      await prompting;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(ended).toHaveBeenCalledWith(expect.objectContaining({
-      reason: "error", description: "HTTP 400: context length exceeded",
+      reason: "error", description: error.message,
     }));
     expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
   });

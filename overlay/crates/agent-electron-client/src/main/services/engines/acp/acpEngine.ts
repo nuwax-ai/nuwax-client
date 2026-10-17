@@ -148,6 +148,21 @@ export interface EngineInitResult {
 
 const MCP_RETRY_DELAY_MS = 1200;
 const MCP_RECONNECT_WINDOW_MS = 4000;
+// Replaying a prompt cannot recover an HTTP 400, even during a recent MCP reconnect.
+function isHttpBadRequest(error: unknown): boolean {
+  if (error !== null && typeof error === "object") {
+    const { status, statusCode } = error as {
+      status?: unknown;
+      statusCode?: unknown;
+    };
+    if ([status, statusCode].some((value) => value === 400 || value === "400")) {
+      return true;
+    }
+  }
+  return /\b(?:HTTP(?:\/\d(?:\.\d)?)?\s+400|API(?:\s+Error)?[:\s]+400|400\s+Bad\s+Request)\b/i.test(
+    toErrorMessage(error),
+  );
+}
 // Claude Code 的 session/new 会在 MCP 子进程完成 tools/list 前返回。
 // 首条 prompt 若立即发出，模型会在工具快照尚未包含慢启动的 npx MCP 时开始运行。
 // 实测 OpenUI MCP 在已命中 npx 缓存时仍需约 2.2 秒完成工具发现，因此为
@@ -1569,6 +1584,7 @@ export class AcpEngine extends EventEmitter {
               shouldRetry: (err, errMsg) =>
                 !upstreamError &&
                 !isPromptCancellation(err) &&
+                !isHttpBadRequest(err) &&
                 this.isMcpReconnectFailure(errMsg),
               getRetryTelemetry: () => getMcpTransportSnapshot(this.acpProcess),
               onRetry: (info) => {
@@ -1683,7 +1699,10 @@ export class AcpEngine extends EventEmitter {
           this.config?.model || this.config?.env?.OPENCODE_MODEL || null,
       });
       const isMcpReconnect =
-        !promptResolved && !upstreamError && this.isMcpReconnectFailure(errMsg);
+        !promptResolved &&
+        !upstreamError &&
+        !isHttpBadRequest(error) &&
+        this.isMcpReconnectFailure(errMsg);
       const isCancelled = isPromptCancellation(error);
       const promptEndReason = isMcpReconnect
         ? "mcp_reconnecting"
