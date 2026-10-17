@@ -926,6 +926,7 @@ export interface ElectronAPI {
   log: LogAPI;
   app: AppAPI;
   permissions: PermissionsAPI;
+  permissionOnboarding: import("./permissionOnboarding").PermissionOnboardingAPI;
   computerUse: ComputerUseAPI;
   powerPolicy: PowerPolicyAPI;
   fullDiskAccess: FullDiskAccessAPI;

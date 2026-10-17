@@ -67,23 +67,9 @@ export const captureFeature: DesktopFeature = {
       }
       return labels;
     };
-    const PERMISSION_PROMPT_DEFAULTS = {
-      title: "需要屏幕录制权限",
-      detail: "截图与录屏需要 macOS 屏幕录制权限。请在「系统设置 → 隐私与安全性 → 屏幕与系统录音」中开启「{0}」，并按系统提示重启应用后重试。也可在客户端「授权」页查看状态。",
-      openSettings: "打开系统设置",
-      cancel: "取消",
-    };
     const promptScreenPermission = createScreenPermissionPrompt({
       log: ctx.log,
-      labels: () => {
-        const labels = { ...PERMISSION_PROMPT_DEFAULTS };
-        for (const key of Object.keys(labels) as Array<keyof typeof labels>) {
-          const id = `Claw.Capture.permissionPrompt.${key}`;
-          const translated = ctx.translate?.(id);
-          if (translated && translated !== id) labels[key] = translated;
-        }
-        return labels;
-      },
+      openGuide: () => ctx.permissions?.openGuide("screen_recording") ?? false,
     });
 
     const clearSession = () => {

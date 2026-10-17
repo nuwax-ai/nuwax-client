@@ -41,6 +41,8 @@ import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLan
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
 import { sanitizeTitlebarDragRegions } from "@shared/utils/titlebarDragRegions";
 import * as cuaComputerUse from "../services/cua/computerUse";
+import { openPermissionGuide, guideForFileAccessError } from "../services/permissionOnboarding";
+import { registerPermissionOnboardingHandlers } from "./permissionOnboardingHandlers";
 import { registerCuaRuntimeHandlers } from "./cuaRuntimeHandlers";
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
@@ -334,6 +336,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     log,
     translate: t,
     getSetting: readSetting,
+    permissions: { openGuide: openPermissionGuide, onFileAccessError: guideForFileAccessError },
     workspace: {
       getIdentity: () => {
         const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
@@ -977,10 +980,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     gateway: switching ? null : getGatewayRequestContext(),
   }));
   powerPolicy.initPowerPolicy();
-  // 全磁盘访问初始化引导（仅 darwin）：主窗口首帧检测，未授权且未拒绝过弹一次
-  // 原生引导窗，「暂不」持久化永不再弹；聚焦/解锁只静默复查（拒绝后的再入口
-  // 在设置页状态行）。内部自挂 browser-window-created，同上拿不到窗口实例。
-  fullDiskAccess.initFullDiskAccessGuard();
+  // 授权引导由宿主在主界面就绪后展示；检测与功能受阻导航不请求系统权限。
+  registerPermissionOnboardingHandlers({ trusted: isHostSender, getWindow: () => ctx.getMainWindow() });
   // 窗口最小尺寸 1200×720：本钩子先于 createWindow 执行（main.ts app ready
   // 序里 registerAllHandlers 在 createWindow 之前），拿不到窗口实例，挂
   // browser-window-created 补设。注意事件在构造参数应用【之前】触发——同步

@@ -135,7 +135,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
         : await capture.screenshot({ compression: { quality } });
       if (!result.success) {
         const errorKey = result.code.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
-        // The host shows a native authorization dialog for permission-denied; a toast would repeat it.
+        // The host opens the permission guide for permission-denied; a toast would repeat it.
         if (alive.current && result.code !== "canceled" && result.code !== "permission-denied") message.error(`${text(`error.${errorKey}`)}${result.error ? ` · ${result.error}` : ""}`);
         return;
       }

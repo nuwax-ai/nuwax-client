@@ -9,10 +9,10 @@
 
 ## 已核实的现状与取舍
 
-- `permissions:check` 只有 macOS 四项：主程序辅助功能、屏幕录制、全磁盘访问占位 unknown、通知。通知必须使用原生授权检测，不能用 Notification.isSupported 冒充授权。
+- `permissions:check` 只有 macOS 四项：主程序辅助功能、屏幕录制、全磁盘访问占位 unknown、通知；新引导按实际消费者只列屏幕/FDA/通知。通知必须使用原生授权检测，不能用 Notification.isSupported 冒充授权。
 - FDA 子进程探针区分 granted/denied/unknown，但目前检测函数还会弹重启框，boot 另弹引导框。新 UI 必须让探针无交互，取消旧 boot 原生弹窗，防止两套流程叠加。
 - 截屏已有权限失败回调及 desktopCapturer 预触发。失败回调改为打开统一引导；预触发移至用户明确点击「打开系统设置」时，进入引导和轮询不能请求系统权限。
-- 主程序辅助功能用于可选的窗口识别增强，不作为截屏、聊天、文件使用的硬门槛；Computer Use 键鼠操作依赖 helper 自身辅助功能，身份独立。
+- 进一步核实 `windowRegions/darwin.ts`：当前窗口识别通过 CoreGraphics 的 CGWindowListCopyWindowInfo 读取边界/图层，不使用 AX。主程序无需辅助功能，新引导不列此项；旧 permissions API 保持兼容。Computer Use 键鼠操作依赖 helper 自身辅助功能，身份独立。
 - FDA 建议用于受保护目录的本地文件直访；文件拒绝也可能来自 ACL、路径边界或沙箱策略，只有真实 OS EACCES/EPERM 且 macOS FDA 明确 denied 时才引导，不能把安全校验拒绝解释为系统授权问题。
 - Windows 不列 macOS TCC 项，不鼓励提升整个客户端；说明普通权限进程不能操作管理员窗口。Linux 说明 X11 与 Wayland portal 差异，允许手动发起截屏自测，不将 unknown 伪装成成功。
 
@@ -32,7 +32,6 @@
 | --- | --- | --- | --- |
 | 屏幕与系统录音（旧系统：屏幕录制） | 安装版 Nuwax / dev Electron | 截图、录屏必需 | 打开隐私面板 → 找到并开启当前主体 → 按系统提示退出并重开 → 回到本页确认；点击时预触发最小捕获，使应用进入列表 |
 | 全磁盘访问 | Nuwax / Electron | 受保护目录的文件直访、工作区读写建议 | 隐私与安全性 → 全磁盘访问 → 点 + → 在应用程序中选 Nuwax.app（dev 选择显示的 Electron.app 路径）→ 开启；给出应用路径并可在 Finder 显示 |
-| 辅助功能 | Nuwax / Electron | 窗口识别增强，可选 | 隐私与安全性 → 辅助功能 → 点 + 添加当前主体并开启；只在点击时可触发登记，不轮询请求 |
 | 通知 | Nuwax / Electron | IM 消息提醒，可选 | 系统设置 → 通知 → 当前主体 → 允许通知；原生模块缺失显示未知 |
 | helper 辅助功能、屏幕录制（适配器接入后） | Nuwax Computer Use | Computer Use 必需 | 始终明确选择 Nuwax Computer Use；不复用主程序状态，helper 未安装/未接通时说明未接入，不展示假的已授权；请求只能经 helper 适配器 |
 
@@ -59,7 +58,7 @@
 ## 对接点
 
 - 新 `permissionOnboarding` 宿主 API：读取快照/首次状态、记录已看过、打开单项设置、显示当前应用位置、重启；preload 暴露类型，事件 `permissions:guide` 仅允许主进程推给宿主。
-- 主进程统一 `openPermissionGuide(target)`：目标为主程序 screen_recording/file_access/accessibility/notifications 或 helper 两项；绑定主窗口 getter，唤起并发送事件；renderer 打开设置并选中对应步。目标白名单阻止任意导航。
+- 主进程统一 `openPermissionGuide(target)`：目标为主程序 screen_recording/file_access/notifications 或 helper 两项；绑定主窗口 getter，唤起并发送事件；renderer 打开设置并选中对应步。目标白名单阻止任意导航。
 - 截屏：permission-denied 回调导航 screen_recording，不再弹另一种原生框；失败结果维持原契约，用户授权后主动重试。
 - 本地直访：仅真实 OS EACCES/EPERM 后静默确认 FDA denied，再导航 file_access；原错误和沙箱安全边界保持原契约。file-server HTTP 返回错误仅明确权限错误才可进入相同处理，不能将网络故障映射成授权缺失。
 - CU：预留注册适配器（check 不得启动 helper/发请求；request 只在用户点击时执行；返回 helper 自身两项状态）。无适配器时显示接入说明；将来产品分支的 permission-required 错误调用统一导航即可。本任务不启用 CU，不改其运行/确认策略。
@@ -75,7 +74,7 @@
 ## 测试与验收计划
 
 1. 主进程状态机：启动已授权、拒绝→授权→待重启、撤权、unknown、单项异常、非 mac 空条目、single-flight、helper 状态隔离、跳过持久化和旧 dismissed 兼容。
-2. IPC：可信宿主/非主 frame/guest 拒绝、键白名单、点击才触发 desktopCapturer/AX、深链映射及两层失败、重启使用 quit。
+2. IPC：可信宿主/非主 frame/guest 拒绝、键白名单、点击才触发 desktopCapturer、深链映射及两层失败、重启使用 quit。
 3. renderer：总览与定向步骤、前后导航、主体/用途/必要性、状态四态、错误不空白；fake timers 验证 1.5s 轮询、focus、visibility、卸载/关闭/切 tab 与迟到响应。
 4. 集成：截屏拒绝统一导航；真实 OS 文件拒绝触发、路径安全拒绝不触发；CU 适配器未注册时无主程序权限冒充；四语言 key 完整性。
 5. 同步本 worktree 基座 overlay，运行相关 Vitest、overlay:check、check:pin、相关类型/构建检查；不运行会清 overlay 的 base:test。依赖安装不变更锁文件。
@@ -91,5 +90,10 @@
 
 ## 阶段进度
 
-- 第一阶段：方案已根据基线代码梳理，待独立提交。
-- 第二阶段：待实现、验证与提交。
+- 第一阶段：方案独立提交 `6c3e30d0`，之后才进入实现。
+- 第二阶段：总览/逐步引导/实时状态/四语言/可信 IPC/截屏与文件错误导航已实现；CU 仅预留适配器，local-files 原关闭门控不变。
+- REVIEW.md 单次核查：已检查功能、清理配对、来源/主 frame、文件路径安全与异步会话代次；修正了文件错误在登出后迟到时可能打开引导的竞态，补充回归用例。没有遗留的阻断性发现。
+- 自动验证：51 个相关 Vitest 文件 / 548 项全部通过；feature-boundaries 及其 11 项脚本测试、overlay:check、check:pin、git diff --check 通过；主进程与 renderer 构建通过。仅在本 worktree 安装/构建 agent-kit，未改锁文件或依赖声明。
+- 全量 tsc 非绿色：同依赖环境的基线和本次均为 238 条已有诊断，归一化路径/行号后没有新增诊断。不能将构建通过宣称为全量类型检查通过。
+- ego-browser 使用模拟权限快照完成三项总览、逐步说明、设置点击、待重启、四语言、Windows/Linux 无 macOS 按钮、稍后关闭的交互检查。截图接口两次 CDP 超时，未取得像素级验收证据；该检查不操作真实系统设置或权限。
+- 人工待验收：正式安装包、macOS 各版本深链/真实主体、实际授权与重启后生效、Windows/Linux/Wayland 真机、CU 产品适配器接通后的 helper 授权。未 push/tag/发布/触发 CI，未改其他分支或系统权限。

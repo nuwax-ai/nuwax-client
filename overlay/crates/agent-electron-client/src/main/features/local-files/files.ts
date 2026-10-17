@@ -142,6 +142,7 @@ export interface PreviewResource {
   origin: string;
   streams: Set<ReadStream>;
   valid(): boolean;
+  onAccessError?(error: unknown): void;
 }
 
 /** The request policy verifies the initiating frame; this additionally checks grant freshness. */
@@ -214,6 +215,7 @@ export async function resourceResponse(
       headers,
     });
   } catch (error) {
+    resource.onAccessError?.(error);
     const failure = fileFailure(error);
     const status =
       failure.code === "not-found"

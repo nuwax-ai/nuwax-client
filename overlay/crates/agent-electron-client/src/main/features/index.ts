@@ -17,7 +17,7 @@ import { createFeatureLifecycle, type FeatureLifecycle, type SessionEndReason } 
 import { registerDesktopFeatures, type RegisteredFeatures } from "./_kit/register";
 import { createScratchDir } from "./_kit/scratchDir";
 import { createTrustedIpc, type IpcMainLike } from "./_kit/trustedIpc";
-import type { DesktopFeature, FeatureContext, FeatureLogger, FeatureWorkspaceServices } from "./_kit/types";
+import type { DesktopFeature, FeatureContext, FeatureLogger, FeatureWorkspaceServices, FeaturePermissionServices } from "./_kit/types";
 import { authorizeLocalFilesRequest, isLocalFilesRequestSource, localFilesFeature } from "./local-files";
 import { captureFeature } from "./capture";
 export { configureCaptureBackend, canCopyCaptureFiles } from "./capture";
@@ -46,6 +46,7 @@ export interface StartFeaturesOptions {
   translate?(key: string): string;
   getSetting?(key: string): unknown;
   workspace?: FeatureWorkspaceServices;
+  permissions?: FeaturePermissionServices;
   setRecordingStopAction?(action: (() => void) | null): void;
   setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }
@@ -94,6 +95,7 @@ export function startDesktopFeatures(
     translate: options.translate,
     getSetting: options.getSetting,
     workspace: options.workspace,
+    permissions: options.permissions,
     setRecordingStopAction: (action) => {
       recordingStopAction = action;
       options.setRecordingStopAction?.(action);

@@ -579,6 +579,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getHostname: () => ipcRenderer.invoke("app:getHostname"),
   },
 
+  permissionOnboarding: {
+    snapshot: () => ipcRenderer.invoke("permissions:onboarding:snapshot"),
+    markSeen: () => ipcRenderer.invoke("permissions:onboarding:seen"),
+    openSettings: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:settings", key),
+    showApp: () => ipcRenderer.invoke("permissions:onboarding:showApp"),
+    restart: () => ipcRenderer.invoke("permissions:onboarding:restart"),
+  },
+
   // Permissions (macOS)
   permissions: {
     check: () => ipcRenderer.invoke("permissions:check"),
@@ -677,6 +687,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "nuwax:layout-changed",
       "nuwax:open-same-window",
       "nuwax:open-client-settings",
+      "permissions:guide",
       "nuwax:loopback-changed",
       "nuwax:webview-nav-state",
       "nuwax:dismiss-topbar-menus",

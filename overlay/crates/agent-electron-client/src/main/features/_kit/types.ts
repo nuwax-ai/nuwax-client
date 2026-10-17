@@ -27,6 +27,11 @@ export interface FeatureWorkspaceServices {
   isCurrentDocument(event: unknown): boolean;
 }
 
+export interface FeaturePermissionServices {
+  openGuide(target: "screen_recording" | "file_access"): boolean;
+  onFileAccessError(error: unknown, stillCurrent: () => boolean): Promise<void>;
+}
+
 export interface FeatureContext {
   /** 宿主产品标识（如 `nuwax`）。特性不应自行判断产品，门控看清单的 `products`。 */
   product: string;
@@ -43,6 +48,7 @@ export interface FeatureContext {
   /** 只读本机偏好，由宿主注入；特性不直接访问客户端数据库。 */
   getSetting?(key: string): unknown;
   workspace?: FeatureWorkspaceServices;
+  permissions?: FeaturePermissionServices;
   setRecordingStopAction?(action: (() => void) | null): void;
   setRecordingPauseAction?(action: (() => void) | null, paused: boolean): void;
 }

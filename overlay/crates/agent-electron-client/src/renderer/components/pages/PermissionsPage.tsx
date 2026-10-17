@@ -1,268 +1,314 @@
-/**
- * PermissionsPage - 系统授权页面 (Electron 版, 仅 macOS)
- *
- * 从 Tauri 客户端 PermissionsPage 简化移植：
- * - 权限列表：全磁盘访问、辅助功能、屏幕录制、消息通知
- * - 每项显示状态（已授权/未授权）
- * - "前往设置"按钮
- *
- * overlay 商业增补（2026-09-21，全磁盘访问批次）：基座 permissions:check 对
- * file_access 无检测 API（Electron systemPreferences 不覆盖 FDA），恒 unknown。
- * 商业宿主存在 fullDiskAccess 命名空间（overlay preload 注入）时，本页用其
- * recheck 真值（探针=open 系统 TCC.db）覆盖该行状态，"前往设置"改走带兜底的
- * openSettings；社区版（无该命名空间）行为与基座逐字节一致。
- */
-
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Button, Tag, Spin, message } from "antd";
+import React, { useEffect, useState } from "react";
+import { Alert, Button, Spin, Tag, message } from "antd";
 import {
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  QuestionCircleOutlined,
-  ReloadOutlined,
-  SettingOutlined,
+  SafetyCertificateOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
 } from "@ant-design/icons";
-import styles from "../../styles/components/ClientPage.module.css";
+import type {
+  GuidedPermissionStatus,
+  PermissionGuideTarget,
+  PermissionKey,
+  PermissionSnapshot,
+} from "@shared/types/permissionOnboarding";
+import { watchPermissionSnapshot } from "../../services/permissionPolling";
 import { t } from "../../services/core/i18n";
-import { I18N_KEYS } from "@shared/constants";
+import styles from "../../styles/components/PermissionsPage.module.css";
 
-interface PermissionItem {
-  key: string;
-  name: string;
-  description: string;
-  status: "granted" | "denied" | "unknown";
-}
-
-const STATUS_ICON: Record<string, React.ReactNode> = {
-  granted: (
-    <CheckCircleOutlined
-      style={{ color: "var(--color-success)", fontSize: 16 }}
-    />
-  ),
-  denied: (
-    <CloseCircleOutlined style={{ color: "var(--color-error)", fontSize: 16 }} />
-  ),
-  unknown: (
-    <QuestionCircleOutlined
-      style={{ color: "var(--color-text-secondary)", fontSize: 16 }}
-    />
-  ),
+const text = (key: string, ...values: string[]) =>
+  t(`Claw.PermissionGuide.${key}`, ...values);
+const color: Record<GuidedPermissionStatus, string> = {
+  granted: "green",
+  denied: "orange",
+  unknown: "default",
+  restart_required: "gold",
 };
+const pane = (key: PermissionKey) => key.replace("helper_", "");
+const helperKey = (key: PermissionKey) => key.startsWith("helper_");
+const required = (key: PermissionKey) =>
+  key === "screen_recording" || helperKey(key)
+    ? "required"
+    : key === "file_access"
+      ? "recommended"
+      : "optional";
 
-const STATUS_TAG: Record<string, { color: string; textKey: string }> = {
-  granted: { color: "green", textKey: "Claw.PermissionsPage.granted" },
-  denied: { color: "red", textKey: "Claw.PermissionsPage.denied" },
-  unknown: { color: "default", textKey: "Claw.PermissionsPage.unknown" },
-};
-
-export default function PermissionsPage() {
-  const [permissions, setPermissions] = useState<PermissionItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const checkVersionRef = useRef(0);
-
-  // overlay：商业宿主才有 fullDiskAccess 命名空间（社区版保持基座行为）
-  const hasFullDiskAccessApi = !!window.electronAPI?.fullDiskAccess;
-
-  const clearPollTimers = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-  }, []);
-
-  const checkPermissions = useCallback(async () => {
-    const version = ++checkVersionRef.current;
-    try {
-      const result = await window.electronAPI?.permissions?.check();
-      if (result) {
-        // overlay：file_access 用真实探针覆盖基座恒 unknown 的状态（仅商业宿主）
-        if (hasFullDiskAccessApi) {
-          try {
-            const fda = await window.electronAPI!.fullDiskAccess.recheck();
-            if (version !== checkVersionRef.current) return;
-            setPermissions(
-              result.map((item) =>
-                item.key === "file_access"
-                  ? {
-                      ...item,
-                      status: fda.probeStatus ??
-                        (fda.granted ? ("granted" as const) : ("denied" as const)),
-                    }
-                  : item,
-              ),
-            );
-            return;
-          } catch (error) {
-            console.error(
-              "[PermissionsPage] Full disk access recheck failed:",
-              error,
-            );
-          }
-        }
-        if (version === checkVersionRef.current) setPermissions(result);
-      }
-    } catch (error) {
-      console.error("[PermissionsPage] Check failed:", error);
-    } finally {
-      if (version === checkVersionRef.current) setLoading(false);
-    }
-  }, [hasFullDiskAccessApi]);
-
+export default function PermissionsPage({
+  target = "overview",
+  onClose,
+}: {
+  target?: PermissionGuideTarget;
+  onClose?(): void;
+}) {
+  const [snapshot, setSnapshot] = useState<PermissionSnapshot | null>(null);
+  const [selected, setSelected] = useState<PermissionGuideTarget>(target);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const api = window.electronAPI?.permissionOnboarding;
   useEffect(() => {
-    checkPermissions();
-    // 从系统设置返回时静默复查，覆盖在设置中停留超过轮询时限的情况。
-    const onFocus = () => { void checkPermissions(); };
-    window.addEventListener("focus", onFocus);
-    return () => {
-      checkVersionRef.current++;
-      window.removeEventListener("focus", onFocus);
-      clearPollTimers();
-    };
-  }, [checkPermissions, clearPollTimers]);
-
-  const handleOpenSettings = async (key: string) => {
+    setSelected(target);
+  }, [target]);
+  useEffect(() => {
+    if (!api) {
+      setFailed(true);
+      return;
+    }
+    return watchPermissionSnapshot({
+      read: () => api.snapshot(),
+      update: (value) => {
+        setSnapshot(value);
+        setFailed(false);
+      },
+      error: () => setFailed(true),
+      document,
+      window,
+    });
+  }, [api]);
+  const action = async (run: () => Promise<boolean>) => {
+    setBusy(true);
     try {
-      if (key === "file_access" && hasFullDiskAccessApi) {
-        // overlay：走 fullDiskAccess.openSettings（面板 URL 失败兜底隐私主面板）
-        await window.electronAPI!.fullDiskAccess.openSettings();
-      } else {
-        const result = await window.electronAPI?.permissions?.openSettings(key);
-        if (!result?.success) {
-          message.error(t("Claw.PermissionsPage.cannotOpenSettings"));
-          return;
-        }
-      }
-      // Poll for changes after user opens settings
-      clearPollTimers();
-      pollTimerRef.current = setInterval(async () => {
-        await checkPermissions();
-      }, 2000);
-      pollTimeoutRef.current = setTimeout(() => {
-        if (pollTimerRef.current) {
-          clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-        }
-      }, 30000);
+      if (!(await run())) message.error(text("actionFailed"));
     } catch {
-      message.error(t("Claw.PermissionsPage.cannotOpenSettings"));
+      message.error(text("actionFailed"));
+    } finally {
+      setBusy(false);
     }
   };
-
-  const handleRefresh = () => {
-    setLoading(true);
-    checkPermissions();
-  };
-
-  const grantedCount = permissions.filter((p) => p.status === "granted").length;
-  const totalCount = permissions.length;
-
-  if (loading && permissions.length === 0) {
+  if (!snapshot)
     return (
       <div className={styles.page}>
-        <div style={{ textAlign: "center", padding: 40 }}>
-          <Spin size="small" />
-        </div>
+        {failed ? (
+          <Alert type="warning" message={text("unavailable")} />
+        ) : (
+          <Spin />
+        )}
       </div>
     );
-  }
-
+  const items = snapshot.items;
+  const granted = items.filter((item) => item.status === "granted").length;
+  const current = items.find((item) => item.key === selected);
+  const index = items.findIndex((item) => item.key === selected);
+  const subject = (key: PermissionKey) =>
+    helperKey(key) ? "Nuwax Computer Use" : snapshot.appName;
+  const isMac = snapshot.platform === "darwin";
+  const missingHelper =
+    typeof selected === "string" &&
+    selected.startsWith("helper_") &&
+    !snapshot.helperAvailable;
   return (
     <div className={styles.page}>
-      {/* Header */}
-      <div className={styles.section}>
-        <div className={styles.servicesHeader}>
-          <div className={styles.servicesHeaderLeft}>
-            <span className={styles.sectionTitle}>
-              {t("Claw.PermissionsPage.title")}
-            </span>
-            {totalCount > 0 && (
-              <Tag color={grantedCount === totalCount ? "green" : "orange"}>
-                {grantedCount}/{totalCount}
-              </Tag>
-            )}
-            <span
-              className={styles.sectionDescription}
-              style={{ marginTop: 0, marginLeft: 12 }}
-            >
-              {t("Claw.PermissionsPage.description")}
-            </span>
+      <div className={styles.header}>
+        <div>
+          <div className={styles.eyebrow}>
+            <SafetyCertificateOutlined /> NUWAX
           </div>
-          <Button
-            size="small"
-            icon={<ReloadOutlined />}
-            onClick={handleRefresh}
-            loading={loading}
-          >
-            {t("Claw.PermissionsPage.refresh")}
-          </Button>
+          <h2 className={styles.title}>{text("title")}</h2>
+          <p className={styles.description}>{text("intro")}</p>
         </div>
-
-        {/* Permission list */}
-        <div className={styles.sectionBody} style={{ padding: "0 16px" }}>
-          {permissions.map((perm) => (
-            <div key={perm.key} className={styles.serviceRow}>
-              <div className={styles.serviceInfo}>
-                {STATUS_ICON[perm.status]}
-                <div>
-                  <span className={styles.serviceLabel}>{perm.name}</span>
-                  <div className={styles.serviceDescription}>
-                    {perm.description}
-                  </div>
+        {onClose && (
+          <Button onClick={onClose}>
+            {text(granted === items.length ? "done" : "later")}
+          </Button>
+        )}
+      </div>
+      {failed && (
+        <Alert type="warning" showIcon message={text("unavailable")} />
+      )}
+      {isMac ? (
+        <>
+          <div aria-live="polite" className={styles.description}>
+            {text("progress", String(granted), String(items.length))}
+          </div>
+          <div className={styles.progress}>
+            <span
+              style={{
+                width: `${items.length ? (granted / items.length) * 100 : 0}%`,
+              }}
+            />
+          </div>
+          <div className={styles.grid}>
+            {items.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`${styles.card} ${selected === item.key ? styles.selected : ""}`}
+                aria-pressed={selected === item.key}
+                onClick={() => setSelected(item.key)}
+              >
+                <div className={styles.cardHeader}>
+                  <span className={styles.cardTitle}>
+                    {text(`name.${pane(item.key)}`)}
+                  </span>
+                  <Tag color={color[item.status]}>
+                    {text(`status.${item.status}`)}
+                  </Tag>
                 </div>
-              </div>
-
-              <div className={styles.serviceActions} style={{ alignItems: "center" }}>
-                <Tag
-                  color={STATUS_TAG[perm.status]?.color || "default"}
-                  style={{ margin: 0, fontSize: 11 }}
-                >
-                  {t(
-                    perm.key === "notifications" && perm.status !== "unknown"
-                      ? (perm.status === "granted"
-                        ? I18N_KEYS.PermissionsPage.NOTIFICATIONS_ENABLED
-                        : I18N_KEYS.PermissionsPage.NOTIFICATIONS_DISABLED)
-                      : STATUS_TAG[perm.status]?.textKey ||
-                      "Claw.PermissionsPage.unknown",
-                  )}
+                <p className={styles.description}>
+                  {text(`purpose.${item.key}`)}
+                </p>
+                <div className={styles.meta}>
+                  {text("subject", subject(item.key))} ·{" "}
+                  {text(required(item.key))}
+                </div>
+              </button>
+            ))}
+          </div>
+          {selected === "overview" && items.length > 0 && (
+            <div className={styles.actions}>
+              <Button
+                type="primary"
+                onClick={() =>
+                  setSelected(
+                    items.find((item) => item.status !== "granted")?.key ??
+                      items[0].key,
+                  )
+                }
+              >
+                {text("start")}
+              </Button>
+            </div>
+          )}
+          {current && (
+            <section
+              className={styles.detail}
+              aria-label={text(`name.${pane(current.key)}`)}
+            >
+              <div className={styles.cardHeader}>
+                <h3>{text(`name.${pane(current.key)}`)}</h3>
+                <Tag aria-live="polite" color={color[current.status]}>
+                  {text(`status.${current.status}`)}
                 </Tag>
-                {perm.status !== "granted" && (
+              </div>
+              <p className={styles.description}>
+                {text("subject", subject(current.key))}
+              </p>
+              <ol className={styles.steps}>
+                <li>{text(`step.${pane(current.key)}.1`)}</li>
+                <li>
+                  {text(`step.${pane(current.key)}.2`, subject(current.key))}
+                </li>
+                <li>{text(`step.${pane(current.key)}.3`)}</li>
+              </ol>
+              {helperKey(current.key) ? (
+                <Alert type="info" message={text("separateIdentity")} />
+              ) : (
+                <>
+                  <code className={styles.path}>{snapshot.appPath}</code>
                   <Button
                     size="small"
-                    icon={<SettingOutlined />}
-                    onClick={() => handleOpenSettings(perm.key)}
+                    onClick={() => void action(() => api!.showApp())}
                   >
-                    {t("Claw.PermissionsPage.openSettings")}
+                    {text("showApp")}
                   </Button>
+                </>
+              )}
+              {current.status === "unknown" && (
+                <p className={styles.description}>{text("unknownHelp")}</p>
+              )}
+              {(current.key === "screen_recording" ||
+                current.key === "helper_screen_recording") && (
+                <p className={`${styles.description} ${styles.notice}`}>
+                  {text("screenConfirmation")}
+                </p>
+              )}
+              {(current.key === "screen_recording" ||
+                current.key === "file_access") &&
+                current.status !== "granted" && (
+                  <div className={styles.notice}>
+                    <p className={styles.description}>
+                      {text(
+                        current.status === "restart_required"
+                          ? "restartHelp"
+                          : "restartIfNeeded",
+                      )}
+                    </p>
+                    <div className={styles.actions}>
+                      <Button
+                        loading={busy}
+                        onClick={() => void action(() => api!.restart())}
+                      >
+                        {text("restart")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              <div className={styles.actions}>
+                <Button
+                  type="primary"
+                  loading={busy}
+                  onClick={() =>
+                    void action(() => api!.openSettings(current.key))
+                  }
+                >
+                  {text("openSettings")}
+                </Button>
+                <span className={styles.description}>
+                  {text("autoRefresh")}
+                </span>
+              </div>
+              <div className={styles.footer}>
+                <Button
+                  icon={<ArrowLeftOutlined />}
+                  onClick={() =>
+                    setSelected(index > 0 ? items[index - 1].key : "overview")
+                  }
+                >
+                  {text(index > 0 ? "previous" : "overview")}
+                </Button>
+                {index < items.length - 1 ? (
+                  <Button onClick={() => setSelected(items[index + 1].key)}>
+                    {text("next")} <ArrowRightOutlined />
+                  </Button>
+                ) : (
+                  onClose && <Button onClick={onClose}>{text("done")}</Button>
                 )}
               </div>
+            </section>
+          )}
+          {(!snapshot.helperAvailable || missingHelper) && (
+            <div className={styles.notice}>
+              <strong>Computer Use</strong>
+              <p className={styles.description}>{text("helperPending")}</p>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {grantedCount === totalCount && totalCount > 0 && (
-        <div
-          style={{
-            padding: "10px 14px",
-            background: "var(--color-bg-section)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--border-radius-lg)",
-            fontSize: 12,
-            color: "var(--color-success)",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <CheckCircleOutlined />
-          {t("Claw.PermissionsPage.allGranted")}
-        </div>
+          )}
+          <details className={styles.help}>
+            <summary>{text("troubleshooting")}</summary>
+            <ol>
+              <li>{text("troubleIdentity", snapshot.appName)}</li>
+              <li>{text("troubleRestart")}</li>
+              <li>{text("troubleReadd")}</li>
+            </ol>
+          </details>
+        </>
+      ) : (
+        <section className={styles.detail}>
+          <h3>{text("noPermissions")}</h3>
+          <p className={styles.description}>
+            {text(snapshot.platform === "win32" ? "windows" : "linux")}
+          </p>
+          <p className={`${styles.description} ${styles.notice}`}>
+            {text(
+              snapshot.platform === "win32" ? "windowsTrouble" : "linuxTest",
+            )}
+          </p>
+          {snapshot.platform === "linux" && (
+            <Button
+              loading={busy}
+              onClick={() => {
+                void action(async () => {
+                  const capture = window.electronAPI?.capture;
+                  if (!capture) return false;
+                  const result = await capture.screenshot();
+                  if (!result.success) return result.code === "canceled";
+                  await capture.release(result.resultId);
+                  message.success(text("testPassed"));
+                  return true;
+                });
+              }}
+            >
+              {text("testCapture")}
+            </Button>
+          )}
+        </section>
       )}
     </div>
   );
