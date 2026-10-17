@@ -1,0 +1,15 @@
+{
+  "sourceBaseline": "7503d15c",
+  "branch": "codex/computer-use-app-icon",
+  "mainIconSha256": "6bc55150e039d689623582747ff356da173396efbe672576b7aac1809ffd03fd",
+  "helperIconSha256": "6bc55150e039d689623582747ff356da173396efbe672576b7aac1809ffd03fd",
+  "bundleIdentifier": "com.nuwax-ai.nuwax-computer-use",
+  "assemblyFromActualBuildScript": true,
+  "cachedHelperBinaryReused": true,
+  "rustRebuilt": false,
+  "signing": "ad-hoc local assembly only",
+  "installedApplicationChanged": false,
+  "helperLaunched": false,
+  "systemPermissionsChanged": false,
+  "artifact": "/Users/apple/workspace/nuwax-client-computer-use-icon/.cache/helper-icon-20261018/helper/Nuwax Computer Use.app"
+}

@@ -112,7 +112,8 @@ export async function prepareComputerUse(root, { tools = core, platform = proces
   const helperDir = path.join(p.client, 'resources/computer-use');
   const helper = path.join(helperDir, platform === 'darwin' ? 'Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use' : platform === 'win32' ? 'NuwaxComputerUse.exe' : 'NuwaxComputerUse');
   const stateFile = path.join(p.cache, 'computer-use.json');
-  const inputs = [path.join(root, 'scripts/computer-use'), path.join(root, 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'), path.join(p.client, 'public/icon.icns')];
+  const mainIcon = path.join(root, 'overlay/crates/agent-electron-client/public/icon.icns');
+  const inputs = [path.join(root, 'scripts/computer-use'), path.join(root, 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'), mainIcon];
   if (process.env.NUWAX_CUA_SOURCE_DIR) inputs.push(path.join(process.env.NUWAX_CUA_SOURCE_DIR, 'libs/cua-driver/rust'));
   const key = tools.fingerprint([platform, arch, process.env.CUA_COMMIT ?? '625118a90', process.env.CUA_VERSION ?? '0.28.2', inputDigest(inputs)]);
   let state;
@@ -127,7 +128,7 @@ export async function prepareComputerUse(root, { tools = core, platform = proces
   if (platform === 'win32' && !fileReady(bash)) throw new Error('[pack] 缺少已准备的 Git Bash');
   await tools.run(bash, [path.join(root, 'scripts/computer-use/build-helper.sh')], {
     cwd: root,
-    env: { ...unsignedEnv(root), TARGET_TRIPLE: triple, OUT_DIR: helperDir, RUNNER_TEMP: p.cache, ICON_ICNS: path.join(p.client, 'public/icon.icns') },
+    env: { ...unsignedEnv(root), TARGET_TRIPLE: triple, OUT_DIR: helperDir, RUNNER_TEMP: p.cache, ICON_ICNS: mainIcon },
   });
   if (!fileReady(helper)) throw new Error(`[pack] Computer Use helper 构建完成但缺少 ${helper}`);
   tools.atomicJson(stateFile, { key, artifact: inputDigest([helperDir]), triple });
