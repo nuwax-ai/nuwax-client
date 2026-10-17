@@ -1481,10 +1481,19 @@ export class AcpEngine extends EventEmitter {
     );
 
     let resultText = "";
+    let promptResolved = false;
     const promptSentAt = Date.now();
     let firstUpdateAt: number | undefined;
+    let upstreamError: Error | undefined;
     const onProgress = (message: UnifiedSessionMessage) => {
       if (message.sessionId !== sessionId) return;
+      if (message.messageType === "agentSessionUpdate" && message.subType === "error") {
+        const data = message.data as { message?: unknown; error?: unknown } | null;
+        upstreamError = new Error(
+          toErrorMessage(data?.error ?? data?.message ?? "Agent reported an error"),
+        );
+        return;
+      }
       if (message.subType !== "agent_message_chunk") return;
       if (firstUpdateAt !== undefined) return;
       firstUpdateAt = Date.now();
@@ -1558,6 +1567,7 @@ export class AcpEngine extends EventEmitter {
               sessionId,
               promptStartTime,
               shouldRetry: (err, errMsg) =>
+                !upstreamError &&
                 !isPromptCancellation(err) &&
                 this.isMcpReconnectFailure(errMsg),
               getRetryTelemetry: () => getMcpTransportSnapshot(this.acpProcess),
@@ -1579,6 +1589,30 @@ export class AcpEngine extends EventEmitter {
             .catch(reject);
         },
       );
+
+      // Some adapters report an upstream failure as an update, then resolve end_turn.
+      // Only end_turn is a successful completion; limits/refusal must reach the error sink.
+      promptResolved = true;
+      if (upstreamError) throw upstreamError;
+      switch (result.stopReason) {
+        case "end_turn":
+        case "cancelled":
+          break;
+        case "max_tokens":
+          throw new Error(
+            "Model output was truncated by the token limit (max_tokens). Continue the response or reduce the requested output.",
+          );
+        case "max_turn_requests":
+          throw new Error(
+            "Agent reached the turn request limit (max_turn_requests) before completing the task.",
+          );
+        case "refusal":
+          throw new Error("The model refused the request (refusal).");
+        default:
+          throw new Error(
+            `Agent stopped without completing the task (${result.stopReason ?? "missing stopReason"}).`,
+          );
+      }
 
       const completedAt = Date.now();
       waitTimer.end("acp.prompt.wait", {
@@ -1648,7 +1682,8 @@ export class AcpEngine extends EventEmitter {
         targetModelId:
           this.config?.model || this.config?.env?.OPENCODE_MODEL || null,
       });
-      const isMcpReconnect = this.isMcpReconnectFailure(errMsg);
+      const isMcpReconnect =
+        !promptResolved && !upstreamError && this.isMcpReconnectFailure(errMsg);
       const isCancelled = isPromptCancellation(error);
       const promptEndReason = isMcpReconnect
         ? "mcp_reconnecting"

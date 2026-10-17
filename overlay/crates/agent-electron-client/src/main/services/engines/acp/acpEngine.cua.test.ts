@@ -180,6 +180,89 @@ function setupEngineForCreateSession(
 
 import { cuaSessionAuthority } from "../../cua/sessionAuthority";
 
+describe("AcpEngine prompt failure reporting", () => {
+  it.each(["max_tokens", "max_turn_requests", "refusal", "error", "unknown", undefined])(
+    "reports %s through the terminal error event instead of successful idle",
+    async (stopReason) => {
+      const { engine, sessionId, session, acpConnection } = setupEngine();
+      const ended = vi.fn(), failed = vi.fn(), idle = vi.fn();
+      engine.on("computer:promptEnd", ended);
+      engine.on("session.error", failed);
+      engine.on("session.idle", idle);
+      vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+      acpConnection.prompt.mockResolvedValueOnce({ stopReason });
+
+      await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+
+      expect(ended).toHaveBeenCalledTimes(1);
+      expect(ended).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId, reason: "error", description: expect.stringContaining(stopReason ?? "missing stopReason"),
+      }));
+      expect(failed).toHaveBeenCalledTimes(1);
+      expect(idle).not.toHaveBeenCalled();
+      expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
+      expect(session.status).toBe("idle");
+      expect((engine as any).activePromptSessions.has(sessionId)).toBe(false);
+      expect(engine.listenerCount("computer:progress")).toBe(0);
+    },
+  );
+
+  it("keeps HTTP 400 rejection details in the terminal error event without retry", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const ended = vi.fn();
+    engine.on("computer:promptEnd", ended);
+    acpConnection.prompt.mockRejectedValueOnce(new Error("HTTP 400: context length exceeded"));
+
+    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+
+    expect(ended).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "error", description: "HTTP 400: context length exceeded",
+    }));
+    expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overwrite a streamed upstream error with end_turn or leak it into the next turn", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const otherSessionId = "unrelated-session";
+    (engine as any).sessions.set(otherSessionId, { id: otherSessionId, status: "active" });
+    const ended = vi.fn(), idle = vi.fn();
+    engine.on("computer:promptEnd", ended);
+    engine.on("session.idle", idle);
+    acpConnection.prompt.mockImplementationOnce(async () => {
+      (engine as any).handleAcpSessionUpdate(sessionId, {
+        sessionUpdate: "error", message: "HTTP 400: context length exceeded",
+      });
+      return { stopReason: "end_turn" };
+    });
+    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    expect(ended).toHaveBeenLastCalledWith(expect.objectContaining({
+      reason: "error", description: "HTTP 400: context length exceeded",
+    }));
+    expect(idle).not.toHaveBeenCalled();
+
+    acpConnection.prompt.mockImplementationOnce(async () => {
+      (engine as any).handleAcpSessionUpdate(otherSessionId, {
+        sessionUpdate: "error", message: "another session failed",
+      });
+      return { stopReason: "end_turn" };
+    });
+    await engine.prompt(sessionId, [{ type: "text", text: "retry" }]);
+    expect(ended).toHaveBeenLastCalledWith(expect.objectContaining({ reason: "end_turn" }));
+    expect(idle).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps resolved cancellation distinct from failure", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const ended = vi.fn(), failed = vi.fn();
+    engine.on("computer:promptEnd", ended);
+    engine.on("session.error", failed);
+    acpConnection.prompt.mockResolvedValueOnce({ stopReason: "cancelled" });
+    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    expect(ended).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
+    expect(failed).not.toHaveBeenCalled();
+  });
+});
+
 describe("AcpEngine Computer Use lifecycle wiring", () => {
   let dir: string;
   beforeEach(() => {
