@@ -1,0 +1,50 @@
+{
+  "result": {
+    "passed": true,
+    "electron": "40.8.2",
+    "platform": "win32",
+    "arch": "x64",
+    "cases": [
+      {
+        "case": "local-renderer-hash",
+        "passed": true
+      },
+      {
+        "case": "host-http-navigation-blocked",
+        "passed": true
+      },
+      {
+        "case": "other-local-document-blocked",
+        "passed": true
+      },
+      {
+        "case": "same-dev-origin-navigation",
+        "passed": true
+      },
+      {
+        "case": "cross-origin-server-redirect-blocked",
+        "passed": true
+      }
+    ],
+    "scope": "Canonical host guard in real Electron, synthetic pages, no account or installed app used"
+  },
+  "runtimeSha256": "a8bd10a923e7d1712ccc591ab9943d1bd25d9400c15c914c5dc8acd79ff75b80",
+  "taskResult": 0,
+  "base": "7503d15ccfe3b6b40e2ac6df837553de7bc084cc",
+  "branch": "codex/host-navigation-boundary",
+  "host": "UTM Windows 11 ARM64, x64 runtime emulation",
+  "checks": {
+    "vitest": 59,
+    "mainPreloadBundle": "passed",
+    "review": "REVIEW.md behavior and security boundary reviewed"
+  },
+  "sources": {
+    "overlay/crates/agent-electron-client/src/main/main.ts": "3c45c8f0f15d728096f41489fa4f61176690aef5d806b615035770ac2614333a",
+    "overlay/crates/agent-electron-client/src/main/services/system/hostNavigation.ts": "ac5fed1915cd47528c52ce124c338b91f4963c33469be7e6d572b7ead19d2a79",
+    "scripts/acceptance/host-navigation.cjs": "d5481b45eb586a11c86965150221ed7ea8edeb32f58bf718b77dcd1167126187"
+  },
+  "limits": [
+    "Canonical guard tested in a separate real Electron fixture; full installed commercial app and account workflows not exercised",
+    "macOS, Linux, Windows 10, all-user install not covered"
+  ]
+}
