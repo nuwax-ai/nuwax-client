@@ -1,6 +1,6 @@
 # 本机文件直访桥
 
-上线状态：仅商业版 Nuwax（社区版 NuwaClaw 无此能力）。release 在 2026-10-14（`672ca584`）为 3.0.14/3.0.15 强制关闭了本机文件直访；本能力仍在开发分支 `codex/local-file-access`、未提测，合入前 release 保持关闭。该分支（2026-10-15）已移除门控，恢复 `features.local-files.enabled` 设置覆盖 ?? 默认开启；设置为 `false` 时不注册 IPC、协议 handler 或授权，能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出走原 API 路线，本机打开/定位入口不显示。启动前的惰性 scheme 声明不提供文件访问能力。验收记录见 [20261015-local-file-access-reenable.md](./acceptance/20261015-local-file-access-reenable.md)。
+上线状态：仅商业版 Nuwax（社区版 NuwaClaw 无此能力）。release 曾在 2026-10-14（`672ca584`）为 3.0.14/3.0.15 强制关闭本机文件直访；2026-10-17 起 release/v3.0.x 经分支 `codex/reenable-local-file-access` 移除该硬门控（cherry-pick `46cd3c6d`），恢复为配置开关。开关为 settings 表键 `features.local-files.enabled`（`~/.nuwax/nuwax.db`）：未设置时取特性清单 `enabledByDefault: true`，即默认开启；设置为 `false`（重启客户端生效）时不注册 IPC、协议 handler 或授权，`canUse(localFiles.*)` 返回 false，能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出走原 API 路线，本机打开/定位入口不显示，与 `672ca584` 的关闭效果一致。启动前的惰性 scheme 声明不提供文件访问能力。验收记录见 [20261015-local-file-access-reenable.md](./acceptance/20261015-local-file-access-reenable.md)。
 
 Nuwax 客户端 `NuwaClawBridge.localFiles` 可选扩展，`apiVersion=1`。旧壳只有 pickDirectory，必须先探测 getCapabilities。桥只接受当前受信顶层文档、有效登录、本机注册身份及当前登录代次。
 
