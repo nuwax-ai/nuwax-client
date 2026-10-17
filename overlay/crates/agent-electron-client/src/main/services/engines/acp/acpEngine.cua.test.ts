@@ -195,6 +195,77 @@ import { attachEngineEventForwarders } from "../engineEventForwarder";
 import { registerEventForwarders, unregisterEventForwarders } from "../../../ipc/eventForwarders";
 import { closeAndClearAllSseClients, registerSseClient, sseClients } from "../../computer/sseManager";
 
+describe("NW-050 ACP SDK NDJSON error boundary", () => {
+  afterEach(() => {
+    unregisterEventForwarders();
+    closeAndClearAllSseClients();
+    agentService.removeAllListeners();
+  });
+
+  it.each(["HTTP 400", "JSON HTTP 400", "unrelated metadata", "max_tokens", "refusal", "end_turn", "cancelled"])(
+    "preserves the terminal outcome for %s over the actual SDK transport",
+    async (outcome) => {
+      const sdk = await import("@agentclientprotocol/sdk");
+      const { engine, sessionId } = setupEngine();
+      const outbound = new TransformStream<Uint8Array>();
+      const receivedFrames: any[] = [];
+      const inbound = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          receivedFrames.push(JSON.parse(new TextDecoder().decode(chunk)));
+          controller.enqueue(chunk);
+        },
+      });
+      const remotePrompt = vi.fn(async () => {
+        if (outcome === "HTTP 400") throw new Error("HTTP 400: context length exceeded");
+        if (outcome === "JSON HTTP 400") throw new Error(JSON.stringify({ statusCode: 400, message: "context length exceeded" }));
+        if (outcome === "unrelated metadata") throw new Error(JSON.stringify({
+          message: "transport unavailable", previousRequest: "HTTP 400",
+        }));
+        return { stopReason: outcome };
+      });
+      const remote = new sdk.AgentSideConnection(
+        () => ({ prompt: remotePrompt }) as unknown as import("@agentclientprotocol/sdk").Agent,
+        sdk.ndJsonStream(inbound.writable, outbound.readable),
+      );
+      const client = new sdk.ClientSideConnection(
+        () => ({ sessionUpdate: vi.fn(), requestPermission: vi.fn() }),
+        sdk.ndJsonStream(outbound.writable, inbound.readable),
+      );
+      const terminal = vi.fn();
+      engine.on("computer:promptEnd", terminal);
+      (engine as any).acpConnection = client;
+      vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+      const expectedSdkError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await engine.prompt(sessionId, [{ type: "text", text: "protocol fixture" }]);
+        const reason = outcome === "unrelated metadata"
+          ? "mcp_reconnecting"
+          : ["end_turn", "cancelled"].includes(outcome) ? outcome : "error";
+        expect(terminal).toHaveBeenCalledTimes(1);
+        expect(terminal).toHaveBeenCalledWith(expect.objectContaining({ reason }));
+        expect(remotePrompt).toHaveBeenCalledTimes(outcome === "unrelated metadata" ? 2 : 1);
+        if (outcome.includes("HTTP 400")) {
+          // Generic agent errors become JSON-RPC Internal error; the original
+          // diagnostic is carried in data.details by the installed ACP SDK.
+          expect(receivedFrames[0].error).toMatchObject({
+            code: -32603, message: "Internal error",
+            data: outcome === "HTTP 400"
+              ? { details: "HTTP 400: context length exceeded" }
+              : { statusCode: 400, message: "context length exceeded" },
+          });
+          expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+            description: expect.stringContaining("HTTP 400: context length exceeded"),
+          }));
+        }
+      } finally {
+        expectedSdkError.mockRestore();
+        await Promise.all([outbound.writable.getWriter().close(), inbound.writable.getWriter().close()]);
+        await Promise.all([client.closed, remote.closed]);
+      }
+    },
+  );
+});
+
 describe("NW-050 terminal errors through the client SSE pipeline", () => {
   afterEach(() => {
     unregisterEventForwarders();

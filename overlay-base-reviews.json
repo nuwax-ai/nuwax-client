@@ -47,8 +47,8 @@
       "path": "crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",
       "baseBlob": "9d373ba4b38e697508795b196eb05b2c554574e4",
       "baseMode": "100644",
-      "overlaySha256": "23e9d600b3d7f581a3547c1bdde6a89d512c7c7538d4b39e0f602bcd87be29ac",
-      "note": "2026-10-14 合并 Computer Use 产品控制时核对基座 484ff6b36→e75c9d5c。该文件基座增量仅为 NW-041 对话级取消的 5 行说明，已完整合入；实际对话解析、chatEngineKey 和 acpSessionSetup 继续由 e75c9d5c 基座提供。商业 overlay 只增加 CUA 会话凭据生命周期和有 CUA 权限的 prompt 禁止重试，保留现有对话级取消行为。商业完整回归 2941 通过，含同目录双对话并行、取消不串扰用例。 2026-10-17 NW-050：在相同 e245b309 基座上对照核查 prompt 结束分支，新增限额/拒答/上游错误的失败分类，保留取消与 CUA 生命周期；相关 113 项测试通过。 v2 续办：明确 HTTP 400 不受近期 MCP 重连窗口兜底影响，不重放 prompt；补充引擎事件转发到 SSE 序列化与关闭的链路验证，相关 123 项通过。"
+      "overlaySha256": "1a9981fb3a79ade50cdae5deca4f311be21d0abab6d605ec0cf599ff184594ef",
+      "note": "2026-10-14 合并 Computer Use 产品控制时核对基座 484ff6b36→e75c9d5c。该文件基座增量仅为 NW-041 对话级取消的 5 行说明，已完整合入；实际对话解析、chatEngineKey 和 acpSessionSetup 继续由 e75c9d5c 基座提供。商业 overlay 只增加 CUA 会话凭据生命周期和有 CUA 权限的 prompt 禁止重试，保留现有对话级取消行为。商业完整回归 2941 通过，含同目录双对话并行、取消不串扰用例。 2026-10-17 NW-050：在相同 e245b309 基座上对照核查 prompt 结束分支，新增限额/拒答/上游错误的失败分类，保留取消与 CUA 生命周期；相关 113 项测试通过。 v2 续办：明确 HTTP 400 不受近期 MCP 重连窗口兜底影响，不重放 prompt；补充引擎事件转发到 SSE 序列化与关闭的链路验证，相关 123 项通过。 SDK 协议续查：仅解包 -32603 下 SDK data.details 明确 400 或 data 顶层 400 状态，不扫描任意元数据；真实 SDK/NDJSON 双向内存夹具及原有链路合计 130 项通过，流已成对关闭。"
     }
   ]
 }

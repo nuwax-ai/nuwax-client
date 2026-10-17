@@ -163,6 +163,29 @@ function isHttpBadRequest(error: unknown): boolean {
     toErrorMessage(error),
   );
 }
+
+function unwrapAcpBadRequest(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const rpcError = error as Error & { code?: unknown; data?: unknown };
+  if (rpcError.code !== -32603 || !rpcError.data || typeof rpcError.data !== "object") {
+    return error;
+  }
+  const data = rpcError.data as {
+    details?: unknown;
+    message?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+  // The ACP SDK wraps a generic agent exception in Internal error/data.details,
+  // or places a JSON-encoded exception message directly in data.
+  if (typeof data.details === "string" && isHttpBadRequest(data.details)) {
+    return new Error(data.details);
+  }
+  if ([data.status, data.statusCode].some((value) => value === 400 || value === "400")) {
+    return new Error(`HTTP 400: ${typeof data.message === "string" ? data.message : "Bad Request"}`);
+  }
+  return error;
+}
 // Claude Code 的 session/new 会在 MCP 子进程完成 tools/list 前返回。
 // 首条 prompt 若立即发出，模型会在工具快照尚未包含慢启动的 npx MCP 时开始运行。
 // 实测 OpenUI MCP 在已命中 npx 缓存时仍需约 2.2 秒完成工具发现，因此为
@@ -1573,7 +1596,9 @@ export class AcpEngine extends EventEmitter {
           }
 
           executePromptWithRetry(
-            () => this.acpConnection!.prompt(promptParams),
+            () => this.acpConnection!.prompt(promptParams).catch((error) => {
+              throw unwrapAcpBadRequest(error);
+            }),
             {
               // A lost prompt response can follow an applied desktop action. Never replay that prompt.
               maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !cuaTurn ? 2 : 1,
