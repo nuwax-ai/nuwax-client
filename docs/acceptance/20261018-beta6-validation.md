@@ -8,6 +8,14 @@
 - 前端 pin：`6a1bb1717427c17e7c4d690a075ab63253ec6a17`；产物 pin：`1a74bd9f2267f7b6fab7884e480374b3b580d471`。仅在 beta.5 固定版本上增加本次升级提示调整；未捎带独立前端仓的其它 WIP。资料库与 IM 子模块 pin 不变。
 - 实际纳入的是下表提交的代码；原始验收 JSON 仍描述原来的候选身份，不能当成本次 beta.6 安装包的验收结果。
 
+## 发布结果（2026-10-18）
+
+- 已公开 [v3.0.17-beta.6](https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.17-beta.6)，不可变 tag 指向 `8fd6af6c292d227793e7afe9e8d1e71941aec2b7`。本节是发布后的文档补记，不改变 tag 或产品源码。
+- [GitHub Actions](https://github.com/nuwax-ai/nuwax-client/actions/runs/39105639057) 完整源码门禁和五平台构建通过，29 个发布资产完成 SHA256 校验；两个 macOS 架构均完成 Developer ID 签名与 Apple 公证。Intel Mac 首次提交公证未返回编号，第二次构建公证、归档和发布成功。
+- S3、OSS 的 Beta 指针字节一致，均为 `3.0.17-beta.6`；稳定版仍为 `3.0.16`，两处稳定版指针与发布前字节一致。详见 [发布校验记录](./20261018-beta6-publication.json)。
+- 本机 UTM Windows 11 已保留官方 `3.0.17-beta.5`，安装文件哈希及 Beta 通道已只读核对，未代替用户触发升级。虚拟机为 ARM64，运行 x64 客户端；不替代原生 x64 或早期 Win10 验收。
+- 首次从 beta.5 升级到 beta.6 时，交互由 beta.5 的更新器决定；本次调整的升级提示界面在运行 beta.6 后生效。以下人工清单仍需实际执行，构建、发布校验不等同于真实业务和操作系统验收完成。
+
 ## 新纳入的 worktree 成果
 
 | 来源 worktree / 分支 | 原提交 | 本次功能 | 验证边界 |
@@ -84,7 +92,7 @@ Windows 原组合包验收证据：[20261018-windows-integrated-utm.json](./2026
 | Linux deb | 点击下载 → 下载完成后再次点击升级 → 必要时输入管理员密码 → 自动 dpkg/依赖处理并重启 | 当前桌面能看到授权框；取消授权不停止服务；没有 zenity 时提示手动安装；普通退出不触发 deb 安装 |
 | Linux rpm | 点击下载 → 下载完成后再次点击升级 → 系统提权与包管理器安装并重启 | 仍由 electron-updater 的系统授权路径处理，未使用 deb 专用的 askpass 修复；授权可见性、失败恢复需真实发行版验证 |
 
-Windows 连续安装由主进程显式开启，实际状态只在 Windows 可报告 `installAfterDownload=true`；Linux 不走这一策略。按锁定的 electron-updater 6.8.3 源码，Linux 根据包内 `resources/package-type` 选择 deb/rpm 更新器，AppImage 使用自身更新器；不会将所有 Linux 安装统一当作 AppImage。已发布 beta.5 的资产也包含 x64/arm64 的 AppImage、deb、rpm，本次 beta.6 尚未构建 Linux 新包。
+Windows 连续安装由主进程显式开启，实际状态只在 Windows 可报告 `installAfterDownload=true`；Linux 不走这一策略。按锁定的 electron-updater 6.8.3 源码，Linux 根据包内 `resources/package-type` 选择 deb/rpm 更新器，AppImage 使用自身更新器；不会将所有 Linux 安装统一当作 AppImage。beta.5 与本次已公开的 beta.6 均包含 x64/arm64 的 AppImage、deb、rpm；本次 Linux 实际升级仍待人工验证。
 
 本轮相关回归：`autoUpdater.test.ts` 83 项、`linuxDebInstaller.test.ts` 7 项，合计 **90 项通过**。这是当前源码与测试结论，尚不等于本次候选在 Linux 实机升级成功。此前“Linux deb 自动更新未实现”的旧范围说明已更正；deb 应用内升级实现已经存在于基座 pin 中。
 
@@ -122,7 +130,7 @@ Windows 连续安装由主进程显式开启，实际状态只在 Windows 可报
 - `overlay:check`、`check:pin`、`check:pin -- --remote origin/main`、`host-bridge:check`、feature/import/appdir 边界与 `git diff --check` 通过；353 个商业 overlay 文件与测试工作树一致。
 - 商业生产 main/preload 与 renderer 构建通过，含 macOS 通知权限原生模块的 arm64/x64 通用产物。未将构建等同于全量 TypeScript 类型门禁；原权限引导记录的基线类型诊断没有在本轮重新宣称为绿色。
 - CU helper 由锁定并已打补丁的源码在本候选缓存副本重新编译，组装与 ad-hoc 签名结构校验通过；没有启动 helper 或改本机系统授权。
-- 最终发布 `--dry-run` 已执行，`ok=false`：外层候选分支及本次基座、前端、产物三个新 pin 尚未推送，远端无法获取。版本、tag 规则和已提交说明预检通过；没有将命令退出码 0 误报为预检全绿。未授权前不推送。
+- 首轮发布 `--dry-run` 为 `ok=false`，当时外层候选和三个新 pin 尚未推送。用户随后明确授权打 tag、经 GitHub 发布 Beta；基座 PR #34、前端 PR #191 已合入并保留原始 pin 的可达性，产物仓快进推送，最终发布预检为 `ok=true`、`findings=[]`。五平台构建与公开发布结果见上方发布记录。
 
 本机 macOS arm64 安装包已按升级提示调整重新生成，并完成包内检查。打包时源码为 `aa873b6a56871c1c95395e27c11cc1217d81ac2a`，之后只补充本文档及证据：
 
@@ -133,11 +141,11 @@ Windows 连续安装由主进程显式开启，实际状态只在 Windows 可报
 
 文件位于本 worktree 的 `release/3.0.17-beta.6/`，同目录含 `SHA256SUMS.txt`、`local-package-verification.json`；[包内证据](./20261018-beta6-local-package.json)记录三个 pin 和 bundle 校验值。实际 ASAR 中 main、preload、HTML、入口 renderer JS/CSS 与当前生产构建逐字节相符；全部内嵌前端文件与提交的产物目录逐字节相符。前端戳为 `6a1bb1717`，资料库与 IM 的 pin 分别仍为 `6d232864fe04`、`1f517d823d47`。权限引导、NW-050、窗口 handler 均在包内；通知原生模块为 x64/arm64 通用文件，helper 图标和 ad-hoc 签名检查通过。
 
-标准打包校验已核对 unpacked app、ZIP 和只读挂载的 DMG 中的 updater 配置；`doctor --json` 的 `issues=[]`。本地只复用已核对来源/哈希的运行资源与版本一致的 Electron 40.8.2 分发目录，没有修改发布流水线。主应用无 Developer ID 签名或公证，helper 为 ad-hoc；没有启动或安装新候选、覆盖日常 profile 或改变系统授权。Windows、macOS x64 和 Linux 两种架构的新 beta.6 安装包尚未构建。
+标准打包校验已核对 unpacked app、ZIP 和只读挂载的 DMG 中的 updater 配置；`doctor --json` 的 `issues=[]`。本地只复用已核对来源/哈希的运行资源与版本一致的 Electron 40.8.2 分发目录，没有修改发布流水线。本地包的主应用无 Developer ID 签名或公证，helper 为 ad-hoc；没有启动或安装新候选、覆盖日常 profile 或改变系统授权。随后 GitHub Actions 已构建并公开五平台安装包，两个 macOS 架构均签名、公证；上表哈希保留本地无签名包记录，不代表 GitHub 最终产物哈希。
 
 
 新候选的真实业务登录、模型错误、系统权限与所有平台的安装包验收仍待执行，原 UTM 证据不替代本候选组合验收。
 
 按根 `REVIEW.md` 复用本批评审，并补查本次新增升级界面差异：计时器在状态结束和卸载时清理，失败释放等待态，不改变平台安装策略；基座提交仅含中立 AboutPage，overlay 兼容检查无重叠变化。原有集成检查包括：检查 preload 合并后同时保留旧 runner 拒绝和权限引导 API；权限引导与外链各自保留可信主 frame 校验；安装清单在构建时嵌入，升级与卸载的未知文件保护保持一致；NW-050 保留取消与 CUA 不重放约束。本次修复翻译门禁问题后没有发现阻断性集成问题。原主工作区仍为 `7503d15c`，原两个未跟踪项保留。
 
-发布约束：当前交接要求 push、tag、发版前由罗东确认。本次先完成可审阅的本地候选和验证清单，未将本地候选称为已公开发布。
+发布授权：用户已明确要求“打Tag，走GitHub去发布Beta版本”。发布及更新源校验已完成；本节及发布记录是发布后的文档补记，产品源码仍由不可变 tag 固定。真实升级、业务链接、登录与系统权限等手工验收仍按本文清单执行。
