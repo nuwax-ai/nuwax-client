@@ -23,7 +23,9 @@ const color: Record<GuidedPermissionStatus, string> = {
   unknown: "default",
   restart_required: "gold",
 };
-const pane = (key: PermissionKey) => key.replace("helper_", "");
+const labelKey = (key: string) =>
+  key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+const pane = (key: PermissionKey) => labelKey(key.replace("helper_", ""));
 const helperKey = (key: PermissionKey) => key.startsWith("helper_");
 const required = (key: PermissionKey) =>
   key === "screen_recording" || helperKey(key)
@@ -139,11 +141,11 @@ export default function PermissionsPage({
                     {text(`name.${pane(item.key)}`)}
                   </span>
                   <Tag color={color[item.status]}>
-                    {text(`status.${item.status}`)}
+                    {text(`status.${labelKey(item.status)}`)}
                   </Tag>
                 </div>
                 <p className={styles.description}>
-                  {text(`purpose.${item.key}`)}
+                  {text(`purpose.${labelKey(item.key)}`)}
                 </p>
                 <div className={styles.meta}>
                   {text("subject", subject(item.key))} ·{" "}
@@ -175,18 +177,18 @@ export default function PermissionsPage({
               <div className={styles.cardHeader}>
                 <h3>{text(`name.${pane(current.key)}`)}</h3>
                 <Tag aria-live="polite" color={color[current.status]}>
-                  {text(`status.${current.status}`)}
+                  {text(`status.${labelKey(current.status)}`)}
                 </Tag>
               </div>
               <p className={styles.description}>
                 {text("subject", subject(current.key))}
               </p>
               <ol className={styles.steps}>
-                <li>{text(`step.${pane(current.key)}.1`)}</li>
+                <li>{text(`step.${pane(current.key)}.step1`)}</li>
                 <li>
-                  {text(`step.${pane(current.key)}.2`, subject(current.key))}
+                  {text(`step.${pane(current.key)}.step2`, subject(current.key))}
                 </li>
-                <li>{text(`step.${pane(current.key)}.3`)}</li>
+                <li>{text(`step.${pane(current.key)}.step3`)}</li>
               </ol>
               {helperKey(current.key) ? (
                 <Alert type="info" message={text("separateIdentity")} />

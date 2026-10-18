@@ -43,10 +43,12 @@ it.each(["granted", "denied", "unknown", "restart_required"] as const)(
   (status) => {
     h.snapshot!.items[0].status = status;
     const html = renderToStaticMarkup(<PermissionsPage />);
-    expect(html).toContain(`Claw.PermissionGuide.status.${status}`);
+    expect(html).toContain(
+      `Claw.PermissionGuide.status.${status === "restart_required" ? "restartRequired" : status}`,
+    );
     expect(html).toContain("Electron");
     expect(html).toContain("/dev/Electron.app");
-    expect(html).toContain("Claw.PermissionGuide.step.screen_recording.2");
+    expect(html).toContain("Claw.PermissionGuide.step.screenRecording.step2");
     expect(html).toContain("Claw.PermissionGuide.required");
     expect(html).toContain("Claw.PermissionGuide.helperPending");
   },
@@ -67,5 +69,5 @@ it("does not claim helper access from the main app's grant", () => {
   h.target = "helper_accessibility";
   const html = renderToStaticMarkup(<PermissionsPage />);
   expect(html).toContain("Claw.PermissionGuide.helperPending");
-  expect(html).not.toContain("Claw.PermissionGuide.step.accessibility.2");
+  expect(html).not.toContain("Claw.PermissionGuide.step.accessibility.step2");
 });
