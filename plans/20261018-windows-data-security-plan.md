@@ -26,3 +26,12 @@
 - C 盘从 3.06 GiB 增至 9.53 GiB：本轮 payload、安装包和恢复副本迁至 D:\nuwax-qa\u1-20261018-offload，63,046 文件逐一 SHA-256 校验后移走 C 盘副本。安装、注册表和分区未改。
 - 空间迁移完成之后，UTM 进入固件 Synchronous Exception 画面，SSH/RDP 均断开。已询问罗东是否正在手动操作，以避免并发重启；在回复前不操作 VM 电源。余下静默/失败重试和安全项真机验证待环境恢复。
 - agentRunner 已确认是未挂载商业 UI 的旧自定义二进制入口，本仓不交付其内核、没有已知安全凭据输入契约。处理方式改为在 preload 与主进程同时拒绝旧启动，而非猜测环境变量/stdin 支持；内置 ACP 引擎维持既有实现。
+
+## 2026-10-18 组合包验收（codex/windows-data-security-integration）
+
+- 从 `7503d15c` 新建 `/Users/apple/workspace/nuwax-client-windows-integration`，cherry-pick U1、宿主导航、openExternal、旧 runner 入口封闭及升级嵌套文件恢复，保留原分支。246 项相关 Vitest 与 8 项安装清单/更新配置脚本通过；主进程、preload、宿主 renderer 已从组合源码重新构建。
+- QA 包复用原 Windows x64 依赖/资源，替换为本 worktree 生产构建的 main/preload/renderer。只增加 QA 入口以隔离 profile 与端口；原商业标识和实际 handler 保持，数据通过专属 QA 目录链接映射至 NSIS 展示的 QA 数据路径。所有 profile 环境覆盖仅限 QA 进程，未调整系统环境/权限。
+- 矩阵：旧 QA 完整包首次安装与运行/安全 handler；应用内从本机回环 feed 下载新包并自动重启；默认不勾选卸载及取消；重装目标包后勾选删除；未知顶层/嵌套文件、实际 QA 配置与新程序完整性；勾选删除本地数据后的卸载；占用/静默重试及 Windows 脚本边界。每个子项以实际产物 SHA 和观测结果记入验收 JSON，不用脚本夹具冒充完整包结果。
+- 纠错记录：首次 cherry-pick 误在主工作区执行，已立即报告并保存 `codex/windows-integration-safety-copy=e9acf294`。罗东明确批准仅为纠错执行一次 `git reset --keep 7503d15c`；恢复前确认无 tracked WIP，恢复后主工作区及原未跟踪项与起点一致。后续所有集成操作只在新 worktree，原保护/不推送/不发布约束不变。
+
+- QA 工具修复：首次自制包中的 ASAR 因库返回 writable stream 后同步封包而为空，已等待 `finished(stream)`、读取版本和逐字比对 main 后再封包。空包及手工替换归档的启动诊断仅算排错，未计为最终包验收。候选启动期间曾记录 NSIS `System.dll` 的 `0xc0000005`，继续核对最终包的真实运行结果，不用重建成功替代实机结果。
