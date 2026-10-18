@@ -31,6 +31,11 @@ if (action === 'payload') {
   }
   assert.equal(bad.length, 0, 'Installed payload differs: ' + bad.slice(0, 12));
   save('payload-verified-' + label, { passed: true, count: Object.keys(expected).length, mismatches: bad });
+} else if (action === 'program-deleted') {
+  const expected = read(root + '/clean-payload-hashes.json');
+  for (const relative of Object.keys(expected)) assert(!fs.existsSync(path.join(installed, relative)), relative);
+  assert(!fs.existsSync(path.join(installed, 'Uninstall NuwaxIntegrationQA.exe')));
+  save('program-deletion-verified-' + label, { passed: true, count: Object.keys(expected).length, uninstallEntryRemoved: true });
 } else if (action === 'seed') {
   const fixture = ['qa-workspace/session.txt', 'qa-top.txt', 'resources/qa-resource.txt', 'resources/qa-dir/中文/原位.txt', 'resources/app.asar.unpacked/qa-nested.txt', 'resources/app.asar.unpacked/node_modules/qa-user.txt', 'locales/qa-user.txt', 'resources/app.asar.unpacked/node_modules/qa-workspace/deep/state.txt'];
   const hashes = {};

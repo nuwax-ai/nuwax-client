@@ -6,8 +6,9 @@ $exe = "$r\NuwaxIntegrationQA\NuwaxIntegrationQA.exe"
 $arguments = ''
 if ($Action -like 'Install*') {
   $number = $Action.Substring(7)
-  $exe = "$r\installers\NuwaxIntegrationQA-3.0.17-qa.integration.$number.exe"
-  $arguments = "/D=$r\NuwaxIntegrationQA"
+  if (!(Test-Path -LiteralPath "$r\installers\NuwaxIntegrationQA-3.0.17-qa.integration.$number.exe")) { throw 'Missing QA package' }
+  $exe = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File $r\source\interactive-installer.ps1 -Number $number"
 } elseif ($Action -eq 'Uninstall') { $exe = "$r\NuwaxIntegrationQA\Uninstall NuwaxIntegrationQA.exe" }
 if (!(Test-Path -LiteralPath $exe)) { throw 'Missing QA executable' }
 $name = "NuwaxIntegrationQA-$Action-20261018"
