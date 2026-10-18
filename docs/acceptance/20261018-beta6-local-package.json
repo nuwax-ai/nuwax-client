@@ -1,0 +1,33 @@
+{
+  "version": "3.0.17-beta.6",
+  "product": "nuwax",
+  "platform": "darwin-arm64",
+  "source": "27a4efefe1bde9f8a316a91072b1beb8ce9bb2b9",
+  "signing": "local unsigned main app; ad-hoc helper",
+  "runtimeLaunched": false,
+  "checks": {
+    "dist/main/main.js": "4c7b4ecf9919bb3ba735bab7436c63021c8d3da801a38e04ad34d34c0f6f40fc",
+    "dist/preload/index.js": "fc8c4fbc20d03c0ef9b36dfc17626e16ea8b174d7a5c4c42c290958458ba441e",
+    "dist/index.html": "e4f84c630d0ca8e759957ab69b54c5c9332572cf8a789446b403bfacf7bd0b66"
+  },
+  "notificationArchitectures": "x86_64 arm64",
+  "helperIconSha256": "6bc55150e039d689623582747ff356da173396efbe672576b7aac1809ffd03fd",
+  "frontend": {
+    "name": "nuwax-frontend",
+    "version": "1.2.0",
+    "gitHash": "3aa6484eb",
+    "buildAt": "2026-10-16T07:48:41.525Z"
+  },
+  "files": [
+    {
+      "name": "Nuwax-3.0.17-beta.6-arm64-mac.zip",
+      "size": 891461631,
+      "sha256": "527a827fd7a69a6d35b8f4fe8a7801bc0a4c96507397d747b2dbe53e0a5f1abf"
+    },
+    {
+      "name": "Nuwax-3.0.17-beta.6-arm64.dmg",
+      "size": 915676084,
+      "sha256": "61802b13c98e74f535bb4d660e0357f907e46751cb345a4ae56fa9912605f2ed"
+    }
+  ]
+}
