@@ -1,0 +1,378 @@
+{
+  "at": "2026-10-18T12:26:15.896Z",
+  "tag": "v3.0.17-beta.7",
+  "source": "cb436f9d5a0e25377c90de507bdd82d9d9515b01",
+  "remoteSource": "cb436f9d5a0e25377c90de507bdd82d9d9515b01",
+  "build": {
+    "attempt": 1,
+    "url": "https://github.com/nuwax-ai/nuwax-client/actions/runs/39121986639",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "Validate release identity",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / Select affected checks",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / frontend source gate",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / terminal compatibility protocol and WinPTY regression (ubuntu-latest)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / community gate (base:test)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / commercial gate (test:commercial + purity)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "verify-source / terminal compatibility protocol and WinPTY regression (windows-latest)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Prepare release",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build Electron (ubuntu-24.04-arm arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build Electron (windows-latest x64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build Electron (macos-26-intel x64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build Electron (ubuntu-24.04 x64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Build Electron (macos-latest arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Publish beta after five platform builds / Sync release to MinIO S3 & OSS",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "release": {
+    "url": "https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.17-beta.7",
+    "isDraft": false,
+    "isPrerelease": true,
+    "publishedAt": "2026-10-18T12:25:44Z",
+    "assetCount": 29,
+    "assets": [
+      {
+        "name": "build-manifest-linux-arm64.json",
+        "size": 762,
+        "digest": "sha256:d47718c755a68f722a59e8eb8e7be22b9cbca2e9acf1506da09ba97c9356ce83"
+      },
+      {
+        "name": "build-manifest-linux-x64.json",
+        "size": 753,
+        "digest": "sha256:59d13665f7b013197ca6ede7de745a277ebdf9fbec19b7dc674b61077620bd4e"
+      },
+      {
+        "name": "build-manifest-macos-arm64.json",
+        "size": 654,
+        "digest": "sha256:904ac13ad7ff0aa08468fc2a5ab78716ad49a5e4772180d419750ade5cb82d65"
+      },
+      {
+        "name": "build-manifest-macos-x64.json",
+        "size": 640,
+        "digest": "sha256:420905117de838196d1c8f936dad3902b5fb90b825c9cde59f6998a60deb25ac"
+      },
+      {
+        "name": "build-manifest-windows-x64.json",
+        "size": 807,
+        "digest": "sha256:734241f00f1a78055191172f471c1b4c4d7c29503707fd97ee8de9bc0732c472"
+      },
+      {
+        "name": "latest-linux-arm64.yml",
+        "size": 689,
+        "digest": "sha256:348f44da0966f9d3ad6814b8a22c4ac6c668b45228bb0837a859767836f615b1"
+      },
+      {
+        "name": "latest-linux-x64.yml",
+        "size": 676,
+        "digest": "sha256:297b3d7c367ba6abba902a44e2129e9fa7725ecef1128aeb78a5f4b0c5fae35d"
+      },
+      {
+        "name": "latest-linux.yml",
+        "size": 1163,
+        "digest": "sha256:a7db92c1606aa3d82810f8c2db80a0de951b0acfcda481ba3d91a48aa3f663c5"
+      },
+      {
+        "name": "latest-mac.yml",
+        "size": 958,
+        "digest": "sha256:1aea5b40f484b49c5d403f5f4610547836e7d0e2dccbc6c4b07466629ad42e29"
+      },
+      {
+        "name": "latest.json",
+        "size": 5659,
+        "digest": "sha256:27ea29f1a387b2946c321b27546a214d8e709132da14121165fc3afe0d37183f"
+      },
+      {
+        "name": "latest.yml",
+        "size": 421,
+        "digest": "sha256:b1c604de5f34ef323020cf5a1bded635202ee04a0d3b6c7bb5c63dbce11fd8a0"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-aarch64.rpm",
+        "size": 501255313,
+        "digest": "sha256:57346a98c06d3cb956055f9829f16a6901929f8f9b2adf39b38cb8e41571428a"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-amd64.deb",
+        "size": 627869784,
+        "digest": "sha256:92ac7c4aeb94a1760b91bd739e922449cc581ab615c10d4dcea0ef58f8298837"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64-mac.zip",
+        "size": 715578993,
+        "digest": "sha256:5c106c9780dbca8295f026a8dd6555b0b9b4dde11ee8b7c83e6bf8b2b7884f06"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64-mac.zip.blockmap",
+        "size": 740526,
+        "digest": "sha256:32090449fdac0ec994d286d3fe3632ad7be75314450ab09d3c1c47ffa99ee3b1"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64.AppImage",
+        "size": 517047794,
+        "digest": "sha256:121b247c72121b405da4c4dacb31c6d7000bc544ae49d0366115157ddce298f1"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64.deb",
+        "size": 584063384,
+        "digest": "sha256:ae0bb097764ea764b6cf4f469904fe2f06904e5d98d7a8c1f20bdc618f441147"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64.dmg",
+        "size": 774691748,
+        "digest": "sha256:e8457211885de5febcad3d4acf43c20038c7b9759cf9fad90daf55145e164a93"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-arm64.dmg.blockmap",
+        "size": 805546,
+        "digest": "sha256:807822000fb01df7dac12039c0d78d9aa4234315b1006e8524cb1432dcbde728"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-mac.zip",
+        "size": 766077992,
+        "digest": "sha256:7e7c2c168a8a82f0349dc2036d46dda021f4590302726753362aa2bae616ffc8"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-mac.zip.blockmap",
+        "size": 792098,
+        "digest": "sha256:e939b474f76af1212aa3706f7ee77c7d9a15cf442283d45c15c914b9b840959c"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7-x86_64.rpm",
+        "size": 532499913,
+        "digest": "sha256:f4f5bc349220d6a30e7d076465c9d7d36679b3f607e0c0cf4b50449ac6feff82"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7.AppImage",
+        "size": 548348740,
+        "digest": "sha256:5f4e36a3552581de9a2f04c3c64724be7f18fd664f367e2b5ba8d1778e99dbdb"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7.dmg",
+        "size": 825326059,
+        "digest": "sha256:d01464e900d7ec6f8dc7e7bac43d525ab45509518eb16e46cf3224cb2a6586f7"
+      },
+      {
+        "name": "Nuwax-3.0.17-beta.7.dmg.blockmap",
+        "size": 861412,
+        "digest": "sha256:fad9960485daaf18b2c4e393a07ea896f1285730125fc47738257fe8a3776f4f"
+      },
+      {
+        "name": "Nuwax-Setup-3.0.17-beta.7-unsigned.exe",
+        "size": 724376637,
+        "digest": "sha256:1f28b0ebe6622b9bbba16808880ed2f5191d2fa049a317b16019fe86d6e2d043"
+      },
+      {
+        "name": "Nuwax-Setup-3.0.17-beta.7-unsigned.exe.blockmap",
+        "size": 736893,
+        "digest": "sha256:d8a3314858d01e8b1567535a841bd84ce5f5c535246b2880d77a6ca01b8dc1cb"
+      },
+      {
+        "name": "Nuwax.3.0.17-beta.7.msi",
+        "size": 737770784,
+        "digest": "sha256:f8f02f2b43f538a01111317014605fc94bd6d1aedc03f9734eeb5548e09aa519"
+      },
+      {
+        "name": "release-provenance.json",
+        "size": 13997,
+        "digest": "sha256:f3ee26e6081c43660e6229a742530bceb11c29d2426aebeb5e59cdf5da1ccbad"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "mirror": "s3",
+      "channel": "latest",
+      "url": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/latest/latest.json",
+      "version": "3.0.16",
+      "sha256": "54f70d5c307e2b1dea13713e0c81c529a2a8c281ee15a972b2ff7ee72244694f",
+      "unchanged": true,
+      "platforms": [
+        "darwin-aarch64",
+        "darwin-aarch64-zip",
+        "darwin-x86_64",
+        "darwin-x86_64-zip",
+        "windows-x86_64",
+        "windows-x86_64-nsis",
+        "linux-x86_64",
+        "linux-x86_64-appimage",
+        "linux-x86_64-deb",
+        "linux-x86_64-rpm",
+        "linux-aarch64",
+        "linux-aarch64-appimage",
+        "linux-aarch64-deb",
+        "linux-aarch64-rpm"
+      ]
+    },
+    {
+      "mirror": "s3",
+      "channel": "beta",
+      "url": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/beta/latest.json",
+      "version": "3.0.17-beta.7",
+      "sha256": "27ea29f1a387b2946c321b27546a214d8e709132da14121165fc3afe0d37183f",
+      "unchanged": false,
+      "platforms": [
+        "darwin-aarch64",
+        "darwin-aarch64-zip",
+        "darwin-x86_64",
+        "darwin-x86_64-zip",
+        "windows-x86_64",
+        "windows-x86_64-nsis",
+        "linux-x86_64",
+        "linux-x86_64-appimage",
+        "linux-x86_64-deb",
+        "linux-x86_64-rpm",
+        "linux-aarch64",
+        "linux-aarch64-appimage",
+        "linux-aarch64-deb",
+        "linux-aarch64-rpm"
+      ]
+    },
+    {
+      "mirror": "oss",
+      "channel": "latest",
+      "url": "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/latest/latest.json",
+      "version": "3.0.16",
+      "sha256": "54f70d5c307e2b1dea13713e0c81c529a2a8c281ee15a972b2ff7ee72244694f",
+      "unchanged": true,
+      "platforms": [
+        "darwin-aarch64",
+        "darwin-aarch64-zip",
+        "darwin-x86_64",
+        "darwin-x86_64-zip",
+        "windows-x86_64",
+        "windows-x86_64-nsis",
+        "linux-x86_64",
+        "linux-x86_64-appimage",
+        "linux-x86_64-deb",
+        "linux-x86_64-rpm",
+        "linux-aarch64",
+        "linux-aarch64-appimage",
+        "linux-aarch64-deb",
+        "linux-aarch64-rpm"
+      ]
+    },
+    {
+      "mirror": "oss",
+      "channel": "beta",
+      "url": "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/beta/latest.json",
+      "version": "3.0.17-beta.7",
+      "sha256": "27ea29f1a387b2946c321b27546a214d8e709132da14121165fc3afe0d37183f",
+      "unchanged": false,
+      "platforms": [
+        "darwin-aarch64",
+        "darwin-aarch64-zip",
+        "darwin-x86_64",
+        "darwin-x86_64-zip",
+        "windows-x86_64",
+        "windows-x86_64-nsis",
+        "linux-x86_64",
+        "linux-x86_64-appimage",
+        "linux-x86_64-deb",
+        "linux-x86_64-rpm",
+        "linux-aarch64",
+        "linux-aarch64-appimage",
+        "linux-aarch64-deb",
+        "linux-aarch64-rpm"
+      ]
+    }
+  ],
+  "before": {
+    "at": "2026-10-18T11:07:26.033Z",
+    "checks": [
+      {
+        "mirror": "s3",
+        "channel": "latest",
+        "url": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/latest/latest.json",
+        "version": "3.0.16",
+        "sha256": "54f70d5c307e2b1dea13713e0c81c529a2a8c281ee15a972b2ff7ee72244694f"
+      },
+      {
+        "mirror": "s3",
+        "channel": "beta",
+        "url": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/beta/latest.json",
+        "version": "3.0.17-beta.6",
+        "sha256": "bdfd7e9e6c70e0b47a772f93b73f05c959c9b2db60dd1bff8d7e793520062c3b"
+      },
+      {
+        "mirror": "oss",
+        "channel": "latest",
+        "url": "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/latest/latest.json",
+        "version": "3.0.16",
+        "sha256": "54f70d5c307e2b1dea13713e0c81c529a2a8c281ee15a972b2ff7ee72244694f"
+      },
+      {
+        "mirror": "oss",
+        "channel": "beta",
+        "url": "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/beta/latest.json",
+        "version": "3.0.17-beta.6",
+        "sha256": "bdfd7e9e6c70e0b47a772f93b73f05c959c9b2db60dd1bff8d7e793520062c3b"
+      }
+    ]
+  },
+  "releaseCli": {
+    "completed": true,
+    "assetSha256Verified": 29
+  },
+  "windowsBaseline": {
+    "checkedAt": "2026-10-18T11:10:22.2737098Z",
+    "installedDisplayVersion": "3.0.17-beta.6",
+    "upgradeTriggeredByAgent": false
+  }
+}
