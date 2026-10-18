@@ -1,0 +1,69 @@
+{
+  "mockBridge": true,
+  "nativeInstallInvoked": false,
+  "windowsPermissions": {
+    "contentHidden": true,
+    "probes": 0,
+    "firstRunOpened": false
+  },
+  "macPermissions": {
+    "guidePreserved": true
+  },
+  "cases": [
+    {
+      "surface": "about",
+      "flow": "oneClick",
+      "maxDialogs": 0,
+      "dialogs": 0,
+      "calls": {
+        "download": 1,
+        "install": 0,
+        "permissionSnapshot": 0,
+        "permissionGuide": 0
+      },
+      "inlineBusy": true
+    },
+    {
+      "surface": "about",
+      "flow": "twoStep",
+      "dialogs": 0,
+      "calls": {
+        "download": 1,
+        "install": 1,
+        "permissionSnapshot": 0,
+        "permissionGuide": 0
+      },
+      "inlineBusy": true
+    },
+    {
+      "surface": "badge",
+      "flow": "oneClick",
+      "dialogs": 0,
+      "calls": {
+        "download": 1,
+        "install": 0,
+        "permissionSnapshot": 0,
+        "permissionGuide": 0
+      },
+      "inlineBusy": true,
+      "errorDetailsPreserved": true
+    },
+    {
+      "surface": "badge",
+      "flow": "twoStep",
+      "dialogs": 0,
+      "calls": {
+        "download": 1,
+        "install": 1,
+        "permissionSnapshot": 0,
+        "permissionGuide": 0
+      },
+      "inlineBusy": true
+    }
+  ],
+  "completedAt": "2026-10-18T10:47:46.130Z",
+  "source": {
+    "shell": "51177cd6b8190510d016f24e1a21f0a5e1350296",
+    "frontend": "cc1bda80eaa59e075616df1fef3f7ac0c33363d2"
+  }
+}

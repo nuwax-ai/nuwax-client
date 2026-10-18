@@ -13,6 +13,7 @@ import {
   PermissionRestartTracker,
   isPermissionKey,
   isPermissionGuideTarget,
+  supportsPermissionGuide,
   type HelperPermissionAdapter,
   type PermissionGuideTarget,
   type PermissionKey,
@@ -43,7 +44,11 @@ export function registerHelperPermissionAdapter(
 export function openPermissionGuide(
   target: PermissionGuideTarget = "overview",
 ): boolean {
-  if (!isPermissionGuideTarget(target)) return false;
+  if (
+    !supportsPermissionGuide(process.platform) ||
+    !isPermissionGuideTarget(target)
+  )
+    return false;
   const win = getWindow?.();
   if (!win || win.isDestroyed()) return false;
   if (win.isMinimized()) win.restore();
@@ -99,8 +104,8 @@ export function getPermissionSnapshot(): Promise<PermissionSnapshot> {
           return status === "granted"
             ? "granted"
             : status === "unknown"
-              ? "unknown"
-              : "denied";
+            ? "unknown"
+            : "denied";
         },
       ],
       ["file_access", probeFullDiskAccess],

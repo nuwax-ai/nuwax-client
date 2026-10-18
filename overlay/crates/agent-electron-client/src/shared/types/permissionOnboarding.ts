@@ -48,6 +48,10 @@ export function isPermissionGuideTarget(
 ): value is PermissionGuideTarget {
   return value === "overview" || isPermissionKey(value);
 }
+/** Windows has no pre-authorization steps; neither show nor open an empty guide. */
+export function supportsPermissionGuide(platform: string): boolean {
+  return !platform.toLowerCase().startsWith("win");
+}
 /** Session-only: a fresh grant may not propagate to processes already running. */
 export class PermissionRestartTracker {
   private denied = new Set<PermissionKey>();

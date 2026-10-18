@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   isPermissionGuideTarget,
+  supportsPermissionGuide,
   type PermissionGuideTarget,
 } from "@shared/types/permissionOnboarding";
 
@@ -13,7 +14,9 @@ export default function PermissionOnboardingEntry({
   onOpen(target: PermissionGuideTarget): void;
 }) {
   const opened = useRef(false);
+  const available = supportsPermissionGuide(navigator.platform);
   useEffect(() => {
+    if (!available) return;
     const open = (target: unknown) => {
       if (!isPermissionGuideTarget(target)) return;
       opened.current = true;
@@ -26,15 +29,22 @@ export default function PermissionOnboardingEntry({
     };
     window.electronAPI?.on("permissions:guide", open);
     return () => window.electronAPI?.off("permissions:guide", open);
-  }, [onOpen]);
+  }, [available, onOpen]);
   useEffect(() => {
-    if (!ready) return;
+    if (!available || !ready) return;
     let alive = true;
     const api = window.electronAPI?.permissionOnboarding;
     void api
       ?.snapshot()
       .then(async (snapshot) => {
-        if (!alive || !snapshot || snapshot.seen || opened.current) return;
+        if (
+          !alive ||
+          !snapshot ||
+          !supportsPermissionGuide(snapshot.platform) ||
+          snapshot.seen ||
+          opened.current
+        )
+          return;
         // Seen means the overview was displayed, never that system access was granted.
         opened.current = true;
         onOpen("overview");
@@ -46,6 +56,6 @@ export default function PermissionOnboardingEntry({
     return () => {
       alive = false;
     };
-  }, [ready, onOpen]);
+  }, [available, ready, onOpen]);
   return null;
 }

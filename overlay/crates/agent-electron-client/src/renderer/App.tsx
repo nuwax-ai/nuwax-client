@@ -78,7 +78,7 @@ import DependenciesPage from "./components/pages/DependenciesPage";
 import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
 import PermissionOnboardingEntry from "./components/PermissionOnboardingEntry";
-import type { PermissionGuideTarget } from "@shared/types/permissionOnboarding";
+import { supportsPermissionGuide, type PermissionGuideTarget } from "@shared/types/permissionOnboarding";
 import PermissionsPage from "./components/pages/PermissionsPage";
 import SessionsPage from "./components/pages/SessionsPage";
 import { type BrowserTarget } from "./components/pages/BrowserHomePage";
@@ -1740,12 +1740,14 @@ function App() {
   // ============================================
   // 授权引导入口
   // ============================================
+  const permissionGuideAvailable = supportsPermissionGuide(navigator.platform);
   const [permissionTarget, setPermissionTarget] = useState<PermissionGuideTarget>("overview");
   const openPermissionOnboarding = useCallback((target: PermissionGuideTarget) => {
+    if (!permissionGuideAvailable) return;
     setPermissionTarget(target);
     setActiveTab("permissions");
     setSettingsModalOpen(true);
-  }, []);
+  }, [permissionGuideAvailable]);
 
   // ============================================
   // 菜单配置（对齐 Tauri 客户端）
@@ -1778,11 +1780,13 @@ function App() {
         label: t("Claw.Menu.dependencies"),
       },
     ];
-    items.push({
-      key: "permissions",
-      icon: <SafetyOutlined />,
-      label: t("Claw.Menu.authorization"),
-    });
+    if (permissionGuideAvailable) {
+      items.push({
+        key: "permissions",
+        icon: <SafetyOutlined />,
+        label: t("Claw.Menu.authorization"),
+      });
+    }
     if (APP_NAME_IDENTIFIER === "nuwax" && captureAvailable) {
       items.push({ key: "capture", icon: <CameraOutlined />, label: t("Claw.Capture.title") });
     }
@@ -1795,7 +1799,7 @@ function App() {
       },
     );
     return items;
-  }, [i18nLang, captureAvailable]);
+  }, [i18nLang, captureAvailable, permissionGuideAvailable]);
 
   // ============================================
   // i18n Context value
@@ -1915,7 +1919,7 @@ function App() {
           value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
         >
           <div className="app-container">
-            {APP_NAME_IDENTIFIER === "nuwax" && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
+            {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
             {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} compact />}
             {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
                 加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
@@ -2268,10 +2272,10 @@ function App() {
                       >
                         <MCPSettings isOpen={activeTab === "mcp"} />
                       </div>
-                      {activeTab === "settings" && <SettingsPage onOpenAuthorization={() => openPermissionOnboarding("overview")} />}
+                      {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
                       {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
                       {activeTab === "dependencies" && <DependenciesPage />}
-                      {activeTab === "permissions" && <PermissionsPage target={permissionTarget} onClose={() => setSettingsModalOpen(false)} />}
+                      {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => setSettingsModalOpen(false)} />}
                       {activeTab === "logs" && <LogViewer />}
                       {activeTab === "about" && <AboutPage webMeta={webMeta} />}
                     </div>

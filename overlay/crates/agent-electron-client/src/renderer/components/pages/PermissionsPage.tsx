@@ -11,6 +11,7 @@ import type {
   PermissionKey,
   PermissionSnapshot,
 } from "@shared/types/permissionOnboarding";
+import { supportsPermissionGuide } from "@shared/types/permissionOnboarding";
 import { watchPermissionSnapshot } from "../../services/permissionPolling";
 import { t } from "../../services/core/i18n";
 import styles from "../../styles/components/PermissionsPage.module.css";
@@ -31,8 +32,8 @@ const required = (key: PermissionKey) =>
   key === "screen_recording" || helperKey(key)
     ? "required"
     : key === "file_access"
-      ? "recommended"
-      : "optional";
+    ? "recommended"
+    : "optional";
 
 export default function PermissionsPage({
   target = "overview",
@@ -46,10 +47,12 @@ export default function PermissionsPage({
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const api = window.electronAPI?.permissionOnboarding;
+  const available = supportsPermissionGuide(navigator.platform);
   useEffect(() => {
     setSelected(target);
   }, [target]);
   useEffect(() => {
+    if (!available) return;
     if (!api) {
       setFailed(true);
       return;
@@ -64,7 +67,7 @@ export default function PermissionsPage({
       document,
       window,
     });
-  }, [api]);
+  }, [api, available]);
   const action = async (run: () => Promise<boolean>) => {
     setBusy(true);
     try {
@@ -75,6 +78,8 @@ export default function PermissionsPage({
       setBusy(false);
     }
   };
+  if (!available || (snapshot && !supportsPermissionGuide(snapshot.platform)))
+    return null;
   if (!snapshot)
     return (
       <div className={styles.page}>
@@ -132,7 +137,9 @@ export default function PermissionsPage({
               <button
                 key={item.key}
                 type="button"
-                className={`${styles.card} ${selected === item.key ? styles.selected : ""}`}
+                className={`${styles.card} ${
+                  selected === item.key ? styles.selected : ""
+                }`}
                 aria-pressed={selected === item.key}
                 onClick={() => setSelected(item.key)}
               >
@@ -186,7 +193,10 @@ export default function PermissionsPage({
               <ol className={styles.steps}>
                 <li>{text(`step.${pane(current.key)}.step1`)}</li>
                 <li>
-                  {text(`step.${pane(current.key)}.step2`, subject(current.key))}
+                  {text(
+                    `step.${pane(current.key)}.step2`,
+                    subject(current.key),
+                  )}
                 </li>
                 <li>{text(`step.${pane(current.key)}.step3`)}</li>
               </ol>

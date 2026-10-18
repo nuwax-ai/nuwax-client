@@ -1,6 +1,6 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PermissionSnapshot } from "@shared/types/permissionOnboarding";
 const h = vi.hoisted(() => ({
   snapshot: null as PermissionSnapshot | null,
@@ -25,6 +25,7 @@ import PermissionsPage from "./PermissionsPage";
 beforeEach(() => {
   h.cursor = 0;
   h.target = "screen_recording";
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
   h.snapshot = {
     platform: "darwin",
     appName: "Electron",
@@ -38,13 +39,16 @@ beforeEach(() => {
   };
   vi.stubGlobal("window", { electronAPI: { permissionOnboarding: {} } });
 });
+afterEach(() => vi.unstubAllGlobals());
 it.each(["granted", "denied", "unknown", "restart_required"] as const)(
   "renders %s with the exact app identity and manual steps",
   (status) => {
     h.snapshot!.items[0].status = status;
     const html = renderToStaticMarkup(<PermissionsPage />);
     expect(html).toContain(
-      `Claw.PermissionGuide.status.${status === "restart_required" ? "restartRequired" : status}`,
+      `Claw.PermissionGuide.status.${
+        status === "restart_required" ? "restartRequired" : status
+      }`,
     );
     expect(html).toContain("Electron");
     expect(html).toContain("/dev/Electron.app");
@@ -53,18 +57,24 @@ it.each(["granted", "denied", "unknown", "restart_required"] as const)(
     expect(html).toContain("Claw.PermissionGuide.helperPending");
   },
 );
-it.each(["win32", "linux"])(
-  "shows platform help without macOS permission controls on %s",
-  (platform) => {
-    h.snapshot!.platform = platform;
-    h.snapshot!.items = [];
-    const html = renderToStaticMarkup(<PermissionsPage />);
-    expect(html).toContain(
-      `Claw.PermissionGuide.${platform === "win32" ? "windows" : "linux"}`,
-    );
-    expect(html).not.toContain("Claw.PermissionGuide.openSettings");
-  },
-);
+it("hides Windows permission content even if navigated directly", () => {
+  h.snapshot!.platform = "win32";
+  h.snapshot!.items = [];
+  expect(renderToStaticMarkup(<PermissionsPage />)).toBe("");
+});
+it("hides Windows permission content before any snapshot arrives", () => {
+  vi.stubGlobal("navigator", { platform: "Win32" });
+  h.snapshot = null;
+  expect(renderToStaticMarkup(<PermissionsPage />)).toBe("");
+});
+it("preserves Linux capture help without macOS permission controls", () => {
+  h.snapshot!.platform = "linux";
+  h.snapshot!.items = [];
+  const html = renderToStaticMarkup(<PermissionsPage />);
+  expect(html).toContain("Claw.PermissionGuide.linux");
+  expect(html).toContain("Claw.PermissionGuide.testCapture");
+  expect(html).not.toContain("Claw.PermissionGuide.openSettings");
+});
 it("does not claim helper access from the main app's grant", () => {
   h.target = "helper_accessibility";
   const html = renderToStaticMarkup(<PermissionsPage />);

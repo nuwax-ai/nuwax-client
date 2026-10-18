@@ -144,14 +144,23 @@ describe("permission onboarding snapshot", () => {
     mock.dismissed.mockReturnValue(true);
     expect((await service.getPermissionSnapshot()).seen).toBe(true);
   });
+  it("does not surface the authorization window on Windows", () => {
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    const provider = vi.fn();
+    service.setPermissionGuideWindowProvider(provider);
+    expect(service.openPermissionGuide("overview")).toBe(false);
+    expect(service.openPermissionGuide("screen_recording")).toBe(false);
+    expect(provider).not.toHaveBeenCalled();
+  });
   it("keeps helper identity independent and requests only on a click", async () => {
     const adapter = {
-      check: vi
-        .fn()
-        .mockResolvedValue({
-          accessibility: "granted",
-          screen_recording: "denied",
-        }),
+      check: vi.fn().mockResolvedValue({
+        accessibility: "granted",
+        screen_recording: "denied",
+      }),
       request: vi.fn().mockResolvedValue(true),
     };
     const unregister = service.registerHelperPermissionAdapter(adapter);
@@ -174,7 +183,9 @@ describe("permission onboarding snapshot", () => {
     await service.openGuidedPermissionSettings("screen_recording");
     expect(mock.sources).toHaveBeenCalledTimes(1);
     expect(mock.settings).toHaveBeenCalledWith("screen_recording");
-    expect(await service.openGuidedPermissionSettings("accessibility" as any)).toBe(false);
+    expect(
+      await service.openGuidedPermissionSettings("accessibility" as any),
+    ).toBe(false);
     expect(mock.ax).not.toHaveBeenCalled();
     expect(await service.openGuidedPermissionSettings("__proto__" as any)).toBe(
       false,
