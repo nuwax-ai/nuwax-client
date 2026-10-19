@@ -27,6 +27,10 @@ electron-builder 打包与运行资源准备。本页是完整清单；日常速
 
 日常修改先运行相关测试，例如 `node --test scripts/client-pack.test.mjs`，或在已同步的基座 crate 内执行 `npm run test:run -- <相关文件>`。已有结果充分且代码未变时复用；源码注释和文档不要求新增行为测试。
 
+Windows NSIS 默认使用 ZIP 直接解压到安装目录，压缩级别为 `normal`，避免 7z 临时解压后再次复制整树。最终 EXE 保留独立 `.blockmap`，供现有更新器差分下载；安装器与签名、发布来源校验继续执行。归档策略固定验证 electron-builder / app-builder-lib `25.1.8`，升级 SDK 时须重新核对模板和更新兼容性。
+
+受控对照可显式设置 `NUWAX_WINDOWS_INSTALLER_ARCHIVE=7z-qa` 或 `zip-qa`；仅接受独立 Windows 目标，旧 dist 入口必须显式 `--publish never`。QA dispatch 的 `windows_archive=7z` 会映射到 `7z-qa`。`qa/**` 只生成隔离产物，不发布版本；完整命名见[分支规则](branch-naming.md)。实际首装验收状态见[安装提速记录](acceptance/20261019-windows-first-install-speed.md)。
+
 CI 由 `scripts/ci-scope.mjs` 根据提交差异选择检查；脚本测试按相对导入依赖选择，无法找到归属时执行全部脚本测试。JS/TS 的普通注释或格式变化通过语法树比较跳过，类型检查／打包指令、解析失败、新增或删除文件不采用此优化。
 
 | 改动 | CI 检查 |

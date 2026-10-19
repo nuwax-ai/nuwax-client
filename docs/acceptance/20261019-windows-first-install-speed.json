@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "status": "in-progress-not-accepted",
+  "targetBranch": "release/v3.1",
+  "implementationCommit": "a5bbe676b7f00c210bdf196c24074f1cb15439a2",
+  "pr": "https://github.com/nuwax-ai/nuwax-client/pull/31",
+  "releaseCreated": false,
+  "publicBaseline": {
+    "tag": "v3.0.17-beta.7",
+    "source": "cb436f9d5a0e25377c90de507bdd82d9d9515b01",
+    "bytes": 724376637,
+    "sha256": "1f28b0ebe6622b9bbba16808880ed2f5191d2fa049a317b16019fe86d6e2d043"
+  },
+  "pins": {
+    "base": "51177cd6b8190510d016f24e1a21f0a5e1350296",
+    "frontend": "cc1bda80eaa59e075616df1fef3f7ac0c33363d2",
+    "dist": "c16358ad0b200dda0a0a3fa8c45f14ae9c2a02a1"
+  },
+  "machine": {
+    "recordedAt": "2026-10-19T17:34:01.7824013+08:00",
+    "cpu": {
+      "Name": "AMD Ryzen 7 5700U with Radeon Graphics         ",
+      "NumberOfCores": 8,
+      "NumberOfLogicalProcessors": 16
+    },
+    "disks": [
+      {
+        "FriendlyName": "ZHITAI TiPlus7100 1TB",
+        "MediaType": "SSD",
+        "Size": 1024209543168
+      }
+    ],
+    "defender": {
+      "AntivirusEnabled": true,
+      "RealTimeProtectionEnabled": true
+    },
+    "freeGB": 16.07,
+    "os": {
+      "Caption": "Microsoft Windows 11 专业版",
+      "Version": "10.0.26200",
+      "BuildNumber": "26200",
+      "OSArchitecture": "64-bit",
+      "TotalVisibleMemorySize": 32930536
+    }
+  },
+  "packages": [
+    {
+      "mode": "7z",
+      "source": "cb436f9d5a0e25377c90de507bdd82d9d9515b01",
+      "version": "3.1.0-qa.20261019.1",
+      "bytes": 724313346,
+      "sha256": "7fbc3174564fadcfca795e26a9a690794eaad66bed195d73691d8731cc27296a",
+      "role": "measured baseline"
+    },
+    {
+      "mode": "7z",
+      "source": "cb436f9d5a0e25377c90de507bdd82d9d9515b01",
+      "version": "3.1.0-qa.20261019.1",
+      "bytes": 724313373,
+      "sha256": "f3fea1fbd49d63a5df3989e1f1272237a6d766046c8d79ccd57ab05ce6b4162f",
+      "role": "unmeasured baseline with corrected trace"
+    },
+    {
+      "mode": "zip",
+      "version": "3.1.0-qa.20261019.1",
+      "bytes": 944921869,
+      "sha256": "0ad432ea5ab3e262e99e57c5d61dade3bdfc83e7dfb773edeafbd78b52b0ee78",
+      "buildElapsedMs": 528282,
+      "embeddedArchive": "app-64.zip",
+      "compression": "normal",
+      "blockmap": {
+        "bytes": 963211,
+        "sha256": "de465f851cd4a214228cdead40ec34e0865e55123604f30ad11b2a822699bd72",
+        "version": "2",
+        "blocks": 45104,
+        "coveredBytes": 944921869
+      },
+      "sourceSha256": {
+        "installer-archive-policy.cjs": "078f5208cf0a3341e5fb38f34d9842eafbed0823d5b302bbe628125df4f6dcdc",
+        "installer-blockmap.cjs": "bb689f782025e1e04a8f58c59952d925992bb91eb5d30bb6e64e26da85c90f45",
+        "run-build-electron.js": "2d93e60498297f35761379f473d82e5a5b22d461df75fbc1eaf2877e4c3ecf0b"
+      },
+      "installed": false
+    }
+  ],
+  "runs": [
+    {
+      "run": "baseline-1",
+      "exitCode": 0,
+      "files": 31520,
+      "elapsedMs": 638132,
+      "start": "2026-10-19T16:55:00.5972277+08:00",
+      "oldQaRegistrationAbsent": true,
+      "defender": {
+        "AntivirusEnabled": true,
+        "RealTimeProtectionEnabled": true
+      },
+      "session": 2,
+      "freeGB": 10.38,
+      "end": "2026-10-19T17:05:38.7507194+08:00",
+      "controlledSilentFirstInstall": true,
+      "exeSha256": "7fbc3174564fadcfca795e26a9a690794eaad66bed195d73691d8731cc27296a",
+      "bytes": 2649107446,
+      "mode": "7z",
+      "stageTraceComplete": false,
+      "stageTraceNote": "QA FileOpen append lacked FileSeek END; total stopwatch valid, stage split unusable. Instrumentation fixed in the unmeasured second baseline."
+    }
+  ],
+  "baselineIntegrity": {
+    "label": "baseline-1",
+    "verifiedFiles": 31519,
+    "bytes": 2648733271,
+    "allInstalledPayloadBytesMatch": true,
+    "expectedManifestSha256": "e547a0f13ec6e63c0b428c71c78625343324be7a34cea9879e6f82e49b619db8",
+    "extra": [
+      "Uninstall NuwaxInstallSpeedQA.exe"
+    ]
+  },
+  "asarIntegrity": {
+    "verifiedOriginalFiles": 19771,
+    "unchangedOriginalCode": true,
+    "changedForQaOnly": [
+      "package.json",
+      "qa-bootstrap.cjs"
+    ]
+  },
+  "ci": {
+    "url": "https://github.com/nuwax-ai/nuwax-client/actions/runs/39230869377",
+    "scriptPass": 370,
+    "scriptSkip": 2,
+    "commercialPass": 3114,
+    "commercialSkip": 5,
+    "terminalUbuntu": "passed",
+    "terminalWindows": "passed"
+  },
+  "pending": [
+    "ZIP actual install payload integrity and updater cache verification",
+    "Repeated controlled first installs and median comparison",
+    "Fresh-profile startup",
+    "7z to ZIP upgrade with unknown-file preservation",
+    "Standalone uninstall and updater cache check"
+  ],
+  "interference": {
+    "scheduledTaskLastResult": "0xC000013A",
+    "independentInteractiveUninstallObserved": true,
+    "deleteLocalDataSelectedInIndependentChain": true,
+    "action": "Stopped only tracked own uninstall chain; await machine coordination before further timed installs"
+  },
+  "rawEvidenceLocation": "C:\\nuwax-qa\\first-install-20261019\\reports",
+  "packageSizeDelta": {
+    "bytes": 220608523,
+    "percent": 30.458,
+    "downloadTimeMeasured": false
+  }
+}
