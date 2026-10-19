@@ -114,6 +114,9 @@ Var nuwaxDataLocal
     StrCpy $R3 "-DeleteLocalData"
   ${endif}
   SetShellVarContext current
+  ; The inventory pass runs in a hidden PowerShell process and the log stays
+  ; silent until it finishes; say so before large payloads look stuck.
+  DetailPrint `Verifying and removing owned files; large installations can take a few minutes with no further log output...`
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\uninstall-data.ps1" -InstallDir "$INSTDIR" -ManifestPath "$PLUGINSDIR\uninstall-payload.json" -ProfileDir "$PROFILE" -RoamingDir "$APPDATA" -LocalDir "$LOCALAPPDATA" $R3`
   Pop $R0
   Pop $R1

@@ -23,13 +23,35 @@ function Existing-Attributes([string]$Value) {
   catch [IO.DirectoryNotFoundException] { return $null }
 }
 
+# Payload inventories reach tens of thousands of files that share a few
+# thousand ancestor directories; the original per-file ancestor walk was the
+# dominant uninstall cost on real installs (minutes of CPU with no output).
+# Verify each directory once per run instead. Whenever a path enters the set,
+# its whole ancestor chain entered in the same walk, so an early hit proves
+# the remaining chain was already verified.
+$verifiedAncestors = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 function Assert-NoReparseAncestors([string]$Value) {
+  $pending = $null
   $current = $Value
   while ($current) {
-    $attributes = Existing-Attributes $current
-    if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing a redirected path: $current" }
+    if (-not $verifiedAncestors.Add($current)) { break }
+    if ($null -eq $pending) { $pending = New-Object 'System.Collections.Generic.List[string]' }
+    $pending.Add($current)
     $current = [IO.Path]::GetDirectoryName($current)
   }
+  if ($null -ne $pending) {
+    foreach ($path in $pending) {
+      $attributes = Existing-Attributes $path
+      if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing a redirected path: $path" }
+    }
+  }
+}
+
+# The uninstaller UI shows nothing while the hidden PowerShell process runs;
+# keep a timestamped trace so a stalled pass can be diagnosed post mortem.
+$progressPath = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'Nuwax-uninstall-progress.log')
+function Write-UninstallProgress([string]$Message) {
+  try { [IO.File]::AppendAllText($progressPath, ('{0:u} {1}{2}' -f [DateTime]::UtcNow, $Message, [Environment]::NewLine)) } catch { }
 }
 
 $root = Full-LocalPath $InstallDir
@@ -61,15 +83,23 @@ $directories = @($manifest.directories | ForEach-Object { Payload-Path $_ })
 if ($files.Count -eq 0 -or $manifest.executable -notin $manifest.files) { throw 'Incomplete payload inventory.' }
 # Preflight every owned file before deleting any. Unknown entries, including
 # files added inside resources, are never enumerated as removal candidates.
+# The probes are exception-free (Windows PowerShell 5.1 exception handling in
+# these loops costs more than the filesystem calls themselves).
+$preflightDone = 0
 foreach ($file in $files) {
   Assert-NoReparseAncestors $file
-  $attributes = Existing-Attributes $file
-  if ($null -ne $attributes) {
+  if ([IO.File]::Exists($file)) {
+    $attributes = [IO.File]::GetAttributes($file)
     if ($attributes -band [IO.FileAttributes]::Directory) { throw "Payload file became a directory: $file" }
     $stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
     $stream.Dispose()
+  } elseif ([IO.Directory]::Exists($file)) {
+    throw "Payload file became a directory: $file"
   }
+  $preflightDone++
+  if (($preflightDone % 5000) -eq 0) { Write-UninstallProgress "preflight $preflightDone/$($files.Count)" }
 }
+Write-UninstallProgress "preflight-complete $preflightDone/$($files.Count)"
 
 function Remove-OwnedData([string]$Target) {
   $attributes = Existing-Attributes $Target
@@ -94,15 +124,25 @@ if ($DeleteLocalData) {
         $target.StartsWith($root + '\', $comparison)) { throw 'Installation and local data directories overlap; refusing local data deletion.' }
   }
 }
+$deleted = 0
 foreach ($file in $files) {
   Assert-NoReparseAncestors $file
-  if ($null -ne (Existing-Attributes $file)) { [IO.File]::Delete($file) }
+  if ([IO.File]::Exists($file)) {
+    [IO.File]::Delete($file)
+    $deleted++
+    if (($deleted % 5000) -eq 0) { Write-UninstallProgress "delete $deleted/$($files.Count)" }
+  }
 }
+Write-UninstallProgress "delete-complete $deleted/$($files.Count)"
 foreach ($directory in ($directories | Sort-Object Length -Descending)) {
   Assert-NoReparseAncestors $directory
   if ([IO.Directory]::Exists($directory) -and [IO.Directory]::GetFileSystemEntries($directory).Length -eq 0) {
     [IO.Directory]::Delete($directory, $false)
   }
 }
-foreach ($target in $dataTargets) { Remove-OwnedData $target }
+foreach ($target in $dataTargets) {
+  Write-UninstallProgress "data-start $target"
+  Remove-OwnedData $target
+  Write-UninstallProgress "data-complete $target"
+}
 Write-Output ('Removed owned program files. Local data deletion requested: ' + [bool]$DeleteLocalData + '. Unknown installation files are retained.')
