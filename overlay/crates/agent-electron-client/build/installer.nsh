@@ -51,6 +51,8 @@
   ${endif}
 !macroend
 
+!include "${BUILD_RESOURCES_DIR}\shortcut-repair.nsh"
+
 ; Standalone failures stop before registration cleanup and keep the uninstaller
 ; for retry. Updates retain the atomic rename/restore path of the parent installer.
 !macro nuwaxRecoveryScripts
@@ -58,6 +60,7 @@
   File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
   File /oname=$PLUGINSDIR\installer-backup-retention.ps1 "${BUILD_RESOURCES_DIR}\installer-backup-retention.ps1"
 !macroend
+
 
 !macro customRemoveFiles
   ${if} ${isUpdated}
@@ -304,6 +307,7 @@
       ; installs prepare exactly the registrations that installSection removes.
       ${if} $installMode != "all"
       ${orIf} ${UAC_IsAdmin}
+        !insertmacro nuwaxUpdateShortcuts Capture
         !insertmacro nuwaxPrepareOldInstall SHELL_CONTEXT nuwax-old-shell.txt
         ${if} $installMode == "all"
           !insertmacro nuwaxPrepareOldInstall HKEY_CURRENT_USER nuwax-old-current.txt
@@ -393,4 +397,5 @@
   ${if} $installMode == "all"
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
   ${endif}
+  !insertmacro nuwaxUpdateShortcuts Repair
 !macroend
