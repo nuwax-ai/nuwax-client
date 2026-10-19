@@ -47,6 +47,8 @@ SilentUnInstall silent
 !define VERSION "0.0.0"
 !define PRODUCT_FILENAME "Nuwax"
 !define APP_PACKAGE_NAME "nuwax-fixture"
+!define INSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
+!define UNINSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
 !define BUILD_RESOURCES_DIR "{CLIENT / 'overlay/crates/agent-electron-client/build'}"
 !define NUWAX_UNINSTALL_MANIFEST "{folder / 'payload.json'}"
 !define isUpdated '"$updateMode" == "1"'
@@ -63,6 +65,9 @@ Function un.onInit
     StrCpy $updateMode "1"
   ${{EndIf}}
   ClearErrors
+  !ifmacrodef windowsRepairRegisteredPaths
+    !insertmacro windowsRepairRegisteredPaths
+  !endif
   SetOutPath "$EXEDIR"
   InitPluginsDir
 FunctionEnd
@@ -136,7 +141,10 @@ for case,updated,locked in [('standalone-locked',False,True),('updated-locked',T
  outside=root/'outside-sentinel.txt';outside.write_bytes(b'outside fake install must survive')
  original_hash=hashlib.sha256(uninstaller.read_bytes()).hexdigest()
  if case=='standalone-missing-uninstaller':uninstaller.unlink()
- with winreg.CreateKey(winreg.HKEY_CURRENT_USER,reg) as key:winreg.SetValueEx(key,'FixtureOnly',0,winreg.REG_SZ,'not a real uninstall registration')
+ with winreg.CreateKey(winreg.HKEY_CURRENT_USER,reg) as key:
+  winreg.SetValueEx(key,'FixtureOnly',0,winreg.REG_SZ,'not a real uninstall registration')
+  winreg.SetValueEx(key,'UninstallString',0,winreg.REG_SZ,'"'+str(uninstaller)+'" /currentuser')
+  winreg.SetValueEx(key,'InstallLocation',0,winreg.REG_SZ,str(install))
  trace=root/'cleanup-trace.txt'
  if trace.exists():trace.unlink()
  handle=None
