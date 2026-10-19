@@ -20,6 +20,13 @@ using System.IO;
 using System.Text.RegularExpressions;
 
 public static class NuwaxUninstallPaths {
+  public static void Progress(string phase, int count, int total) {
+    try {
+      File.AppendAllText(Path.Combine(Path.GetTempPath(), "Nuwax-uninstall-progress.log"),
+        DateTime.UtcNow.ToString("u") + " " + phase + " " + count + "/" + total + Environment.NewLine);
+    } catch { /* Diagnostics must never block removal. */ }
+  }
+
   public static FileAttributes? ExistingAttributes(string path) {
     try { return File.GetAttributes(path); }
     catch (FileNotFoundException) { return null; }
@@ -54,21 +61,30 @@ public static class NuwaxUninstallPaths {
   }
 
   public static void PreflightFiles(string[] files) {
+    int checkedFiles = 0;
+    Progress("preflight-start", 0, files.Length);
     foreach (string file in files) {
       AssertNoReparseAncestors(file);
       FileAttributes? attributes = ExistingAttributes(file);
-      if (!attributes.HasValue) continue;
-      if ((attributes.Value & FileAttributes.Directory) != 0)
-        throw new IOException("Payload file became a directory: " + file);
-      using (File.Open(file, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+      if (attributes.HasValue) {
+        if ((attributes.Value & FileAttributes.Directory) != 0)
+          throw new IOException("Payload file became a directory: " + file);
+        using (File.Open(file, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+      }
+      if (++checkedFiles % 5000 == 0) Progress("preflight", checkedFiles, files.Length);
     }
+    Progress("preflight-complete", checkedFiles, files.Length);
   }
 
   public static void RemoveFiles(string[] files) {
+    int checkedFiles = 0;
+    Progress("delete-start", 0, files.Length);
     foreach (string file in files) {
       AssertNoReparseAncestors(file);
       if (ExistingAttributes(file).HasValue) File.Delete(file);
+      if (++checkedFiles % 5000 == 0) Progress("delete", checkedFiles, files.Length);
     }
+    Progress("delete-complete", checkedFiles, files.Length);
   }
 }
 '@

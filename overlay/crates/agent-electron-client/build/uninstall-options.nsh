@@ -119,7 +119,8 @@ Var nuwaxDataLocal
     StrCpy $R3 "-DeleteLocalData"
   ${endif}
   SetShellVarContext current
-  DetailPrint "正在检查并移除程序文件，请稍候..."
+  ; The inventory pass runs in a hidden PowerShell process; explain the wait.
+  DetailPrint "正在检查并移除程序文件，请稍候；文件较多时需要数分钟..."
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\uninstall-data.ps1" -InstallDir "$INSTDIR" -ManifestPath "$PLUGINSDIR\uninstall-payload.json" -ProfileDir "$PROFILE" -RoamingDir "$APPDATA" -LocalDir "$LOCALAPPDATA" $R3`
   Pop $R0
   Pop $R1
