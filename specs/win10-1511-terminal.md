@@ -13,7 +13,7 @@ Windows 10 1511 x64 必须保留内嵌交互终端。现有终端前端和业务
 
 - 在壳仓 `native/legacy-terminal/` 维护独立 Go 兼容服务，使用固定版本 Gorilla WebSocket 和 WinPTY 0.4.3 原生 DLL/agent。Go 通过 Windows DLL API 调用 WinPTY，不引入 Node 原生插件。
 - 兼容服务接受当前 ttyd 使用的 `-p/-i/-W/-w/-a` 启动参数，提供 `/ws` + `tty` 子协议。返回 `--version` 供现有可用性检查使用。
-- 商业 overlay 的 binaryLocator 仅在 `win32` 且系统 build <17763 时选择兼容程序；新系统继续使用原 ttyd。旧系统资源缺失时返回兼容程序的预期路径，让现有缺失资源错误显式暴露，禁止回退到必定失败的 ConPTY。
+- 商业 overlay 的 binaryLocator 使用 `os.release()` 返回的内核版本判断，不比较 1507/1511/22H2 等发行标签。Windows 10 的 `10.0.<build>[.<revision>]` 以 17763 为分界：1507～1803（10240～17134）选择 WinPTY，1809～22H2（17763～19045）继续使用原 ttyd；Windows 11 的 `10.0.22000+` 同样使用原 ttyd。无法解析或无法确认支持 ConPTY 的内核版本保守选择兼容程序。兼容资源缺失时返回其预期路径，让现有缺失资源错误显式暴露，禁止回退到 ConPTY。
 - 资源位于 `resources/ttyd/legacy/win32-x64/`，沿用现有 ttyd extraResources。本地 prepare、pack 和 Windows 发布工作流均准备并核验资源。
 
 ### 数据与契约
@@ -30,6 +30,7 @@ Windows 10 1511 x64 必须保留内嵌交互终端。现有终端前端和业务
 |---|---|
 | Windows 10 1511 x64 / build <17763 | WinPTY 兼容服务 |
 | Windows build >=17763 | 现有 ttyd / ConPTY |
+| Windows 内核版本无法识别 | WinPTY 兼容服务；资源缺失则显式失败 |
 | macOS / Linux | 现有 ttyd |
 
 ## 异常与失败场景
