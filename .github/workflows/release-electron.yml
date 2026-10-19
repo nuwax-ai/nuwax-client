@@ -590,7 +590,7 @@ jobs:
 
       - name: Upload macOS recovery checkpoint
         if: failure() && runner.os == 'macOS' && env.NUWAX_SIGNED_MAC_BUILD == '1'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mac-notary-recovery-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/mac-notary-recovery-${{ matrix.arch }}.tar.gz
