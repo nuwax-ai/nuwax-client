@@ -83,6 +83,25 @@ test('locked builder emits the real Linux launcher label and both Windows instal
   }
 });
 
+test('locked NSIS builder uses the branded uninstall entry without renaming the product', async t => {
+  const require = builder(t);
+  if (!require) return;
+  const { NsisTarget } = require('app-builder-lib/out/targets/nsis/NsisTarget.js');
+  const { expandMacro } = require('app-builder-lib/out/util/macroExpander.js');
+  const build = branded('win32');
+  for (const version of ['3.0.17', '3.0.18-beta.1']) {
+    const appInfo = { productName: build.productName, sanitizedProductName: build.productName, version };
+    const packager = { appInfo, info: { cancellationToken: { cancelled: false } },
+      getResource: async () => null,
+      expandMacro: (value, arch, extra, sanitized) => expandMacro(value, arch, appInfo, extra, sanitized) };
+    const defines = {};
+    await NsisTarget.prototype.configureDefines.call({ packager, options: build.nsis }, false, defines);
+    assert.equal(defines.UNINSTALL_DISPLAY_NAME, `女娲Nuwax ${version}`);
+    assert.equal(defines.SHORTCUT_NAME, '女娲Nuwax');
+    assert.equal(appInfo.productName, 'Nuwax');
+  }
+});
+
 test('macOS resolves the real Finder and bundle names through native localization', { skip: process.platform !== 'darwin' }, async t => {
   const dir = fixture(t);
   const app = path.join(dir, 'Nuwax.app');
