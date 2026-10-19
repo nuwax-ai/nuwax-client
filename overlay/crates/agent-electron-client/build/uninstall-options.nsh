@@ -84,13 +84,7 @@ Var nuwaxDataLocal
   FunctionEnd
 !macroend
 
-!macro nuwaxRemoveOwnedFiles
-  InitPluginsDir
-  SetOutPath "$PLUGINSDIR"
-  ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
-    !insertmacro nuwaxStopStandaloneUninstall "卸载程序缺失，卸载已停止，原安装文件和卸载登记未删除。"
-  ${endif}
-  File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
+!macro nuwaxExtractUninstallInventory
   !ifndef NUWAX_UNINSTALL_MANIFEST
     !ifdef APP_64
       !ifdef APP_ARM64
@@ -109,6 +103,16 @@ Var nuwaxDataLocal
     !endif
   !endif
   File /oname=$PLUGINSDIR\uninstall-payload.json "${NUWAX_UNINSTALL_MANIFEST}"
+!macroend
+
+!macro nuwaxRemoveOwnedFiles
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
+    !insertmacro nuwaxStopStandaloneUninstall "卸载程序缺失，卸载已停止，原安装文件和卸载登记未删除。"
+  ${endif}
+  File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
+  !insertmacro nuwaxExtractUninstallInventory
   StrCpy $R3 ""
   ${if} $nuwaxDeleteLocalData == 1
     StrCpy $R3 "-DeleteLocalData"

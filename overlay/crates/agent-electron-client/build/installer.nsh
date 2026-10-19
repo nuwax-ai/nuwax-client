@@ -53,8 +53,25 @@
 
 ; Standalone failures stop before registration cleanup and keep the uninstaller
 ; for retry. Updates retain the atomic rename/restore path of the parent installer.
+!macro nuwaxRecoveryScripts
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+  File /oname=$PLUGINSDIR\installer-backup-retention.ps1 "${BUILD_RESOURCES_DIR}\installer-backup-retention.ps1"
+!macroend
+
 !macro customRemoveFiles
   ${if} ${isUpdated}
+    ; The old uninstaller is the trusted source of its own payload inventory.
+    ; Legacy uninstallers leave no proof and their backups remain protected.
+    !insertmacro nuwaxRecoveryScripts
+    !insertmacro nuwaxExtractUninstallInventory
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+    Pop $R0
+    Pop $R1
+    ${if} $R0 != 0
+      !insertmacro nuwaxLogRecoveryFailure RecordPayload
+    ${endif}
+    ClearErrors
     CreateDirectory "$PLUGINSDIR\old-install"
 
     Push ""
@@ -147,7 +164,7 @@
     ; a verified path; do not carry that stale flag into the upgrade steps.
     ClearErrors
     DetailPrint `Preserving old "${PRODUCT_NAME}" installation in $R5 (${ROOT_KEY})`
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+    !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}"`
     Pop $R0
     Pop $R1
@@ -165,7 +182,7 @@
 
 !macro nuwaxRestoreOldInstall STATE_FILE
   ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+    !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Restore -StatePath "$PLUGINSDIR\${STATE_FILE}"`
     Pop $R0
     Pop $R1
@@ -195,7 +212,7 @@
   ${if} $R8 == 1
     StrCpy $R8 "missing"
     ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+      !insertmacro nuwaxRecoveryScripts
       nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Rollback -StatePath "$PLUGINSDIR\${STATE_FILE}"`
       Pop $R8
       Pop $R9

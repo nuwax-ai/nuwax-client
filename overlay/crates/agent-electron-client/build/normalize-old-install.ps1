@@ -1,7 +1,9 @@
 param(
-  [ValidateSet('Prepare', 'Restore', 'Rollback')][string]$Action = 'Prepare',
+  [ValidateSet('Prepare', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup')][string]$Action = 'Prepare',
   [string]$InstallDir,
-  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath
+  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath,
+  [string]$PayloadInventoryPath,
+  [switch]$CleanupRuntime
 )
 
 # The old electron-builder uninstaller recursively removes InstallDir. Preserve
@@ -157,6 +159,10 @@ function Get-MarkerPath([string]$Root) {
   )
 }
 
+$script:recoveryRuntimePath = $PSCommandPath
+. (Join-Path $PSScriptRoot 'installer-backup-retention.ps1')
+if ($CleanupRuntime -and $Action -ne 'Cleanup') { throw 'CleanupRuntime is only valid for background cleanup.' }
+
 $statePathFull = [System.IO.Path]::GetFullPath($StatePath)
 $stateFile = Get-ExtendedPath $statePathFull
 $fromState = $null
@@ -166,9 +172,9 @@ if ([System.IO.File]::Exists($stateFile)) {
 $records = $null
 $recoveryDir = $fromState
 
-if ($Action -eq 'Prepare') {
+if ($Action -in @('Prepare', 'RecordPayload', 'Cleanup')) {
   if (-not $InstallDir) {
-    throw 'Prepare requires InstallDir.'
+    throw "$Action requires InstallDir."
   }
   $root = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd([char]92)
 } else {
@@ -206,6 +212,17 @@ if ($statePathFull.StartsWith($root + '\', $pathComparison)) {
 
 $marker = Get-MarkerPath $root
 $extendedMarker = Get-ExtendedPath $marker
+$recoveryMutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)))
+$mutexHeld = $false
+try { $mutexHeld = $recoveryMutex.WaitOne(30000) }
+catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
+if (-not $mutexHeld) { $recoveryMutex.Dispose(); throw 'Another recovery operation is active for this installation.' }
+try {
+
+if ($Action -eq 'Cleanup') {
+  Invoke-RecoveryRetention $root
+  exit 0
+}
 
 # StatePath lives in NSIS PLUGINSDIR. The sibling marker survives a process
 # restart, while the JSONL manifest inside recovery records each individual
@@ -265,6 +282,14 @@ if ($recoveryDir) {
   }
 }
 
+if ($Action -eq 'RecordPayload') {
+  if ($recoveryDir) {
+    if (-not $PayloadInventoryPath) { throw 'RecordPayload requires an embedded inventory.' }
+    Save-RecoveryPayloadInventory $PayloadInventoryPath
+  }
+  exit 0
+}
+
 if ($Action -eq 'Rollback') {
   if (-not $recoveryDir) {
     exit 0
@@ -321,7 +346,7 @@ if ($Action -eq 'Rollback') {
     }
   }
   if ($conflicts -eq 0 -and $missing -eq 0 -and $moveFailures.Count -eq 0 -and $uninstallerPresent) {
-    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned })
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
     if ([System.IO.File]::Exists($extendedMarker)) {
       [System.IO.File]::Delete($extendedMarker)
     }
@@ -457,12 +482,14 @@ if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare) {
     Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
     exit 3
   }
-  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts; payloadExtrasRestored = $script:payloadRestored; payloadCollisionsRetained = $script:payloadCollisions })
+  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts; payloadExtrasRestored = $script:payloadRestored; payloadCollisionsRetained = $script:payloadCollisions; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
   if ([System.IO.File]::Exists($extendedMarker)) {
     [System.IO.File]::Delete($extendedMarker)
   }
   Write-Output "Restored $restored non-application entries and $script:payloadRestored missing payload-directory entries; $script:payloadCollisions existing payload paths retained in $recoveryDir"
   if (-not $resumeRestoreBeforePrepare) {
+    try { Start-RecoveryRetention $root }
+    catch { Write-Output ('Backup retention skipped: ' + $_.Exception.Message) }
     exit 0
   }
   if ([System.IO.File]::Exists($stateFile)) {
@@ -627,3 +654,11 @@ try {
 }
 
 Write-Output "Preserved $($plans.Count) old installation entries in $recoveryDir"
+} finally {
+  if ($mutexHeld) { $recoveryMutex.ReleaseMutex() }
+  $recoveryMutex.Dispose()
+  if ($CleanupRuntime) {
+    try { Remove-RecoveryRetentionRuntime ([IO.Path]::GetDirectoryName($script:recoveryRuntimePath)) $root }
+    catch { Write-Output ('Cleanup runtime retained: ' + $_.Exception.Message) }
+  }
+}

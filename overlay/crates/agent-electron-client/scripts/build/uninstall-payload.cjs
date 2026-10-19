@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 // The NSIS uninstaller embeds this build-time inventory. A mutable installed
 // manifest must never authorize deleting arbitrary files during elevation.
@@ -13,7 +14,19 @@ function writeUninstallPayload({ packager, appOutDir, arch }) {
       || !/^[A-Za-z0-9 _.-]+\.exe$/.test(executable)) {
     throw new Error('[uninstall] Unsupported commercial payload identity');
   }
-  const files = [], directories = [];
+  const files = [], directories = [], fileHashes = {};
+  const hashBuffer = Buffer.allocUnsafe(1024 * 1024);
+  function hashFile(file) {
+    const descriptor = fs.openSync(file, 'r');
+    const hash = createHash('sha256');
+    try {
+      let length;
+      while ((length = fs.readSync(descriptor, hashBuffer, 0, hashBuffer.length, null)) !== 0) {
+        hash.update(hashBuffer.subarray(0, length));
+      }
+      return hash.digest('hex');
+    } finally { fs.closeSync(descriptor); }
+  }
   function visit(folder, prefix = '') {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
       const relative = prefix + entry.name;
@@ -21,13 +34,16 @@ function writeUninstallPayload({ packager, appOutDir, arch }) {
       if (entry.isDirectory()) {
         directories.push(relative);
         visit(path.join(folder, entry.name), `${relative}/`);
-      } else if (entry.isFile()) files.push(relative);
+      } else if (entry.isFile()) {
+        files.push(relative);
+        fileHashes[relative] = hashFile(path.join(folder, entry.name));
+      }
       else throw new Error('[uninstall] Unsupported payload entry');
     }
   }
   visit(appOutDir);
   if (!files.includes(executable)) throw new Error('[uninstall] Missing application executable');
-  const manifest = { schemaVersion: 1, executable, files, directories,
+  const manifest = { schemaVersion: 1, executable, files, directories, fileHashes,
     dataDirectoryName: `.${name}`, appDataName: packager.appInfo.productFilename,
     updaterCacheName: `${name}-updater` };
   const output = path.join(packager.projectDir, 'dist', 'installer-uninstall', `payload-${architecture}.json`);
