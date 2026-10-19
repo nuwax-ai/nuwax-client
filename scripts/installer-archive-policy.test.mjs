@@ -6,6 +6,11 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { installedBuilder } from './test-support/fixtures.mjs';
+import blockmaps from '../overlay/crates/agent-electron-client/scripts/build/installer-blockmap.cjs';
+import { gunzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import { createServer, request } from 'node:http';
 import policy from '../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { builderConfig, pack } from './client/pack.mjs';
 import * as core from './client/core.mjs';
@@ -15,6 +20,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const client = core.paths(root).client;
 const pkg = JSON.parse(fs.readFileSync(path.join(client, 'package.json'), 'utf8'));
 const enabled = { [ENV_KEY]: 'zip-qa' };
+const sevenZip = { [ENV_KEY]: '7z-qa' };
+const zipArgs = ['--config.nsis.differentialPackage=false', '--config.nsis.useZip=true', `--config.afterAllArtifactBuild=${policy.LEGACY_BLOCKMAP_HOOK}`];
 const versions = { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' };
 const zipOptions = { env: enabled, platform: 'win32', builderVersions: versions };
 const configOptions = { frontendDist: '/fixture/frontend', helperDir: '/fixture/computer-use', output: '/fixture/release', version: '3.0.9-beta.1' };
@@ -56,7 +63,7 @@ function runLegacy(projectRoot, argv, env = {}, platform = 'darwin') {
   return commands;
 }
 
-test('unset and empty modes preserve the complete configuration and need no installed-version lookup', () => {
+test('non-Windows defaults preserve the complete configuration without an SDK lookup', () => {
   for (const env of [{}, { [ENV_KEY]: '' }]) {
     const config = structuredClone(pkg.build);
     const before = structuredClone(config);
@@ -66,12 +73,12 @@ test('unset and empty modes preserve the complete configuration and need no inst
   }
 });
 
-test('zip-qa changes exactly the paired archive options, preserving resources, targets and signing/publishing fields', () => {
+test('ZIP pairs archive options with the blockmap hook while preserving payload and signing fields', () => {
   const config = { ...structuredClone(pkg.build), afterSign: 'fixture-after-sign.js', publish: { provider: 'generic', url: 'https://example.invalid/releases' }, win: { ...pkg.build.win, certificateSha1: 'fixture-certificate' } };
   const before = structuredClone(config);
   const result = applyInstallerArchivePolicy(config, zipOptions);
   assert.deepEqual(config, before);
-  assert.deepEqual(result, { ...before, nsis: { ...before.nsis, differentialPackage: false, useZip: true } });
+  assert.deepEqual(result, { ...before, nsis: { ...before.nsis, differentialPackage: false, useZip: true }, afterAllArtifactBuild: policy.BLOCKMAP_HOOK });
   assert.equal(result.extraResources, config.extraResources);
   assert.equal(result.win, config.win);
   assert.equal(result.afterSign, config.afterSign);
@@ -121,7 +128,7 @@ test('ZIP policy owns the unique archive CLI pair and rejects callers supplying 
 
 test('ZIP legacy publishing requires explicit never and refuses every conflicting supplied value', () => {
   for (const argv of [['--publish', 'never'], ['--publish=never'], ['-p', 'never'], ['-p=never']]) {
-    assert.deepEqual(installerArchiveCliArgs({}, { ...zipOptions, argv }), ['--config.nsis.differentialPackage=false', '--config.nsis.useZip=true']);
+    assert.deepEqual(installerArchiveCliArgs({}, { ...zipOptions, argv }), zipArgs);
   }
   for (const argv of [[], ['--publish'], ['--publish', 'always'], ['--publish=onTag'], ['-p', 'onTagOrDraft'], ['-p=always'], ['-pnever'], ['--no-publish'], ['--publish=always', '--publish=never'], ['-p=never', '--publish=always'], ['-p=never', '--publish', 'never']]) {
     assert.throws(() => installerArchiveCliArgs({}, { ...zipOptions, argv }), /publish|short/);
@@ -134,19 +141,20 @@ test('conflicting CLI booleans and opaque config overrides fail safely', () => {
   }
 });
 
-test('local builderConfig keeps its full existing behavior, and ZIP only adds the two NSIS fields', () => {
+test('local builderConfig applies Windows ZIP defaults without mutating package input', () => {
   const before = structuredClone(pkg);
-  const defaultConfig = builderConfig(pkg, { ...configOptions, env: {}, platform: 'win32' });
-  const emptyConfig = builderConfig(pkg, { ...configOptions, env: { [ENV_KEY]: '' }, platform: 'win32' });
+  const defaultConfig = builderConfig(pkg, { ...configOptions, env: {}, platform: 'win32', builderVersions: versions });
+  const emptyConfig = builderConfig(pkg, { ...configOptions, env: { [ENV_KEY]: '' }, platform: 'win32', builderVersions: versions });
   const zipConfig = builderConfig(pkg, { ...configOptions, ...zipOptions });
   assert.deepEqual(defaultConfig, emptyConfig);
-  assert.deepEqual(zipConfig, { ...defaultConfig, nsis: { ...defaultConfig.nsis, differentialPackage: false, useZip: true } });
+  assert.deepEqual(zipConfig, defaultConfig);
+  assert.equal(defaultConfig.afterAllArtifactBuild, policy.BLOCKMAP_HOOK);
   assert.deepEqual(pkg, before);
   assert.deepEqual(zipConfig.extraResources, defaultConfig.extraResources);
   assert.deepEqual(zipConfig.win.extraResources, defaultConfig.win.extraResources);
 });
 
-test('legacy default command, prepare arch, and complete config forwarding remain unchanged', (t) => {
+test('legacy Windows defaults add ZIP and blockmaps while preserving prepare and target arguments', (t) => {
   const dir = temporaryClient(t);
   const argv = ['--win', '--x64', '--publish', 'never', '--config.nsis.shortcutName="女娲Nuwax"'];
   for (const env of [{}, { [ENV_KEY]: '' }]) {
@@ -154,17 +162,17 @@ test('legacy default command, prepare arch, and complete config forwarding remai
     assert.equal(commands.length, 2);
     assert.equal(commands[0].command, 'npm run prepare:all');
     assert.equal(commands[0].options.env.TARGET_ARCH, 'x64');
-    assert.equal(commands[1].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')}`);
+    assert.equal(commands[1].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} ${zipArgs.join(' ')}`);
   }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).build, pkg.build);
 });
 
-test('legacy explicit ZIP forwards only the paired options, including a native Windows default target', (t) => {
+test('legacy explicit ZIP forwards the archive pair and blockmap hook for Windows targets', (t) => {
   const dir = temporaryClient(t);
   for (const argv of [['--windows', '--x64', '--publish', 'never'], ['--x64', '-p=never']]) {
     const commands = runLegacy(dir, argv, { ...enabled, SKIP_PREPARE: '1' }, 'win32');
     assert.equal(commands.length, 1);
-    assert.equal(commands[0].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} --config.nsis.differentialPackage=false --config.nsis.useZip=true`);
+    assert.equal(commands[0].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} ${zipArgs.join(' ')}`);
   }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).build, pkg.build);
 });
@@ -185,7 +193,7 @@ test('ZIP legacy missing or conflicting publishing fails before any prepare or b
   }
 });
 
-test('ZIP legacy parser ambiguities fail before any command, while default forwarding remains unchanged', (t) => {
+test('QA parser ambiguities fail before preparation or packaging', (t) => {
   const dir = temporaryClient(t);
   const ambiguous = [
     ['--win', '--publish=never', '-p=never'],
@@ -203,10 +211,6 @@ test('ZIP legacy parser ambiguities fail before any command, while default forwa
   ];
   for (const argv of ambiguous) {
     assert.throws(() => runLegacy(dir, argv, enabled), (error) => error.commands.length === 0);
-    for (const env of [{}, { [ENV_KEY]: '' }]) {
-      const commands = runLegacy(dir, argv, { ...env, SKIP_PREPARE: '1' });
-      assert.equal(commands[0].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')}`);
-    }
   }
 });
 
@@ -231,15 +235,9 @@ test('local pack rejects an invalid mode or non-Windows ZIP before preparation',
 });
 
 test('generated ZIP config is accepted by installed 25.1.8 schema and selects matching vendor ZIP defines', async (t) => {
-  let builderFile;
-  try { builderFile = require.resolve('electron-builder/package.json', { paths: [client] }); } catch (error) {
-    if (error.code !== 'MODULE_NOT_FOUND') throw error;
-    t.skip('Install the audited builder dependencies to run the real schema contract check.');
-    return;
-  }
-  assert.deepEqual(installedBuilderVersions(client), versions);
-  const builderRequire = createRequire(builderFile);
-  builderRequire('app-builder-lib');
+  const builderRequire = installedBuilder(t);
+  if (!builderRequire) return;
+  assert.deepEqual(installedBuilderVersions(process.env.NUWAX_TEST_BUILDER_CLIENT_DIR ?? client), versions);
   const { configureBuildCommand, normalizeOptions } = builderRequire('./out/builder.js');
   const parse = (argv) => normalizeOptions(configureBuildCommand(builderRequire('yargs/yargs')(argv).parserConfiguration({ 'camel-case-expansion': false }).exitProcess(false)).parse());
   const duplicatePublish = parse(['--win', '--publish=never', '-p=never']);
@@ -261,4 +259,95 @@ test('generated ZIP config is accepted by installed 25.1.8 schema and selects ma
   NsisTarget.prototype.configureDefinesForAllTypeOfInstaller.call({ options: generated.nsis, isWebInstaller: false, packager: { appInfo: { productFilename: 'Nuwax', updaterCacheDirName: 'nuwax-updater' } } }, defines);
   assert.equal(defines.COMPRESSION_METHOD, 'zip');
   assert.ok(Object.hasOwn(defines, 'ZIP_COMPRESSION'));
+  assert.equal(defines.APP_INSTALLER_STORE_FILE, 'nuwax-updater\\installer.exe');
+});
+
+test('Windows defaults to direct ZIP while explicit 7z QA retains the vendor archive path', () => {
+  for (const env of [{}, { [ENV_KEY]: '' }]) {
+    assert.equal(policy.resolveInstallerArchiveMode({ env, platform: 'win32' }), 'zip');
+    const config = applyInstallerArchivePolicy({}, { ...zipOptions, env });
+    assert.deepEqual(config.nsis, { differentialPackage: false, useZip: true });
+    assert.equal(config.afterAllArtifactBuild, policy.BLOCKMAP_HOOK);
+    assert.deepEqual(installerArchiveCliArgs({}, { ...zipOptions, env, argv: ['--publish', 'always'] }), zipArgs);
+  }
+  assert.deepEqual(applyInstallerArchivePolicy({}, { ...zipOptions, env: sevenZip }).nsis, { differentialPackage: true, useZip: false });
+  assert.deepEqual(installerArchiveCliArgs({}, { ...zipOptions, env: sevenZip, argv: ['--publish', 'never'] }), ['--config.nsis.differentialPackage=true', '--config.nsis.useZip=false']);
+  assert.throws(() => installerArchiveCliArgs({}, { ...zipOptions, env: sevenZip, argv: ['--publish', 'always'] }), /publish/);
+  assert.throws(() => applyInstallerArchivePolicy({ afterAllArtifactBuild: 'custom-hook.cjs' }, zipOptions), /Compose/);
+});
+
+test('ZIP EXEs retain updater-readable blockmaps without changing signed distribution bytes', async t => {
+  const sdk = installedBuilder(t);
+  if (!sdk) return;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax blockmap '));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'Nuwax-Setup-3.1.0-beta.1.exe');
+  const bytes = Buffer.alloc(1024 * 1024, 37);
+  fs.writeFileSync(file, bytes);
+  const context = {
+    configuration: { nsis: { differentialPackage: false, useZip: true } },
+    artifactPaths: [file],
+    platformToTargets: new Map([['win', new Map([['nsis', { packager: { projectDir: process.env.NUWAX_TEST_BUILDER_CLIENT_DIR ?? client } }]])]]),
+  };
+  const files = await blockmaps(context);
+  assert.deepEqual(files, [file + '.blockmap']);
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  const map = JSON.parse(gunzipSync(fs.readFileSync(files[0])));
+  assert.equal(map.version, '2');
+  assert.equal(map.files[0].sizes.reduce((sum, size) => sum + size, 0), bytes.length);
+  assert.equal(map.files[0].checksums.length, map.files[0].sizes.length);
+  const first = fs.readFileSync(files[0]);
+  fs.writeFileSync(file, Buffer.alloc(1024 * 1024, 39));
+  await blockmaps(context);
+  assert.notDeepEqual(fs.readFileSync(files[0]), first, 'A stale blockmap must be replaced');
+  assert.equal(createHash('sha256').update(fs.readFileSync(file)).digest('hex'), createHash('sha256').update(Buffer.alloc(1024 * 1024, 39)).digest('hex'));
+  fs.unlinkSync(file);
+  await assert.rejects(blockmaps(context), /ENOENT/);
+  assert.deepEqual(await blockmaps({ configuration: { nsis: {} } }), []);
+});
+
+test('the installed updater reconstructs exact installer bytes using external ZIP-policy blockmaps', async t => {
+  const sdk = installedBuilder(t);
+  if (!sdk) return;
+  const project = process.env.NUWAX_TEST_BUILDER_CLIENT_DIR ?? client;
+  const updater = createRequire(require.resolve('electron-updater/package.json', { paths: [project] }));
+  const { GenericDifferentialDownloader } = updater('./out/differentialDownloader/GenericDifferentialDownloader.js');
+  const { CancellationToken } = updater('builder-util-runtime');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-updater-blockmap-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'setup.exe');
+  const oldFile = path.join(directory, 'cached-installer.exe');
+  const newFile = path.join(directory, 'downloaded-installer.exe');
+  const bytes = Buffer.concat(Array.from({ length: 65536 }, (_, i) => createHash('sha256').update(String(i)).digest()));
+  const context = {
+    configuration: { nsis: { differentialPackage: false, useZip: true } }, artifactPaths: [file],
+    platformToTargets: new Map([['win', new Map([['nsis', { packager: { projectDir: project } }]])]]),
+  };
+  fs.writeFileSync(file, bytes);
+  await blockmaps(context);
+  const oldMap = JSON.parse(gunzipSync(fs.readFileSync(file + '.blockmap')));
+  fs.copyFileSync(file, oldFile);
+  bytes.fill(42, 1024 * 1024, 1024 * 1024 + 512);
+  fs.writeFileSync(file, bytes);
+  await blockmaps(context);
+  const newMap = JSON.parse(gunzipSync(fs.readFileSync(file + '.blockmap')));
+  let downloaded = 0;
+  const server = createServer((req, res) => {
+    const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? '');
+    if (!match) { res.writeHead(416).end(); return; }
+    const start = Number(match[1]), end = Number(match[2]);
+    downloaded += end - start + 1;
+    res.writeHead(206, { 'content-range': `bytes ${start}-${end}/${bytes.length}`, 'content-length': end - start + 1 });
+    res.end(bytes.subarray(start, end + 1));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const logger = { info() {}, warn() {}, error() {} };
+  const executor = { createRequest: request, addErrorAndTimeoutHandlers(req, reject) { req.on('error', reject); req.setTimeout(5000, () => req.destroy(new Error('Range request timeout'))); } };
+  await new GenericDifferentialDownloader({ size: bytes.length, sha512: createHash('sha512').update(bytes).digest('base64') }, executor, {
+    oldFile, newFile, newUrl: new URL(`http://127.0.0.1:${server.address().port}/setup.exe`), logger,
+    isUseMultipleRangeRequest: false, cancellationToken: new CancellationToken(),
+  }).download(oldMap, newMap);
+  assert.deepEqual(fs.readFileSync(newFile), bytes);
+  assert.ok(downloaded > 0 && downloaded < bytes.length, 'Uses both cached bytes and HTTP ranges');
 });

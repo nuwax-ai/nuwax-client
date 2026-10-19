@@ -68,7 +68,7 @@ test('manual QA builds use separate full QA identities and select only allowed W
   }
 });
 
-test('QA branch push defaults to ZIP while public tag push preserves its original archive policy', (t) => {
+test('QA branch push selects ZIP explicitly while public tags use the shared default', (t) => {
   assert.deepEqual(workflow.on.push.branches, ['qa/**']);
   for (const [ref, archive, qa] of [['refs/heads/qa/3.0.9-qa.20261008.1', 'zip-qa', true], ['refs/tags/v3.0.9-beta.1', '', false]]) {
     const result = resolveIdentity(t, { BUILD_EVENT: 'push', BUILD_REF: ref });
@@ -92,13 +92,13 @@ test('strict QA date accepts a leap day and keeps a positive semver attempt', (t
 
 test('workflow archive environment agrees with the shared policy for Windows 7z and ZIP, and other platforms', () => {
   const evaluate = Function('runner', 'needs', `return (${expression(operations.build.env.NUWAX_WINDOWS_INSTALLER_ARCHIVE)});`);
-  for (const [osName, platform, archive, expected] of [
-    ['Windows', 'win32', '7z', ''], ['Windows', 'win32', 'zip-qa', 'zip-qa'],
-    ['Windows', 'win32', '', ''], ['macOS', 'darwin', 'zip-qa', ''], ['Linux', 'linux', 'zip-qa', ''],
+  for (const [osName, platform, archive, envMode, resolvedMode] of [
+    ['Windows', 'win32', '7z', '7z-qa', '7z-qa'], ['Windows', 'win32', 'zip-qa', 'zip-qa', 'zip-qa'],
+    ['Windows', 'win32', '', '', 'zip'], ['macOS', 'darwin', 'zip-qa', '', ''], ['Linux', 'linux', 'zip-qa', '', ''],
   ]) {
     const mode = evaluate({ os: osName }, { prepare: { outputs: { windows_archive: archive } } });
-    assert.equal(mode, expected);
-    assert.equal(archivePolicy.resolveInstallerArchiveMode({ env: { [archivePolicy.ENV_KEY]: mode }, platform }), expected);
+    assert.equal(mode, envMode);
+    assert.equal(archivePolicy.resolveInstallerArchiveMode({ env: { [archivePolicy.ENV_KEY]: mode }, platform }), resolvedMode);
   }
 });
 
