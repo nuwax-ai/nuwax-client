@@ -18,10 +18,19 @@
 ; ---------------------------------------------------------------------------
 
 !include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-path.nsh"
+
+!macro preInit
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro check64BitAndSetRegView
+    !insertmacro windowsRepairRegisteredPaths
+  !endif
+!macroend
 
 !macro customHeader
   Name "女娲Nuwax"
   !insertmacro nuwaxUninstallStrings
+  !insertmacro windowsInstallPathStrings
   ; Cleanup is an explicit, default-off choice; never inherit builder's
   ; unconditional data deletion, including while an old version is updated.
   !ifdef DELETE_APP_DATA_ON_UNINSTALL
@@ -63,6 +72,7 @@
 
 
 !macro customRemoveFiles
+  !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
     ; The old uninstaller is the trusted source of its own payload inventory.
     ; Legacy uninstallers leave no proof and their backups remain protected.
@@ -242,6 +252,10 @@
 !macroend
 
 !macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+    ; The install-mode page can change scope after customInit has run.
+    !insertmacro windowsRequireRegisteredPath
+  !endif
   ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
     !insertmacro nuwaxFindAppProcess $R0
     ${if} $R0 == 0
@@ -321,6 +335,8 @@
 ; instance. That is the process that actually uninstalls an all-users copy, so
 ; perform the same close and directory preflight before it reaches the section.
 !macro customInit
+  !insertmacro windowsInitRegisteredPaths
+  !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
     SetAutoClose true
   ${endif}
@@ -334,19 +350,7 @@
 ; 更新沿用正在运行副本的范围，首次安装仍由向导选择。/D 由更新器传入，
 ; initMultiUser 已将其解析到 INSTDIR；注册表同时存在两种安装时也不能换副本。
 !macro customInstallMode
-  ${if} ${isUpdated}
-    ${if} $perMachineInstallationFolder != ""
-    ${andIf} $INSTDIR == $perMachineInstallationFolder
-      StrCpy $isForceMachineInstall "1"
-    ${elseif} $perUserInstallationFolder != ""
-    ${andIf} $INSTDIR == $perUserInstallationFolder
-      StrCpy $isForceCurrentInstall "1"
-    ${elseif} $installMode == "all"
-      StrCpy $isForceMachineInstall "1"
-    ${else}
-      StrCpy $isForceCurrentInstall "1"
-    ${endif}
-  ${endif}
+  !insertmacro windowsSelectUpdateInstallMode
 !macroend
 
 ; builder 的目录规整回调在跳过目录页后仍运行，会给自定义旧路径追加产品名。

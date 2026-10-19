@@ -27,6 +27,7 @@ Var nuwaxDataLocal
 !macroend
 
 !macro customUnInit
+  !insertmacro windowsInitUninstallPath
   StrCpy $nuwaxDeleteLocalData 0
   ClearErrors
   ${GetParameters} $R0
