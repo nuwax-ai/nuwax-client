@@ -10,6 +10,69 @@ param(
 $ErrorActionPreference = 'Stop'
 $comparison = [StringComparison]::OrdinalIgnoreCase
 
+# The shipped inventory contains tens of thousands of files. Keep repeated path
+# walks in .NET to avoid per-ancestor PowerShell invocation overhead. Recheck
+# ancestors on every pass: cached attributes could miss a directory replaced
+# by a junction during removal.
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text.RegularExpressions;
+
+public static class NuwaxUninstallPaths {
+  public static FileAttributes? ExistingAttributes(string path) {
+    try { return File.GetAttributes(path); }
+    catch (FileNotFoundException) { return null; }
+    catch (DirectoryNotFoundException) { return null; }
+  }
+
+  public static void AssertNoReparseAncestors(string path) {
+    for (string current = path; !String.IsNullOrEmpty(current); current = Path.GetDirectoryName(current)) {
+      FileAttributes? attributes = ExistingAttributes(current);
+      if (attributes.HasValue && (attributes.Value & FileAttributes.ReparsePoint) != 0)
+        throw new IOException("Refusing a redirected path: " + current);
+    }
+  }
+
+  public static string[] PayloadPaths(string root, string[] relativePaths) {
+    if (relativePaths == null) return new string[0];
+    var result = new string[relativePaths.Length];
+    for (int i = 0; i < relativePaths.Length; i++) {
+      string relative = relativePaths[i];
+      if (String.IsNullOrEmpty(relative) || Regex.IsMatch(relative, @"[\\:\x00-\x1f]") || relative.StartsWith("/"))
+        throw new IOException("Invalid relative payload path.");
+      foreach (string segment in relative.Split('/')) {
+        if (segment == "" || segment == "." || segment == ".." || segment.EndsWith(".") || segment.EndsWith(" "))
+          throw new IOException("Invalid relative payload path.");
+      }
+      string full = Path.GetFullPath(Path.Combine(root, relative.Replace('/', '\\')));
+      if (!full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
+        throw new IOException("Payload path escapes installation.");
+      result[i] = full;
+    }
+    return result;
+  }
+
+  public static void PreflightFiles(string[] files) {
+    foreach (string file in files) {
+      AssertNoReparseAncestors(file);
+      FileAttributes? attributes = ExistingAttributes(file);
+      if (!attributes.HasValue) continue;
+      if ((attributes.Value & FileAttributes.Directory) != 0)
+        throw new IOException("Payload file became a directory: " + file);
+      using (File.Open(file, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+    }
+  }
+
+  public static void RemoveFiles(string[] files) {
+    foreach (string file in files) {
+      AssertNoReparseAncestors(file);
+      if (ExistingAttributes(file).HasValue) File.Delete(file);
+    }
+  }
+}
+'@
+
 function Full-LocalPath([string]$Value) {
   if ($Value -notmatch '^[A-Za-z]:\\' -or $Value -match '[\x00-\x1f]') { throw 'Expected an absolute local path.' }
   $full = [IO.Path]::GetFullPath($Value).TrimEnd([char]92)
@@ -18,18 +81,11 @@ function Full-LocalPath([string]$Value) {
 }
 
 function Existing-Attributes([string]$Value) {
-  try { return [IO.File]::GetAttributes($Value) }
-  catch [IO.FileNotFoundException] { return $null }
-  catch [IO.DirectoryNotFoundException] { return $null }
+  return [NuwaxUninstallPaths]::ExistingAttributes($Value)
 }
 
 function Assert-NoReparseAncestors([string]$Value) {
-  $current = $Value
-  while ($current) {
-    $attributes = Existing-Attributes $current
-    if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing a redirected path: $current" }
-    $current = [IO.Path]::GetDirectoryName($current)
-  }
+  [NuwaxUninstallPaths]::AssertNoReparseAncestors($Value)
 }
 
 $root = Full-LocalPath $InstallDir
@@ -46,30 +102,12 @@ if ($manifest.schemaVersion -ne 1 -or $manifest.executable -notmatch '^[A-Za-z0-
     $manifest.appDataName -notmatch '^Nuwax[A-Za-z0-9 _.-]*$' -or
     $manifest.updaterCacheName -notmatch '^nuwax(?:-[a-z0-9-]+)?-updater$') { throw 'Invalid embedded payload inventory.' }
 
-function Payload-Path([string]$Relative) {
-  if (!$Relative -or $Relative -match '[\\:\x00-\x1f]' -or $Relative.StartsWith('/') -or
-      @($Relative.Split('/') | Where-Object { $_ -in @('', '.', '..') -or $_.EndsWith('.') -or $_.EndsWith(' ') }).Count) {
-    throw 'Invalid relative payload path.'
-  }
-  $full = [IO.Path]::GetFullPath([IO.Path]::Combine($root, $Relative.Replace('/', '\')))
-  if (!$full.StartsWith($root + '\', $comparison)) { throw 'Payload path escapes installation.' }
-  return $full
-}
-
-$files = @($manifest.files | ForEach-Object { Payload-Path $_ })
-$directories = @($manifest.directories | ForEach-Object { Payload-Path $_ })
+$files = [NuwaxUninstallPaths]::PayloadPaths($root, [string[]]$manifest.files)
+$directories = [NuwaxUninstallPaths]::PayloadPaths($root, [string[]]$manifest.directories)
 if ($files.Count -eq 0 -or $manifest.executable -notin $manifest.files) { throw 'Incomplete payload inventory.' }
 # Preflight every owned file before deleting any. Unknown entries, including
 # files added inside resources, are never enumerated as removal candidates.
-foreach ($file in $files) {
-  Assert-NoReparseAncestors $file
-  $attributes = Existing-Attributes $file
-  if ($null -ne $attributes) {
-    if ($attributes -band [IO.FileAttributes]::Directory) { throw "Payload file became a directory: $file" }
-    $stream = [IO.File]::Open($file, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
-    $stream.Dispose()
-  }
-}
+[NuwaxUninstallPaths]::PreflightFiles($files)
 
 function Remove-OwnedData([string]$Target) {
   $attributes = Existing-Attributes $Target
@@ -94,10 +132,7 @@ if ($DeleteLocalData) {
         $target.StartsWith($root + '\', $comparison)) { throw 'Installation and local data directories overlap; refusing local data deletion.' }
   }
 }
-foreach ($file in $files) {
-  Assert-NoReparseAncestors $file
-  if ($null -ne (Existing-Attributes $file)) { [IO.File]::Delete($file) }
-}
+[NuwaxUninstallPaths]::RemoveFiles($files)
 foreach ($directory in ($directories | Sort-Object Length -Descending)) {
   Assert-NoReparseAncestors $directory
   if ([IO.Directory]::Exists($directory) -and [IO.Directory]::GetFileSystemEntries($directory).Length -eq 0) {
