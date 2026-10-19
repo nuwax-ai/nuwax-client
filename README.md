@@ -203,7 +203,7 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 
 ### 分支模型与双轨门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push 按改动域运行检查，发布 tag 运行完整源码门禁；触发规则见 [脚本参考](docs/npm-scripts.md)。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+外层产品仓使用 `main` 与 `release/v<major>.<minor>` 版本线，当前为 `release/v3.1`；任务从明确目标线创建，经 PR 回流。Agent 默认任务名为 `codex/<topic>`，例如 `codex/windows-first-install-speed`。中立基座保持任务线经 PR 进入基座 main，pin 跟随 main；历史 `pin/nuwawork` 线已退役。发布由不可变 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），分支推进不直接发布。CI 在 main push、指向 main / `release/**` 的 PR 中按改动域检查，发布调用完整源码门禁；release/普通任务分支 push 不自动跑此门禁。权威规范见 [分支与版本规则](./docs/branch-naming.md)，执行入口见[脚本参考](docs/npm-scripts.md)。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|

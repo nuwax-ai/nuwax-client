@@ -2,6 +2,8 @@
 
 新发布标签统一为 `vX.Y.Z`（stable）、`vX.Y.Z-beta.N`（beta）。应用版本去掉 v 后完整保留 beta 后缀，安装包文件名、来源清单和 latest.json 使用同一版本。数字无前导零；beta 从 1 开始，每次取已占用最大序号加一。`beta.2 < beta.10 < stable`。
 
+版本开发/维护线统一 `release/v<major>.<minor>`，当前为 `release/v3.1`；同线产出 Beta、正式版及补丁，不为各通道再建长期分支。任务线、合并方向、历史名称和隔离 QA 规则见[分支与版本](branch-naming.md)。
+
 可以直接发布 stable，也可以多轮 beta 后同号转正。正式 tag 创建即关闭同号 beta；Draft 也占用版本。失败重试使用同一 tag/SHA，修代码要升号，历史 tag 不移动。
 
 ## 发布入口
@@ -33,7 +35,7 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-b
 | `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 完整源码门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
 | `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 完整源码门禁 → 五平台 → 自动调用同步，公开 prerelease |
 | `sync-electron-to-oss.yml` | beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
-| `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 普通提交按改动域选择，发布调用完整检查；不发布安装包 |
+| `ci.yml` | main push、指向 main / `release/**` 的 PR、发布 workflow 调用 | 普通提交按改动域选择，发布调用完整检查；release/普通任务线 push 不自动跑此门禁，不发布安装包 |
 
 beta workflow 的手动与 `codex/beta-qa/**` 分支入口只产隔离 QA artifacts，不创建正式 tag/Release，不更新订阅入口。正式打包只用 tag push。非法 tag 在版本校验处失败，不进入测试门禁或五平台矩阵；有效 tag 只触发一套发布构建。
 
