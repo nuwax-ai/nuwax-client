@@ -11,12 +11,12 @@
 # overlay/ 商业版字节相同（防商业代码泄回中立基座）。
 name: CI (gates)
 
-# main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
-# 普通 feat/** 分支仅在 PR 时执行，避免每次推送都触发全量测试。
+# push 仅 main 自动跑门禁（恢复 7a9594be 定档）；release/工作分支 push 不再自动触发，
+# 改动一律开 PR（指向 main/release/**）跑门禁；发布 workflow 的 workflow_call 照旧。
 on:
   workflow_call:
   push:
-    branches: [main, 'release/**']
+    branches: [main]
   pull_request:
     branches: [main, 'release/**']
 
