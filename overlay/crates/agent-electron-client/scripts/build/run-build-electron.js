@@ -16,6 +16,7 @@ const {
   resolveBuilderPlatform,
   installedBuilderVersions,
   installerArchiveCliArgs,
+  ZIP_COMPRESSION,
 } = require('./installer-archive-policy.cjs');
 
 /**
@@ -117,7 +118,8 @@ function main() {
     console.log('[build:electron] SKIP_PREPARE=1, skipping prepare:all');
   }
 
-  const cmd = `npx electron-builder --config.compression=maximum ${[...extraArgs, ...archiveArgs].join(' ')}`;
+  const compression = archiveMode && archiveMode !== '7z-qa' ? ZIP_COMPRESSION : 'maximum';
+  const cmd = `npx electron-builder --config.compression=${compression} ${[...extraArgs, ...archiveArgs].join(' ')}`;
   console.log('[build:electron]', cmd);
   execSync(cmd, { cwd: projectRoot, stdio: 'inherit' });
 }

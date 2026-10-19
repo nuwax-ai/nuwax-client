@@ -12,7 +12,8 @@ import { packagedResources } from './prepare-release-updater.mjs';
 test('independent builder config contains commercial identity/payload and leaves package unchanged', () => {
   const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'resources/agent-gui-server', to: 'agent-gui-server' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }, { from: 'stale/dist', to: 'nuwax-dist' }, { from: 'resources/sandbox-runtime', to: 'sandbox-runtime' }, { from: 'resources/sandboxed-bash-mcp', to: 'sandboxed-bash-mcp' }, { from: 'resources/sandboxed-fs-mcp', to: 'sandboxed-fs-mcp' }], win: { extraResources: [{ from: 'resources/sandbox-helper', to: 'sandbox-helper' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
   const original = structuredClone(pkg);
-  const result = builderConfig(pkg, { frontendDist: '/client/nuwax-dist', output: '/client/release/1.2.3', version: '1.2.3', helperDir: '/client/resources/computer-use' });
+  const result = builderConfig(pkg, { frontendDist: '/client/nuwax-dist', output: '/client/release/1.2.3', version: '1.2.3', helperDir: '/client/resources/computer-use',
+    builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' } });
   assert.deepEqual(pkg, original);
   assert.equal(result.appId, 'com.nuwax-ai.nuwax');
   assert.equal(result.productName, 'Nuwax');
@@ -155,7 +156,8 @@ test('default pack consumes configured frontend pin and creates complete package
 
 test('capture and notices use independent commercial resource paths and include source archives', () => {
   const pkg = { build: { extraResources: [{ from: 'stale', to: 'capture' }, { from: 'stale-notices', to: 'third-party' }] } };
-  const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', noticesDir: '/commercial/.cache/notices', frontendDist: '/frontend', output: '/output' });
+  const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', noticesDir: '/commercial/.cache/notices', frontendDist: '/frontend', output: '/output',
+    builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' } });
   assert.equal(result.extraResources.filter((entry) => entry.to.startsWith('capture')).length, 1);
   assert.deepEqual(result.extraResources.find((entry) => entry.to.startsWith('capture')), { from: '/commercial/resources/capture/darwin-arm64', to: 'capture/darwin-arm64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json', 'koffi.node', 'koffi.json'] });
   assert.deepEqual(result.extraResources.find((entry) => entry.to === 'third-party').filter, ['third-party-notices.json', 'licenses/**', 'sources/**']);

@@ -118,7 +118,8 @@ test('real package admission rejects omitted or changed runtime payload', async 
 test('macOS and Linux packages exclude Windows compatibility payloads', () => {
   const pkg = { build: { extraResources: [{ from: 'resources/ttyd', to: 'ttyd', filter: ['**/*'] }] } };
   for (const platform of ['darwin', 'linux', 'win32']) {
-    const config = builderConfig(pkg, { platform, frontendDist: '/frontend', output: '/out', version: '3.0.16' });
+    const config = builderConfig(pkg, { platform, frontendDist: '/frontend', output: '/out', version: '3.0.16',
+      builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' } });
     const ttyd = config.extraResources.find(entry => entry.to === 'ttyd');
     assert.equal(ttyd.filter.includes('!legacy/**'), platform !== 'win32');
   }
