@@ -14,10 +14,10 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { CuaMcpGateway } from "../../../overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway";
-import { CuaTaskController } from "../../../overlay/crates/agent-electron-client/src/main/services/cua/taskController";
-import * as windowScopeModule from "../../../overlay/crates/agent-electron-client/src/main/services/cua/windowScope";
-import type { CuaScope } from "../../../overlay/crates/agent-electron-client/src/shared/types/cuaRuntime";
+import { CuaMcpGateway } from "../../../overlay/crates/agent-electron-client/src/main/features/computer-use/mcpGateway";
+import { CuaTaskController } from "../../../overlay/crates/agent-electron-client/src/main/features/computer-use/taskController";
+import * as windowScopeModule from "../../../overlay/crates/agent-electron-client/src/main/features/computer-use/windowScope";
+import type { CuaScope } from "../../../overlay/crates/agent-electron-client/src/shared/features/computer-use/contract";
 import { TASKS, WINDOW_TASKS, type BenchContext } from "./tasks";
 
 // The harness also runs against older control layers (for baselines) that predate these exports.
@@ -34,7 +34,7 @@ export class TaskAborted extends Error {}
 
 /** Allowed/denied tool lists live in computerUse.ts (which imports electron); read them as text. */
 function toolLists(root: string) {
-  const src = fs.readFileSync(path.join(root, "overlay/crates/agent-electron-client/src/main/services/cua/computerUse.ts"), "utf8");
+  const src = fs.readFileSync(path.join(root, "overlay/crates/agent-electron-client/src/main/features/computer-use/computerUse.ts"), "utf8");
   const grab = (name: string) => {
     const m = new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`).exec(src);
     if (!m) throw new Error(`cannot read ${name}`);

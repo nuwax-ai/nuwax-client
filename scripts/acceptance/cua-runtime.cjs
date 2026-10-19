@@ -54,7 +54,7 @@ async function stop() {
 }
 (async () => {
   const output = path.join(dir, 'runtime.cjs');
-  await esbuild.build({ stdin: { contents: `export { CuaMcpGateway } from './src/main/services/cua/mcpGateway'; export { CuaTaskController } from './src/main/services/cua/taskController'; export { cuaPolicy } from './src/main/services/cua/windowScope';`, resolveDir: base }, outfile: output, bundle: true, platform: 'node', format: 'cjs' });
+  await esbuild.build({ stdin: { contents: `export { CuaMcpGateway } from './src/main/features/computer-use/mcpGateway'; export { CuaTaskController } from './src/main/features/computer-use/taskController'; export { cuaPolicy } from './src/main/features/computer-use/windowScope';`, resolveDir: base }, outfile: output, bundle: true, platform: 'node', format: 'cjs' });
   const { CuaMcpGateway, CuaTaskController, cuaPolicy } = require(output);
   fs.writeFileSync(policyFile, cuaPolicy({ kind: 'window', pid: 2147483646, windowId: 2147483646, label: '' }, [], ['replay_trajectory']), { mode: 0o600 });
   const controller = new CuaTaskController(); controller.setAvailable(true);

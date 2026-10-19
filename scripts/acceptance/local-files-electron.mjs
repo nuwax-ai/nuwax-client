@@ -90,7 +90,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
-import {desktopFeatureSchemes, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
+import {prepareDesktopFeaturesBeforeReady, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
   "main/features/index.ts"
 )};
 import {initBusinessRequestRouting} from ${importFrom(
@@ -107,7 +107,7 @@ const temp=process.env.NUWAX_LOCAL_FILES_FIXTURE;
 const reportPath=process.env.NUWAX_LOCAL_FILES_REPORT;
 app.setPath('userData',path.join(temp,'profile'));
 app.commandLine.appendSwitch('no-proxy-server');
-protocol.registerSchemesAsPrivileged(desktopFeatureSchemes('nuwax'));
+protocol.registerSchemesAsPrivileged(prepareDesktopFeaturesBeforeReady('nuwax',app.commandLine));
 if(process.env.NUWAX_LOCAL_FILES_DEBUG){const original=LocalFilesRuntime.prototype.authorize;LocalFilesRuntime.prototype.authorize=function(details){const result=original.call(this,details);if(result!==undefined)console.log('POLICY',JSON.stringify({url:redactLocalFileUrl(details.url),result,type:details.resourceType,webContentsId:details.webContentsId,frameUrl:redactLocalFileUrl(details.frame?.url??''),processId:details.frame?.processId,routingId:details.frame?.routingId,parentUrl:redactLocalFileUrl(details.frame?.parent?.url??''),referrer:redactLocalFileUrl(details.referrer??'')}));return result;};}
 const windows=[];const requests=[];const checks=[];const fixtureLimitations=[];
 let server, origin, fileOrigin, bridgeContext, fileServer;

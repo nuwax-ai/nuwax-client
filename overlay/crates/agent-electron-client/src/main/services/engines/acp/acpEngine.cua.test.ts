@@ -8,6 +8,21 @@ import * as dependencies from "@main/services/system/dependencies";
 import * as sandboxPolicy from "@main/services/sandbox/policy";
 import * as opencodeAcpSandbox from "./sandbox/opencodeAcpSandbox";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
+import type { ServerResponse } from "http";
+import type { HandlerContext } from "@shared/types/ipc";
+import { agentService } from "../unifiedAgent";
+import { attachEngineEventForwarders } from "../engineEventForwarder";
+import { registerEventForwarders, unregisterEventForwarders } from "../../../ipc/eventForwarders";
+import { closeAndClearAllSseClients, registerSseClient, sseClients } from "../../computer/sseManager";
+
+vi.mock("../unifiedAgent", async () => {
+  const { EventEmitter } = await import("events");
+  return { agentService: new EventEmitter() };
+});
+vi.mock("../../computerServer", async () => {
+  const { pushSseEvent } = await import("../../computer/sseManager");
+  return { pushSseEvent };
+});
 
 vi.mock("electron", () => ({
   app: {
