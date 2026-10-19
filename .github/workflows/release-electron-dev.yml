@@ -7,14 +7,14 @@
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
-# workflow_dispatch / codex/beta-qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
+# workflow_dispatch / qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
 # manifest 的 qa-v完整版本是独立构建标识，不创建 tag/Release，不改更新指针。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/v{x.y.z}-beta.1.md
 #   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
-#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 codex/beta-qa/ 分支。
+#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 qa/ 分支。
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -41,7 +41,7 @@ on:
     tags:
       - "v*-beta.*"
     branches:
-      - "codex/beta-qa/**"
+      - "qa/**"
   workflow_dispatch:
     inputs:
       version:
@@ -119,8 +119,8 @@ jobs:
               node scripts/release-version.mjs "$TAG" beta > /tmp/build-release-identity
               VERSION="$(sed -n 's/^version=//p' /tmp/build-release-identity)"
               ;;
-            push:refs/heads/codex/beta-qa/*)
-              VERSION="${BUILD_REF#refs/heads/codex/beta-qa/}"
+            push:refs/heads/qa/*)
+              VERSION="${BUILD_REF#refs/heads/qa/}"
               QA_BUILD=true
               WINDOWS_ARCHIVE=zip-qa
               ;;
