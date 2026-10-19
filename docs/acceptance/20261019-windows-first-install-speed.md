@@ -1,6 +1,6 @@
 # Windows 首次安装提速：实施与验收（进行中）
 
-目标为 `release/v3.1`，实现见 [PR #31](https://github.com/nuwax-ai/nuwax-client/pull/31)。本轮不发版。**当前仅完成基线与实现检查，尚未完成优化包首装对照，PR 保持 Draft。** 聚合数据见[JSON](20261019-windows-first-install-speed.json)。
+目标为 `release/v3.1`，实现见 [PR #31](https://github.com/nuwax-ai/nuwax-client/pull/31)。本轮不发版。**当前已完成基线、实现检查和候选包校验，尚未完成优化包首装对照，PR 保持 Draft。2026-10-19 用户确认测试机正有人使用，该机安装、升级和卸载测试暂缓，待用户确认可用后恢复。** 聚合数据见[JSON](20261019-windows-first-install-speed.json)。
 
 ## 实现与瓶颈
 

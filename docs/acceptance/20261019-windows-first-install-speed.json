@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "date": "2026-10-19",
-  "status": "in-progress-not-accepted",
+  "status": "awaiting-test-machine-not-accepted",
   "targetBranch": "release/v3.1",
   "implementationCommit": "a5bbe676b7f00c210bdf196c24074f1cb15439a2",
   "pr": "https://github.com/nuwax-ai/nuwax-client/pull/31",
@@ -152,5 +152,12 @@
     "bytes": 220608523,
     "percent": 30.458,
     "downloadTimeMeasured": false
+  },
+  "machineAvailability": {
+    "confirmedByUserOn": "2026-10-19",
+    "reason": "win-pc is currently in use",
+    "installationUpgradeUninstallTests": "paused-by-user",
+    "resumeCondition": "user confirms the machine is available",
+    "preserveCandidatesAndEvidence": true
   }
 }
