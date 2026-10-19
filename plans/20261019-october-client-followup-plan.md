@@ -89,4 +89,10 @@ NUWAX_TEST_BUILDER_CLIENT_DIR=/Users/apple/workspace/nuwax-client/nuwa-electron-
 
 按 REVIEW.md 核对一次：名称由本地 pack 与发布共用配置生成器提供；保留身份与路径；NSIS 宏包含完整版本；原包与已发布资产不改。`git diff --check` 通过。没有构建新的 Windows 安装器，真实卸载列表及 MSI 显示名仍待下一候选验收。
 
-待确认后执行：将已发布 beta.7 的 24 个提交收回 release，并按完整同步范围向 main 发 PR；本轮品牌漏项可以作为独立修复提交加入该候选。未经确认不推送、不移动受保护分支、不发布新包。
+## 2026-10-19 PR 执行授权
+
+用户已明确授权：“把 beta.7 和卸载名称修复推送并通过 PR 合回 release/v3.0.x，再同步 main，暂不发版。”依此推进现有候选的普通推送、release PR 与 main 同步 PR，等待各自 CI 完成后合并；不打 tag、不运行发布或同步更新源。
+
+执行前复核：远端 release 仍为 7503d15c，main 仍为 f4cab8e1。主工作区本地 release 另有未推送的 b76ff8cc（Windows 终端系统版本选择）及基座 WIP，不属于本次候选，保留原状；不从主工作区推送 release 分支。
+
+复用 beta.7 的完整两轨与发布前验证、卸载名称修复的 16 项相关检查及本批 REVIEW.md 核对。PR 的 pin 变化与 main 的完整同步范围由现有 CI 分域门禁验证，未完成前不宣称合并成功。
