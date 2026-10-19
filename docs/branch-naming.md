@@ -8,13 +8,16 @@
 | --- | --- | --- |
 | 长期主干 | `main` | 汇总经验证的产品改动与版本线修复；main 尖端不等于已公开版本 |
 | 版本开发/维护线 | 新线统一 `release/v<major>.<minor>`，当前为 `release/v3.1` | 同一条线承载该 minor 的 Beta、转正和后续补丁；不为每个 Beta 或 patch 再建长期线 |
-| Agent 任务线 | 默认 `codex/<topic>`，如 `codex/windows-first-install-speed`、`codex/nw-104-install-speed` | 从明确的目标版本线或 main 创建，一个分支一个目标；topic 用简短小写英文、数字与连字符，版本信息由 PR base 表达 |
-| 人工任务线 | 可沿用 `feat/`、`fix/`、`refactor/`、`chore/`、`docs/` 加同样的 topic | 合并规则与 Agent 任务线一致，不再叠加第二个类型前缀 |
-| 隔离 QA 构建线 | `codex/beta-qa/X.Y.Z-qa.YYYYMMDD.N`，如 `codex/beta-qa/3.1.0-qa.20261019.1` | 特殊构建入口，固定一次源码 SHA；重做源码用新的 attempt/分支，不复用旧身份 |
+| 功能任务线 | `feat/<topic>` | 新功能；人和 Agent 使用同一规则，从明确目标线创建并经 PR 回流 |
+| 修复任务线 | `fix/<topic>`，如 `fix/windows-first-install-speed`、`fix/nw-104-install-speed` | 问题修复与性能优化；一个分支一个目标 |
+| 其他任务线 | `refactor/<topic>`、`chore/<topic>`、`docs/<topic>` | 分别表示行为保持的重构、工程/工具链维护、纯文档；不按执行者或 Agent 品牌分组 |
+| 隔离 QA 构建线 | `qa/X.Y.Z-qa.YYYYMMDD.N`，如 `qa/3.1.0-qa.20261019.1` | 特殊构建入口，固定一次源码 SHA；重做源码用新的 attempt/分支，不复用旧身份 |
 | 历史归档 | `archive/<original-topic>` | 保留需要追溯的历史线，冻结后不继续开发 |
 | 依赖机器人 | 保留 `dependabot/...` 等工具命名 | 不改机器人自有命名规则 |
 
 `release/v3.1` 比 `release/v3.1.x` 更简洁，二者表达的都是 3.1 系列；现统一前者，避免同一系列保留两个可写入口。已有 `release/v3.0.x`、`release/v1.0.x` 属历史名称，继续按原接手范围处理，不为命名一致性批量改写或删除。
+
+topic 用简短小写英文、数字与连字符；版本信息由 PR base 表达。不按 Codex、Claude、Cursor 或具体人员命名新分支。历史 `codex/*` 等分支保留原引用，后续新任务按工作性质命名。
 
 不新增 `develop`、`beta`、`stable` 等长期并行分支。Beta/stable 是版本和更新订阅的属性，用 tag 与发布元数据表达；任务分支不以 `beta5-release` 这类名字充当长期版本线。现有任务分支不因规则更新强制改名。
 
@@ -32,7 +35,7 @@
 
 - 发布用不可变 `vX.Y.Z-beta.N` / `vX.Y.Z` tag，如 `v3.1.0-beta.1`、`v3.1.0`、`v3.1.1`。Draft 同样占号；失败续跑同 tag/SHA，修源码用下一可用版本，详见[发布与更新通道](release-channels.md)。
 - 普通任务分支 push、`release/**` push 不触发 `ci.yml` 源码门禁；main push 和指向 main / `release/**` 的 PR 按改动域执行。发布 workflow 调用完整检查。release 线通过 PR 交付，不用“已 push”代替“门禁已通过”。
-- QA 特殊分支 push 或显式 QA dispatch 仅输出隔离 Actions artifacts，不创建公开 tag/Release 或更新源。其名称必须符合工作流的完整版本校验；旧 `codex/beta-qa/3.0.9` 只是历史引用，不作为新建示例。
+- `qa/**` 特殊分支 push 或显式 QA dispatch 仅输出隔离 Actions artifacts，不创建公开 tag/Release 或更新源。名称必须符合完整 QA 版本校验；旧 `codex/beta-qa/**` 保留历史引用与冻结 workflow，不作为当前工作流的新入口。
 - 这是协作规则；GitHub 是否强制必须 PR/检查，由仓库 protection/rulesets 的实际配置决定。不能把规则文档视为服务端已开启保护。
 
 具体执行规则见[脚本参考](npm-scripts.md)和 `.github/workflows/ci.yml`、`release-electron-dev.yml`。调整触发逻辑时同时更新这些消费者与相关脚本检查。

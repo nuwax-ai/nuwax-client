@@ -49,7 +49,7 @@ function resolveIdentity(t, env = {}) {
   writeFileSync(output, '');
   const result = spawnSync('bash', ['-c', operations.identity.run], {
     cwd: root,
-    env: { ...process.env, BUILD_EVENT: 'workflow_dispatch', BUILD_REF: 'refs/heads/codex/client-qa', BUILD_SHA: sourceSha,
+    env: { ...process.env, BUILD_EVENT: 'workflow_dispatch', BUILD_REF: 'refs/heads/chore/client-qa', BUILD_SHA: sourceSha,
       VERSION_INPUT: '3.0.9-qa.20261008.1', WINDOWS_ARCHIVE_INPUT: 'zip-qa', GITHUB_OUTPUT: output, ...env },
     encoding: 'utf8',
   });
@@ -69,7 +69,8 @@ test('manual QA builds use separate full QA identities and select only allowed W
 });
 
 test('QA branch push defaults to ZIP while public tag push preserves its original archive policy', (t) => {
-  for (const [ref, archive, qa] of [['refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', 'zip-qa', true], ['refs/tags/v3.0.9-beta.1', '', false]]) {
+  assert.deepEqual(workflow.on.push.branches, ['qa/**']);
+  for (const [ref, archive, qa] of [['refs/heads/qa/3.0.9-qa.20261008.1', 'zip-qa', true], ['refs/tags/v3.0.9-beta.1', '', false]]) {
     const result = resolveIdentity(t, { BUILD_EVENT: 'push', BUILD_REF: ref });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.values.version, qa ? '3.0.9-qa.20261008.1' : '3.0.9-beta.1');
@@ -105,8 +106,10 @@ test('QA identity rejects malformed versions, unsupported refs, archive input an
   const invalid = [
     ...['3.0.9', '03.0.9-qa.20261008.1', '3.0', '3.0.9-qa.1', '3.0.9-qa.2026108.1', '3.0.9-qa.20261008.01', '3.0.9-qa.20261008.0', '3.0.9-qa.20260230.1', '3.0.9-qa.20261308.1', '3.0.9-qa.20260229.1', '3.0.9-beta.20261008.1', '3.0.9-qa.20261008.1\nversion=9.9.9', '3.0.9-qa.20261008.1$(touch "$QA_SENTINEL")'].map((VERSION_INPUT) => ({ VERSION_INPUT })),
     { WINDOWS_ARCHIVE_INPUT: 'zip-qa$(touch "$QA_SENTINEL")' },
-    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/codex/beta-qa/nested/3.0.9' },
-    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/codex/beta-qa/3.0.9' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/qa/nested/3.0.9' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/qa/3.0.9' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/codex/beta-qa/3.0.9-qa.20261008.1' },
+    { BUILD_EVENT: 'push', BUILD_REF: 'refs/heads/fix/windows-first-install-speed' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.1-qa.20261008.1' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.0' },
     { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.9-beta.1$(touch "$QA_SENTINEL")' },
@@ -131,8 +134,8 @@ test('all three release mutations require a real tag push and QA artifacts use t
   const qaPredicates = [condition(operations.qaStage), condition(operations.qaUpload)];
   for (const [event, ref, published] of [
     ['push', 'refs/tags/v3.0.9-beta.1', true],
-    ['push', 'refs/heads/codex/beta-qa/3.0.9-qa.20261008.1', false],
-    ['workflow_dispatch', 'refs/heads/codex/client-qa', false],
+    ['push', 'refs/heads/qa/3.0.9-qa.20261008.1', false],
+    ['workflow_dispatch', 'refs/heads/chore/client-qa', false],
     ['workflow_dispatch', 'refs/tags/v3.0.9-beta.1', false],
   ]) {
     for (const predicate of releasePredicates) assert.equal(predicate(event, ref), published, `${event}:${ref}`);
@@ -383,7 +386,7 @@ test('QA artifact staging preserves complete package files, notes and frozen sou
     mkdirSync(runnerTemp);
     const result = spawnSync('bash', ['-c', run], { cwd: directory, encoding: 'utf8', env: { ...process.env,
       QA_VERSION: version, QA_BUILD_IDENTITY: `qa-v${version}`, QA_SOURCE_SHA: clientSha, QA_PLATFORM: osName,
-      QA_EVENT: 'push', QA_REF: `refs/heads/codex/beta-qa/${version}`, QA_ARCHIVE: osName === 'Windows' ? 'zip-qa' : '',
+      QA_EVENT: 'push', QA_REF: `refs/heads/qa/${version}`, QA_ARCHIVE: osName === 'Windows' ? 'zip-qa' : '',
       NUWAX_WINDOWS_OUTPUT_DIR: shortOutput, RUNNER_TEMP: runnerTemp, GITHUB_OUTPUT: output,
       GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1',
     } });
