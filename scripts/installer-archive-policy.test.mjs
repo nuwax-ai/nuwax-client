@@ -78,7 +78,7 @@ test('ZIP pairs archive options with the blockmap hook while preserving payload 
   const before = structuredClone(config);
   const result = applyInstallerArchivePolicy(config, zipOptions);
   assert.deepEqual(config, before);
-  assert.deepEqual(result, { ...before, nsis: { ...before.nsis, differentialPackage: false, useZip: true }, afterAllArtifactBuild: policy.BLOCKMAP_HOOK });
+  assert.deepEqual(result, { ...before, nsis: { ...before.nsis, differentialPackage: false, useZip: true }, compression: 'normal', afterAllArtifactBuild: policy.BLOCKMAP_HOOK });
   assert.equal(result.extraResources, config.extraResources);
   assert.equal(result.win, config.win);
   assert.equal(result.afterSign, config.afterSign);
@@ -162,7 +162,7 @@ test('legacy Windows defaults add ZIP and blockmaps while preserving prepare and
     assert.equal(commands.length, 2);
     assert.equal(commands[0].command, 'npm run prepare:all');
     assert.equal(commands[0].options.env.TARGET_ARCH, 'x64');
-    assert.equal(commands[1].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} ${zipArgs.join(' ')}`);
+    assert.equal(commands[1].command, `npx electron-builder --config.compression=normal ${argv.join(' ')} ${zipArgs.join(' ')}`);
   }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).build, pkg.build);
 });
@@ -172,7 +172,7 @@ test('legacy explicit ZIP forwards the archive pair and blockmap hook for Window
   for (const argv of [['--windows', '--x64', '--publish', 'never'], ['--x64', '-p=never']]) {
     const commands = runLegacy(dir, argv, { ...enabled, SKIP_PREPARE: '1' }, 'win32');
     assert.equal(commands.length, 1);
-    assert.equal(commands[0].command, `npx electron-builder --config.compression=maximum ${argv.join(' ')} ${zipArgs.join(' ')}`);
+    assert.equal(commands[0].command, `npx electron-builder --config.compression=normal ${argv.join(' ')} ${zipArgs.join(' ')}`);
   }
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).build, pkg.build);
 });
@@ -253,6 +253,11 @@ test('generated ZIP config is accepted by installed 25.1.8 schema and selects ma
   const { NsisTarget } = builderRequire('app-builder-lib/out/targets/nsis/NsisTarget.js');
   const generated = builderConfig(pkg, { ...configOptions, ...zipOptions });
   await validateConfiguration(generated, { isEnabled: false });
+  const { compute7zCompressArgs } = builderRequire('app-builder-lib/out/targets/archive.js');
+  const compressionArgs = compute7zCompressArgs('zip', { compression: generated.compression });
+  assert.equal(generated.compression, 'normal');
+  assert.ok(compressionArgs.includes('-mx=7'));
+  assert.ok(!compressionArgs.includes('-mpass=15'));
   const differentialGetter = Object.getOwnPropertyDescriptor(NsisTarget.prototype, 'isBuildDifferentialAware').get;
   assert.equal(differentialGetter.call({ isPortable: false, options: generated.nsis }), false);
   const defines = { APP_FILENAME: 'Nuwax' };

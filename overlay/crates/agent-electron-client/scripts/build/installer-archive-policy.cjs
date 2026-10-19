@@ -4,6 +4,7 @@ const path = require('node:path');
 
 const ENV_KEY = 'NUWAX_WINDOWS_INSTALLER_ARCHIVE';
 const SUPPORTED_BUILDER_VERSION = '25.1.8';
+const ZIP_COMPRESSION = 'normal';
 const ZIP_OPTIONS = Object.freeze({ differentialPackage: false, useZip: true });
 const SEVEN_ZIP_OPTIONS = Object.freeze({ differentialPackage: true, useZip: false });
 const BLOCKMAP_HOOK = path.join(__dirname, 'installer-blockmap.cjs');
@@ -83,7 +84,7 @@ function applyInstallerArchivePolicy(config, { env = process.env, platform, buil
   }
   checkCliOverrides(argv);
   // ZIP 直接解压到目标目录；EXE 的独立 blockmap 保留更新器的差分下载协议。
-  return { ...config, nsis: { ...nsis, ...options }, ...(mode === '7z-qa' ? {} : { afterAllArtifactBuild: hook }) };
+  return { ...config, nsis: { ...nsis, ...options }, ...(mode === '7z-qa' ? {} : { compression: ZIP_COMPRESSION, afterAllArtifactBuild: hook }) };
 }
 
 function installerArchiveCliArgs(config, options) {
@@ -113,6 +114,7 @@ function installerArchiveCliArgs(config, options) {
 module.exports = {
   ENV_KEY,
   SUPPORTED_BUILDER_VERSION,
+  ZIP_COMPRESSION,
   BLOCKMAP_HOOK,
   LEGACY_BLOCKMAP_HOOK,
   resolveInstallerArchiveMode,
