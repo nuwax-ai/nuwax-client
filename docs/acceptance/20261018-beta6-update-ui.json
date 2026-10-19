@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-18",
+  "version": "3.0.17-beta.6",
+  "scope": "Real UI components with a local simulated host bridge; no native installer or production feed invoked",
+  "sources": {
+    "nuwa-electron-shell": "0d7ce59d540238c0d9a5261ecd33f79a08265fe1",
+    "nuwax": "6a1bb1717427c17e7c4d690a075ab63253ec6a17"
+  },
+  "checks": {
+    "downloadUsesInlineProgress": true,
+    "downloadedTwoStepWaitsForUserAction": true,
+    "installProgressDelayed": true,
+    "aboutPageErrorReleasesProgressDialog": true
+  },
+  "observations": [
+    {
+      "surface": "AboutPage",
+      "flow": "two-step",
+      "calls": {
+        "download": 1,
+        "install": 1
+      },
+      "modalDelayMs": 1018
+    },
+    {
+      "surface": "AboutPage",
+      "flow": "one-click",
+      "calls": {
+        "download": 1,
+        "install": 0
+      },
+      "autoInstallProgressVisible": true
+    },
+    {
+      "surface": "ClientVersionBadge",
+      "flow": "one-click",
+      "calls": {
+        "download": 1,
+        "install": 0
+      },
+      "modalDelayMs": 1015
+    },
+    {
+      "surface": "ClientVersionBadge",
+      "flow": "two-step",
+      "calls": {
+        "download": 1,
+        "install": 1
+      },
+      "modalDelayMs": 1016
+    }
+  ]
+}

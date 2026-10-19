@@ -30,6 +30,10 @@ def prepare_source(phase, run_id):
     removal = vendor[vendor.index('  # delete the installed files'):vendor.index('  ${ifNot} ${isKeepShortcuts}')]
     header = BASELINE.read_text(encoding='utf-8') if phase == 'before' else (CLIENT / 'overlay/crates/agent-electron-client/build/installer.nsh').read_text(encoding='utf-8')
     (folder / 'canonical.nsh').write_text(header,encoding='utf-8')
+    (folder / 'payload.json').write_text(json.dumps({
+        'schemaVersion': 1, 'executable': 'Nuwax.exe', 'files': ['Nuwax.exe'], 'directories': [],
+        'dataDirectoryName': '.nuwax-fixture', 'appDataName': 'Nuwax', 'updaterCacheName': 'nuwax-fixture-updater',
+    }), encoding='utf-8')
     # The only registry operations target this random non-Uninstall test key.
     source = f'''Unicode true
 Name "NuwaxRemovalFixture-{run_id}"
@@ -40,12 +44,19 @@ SilentUnInstall silent
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 !define UNINSTALL_FILENAME "Uninstall Nuwax.exe"
+!define VERSION "0.0.0"
+!define PRODUCT_FILENAME "Nuwax"
+!define APP_PACKAGE_NAME "nuwax-fixture"
+!define BUILD_RESOURCES_DIR "{CLIENT / 'overlay/crates/agent-electron-client/build'}"
+!define NUWAX_UNINSTALL_MANIFEST "{folder / 'payload.json'}"
 !define isUpdated '"$updateMode" == "1"'
 Var updateMode
+Var installMode
 !include "canonical.nsh"
 Function un.onInit
   StrCpy $INSTDIR "$EXEDIR\\fake-install"
   StrCpy $updateMode "0"
+  StrCpy $installMode "current"
   ${{GetParameters}} $R0
   ${{GetOptions}} $R0 "--updated" $R1
   ${{IfNot}} ${{Errors}}
@@ -73,7 +84,7 @@ SectionEnd
     (folder / 'fixture.nsi').write_text(source,encoding='utf-8')
     compiler_env = os.environ.copy()
     compiler_env['NSISDIR'] = str(COMPILER.parent.parent)
-    r = subprocess.run([str(COMPILER), '-V3', 'fixture.nsi'], cwd=folder, env=compiler_env, capture_output=True, timeout=30)
+    r = subprocess.run([str(COMPILER), '-V3', 'fixture.nsi'], cwd=folder, env=compiler_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
     (folder / 'compile.log').write_bytes(r.stdout + r.stderr)
     if r.returncode:
         print((r.stdout + r.stderr).decode(errors='replace')[-5000:])
@@ -156,7 +167,7 @@ for case,updated,locked in [('standalone-locked',False,True),('updated-locked',T
 result={'recordedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'phase':payload['phase'],'fixtureRoot':str(root),
         'runId':payload['runId'],'cases':rows,'source':{k:payload[k] for k in ['vendorSha256','hookSha256','compilerSha256','sourceSha256','builderSha256']},
         'realRegistryOrInstallationTouched':False,'ownRegistryCleaned':not reg_present(),'onlySyntheticUninstallerExecuted':True,
-        'limits':['No real Nuwax uninstall executed','U1 install-directory user-data preservation remains open','ACL and interruption cases not covered']}
+        'limits':['No real Nuwax uninstall executed','Local-data checkbox requires separate interactive package acceptance','ACL and interruption cases not covered']}
 print(json.dumps(result))
 '''
 
@@ -190,7 +201,7 @@ def main():
     (WORK / ('uninstall-u2-' + phase + '-input.json')).write_text(json.dumps({k:v for k,v in payload.items() if k!='builderB64'},indent=2)+'\n')
     code = REMOTE.replace('payload=PAYLOAD', 'payload=json.loads(base64.b64decode('+repr(base64.b64encode(json.dumps(payload).encode()).decode())+'))')
     command = (['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8',SSH_HOST,'python','-'] if SSH_HOST else [sys.executable,'-'])
-    r = subprocess.run(command,input=code.encode('utf-8'),capture_output=True,timeout=145)
+    r = subprocess.run(command,input=code.encode('utf-8'),stdout=subprocess.PIPE, stderr=subprocess.PIPE,timeout=145)
     if r.returncode:
         print(r.stderr.decode(errors='replace')[-1600:])
         raise RuntimeError('synthetic fixture failed')
@@ -216,6 +227,8 @@ def main():
             row = cases[case]
             if not (row['exitCode'] == 0 and not row['registryPreserved'] and row['cleanupReached'] and not row['payloadResidual']):
                 raise RuntimeError('normal removal failed')
+        if not cases['standalone-normal']['installWorkspaceSurvives']:
+            raise RuntimeError('standalone uninstall deleted unknown installation workspace')
         row = cases['standalone-missing-uninstaller']
         if not (row['exitCode'] != 0 and row['registryPreserved'] and not row['cleanupReached'] and row['payloadResidual'] and row['installWorkspaceSurvives']):
             raise RuntimeError('backup preflight failure did not preserve data')

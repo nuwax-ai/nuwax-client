@@ -61,6 +61,18 @@ function Write-FixtureFile([string]$Path, [string]$Content) {
   [IO.File]::WriteAllText($Path, $Content)
 }
 
+function Remove-FixtureTree([string]$ExtendedPath) {
+  $attributes = [IO.File]::GetAttributes($ExtendedPath)
+  if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+      foreach ($entry in [IO.Directory]::GetFileSystemEntries($ExtendedPath)) { Remove-FixtureTree $entry }
+    }
+    [IO.Directory]::Delete($ExtendedPath, $false)
+  } else {
+    [IO.File]::Delete($ExtendedPath)
+  }
+}
+
 function Get-FixtureHash([string]$Path) {
   Assert-FixturePath $Path
   $sha = [Security.Cryptography.SHA256]::Create()
@@ -288,6 +300,99 @@ function Test-InterruptedUpgrade([string]$CaseName, [bool]$Workspace, [bool]$Con
   return [pscustomobject]@{ case = $CaseName; passed = $true; priorBackupPreserved = $true; workspaceConflictBlocked = $Conflict }
 }
 
+function Test-PayloadExtras([string]$Mode) {
+  $caseName = 'payload-extras-' + $Mode
+  $caseRoot = [IO.Path]::Combine($fixtureRoot, $caseName)
+  $install = [IO.Path]::Combine($caseRoot, 'fake-install')
+  $state = [IO.Path]::Combine($caseRoot, 'plugin-state.txt')
+  $resources = [IO.Path]::Combine($install, 'resources')
+  $outside = [IO.Path]::Combine($caseRoot, 'outside-link-target')
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'NOT AN EXECUTABLE: fixture only'
+  Write-FixtureFile "$install\Nuwax.exe" 'old application'
+  Write-FixtureFile "$resources\app.asar" 'old archive stays backed up'
+  Write-FixtureFile "$resources\a-first.txt" 'first returned file'
+  Write-FixtureFile "$resources\user-added.txt" 'user file inside payload directory'
+  Write-FixtureFile "$resources\nested\shared\user.bin" 'nested user bytes'
+  Write-FixtureFile "$resources\file-conflict.txt" 'old colliding bytes'
+  Write-FixtureFile "$resources\type-conflict\old.bin" 'old directory bytes'
+  Write-FixtureFile "$resources\z-locked.txt" 'retry returns locked bytes'
+  Write-FixtureFile "$resources\own-workspace\note.txt" 'directory with reserved filename'
+  [IO.File]::WriteAllText("\\?\$resources\own-workspace\nul", 'reserved device-name bytes')
+  Write-FixtureFile "$install\locales\custom\user.txt" 'custom locale directory'
+  Write-FixtureFile "$outside\outside.txt" 'outside bytes must remain unchanged'
+  if ($Mode -eq 'links') {
+    Write-FixtureFile "$resources\linked-destination\user.bin" 'must remain in backup, not outside'
+    $null = & cmd.exe /d /c mklink /J "$resources\source-link" $outside
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not create source junction fixture.'
+  }
+
+  $prepared = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($prepared.ExitCode -eq 0) "Payload fixture Prepare failed: $($prepared.Output)"
+  $recovery = [IO.File]::ReadAllText($state).Trim()
+  $manifest = "$recovery\manifest.jsonl"
+  $plans = @(Read-FixtureManifest $manifest | Where-Object { $_.status -eq 'planned' })
+  $resourcePlan = @($plans | Where-Object { $_.original -eq $resources })[0]
+  $backup = [string]$resourcePlan.backup
+  Write-FixtureFile "$install\Nuwax.exe" 'new application must not change'
+  Write-FixtureFile "$resources\app.asar" 'new archive must not change'
+  Write-FixtureFile "$resources\nested\shared\new.bin" 'new nested payload'
+  Write-FixtureFile "$resources\file-conflict.txt" 'new colliding bytes'
+  Write-FixtureFile "$resources\type-conflict" 'new file wins over old directory'
+  Write-FixtureFile "$install\locales\new.pak" 'new locale payload'
+  if ($Mode -eq 'links') {
+    $null = & cmd.exe /d /c mklink /J "$resources\linked-destination" $outside
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not create destination junction fixture.'
+  }
+  if ($Mode -in @('interrupted', 'failure')) {
+    # Simulate process loss after an atomic nested rename and before its
+    # completion record, using the same durable intent as the implementation.
+    $intent = [ordered]@{ status = 'payload-restore-intent'; original = "$resources\a-first.txt"; backup = "$backup\a-first.txt" }
+    [IO.File]::AppendAllText($manifest, (($intent | ConvertTo-Json -Compress) + [Environment]::NewLine))
+    [IO.File]::Move("$backup\a-first.txt", "$resources\a-first.txt")
+    $freshState = "$caseRoot\fresh-plugin-state.txt"
+    $blocked = Invoke-Recovery 'Prepare' $freshState $install
+    Assert-True ($blocked.ExitCode -ne 0 -and $blocked.Output.Contains('unfinished Restore/Rollback')) 'New Prepare ignored partial nested restoration.'
+    Assert-True (-not [IO.File]::Exists($freshState)) 'Blocked Prepare wrote a new transaction.'
+  }
+  if ($Mode -eq 'failure') {
+    $lock = [IO.File]::Open("$backup\z-locked.txt", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    try {
+      $failed = Invoke-Recovery 'Restore' $state
+      Assert-True ($failed.ExitCode -ne 0) 'Locked nested file did not stop restoration.'
+      Assert-True ([IO.File]::Exists("$backup\z-locked.txt")) 'Locked nested file was lost.'
+      Assert-True (@([IO.Directory]::GetFiles($caseRoot, 'Nuwax-installer-recovery-active-*.txt')).Count -eq 1) 'Failed restore cleared recovery marker.'
+    } finally { $lock.Dispose() }
+  }
+  $restored = Invoke-Recovery 'Restore' $state
+  Assert-True ($restored.ExitCode -eq 0) "Payload extras Restore failed: $($restored.Output)"
+  Assert-True ([IO.File]::Exists("$resources\user-added.txt")) 'Payload-directory user file was not restored in place.'
+  Assert-True ([IO.File]::ReadAllText("$resources\user-added.txt") -eq 'user file inside payload directory') 'Payload-directory user file was not restored in place.'
+  Assert-True ([IO.File]::ReadAllText("$resources\a-first.txt") -eq 'first returned file') 'Interrupted returned entry changed.'
+  Assert-True ([IO.File]::ReadAllText("$resources\nested\shared\user.bin") -eq 'nested user bytes') 'Deep shared-directory file was not restored.'
+  Assert-True ([IO.File]::ReadAllText("$resources\nested\shared\new.bin") -eq 'new nested payload') 'New nested payload changed.'
+  Assert-True ([IO.File]::ReadAllText("\\?\$resources\own-workspace\nul") -eq 'reserved device-name bytes') 'Reserved filename was lost during subtree restore.'
+  Assert-True ([IO.File]::ReadAllText("$install\locales\custom\user.txt") -eq 'custom locale directory') 'Locale-directory user files were not restored.'
+  Assert-True ([IO.File]::ReadAllText("$resources\z-locked.txt") -eq 'retry returns locked bytes') 'Retry failed to restore locked entry.'
+  Assert-True ([IO.File]::ReadAllText("$install\Nuwax.exe") -eq 'new application must not change') 'New application changed.'
+  Assert-True ([IO.File]::ReadAllText("$resources\app.asar") -eq 'new archive must not change') 'New archive was overwritten.'
+  Assert-True ([IO.File]::ReadAllText("$backup\app.asar") -eq 'old archive stays backed up') 'Old application backup changed.'
+  Assert-True ([IO.File]::ReadAllText("$resources\file-conflict.txt") -eq 'new colliding bytes') 'Existing file was overwritten.'
+  Assert-True ([IO.File]::ReadAllText("$backup\file-conflict.txt") -eq 'old colliding bytes') 'Colliding backup was lost.'
+  Assert-True ([IO.File]::ReadAllText("$resources\type-conflict") -eq 'new file wins over old directory') 'Type conflict overwrote new file.'
+  Assert-True ([IO.File]::ReadAllText("$backup\type-conflict\old.bin") -eq 'old directory bytes') 'Type conflict lost old directory.'
+  Assert-True ([IO.File]::ReadAllText("$outside\outside.txt") -eq 'outside bytes must remain unchanged') 'Link target was changed.'
+  if ($Mode -eq 'links') {
+    Assert-True (([IO.File]::GetAttributes("$resources\source-link") -band [IO.FileAttributes]::ReparsePoint) -ne 0) 'Missing source link was not restored as a link.'
+    Assert-True (-not [IO.File]::Exists("$outside\user.bin")) 'Restore followed a destination junction.'
+    Assert-True ([IO.File]::ReadAllText("$backup\linked-destination\user.bin") -eq 'must remain in backup, not outside') 'Linked destination lost its preserved source.'
+  }
+  $again = Invoke-Recovery 'Restore' $state
+  Assert-True ($again.ExitCode -eq 0) "Repeated payload Restore failed: $($again.Output)"
+  Assert-True ([IO.File]::ReadAllText("$resources\user-added.txt") -eq 'user file inside payload directory') 'Repeated restore changed returned bytes.'
+  Assert-True (@([IO.Directory]::GetFiles($caseRoot, 'Nuwax-installer-recovery-active-*.txt')).Count -eq 0) 'Completed restore kept active marker.'
+  return [pscustomobject]@{ case = $caseName; passed = $true; missingEntriesRestoredInPlace = $true; newPayloadPreserved = $true; collisionBackupsRetained = $true }
+}
+
 try {
   $cases = @(
     (Test-RestoreConflict 'all-conflicts' $false),
@@ -295,7 +400,11 @@ try {
     (Test-InterruptedUpgrade 'interrupted-app-only' $false $false),
     (Test-InterruptedUpgrade 'interrupted-with-workspace' $true $false),
     (Test-InterruptedUpgrade 'interrupted-workspace-conflict' $true $true),
-    (Test-InterruptedUpgrade 'interrupted-incomplete-prepare' $true $false $false)
+    (Test-InterruptedUpgrade 'interrupted-incomplete-prepare' $true $false $false),
+    (Test-PayloadExtras 'basic'),
+    (Test-PayloadExtras 'interrupted'),
+    (Test-PayloadExtras 'failure'),
+    (Test-PayloadExtras 'links')
   )
 } finally {
   if (-not $KeepFixture) {
@@ -304,7 +413,7 @@ try {
     Assert-True ([IO.Path]::GetDirectoryName($fixtureRoot) -eq $tempParent) 'Refusing cleanup outside the fixture parent.'
     Assert-True ([IO.Path]::GetFileName($fixtureRoot) -eq $fixtureName) 'Refusing cleanup of a different directory.'
     Assert-True ([IO.File]::ReadAllText($ownerFile) -eq $fixtureName) 'Fixture owner sentinel does not match.'
-    [IO.Directory]::Delete($fixtureRoot, $true)
+    Remove-FixtureTree ('\\?\' + $fixtureRoot)
   }
 }
 [pscustomobject]@{ success = $true; cases = $cases; fixtureRetained = [bool]$KeepFixture; fixturePath = $fixtureRoot; installerExecuted = $false; registryTouched = $false } | ConvertTo-Json -Depth 5

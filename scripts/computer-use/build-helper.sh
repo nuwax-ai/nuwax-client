@@ -13,7 +13,7 @@
 #   CUA_VERSION           写进 Info.plist 的版本串（默认 0.28.2）
 #   TARGET_TRIPLE         Rust target（必填，如 aarch64-apple-darwin / x86_64-pc-windows-msvc）
 #   OUT_DIR               产物目录（必填，一般=agent-electron-client/resources/computer-use）
-#   ICON_ICNS             mac 图标源（默认取 overlay 同步后的 public/icon.icns 黑标）
+#   ICON_ICNS             mac 图标源（默认直接复用商业版主应用的 canonical icon.icns）
 #   SIGN_IDENTITY         mac Developer ID 身份（空=ad-hoc 签名，仅 dev 用；产品必须正签）
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
 set -euo pipefail
@@ -102,8 +102,10 @@ if [ "$PLATFORM" = "mac" ]; then
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   cp "$BIN" "$APP/Contents/MacOS/Nuwax Computer Use"
   chmod +x "$APP/Contents/MacOS/Nuwax Computer Use"
-  ICON_ICNS="${ICON_ICNS:-$(cd "$REPO_ROOT" && find nuwa-electron-shell/crates/agent-electron-client/public -maxdepth 1 -name 'icon.icns' | head -1)}"
-  [ -n "$ICON_ICNS" ] && [ -f "$ICON_ICNS" ] || { echo "::error::icon.icns not found (overlay sync?)"; exit 1; }
+  # The dependency checkout can still contain the community AI icon. Read the
+  # same commercial source used for the main app without depending on sync order.
+  ICON_ICNS="${ICON_ICNS:-$REPO_ROOT/overlay/crates/agent-electron-client/public/icon.icns}"
+  [ -f "$ICON_ICNS" ] || { echo "::error::main application icon.icns not found: $ICON_ICNS"; exit 1; }
   cp "$ICON_ICNS" "$APP/Contents/Resources/AppIcon.icns"
   sed -e "s/@@CUA_VERSION@@/$CUA_VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
   printf 'APPL????' > "$APP/Contents/PkgInfo"

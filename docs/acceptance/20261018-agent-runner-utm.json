@@ -1,0 +1,49 @@
+{
+  "base": "7503d15c",
+  "branch": "codex/legacy-agent-runner-guard",
+  "behavior": "Retire the unused commercial custom-binary runner start at both production preload and main IPC; retain the separate built-in ACP engine. No guessed environment/stdin credential protocol.",
+  "reason": "Legacy external binary is not shipped; no mounted commercial UI caller or known secure credential input contract. Restoring this surface requires an explicit consumer and safe contract.",
+  "checks": {
+    "vitest": {
+      "boundaryAndSchemas": 21,
+      "existingAcpAndAuth": 52,
+      "totalPassed": 73
+    },
+    "mainPreloadBundle": "passed",
+    "overlayCheck": "passed, 335 files synchronized",
+    "pinPurity": "passed",
+    "overlayCompatibility": "same pinned base, 0 overlapping changes",
+    "review": "REVIEW.md reviewed; new commercial processHandlers override differs from pinned base only in import and legacy start block"
+  },
+  "utm": {
+    "passed": true,
+    "platform": "win32",
+    "electron": "40.8.2",
+    "arch": "x64",
+    "cases": [
+      {
+        "case": "canonical-preload-rejects-without-config-ipc",
+        "passed": true
+      },
+      {
+        "case": "legacy-ipc-rejected-without-config-echo",
+        "passed": true
+      }
+    ],
+    "scope": "Canonical production preload plus shared rejection callback through real Electron IPC; actual registerProcessHandlers wiring separately covered by unit tests",
+    "realCredentialsUsed": false,
+    "externalBinaryStarted": false
+  },
+  "sources": {
+    "overlay/crates/agent-electron-client/src/preload/index.ts": "92af6c3299be6d227152cf26fcdb708c243e2839c0251eb25fb336da1a16896b",
+    "overlay/crates/agent-electron-client/src/main/ipc/processHandlers.ts": "80c6deab6016fda6d877abcb6ad007fc5ba73000393671f77ee4067505342931",
+    "overlay/crates/agent-electron-client/src/shared/legacyAgentRunner.ts": "9ccc435ea3b3d246793ec28e32786b6a3524a8e6dd173579abbaece48e7d7135",
+    "scripts/acceptance/agent-runner.cjs": "71387d5696e8d2dc3c868c19138e0099f6880e5b098b60829b09f7ae42b09f30"
+  },
+  "limits": [
+    "Real Electron fixture covers production preload plus shared main rejection callback; actual registerProcessHandlers registration and no process/port operations covered by unit tests",
+    "No full installed commercial client regression or physical x64/Win10 validation",
+    "Legacy custom runner functionality is intentionally unavailable; this does not implement a new external runner credential transport"
+  ],
+  "published": false
+}

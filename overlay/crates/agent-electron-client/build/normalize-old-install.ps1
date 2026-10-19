@@ -10,9 +10,8 @@ param(
 # names and trailing dots/spaces without enumerating those paths.
 $ErrorActionPreference = 'Stop'
 $uninstallerName = 'Uninstall Nuwax.exe'
-# Only the Electron payload has a predictable name. Restore every other
-# top-level entry to its original location: workspaceDir may be any directory
-# chosen by the user, including the installation root itself.
+# Known payload files stay in recovery. Payload directories can also contain
+# user files; restore missing descendants without replacing the new payload.
 $appEntryNames = @(
   'Nuwax.exe',
   'locales',
@@ -106,6 +105,38 @@ function Move-Entry([string]$Source, [string]$Destination, [bool]$IsDirectory) {
     [System.IO.Directory]::Move($Source, $Destination)
   } else {
     [System.IO.File]::Move($Source, $Destination)
+  }
+}
+
+function Restore-PayloadExtras([string]$Source, [string]$Destination) {
+  $extendedSource = Get-ExtendedPath $Source
+  $extendedDestination = Get-ExtendedPath $Destination
+  if (-not (Test-EntryExists $extendedSource)) { return }
+  $sourceAttributes = [System.IO.File]::GetAttributes($extendedSource)
+  $isDirectory = ($sourceAttributes -band [System.IO.FileAttributes]::Directory) -ne 0
+  if (-not (Test-EntryExists $extendedDestination)) {
+    # Rename a missing subtree atomically, including links and reserved names.
+    # A retry scans the remaining backup, so an interrupted rename is not
+    # repeated and never needs to overwrite the returned entry.
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restore-intent'; original = $Destination; backup = $Source })
+    Move-Entry $extendedSource $extendedDestination $isDirectory
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restored'; original = $Destination; backup = $Source })
+    $script:payloadRestored++
+    return
+  }
+  $destinationAttributes = [System.IO.File]::GetAttributes($extendedDestination)
+  if (-not $isDirectory -or
+      ($sourceAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::Directory) -eq 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    # Existing files, type conflicts and linked directories belong to the new
+    # install. Keep their old counterparts in recovery; never traverse a link.
+    $script:payloadCollisions++
+    return
+  }
+  foreach ($entry in [System.IO.Directory]::GetFileSystemEntries($extendedSource)) {
+    $name = [System.IO.Path]::GetFileName($entry)
+    Restore-PayloadExtras ($entry.Substring(4)) ([System.IO.Path]::Combine($Destination, $name))
   }
 }
 
@@ -315,7 +346,7 @@ if ($Action -eq 'Prepare' -and $recoveryDir) {
     $status = [string]$records[$index].status
     if ($status -in @('restore-complete', 'rollback-complete')) {
       $lastTerminal = $index
-    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
+    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'payload-restore-intent', 'payload-restored', 'restore-incomplete')) {
       $lastPartialRestore = $index
     } elseif ($status -in @('planned', 'moved')) {
       $lastPrepareChange = $index
@@ -382,10 +413,15 @@ if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare) {
   }
   $restored = 0
   $conflicts = 0
+  $script:payloadRestored = 0
+  $script:payloadCollisions = 0
   foreach ($plan in $plans) {
     $original = [string]$plan.original
     $name = [System.IO.Path]::GetFileName($original)
     if ($appEntryNames -contains $name) {
+      if ([bool]$plan.directory) {
+        Restore-PayloadExtras ([string]$plan.backup) $original
+      }
       continue
     }
 
@@ -421,11 +457,11 @@ if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare) {
     Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
     exit 3
   }
-  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts })
+  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts; payloadExtrasRestored = $script:payloadRestored; payloadCollisionsRetained = $script:payloadCollisions })
   if ([System.IO.File]::Exists($extendedMarker)) {
     [System.IO.File]::Delete($extendedMarker)
   }
-  Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
+  Write-Output "Restored $restored non-application entries and $script:payloadRestored missing payload-directory entries; $script:payloadCollisions existing payload paths retained in $recoveryDir"
   if (-not $resumeRestoreBeforePrepare) {
     exit 0
   }

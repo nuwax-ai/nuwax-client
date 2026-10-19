@@ -9,6 +9,9 @@ import {
 } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import * as path from "path";
+import { pathToFileURL } from "node:url";
+import { createExternalOpenHandler } from "./openExternal";
+import { DEFAULT_DEV_SERVER_PORT } from "../services/constants";
 import * as fs from "fs";
 import * as os from "os";
 import { execSync } from "child_process";
@@ -447,15 +450,14 @@ export function registerAppHandlers(ctx: HandlerContext): void {
   );
 
   // Shell
-  ipcMain.handle("shell:openExternal", async (_, url: string) => {
-    try {
-      await shell.openExternal(url);
-      return { success: true };
-    } catch (error) {
-      log.error("[IPC] shell:openExternal failed:", error);
-      return { success: false, error: String(error) };
-    }
-  });
+  const rendererEntry = app.isPackaged
+    ? pathToFileURL(path.join(process.resourcesPath, "app.asar", "dist", "index.html")).href
+    : `http://localhost:${DEFAULT_DEV_SERVER_PORT}/`;
+  ipcMain.handle("shell:openExternal", createExternalOpenHandler(
+    () => ctx.getMainWindow()?.webContents,
+    rendererEntry,
+    (url) => shell.openExternal(url),
+  ));
 
   ipcMain.handle("shell:openPath", async (_, targetPath: string) => {
     try {

@@ -1,0 +1,476 @@
+import { registerServiceHandler } from "./serviceHandler";
+import { legacyAgentRunnerUnavailable } from "@shared/legacyAgentRunner";
+import { commercialLifecycle } from "../services/auth/lifecycle";
+import { ipcMain } from "electron";
+import * as fs from "fs";
+import log from "electron-log";
+import { z } from "zod";
+import type { HandlerContext } from "@shared/types/ipc";
+import { DEFAULT_FILE_SERVER_PORT } from "@shared/constants";
+import { createServiceManager } from "../window/serviceManager";
+import { getTrayManager } from "../window/trayManager";
+import { getConfiguredPorts } from "../services/startupPorts";
+import { killProcessTreesListeningOnTcpPort } from "../services/utils/processTree";
+
+export const lanproxyConfigSchema = z.object({
+  serverIp: z.string().min(1),
+  serverPort: z.number().int().positive(),
+  clientKey: z.string().min(1),
+  ssl: z.boolean().optional(),
+});
+
+export const agentRunnerConfigSchema = z.object({
+  binPath: z.string().min(1),
+  backendPort: z.number().int().positive(),
+  proxyPort: z.number().int().positive(),
+  apiKey: z.string().min(1),
+  apiBaseUrl: z.string().min(1),
+  defaultModel: z.string().min(1),
+});
+
+export const portSchema = z.number().int().positive();
+
+function invalidArgs(channel: string, issues: unknown) {
+  log.warn(`[IPC] ${channel} invalid args:`, issues);
+  return { success: false, error: `Invalid arguments for ${channel}` };
+}
+
+async function clearServicePort(
+  serviceName: string,
+  port: number,
+): Promise<void> {
+  try {
+    log.info(`[IPC] ${serviceName}: clearing TCP listeners on port ${port}`);
+    await killProcessTreesListeningOnTcpPort(port);
+  } catch (error) {
+    log.warn(`[IPC] ${serviceName}: port cleanup failed`, error);
+  }
+}
+
+/** 模块级 _serviceManager，供其他模块（如 computerServer）访问 */
+let _serviceManager: ReturnType<typeof createServiceManager> | null = null;
+
+/** 模块级 _ctx，供 stopAllServicesNow/restartAllServicesNow 等聚合函数访问 */
+let _ctx: HandlerContext | null = null;
+
+/** 获取 _serviceManager 实例（需先调用 registerProcessHandlers） */
+export function getServiceManager(): ReturnType<
+  typeof createServiceManager
+> | null {
+  return _serviceManager;
+}
+
+/**
+ * 任意核心托管服务是否在运行（fileServer/lanproxy/agentRunner/ttyd）。
+ * 供桥 handler 做幂等守卫——如 auth:persistToken 时仅在「未运行」才起服务，
+ * 避免已登录态下重复 restart 打断在跑的会话。
+ */
+export function isAnyCoreServiceRunning(): boolean {
+  const ctx = _ctx;
+  if (!ctx) return false;
+  return (
+    ctx.fileServer.running ||
+    ctx.lanproxy.running ||
+    ctx.agentRunner.running ||
+    ctx.ttyd.running
+  );
+}
+
+/**
+ * 停止全部本地服务（sm.stopAllServices + computerServer + 端口清理 + 托盘同步）。
+ * 供 services:stopAll IPC 与桥 auth:clear（登出 / token 失效 401）共用，确保
+ * 登出与失效都立即停掉所有服务（见 syncTrayStatusFromContext 的托盘推断）。
+ */
+export async function stopAllServicesNow(): Promise<{
+  success: boolean;
+  results: Record<string, { success: boolean; error?: string }>;
+}> {
+  const ctx = _ctx;
+  const sm = _serviceManager;
+  if (!ctx || !sm) {
+    log.warn("[Services] stopAllServicesNow: not initialized yet");
+    return { success: false, results: {} };
+  }
+  log.info("[Services] Stopping all services...");
+  const base = await sm.stopAllServices();
+  const results: Record<string, { success: boolean; error?: string }> = {
+    ...base.results,
+  };
+
+  // 补充 processHandlers 特有步骤：Computer Server
+  try {
+    const { stopComputerServer } = await import("../services/computerServer");
+    await stopComputerServer();
+    await clearServicePort(
+      "computerServer:stopAll",
+      getConfiguredPorts().agent,
+    );
+    results.computerServer = { success: true };
+    log.info("[Services] ComputerServer stopped");
+  } catch (e) {
+    results.computerServer = { success: false, error: String(e) };
+    log.error("[Services] ComputerServer stop failed:", e);
+  }
+
+  try {
+    const { stopSandboxService } =
+      await import("../services/sandbox/serviceBootstrap");
+    await stopSandboxService();
+    const runner = await ctx.agentRunner.stopAsync();
+    if (runner && !runner.success)
+      throw new Error(runner.message || "Agent runner stop failed");
+    results.sandbox = { success: true };
+  } catch (e) {
+    results.sandbox = { success: false, error: String(e) };
+  }
+  syncTrayStatusFromContext(ctx);
+  log.info("[Services] All services stopped:", results);
+  return { success: Object.values(results).every((r) => r.success), results };
+}
+
+/**
+ * 重启全部本地服务（best-effort：复用 settings 中已有 reg 产物）。
+ * 供 services:restartAll IPC 与桥 auth:persistToken（登录成功）共用。
+ * ComputerServer 的启动编排在 serviceManager.restartAllServices 内部（先于 lanproxy，
+ * 隧道健康检查依赖其监听 agent 端口）；此处仅负责重启前先停旧 ComputerServer。
+ * 注意：lanproxy 强依赖 reg 的 configKey/serverHost/serverPort；若 settings 缺失，
+ * serviceManager 内部会跳过 lanproxy 并 warn，其余服务照常启动。
+ */
+export async function restartAllServicesNow(signal?: AbortSignal): Promise<{
+  success: boolean;
+  results: Record<string, { success: boolean; error?: string }>;
+}> {
+  const ctx = _ctx;
+  const sm = _serviceManager;
+  if (!ctx || !sm) {
+    log.warn("[Services] restartAllServicesNow: not initialized yet");
+    return { success: false, results: {} };
+  }
+  log.info("[Services] Restarting all services...");
+  try {
+    // loopback 网关随配置刷新（形态/后端/域名可能已变），完成后通知 renderer
+    // 重解析 webview URL（refreshLoopbackGateway 内部处理 direct 停用场景）。
+    const { refreshLoopbackGateway } =
+      await import("../services/loopbackGateway");
+    await refreshLoopbackGateway();
+    const { stopComputerServer } = await import("../services/computerServer");
+    await stopComputerServer();
+    await clearServicePort(
+      "computerServer:restartAll",
+      getConfiguredPorts().agent,
+    );
+  } catch (e) {
+    log.warn("[Services] Restart preparation failed:", e);
+    return {
+      success: false,
+      results: { preparation: { success: false, error: String(e) } },
+    };
+  }
+  signal?.throwIfAborted();
+  const base = await sm.restartAllServices(signal);
+  const results: Record<string, { success: boolean; error?: string }> = {
+    ...base.results,
+  };
+
+  syncTrayStatusFromContext(ctx);
+  log.info("[Services] All services restart complete:", results);
+  return { success: Object.values(results).every((r) => r.success), results };
+}
+
+export function registerProcessHandlers(ctx: HandlerContext): void {
+  _serviceManager = createServiceManager({
+    lanproxy: ctx.lanproxy,
+    fileServer: ctx.fileServer,
+    agentRunner: ctx.agentRunner,
+    ttyd: ctx.ttyd,
+  });
+  _ctx = ctx;
+
+  // 本地别名，确保 TypeScript 知道它已被赋值
+  const sm = _serviceManager;
+
+  // ==================== Helper: Start File Server ====================
+  const startFileServerProcess = async (
+    port: number,
+  ): Promise<{ success: boolean; error?: string }> => {
+    await ctx.fileServer.stopAsync(3000);
+    await clearServicePort("fileServer:start", port);
+    return sm.startFileServer(port);
+  };
+
+  // ==================== Helper: Start Lanproxy ====================
+  const startLanproxyProcess = async (config: {
+    serverIp: string;
+    serverPort: number;
+    clientKey: string;
+    ssl?: boolean;
+  }): Promise<{
+    success: boolean;
+    error?: string;
+    healthCheck?: { healthy: boolean; error?: string };
+  }> => {
+    if (ctx.lanproxy.running) {
+      // 切换账号后 clientKey 会变化，必须用新配置重启，不能跳过。
+      // 否则旧进程继续使用旧 clientKey 导致「本地显示已联通、会话显示离线」。
+      log.info(
+        "[Lanproxy] Already running, stopping first before restarting with new config",
+      );
+      await ctx.lanproxy.stopAsync();
+    }
+    const useSsl = config.ssl !== false;
+    const maskedKey =
+      config.clientKey.length > 8
+        ? `${config.clientKey.slice(0, 4)}****${config.clientKey.slice(-4)}`
+        : "****";
+    log.info("[Lanproxy] Starting", {
+      server: config.serverIp,
+      port: config.serverPort,
+      keyMasked: maskedKey,
+      ssl: useSsl,
+    });
+    // startLanproxy 内部：spawn + 三层健康检查 + 失败完整重试（最多 3 次）
+    const result = await sm.startLanproxy(config);
+    if (result.success) {
+      log.info("[Lanproxy] Started", {
+        server: config.serverIp,
+        port: config.serverPort,
+        healthCheck: result.healthCheck,
+      });
+    } else {
+      log.error("[Lanproxy] Start failed", {
+        error: result.error,
+        server: config.serverIp,
+        port: config.serverPort,
+        healthCheck: result.healthCheck,
+      });
+    }
+    return result;
+  };
+
+  // Lanproxy handlers
+  registerServiceHandler(
+    "lanproxy:start",
+    async (
+      _,
+      config: {
+        serverIp: string;
+        serverPort: number;
+        clientKey: string;
+        ssl?: boolean;
+      },
+    ) => {
+      const parsed = lanproxyConfigSchema.safeParse(config);
+      if (!parsed.success) {
+        return invalidArgs("lanproxy:start", parsed.error.issues);
+      }
+      return startLanproxyProcess(parsed.data);
+    },
+  );
+
+  registerServiceHandler("lanproxy:stop", async () => {
+    return ctx.lanproxy.stopAsync(3000);
+  });
+
+  registerServiceHandler("lanproxy:status", () => {
+    return ctx.lanproxy.status();
+  });
+
+  /** 供设置页判断是否可显示「启动」并提示不可用原因 */
+  registerServiceHandler("lanproxy:isAvailable", async () => {
+    const { getLanproxyEntryPath } =
+      await import("../services/system/dependencies");
+    return { available: fs.existsSync(getLanproxyEntryPath()) };
+  });
+
+  // Reject even an older preload without reading its config, clearing ports,
+  // spawning a shell or forwarding credentials to an external binary.
+  ipcMain.handle("agentRunner:start", legacyAgentRunnerUnavailable);
+
+  registerServiceHandler("agentRunner:stop", async () => {
+    const ports = ctx.agentRunnerPorts;
+    const result = await ctx.agentRunner.stopAsync(3000);
+    if (ports) {
+      await clearServicePort("agentRunner:stop:backend", ports.backendPort);
+      await clearServicePort("agentRunner:stop:proxy", ports.proxyPort);
+    }
+    ctx.setAgentRunnerPorts(null);
+    return result;
+  });
+
+  registerServiceHandler("agentRunner:status", () => {
+    const st = ctx.agentRunner.status();
+    return {
+      ...st,
+      backendUrl: ctx.agentRunnerPorts
+        ? `http://127.0.0.1:${ctx.agentRunnerPorts.backendPort}`
+        : undefined,
+      proxyUrl: ctx.agentRunnerPorts
+        ? `http://127.0.0.1:${ctx.agentRunnerPorts.proxyPort}`
+        : undefined,
+    };
+  });
+
+  // File Server handlers
+  // 缺参回退用聚合配置默认端口（60005+NUWAX_PORT_OFFSET），与 serviceManager /
+  // ClientPage 一致；写死社区版默认 60000 会让商业版起在错误端口。
+  registerServiceHandler(
+    "fileServer:start",
+    async (_, port: number = DEFAULT_FILE_SERVER_PORT) => {
+      const parsed = portSchema.safeParse(port);
+      if (!parsed.success) {
+        return invalidArgs("fileServer:start", parsed.error.issues);
+      }
+      return startFileServerProcess(parsed.data);
+    },
+  );
+
+  registerServiceHandler("fileServer:stop", async () => {
+    const result = await ctx.fileServer.stopAsync(3000);
+    await clearServicePort("fileServer:stop", getConfiguredPorts().fileServer);
+    return result;
+  });
+
+  registerServiceHandler("fileServer:status", () => {
+    return ctx.fileServer.status();
+  });
+
+  // Computer Server handlers (Agent HTTP 接口服务，对齐 rcoder /computer/* API)
+  registerServiceHandler("computerServer:status", async () => {
+    const { getComputerServerStatus } =
+      await import("../services/computerServer");
+    return getComputerServerStatus();
+  });
+
+  registerServiceHandler("computerServer:start", async (_, port?: number) => {
+    const { startComputerServer } = await import("../services/computerServer");
+    const resolvedPortRaw = port ?? getConfiguredPorts().agent;
+    const parsed = portSchema.safeParse(resolvedPortRaw);
+    if (!parsed.success) {
+      return invalidArgs("computerServer:start", parsed.error.issues);
+    }
+    const resolvedPort = parsed.data;
+    const { stopComputerServer } = await import("../services/computerServer");
+    await stopComputerServer();
+    await clearServicePort("computerServer:start", resolvedPort);
+    return startComputerServer(resolvedPort);
+  });
+
+  registerServiceHandler("computerServer:stop", async () => {
+    const { stopComputerServer } = await import("../services/computerServer");
+    await stopComputerServer();
+    await clearServicePort("computerServer:stop", getConfiguredPorts().agent);
+    return { success: true };
+  });
+
+  // Admin Server handlers (管理接口服务)
+  // Admin Server 已合并到 Computer Server (60006)，不再有独立的 60007 端口
+  // start/stop 为空操作（Computer Server 通过 services:restartAll 管理）
+  registerServiceHandler("adminServer:start", async () => {
+    return { success: true };
+  });
+
+  registerServiceHandler("adminServer:stop", async () => {
+    return { success: true };
+  });
+
+  // adminServer:status 现在返回 Computer Server 状态
+  registerServiceHandler("adminServer:status", async () => {
+    const { getComputerServerStatus } =
+      await import("../services/computerServer");
+    return getComputerServerStatus();
+  });
+
+  // ==================== services:restartAll ====================
+
+  registerServiceHandler("services:restartAll", async () => {
+    return commercialLifecycle
+      ? commercialLifecycle.start(true)
+      : restartAllServicesNow();
+  });
+
+  // ==================== services:refreshLoopbackGateway ====================
+
+  // 仅刷新回环网关（停旧实例→按当前配置重确保→运行时键变化广播
+  // nuwax:loopback-changed），不触业务服务启停——网关在登录前就得就绪
+  // （gateway 形态承载登录页本身），不能复用被登录门禁拦在前面的
+  // services:restartAll。设置页切换加载形态（gateway/direct）即用。
+  registerServiceHandler("services:refreshLoopbackGateway", async () => {
+    try {
+      const { refreshLoopbackGateway } =
+        await import("../services/loopbackGateway");
+      await refreshLoopbackGateway();
+      return { success: true };
+    } catch (e) {
+      log.warn("[Services] refreshLoopbackGateway failed:", e);
+      return { success: false, error: String(e) };
+    }
+  });
+
+  // ==================== services:stopAll ====================
+
+  registerServiceHandler("services:stopAll", async () => {
+    return commercialLifecycle
+      ? commercialLifecycle.stop()
+      : stopAllServicesNow();
+  });
+
+  // ==================== services:restartAllExceptLanproxy ====================
+
+  registerServiceHandler("services:restartAllExceptLanproxy", async () => {
+    log.info("[Services] Restarting all services except lanproxy...");
+    const base = await sm.restartAllServicesExceptLanproxy();
+    const results: Record<string, { success: boolean; error?: string }> = {
+      ...base.results,
+    };
+
+    // 补充 processHandlers 特有步骤：Computer Server
+    try {
+      const { startComputerServer } =
+        await import("../services/computerServer");
+      const { agent: agentPort } = getConfiguredPorts();
+      await clearServicePort(
+        "computerServer:restartAllExceptLanproxy",
+        agentPort,
+      );
+      results.computerServer = await startComputerServer(agentPort);
+      log.info("[Services] ComputerServer started:", results.computerServer);
+    } catch (e) {
+      results.computerServer = { success: false, error: String(e) };
+      log.error("[Services] ComputerServer start failed:", e);
+    }
+
+    // 同步托盘状态：基于 ManagedProcess.running 重新计算。
+    syncTrayStatusFromContext(ctx);
+
+    log.info(
+      "[Services] All services (except lanproxy) restart complete:",
+      results,
+    );
+    return { success: Object.values(results).every((r) => r.success), results };
+  });
+}
+
+/**
+ * 根据 HandlerContext 中各 ManagedProcess 的实际运行状态同步托盘。
+ *
+ * 设计要点：
+ * - 托盘的 running/stopped 文案是面向用户的"是否有服务在跑"概览，
+ *   只要任一基础设施进程（fileServer / lanproxy / agentRunner / ttyd）
+ *   处于运行中，就显示 running；全部停止时显示 stopped。
+ * - 与之前"只有托盘菜单点击才会更新托盘状态"相比，补充了 UI 入口
+ *   （services:restartAll / services:stopAll / services:restartAllExceptLanproxy）
+ *   触发的状态同步路径。
+ * - mcpProxy / agentService 是通过不同管理器（mcpProxyManager / agentService）
+ *   启动的子进程，未在 ctx 中；如需更精确判断"所有服务都运行中"，可在未来
+ *   引入 mcpProxyManager.isRunning() / agentService.isReady() 扩展此处。
+ */
+function syncTrayStatusFromContext(ctx: HandlerContext): void {
+  const tray = getTrayManager();
+  if (!tray) return;
+  const running =
+    ctx.fileServer.running ||
+    ctx.lanproxy.running ||
+    ctx.agentRunner.running ||
+    ctx.ttyd.running;
+  tray.updateServicesStatus(running);
+}

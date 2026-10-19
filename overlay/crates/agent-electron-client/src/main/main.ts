@@ -17,6 +17,8 @@ import {
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import { pathToFileURL } from "node:url";
+import { guardHostNavigation } from "./services/system/hostNavigation";
 import log from "electron-log";
 import { initDatabase, closeDb, readSetting } from "./db";
 import { ManagedProcess } from "./processManager";
@@ -274,6 +276,14 @@ function createWindow() {
     show: false,
   });
 
+  const indexPath = path.join(process.resourcesPath, "app.asar", "dist", "index.html");
+  const rendererEntry = isDev
+    ? `http://localhost:${DEFAULT_DEV_SERVER_PORT}/`
+    : pathToFileURL(indexPath).href;
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    guardHostNavigation(mainWindow.webContents, rendererEntry);
+  }
+
   // 为 webview guest 注入轻量 Bridge（NuwaClawBridge）。
   // 商业网页共享会话，桥由轻量 preload 按实际业务文档暴露。
   mainWindow.webContents.on(
@@ -303,7 +313,7 @@ function createWindow() {
   // Load the app
   if (isDev) {
     const devCacheBust = Date.now();
-    const devUrl = `http://localhost:${DEFAULT_DEV_SERVER_PORT}/?_ncd=${devCacheBust}`;
+    const devUrl = `${rendererEntry}?_ncd=${devCacheBust}`;
     void mainWindow.webContents.session
       .clearCache()
       .catch((err) => log.warn("[DevCache] clearCache failed:", err))
@@ -317,12 +327,6 @@ function createWindow() {
     // 生产环境：dist 目录被打包到 app.asar 中
     // 用 loadFile 让 Electron 内部走 pathToFileURL，避免 Windows 上路径含空格 / 中文 / 反斜杠时
     // 拼出畸形 file:// URL，进而影响 Monaco 等通过 window.location.href 解析相对路径的资源加载
-    const indexPath = path.join(
-      process.resourcesPath,
-      "app.asar",
-      "dist",
-      "index.html",
-    );
     log.info("Loading app from:", indexPath);
     mainWindow.loadFile(indexPath);
   }

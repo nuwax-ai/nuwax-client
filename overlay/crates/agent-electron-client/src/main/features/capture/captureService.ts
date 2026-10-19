@@ -122,7 +122,8 @@ export function createCaptureService(deps: CaptureServiceDeps): CaptureService {
     if (state !== "idle") {
       return { success: false, code: "busy", error: "another capture session is in progress" };
     }
-    if (deps.getPermission() === "denied") {
+    const permission = deps.getPermission();
+    if (permission === "denied" || permission === "not-determined") {
       deps.onPermissionDenied?.();
       return { success: false, code: "permission-denied", error: "screen recording permission denied" };
     }

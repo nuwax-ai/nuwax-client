@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { legacyAgentRunnerUnavailable } from "@shared/legacyAgentRunner";
 import type { SandboxPolicy } from "@shared/types/sandbox";
 import type { UpdateCheckOptions } from "@shared/types/updateTypes";
 import { hostFeatureNamespaces } from "./features";
@@ -92,16 +93,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }>,
   },
 
-  // Agent Runner management (via IPC to main process)
+  // Legacy compatibility surface: reject start locally before transmitting config.
   agentRunner: {
-    start: (config: {
+    start: (_config: {
       binPath: string;
       backendPort: number;
       proxyPort: number;
       apiKey: string;
       apiBaseUrl: string;
       defaultModel: string;
-    }) => ipcRenderer.invoke("agentRunner:start", config),
+    }) => Promise.resolve(legacyAgentRunnerUnavailable()),
     stop: () => ipcRenderer.invoke("agentRunner:stop"),
     status: () => ipcRenderer.invoke("agentRunner:status"),
   },
@@ -578,6 +579,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getHostname: () => ipcRenderer.invoke("app:getHostname"),
   },
 
+  permissionOnboarding: {
+    snapshot: () => ipcRenderer.invoke("permissions:onboarding:snapshot"),
+    markSeen: () => ipcRenderer.invoke("permissions:onboarding:seen"),
+    openSettings: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:settings", key),
+    showApp: () => ipcRenderer.invoke("permissions:onboarding:showApp"),
+    restart: () => ipcRenderer.invoke("permissions:onboarding:restart"),
+  },
+
   // Permissions (macOS)
   permissions: {
     check: () => ipcRenderer.invoke("permissions:check"),
@@ -676,6 +687,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "nuwax:layout-changed",
       "nuwax:open-same-window",
       "nuwax:open-client-settings",
+      "permissions:guide",
       "nuwax:loopback-changed",
       "nuwax:webview-nav-state",
       "nuwax:dismiss-topbar-menus",

@@ -1,0 +1,603 @@
+{
+  "date": "2026-10-18",
+  "scope": "仅 nuwax-client；独立 worktree 的本地组合测试包；不发布",
+  "status": "本地 QA 功能矩阵通过；计划任务直接启动差异仍待定位；不作为生产发版验收",
+  "source": {
+    "branch": "codex/windows-data-security-integration",
+    "worktree": "/Users/apple/workspace/nuwax-client-windows-integration",
+    "base": "7503d15ccfe3b6b40e2ac6df837553de7bc084cc",
+    "packageSourceTip": "602f66fe341cb38b9631014f0ac22bb54ba5e794",
+    "basePin": "e245b3095e970d1c4a188a0d0881d98ed08eb2f4",
+    "frontendPin": "3aa6484ebbed95ab50e596a84b0d279efaaec66f",
+    "distPin": "8597fb337287e20a332a1458a7a4ccb0988c3b09",
+    "integratedCommits": [
+      {
+        "commit": "0d032f22f5201deef746e7246c1d6aad6df89a48",
+        "original": "6f30a642",
+        "purpose": "U1：清单卸载与默认保留本地数据"
+      },
+      {
+        "commit": "32c3f81a0450a61c41016a6560adb63697092e39",
+        "original": "611ffcde",
+        "purpose": "宿主导航边界"
+      },
+      {
+        "commit": "553c345072ce96131db48d02a506e9da9d142cae",
+        "original": "4dc435bd",
+        "purpose": "外部链接协议及来源校验"
+      },
+      {
+        "commit": "db63e21df8bc558e4b45bace66f0000a591728a8",
+        "original": "e315ed9c",
+        "purpose": "封闭旧自定义 runner 启动入口"
+      },
+      {
+        "commit": "248da5143637ecf6d704ad4b7a5aaa7551a1f9e8",
+        "original": "46a4a6c5",
+        "purpose": "升级嵌套未知文件原位恢复"
+      },
+      {
+        "commit": "6395a115296d4f70617ffc21542db9daeaf58d9c",
+        "original": "d277a446",
+        "purpose": "QA 续办的安装器缓存校验"
+      }
+    ]
+  },
+  "environment": {
+    "host": "WIN-UTM",
+    "os": "Windows 11 Pro 10.0.26100",
+    "guestArchitecture": "ARM64",
+    "appArchitecture": "x64 emulated",
+    "electron": "40.8.2",
+    "root": "C:\\nuwax-qa\\integration-20261018",
+    "install": "C:\\nuwax-qa\\integration-20261018\\NuwaxIntegrationQA",
+    "mode": "currentuser, interactive Limited",
+    "feed": "http://127.0.0.1:55321",
+    "appId": "com.nuwax-ai.nuwax.integrationqa.20261018"
+  },
+  "artifacts": {
+    "version": "3.0.17-qa.integration.2",
+    "build": [
+      {
+        "file": "dist/main/main.js",
+        "sha256": "b4f0361d3a1c0a84a3f84364e401b56830af9fe98577297a9e8a031761b51f16"
+      },
+      {
+        "file": "dist/preload/index.js",
+        "sha256": "91db5e5f248eb88e9c45a59e48fb76e416232afc8b44e1f53164b189cb9e771e"
+      },
+      {
+        "file": "dist/index.html",
+        "sha256": "d8b95b4d64decda79971d4c9f8741678d2cecac5fb21dc3c2e9f394cdc91b1f0"
+      },
+      {
+        "file": "qa-bootstrap.cjs",
+        "sha256": "5e9aa84ab4eb075ed58a0aa01ff3afe3caf3442dd08461b0f89d886ced1dfbb5"
+      }
+    ],
+    "installers": [
+      {
+        "file": "C:/nuwax-qa/integration-20261018/installers/NuwaxIntegrationQA-3.0.17-qa.integration.1.exe",
+        "bytes": 826974771,
+        "sha256": "3d8749aaff06537334563d4e1224a6d04c8d81c2f20e9a8f0954feb2ea3db7e2"
+      },
+      {
+        "file": "C:/nuwax-qa/integration-20261018/installers/NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+        "bytes": 826974774,
+        "sha256": "c295ab4689d9b059c32a7b05aaa8cd68cb00f60754a3a0ba362fcc3b5d92bc93"
+      }
+    ]
+  },
+  "automated": {
+    "vitest": {
+      "passed": 246,
+      "groups": [
+        {
+          "files": 9,
+          "tests": 183
+        },
+        {
+          "files": 2,
+          "tests": 63,
+          "description": "unifiedAgent 45 + processHandlers 18"
+        }
+      ]
+    },
+    "node": {
+      "passed": 8,
+      "commands": [
+        "node --test scripts/uninstall-payload.test.mjs scripts/app-update-packaging.test.mjs"
+      ]
+    },
+    "windowsScripts": {
+      "passed": 18,
+      "uninstall": {
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-uninstall-data-8410c4a6fbc24d8f99d442be4cc8f488",
+        "realUserDataTouched": false,
+        "cases": [
+          {
+            "case": "default-keeps-data",
+            "passed": true
+          },
+          {
+            "case": "checked",
+            "passed": true
+          },
+          {
+            "case": "locked-preflight-and-retry",
+            "passed": true
+          },
+          {
+            "case": "escaping-inventory",
+            "passed": true
+          },
+          {
+            "case": "linked-program-directory",
+            "passed": true
+          },
+          {
+            "case": "linked-data-root",
+            "passed": true
+          },
+          {
+            "case": "nested-data-link",
+            "passed": true
+          },
+          {
+            "case": "overlapping-install-data",
+            "passed": true
+          }
+        ],
+        "fixtureRetained": true,
+        "passed": true
+      },
+      "recovery": {
+        "success": true,
+        "cases": [
+          {
+            "case": "all-conflicts",
+            "passed": true,
+            "blockedPrepareUsesFreshStatePath": true,
+            "dataHashesPreserved": true,
+            "restoreRetryCompleted": true
+          },
+          {
+            "case": "partial-restore",
+            "passed": true,
+            "blockedPrepareUsesFreshStatePath": true,
+            "dataHashesPreserved": true,
+            "restoreRetryCompleted": true
+          },
+          {
+            "case": "interrupted-app-only",
+            "passed": true,
+            "priorBackupPreserved": true,
+            "workspaceConflictBlocked": false
+          },
+          {
+            "case": "interrupted-with-workspace",
+            "passed": true,
+            "priorBackupPreserved": true,
+            "workspaceConflictBlocked": false
+          },
+          {
+            "case": "interrupted-workspace-conflict",
+            "passed": true,
+            "priorBackupPreserved": true,
+            "workspaceConflictBlocked": true
+          },
+          {
+            "case": "interrupted-incomplete-prepare",
+            "passed": true,
+            "priorBackupPreserved": true,
+            "workspaceConflictBlocked": false
+          },
+          {
+            "case": "payload-extras-basic",
+            "passed": true,
+            "missingEntriesRestoredInPlace": true,
+            "newPayloadPreserved": true,
+            "collisionBackupsRetained": true
+          },
+          {
+            "case": "payload-extras-interrupted",
+            "passed": true,
+            "missingEntriesRestoredInPlace": true,
+            "newPayloadPreserved": true,
+            "collisionBackupsRetained": true
+          },
+          {
+            "case": "payload-extras-failure",
+            "passed": true,
+            "missingEntriesRestoredInPlace": true,
+            "newPayloadPreserved": true,
+            "collisionBackupsRetained": true
+          },
+          {
+            "case": "payload-extras-links",
+            "passed": true,
+            "missingEntriesRestoredInPlace": true,
+            "newPayloadPreserved": true,
+            "collisionBackupsRetained": true
+          }
+        ],
+        "fixtureRetained": false,
+        "fixturePath": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-installer-recovery-test-bb45743287fb42c98f0ce525b9c9be90",
+        "installerExecuted": false,
+        "registryTouched": false
+      }
+    },
+    "build": "production main/preload esbuild and host renderer Vite passed",
+    "overlay": "342 expected files; overlay check, pin check and compatibility against same base passed",
+    "review": "按 REVIEW.md 核对一次，复用定向检查；未重复全量 base:test"
+  },
+  "runtimeCases": {
+    "unknown-verified-after-reinstall": {
+      "passed": true,
+      "count": 8,
+      "restoredAtOriginalPaths": true,
+      "outsideSentinelPreserved": true
+    },
+    "payload-verified-after-reinstall": {
+      "passed": true,
+      "count": 51198,
+      "mismatches": []
+    },
+    "uninstall-default-result": {
+      "passed": true,
+      "unknownFilesRetained": true,
+      "method": "Actual NSIS GUI option; read-only verification afterwards",
+      "observed": "2026-10-18T03:25:32.9111097Z",
+      "mode": "default",
+      "dataKept": true,
+      "knownProgramFilesRemoved": true,
+      "registrationRemoved": true
+    },
+    "program-deletion-verified-default": {
+      "passed": true,
+      "count": 51198,
+      "uninstallEntryRemoved": true
+    },
+    "payload-verified-after-cancel": {
+      "passed": true,
+      "count": 51198,
+      "mismatches": []
+    },
+    "data-verified-default": {
+      "passed": true,
+      "count": 1653
+    },
+    "unknown-verified-after-cancel": {
+      "passed": true,
+      "count": 8,
+      "restoredAtOriginalPaths": true,
+      "outsideSentinelPreserved": true
+    },
+    "security-result-3.0.17-qa.integration.2": {
+      "passed": true,
+      "version": "3.0.17-qa.integration.2",
+      "pid": 8292,
+      "electron": "40.8.2",
+      "cases": [
+        {
+          "case": "installed-production-main-preload-renderer",
+          "passed": true
+        },
+        {
+          "case": "actual-external-handler-safe-protocols",
+          "passed": true
+        },
+        {
+          "case": "actual-preload-legacy-runner-rejected",
+          "passed": true
+        },
+        {
+          "case": "actual-ipc-foreign-source-and-old-runner-denied",
+          "passed": true
+        },
+        {
+          "case": "actual-privileged-host-navigation-blocked",
+          "passed": true
+        }
+      ],
+      "syntheticOsDispatchIntercepted": true,
+      "appPath": "C:\\nuwax-qa\\integration-20261018\\NuwaxIntegrationQA\\resources\\app.asar",
+      "userData": "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax",
+      "home": "C:\\nuwax-qa\\integration-20261018\\profile"
+    },
+    "interactive-install-result": {
+      "exitCode": 0,
+      "method": "interactive PowerShell Start-Process, same artifact and scope"
+    },
+    "update-result": {
+      "started": "2026-10-18T03:09:27.5829285Z",
+      "passed": true,
+      "after": {
+        "pid": 8292,
+        "version": "3.0.17-qa.integration.2",
+        "url": "file:///C:/nuwax-qa/integration-20261018/NuwaxIntegrationQA/resources/app.asar/dist/index.html",
+        "home": "C:\\nuwax-qa\\integration-20261018\\profile",
+        "userData": "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax"
+      },
+      "before": {
+        "pid": 4784,
+        "version": "3.0.17-qa.integration.1",
+        "url": "file:///C:/nuwax-qa/integration-20261018/NuwaxIntegrationQA/resources/app.asar/dist/index.html",
+        "home": "C:\\nuwax-qa\\integration-20261018\\profile",
+        "userData": "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax"
+      },
+      "localDataMarkersRetained": true,
+      "oldProcessExited": true,
+      "input": "Actual About-page immediate-update button; no installer clicks during upgrade",
+      "observed": "2026-10-18T03:13:50.5078743Z"
+    },
+    "boundary-result": {
+      "unsafeFlagExit": 2,
+      "retry": "GUI default uninstall after releasing lock",
+      "programAndRegistrationRetained": true,
+      "lockedExit": 2,
+      "passed": true
+    },
+    "unknown-verified-after-uninstall-default": {
+      "passed": true,
+      "count": 8,
+      "restoredAtOriginalPaths": true,
+      "outsideSentinelPreserved": true
+    },
+    "update-before": {
+      "before": {
+        "pid": 4784,
+        "version": "3.0.17-qa.integration.1",
+        "url": "file:///C:/nuwax-qa/integration-20261018/NuwaxIntegrationQA/resources/app.asar/dist/index.html",
+        "home": "C:\\nuwax-qa\\integration-20261018\\profile",
+        "userData": "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax"
+      },
+      "started": "2026-10-18T03:09:27.5829285Z",
+      "markers": [
+        {
+          "Path": "C:\\Users\\Louis\\.nuwax-integration-qa\\integration-sentinel.txt",
+          "Hash": "C83965EEBAAF5236B4B0C63AE4DCD547D30CDFE66B71F029ADFB0683A2EFDF9E"
+        },
+        {
+          "Path": "C:\\Users\\Louis\\AppData\\Roaming\\NuwaxIntegrationQA\\integration-sentinel.txt",
+          "Hash": "C83965EEBAAF5236B4B0C63AE4DCD547D30CDFE66B71F029ADFB0683A2EFDF9E"
+        },
+        {
+          "Path": "C:\\Users\\Louis\\AppData\\Local\\nuwax-integration-qa-updater\\integration-sentinel.txt",
+          "Hash": "C83965EEBAAF5236B4B0C63AE4DCD547D30CDFE66B71F029ADFB0683A2EFDF9E"
+        }
+      ]
+    },
+    "payload-verified-after-upgrade": {
+      "passed": true,
+      "count": 51198,
+      "mismatches": []
+    },
+    "unknown-verified-after-upgrade": {
+      "passed": true,
+      "count": 8,
+      "restoredAtOriginalPaths": true,
+      "outsideSentinelPreserved": true
+    },
+    "isolation": {
+      "profile": "C:\\nuwax-qa\\integration-20261018\\profile",
+      "systemPermissionsChanged": false,
+      "runtimeLinks": [
+        "C:\\nuwax-qa\\integration-20261018\\profile\\.nuwax",
+        "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax",
+        "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Local\\nuwax-integration-qa-updater"
+      ],
+      "processOnlyEnvironment": true,
+      "realQaDataTargets": [
+        "C:\\Users\\Louis\\.nuwax-integration-qa",
+        "C:\\Users\\Louis\\AppData\\Roaming\\NuwaxIntegrationQA",
+        "C:\\Users\\Louis\\AppData\\Local\\nuwax-integration-qa-updater"
+      ]
+    },
+    "package-evidence": {
+      "version": "3.0.17-qa.integration.2",
+      "build": [
+        {
+          "file": "dist/main/main.js",
+          "sha256": "b4f0361d3a1c0a84a3f84364e401b56830af9fe98577297a9e8a031761b51f16"
+        },
+        {
+          "file": "dist/preload/index.js",
+          "sha256": "91db5e5f248eb88e9c45a59e48fb76e416232afc8b44e1f53164b189cb9e771e"
+        },
+        {
+          "file": "dist/index.html",
+          "sha256": "d8b95b4d64decda79971d4c9f8741678d2cecac5fb21dc3c2e9f394cdc91b1f0"
+        },
+        {
+          "file": "qa-bootstrap.cjs",
+          "sha256": "5e9aa84ab4eb075ed58a0aa01ff3afe3caf3442dd08461b0f89d886ced1dfbb5"
+        }
+      ],
+      "installers": [
+        {
+          "file": "C:/nuwax-qa/integration-20261018/installers/NuwaxIntegrationQA-3.0.17-qa.integration.1.exe",
+          "bytes": 826974771,
+          "sha256": "3d8749aaff06537334563d4e1224a6d04c8d81c2f20e9a8f0954feb2ea3db7e2"
+        },
+        {
+          "file": "C:/nuwax-qa/integration-20261018/installers/NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "bytes": 826974774,
+          "sha256": "c295ab4689d9b059c32a7b05aaa8cd68cb00f60754a3a0ba362fcc3b5d92bc93"
+        }
+      ]
+    },
+    "security-result-3.0.17-qa.integration.1": {
+      "passed": true,
+      "version": "3.0.17-qa.integration.1",
+      "pid": 4784,
+      "electron": "40.8.2",
+      "cases": [
+        {
+          "case": "installed-production-main-preload-renderer",
+          "passed": true
+        },
+        {
+          "case": "actual-external-handler-safe-protocols",
+          "passed": true
+        },
+        {
+          "case": "actual-preload-legacy-runner-rejected",
+          "passed": true
+        },
+        {
+          "case": "actual-ipc-foreign-source-and-old-runner-denied",
+          "passed": true
+        },
+        {
+          "case": "actual-privileged-host-navigation-blocked",
+          "passed": true
+        }
+      ],
+      "syntheticOsDispatchIntercepted": true,
+      "appPath": "C:\\nuwax-qa\\integration-20261018\\NuwaxIntegrationQA\\resources\\app.asar",
+      "userData": "C:\\nuwax-qa\\integration-20261018\\profile\\AppData\\Roaming\\Nuwax",
+      "home": "C:\\nuwax-qa\\integration-20261018\\profile"
+    },
+    "unknown-verified-after-uninstall-checked": {
+      "passed": true,
+      "count": 8,
+      "restoredAtOriginalPaths": true,
+      "outsideSentinelPreserved": true
+    },
+    "data-deletion-verified": {
+      "passed": true,
+      "targets": [
+        "C:\\Users\\Louis\\.nuwax-integration-qa",
+        "C:\\Users\\Louis\\AppData\\Roaming\\NuwaxIntegrationQA",
+        "C:\\Users\\Louis\\AppData\\Local\\nuwax-integration-qa-updater"
+      ]
+    },
+    "program-deletion-verified-checked": {
+      "passed": true,
+      "count": 51198,
+      "uninstallEntryRemoved": true
+    },
+    "uninstall-checked-result": {
+      "passed": true,
+      "unknownFilesRetained": true,
+      "method": "Actual NSIS GUI option; read-only verification afterwards",
+      "observed": "2026-10-18T03:42:38.8416566Z",
+      "mode": "checked",
+      "dataKept": false,
+      "knownProgramFilesRemoved": true,
+      "registrationRemoved": true
+    }
+  },
+  "uiObservations": {
+    "install1": "实际完整 EXE、当前用户、独立目录完成向导并启动真实生产构建；不计早期排错包",
+    "upgrade": "关于页切换 Beta 并确认；单击立即更新，真实下载本机回环 feed 的新版完整 EXE；旧进程退出，只有安装进度页，无后续安装器点击，新版自动启动",
+    "upgradedAbout": "已观察 v3.0.17-qa.integration.2，Beta 开关保留；截图只在本地 cache",
+    "cancelUninstall": "默认未勾选，路径为三处 QA 数据目标；取消后程序、未知文件和本地数据保留",
+    "defaultUninstall": "真实 GUI 未勾选卸载成功；已知程序文件/卸载器/登记删除，未知文件与实际 QA 数据保留",
+    "reinstall2": "同一最终新版 EXE，经普通交互 PowerShell Start-Process 完成安装向导；取消运行勾选，程序/未知文件/1653 项数据校验通过",
+    "checkedUninstall": "重装后实际 GUI 再次确认默认未勾选，主动勾选并下一步，最终完成页已观察；三处 QA 数据目录全部删除，51198 已知程序文件及卸载登记删除，8 处未知文件和外部哨兵保留"
+  },
+  "diagnostics": {
+    "earlyAsar": "早期自制包的 writable stream 未结束即同步封包，ASAR 为空；已 await finished(stream)，读取版本并比对 main 后再封包。空包及手工替换归档仅算排错，全部排除在最终完整包验收外。",
+    "installerLaunchContext": {
+      "status": "unresolved-context-specific-failure",
+      "directScheduledTask": "直接通过计划任务启动新版 NSIS 时 System.dll / c0000005 / offset 00001581",
+      "sameFinalArtifactViaInteractivePowerShell": "同一 SHA-256、同一路径经 Start-Process 成功，exitCode 0",
+      "actualInAppUpdater": "成功下载安装并自动重启",
+      "interpretation": "差异已复现，根因未确认；交互包装器保留已验证的启动上下文，不将其称为产品崩溃修复或实体机稳定性结论。02:55/02:56 为此前诊断事件，未逐一绑定最终包 SHA；03:26/03:28 在最终新版同路径直接计划任务启动时复现。",
+      "events": [
+        {
+          "appPath": "C:\\nuwax-qa\\integration-20261018\\installers\\NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "offset": "00001581",
+          "exception": "c0000005",
+          "app": "NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "module": "System.dll",
+          "time": "2026-10-18T03:28:40.7176456Z"
+        },
+        {
+          "appPath": "C:\\nuwax-qa\\integration-20261018\\installers\\NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "offset": "00001581",
+          "exception": "c0000005",
+          "app": "NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "module": "System.dll",
+          "time": "2026-10-18T03:26:39.6281383Z"
+        },
+        {
+          "appPath": "C:\\nuwax-qa\\integration-20261018\\installers\\NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "offset": "00001581",
+          "exception": "c0000005",
+          "app": "NuwaxIntegrationQA-3.0.17-qa.integration.2.exe",
+          "module": "System.dll",
+          "time": "2026-10-18T02:56:44.7699867Z"
+        },
+        {
+          "appPath": "C:\\nuwax-qa\\integration-20261018\\installers\\NuwaxIntegrationQA-3.0.17-qa.integration.1.exe",
+          "offset": "00001581",
+          "exception": "c0000005",
+          "app": "NuwaxIntegrationQA-3.0.17-qa.integration.1.exe",
+          "module": "System.dll",
+          "time": "2026-10-18T02:55:10.7549340Z"
+        }
+      ]
+    }
+  },
+  "isolationAndLimits": [
+    "仅此 UTM 固定根目录适用；QA appId/包名/EXE/版本/端口/更新源/数据路径不同，不可直接作为分发候选",
+    "main、preload 与宿主 renderer 均从集成源码生产构建；Windows 依赖/资源复用已验证 x64 payload，ASAR 的 node_modules 全部 unpack，51,198 文件数与生产包不同",
+    "QA 入口覆盖仅限进程的 profile 并禁用 GPU；专用 junction 映射至三个 QA 数据目标；没有系统环境/权限修改",
+    "安全用例经过实际 handler/IPC，最终合成 OS 协议派发被拦截，未执行危险协议；不等于默认浏览器完整验收",
+    "没有业务登录、真实模型/API、生产签名/SmartScreen、公开 CDN、MSI、全用户/UAC、Win10 1511、实体 x64 验收",
+    "NW-050、辅助应用 logo、UTF-8 跨仓改动不在此组合包；暂停项与决策门禁未解除",
+    "升级计时包含观察及完整文件校验，不作为纯安装耗时或关闭 14–16 分钟问题的证据"
+  ],
+  "mainWorktreeIncident": {
+    "action": "误在主工作区 cherry-pick 六个提交后立即报告",
+    "backup": "codex/windows-integration-safety-copy",
+    "backupTip": "e9acf294e27613c5ffa350890fd1a908755b6115",
+    "userAuthorization": "允许此次纠错恢复",
+    "correction": "仅此一次 git -c submodule.recurse=false reset --keep 7503d15c；恢复前确认无 tracked WIP，保留原未跟踪文件",
+    "mainAfter": "7503d15ccfe3b6b40e2ac6df837553de7bc084cc",
+    "noOtherReset": true,
+    "noPushTagPublishOrReleaseMerge": true,
+    "mainUntrackedRetained": [
+      ".codex/worktrees/",
+      "docs/20261017-nuwax-client-project-handoff.md"
+    ]
+  },
+  "evidenceStorage": {
+    "local": "/Users/apple/workspace/nuwax-client-windows-integration/.cache/integration-20261018",
+    "vm": "C:\\nuwax-qa\\integration-20261018",
+    "screenshots": "仅 cache，不提交含其他应用画面的截图"
+  },
+  "cleanupAndProtection": {
+    "originalMainStillRunning": true,
+    "tasksRemoved": [
+      "NuwaxIntegrationQA-Install1-20261018",
+      "NuwaxIntegrationQA-Install2-20261018",
+      "NuwaxIntegrationQA-App-20261018",
+      "NuwaxIntegrationQA-Uninstall-20261018"
+    ],
+    "systemPermissionsChanged": false,
+    "qaAppProcesses": 0,
+    "passed": true,
+    "freeBytes": 176071196672,
+    "protectedFiles": [
+      {
+        "path": "C:\\nuwax-qa\\beta5-20261017\\installed\\Nuwax.exe",
+        "sha256": "a8bd10a923e7d1712ccc591ab9943d1bd25d9400c15c914c5dc8acd79ff75b80",
+        "unchanged": true
+      },
+      {
+        "path": "C:\\nuwax-qa\\beta5-20261017\\installed\\resources\\app.asar",
+        "sha256": "3b91dfe9368637c6f9622511732aebbaee24ebd64794cb08f31515739704d8ee",
+        "unchanged": true
+      }
+    ],
+    "packagesAndUnknownFilesRetained": true,
+    "ownedFeedStopped": true,
+    "capacityBytes": 257575333888,
+    "originalMainPid": 11940,
+    "observed": "2026-10-18T03:43:46.8460337Z"
+  }
+}

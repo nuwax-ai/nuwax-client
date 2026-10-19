@@ -1,0 +1,52 @@
+{
+  "version": "3.0.17-beta.6",
+  "product": "nuwax",
+  "platform": "darwin-arm64",
+  "source": "aa873b6a56871c1c95395e27c11cc1217d81ac2a",
+  "signing": "local unsigned main app; ad-hoc helper",
+  "runtimeLaunched": false,
+  "sourcePins": {
+    "nuwa-electron-shell": "0d7ce59d540238c0d9a5261ecd33f79a08265fe1",
+    "nuwax": "6a1bb1717427c17e7c4d690a075ab63253ec6a17",
+    "nuwax-dist": "1a74bd9f2267f7b6fab7884e480374b3b580d471"
+  },
+  "frontendBytesMatch": true,
+  "microAppPins": [
+    {
+      "id": "repo",
+      "commit": "6d232864fe045d25dda39eb50bb9206739815e5e"
+    },
+    {
+      "id": "message",
+      "commit": "1f517d823d4735ba16f0645e2509489f4c94795e"
+    }
+  ],
+  "checks": {
+    "dist/main/main.js": "4c7b4ecf9919bb3ba735bab7436c63021c8d3da801a38e04ad34d34c0f6f40fc",
+    "dist/preload/index.js": "fc8c4fbc20d03c0ef9b36dfc17626e16ea8b174d7a5c4c42c290958458ba441e",
+    "dist/index.html": "121cae0436ffb4a78c86fb5dc502e11c6a75ea0c42d3b095010dc8e7d139f935",
+    "dist/assets/index-AuvmYr-m.js": "5988ff22b401f61243bef00ef50c831102b3733faf1d1035255562e6f8046547",
+    "dist/assets/vendor-antd-Cq_XW8TK.js": "6c69cfdb61121b066e820c61f1cb41ca823c9f385d6cb6da7cd04bb2e89cd100",
+    "dist/assets/index-DKWkNoIn.css": "e8d5563bcc99923da9452177be337df503d9452c85975bf57dadca84e86ff1e9"
+  },
+  "notificationArchitectures": "x86_64 arm64",
+  "helperIconSha256": "6bc55150e039d689623582747ff356da173396efbe672576b7aac1809ffd03fd",
+  "frontend": {
+    "name": "nuwax-frontend",
+    "version": "1.2.0",
+    "gitHash": "6a1bb1717",
+    "buildAt": "2026-10-18T06:19:34.672Z"
+  },
+  "files": [
+    {
+      "name": "Nuwax-3.0.17-beta.6-arm64-mac.zip",
+      "size": 892352936,
+      "sha256": "5bc5634121767a65a51535e0066ed505e97631ab4b491c879f54d256b07a8657"
+    },
+    {
+      "name": "Nuwax-3.0.17-beta.6-arm64.dmg",
+      "size": 916518021,
+      "sha256": "7cd88be2098fb6860840494d5f311fae0e65699185c85004c6820b3da1b81727"
+    }
+  ]
+}

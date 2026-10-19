@@ -1,0 +1,40 @@
+{
+  "base": "7503d15c",
+  "branch": "codex/open-external-policy",
+  "behavior": "Only actual host main frame on the expected renderer may open a canonical HTTP(S) URL. Other protocols and sources fail before OS dispatch.",
+  "checks": {
+    "vitest": {
+      "passed": 31,
+      "files": [
+        "openExternal.test.ts",
+        "appHandlers.permissions.test.ts",
+        "bridgeTrust.test.ts"
+      ]
+    },
+    "mainPreloadBundle": "passed",
+    "overlayCheck": "passed",
+    "pinPurity": "passed",
+    "overlayCompatibility": "same pinned base, 0 overlapping changes",
+    "review": "REVIEW.md behavior and security boundary reviewed"
+  },
+  "utm": {
+    "status": "pending readback",
+    "fixture": "D:\\nuwax-qa\\security-20261018\\cases\\open-external",
+    "task": "NuwaxOpenExternal20261018",
+    "started": true,
+    "resultConfirmed": false,
+    "reason": "SSH/RDP disconnected; UTM console subsequently observed at firmware Synchronous Exception. No success inferred from dispatch.",
+    "osLauncher": "Stubbed in the fixture; unsafe test schemes cannot launch OS handlers"
+  },
+  "sources": {
+    "overlay/crates/agent-electron-client/src/main/ipc/appHandlers.ts": "9be2ccfda69aff527e0d08ee4f39c941c8c55ee83dc406b0e9bf44ccb0256ec6",
+    "overlay/crates/agent-electron-client/src/main/ipc/openExternal.ts": "9adfd35d6f7c381a02dd03a3accea34ed90e437e3509404debbecce322d824bc",
+    "scripts/acceptance/open-external.cjs": "f31abe9b5d38c1cb59add87618f75b343f16e06a128c4697277515a4f541e084"
+  },
+  "limits": [
+    "Full installed commercial app and default external browser dispatch not exercised",
+    "UTM result needs readback or rerun after environment recovery",
+    "Other shell APIs and fixed OS-settings links outside this scoped handler were not changed"
+  ],
+  "published": false
+}
