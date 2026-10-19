@@ -1,4 +1,3 @@
-vi.mock("./cuaRuntimeHandlers", () => ({ registerCuaRuntimeHandlers: vi.fn() }));
 /**
  * 单元测试: 商业版窗口最小尺寸 1200×720（plans/20260921-min-window-resolution.md）
  *

@@ -1,7 +1,7 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
-import { configureCaptureBackend, controlDesktopRecording, desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { prepareDesktopFeaturesBeforeReady, runDesktopActivity, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
 import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
@@ -81,12 +81,11 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 
-const featureSchemes = desktopFeatureSchemes(APP_NAME_IDENTIFIER);
+const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
-  configureCaptureBackend(app.commandLine);
   configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
   // Keep the Windows updater/taskbar identity under the commercial product guard.
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
@@ -414,7 +413,7 @@ function createWindow() {
   if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
     // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
     // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
-    const shortcutOptions = { platform: process.platform, controlRecording: controlDesktopRecording };
+    const shortcutOptions = { platform: process.platform, controlRecording: (action: "pause" | "stop") => runDesktopActivity("capture", action) };
     bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction, shortcutOptions);
     mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
       bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction, shortcutOptions);
@@ -645,7 +644,9 @@ async function cleanupAllProcesses(): Promise<void> {
   }
 
   // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
-  await runCleanupStep("Desktop features stop", disposeDesktopFeatures);
+  // 特性收尾含 Computer Use daemon 停机（协议 4s + 等待 3s + 兜底），给与
+// 「Commercial extras stop」同级的步进上限；两步共享同一幂等收尾 Promise。
+  await runCleanupStep("Desktop features stop", disposeDesktopFeatures, Math.max(stepTimeoutMs, 8000));
 
   await runCleanupStep("Engine processes stop", () => {
     stopAllEngines();

@@ -17,7 +17,7 @@ vi.mock("antd", async () => {
     Button: (props: any) => { harness.buttons.push(props); return <button disabled={props.disabled}>{props.children}</button>; },
   };
 });
-import { CuaControls } from "./CuaControls";
+import { CuaControls, CuaSettingsRows } from "./CuaControls";
 const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
@@ -26,7 +26,9 @@ beforeEach(() => {
   vi.stubGlobal("window", Object.assign(new EventTarget(), { electronAPI: { on: vi.fn(), off: vi.fn() } }));
 });
 afterEach(() => vi.unstubAllGlobals());
-const render = (compact = true) => renderToStaticMarkup(<CuaControls api={api as any} t={(key) => key} compact={compact} />);
+const render = () => renderToStaticMarkup(<CuaControls api={api as any} t={(key) => key} />);
+const Row = ({ label, desc, control }: any) => <section><h4>{label}</h4><p>{desc}</p>{control}</section>;
+const renderRows = () => renderToStaticMarkup(<CuaSettingsRows api={api as any} t={(key) => key} Row={Row} />);
 describe("Computer Use controls", () => {
   it("keeps emergency stop enabled during another pending operation", () => {
     harness.states[1] = true;
@@ -43,6 +45,29 @@ describe("Computer Use controls", () => {
   it("does not mistake session end for verified business success", () => {
     harness.states[0] = { ...harness.states[0], phase: "completed", resultObserved: false };
     expect(render()).toContain("Claw.Cua.unobservedResult");
+  });
+  it("explains a resumable no-progress pause and labels refused steps", () => {
+    harness.states[0] = { ...harness.states[0], phase: "paused", reason: "noProgress",
+      steps: [{ sequence: 1, tool: "browser_click", startedAt: 0, outcome: "refused" }] };
+    const html = render();
+    expect(html).toContain("Claw.Cua.reason.noProgress");
+    expect(html).toContain("Claw.Cua.outcome.refused");
+  });
+  it("keeps the control bar hidden without a task", () => {
+    harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
+    expect(render()).toBe("");
+  });
+  it("offers scope and diagnostics as settings rows, locked while a task runs", () => {
+    harness.states = [{ ...harness.states[0], phase: "idle", taskId: null }, false, [], false, null];
+    const html = renderRows();
+    expect(html).toContain("Claw.Settings.computerUse.scope");
+    expect(html).toContain("Claw.Cua.scope.explanation");
+    expect(html).toContain("Claw.Settings.computerUse.diagnostics");
+    expect(html).not.toContain("Claw.Cua.modelExplanation");
+    harness.cursor = 0; harness.buttons = [];
+    harness.states[0] = { ...harness.states[0], phase: "running", taskId: "id" };
+    renderRows();
+    expect(harness.buttons.find((b) => b.children === "Claw.Cua.clear").disabled).toBe(true);
   });
   it("ignores stale snapshots and removes subscriptions on unmount", async () => {
     let resolve!: (value: unknown) => void;

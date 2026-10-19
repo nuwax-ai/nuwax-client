@@ -30,6 +30,11 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
      id: 'my-feature',
      products: ['nuwax'],          // 不在列表内的产品里，整个特性不存在
      enabledByDefault: true,
+     // lockedOff: '发版强关原因',            // 非空即强制关闭，忽略设置覆盖
+     // bridge: { namespaces: ['myNs'] },    // canUse 归属（主进程侧判定可加 canUse）
+     // requests: { authorize, isSource },   // 请求门与凭据过滤（与注册与否无关）
+     // beforeReady(commandLine) {},         // app ready 前的命令行准备
+     // agentServers: ['my-tool'],           // 本特性保留的本地 MCP 条目 id
      register(ctx) {               // 同步、轻量；重活必须懒初始化
        ctx.ipc.handle(CH.DO, (event, arg) => doIt(arg), UNTRUSTED_RESULT);   // 业务页（受信顶层文档）
        ctx.hostIpc.handle(CH.GET, () => load(), null);                      // 宿主壳渲染进程
@@ -43,6 +48,22 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
 5. 若有随包的第三方二进制：在 `third-party/manifest.json` 登记，并确保许可证与源码地址可读（见下「开源声明」）。
 6. 跑 `node --test scripts/check-feature-boundaries.test.mjs`。
 
+## 通用端口（FeatureContext）
+
+套件只含通用接缝，**不得为单个特性加专属字段**（R5 强制）；出现第二个使用者再增补端口：
+
+| 端口 | 用途 |
+| --- | --- |
+| `ipc` / `hostIpc` | 受信 IPC（业务页 / 宿主壳） |
+| `lifecycle` | 会话失效（同步撤销）、服务启动前/停止时（可等待）、登出换域、退出 |
+| `scratch` / `dataDir` | 带 TTL 的临时目录 / 特性持久目录（`~/.nuwax/<id>`） |
+| `settings` | 本机设置读写 |
+| `session` / `windows` | 登录态查询 / 宿主主窗口 |
+| `activities` | 进行中操作（托盘动作项：id + i18n 键 + 回调） |
+| `agent` | 本地 MCP 条目登记、随包 Node 定位、Agent 会话参与者 |
+| `workspace` | 会话工作区身份与目录解析 |
+| `translate` | 宿主当前语言翻译 |
+
 ## 边界规则（`scripts/check-feature-boundaries.mjs` 强制）
 
 | 规则 | 内容 |
@@ -51,6 +72,7 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
 | R2 | 特性之外的代码只能经公开入口使用特性：`main/features/index`、`preload/features/index`、`renderer/features/<id>`（目录入口）、`shared/features/<id>/contract` |
 | R3 | `_kit` 不得依赖任何特性或客户端其余代码 |
 | R4 | 特性内不得出现 `APP_NAME_IDENTIFIER`，产品门控只看清单的 `products` |
+| R5 | `_kit` 不得以字符串字面量出现任何特性 id；注册表只 import 各特性公开入口（`features/<id>` 或 `/index`） |
 
 渲染进程特性不能 import 客户端 i18n、状态等，需要的东西（翻译函数、桥对象）由调用方作为 props 传入。
 
@@ -62,7 +84,9 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
 
 ## 接缝（既有代码里与特性机制相关的改动点）
 
-`nuwaxBridgeHandlers.ts`（一次 `startDesktopFeatures`；`cancelTransfers` 在每个会话边界通知特性）、`main.ts`（退出清理 `disposeDesktopFeatures`）、`webviewPerfBridge.ts` 与 `preload/index.ts`（各一处命名空间展开）。新增特性**不需要**再改这些文件。
+`nuwaxBridgeHandlers.ts`（一次 `startDesktopFeatures` 并注入宿主端口实现）、`commercialAuth.ts`（生命周期 v2 汇合点）、`main.ts`（`prepareDesktopFeaturesBeforeReady` 与退出清理 `disposeDesktopFeatures`）、`webviewPerfBridge.ts` 与 `preload/index.ts`（各一处命名空间展开）。新增特性**不需要**再改这些文件。
+
+canUse 的命名空间归属由清单 `bridge.namespaces` 声明，格式/可用性探测在各特性 `preload/features/<id>` 文件内实现（`probeFeatureCapability` 派发）；`shared/hostCapabilities.ts` 的公开白名单属对外契约，与前端生成快照对齐。
 
 ## 开源声明
 

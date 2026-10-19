@@ -1,13 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ data: {} as Record<string, any>, secure: true }));
-vi.mock("../../db", () => ({ readSetting: (key: string) => state.data[key], writeSetting: (key: string, value: any) => { state.data[key] = value; return true; } }));
 vi.mock("electron", () => ({ safeStorage: {
   isEncryptionAvailable: () => state.secure, getSelectedStorageBackend: () => "keychain",
   encryptString: (value: string) => Buffer.from("encrypted:" + value),
   decryptString: (value: Buffer) => value.toString().slice(10),
 } }));
 import { getVlmConfig, setVlmConfig, testVlm, visionProbeImage } from "./vlmDiagnostics";
-beforeEach(() => { state.data = {}; state.secure = true; vi.unstubAllGlobals(); });
+import { configureComputerUseHost } from "./ports";
+beforeEach(() => {
+  state.data = {}; state.secure = true; vi.unstubAllGlobals();
+  configureComputerUseHost({
+    dataHome: "/tmp",
+    readSetting: (key: string) => state.data[key] ?? null,
+    writeSetting: (key: string, value: unknown) => { state.data[key] = value; return true; },
+    setLocalMcpServer: async () => undefined,
+    hasLocalMcpServer: () => false,
+    resolveNodeBinary: () => null,
+  });
+});
 describe("vision endpoint diagnostics", () => {
   it("migrates legacy plaintext and never returns an existing key to the renderer", () => {
     state.data.step1_config = { unrelated: 3, computerUseVlm: { apiKey: "secret", model: "vision" } };
@@ -43,6 +53,16 @@ describe("vision endpoint diagnostics", () => {
     expect(body.messages[0].content[0].text).not.toContain("red");
     fetcher.mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "I cannot view images" } }] })));
     expect((await testVlm()).error).toBe("visionVerificationFailed");
+  });
+  it("leaves room for reasoning models and reads GLM boxed answers", async () => {
+    setVlmConfig({ apiKey: "secret", model: "glm" });
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "stop",
+      message: { content: "<|begin_of_box|>Red<|end_of_box|>", reasoning_content: "The image is uniformly red." } }] })));
+    vi.stubGlobal("fetch", fetcher);
+    expect((await testVlm()).success).toBe(true);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).max_tokens).toBeGreaterThanOrEqual(1024);
+    fetcher.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "" } }] })));
+    expect((await testVlm()).error).toBe("answerTruncated");
   });
   it("does not echo server content or credentials in errors", async () => {
     setVlmConfig({ apiKey: "secret", model: "vision" });

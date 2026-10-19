@@ -1,4 +1,4 @@
-import { CuaEngineSessions } from "../../cua/sessionAuthority";
+import { createDesktopAgentSessions, type AgentTurn } from "../../../features";
 /**
  * AcpEngine — ACP protocol handler for claude-code & nuwaxcode.
  *
@@ -222,7 +222,7 @@ interface AcpSession extends SessionWorkspaceRef {
 // Session counter removed — ACP protocol UUID is used as canonical session.id
 
 export class AcpEngine extends EventEmitter {
-  private readonly cuaSessions = new CuaEngineSessions();
+  private readonly agentSessions = createDesktopAgentSessions();
   private config: AgentConfig | null = null;
   private _ready = false;
   private acpConnection: AcpClientSideConnection | null = null;
@@ -917,7 +917,7 @@ export class AcpEngine extends EventEmitter {
   }
 
   async destroy(): Promise<void> {
-    this.cuaSessions.destroy();
+    this.agentSessions.destroy();
     // Cancel all active sessions
     for (const [, session] of this.sessions) {
       if (session.acpSessionId && this.activePromptSessions.has(session.id)) {
@@ -1074,7 +1074,7 @@ export class AcpEngine extends EventEmitter {
     restoreFlowagentsSessions(this.isolatedHome, sessionCwd);
 
     const timer = perfEmitter.start();
-    const resumeResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.resumeSession!({
+    const resumeResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.resumeSession!({
       sessionId,
       cwd: sessionCwd,
       mcpServers,
@@ -1152,7 +1152,7 @@ export class AcpEngine extends EventEmitter {
     const timer = perfEmitter.start();
     let loadResult: { modes?: unknown; configOptions?: unknown };
     try {
-      loadResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.loadSession!({
+      loadResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.loadSession!({
         sessionId,
         cwd: sessionCwd,
         mcpServers,
@@ -1266,7 +1266,7 @@ export class AcpEngine extends EventEmitter {
     };
     this.pendingNewSessionRegistration = true;
     try {
-      acpResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.newSession(newSessionParams), (result) => result.sessionId);
+      acpResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.newSession(newSessionParams), (result) => result.sessionId);
     } catch (err) {
       log.error(`${this.logTag} ❌ ACP newSession failed:`, err);
       throw err;
@@ -1365,13 +1365,13 @@ export class AcpEngine extends EventEmitter {
   }
 
   async deleteSession(id: string): Promise<boolean> {
-    this.cuaSessions.remove(id);
+    this.agentSessions.remove(id);
     return this.sessions.delete(id);
   }
 
   async abortSession(id?: string): Promise<boolean> {
-    if (id) this.cuaSessions.cancel(id);
-    else for (const sessionId of this.sessions.keys()) this.cuaSessions.cancel(sessionId);
+    if (id) this.agentSessions.cancel(id);
+    else for (const sessionId of this.sessions.keys()) this.agentSessions.cancel(sessionId);
     if (!this.acpConnection) return false;
 
     const cancelOne = async (
@@ -1492,7 +1492,7 @@ export class AcpEngine extends EventEmitter {
 
     if (promptContent.length === 0) throw new Error("Empty prompt");
 
-    let cuaTurn = 0;
+    let agentTurn: AgentTurn = { active: false, turns: new Map() };
     let cuaFailed = false;
     const promptTurn = this.bumpPromptTurn(sessionId);
     this.activePromptSessions.add(sessionId);
@@ -1557,7 +1557,7 @@ export class AcpEngine extends EventEmitter {
     this.on("computer:progress", onProgress);
 
     try {
-      cuaTurn = this.cuaSessions.start(sessionId);
+      agentTurn = this.agentSessions.start(sessionId);
       log.info(`${this.logTag} Starting prompt`, {
         sessionId,
         acpSessionId: session.acpSessionId,
@@ -1601,7 +1601,7 @@ export class AcpEngine extends EventEmitter {
             }),
             {
               // A lost prompt response can follow an applied desktop action. Never replay that prompt.
-              maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !cuaTurn ? 2 : 1,
+              maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !agentTurn.active ? 2 : 1,
               retryDelayMs: MCP_RETRY_DELAY_MS,
               logTag: this.logTag,
               sessionId,
@@ -1766,7 +1766,7 @@ export class AcpEngine extends EventEmitter {
         reason: promptEndReason,
       });
     } finally {
-      this.cuaSessions.finish(sessionId, cuaTurn, cuaFailed);
+      this.agentSessions.finish(sessionId, agentTurn, cuaFailed);
       this.off("computer:progress", onProgress);
       if (this.isCurrentPromptTurn(sessionId, promptTurn)) {
         this.activePromptSessions.delete(sessionId);

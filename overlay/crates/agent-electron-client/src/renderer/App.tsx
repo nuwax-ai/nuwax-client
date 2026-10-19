@@ -86,7 +86,7 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
-import { CuaControls } from "./components/CuaControls";
+import { CuaControls } from "./features/computer-use";
 import { CaptureLauncher } from "./features/capture";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";
@@ -1920,7 +1920,8 @@ function App() {
         >
           <div className="app-container">
             {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
-            {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} compact />}
+            {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} />}
+
             {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
                 加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
             {loadingCovered && <AppIconLoading overlay />}

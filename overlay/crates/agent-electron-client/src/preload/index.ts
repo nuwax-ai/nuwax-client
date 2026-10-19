@@ -596,33 +596,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("permissions:openSettings", permissionKey),
   },
 
-  // Computer Use（cua helper；商业版 overlay 注入，基座无此命名空间）
-  computerUse: {
-    getRuntime: () => ipcRenderer.invoke("cua:getRuntime"),
-    pause: () => ipcRenderer.invoke("cua:pause"),
-    resume: () => ipcRenderer.invoke("cua:resume"),
-    stop: () => ipcRenderer.invoke("cua:stop"),
-    recover: () => ipcRenderer.invoke("cua:recover"),
-    selfTest: () => ipcRenderer.invoke("cua:selfTest"),
-    exportDiagnostics: () => ipcRenderer.invoke("cua:exportDiagnostics"),
-    clearHistory: () => ipcRenderer.invoke("cua:clearHistory"),
-    listWindows: () => ipcRenderer.invoke("cua:listWindows"),
-    setScope: (scope: import("@shared/types/cuaRuntime").CuaScope) => ipcRenderer.invoke("cua:setScope", scope),
-    getStatus: () => ipcRenderer.invoke("cua:getStatus"),
-    setEnabled: (enabled: boolean) =>
-      ipcRenderer.invoke("cua:setEnabled", enabled),
-    requestPermissions: () => ipcRenderer.invoke("cua:requestPermissions"),
-    installHelper: () => ipcRenderer.invoke("cua:installHelper"),
-    getVlmConfig: () => ipcRenderer.invoke("cua:getVlmConfig"),
-    setVlmConfig: (patch: {
-      clearApiKey?: boolean;
-      baseUrl?: string;
-      model?: string;
-      apiKey?: string;
-    }) => ipcRenderer.invoke("cua:setVlmConfig", patch),
-    testVlm: () => ipcRenderer.invoke("cua:testVlm"),
-  },
-
   // 允许锁屏运行（电源保活档位；商业版 overlay 注入，基座无此命名空间）
   powerPolicy: {
     get: () => ipcRenderer.invoke("powerPolicy:get"),

@@ -33,6 +33,24 @@ function toFailure(error: unknown): CaptureFailure {
   return { success: false, code: "failed", error: message };
 }
 
+/** canUse 的 capture 侧探测：实际编码器格式 + 异步后二次授权。 */
+export async function captureCapabilityProbe(
+  capability: { methods: readonly string[]; variant?: string },
+  name: string,
+  bridge: { capture?: CaptureBridge },
+  authorize: (name: string) => Promise<boolean>,
+): Promise<boolean> {
+  const caps = await bridge.capture?.getCapabilities?.();
+  if (!caps?.available) return false;
+  const method = capability.methods[0];
+  const variant = capability.variant;
+  if (method === 'screenshot' && (variant ? !caps.formats.still.some(format => format === variant) : !caps.formats.still.length)) return false;
+  if (method === 'record' && (variant === 'gif' ? !caps.formats.gif : variant
+    ? !caps.formats.video.some(format => format === variant) : !caps.formats.video.length && !caps.formats.gif)) return false;
+  // 格式检查包含 await；再次授权，拒绝等待期间已换域/登出的文档。
+  return await authorize(name) === true;
+}
+
 export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CAPTURE_IPC): CaptureBridge {
   return {
     async getCapabilities() {

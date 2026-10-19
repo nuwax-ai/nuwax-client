@@ -19,15 +19,13 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app } from "electron";
-import { CuaTaskController } from "./taskController";
+import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
-import { getNodeBinPathWithFallback } from "../system/binaryLocator";
+import { computerUseHost } from "./ports";
 import { cuaSessionAuthority } from "./sessionAuthority";
-import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/types/cuaRuntime";
-import { cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
+import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/features/computer-use/contract";
+import { CuaBrowserBindings, cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
 import log from "electron-log";
-import { getDb, readSetting, writeSetting } from "../../db";
-import { APP_DATA_DIR_NAME } from "../constants";
 
 const pexec = promisify(execFile);
 
@@ -42,6 +40,7 @@ const HELPER_BIN_NAME = "NuwaxComputerUse";
 const MCP_SERVER_ID = "cua";
 const cuaTasks = new CuaTaskController();
 let cuaGateway: CuaMcpGateway | null = null;
+const cuaBindings = new CuaBrowserBindings();
 let runtimeSuspended = false;
 let shortcutAvailable = false;
 let pendingControls = 0;
@@ -51,7 +50,7 @@ let scopeInitialized = false;
 function initializeScopePreference() {
   if (scopeInitialized) return;
   scopeInitialized = true;
-  const saved = readSetting(STEP1_KEY) as { computerUseScopeKind?: string } | null;
+  const saved = computerUseHost().readSetting(STEP1_KEY) as { computerUseScopeKind?: string } | null;
   // Native IDs are not durable. A previous window scope must never widen on restart.
   if (saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
 }
@@ -68,8 +67,10 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       controller: cuaTasks,
       allowedTools: CUA_ALLOWED_TOOLS,
       visibleTools: () => visibleCuaTools(cuaScope, CUA_ALLOWED_TOOLS),
+      scope: () => cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
-      transformCall: (tool, args) => scopeCuaCall(cuaScope, tool, args),
+      transformCall: (tool, args) => scopeCuaCall(cuaScope, tool, args, cuaBindings),
+      onResult: (tool, args, outcome, structured) => cuaBindings.record(cuaScope, tool, args, outcome, structured),
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
       }),
@@ -80,7 +81,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
   await cuaGateway.listen(socketPath, selected.token);
   if (!IS_WIN) fs.chmodSync(socketPath, 0o600);
   cuaSessionAuthority.configure(path.join(stableInstallDir(), `session-grants-${process.pid}`),
-    (file) => ({ command: getNodeBinPathWithFallback()!, args: ["-e", CUA_STDIO_RELAY],
+    (file) => ({ command: computerUseHost().resolveNodeBinary()!, args: ["-e", CUA_STDIO_RELAY],
       env: { NUWAX_CUA_GATEWAY: socketPath, NUWAX_CUA_GATEWAY_TOKEN: selected.tokenFile, NUWAX_CUA_SESSION_FILE: file } }),
     (owner, cancelled) => {
       if (cuaTasks.owns(owner)) {
@@ -93,7 +94,6 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
 }
 
 const STEP1_KEY = "step1_config";
-const MCP_LOCAL_CONFIG_KEY = "mcp_local_config";
 const HELPER_TEAM_ID = "89GQ2RJVW7";
 // Opaque trajectory replay would bypass per-action observation and step budgets.
 const CUA_DENIED_TOOLS = ["check_for_update", "install_ffmpeg", "replay_trajectory"];
@@ -102,7 +102,7 @@ const CUA_ALLOWED_TOOLS = [
   "bring_to_front", "browser_click", "browser_dialog", "browser_download",
   "browser_navigate", "browser_pointer", "browser_prepare", "browser_set_input_files",
   "browser_type", "check_permissions", "click", "clipboard_read", "clipboard_write",
-  "debug_window_info", "double_click", "drag", "end_session", "escalate_session",
+  "double_click", "drag", "end_session", "escalate_session",
   "get_accessibility_tree", "get_agent_cursor_state", "get_browser_state", "get_config",
   "get_cursor_position", "get_desktop_state", "get_recording_state", "get_screen_size",
   "get_session", "get_session_state", "get_window_state", "health_report", "hotkey",
@@ -351,11 +351,12 @@ async function waitForDaemonStopped(timeoutMs: number): Promise<boolean> {
 
 /**
  * 驱动自有落盘的统一宿主目录（补丁 3 的 CUA_DRIVER_DATA_HOME）：~/.nuwax/computer-use
- * （与 nuwax.db 同源=APP_DATA_DIR_NAME 派生）——pid/telemetry·install 标记/history/
- * 浏览器 profile/libei restore token 全部内聚于此，机器上不再出现 cua-* 外部目录。
+ * （与 nuwax.db 同源=APP_DATA_DIR_NAME 派生，由宿主经 FeatureContext.dataDir 注入）——
+ * pid/telemetry·install 标记/history/浏览器 profile/libei restore token 全部内聚于此，
+ * 机器上不再出现 cua-* 外部目录。
  */
 function cuaDataHome(): string {
-  return path.join(app.getPath("home"), APP_DATA_DIR_NAME, "computer-use");
+  return computerUseHost().dataHome;
 }
 
 /** daemon 进程环境：数据目录内聚 env（须与补丁 3 的开关同名）。 */
@@ -518,106 +519,59 @@ export async function stopDaemon(): Promise<void> {
 }
 
 function readEnabled(): boolean {
-  const step1 = readSetting(STEP1_KEY) as {
+  const step1 = computerUseHost().readSetting(STEP1_KEY) as {
     computerUseEnabled?: boolean;
   } | null;
   return step1?.computerUseEnabled === true;
 }
 
 function persistEnabled(enabled: boolean) {
-  const step1 = (readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
-  writeSetting(STEP1_KEY, { ...step1, computerUseEnabled: enabled });
+  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
+  computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseEnabled: enabled });
 }
 
 function consentPending(): boolean {
-  const step1 = readSetting(STEP1_KEY) as { computerUseConsentPending?: boolean } | null;
+  const step1 = computerUseHost().readSetting(STEP1_KEY) as { computerUseConsentPending?: boolean } | null;
   return step1?.computerUseConsentPending === true;
 }
 
 function persistConsentPending(pending: boolean): void {
-  const step1 = (readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
-  writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
+  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
+  computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
 }
 
-// ========== MCP 条目注入（照 guiMcpLocalConfig.syncGuiAgentLocalMcpConfig 先例） ==========
-
-import type { McpServerEntry } from "../packages/mcp";
-
-function readMcpLocalConfig(): { mcpServers: Record<string, McpServerEntry> } {
-  const db = getDb();
-  if (!db) return { mcpServers: {} };
-  const saved = db
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(MCP_LOCAL_CONFIG_KEY) as { value: string } | undefined;
-  if (!saved?.value) return { mcpServers: {} };
-  try {
-    const parsed = JSON.parse(saved.value) as {
-      mcpServers?: Record<string, McpServerEntry>;
-    };
-    return {
-      mcpServers:
-        parsed?.mcpServers && typeof parsed.mcpServers === "object"
-          ? parsed.mcpServers
-          : {},
-    };
-  } catch (e) {
-    log.warn("[Cua] Failed to parse mcp_local_config, reset:", e);
-    return { mcpServers: {} };
-  }
-}
+// ========== MCP 条目注入（宿主代管 mcp_local_config + MCP Proxy 同步；照 guiMcpLocalConfig 先例） ==========
 
 function isMcpInjected(): boolean {
-  return !!readMcpLocalConfig().mcpServers?.[MCP_SERVER_ID];
+  return computerUseHost().hasLocalMcpServer(MCP_SERVER_ID);
 }
 
 /**
- * 开关 → `cua` MCP 条目 upsert/remove，并同步 MCP Proxy 内存（运行中立即生效；
- * 引擎侧由 unifiedAgent.loadLocalMcpConfig 在下次引擎启动合并，本地条目优先）。
+ * 开关 → `cua` MCP 条目 upsert/remove，宿主写入 `mcp_local_config` 并同步 MCP Proxy
+ * 内存（运行中立即生效；引擎侧由 unifiedAgent.loadLocalMcpConfig 在下次引擎启动合并，
+ * 本地条目优先）。
  */
 export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
-  const db = getDb();
-  if (!db) {
-    if (enabled) throw new Error("databaseNotReady");
-    log.warn("[Cua] Database not ready, skip MCP removal");
-    return;
-  }
-  const config = readMcpLocalConfig();
-  const servers = { ...(config.mcpServers ?? {}) };
+  const host = computerUseHost();
   if (enabled) {
     const helperRoot = findHelperApp();
     if (!helperRoot) {
-      delete servers[MCP_SERVER_ID];
+      await host.setLocalMcpServer(MCP_SERVER_ID, null);
     } else {
-      const node = getNodeBinPathWithFallback();
+      const node = host.resolveNodeBinary();
       if (!node) throw new Error("nodeRuntimeMissing");
       const gatewayPath = await ensureCuaGateway(helperRoot);
-      servers[MCP_SERVER_ID] = {
+      await host.setLocalMcpServer(MCP_SERVER_ID, {
         command: node,
         args: ["-e", CUA_STDIO_RELAY],
         env: { NUWAX_CUA_GATEWAY: gatewayPath, NUWAX_CUA_GATEWAY_TOKEN: endpoint().tokenFile },
         enabled: true,
         allowTools: CUA_ALLOWED_TOOLS,
         denyTools: CUA_DENIED_TOOLS,
-      };
+      });
     }
   } else {
-    delete servers[MCP_SERVER_ID];
-  }
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
-    MCP_LOCAL_CONFIG_KEY,
-    JSON.stringify({ ...config, mcpServers: servers }),
-  );
-  try {
-    const { syncMcpConfigToProxyAndReload } = await import(
-      "../packages/mcp"
-    );
-    const { filterEnabledMcpServers } = await import(
-      "../utils/mcpServerMerge"
-    );
-    await syncMcpConfigToProxyAndReload(filterEnabledMcpServers(servers));
-  } catch (e) {
-    // Proxy 未起（如未登录态）时同步失败可容忍：条目已落库，引擎启动仍会读到
-    log.warn("[Cua] MCP proxy sync skipped:", e);
+    await host.setLocalMcpServer(MCP_SERVER_ID, null);
   }
   log.info(`[Cua] Synced ${MCP_SERVER_ID} in mcp_local_config: enabled=${enabled}`);
 }
@@ -999,11 +953,6 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
   return { success: true, installedPath: dest };
 }
 
-/** 退出清理：app 退出即停 daemon（协议优先，失败强杀兜底；下次启动 ensureCuaOnBoot 幂等拉回）。 */
-export function registerCuaQuitCleanup(): void {
-  app.on("will-quit", () => { void suspendCua("appQuit").catch(() => undefined); });
-}
-
 /** Revoke synchronously before waiting for any lifecycle queue or OS operation. */
 export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaDisableEpoch++;
@@ -1011,6 +960,7 @@ export function suspendCua(reason = "sessionEnded"): Promise<void> {
   runtimeSuspended = true;
   cuaTasks.setAvailable(false);
   cuaTasks.stop(reason);
+  cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   return serializeCua(suspendCuaRuntimeResources).finally(() => { pendingControls--; cuaTasks.notify(); });
 }
@@ -1034,6 +984,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
   cuaDisableEpoch++;
   runtimeSuspended = true;
   cuaTasks.pause(reason);
+  cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   cuaGateway?.pauseTransports();
   try {
@@ -1051,7 +1002,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
 export async function resumeCuaTask(): Promise<CuaControlResult> {
   const runtime = getCuaRuntime();
   if (preparingRuntime || pendingControls || runtime.phase !== "paused" || !readEnabled() ||
-      ["stepLimit", "timeLimit", "repeatedAction"].includes(runtime.reason ?? ""))
+      CUA_FINAL_REASONS.includes(runtime.reason ?? ""))
     return { success: false, error: "cannotResume", runtime: getCuaRuntime() };
   preparingRuntime = true;
   const epoch = cuaDisableEpoch;
@@ -1121,7 +1072,8 @@ export async function setCuaScope(requested: unknown): Promise<CuaControlResult>
     await stopping;
     if (nextEpoch !== cuaDisableEpoch) return { success: false, error: "sessionEnded", runtime: getCuaRuntime() };
     const nextScope: CuaScope = target ? { kind: "window", ...target } : { kind: "desktop" };
-    if (!writeSetting(STEP1_KEY, { ...(readSetting(STEP1_KEY) as Record<string, unknown> ?? {}), computerUseScopeKind: nextScope.kind }))
+    const host = computerUseHost();
+    if (!host.writeSetting(STEP1_KEY, { ...(host.readSetting(STEP1_KEY) as Record<string, unknown> ?? {}), computerUseScopeKind: nextScope.kind }))
       return { success: false, error: "scopeSaveFailed", runtime: getCuaRuntime() };
     scopeInitialized = true;
     cuaScope = nextScope;
