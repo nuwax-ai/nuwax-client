@@ -1,6 +1,10 @@
 /** Real Electron smoke with isolated profile and fixture metadata server; no login/account/package claim.
  * Uses an existing ffmpeg (or NUWAX_QA_FFMPEG) to generate a local H.264 test clip.
  * The save dialog is fixture-selected; the real feature, protocol, preload and IPC run unmodified.
+ * `--bundle-only <dir>` writes main.cjs/preload.cjs/playback.mp4 for a host without this checkout
+ * (see local-files-electron-windows.ps1) instead of launching Electron here.
+ * NUWAX_QA_REAL_FILE_SERVER_PORT additionally lists/searches the fixture workspace through a running
+ * nuwax-file-server on that loopback port (read-only).
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +12,15 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+
+const bundleOnlyIndex = process.argv.indexOf("--bundle-only");
+const bundleOnlyArg =
+  bundleOnlyIndex === -1 ? undefined : process.argv[bundleOnlyIndex + 1];
+if (bundleOnlyIndex !== -1 && !bundleOnlyArg) {
+  console.error("Usage: local-files-electron.mjs [--bundle-only <dir>]");
+  process.exit(1);
+}
+const bundleOnly = bundleOnlyArg ? path.resolve(bundleOnlyArg) : null;
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -77,7 +90,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
-import {desktopFeatureSchemes, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
+import {prepareDesktopFeaturesBeforeReady, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
   "main/features/index.ts"
 )};
 import {initBusinessRequestRouting} from ${importFrom(
@@ -94,10 +107,11 @@ const temp=process.env.NUWAX_LOCAL_FILES_FIXTURE;
 const reportPath=process.env.NUWAX_LOCAL_FILES_REPORT;
 app.setPath('userData',path.join(temp,'profile'));
 app.commandLine.appendSwitch('no-proxy-server');
-protocol.registerSchemesAsPrivileged(desktopFeatureSchemes('nuwax'));
+protocol.registerSchemesAsPrivileged(prepareDesktopFeaturesBeforeReady('nuwax',app.commandLine));
 if(process.env.NUWAX_LOCAL_FILES_DEBUG){const original=LocalFilesRuntime.prototype.authorize;LocalFilesRuntime.prototype.authorize=function(details){const result=original.call(this,details);if(result!==undefined)console.log('POLICY',JSON.stringify({url:redactLocalFileUrl(details.url),result,type:details.resourceType,webContentsId:details.webContentsId,frameUrl:redactLocalFileUrl(details.frame?.url??''),processId:details.frame?.processId,routingId:details.frame?.routingId,parentUrl:redactLocalFileUrl(details.frame?.parent?.url??''),referrer:redactLocalFileUrl(details.referrer??'')}));return result;};}
 const windows=[];const requests=[];const checks=[];const fixtureLimitations=[];
 let server, origin, fileOrigin, bridgeContext, fileServer;
+const realFileServerPort=Number(process.env.NUWAX_QA_REAL_FILE_SERVER_PORT)||0;let realFileServerActive=false;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const workspace=path.join(temp,'workspace');
 const pass=(name,data={})=>{checks.push({name,...data});console.log('PASS '+name);};
@@ -142,7 +156,7 @@ try {
   const trusted=event=>!!event.senderFrame&&!event.senderFrame.parent&&windows.some(window=>window.webContents===event.sender)&&event.senderFrame.url.startsWith(origin+'/');
   initBusinessRequestRouting(()=>origin,()=>windows[0]?.webContents??null);
   startDesktopFeatures({product:'nuwax',ipcMain,isBusinessSender:trusted,isHostSender:()=>false,dataDir:path.join(temp,'features'),isEnabled:(_id,value)=>value,log:console,
-    workspace:{getIdentity:()=>({sandboxId:'fixture-device',businessOrigins:[origin]}),resolveRoot:()=>workspace,getFileServerPort:()=>fileServer.address().port,isCurrentDocument:trusted}});
+    workspace:{getIdentity:()=>({sandboxId:'fixture-device',businessOrigins:[origin]}),resolveRoot:()=>workspace,getFileServerPort:()=>realFileServerActive?realFileServerPort:fileServer.address().port,isCurrentDocument:trusted}});
   async function makeWindow(){const window=new BrowserWindow({show:false,webPreferences:{preload:path.join(temp,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});if(process.env.NUWAX_LOCAL_FILES_DEBUG)window.webContents.on('console-message',(_event,_level,message)=>console.log('RENDERER',redactLocalFileUrl(message)));windows.push(window);await window.loadURL(origin+'/');return window;}
   const owner=await makeWindow();const foreign=await makeWindow();
   const capability=await localCall(owner,'getCapabilities');assert.equal(capability.available,true);
@@ -153,6 +167,16 @@ try {
   const searched=await localCall(owner,'searchFiles',bridgeContext.contextId,{kw:'note'});assert.equal(searched.success,true);
   assert.ok(requests.filter(request=>request.customTargetDir).every(request=>!request.cookie&&!request.authorization));
   pass('main-process list/search fixture server without cloud credentials',{server:'fixture metadata (native endpoint shape)'});
+  if(realFileServerPort){
+    realFileServerActive=true;
+    try{
+      const realList=await localCall(owner,'listFiles',bridgeContext.contextId,{recursive:false,depth:2});assert.equal(realList.success,true,JSON.stringify(realList));
+      const realNames=realList.data.files.map(file=>file.name);assert.ok(realNames.includes('note.txt')&&realNames.includes('index.html'),JSON.stringify(realNames));
+      const realSearch=await localCall(owner,'searchFiles',bridgeContext.contextId,{kw:'style'});assert.equal(realSearch.success,true,JSON.stringify(realSearch));
+      assert.ok(realSearch.data.files.some(file=>file.name==='assets/style.css'),JSON.stringify(realSearch.data.files));
+      pass('main-process list/search against a real nuwax-file-server',{port:realFileServerPort,listed:realNames.length});
+    }finally{realFileServerActive=false;}
+  }
   const preview=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'note.txt'})).data;
   const full=await request(owner,preview.url);if(process.env.NUWAX_LOCAL_FILES_DEBUG)console.log('FETCH_RESULT',full);assert.equal(full.status,200);assert.equal(full.text,'0123456789');
   const head=await request(owner,preview.url,{method:'HEAD'});assert.equal(head.status,200);assert.equal(head.text,'');assert.equal(head.headers['content-length'],'10');
@@ -207,6 +231,12 @@ try {
     const relativeLink=await request(owner,new URL('soft.txt',html.url).href);assert.equal(relativeLink.status,403);
     pass('explicit symlink file reads work while relative resources cannot escape the grant root');
   }
+  const explicitPath=path.join(temp,'explicit-outside.txt');await fs.writeFile(explicitPath,'explicit absolute read');
+  const absoluteForms=process.platform==='win32'?[explicitPath,explicitPath.replace(/\\/g,'/')]:[explicitPath];
+  for(const form of absoluteForms){const absolute=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:form})).data;assert.equal((await request(owner,absolute.url)).text,'explicit absolute read');}
+  const backslash=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'assets\\style.css'})).data;assert.equal((await request(owner,backslash.url)).text,'body {color:rgb(31,63,127)}');
+  const escaping=await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'..\\explicit-outside.txt'});assert.equal(escaping.code,'permission-denied');
+  pass('host path semantics: explicit absolute files read, backslash-relative paths resolve, relative escape denied',{absoluteForms:absoluteForms.length});
   await localCall(owner,'releasePreview',preview.grantId);assert.equal((await request(owner,preview.url)).blocked,true);
   pass('release revokes the protocol grant');
   notifyFeatureSessionEnd('logout');assert.equal((await request(owner,big.url,{method:'HEAD'})).blocked,true);
@@ -220,7 +250,7 @@ try {
   pass('full document reload revokes context and grant');
   assert.equal(requests.some(request=>request.path.startsWith('/api/computer/static/')),false);
   pass('successful local byte access makes no cloud static-file request');
-  const report={success:true,at:new Date().toISOString(),electron:process.versions.electron,platform:process.platform,arch:process.arch,checks,requestPaths:requests.map(request=>request.path),limitations:['Isolated real Electron runtime, fixture metadata server and stubbed save dialog; not a signed installer or real-account acceptance.','Windows real-device execution remains separate.',...fixtureLimitations]};
+  const report={success:true,at:new Date().toISOString(),electron:process.versions.electron,platform:process.platform,arch:process.arch,checks,requestPaths:requests.map(request=>request.path),limitations:['Isolated real Electron runtime, fixture metadata server and stubbed save dialog; not a signed installer or real-account acceptance.',...(process.platform==='win32'?[]:['Windows real-device execution remains separate.']),...fixtureLimitations]};
   await fs.mkdir(path.dirname(reportPath),{recursive:true});await fs.writeFile(reportPath,JSON.stringify(report,null,2)+'\n');
   console.log('LOCAL_FILES_ELECTRON_PASS '+reportPath);
 } catch(error) {
@@ -262,6 +292,19 @@ try {
     stdin: { contents: main, resolveDir: shell, loader: "ts" },
     outfile: path.join(temporary, "main.cjs"),
   });
+  if (bundleOnly) {
+    await fs.mkdir(bundleOnly, { recursive: true });
+    for (const name of ["main.cjs", "preload.cjs", "playback.mp4"])
+      await fs.copyFile(path.join(temporary, name), path.join(bundleOnly, name));
+    console.log(`LOCAL_FILES_ELECTRON_BUNDLE ${bundleOnly}`);
+  } else {
+    await launch();
+  }
+} finally {
+  await fs.rm(temporary, { recursive: true, force: true });
+}
+
+async function launch() {
   const env = {
     ...process.env,
     NUWAX_LOCAL_FILES_FIXTURE: temporary,
@@ -285,6 +328,4 @@ try {
   clearTimeout(watchdog);
   process.exitCode = timedOut ? 1 : exit;
   if (timedOut) console.error("LOCAL_FILES_ELECTRON_TIMEOUT");
-} finally {
-  await fs.rm(temporary, { recursive: true, force: true });
 }

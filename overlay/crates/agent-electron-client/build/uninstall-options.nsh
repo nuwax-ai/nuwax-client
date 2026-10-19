@@ -27,6 +27,7 @@ Var nuwaxDataLocal
 !macroend
 
 !macro customUnInit
+  !insertmacro windowsInitUninstallPath
   StrCpy $nuwaxDeleteLocalData 0
   ClearErrors
   ${GetParameters} $R0
@@ -84,13 +85,7 @@ Var nuwaxDataLocal
   FunctionEnd
 !macroend
 
-!macro nuwaxRemoveOwnedFiles
-  InitPluginsDir
-  SetOutPath "$PLUGINSDIR"
-  ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
-    !insertmacro nuwaxStopStandaloneUninstall "卸载程序缺失，卸载已停止，原安装文件和卸载登记未删除。"
-  ${endif}
-  File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
+!macro nuwaxExtractUninstallInventory
   !ifndef NUWAX_UNINSTALL_MANIFEST
     !ifdef APP_64
       !ifdef APP_ARM64
@@ -109,11 +104,23 @@ Var nuwaxDataLocal
     !endif
   !endif
   File /oname=$PLUGINSDIR\uninstall-payload.json "${NUWAX_UNINSTALL_MANIFEST}"
+!macroend
+
+!macro nuwaxRemoveOwnedFiles
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
+    !insertmacro nuwaxStopStandaloneUninstall "卸载程序缺失，卸载已停止，原安装文件和卸载登记未删除。"
+  ${endif}
+  File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
+  !insertmacro nuwaxExtractUninstallInventory
   StrCpy $R3 ""
   ${if} $nuwaxDeleteLocalData == 1
     StrCpy $R3 "-DeleteLocalData"
   ${endif}
   SetShellVarContext current
+  ; The inventory pass runs in a hidden PowerShell process; explain the wait.
+  DetailPrint "正在检查并移除程序文件，请稍候；文件较多时需要数分钟..."
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\uninstall-data.ps1" -InstallDir "$INSTDIR" -ManifestPath "$PLUGINSDIR\uninstall-payload.json" -ProfileDir "$PROFILE" -RoamingDir "$APPDATA" -LocalDir "$LOCALAPPDATA" $R3`
   Pop $R0
   Pop $R1

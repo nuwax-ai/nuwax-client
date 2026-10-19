@@ -9,11 +9,11 @@ const out = process.argv[2] ? path.resolve(process.argv[2]) : fs.mkdtempSync(pat
 fs.mkdirSync(out, { recursive: true });
 const esbuild = require(path.join(base, 'node_modules/esbuild'));
 (async () => {
-  await esbuild.build({ entryPoints: [path.join(base, 'src/preload/cuaControls.ts')], outfile: path.join(out, 'preload.cjs'), bundle: true, platform: 'node', external: ['electron'] });
+  await esbuild.build({ entryPoints: [path.join(base, 'src/preload/features/computer-use/controlPreload.ts')], outfile: path.join(out, 'preload.cjs'), bundle: true, platform: 'node', external: ['electron'] });
   const runner = `
 const {app,BrowserWindow}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {createCuaControlWindow}=require(${JSON.stringify(path.join(base, 'src/main/services/cua/controlWindow.ts'))});
+const {createCuaControlWindow}=require(${JSON.stringify(path.join(base, 'src/main/features/computer-use/controlWindow.ts'))});
 const labels=require(${JSON.stringify(path.join(base, 'src/shared/locales/zh-CN.json'))});
 const out=${JSON.stringify(out)};let dispose;
 app.whenReady().then(async()=>{

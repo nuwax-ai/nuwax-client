@@ -1,8 +1,13 @@
-import type { CuaRuntime, CuaControlResult, CuaCheck, CuaWindow } from "./cuaRuntime";
+// Computer Use 运行时与 API 契约的单一事实源在特性 contract；此处转出供既有 import 路径使用。
+export type {
+  CuaRuntime, CuaControlResult, CuaCheck, CuaWindow,
+  ComputerUseStatus, ComputerUseAPI,
+} from "../features/computer-use/contract";
 // Type definitions for Electron API exposed via preload
 import type { HostBridgeContract } from './hostBridge';
 import type { HostCaptureBridge } from '../features/capture/contract';
 import type { NoticesBridge } from '../features/open-source-notices/contract';
+import type { ComputerUseAPI } from '../features/computer-use/contract';
 
 /** 业务 webview 契约来自前端 canonical 的生成快照，与宿主 renderer 的 ElectronAPI 分开。 */
 export type NuwaClawBridgeAPI = HostBridgeContract;
@@ -597,73 +602,6 @@ export interface PermissionsAPI {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-export interface ComputerUseStatus {
-  supported: boolean;
-  installed: boolean;
-  /** 随包 Resources 有 helper 但未安装（首用安装流输入）。 */
-  installable?: boolean;
-  running: boolean;
-  enabled: boolean;
-  /** 一次性确认已接受，待系统授权后可在设置页继续。 */
-  consentPending?: boolean;
-  /** `cua` MCP 条目已写入 mcp_local_config（功能闭环就绪标志）。 */
-  mcpInjected?: boolean;
-  socketPath?: string;
-  helperPath?: string | null;
-  accessibility?: boolean | null;
-  screenRecording?: boolean | null;
-  error?: string | null;
-}
-
-export interface ComputerUseAPI {
-  getRuntime: () => Promise<CuaRuntime>;
-  pause: () => Promise<CuaControlResult>;
-  resume: () => Promise<CuaControlResult>;
-  stop: () => Promise<CuaControlResult>;
-  recover: () => Promise<CuaControlResult>;
-  selfTest: () => Promise<{ success: boolean; checks?: CuaCheck[]; error?: string }>;
-  exportDiagnostics: () => Promise<{ success: boolean; cancelled?: boolean }>;
-  clearHistory: () => Promise<{ success: boolean }>;
-  listWindows: () => Promise<{ success: boolean; windows?: CuaWindow[]; error?: string }>;
-  setScope: (scope: { kind: "desktop" } | { kind: "window"; pid: number; windowId: number }) => Promise<CuaControlResult>;
-  getStatus: () => Promise<ComputerUseStatus>;
-  setEnabled: (
-    enabled: boolean,
-  ) => Promise<{
-    success: boolean;
-    error?: string;
-    status?: ComputerUseStatus;
-  }>;
-  requestPermissions: () => Promise<{
-    success: boolean;
-    error?: string;
-    accessibility?: boolean | null;
-    screenRecording?: boolean | null;
-  }>;
-  installHelper: () => Promise<{
-    success: boolean;
-    error?: string;
-    installedPath?: string | null;
-  }>;
-  getVlmConfig: () => Promise<{
-    baseUrl: string;
-    model: string;
-    apiKey: string;
-    hasApiKey?: boolean;
-  }>;
-  setVlmConfig: (patch: {
-    clearApiKey?: boolean;
-    baseUrl?: string;
-    model?: string;
-    apiKey?: string;
-  }) => Promise<{ success: boolean; error?: string }>;
-  testVlm: () => Promise<{
-    success: boolean;
-    error?: string;
-    latencyMs?: number;
-  }>;
-}
-
 /** 「允许锁屏运行」电源保活档位：off=关闭；keepAwake=熄屏后保持唤醒；keepDisplayOn=保持屏幕常亮 */
 export type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
 
@@ -827,6 +765,8 @@ export interface QuickInitAPI {
 export interface ElectronAPI {
   capture: HostCaptureBridge;
   notices: NoticesBridge;
+  /** 已注册的桌面特性 id（用于显示/隐藏宿主壳入口）。 */
+  features: { registered: () => Promise<string[]> };
   versions: {
     node: string;
     electron: string;

@@ -43,9 +43,11 @@ vi.mock("../services/startupPorts", () => ({
 vi.mock("../services/system/deviceId", () => ({
   getDeviceId: () => "commercial-device",
 }));
-// stopExtras 钩子引入的传递依赖：mock 掉避免拖入 cua 模块求值链
-vi.mock("../services/cua/computerUse", () => ({
-  suspendCua: vi.fn(async () => undefined),
+// 退出/停止钩子经桌面特性汇合点；mock 掉避免拖入整条特性求值链
+vi.mock("../features", () => ({
+  emitFeatureSessionInvalidated: vi.fn(),
+  runFeatureServicesStopping: vi.fn(async () => ({ success: true })),
+  settleDesktopFeaturesForQuit: vi.fn(async () => undefined),
 }));
 vi.mock("os", () => ({
   hostname: () => "fengfei-mac-xx.local",
@@ -416,11 +418,11 @@ describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
 });
 
 describe("stopExtras — 退出期附加清理接线", () => {
-  it("flow.stopExtras() 触达 CUA daemon 停止钩子（CUA daemon 不随引擎树回收，须经此钩子）", async () => {
+  it("flow.stopExtras() 等待桌面特性收尾（daemon 等不随引擎树回收，须经此钩子）", async () => {
     const { flow } = fixture();
     await flow.stopExtras();
-    const { suspendCua } = await import("../services/cua/computerUse");
-    expect(suspendCua).toHaveBeenCalledWith("appQuit");
+    const { settleDesktopFeaturesForQuit } = await import("../features");
+    expect(settleDesktopFeaturesForQuit).toHaveBeenCalled();
   });
 });
 

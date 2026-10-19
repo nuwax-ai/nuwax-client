@@ -90,7 +90,18 @@ beforeEach(() => {
   ctx = {
     product: 'nuwax', ipc: createTrustedIpc(ipcMain, trust('business')), hostIpc: createTrustedIpc(ipcMain, trust('host')),
     lifecycle, scratch: { root: '/fixture', sweep: vi.fn(() => 0), create: vi.fn(() => '/fixture'), resolve: () => null, remove: vi.fn(), isValidId: () => true },
-    log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, setRecordingStopAction: vi.fn(),
+    log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    dataDir: '/fixture',
+    settings: { read: vi.fn(() => undefined), write: vi.fn(() => true) },
+    session: { isAuthenticated: () => true },
+    windows: { getMain: () => null },
+    activities: { set: vi.fn() },
+    agent: {
+      setLocalMcpServer: async () => undefined,
+      hasLocalMcpServer: () => false,
+      resolveNodeBinary: () => null,
+      registerSessionParticipant: () => () => {},
+    },
   };
   handle = captureFeature.register(ctx);
 });

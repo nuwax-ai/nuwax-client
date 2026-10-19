@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { temporaryDirectory } from './test-support/fixtures.mjs';
 import payload from '../overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs';
 import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
@@ -17,6 +18,7 @@ test('build-time inventory includes owned files inside resources and stays outsi
   assert.deepEqual(JSON.parse(fs.readFileSync(manifest)), {
     schemaVersion: 1, executable: 'Nuwax.exe', files: ['Nuwax.exe', 'resources/nested/app.asar'],
     directories: ['resources', 'resources/nested'], dataDirectoryName: '.nuwax', appDataName: 'Nuwax', updaterCacheName: 'nuwax-updater',
+    fileHashes: { 'Nuwax.exe': createHash('sha256').update('program').digest('hex'), 'resources/nested/app.asar': createHash('sha256').update('payload').digest('hex') },
   });
   assert.deepEqual(fs.readdirSync(app), ['Nuwax.exe', 'resources']);
 });
@@ -29,6 +31,16 @@ test('inventory rejects redirected payload entries and unsupported product ident
   assert.throws(() => payload.writeUninstallPayload(context), /Unsafe payload/);
   context.packager.appInfo.name = '../profile';
   assert.throws(() => payload.writeUninstallPayload(context), /Unsupported commercial/);
+});
+
+test('inventory hashes the complete contents of large program files', t => {
+  const root = temporaryDirectory(t), app = path.join(root, 'application');
+  fs.mkdirSync(app);
+  const program = Buffer.alloc(2 * 1024 * 1024 + 17, 0x6e);
+  fs.writeFileSync(path.join(app, 'Nuwax.exe'), program);
+  const manifest = payload.writeUninstallPayload({ appOutDir: app, arch: 1,
+    packager: { projectDir: root, appInfo: { name: 'nuwax', productFilename: 'Nuwax' } } });
+  assert.equal(JSON.parse(fs.readFileSync(manifest)).fileHashes['Nuwax.exe'], createHash('sha256').update(program).digest('hex'));
 });
 
 test('actual Windows afterPack composes updater metadata and the embedded uninstall inventory', async t => {

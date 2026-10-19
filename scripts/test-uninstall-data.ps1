@@ -27,6 +27,7 @@ function Invoke-Uninstall($f, [bool]$Delete = $false) {
   $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $ScriptPath + '" -InstallDir "' + $f.install + '" -ManifestPath "' + $f.manifest + '" -ProfileDir "' + $f.profile + '" -RoamingDir "' + $f.roaming + '" -LocalDir "' + $f.local + '"' + $(if ($Delete) { ' -DeleteLocalData' } else { '' })
   $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardError=$true; $psi.RedirectStandardOutput=$true
   $p=[Diagnostics.Process]::Start($psi)
+  if (!$p.WaitForExit(90000)) { $p.Kill(); throw 'Uninstall fixture exceeded 90 seconds.' }
   $stdout=$p.StandardOutput.ReadToEnd(); $stderr=$p.StandardError.ReadToEnd(); $p.WaitForExit()
   [IO.File]::WriteAllText((Join-Path $f.base 'result.log'), $stdout + $stderr)
   return $p.ExitCode
@@ -80,4 +81,31 @@ Assert ((Invoke-Uninstall $f $true) -ne 0) 'Overlapping install/data directories
 Assert (Test-Path "$overlap\NuwaxU1QA.exe") 'Overlap partly removed program'
 Assert (Test-Path "$overlap\workspace\personal.txt") 'Overlap deleted unknown install data'
 $rows+=@{case='overlapping-install-data';passed=$true}
+$f=Fixture 'large-inventory'
+$files=New-Object 'System.Collections.Generic.List[string]'
+$files.Add('NuwaxU1QA.exe');$files.Add('resources/app.asar')
+$directories=New-Object 'System.Collections.Generic.List[string]'
+$directories.Add('resources')
+for($group=0;$group -lt 60;$group++) {
+  $directory='resources/dependencies/group-'+$group
+  $directories.Add($directory)
+  for($item=0;$item -lt 100;$item++) {
+    $relative=$directory+'/file-'+$item+'.txt'
+    Put (Join-Path $f.install $relative)
+    $files.Add($relative)
+  }
+}
+$directories.Add('resources/dependencies')
+$m=[IO.File]::ReadAllText($f.manifest)|ConvertFrom-Json
+$m.files=$files.ToArray();$m.directories=$directories.ToArray()
+$m|ConvertTo-Json -Depth 4|Set-Content -Encoding UTF8 $f.manifest
+$watch=[Diagnostics.Stopwatch]::StartNew()
+Assert ((Invoke-Uninstall $f) -eq 0) 'Large inventory uninstall failed'
+$watch.Stop()
+Assert ($watch.Elapsed.TotalSeconds -lt 60) 'Large inventory uninstall took over 60 seconds'
+Assert (!(Test-Path "$($f.install)\resources\dependencies")) 'Large payload retained'
+Assert (Test-Path "$($f.install)\workspace\personal.txt") 'Large uninstall removed workspace'
+Assert (Test-Path "$($f.install)\resources\user-added.txt") 'Large uninstall removed unknown resource'
+Assert (Test-Path "$($f.profile)\.nuwax-u1-qa\workspace\user.txt") 'Large uninstall removed unchecked local data'
+$rows+=@{case='large-inventory';passed=$true;files=$files.Count;elapsedSeconds=$watch.Elapsed.TotalSeconds}
 @{passed=$true;fixtureRoot=$root;cases=$rows;realUserDataTouched=$false;fixtureRetained=$true}|ConvertTo-Json -Depth 4

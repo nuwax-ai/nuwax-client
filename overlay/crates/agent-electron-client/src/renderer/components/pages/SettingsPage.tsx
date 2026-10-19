@@ -34,7 +34,7 @@ import {
   TEST_SERVER_HOST,
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
-import type { ComputerUseStatus } from "@shared/types/electron";
+import { ComputerUseSettings } from "../../features/computer-use";
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -90,23 +90,6 @@ function SettingsRow(props: {
   );
 }
 
-// 权限状态点：true 绿✓ / false 红✗ / null 灰?（未知，尚未探测）
-function PermDot(props: { ok: boolean | null | undefined }) {
-  const { ok } = props;
-  const color = ok == null ? "#999" : ok ? "#52c41a" : "#ff4d4f";
-  const label = ok == null ? "?" : ok ? "✓" : "✗";
-  return <span style={{ color, marginLeft: 4, fontWeight: 600 }}>{label}</span>;
-}
-
-function cuaErrorText(error?: string): string {
-  const known = new Set([
-    "permissionsRequired", "permissionHostFailed", "timeout", "daemonNotReady",
-    "bundledNotFound", "helperNotInstalled", "helperStillRunning", "databaseNotReady",
-    "disableFailed", "policyNotActive",
-  ]);
-  return t("Claw.Settings.computerUse.errors." + (error && known.has(error) ? error : "generic"));
-}
-
 export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorization?: () => void } = {}) {
   // 主题
   const { themeMode, setThemeMode } = useTheme();
@@ -154,22 +137,8 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
   const [powerPolicyMode, setPowerPolicyMode] = useState<PowerPolicyMode>("off");
   const [powerPolicyApplying, setPowerPolicyApplying] = useState(false);
 
-  // Computer Use（cua helper；商业版 overlay 注入，旧宿主无此命名空间时整组隐藏）
-  const hasComputerUseApi = !!window.electronAPI?.computerUse;
-  // TCC 授权引导仅 mac（Windows 无辅助功能/屏幕录制 per-app 授权，UIA/截屏开箱即用）
-  const isMacPlatform = /mac/i.test(navigator.platform);
-  const [cuaStatus, setCuaStatus] = useState<ComputerUseStatus | null>(null);
-  const [cuaEnablePendingPermission, setCuaEnablePendingPermission] = useState(false);
-  const [cuaApplying, setCuaApplying] = useState(false);
-  const [cuaInstalling, setCuaInstalling] = useState(false);
-  const [cuaPermChecking, setCuaPermChecking] = useState(false);
-  const [cuaVlm, setCuaVlm] = useState<{
-    baseUrl: string;
-    model: string;
-    apiKey: string;
-    hasApiKey?: boolean;
-  } | null>(null);
-  const [cuaVlmTesting, setCuaVlmTesting] = useState(false);
+  // Computer Use 设置区块（经特性公开入口渲染；未注册时整组隐藏）
+  const [registeredFeatures, setRegisteredFeatures] = useState<string[]>([]);
 
   // 工作区目录行展示源：保存后即时跟随
   const workspaceDir = config?.workspaceDir ?? "";
@@ -229,161 +198,12 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
     }
   }, []);
 
-  // 视觉模型配置：行内即点即存（与端口/域名同范式）
-  const commitVlm = async (patch: {
-    baseUrl?: string;
-    model?: string;
-    apiKey?: string;
-    clearApiKey?: boolean;
-  }) => {
-    try {
-      const result = await window.electronAPI!.computerUse.setVlmConfig(patch);
-      if (!result.success) throw new Error("configSaveFailed");
-      const saved = await window.electronAPI!.computerUse.getVlmConfig();
-      setCuaVlm((value) => value ? { ...value, hasApiKey: saved.hasApiKey,
-        apiKey: patch.clearApiKey || value.apiKey === patch.apiKey ? "" : value.apiKey } : value);
-      return true;
-    } catch {
-      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-      return false;
-    }
-  };
-
-  const handleVlmTest = async () => {
-    // 先落当前草稿再测，避免「看起来填了但没存」的假成功
-    if (cuaVlm && !(await commitVlm(cuaVlm))) return;
-    setCuaVlmTesting(true);
-    try {
-      const r = await window.electronAPI!.computerUse.testVlm();
-      if (r.success) {
-        message.success(
-          t("Claw.Settings.computerUse.vlmTestOk", { ms: r.latencyMs ?? "?" }),
-        );
-      } else {
-        message.error(
-          t("Claw.Settings.computerUse.vlmTestFail", {
-            err:
-              r.error === "vlm-not-configured"
-                ? t("Claw.Settings.computerUse.errors.vlm-not-configured")
-                : r.error ?? "unknown",
-          }),
-        );
-      }
-    } finally {
-      setCuaVlmTesting(false);
-    }
-  };
-
-  // ========== Computer Use：状态加载 / 开关 / 授权引导 ==========
-  const loadCuaStatus = useCallback(async () => {
-    if (!hasComputerUseApi) return;
-    try {
-      window.electronAPI!.computerUse
-        .getVlmConfig()
-        .then((v) => setCuaVlm(v))
-        .catch(() => undefined);
-      const s = await window.electronAPI!.computerUse.getStatus();
-      setCuaStatus(s);
-      setCuaEnablePendingPermission(s.consentPending === true);
-    } catch (error) {
-      console.error("Failed to load computer use status:", error);
-    }
-  }, [hasComputerUseApi]);
-
-  const handleCuaChange = async (checked: boolean) => {
-    if (checked && !cuaEnablePendingPermission && !cuaStatus?.consentPending) {
-      const accepted = await new Promise<boolean>((resolve) => {
-        Modal.confirm({
-          title: t("Claw.Settings.computerUse.consentTitle"),
-          content: t("Claw.Settings.computerUse.consentDescription"),
-          okText: t("Claw.Settings.computerUse.consentAccept"),
-          cancelText: t("Claw.Settings.computerUse.consentCancel"),
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
-        });
-      });
-      if (!accepted) return;
-    } else if (!checked) {
-      setCuaEnablePendingPermission(false);
-    }
-    setCuaApplying(true);
-    try {
-      const r = await window.electronAPI!.computerUse.setEnabled(checked);
-      if (r.status) {
-        setCuaStatus(r.status);
-        setCuaEnablePendingPermission(r.status.consentPending === true);
-      }
-      if (!r.success) {
-        message.error(cuaErrorText(r.error));
-        return;
-      }
-      setCuaEnablePendingPermission(false);
-      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-    } catch {
-      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-    } finally {
-      setCuaApplying(false);
-    }
-  };
-
-  // 授权动作兼复查：已授权时立即返回且不再弹窗（见 services/cua/computerUse.ts 契约）
-  const handleCuaRequestPermissions = async () => {
-    setCuaPermChecking(true);
-    try {
-      const r = await window.electronAPI!.computerUse.requestPermissions();
-      setCuaStatus((prev) =>
-        prev
-          ? {
-              ...prev,
-              accessibility: r.accessibility ?? null,
-              screenRecording: r.screenRecording ?? null,
-            }
-          : prev,
-      );
-      if (r.success && r.accessibility && r.screenRecording) {
-        message.success(t("Claw.Settings.computerUse.permGranted"));
-        if (cuaEnablePendingPermission || cuaStatus?.consentPending) {
-          setCuaApplying(true);
-          const enabled = await window.electronAPI!.computerUse.setEnabled(true);
-          if (enabled.status) {
-            setCuaStatus(enabled.status);
-            setCuaEnablePendingPermission(enabled.status.consentPending === true);
-          }
-          if (enabled.success) {
-            setCuaEnablePendingPermission(false);
-            message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-          } else {
-            message.error(cuaErrorText(enabled.error));
-          }
-        }
-      } else {
-        message.info(t("Claw.Settings.computerUse.permPending"));
-      }
-    } catch {
-      message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
-    } finally {
-      setCuaPermChecking(false);
-      setCuaApplying(false);
-    }
-  };
-
-  // 手动安装/升级入口；开启开关时也会自动执行，安装本身不请求系统权限。
-  const handleCuaInstall = async () => {
-    setCuaInstalling(true);
-    try {
-      const r = await window.electronAPI!.computerUse.installHelper();
-      if (!r.success) {
-        message.error(cuaErrorText(r.error));
-        return;
-      }
-      message.success(t("Claw.Settings.computerUse.installOk"));
-      await loadCuaStatus();
-    } catch {
-      message.error(t(I18N_KEYS.Toast.ERROR.LOAD_FAILED));
-    } finally {
-      setCuaInstalling(false);
-    }
-  };
+  useEffect(() => {
+    void window.electronAPI?.features
+      ?.registered?.()
+      .then((ids) => setRegisteredFeatures(ids ?? []))
+      .catch(() => setRegisteredFeatures([]));
+  }, []);
 
   useEffect(() => {
     loadConfig();
@@ -404,16 +224,6 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       );
     };
   }, [loadConfig, loadSystemSettings]);
-
-  useEffect(() => {
-    loadCuaStatus();
-    const refresh = () => {
-      void window.electronAPI?.computerUse?.getStatus().then(setCuaStatus).catch(() => undefined);
-    };
-    window.electronAPI?.on("cua:runtime", refresh);
-    window.addEventListener("focus", refresh);
-    return () => { window.electronAPI?.off("cua:runtime", refresh); window.removeEventListener("focus", refresh); };
-  }, [loadCuaStatus]);
 
   // ========== 服务域名：行内提交 → 确认 → configureServerHost 事务 ==========
   // 协议归一：支持带 http(s)://，未含默认补 https://
@@ -859,157 +669,17 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
         </div>
       </div>
 
-      {/* Computer Use（商业版 overlay 注入；旧宿主无此 API 时整组隐藏） */}
-      {hasComputerUseApi && (
+      {/* Computer Use（特性公开入口渲染；未注册时整组隐藏） */}
+      {registeredFeatures.includes("computer-use") && (
         <div className={styles.group}>
           <div className={styles.groupTitle}>
             {t("Claw.Settings.computerUse.title")}
           </div>
           <div className={styles.groupCard}>
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.enable")}
-              desc={
-                <span>
-                  {t("Claw.Settings.computerUse.desc")}
-                  {cuaStatus && (
-                    <span style={{ marginLeft: 8, whiteSpace: "nowrap" }}>
-                      {cuaStatus.consentPending || cuaStatus.error === "permissionsRequired"
-                        ? `● ${t("Claw.Settings.computerUse.stateAwaitingPermission")}`
-                        : !cuaStatus.enabled
-                        ? `● ${t("Claw.Settings.computerUse.stateOff")}`
-                        : cuaStatus.installed
-                        ? cuaStatus.running
-                          ? `● ${t("Claw.Settings.computerUse.stateRunning")}`
-                          : `● ${t("Claw.Settings.computerUse.stateIdle")}`
-                        : `● ${t("Claw.Settings.computerUse.stateNotInstalled")}`}
-                    </span>
-                  )}
-                </span>
-              }
-              control={
-                <Switch
-                  checked={!!cuaStatus?.enabled}
-                  onChange={handleCuaChange}
-                  loading={cuaApplying}
-                  disabled={!cuaStatus?.installed && !cuaStatus?.installable}
-                />
-              }
-            />
-            {!cuaStatus?.installed && cuaStatus?.installable && (
-              <SettingsRow
-                label={t("Claw.Settings.computerUse.install")}
-                desc={t("Claw.Settings.computerUse.installDesc")}
-                control={
-                  <Button
-                    size="small"
-                    loading={cuaInstalling}
-                    onClick={handleCuaInstall}
-                  >
-                    {t("Claw.Settings.computerUse.installBtn")}
-                  </Button>
-                }
-              />
-            )}
-            {isMacPlatform && (
-              <SettingsRow
-                label={t("Claw.Settings.computerUse.permissions")}
-              desc={
-                <span>
-                  {t("Claw.Settings.computerUse.permAx")}
-                  <PermDot ok={cuaStatus?.accessibility} />
-                  {" · "}
-                  {t("Claw.Settings.computerUse.permSr")}
-                  <PermDot ok={cuaStatus?.screenRecording} />
-                </span>
-              }
-              control={
-                <Button
-                  size="small"
-                  loading={cuaPermChecking}
-                  disabled={!cuaStatus?.installed}
-                  onClick={handleCuaRequestPermissions}
-                >
-                  {t("Claw.Settings.computerUse.requestPerm")}
-                </Button>
-              }
-            />
-            )}
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.vlmModel")}
-              desc={t("Claw.Settings.computerUse.vlmModelDesc")}
-              control={
-                <Input
-                  style={{ width: 200 }}
-                  placeholder="glm-4.5v"
-                  value={cuaVlm?.model ?? ""}
-                  disabled={!cuaVlm}
-                  onChange={(e) =>
-                    setCuaVlm((v) =>
-                      v ? { ...v, model: e.target.value } : v,
-                    )
-                  }
-                  onBlur={() =>
-                    cuaVlm && commitVlm({ model: cuaVlm.model })
-                  }
-                />
-              }
-            />
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.vlmBaseUrl")}
-              desc={t("Claw.Settings.computerUse.vlmBaseUrlDesc")}
-              control={
-                <Input
-                  style={{ width: 280 }}
-                  value={cuaVlm?.baseUrl ?? ""}
-                  disabled={!cuaVlm}
-                  onChange={(e) =>
-                    setCuaVlm((v) =>
-                      v ? { ...v, baseUrl: e.target.value } : v,
-                    )
-                  }
-                  onBlur={() =>
-                    cuaVlm && commitVlm({ baseUrl: cuaVlm.baseUrl })
-                  }
-                />
-              }
-            />
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.vlmApiKey")}
-              desc={t("Claw.Settings.computerUse.vlmApiKeyDesc")}
-              control={
-                <Space>
-                <Input.Password
-                  placeholder={cuaVlm?.hasApiKey ? t("Claw.Cua.keySaved") : ""}
-                  style={{ width: 280 }}
-                  value={cuaVlm?.apiKey ?? ""}
-                  disabled={!cuaVlm}
-                  onChange={(e) =>
-                    setCuaVlm((v) =>
-                      v ? { ...v, apiKey: e.target.value } : v,
-                    )
-                  }
-                  onBlur={() =>
-                    cuaVlm && commitVlm({ apiKey: cuaVlm.apiKey })
-                  }
-                />
-                <Button size="small" disabled={!cuaVlm?.hasApiKey} onClick={() => void commitVlm({ clearApiKey: true })}>
-                  {t("Claw.Cua.clearKey")}
-                </Button>
-                </Space>
-              }
-            />
-            <SettingsRow
-              label={t("Claw.Settings.computerUse.vlmTest")}
-              desc={t("Claw.Settings.computerUse.vlmTestDesc")}
-              control={
-                <Button
-                  size="small"
-                  loading={cuaVlmTesting}
-                  onClick={handleVlmTest}
-                >
-                  {t("Claw.Settings.computerUse.vlmTestBtn")}
-                </Button>
-              }
+            <ComputerUseSettings
+              t={t}
+              Row={SettingsRow}
+              api={window.electronAPI?.computerUse}
             />
           </div>
         </div>

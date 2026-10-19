@@ -914,6 +914,9 @@ export const localFilesFeature: DesktopFeature = {
   id: "local-files",
   products: ["nuwax"],
   enabledByDefault: true,
+  // 本机文件直访尚未提测，本次上线强制关闭，避免历史设置重新启用。
+  bridge: { namespaces: ["localFiles"] },
+  requests: { authorize: authorizeLocalFilesRequest, isSource: isLocalFilesRequestSource },
   schemes: [
     {
       scheme: LOCAL_FILES_SCHEME,

@@ -1,6 +1,6 @@
 # 实施计划：local-file-access
 
-- 状态：开发完成；macOS runtime 验证完成，真实账户/安装包及 Windows 验收待补
+- 状态：开发完成；macOS 与 Windows 实际 Electron 验收完成（2026-10-15）；真实账户/安装包人工验收待提测
 - 对应 spec：specs/local-file-access.md
 
 ## 基线与隔离
@@ -39,3 +39,14 @@ ZIP 按用户已确认的完整工作区实现，流式预览代替原 ZCode 草
 5. 本机明确选中的符号链接允许 Markdown、HTML、OpenUI 与只读代码预览；远端链接和自动资源越界边界保留。
 
 本轮质量门、提交与实际环境范围见 `docs/acceptance/20261013-local-file-access-fixes.md`。
+
+## 2026-10-15 恢复开启与 Windows 验收
+
+原分支已全部合入 release，但 release 为 3.0.14/3.0.15 在 `672ca584` 强制关闭了该特性。本轮在同一 worktree 将壳与前端的 `codex/local-file-access` 分别 fast-forward 至 `release/v3.0.x`（`25aea924`）与 `feat-2026.9.30`（`b30f4ae17`）后继续：
+
+1. 移除硬门控，恢复 `features.local-files.enabled` 覆盖 ?? 默认开启；先写三态失败测试再改。
+2. Windows 实机（win-pc 现址 192.168.32.235）真实 Electron 验收 17/17 通过；补宿主路径语义检查、`--bundle-only` 与 Windows 运行器。
+3. macOS 经真实 nuwax-file-server 1.5.8 的列表/搜索纳入 runtime 验收（18/18）。
+4. 前端无需改动，壳不改前端/产物 pin。
+
+仅商业版（`products: ["nuwax"]`、overlay 托管，前端按 `getProduct()==='nuwax'` 探测），社区版不受影响。仍在开发分支、未提测；提测前须完成真实账户与安装包人工验收，合入 release 后商业版默认开启。详见 `docs/acceptance/20261015-local-file-access-reenable.md`。

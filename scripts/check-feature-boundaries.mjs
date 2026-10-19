@@ -85,6 +85,19 @@ function walk(dir, out = []) {
   return out;
 }
 
+/** 特性自身的公开入口（main/preload）：注册表只允许 import 这些。 */
+function isFeatureEntry(target) {
+  const rel = target.rel;
+  return rel === `${target.area}/features/${target.id}` || rel === `${target.area}/features/${target.id}/index`;
+}
+
+/** 去掉注释后的源码（R5 的字符串字面量检查不受注释干扰）。 */
+export function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 /** 外部代码允许 import 的特性公开入口。 */
 function isPublicEntry(target) {
   const rel = target.rel;
@@ -99,7 +112,14 @@ export function checkFeatureBoundaries(root = defaultRoot) {
   const violations = [];
   const add = (file, rule, message) => violations.push({ file, rule, message });
 
-  for (const file of walk(src)) {
+  const files = walk(src);
+  const featureIds = new Set(
+    files.map((file) => classify(stripExt(toPosix(path.relative(src, file)))))
+      .filter((entry) => entry.kind === 'feature')
+      .map((entry) => entry.id),
+  );
+
+  for (const file of files) {
     const rel = toPosix(path.relative(src, file));
     const relNoExt = stripExt(rel);
     const here = classify(relNoExt);
@@ -108,6 +128,15 @@ export function checkFeatureBoundaries(root = defaultRoot) {
 
     if (here.kind === 'feature' && !isTest && /\bAPP_NAME_IDENTIFIER\b/.test(text)) {
       add(rel, 'R4', '特性内不得出现 APP_NAME_IDENTIFIER，产品门控只看特性清单的 products');
+    }
+
+    if (here.kind === 'kit' && !isTest) {
+      const code = stripComments(text);
+      for (const id of featureIds) {
+        if (new RegExp(`['"]${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`).test(code)) {
+          add(rel, 'R5', `_kit 不得出现特性 id「${id}」的字符串字面量（端口必须通用）`);
+        }
+      }
     }
 
     for (const spec of extractImports(text)) {
@@ -127,8 +156,8 @@ export function checkFeatureBoundaries(root = defaultRoot) {
           add(rel, 'R3', `_kit 不得 import「${spec}」（只能引用 _kit 自身与第三方包）`);
         }
       } else if (target.kind === 'feature' || target.kind === 'registry') {
-        // 注册表本身允许引用各特性的入口
-        const fromRegistry = here.kind === 'registry' && target.kind === 'feature';
+        // 注册表只允许引用各特性的公开入口
+        const fromRegistry = here.kind === 'registry' && target.kind === 'feature' && isFeatureEntry(target);
         if (!fromRegistry && !isPublicEntry(target)) {
           add(rel, 'R2', `「${spec}」是特性内部实现，外部只能经公开入口使用特性`);
         }

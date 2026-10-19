@@ -124,3 +124,26 @@ test('the real overlay tree satisfies every boundary rule', () => {
   const violations = checkFeatureBoundaries();
   assert.deepEqual(violations, [], violations.map((v) => `${v.rule} ${v.file}: ${v.message}`).join('\n'));
 });
+
+test('R5: the kit must not carry feature id string literals; comments are exempt', (t) => {
+  const root = fixture(t, {
+    'main/features/_kit/types.ts': "export const a = 'capture';\n// 注释里的 computer-use 与 /* local-files */ 不算\nexport const b = `x`;",
+    'main/features/_kit/helper.ts': 'export const y = 1;',
+    'main/features/capture/index.ts': 'export const c = 1;',
+  });
+  const out = checkFeatureBoundaries(root).filter((v) => v.rule === 'R5');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].file, 'main/features/_kit/types.ts');
+});
+
+test('R5: the registry may import feature entries only, not feature internals', (t) => {
+  const root = fixture(t, {
+    'main/features/index.ts': "import { a } from './capture';\nimport { b } from './capture/impl';\nexport const all = [a, b];",
+    'main/features/capture/index.ts': "import { i } from './impl';\nexport const a = i;",
+    'main/features/capture/impl.ts': 'export const i = 1;',
+    'preload/features/index.ts': "import { p } from './capture';\nexport const ps = p;",
+    'preload/features/capture.ts': 'export const p = 1;',
+  });
+  const out = checkFeatureBoundaries(root).filter((v) => v.rule === 'R2');
+  assert.deepEqual(out.map((v) => v.file), ['main/features/index.ts']);
+});

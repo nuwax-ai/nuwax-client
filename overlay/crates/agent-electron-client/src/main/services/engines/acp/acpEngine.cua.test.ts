@@ -10,6 +10,10 @@ import * as opencodeAcpSandbox from "./sandbox/opencodeAcpSandbox";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
 import type { ServerResponse } from "http";
 import type { HandlerContext } from "@shared/types/ipc";
+import { agentService } from "../unifiedAgent";
+import { attachEngineEventForwarders } from "../engineEventForwarder";
+import { registerEventForwarders, unregisterEventForwarders } from "../../../ipc/eventForwarders";
+import { closeAndClearAllSseClients, registerSseClient, sseClients } from "../../computer/sseManager";
 
 vi.mock("../unifiedAgent", async () => {
   const { EventEmitter } = await import("events");
@@ -189,11 +193,145 @@ function setupEngineForCreateSession(
 }
 
 
-import { cuaSessionAuthority } from "../../cua/sessionAuthority";
-import { agentService } from "../unifiedAgent";
-import { attachEngineEventForwarders } from "../engineEventForwarder";
-import { registerEventForwarders, unregisterEventForwarders } from "../../../ipc/eventForwarders";
-import { closeAndClearAllSseClients, registerSseClient, sseClients } from "../../computer/sseManager";
+import {
+  registerDesktopAgentSessionParticipant,
+} from "../../../features";
+
+/**
+ * 引擎只经组合对象驱动参与者；凭据语义本身由特性内 sessionAuthority 测试覆盖。
+ * 本测试用记录式假参与者锁定引擎的调用时序与参数。
+ */
+function createFakeParticipant() {
+  const calls: string[] = [];
+  const active = new Set<string>();
+  const bound = new Map<string, string>();
+  let seq = 0;
+  const participant = {
+    prepare(servers: Array<{ name: string; args?: string[]; env?: Array<{ name: string; value: string }> }>) {
+      calls.push("prepare");
+      const index = servers.findIndex((server) => server.name === "cua");
+      if (index < 0) return { bind: (id: string) => calls.push(`bind:${id}`), cancel: () => calls.push("cancel") };
+      const secret = `secret-${++seq}`;
+      servers[index] = { name: "cua", command: "node", args: ["relay"], env: [{ name: "CAP", value: secret }] };
+      return {
+        bind: (id: string) => {
+          calls.push(`bind:${id}:${secret}`);
+          bound.set(id, secret); // 未 start 前凭据未激活，与真实签发语义一致
+        },
+        cancel: () => calls.push(`cancel:${secret}`),
+      };
+    },
+    start(id: string) {
+      calls.push(`start:${id}`);
+      for (const secret of active) active.delete(secret); // 轮换：旧凭据失效
+      const secret = bound.get(id);
+      if (secret) active.add(secret);
+      return seq;
+    },
+    finish(id: string, turn: number, cancelled: boolean) {
+      calls.push(`finish:${id}:${turn}:${cancelled}`);
+      const secret = bound.get(id);
+      if (secret) active.delete(secret);
+    },
+    cancel(id: string) {
+      calls.push(`cancel:${id}`);
+      const secret = bound.get(id);
+      if (secret) active.delete(secret);
+    },
+    remove(id: string) {
+      calls.push(`remove:${id}`);
+      const secret = bound.get(id);
+      if (secret) { active.delete(secret); bound.delete(id); }
+    },
+    destroy() {
+      calls.push("destroy");
+      active.clear(); bound.clear();
+    },
+  };
+  return { calls, active, bound, participant };
+}
+
+describe("AcpEngine Computer Use lifecycle wiring", () => {
+  let fake: ReturnType<typeof createFakeParticipant>;
+  let unregister: () => void;
+  beforeEach(() => {
+    fake = createFakeParticipant();
+    unregister = registerDesktopAgentSessionParticipant("computer-use", () => fake.participant);
+  });
+  afterEach(() => unregister());
+  function bind(_engine: AcpEngine, id: string) {
+    const servers = [{ name: "cua", env: [] as Array<{ name: string; value: string }> }];
+    fake.participant.prepare(servers).bind(id);
+    return servers[0].env[0].value;
+  }
+  it("creates different session credentials through actual ACP newSession parameters", async () => {
+    const { engine, newSession } = setupEngineForCreateSession();
+    (engine as any).config.mcpServers = { cua: { command: "old-helper", args: [] } };
+    newSession.mockResolvedValueOnce({ sessionId: "a" }).mockResolvedValueOnce({ sessionId: "b" });
+    await engine.createSession(); await engine.createSession();
+    const first = newSession.mock.calls[0][0].mcpServers.find((s: any) => s.name === "cua");
+    const second = newSession.mock.calls[1][0].mcpServers.find((s: any) => s.name === "cua");
+    expect(first.args).toEqual(["relay"]);
+    expect(first.env[0].value).not.toBe(second.env[0].value);
+    // 签发即绑定、未 start 不激活：与真实凭据语义一致
+    expect(fake.active.size).toBe(0);
+    expect(fake.bound.get("a")).toBe(first.env[0].value);
+    expect(fake.bound.get("b")).toBe(second.env[0].value);
+    await engine.destroy();
+    expect(fake.calls.at(-1)).toBe("destroy");
+    expect(fake.bound.size).toBe(0);
+  });
+  it.each(["resumeAcpSession", "loadAcpSession"] as const)("rotates credentials through %s", async (method) => {
+    const { engine } = setupEngineForCreateSession();
+    (engine as any).config.mcpServers = { cua: { command: "old-helper", args: [] } };
+    const rpc = vi.fn().mockResolvedValue({});
+    (engine as any).acpConnection[method === "resumeAcpSession" ? "resumeSession" : "loadSession"] = rpc;
+    const old = bind(engine, "same");
+    (engine as any).agentSessions.start("same");
+    await engine[method]("same");
+    // 重连后旧凭据失效、只剩会话当前一份
+    expect(fake.bound.get("same")).not.toBe(old);
+    expect(rpc.mock.calls[0][0].mcpServers[0].args).toEqual(["relay"]);
+    expect([...fake.bound.keys()]).toEqual(["same"]);
+    await engine.destroy();
+  });
+  it("allows only the active prompt and revokes before awaiting ACP cancellation", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const secret = bind(engine, sessionId), reply = createDeferred<any>(), cancelled = createDeferred<void>();
+    acpConnection.prompt.mockReturnValue(reply.promise); acpConnection.cancel.mockReturnValue(cancelled.promise);
+    const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    expect(fake.active.has(secret)).toBe(true);
+    const aborting = engine.abortSession(sessionId);
+    // 撤销先于等待 ACP 取消完成：调用 abort 同步即失效
+    expect(fake.active.has(secret)).toBe(false);
+    cancelled.resolve(); reply.resolve({ stopReason: "end_turn" });
+    await aborting; await prompting; await engine.destroy();
+    expect(fake.bound.size).toBe(0);
+  });
+  it("never retries an uncertain prompt when desktop capabilities are attached", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const secret = bind(engine, sessionId);
+    vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+    acpConnection.prompt.mockRejectedValue(new Error("MCP connection lost"));
+    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
+    expect(fake.active.has(secret)).toBe(false);
+    await engine.destroy();
+  });
+  it("revokes before engine destruction waits for ACP and clears late prompt results", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine();
+    const secret = bind(engine, sessionId), reply = createDeferred<any>(), cancelled = createDeferred<void>();
+    acpConnection.prompt.mockReturnValue(reply.promise); acpConnection.cancel.mockReturnValue(cancelled.promise);
+    const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
+    const destroying = engine.destroy();
+    // destroy 同步撤销参与者凭据，之后才等待 ACP
+    expect(fake.calls).toContain("destroy");
+    expect(fake.active.has(secret)).toBe(false);
+    cancelled.resolve(); reply.resolve({ stopReason: "end_turn" });
+    await destroying; await prompting;
+    expect(fake.active.has(secret)).toBe(false);
+  });
+});
 
 describe("NW-050 ACP SDK NDJSON error boundary", () => {
   afterEach(() => {
@@ -431,77 +569,5 @@ describe("AcpEngine prompt failure reporting", () => {
     await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
     expect(ended).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
     expect(failed).not.toHaveBeenCalled();
-  });
-});
-
-describe("AcpEngine Computer Use lifecycle wiring", () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "acp-cua-"));
-    cuaSessionAuthority.configure(dir, (file) => ({ command: "node", args: ["relay"], env: { CAP: file } }), () => {});
-  });
-  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
-  function bind(engine: AcpEngine, id: string) {
-    const servers = [{ name: "cua", env: [] as Array<{ name: string; value: string }> }];
-    (engine as any).cuaSessions.prepare(servers).bind(id);
-    return fs.readFileSync(servers[0].env[0].value, "utf8");
-  }
-  it("creates different session credentials through actual ACP newSession parameters", async () => {
-    const { engine, newSession } = setupEngineForCreateSession();
-    (engine as any).config.mcpServers = { cua: { command: "old-helper", args: [] } };
-    newSession.mockResolvedValueOnce({ sessionId: "a" }).mockResolvedValueOnce({ sessionId: "b" });
-    await engine.createSession(); await engine.createSession();
-    const first = newSession.mock.calls[0][0].mcpServers.find((s: any) => s.name === "cua");
-    const second = newSession.mock.calls[1][0].mcpServers.find((s: any) => s.name === "cua");
-    expect(first.args).toEqual(["relay"]);
-    expect(first.env[0].value).not.toBe(second.env[0].value);
-    expect(cuaSessionAuthority.authorize(fs.readFileSync(first.env[0].value, "utf8"))).toBeNull();
-    await engine.destroy(); expect(fs.readdirSync(dir)).toEqual([]);
-  });
-  it.each(["resumeAcpSession", "loadAcpSession"] as const)("rotates credentials through %s", async (method) => {
-    const { engine } = setupEngineForCreateSession();
-    (engine as any).config.mcpServers = { cua: { command: "old-helper", args: [] } };
-    const rpc = vi.fn().mockResolvedValue({});
-    (engine as any).acpConnection[method === "resumeAcpSession" ? "resumeSession" : "loadSession"] = rpc;
-    const old = bind(engine, "same");
-    (engine as any).cuaSessions.start("same");
-    await engine[method]("same");
-    expect(cuaSessionAuthority.authorize(old)).toBeNull();
-    expect(rpc.mock.calls[0][0].mcpServers[0].args).toEqual(["relay"]);
-    expect(fs.readdirSync(dir)).toHaveLength(1);
-    await engine.destroy();
-  });
-  it("allows only the active prompt and revokes before awaiting ACP cancellation", async () => {
-    const { engine, sessionId, acpConnection } = setupEngine();
-    const secret = bind(engine, sessionId), reply = createDeferred<any>(), cancelled = createDeferred<void>();
-    acpConnection.prompt.mockReturnValue(reply.promise); acpConnection.cancel.mockReturnValue(cancelled.promise);
-    const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
-    expect(cuaSessionAuthority.authorize(secret)).toBeTruthy();
-    const aborting = engine.abortSession(sessionId);
-    expect(cuaSessionAuthority.authorize(secret)).toBeNull();
-    cancelled.resolve(); reply.resolve({ stopReason: "end_turn" });
-    await aborting; await prompting; await engine.destroy();
-    expect(fs.readdirSync(dir)).toEqual([]);
-  });
-  it("never retries an uncertain prompt when desktop capabilities are attached", async () => {
-    const { engine, sessionId, acpConnection } = setupEngine();
-    const secret = bind(engine, sessionId);
-    vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
-    acpConnection.prompt.mockRejectedValue(new Error("MCP connection lost"));
-    await engine.prompt(sessionId, [{ type: "text", text: "test" }]);
-    expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
-    expect(cuaSessionAuthority.authorize(secret)).toBeNull();
-    await engine.destroy();
-  });
-  it("revokes before engine destruction waits for ACP and clears late prompt results", async () => {
-    const { engine, sessionId, acpConnection } = setupEngine();
-    const secret = bind(engine, sessionId), reply = createDeferred<any>(), cancelled = createDeferred<void>();
-    acpConnection.prompt.mockReturnValue(reply.promise); acpConnection.cancel.mockReturnValue(cancelled.promise);
-    const prompting = engine.prompt(sessionId, [{ type: "text", text: "test" }]);
-    const destroying = engine.destroy();
-    expect(cuaSessionAuthority.authorize(secret)).toBeNull(); expect(fs.readdirSync(dir)).toEqual([]);
-    cancelled.resolve(); reply.resolve({ stopReason: "end_turn" });
-    await destroying; await prompting;
-    expect(cuaSessionAuthority.authorize(secret)).toBeNull();
   });
 });

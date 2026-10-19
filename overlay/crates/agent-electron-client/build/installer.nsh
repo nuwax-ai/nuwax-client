@@ -18,10 +18,19 @@
 ; ---------------------------------------------------------------------------
 
 !include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-path.nsh"
+
+!macro preInit
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro check64BitAndSetRegView
+    !insertmacro windowsRepairRegisteredPaths
+  !endif
+!macroend
 
 !macro customHeader
   Name "女娲Nuwax"
   !insertmacro nuwaxUninstallStrings
+  !insertmacro windowsInstallPathStrings
   ; Cleanup is an explicit, default-off choice; never inherit builder's
   ; unconditional data deletion, including while an old version is updated.
   !ifdef DELETE_APP_DATA_ON_UNINSTALL
@@ -51,10 +60,31 @@
   ${endif}
 !macroend
 
+!include "${BUILD_RESOURCES_DIR}\shortcut-repair.nsh"
+
 ; Standalone failures stop before registration cleanup and keep the uninstaller
 ; for retry. Updates retain the atomic rename/restore path of the parent installer.
+!macro nuwaxRecoveryScripts
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+  File /oname=$PLUGINSDIR\installer-backup-retention.ps1 "${BUILD_RESOURCES_DIR}\installer-backup-retention.ps1"
+!macroend
+
+
 !macro customRemoveFiles
+  !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
+    ; The old uninstaller is the trusted source of its own payload inventory.
+    ; Legacy uninstallers leave no proof and their backups remain protected.
+    !insertmacro nuwaxRecoveryScripts
+    !insertmacro nuwaxExtractUninstallInventory
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+    Pop $R0
+    Pop $R1
+    ${if} $R0 != 0
+      !insertmacro nuwaxLogRecoveryFailure RecordPayload
+    ${endif}
+    ClearErrors
     CreateDirectory "$PLUGINSDIR\old-install"
 
     Push ""
@@ -147,7 +177,7 @@
     ; a verified path; do not carry that stale flag into the upgrade steps.
     ClearErrors
     DetailPrint `Preserving old "${PRODUCT_NAME}" installation in $R5 (${ROOT_KEY})`
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+    !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}"`
     Pop $R0
     Pop $R1
@@ -165,7 +195,7 @@
 
 !macro nuwaxRestoreOldInstall STATE_FILE
   ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+    !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Restore -StatePath "$PLUGINSDIR\${STATE_FILE}"`
     Pop $R0
     Pop $R1
@@ -195,7 +225,7 @@
   ${if} $R8 == 1
     StrCpy $R8 "missing"
     ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+      !insertmacro nuwaxRecoveryScripts
       nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Rollback -StatePath "$PLUGINSDIR\${STATE_FILE}"`
       Pop $R8
       Pop $R9
@@ -222,6 +252,10 @@
 !macroend
 
 !macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+    ; The install-mode page can change scope after customInit has run.
+    !insertmacro windowsRequireRegisteredPath
+  !endif
   ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
     !insertmacro nuwaxFindAppProcess $R0
     ${if} $R0 == 0
@@ -287,6 +321,7 @@
       ; installs prepare exactly the registrations that installSection removes.
       ${if} $installMode != "all"
       ${orIf} ${UAC_IsAdmin}
+        !insertmacro nuwaxUpdateShortcuts Capture
         !insertmacro nuwaxPrepareOldInstall SHELL_CONTEXT nuwax-old-shell.txt
         ${if} $installMode == "all"
           !insertmacro nuwaxPrepareOldInstall HKEY_CURRENT_USER nuwax-old-current.txt
@@ -300,6 +335,8 @@
 ; instance. That is the process that actually uninstalls an all-users copy, so
 ; perform the same close and directory preflight before it reaches the section.
 !macro customInit
+  !insertmacro windowsInitRegisteredPaths
+  !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
     SetAutoClose true
   ${endif}
@@ -313,19 +350,7 @@
 ; 更新沿用正在运行副本的范围，首次安装仍由向导选择。/D 由更新器传入，
 ; initMultiUser 已将其解析到 INSTDIR；注册表同时存在两种安装时也不能换副本。
 !macro customInstallMode
-  ${if} ${isUpdated}
-    ${if} $perMachineInstallationFolder != ""
-    ${andIf} $INSTDIR == $perMachineInstallationFolder
-      StrCpy $isForceMachineInstall "1"
-    ${elseif} $perUserInstallationFolder != ""
-    ${andIf} $INSTDIR == $perUserInstallationFolder
-      StrCpy $isForceCurrentInstall "1"
-    ${elseif} $installMode == "all"
-      StrCpy $isForceMachineInstall "1"
-    ${else}
-      StrCpy $isForceCurrentInstall "1"
-    ${endif}
-  ${endif}
+  !insertmacro windowsSelectUpdateInstallMode
 !macroend
 
 ; builder 的目录规整回调在跳过目录页后仍运行，会给自定义旧路径追加产品名。
@@ -376,4 +401,5 @@
   ${if} $installMode == "all"
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
   ${endif}
+  !insertmacro nuwaxUpdateShortcuts Repair
 !macroend

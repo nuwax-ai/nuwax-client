@@ -9,9 +9,11 @@
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
 import type { NoticesBridge } from "@shared/features/open-source-notices/contract";
-import { createCaptureBridge } from "./capture";
+import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
+import { createCaptureBridge, captureCapabilityProbe } from "./capture";
 import { createNoticesBridge } from "./open-source-notices";
-import { createLocalFilesBridge } from "./local-files";
+import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
+import { createComputerUseBridge } from "./computer-use";
 
 export interface FeatureNamespaces {
   capture: CaptureBridge;
@@ -21,6 +23,8 @@ export interface FeatureNamespaces {
 export interface HostFeatureNamespaces {
   notices: NoticesBridge;
   capture: HostCaptureBridge;
+  computerUse: ComputerUseAPI;
+  features: { registered: () => Promise<string[]> };
 }
 
 export function featureNamespaces(
@@ -34,6 +38,8 @@ export function hostFeatureNamespaces(
 ): HostFeatureNamespaces {
   return {
     notices: createNoticesBridge(ipc),
+    computerUse: createComputerUseBridge(ipc),
+    features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },
     capture: {
       ...createCaptureBridge(ipc, HOST_CAPTURE_IPC),
       save: (resultId) => ipc.invoke(HOST_CAPTURE_SAVE_IPC, resultId),
@@ -48,4 +54,31 @@ export function hostFeatureNamespaces(
       },
     },
   };
+}
+
+export type CapabilityProbe = (
+  capability: { methods: readonly string[]; variant?: string },
+  name: string,
+  bridge: unknown,
+  authorize: (name: string) => Promise<boolean>,
+) => Promise<boolean>;
+
+const FEATURE_PROBES: Record<string, CapabilityProbe> = {
+  capture: captureCapabilityProbe as CapabilityProbe,
+  localFiles: localFilesCapabilityProbe as CapabilityProbe,
+};
+
+/**
+ * canUse 的特性侧探测：命名空间不归任何特性时返回 null（由 canUse 通用流程判定）；
+ * 归属特性的可用性/格式探测在各特性 preload 文件里实现。
+ */
+export function probeFeatureCapability(
+  namespace: string,
+  capability: { methods: readonly string[]; variant?: string },
+  name: string,
+  bridge: unknown,
+  authorize: (name: string) => Promise<boolean>,
+): Promise<boolean> | null {
+  const probe = FEATURE_PROBES[namespace];
+  return probe ? probe(capability, name, bridge, authorize) : null;
 }
