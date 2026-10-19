@@ -191,7 +191,7 @@ Linux x64/arm64 录屏资源在对应架构原生构建，需要 GCC/G++、make�
 
 ```bash
 npm run sub:update
-npm run sub:update -- --nuwax feat-2026.9.30
+npm run sub:update -- --nuwax feat-2026.10.30
 npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
 ```
 
