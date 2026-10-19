@@ -32,4 +32,5 @@
 - 未登录只运行页面所需的 loopback gateway。商业版不按端口杀未知进程，避免干扰 NuwaClaw/CLI。
 - base:test 会清 overlay，必须在隔离副本运行；商业测试需同步 overlay 后单独运行，提测还须验证真实安装包。
 - 双轨门禁命令：社区 `npm run base:test`、商业 `npm run test:commercial`（--no-env：同步 overlay 不注 env）；CI（ci.yml）双 job 各跑一轨。
-- 提交基座前必须 `npm run check:pin`：基座脏文件/staged 不得混入 overlay 托管路径（CI 另有 --remote origin/main 字节级防线）。分支模型为单主干（feat 线 PR 进 main，pin 跟随 main），勿 rebase 改写已 pin 的基座 SHA。
+- 外层版本线使用 `release/v<major>.<minor>`（当前 `release/v3.1`），Agent 任务线默认 `codex/<topic>`，从目标线创建并经 PR 回流；分支/QA/合并方向统一见 `docs/branch-naming.md`。
+- 提交基座前必须 `npm run check:pin`：基座脏文件/staged 不得混入 overlay 托管路径（CI 另有 --remote origin/main 字节级防线）。基座保持单主干（任务线 PR 进基座 main，pin 跟随 main），勿 rebase 改写已 pin 的基座 SHA。
