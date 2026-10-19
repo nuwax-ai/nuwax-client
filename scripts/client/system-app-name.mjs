@@ -13,7 +13,8 @@ export function configureSystemAppName(build, { platform = process.platform, arc
     extraMetadata: { ...build.extraMetadata, productName: product.name },
     mac: { ...build.mac, extendInfo: { ...build.mac?.extendInfo,
       CFBundleName: product.name, CFBundleDisplayName: product.name } },
-    nsis: { ...build.nsis, shortcutName: product.displayName },
+    nsis: { ...build.nsis, shortcutName: product.displayName,
+      uninstallDisplayName: product.displayName + ' ${version}' },
     msi: { ...build.msi, shortcutName: product.displayName },
     linux: { ...build.linux, desktop: { ...entry, ...desktop, Name: product.displayName } },
   };
