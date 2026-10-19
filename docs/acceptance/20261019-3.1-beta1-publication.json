@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-19T12:53:53.401Z",
+  "version": "3.1.0-beta.1",
+  "tag": "v3.1.0-beta.1",
+  "releaseUrl": "https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.1.0-beta.1",
+  "workflowUrl": "https://github.com/nuwax-ai/nuwax-client/actions/runs/39244815721",
+  "source": {
+    "client": "488673578ac9f9b2742bc81c45cd833d7c4cb932",
+    "shell": "c08080d127544b7e191e11fe722fa50a1b977679",
+    "frontend": "7efd517260f134562813c1ccdffdb41c4dab4d53",
+    "dist": "32672177b922f446a9542d21953c08c83e720e3f"
+  },
+  "assetsVerified": 29,
+  "fivePlatformBuildsPassed": true,
+  "macosSignedAndNotarized": true,
+  "betaPointersIdentical": true,
+  "betaPointerSha256": "4125b647487fe0248dddc6ce60e7426a5d0e17bfa6bd1ff6932c58d82da8b887",
+  "pointerUrls": [
+    "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/beta/latest.json",
+    "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron/beta/latest.json"
+  ],
+  "windowsUrl": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/beta-build/v3.1.0-beta.1/Nuwax-Setup-3.1.0-beta.1-unsigned.exe",
+  "windowsSigning": "unsigned Beta policy",
+  "commercialGate": {
+    "filesPassed": 255,
+    "testsPassed": 3193,
+    "testsSkipped": 5
+  },
+  "windowsStatic": {
+    "tag": "v3.1.0-beta.1",
+    "source": {
+      "client": "488673578ac9f9b2742bc81c45cd833d7c4cb932",
+      "shell": "c08080d127544b7e191e11fe722fa50a1b977679",
+      "frontend": "7efd517260f134562813c1ccdffdb41c4dab4d53"
+    },
+    "size": 946971455,
+    "sha256": "1a5febdae92b1ad14cc9bbe42660af5843d58239cc8f11a2f4fe3f2778c2a037",
+    "blockmapChunks": 45165,
+    "completeCoverage": true,
+    "recomputedBlockmapMatches": true,
+    "installerExecuted": false,
+    "archiveFormat": "zip",
+    "archiveOffset": 624680,
+    "archiveSize": 944359975,
+    "payloadFileCount": 31520,
+    "payloadUncompressedBytes": 2648876747,
+    "zipMethods": [
+      0,
+      8
+    ],
+    "entryExecutablePresent": true,
+    "appAsarPresent": true,
+    "zipIntegrityPassed": true,
+    "deviceInstallationTiming": "Pending; win-pc installation acceptance remains paused",
+    "windowsPeMachine": "0x8664",
+    "requiredPreloadsPresent": [
+      "dist/main/main.js",
+      "dist/preload/index.js",
+      "dist/preload/cuaControls.js",
+      "dist/preload/captureWindow.js",
+      "dist/preload/captureRecording.js",
+      "dist/preload/webviewPerfBridge.js"
+    ],
+    "bundledNativeHelpers": [
+      "resources/capture/win32-x64/ffmpeg.exe",
+      "resources/computer-use/NuwaxComputerUse.exe"
+    ]
+  },
+  "deviceAcceptance": "win-pc installer, upgrade and uninstall acceptance remains paused by user; first-install speed improvement not measured"
+}
