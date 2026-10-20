@@ -1,0 +1,1791 @@
+{
+  "recordedAt": "2026-10-20T07:45:08.264443+00:00",
+  "status": "Installed-package login/service-error and global-polling checks passed on both devices; Windows legacy shortcut required local repair; full installer lifecycle not rerun.",
+  "productVersion": "3.0.17",
+  "sourceTag": "v3.0.17",
+  "sourceCommit": "f4bcea192d3e94a96d7043c7035826b83070be97",
+  "mode": "direct",
+  "origin": "https://testagent.xspaceagi.com",
+  "sessionSource": "Existing valid sessions in each actually installed package. This run verifies session restore and expiry handling; it does not assert a new interactive password/CAPTCHA login.",
+  "method": {
+    "native": "Temporarily intercept only electron.net.fetch for test-origin /api/user/getLoginInfo, reload actual guest, then use real retry and backend recovery.",
+    "polling": "Intercept only the actual guest credit summary and notify collect/batch endpoints; wait for their natural 60s/5s timers. No forced polling invocation.",
+    "expiry": "Synthetic getLoginInfo 4010/4011 expires local ticket; restore original still-valid ticket privately in memory and verify real backend /home recovery.",
+    "secrets": "No password, ticket or token values recorded."
+  },
+  "caseCount": 22,
+  "allCasesPassed": true,
+  "platforms": [
+    {
+      "device": {
+        "name": "WIN-UTM",
+        "kind": "Windows 11 ARM UTM VM running x64 Nuwax",
+        "uiAccess": "Windows App RDP",
+        "installedPath": "C:\\Program Files\\Nuwax\\Nuwax.exe"
+      },
+      "installedIdentity": {
+        "version": "3.0.17",
+        "platform": "win32",
+        "packaged": true,
+        "mainSha256": "950e1606aaf52fa010f5713ed1b5a4ca8e9706c8adeaef6234364172c9bc8c94",
+        "preloadSha256": "40d35e16f396e72717a21912a9e65e732deeefa190311d8115eab84caf5c7bd3",
+        "oneClickIncluded": false,
+        "updaterConfig": "provider: generic\nurl: https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron\nupdaterCacheDirName: nuwax-updater\n"
+      },
+      "frontend": {
+        "gitHash": "c75c76350",
+        "buildAt": "2026-10-20T03:11:00.713Z",
+        "version": "1.2.0"
+      },
+      "baseline": {
+        "version": "3.0.17",
+        "platform": "win32",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 0,
+          "credit": 0,
+          "batch": 0
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        }
+      },
+      "nativeServiceFailures": [
+        {
+          "mode": "503",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "503",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 1,
+              "credit": 0,
+              "batch": 2
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 2,
+              "credit": 0,
+              "batch": 3
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "502-html",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "502-html",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 3,
+              "credit": 0,
+              "batch": 4
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 4,
+              "credit": 0,
+              "batch": 5
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "network",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "network",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 5,
+              "credit": 0,
+              "batch": 6
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 6,
+              "credit": 0,
+              "batch": 7
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "5000",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "5000",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 7,
+              "credit": 0,
+              "batch": 8
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 0,
+              "batch": 9
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        }
+      ],
+      "globalPolling": [
+        {
+          "credit": "503",
+          "batch": "4010",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 5
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "503",
+              "batch": "4010"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 2,
+              "batch": 21
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "4010",
+                "time": 1792481475235
+              },
+              "credit": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481479816
+              }
+            }
+          }
+        },
+        {
+          "credit": "4010",
+          "batch": "4011",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "4010",
+              "batch": "4011"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 3,
+              "batch": 33
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481535444
+              },
+              "credit": {
+                "status": 0,
+                "code": "4010",
+                "time": 1792481539829
+              }
+            }
+          }
+        },
+        {
+          "credit": "4011",
+          "batch": "http401",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "4011",
+              "batch": "http401"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 4,
+              "batch": 45
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481595637
+              },
+              "credit": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481599874
+              }
+            }
+          }
+        },
+        {
+          "credit": "network",
+          "batch": "503",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "network",
+              "batch": "503"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 5,
+              "batch": 57
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481655886
+              },
+              "credit": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481599874
+              }
+            }
+          }
+        },
+        {
+          "credit": "5000",
+          "batch": "network",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "5000",
+              "batch": "network"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 6,
+              "batch": 69
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481655886
+              },
+              "credit": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481719961
+              }
+            }
+          }
+        }
+      ],
+      "globalPollingRealBackendRecovery": {
+        "version": "3.0.17",
+        "platform": "win32",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 8,
+          "credit": 7,
+          "batch": 81
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        },
+        "unhandled": 0,
+        "lastResponses": {
+          "batch": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481778058
+          },
+          "credit": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481780122
+          }
+        }
+      },
+      "explicitSessionExpiry": [
+        {
+          "code": "4010",
+          "passed": true,
+          "expired": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": false,
+            "cookieUnchanged": false,
+            "faults": {
+              "native": "4010",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 9,
+              "credit": 7,
+              "batch": 95
+            },
+            "page": {
+              "path": "/login",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481836405
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481780122
+              }
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 9,
+              "credit": 7,
+              "batch": 95
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481836405
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481780122
+              }
+            }
+          }
+        },
+        {
+          "code": "4011",
+          "passed": true,
+          "expired": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": false,
+            "cookieUnchanged": false,
+            "faults": {
+              "native": "4011",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 10,
+              "credit": 7,
+              "batch": 98
+            },
+            "page": {
+              "path": "/login",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481845981
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481780122
+              }
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "win32",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 10,
+              "credit": 7,
+              "batch": 99
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481845981
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481780122
+              }
+            }
+          }
+        }
+      ],
+      "finalBeforeNormalRestart": {
+        "version": "3.0.17",
+        "platform": "win32",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 12,
+          "credit": 11,
+          "batch": 143
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        },
+        "unhandled": 0,
+        "lastResponses": {
+          "batch": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792482073238
+          },
+          "credit": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792482035925
+          }
+        }
+      }
+    },
+    {
+      "device": {
+        "name": "soddydeMac-mini.local",
+        "kind": "Physical Apple M4 Mac mini",
+        "uiAccess": "macOS Screen Sharing",
+        "installedPath": "/Applications/Nuwax.app"
+      },
+      "installedIdentity": {
+        "version": "3.0.17",
+        "platform": "darwin",
+        "packaged": true,
+        "mainSha256": "950e1606aaf52fa010f5713ed1b5a4ca8e9706c8adeaef6234364172c9bc8c94",
+        "preloadSha256": "40d35e16f396e72717a21912a9e65e732deeefa190311d8115eab84caf5c7bd3",
+        "oneClickIncluded": false,
+        "updaterConfig": "provider: generic\nurl: https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron\nupdaterCacheDirName: nuwax-updater\n"
+      },
+      "frontend": {
+        "gitHash": "c75c76350",
+        "buildAt": "2026-10-20T03:11:00.713Z",
+        "version": "1.2.0"
+      },
+      "baseline": {
+        "version": "3.0.17",
+        "platform": "darwin",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 0,
+          "credit": 0,
+          "batch": 0
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        }
+      },
+      "nativeServiceFailures": [
+        {
+          "mode": "503",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "503",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 1,
+              "credit": 2,
+              "batch": 14
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 2,
+              "credit": 2,
+              "batch": 15
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "502-html",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "502-html",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 3,
+              "credit": 2,
+              "batch": 16
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 4,
+              "credit": 2,
+              "batch": 17
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "network",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "network",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 5,
+              "credit": 2,
+              "batch": 18
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 6,
+              "credit": 2,
+              "batch": 20
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        },
+        {
+          "mode": "5000",
+          "passed": true,
+          "failure": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "5000",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 7,
+              "credit": 3,
+              "batch": 21
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": true,
+              "hasReloadButton": true,
+              "toastCount": 0,
+              "bridge": true
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 3,
+              "batch": 22
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            }
+          }
+        }
+      ],
+      "globalPolling": [
+        {
+          "credit": "503",
+          "batch": "4010",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 2
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "503",
+              "batch": "4010"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 8,
+              "batch": 70
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "4010",
+                "time": 1792481251187
+              },
+              "credit": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481252591
+              }
+            }
+          }
+        },
+        {
+          "credit": "4010",
+          "batch": "4011",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "4010",
+              "batch": "4011"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 9,
+              "batch": 82
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481311269
+              },
+              "credit": {
+                "status": 0,
+                "code": "4010",
+                "time": 1792481312603
+              }
+            }
+          }
+        },
+        {
+          "credit": "4011",
+          "batch": "http401",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "4011",
+              "batch": "http401"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 10,
+              "batch": 94
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481371354
+              },
+              "credit": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481372615
+              }
+            }
+          }
+        },
+        {
+          "credit": "network",
+          "batch": "503",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "network",
+              "batch": "503"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 11,
+              "batch": 106
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481431443
+              },
+              "credit": {
+                "status": 0,
+                "code": "4011",
+                "time": 1792481372615
+              }
+            }
+          }
+        },
+        {
+          "credit": "5000",
+          "batch": "network",
+          "passed": true,
+          "requestsObserved": {
+            "credit": 1,
+            "batch": 12
+          },
+          "after": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "5000",
+              "batch": "network"
+            },
+            "counts": {
+              "native": 8,
+              "credit": 12,
+              "batch": 118
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481431443
+              },
+              "credit": {
+                "status": 0,
+                "code": "5000",
+                "time": 1792481492642
+              }
+            }
+          }
+        }
+      ],
+      "globalPollingRealBackendRecovery": {
+        "version": "3.0.17",
+        "platform": "darwin",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 8,
+          "credit": 13,
+          "batch": 130
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        },
+        "unhandled": 0,
+        "lastResponses": {
+          "batch": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481553090
+          },
+          "credit": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481552741
+          }
+        }
+      },
+      "explicitSessionExpiry": [
+        {
+          "code": "4010",
+          "passed": true,
+          "expired": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": false,
+            "cookieUnchanged": false,
+            "faults": {
+              "native": "4010",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 9,
+              "credit": 15,
+              "batch": 164
+            },
+            "page": {
+              "path": "/login",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481720335
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481672957
+              }
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 9,
+              "credit": 15,
+              "batch": 165
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481721556
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481672957
+              }
+            }
+          }
+        },
+        {
+          "code": "4011",
+          "passed": true,
+          "expired": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": false,
+            "cookieUnchanged": false,
+            "faults": {
+              "native": "4011",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 10,
+              "credit": 15,
+              "batch": 166
+            },
+            "page": {
+              "path": "/login",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481721856
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481672957
+              }
+            }
+          },
+          "recovered": {
+            "version": "3.0.17",
+            "platform": "darwin",
+            "packaged": true,
+            "cookiePresent": true,
+            "cookieUnchanged": true,
+            "faults": {
+              "native": "none",
+              "credit": "none",
+              "batch": "none"
+            },
+            "counts": {
+              "native": 10,
+              "credit": 15,
+              "batch": 167
+            },
+            "page": {
+              "path": "/home",
+              "origin": "https://testagent.xspaceagi.com",
+              "loginStatus": "true",
+              "hasUserInfo": true,
+              "retry": false,
+              "hasReloadButton": false,
+              "toastCount": 0,
+              "bridge": true
+            },
+            "unhandled": 0,
+            "lastResponses": {
+              "batch": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481721856
+              },
+              "credit": {
+                "status": 200,
+                "code": "0000",
+                "time": 1792481672957
+              }
+            }
+          }
+        }
+      ],
+      "finalBeforeNormalRestart": {
+        "version": "3.0.17",
+        "platform": "darwin",
+        "packaged": true,
+        "cookiePresent": true,
+        "cookieUnchanged": true,
+        "faults": {
+          "native": "none",
+          "credit": "none",
+          "batch": "none"
+        },
+        "counts": {
+          "native": 12,
+          "credit": 17,
+          "batch": 185
+        },
+        "page": {
+          "path": "/home",
+          "origin": "https://testagent.xspaceagi.com",
+          "loginStatus": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0,
+          "bridge": true
+        },
+        "unhandled": 0,
+        "lastResponses": {
+          "batch": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481805899
+          },
+          "credit": {
+            "status": 200,
+            "code": "0000",
+            "time": 1792481784545
+          }
+        }
+      }
+    }
+  ],
+  "windowsShortcut": {
+    "before": [
+      {
+        "Path": "C:\\Users\\Public\\Desktop\\女娲Nuwax.lnk",
+        "Target": "C:\\Program Files\\Nuwax\\Nuwax.exe",
+        "TargetExists": true,
+        "Icon": "C:\\Program Files\\Nuwax\\Nuwax.exe,0",
+        "WorkingDirectory": "C:\\Program Files\\Nuwax",
+        "AppId": "com.nuwax-ai.nuwax"
+      },
+      {
+        "Path": "C:\\Users\\Louis\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Nuwax.lnk",
+        "Target": "C:\\nuwax-qa\\beta5-20261017\\installed\\Nuwax.exe",
+        "TargetExists": false,
+        "Icon": ",0",
+        "WorkingDirectory": "C:\\nuwax-qa\\beta5-20261017\\installed",
+        "AppId": "com.nuwax-ai.nuwax"
+      },
+      {
+        "Path": "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\女娲Nuwax.lnk",
+        "Target": "C:\\Program Files\\Nuwax\\Nuwax.exe",
+        "TargetExists": true,
+        "Icon": "C:\\Program Files\\Nuwax\\Nuwax.exe,0",
+        "WorkingDirectory": "C:\\Program Files\\Nuwax",
+        "AppId": "com.nuwax-ai.nuwax"
+      }
+    ],
+    "repair": {
+      "Result": {
+        "Action": "Repair",
+        "Changed": 1,
+        "Failed": 0,
+        "Captured": 0
+      },
+      "Target": "C:\\Program Files\\Nuwax\\Nuwax.exe",
+      "Icon": "C:\\Program Files\\Nuwax\\Nuwax.exe,0",
+      "TargetExists": true,
+      "Backup": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-installed-317-qa\\shortcut-before.lnk"
+    },
+    "after": {
+      "target": "C:\\Program Files\\Nuwax\\Nuwax.exe",
+      "icon": "C:\\Program Files\\Nuwax\\Nuwax.exe,0",
+      "targetExists": true
+    },
+    "visual": {
+      "method": "Windows App RDP to WIN-UTM after normal app relaunch",
+      "runningTaskbarIconCorrect": true,
+      "loggedInHomeVisible": true,
+      "startMenuRecentlyAddedStillShowsBlankIcon": true,
+      "screenshotLocalCache": "windows-normal-home-rdp.jpg",
+      "screenshotSha256": "0db60e19701c93a675d2ebf5a3147d80cc5678e0e55f4dc1ed76bf4278956ec3"
+    },
+    "finding": "The all-users installation was correct in the common Desktop and Start Menu. A per-user Nuwax.lnk still targeted a missing beta5 QA directory with empty icon. The existing CurrentUser repair helper corrected one link (Failed=0); normal relaunch restored the running taskbar icon. Automatic cross-scope cleanup and the Start Menu cached recent-entry icon are not accepted as fixed by this run.",
+    "productCodeChanged": false
+  },
+  "cleanup": {
+    "faultInjectionRemoved": true,
+    "originalSessionsRestored": true,
+    "normalRelaunchBoth": true,
+    "windowsQaTaskRemoved": true,
+    "windowsDebugListeners": [],
+    "windowsRootCommandLine": "\"C:\\Program Files\\Nuwax\\Nuwax.exe\" ",
+    "macDebugListeners": [],
+    "macRootCommandLine": "/Applications/Nuwax.app/Contents/MacOS/Nuwax",
+    "qaSshTunnelsStopped": true,
+    "profileDataDeleted": false
+  },
+  "signatureObservation": {
+    "macInstalledAppDeepStrictCodesign": "passed",
+    "windowsInstalledMainExe": "NotSigned",
+    "windowsInstallerSignature": "not revalidated in this run; do not infer installer signature from main exe status"
+  },
+  "oneClickUpgrade": {
+    "included": false,
+    "evidence": "Both installed main bundles lack installAfterDownload/runOneClickUpdate; no new updater code was added."
+  },
+  "releaseObserved": {
+    "isDraft": false,
+    "isPrerelease": false,
+    "publishedAt": "2026-10-20T06:47:29Z",
+    "url": "https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.17",
+    "assetCount": 28,
+    "windowsExe": {
+      "digest": "sha256:e04790cac9f34b9385c1f9edd13b500ebd06fdd815941bded5bf23c9b2b1418d",
+      "name": "Nuwax.Setup.3.0.17.exe",
+      "size": 723488816,
+      "url": "https://github.com/nuwax-ai/nuwax-client/releases/download/v3.0.17/Nuwax.Setup.3.0.17.exe"
+    },
+    "ci": {
+      "run": 39374784208,
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Validate release identity",
+          "conclusion": "success"
+        },
+        {
+          "name": "verify-source / community gate (base:test)",
+          "conclusion": "success"
+        },
+        {
+          "name": "verify-source / frontend source gate",
+          "conclusion": "success"
+        },
+        {
+          "name": "verify-source / commercial gate (test:commercial + purity)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Prepare release",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build Electron (macos-latest arm64)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build Electron (ubuntu-24.04-arm arm64)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build Electron (windows-latest x64)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build Electron (macos-26-intel x64)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build Electron (ubuntu-24.04 x64)",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "publicationAction": "Read-only observation during installed verification. This verification run did not retag, rebuild or publish."
+  },
+  "limitations": [
+    "No full install/upgrade/uninstall wizard or all-users UAC lifecycle rerun on these user profiles.",
+    "No one-click updater acceptance: feature absent in installed 3.0.17.",
+    "Windows legacy per-user shortcut was manually repaired using the shipped-source helper; this is not proof that a fresh all-users installer repairs legacy per-user entries automatically.",
+    "Windows Start Menu Recently added entry remained visually blank at final observation; no global icon-cache deletion or Explorer restart performed.",
+    "A bounded natural-polling test does not establish an hours-long idle soak."
+  ],
+  "localRawEvidenceDirectory": ".cache/installed-3.0.17-qa",
+  "rawEvidenceHashes": [
+    {
+      "file": "mac-baseline.json",
+      "sha256": "6dd1b412f43277f8d216333c1cbb90cf7cd14ac25cb5927a23aa14edd529a58a"
+    },
+    {
+      "file": "mac-expiry.json",
+      "sha256": "32e82681121a0d340ac95ba39b7a9e890253ec6a9708e907ca47f98359edcadc"
+    },
+    {
+      "file": "mac-final-before-normal-restart.json",
+      "sha256": "7e86308ecc0690be39d23ff4046747489c63e07d54f91a876b9b12643696f0e2"
+    },
+    {
+      "file": "mac-installed-identity.json",
+      "sha256": "272130cb0588df2152789e798d12885d69592a19e90db2088725fd1761bec772"
+    },
+    {
+      "file": "mac-native-errors.json",
+      "sha256": "66335ce5946785079f72db9315f4d7cf4afa20ddf80b690a4118833c1265e5b3"
+    },
+    {
+      "file": "mac-polling.json",
+      "sha256": "de6405f244238345a69aea1ece1d12ea643e39048d83ae07e51ba27e9c56ec52"
+    },
+    {
+      "file": "windows-baseline.json",
+      "sha256": "188ea4ad8d62b0ae14a993afe03c69d2b0686250a1231b075aee9efe01d2b6fc"
+    },
+    {
+      "file": "windows-expiry.json",
+      "sha256": "d3838b5866a6a89bc3e92d2fcad2ae5600f96de6b01111ec8fe3ca60628c0155"
+    },
+    {
+      "file": "windows-final-before-normal-restart.json",
+      "sha256": "e8cda914d076730c8fb2748928766c0dccfdb24c620e9deae8962ccb08e7b652"
+    },
+    {
+      "file": "windows-installed-identity.json",
+      "sha256": "1bf95251ab6cb3f13effff1440b2286c9c23ed6310bad36862d77030867d0aaa"
+    },
+    {
+      "file": "windows-native-errors.json",
+      "sha256": "043fe10646aeec2e273eba3d138beabe92fed0408cdcc1f24efbe0d3008a57b3"
+    },
+    {
+      "file": "windows-normal-restart.json",
+      "sha256": "29d8a1a953eca7e1c38082c7e3efe049970f6a50e29f2ac0e2828c1d7e659479"
+    },
+    {
+      "file": "windows-polling.json",
+      "sha256": "685a10336398144bb1cc53ed3f1b4eae8d41799d5fc57f26e7e47d2a16ce337d"
+    },
+    {
+      "file": "windows-shortcut-repair.json",
+      "sha256": "79ec68c51bc0ece2dd6a88d096e808972ce458f9846c55f210f2735a99a9c59e"
+    },
+    {
+      "file": "windows-shortcuts.json",
+      "sha256": "f2c1eeefde333fc4106e07276901b2534797e3a5bbcb1869fdf6edecd67d2ac9"
+    },
+    {
+      "file": "windows-signature-and-shortcut.json",
+      "sha256": "d69b51073b73353bffb4e24c366a780ab6729e2774ae71fca9e99212a6c1a89c"
+    }
+  ]
+}

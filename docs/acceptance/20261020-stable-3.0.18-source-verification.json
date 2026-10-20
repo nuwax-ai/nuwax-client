@@ -1,0 +1,282 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-20",
+  "scope": "3.0.18 source gates and win-pc direct checks; not installed-package/signature acceptance",
+  "baseline": "6c3a2c0a",
+  "baselineTag": "v3.0.17",
+  "baselineTagCommit": "f4bcea192d3e94a96d7043c7035826b83070be97",
+  "maintenanceBranch": "release/v3.0",
+  "candidateBranch": "fix/stable-3.0.18",
+  "sourceCommitAtRecording": "1a76bb66b92ebc2143fe71d02a646172a4396f2e",
+  "pins": {
+    "nuwa-electron-shell": "e245b3095e970d1c4a188a0d0881d98ed08eb2f4",
+    "nuwax": "1f3499c344b2178f81512b7c7996daa84d3cb4d2",
+    "nuwax-dist": "5506e1c3d6a1c5e09b092665e18166735f98f03e"
+  },
+  "gates": {
+    "commercial": {
+      "passed": 3059,
+      "skipped": 18
+    },
+    "communityIsolated": {
+      "passed": 1648,
+      "skipped": 18
+    },
+    "frontendFinal": {
+      "passed": 4106,
+      "skipped": 6
+    },
+    "frontendUpdaterAuthPolling": {
+      "passed": 206
+    },
+    "scripts": {
+      "passed": 355
+    },
+    "brandingPackagingAfterFooter": {
+      "passed": 16
+    },
+    "identityAfterCiGuardCorrection": {
+      "passed": 3,
+      "appDirCheck": "passed",
+      "mainBuild": "passed"
+    },
+    "otherPassed": [
+      "bridge contract",
+      "base pin boundary",
+      "overlay compatibility",
+      "frontend type domains",
+      "frontend architecture",
+      "renderer build",
+      "frontend production build"
+    ]
+  },
+  "winPcSource": {
+    "device": "win-pc physical Windows 11 x64",
+    "packaged": false,
+    "qaVersion": "3.0.18-qa.20261020.1",
+    "runtimeSourceCommit": "082fd7aea9829e8fd1b32ce80aadf742cce76fab",
+    "mainSha256": "a6b06f67096a449d6a2e90e7d569fd62a9d9bd642dd2f95660d9b4a5b7b3cec4",
+    "origin": "https://testagent.xspaceagi.com",
+    "deployedFrontend": {
+      "gitHash": "367e2859c",
+      "buildAt": "2026-10-20T07:46:28.497Z",
+      "version": "1.2.0"
+    },
+    "cases": {
+      "native-errors": [
+        {
+          "mode": "503",
+          "passed": true
+        },
+        {
+          "mode": "502-html",
+          "passed": true
+        },
+        {
+          "mode": "network",
+          "passed": true
+        },
+        {
+          "mode": "5000",
+          "passed": true
+        }
+      ],
+      "polling": [
+        {
+          "credit": "503",
+          "batch": "4010",
+          "passed": true
+        },
+        {
+          "credit": "4010",
+          "batch": "4011",
+          "passed": true
+        },
+        {
+          "credit": "4011",
+          "batch": "http401",
+          "passed": true
+        },
+        {
+          "credit": "network",
+          "batch": "503",
+          "passed": true
+        },
+        {
+          "credit": "5000",
+          "batch": "network",
+          "passed": true
+        }
+      ],
+      "expiry": [
+        {
+          "code": "4010",
+          "passed": true
+        },
+        {
+          "code": "4011",
+          "passed": true
+        }
+      ]
+    },
+    "passed": 11,
+    "final": {
+      "version": "3.0.18-qa.20261020.1",
+      "platform": "win32",
+      "packaged": false,
+      "cookiePresent": true,
+      "cookieUnchanged": true,
+      "faults": {
+        "native": "none",
+        "credit": "none",
+        "batch": "none"
+      },
+      "counts": {
+        "native": 12,
+        "credit": 8,
+        "batch": 94
+      },
+      "observed": [
+        {
+          "kind": "credit",
+          "status": 200,
+          "time": 1792484544017
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484544597
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484549710
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484554812
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484559915
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484565029
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484570153
+        },
+        {
+          "kind": "batch",
+          "status": 200,
+          "time": 1792484575255
+        }
+      ],
+      "page": {
+        "path": "/home",
+        "origin": "https://testagent.xspaceagi.com",
+        "loginStatus": "true",
+        "hasUserInfo": true,
+        "retry": false,
+        "hasReloadButton": false,
+        "toastCount": 0,
+        "bridge": true
+      },
+      "unhandled": 0,
+      "lastResponses": {
+        "credit": {
+          "status": 200,
+          "code": "0000",
+          "time": 1792484544022
+        },
+        "batch": {
+          "status": 200,
+          "code": "0000",
+          "time": 1792484575256
+        }
+      }
+    },
+    "cleanup": {
+      "faultInjectionRemoved": true,
+      "originalSessionRestored": true,
+      "qaAppQuit": true,
+      "ownedScheduledTaskRemoved": true
+    },
+    "completedBeforeInternalPackaging": true
+  },
+  "webIntegration": {
+    "pr": "https://github.com/nuwax-ai/nuwax/pull/198",
+    "mergeCommit": "99f34c745ee59e9ac1ce98c017585ef00e598cbc",
+    "productionTreeUnchangedByMerge": true,
+    "deploymentPerformed": false
+  },
+  "limitations": [
+    "Internal QA installers and Dock observations recorded separately.",
+    "Source direct checks used existing valid test session; not claimed as fresh password/CAPTCHA login.",
+    "A follow-up retains the same Windows AppUserModelID in the existing guarded main entry; remote CI must pass before merge.",
+    "3.0.17 tag/assets unchanged; no 3.0.18 production feed switch."
+  ],
+  "logSha256": {
+    "commercial-tests.log": "7716396ab72cfada738c4ec73f10f44bdf97b6debe2d51f78a5b03d9c396201e",
+    "community-tests.log": "fe13f5675a0ebbe72fe3139e80e8d70f8048a9ba7005d578ede733db94c24eb4",
+    "frontend-final-full.log": "7ce1f6e569bbbfe3a52ab92056c91ecebac9c69f3397a2c652df25cff60accd6",
+    "frontend-updater-final.log": "52a8d304017d291e048712c842e781b0e6585a879b0e8d55c703fe2ce1ca503b",
+    "script-tests.log": "c17cc04fa97a096e7305caa958beaef9e222dcabe3ab6b371a8c558748ac2115",
+    "final-name-tests.log": "b110fdbe0727bd367a8c0943d86fc77a7902467a596818bfbd6067f9953190ef",
+    "identity-build.log": "ac8e9a5209f622c9a54f3010fd57cd332cc60cea185f9f25832a170530f8abcf"
+  },
+  "acceptanceHandoff": {
+    "requestedByUser": true,
+    "instruction": "停止继续真机验证，制作3.0.18正式签名候选包，由用户验收",
+    "stableFeedSyncAuthorizedAfterAcceptanceOnly": true,
+    "pending": [
+      "Windows full install/upgrade/uninstall and UAC",
+      "one-click download/install/restart, concurrency and retry",
+      "cross-scope stale icons",
+      "existing macOS Dock pin immediate label refresh"
+    ],
+    "installerFollowup": {
+      "before": "NSIS System.dll+0x1581 access violation 0xC0000005 during initMultiUser",
+      "after": "native initializer completes and wizard remains alive",
+      "shortcutExecutable": "PRODUCT_FILENAME.exe available at function inclusion time",
+      "files": {
+        "overlay/crates/agent-electron-client/build/installer.nsh": "1bf07d299e188ef5d405f0f267e7a5d316472be078d2aafe5fb0a5358d88ff35",
+        "overlay/crates/agent-electron-client/build/shortcut-repair.nsh": "f70478d239e24ecf5ae2241813ead8c2a10ed7e7ef7423eea651fbaebe5aeaf0",
+        "overlay/crates/agent-electron-client/build/uninstall-options.nsh": "e715fde7ae50e0f1a11f0bf00cd0a865f18dcec69610b59369e3d8d228b2502a",
+        "overlay/crates/agent-electron-client/build/windows-per-user-install.nsh": "aff61c0fe7472c2b57c9013d32d3343097432ab971f66af158e09bfe0efff756"
+      }
+    }
+  },
+  "release318": {
+    "sourceCommit": "87710c67de4df309c9590edbb238fe5cb1e73fe1",
+    "tag": "v3.0.18",
+    "pr": "https://github.com/nuwax-ai/nuwax-client/pull/38",
+    "sourceGates": "passed",
+    "buildRun": "https://github.com/nuwax-ai/nuwax-client/actions/runs/39402205795",
+    "buildAttempt": 2,
+    "resume": "cancelled Windows x64 and Intel macOS jobs only; successful platform assets retained",
+    "stableFeedSynced": false
+  },
+  "followup319": {
+    "branch": "fix/stable-3.0.19",
+    "baseline": "87710c67de4df309c9590edbb238fe5cb1e73fe1",
+    "sourceCommit": "a6e4f8001f7027cd7ae9d7faffd9033bf9c013aa",
+    "cherryPickSource": "1a9070b59ae9b70f8c5a449f028d0635a661a664",
+    "scope": "Preserve ticket for trusted logged-in code/send requests (reset password / bind email); keep anonymous login and untrusted-origin boundaries",
+    "pinsUnchanged": true,
+    "targetedTests": {
+      "command": "pnpm exec vitest run src/main/services/sessionAuthInjection.test.ts src/main/services/loopbackGateway/gateway.test.ts src/main/services/ticketCookiePolicy.test.ts",
+      "passed": 113,
+      "files": 3
+    },
+    "review": "REVIEW.md checked for the delta; release tag CI will run complete source gates",
+    "installedPackageAcceptance": "delegated to user; further device QA stopped at user request",
+    "stableFeedSynced": false
+  }
+}
