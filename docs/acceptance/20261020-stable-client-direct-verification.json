@@ -1,0 +1,414 @@
+{
+  "recordedAt": "2026-10-20T04:32:52.244553+00:00",
+  "status": "core error-handling checks passed; fresh candidate login blocked on captcha verification",
+  "host": "win-pc",
+  "candidateSource": "42330153fc170a91d721000ddabc4623ae9939c5",
+  "baseline": "v3.0.16",
+  "mode": "direct",
+  "origin": "https://testagent.xspaceagi.com",
+  "testFrontend": {
+    "gitHash": "c75c76350",
+    "buildAt": "2026-10-20T03:11:00.713Z"
+  },
+  "runtime": {
+    "electron": "40.8.2",
+    "platform": "win32",
+    "mainSha256": "8b75a162224345f483d6a16191bf6cc10392cba337b1f025fb423848c81270d0",
+    "preloadSha256": "40d35e16f396e72717a21912a9e65e732deeefa190311d8115eab84caf5c7bd3",
+    "rendererIndexSha256": "ff962ae6118b883620997f839c8ca57665e4fb0a326340b869de2dcdba881379",
+    "remoteAndLocalHashesMatch": true
+  },
+  "sessionSource": "User completed manual login in isolated Chrome on the same Windows host and test origin; its valid ticket was imported into the isolated candidate profile. This verifies session restore, not fresh candidate interactive login.",
+  "nativeServiceFailureChecks": [
+    {
+      "case": "503",
+      "passed": true,
+      "failure": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": true,
+          "hasReloadButton": true,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 3,
+          "credit": 1,
+          "batch": 13
+        }
+      },
+      "recovered": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 3,
+          "credit": 1,
+          "batch": 13
+        }
+      }
+    },
+    {
+      "case": "502-html",
+      "passed": true,
+      "failure": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": true,
+          "hasReloadButton": true,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 4,
+          "credit": 1,
+          "batch": 15
+        }
+      },
+      "recovered": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 4,
+          "credit": 1,
+          "batch": 15
+        }
+      }
+    },
+    {
+      "case": "network",
+      "passed": true,
+      "failure": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": true,
+          "hasReloadButton": true,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 5,
+          "credit": 1,
+          "batch": 17
+        }
+      },
+      "recovered": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 5,
+          "credit": 1,
+          "batch": 17
+        }
+      }
+    },
+    {
+      "case": "business-5000",
+      "passed": true,
+      "failure": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": true,
+          "hasReloadButton": true,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 6,
+          "credit": 1,
+          "batch": 19
+        }
+      },
+      "recovered": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 6,
+          "credit": 1,
+          "batch": 19
+        }
+      }
+    }
+  ],
+  "globalPollingChecks": [
+    {
+      "case": {
+        "credit": "503",
+        "batch": "4010"
+      },
+      "passed": true,
+      "naturalTimer": true,
+      "elapsedSeconds": 17.4,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 3,
+          "batch": 33
+        },
+        "uncaughtCount": 2
+      },
+      "balancePreservationVisible": false
+    },
+    {
+      "case": {
+        "credit": "4010",
+        "batch": "4011"
+      },
+      "passed": true,
+      "naturalTimer": true,
+      "elapsedSeconds": 60.1,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 4,
+          "batch": 45
+        },
+        "uncaughtCount": 2
+      },
+      "balancePreservationVisible": false
+    },
+    {
+      "case": {
+        "credit": "4011",
+        "batch": "http401"
+      },
+      "passed": true,
+      "naturalTimer": true,
+      "elapsedSeconds": 60.1,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 5,
+          "batch": 57
+        },
+        "uncaughtCount": 2
+      },
+      "balancePreservationVisible": false
+    },
+    {
+      "case": {
+        "credit": "network",
+        "batch": "503"
+      },
+      "passed": true,
+      "naturalTimer": true,
+      "elapsedSeconds": 60.0,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 6,
+          "batch": 68
+        },
+        "uncaughtCount": 2
+      },
+      "balancePreservationVisible": false
+    },
+    {
+      "case": {
+        "credit": "business-5000",
+        "batch": "network"
+      },
+      "passed": true,
+      "naturalTimer": true,
+      "elapsedSeconds": 60.1,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 7,
+          "batch": 81
+        },
+        "uncaughtCount": 2
+      },
+      "balancePreservationVisible": false
+    },
+    {
+      "case": "real-backend-recovery",
+      "passed": true,
+      "snapshot": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        },
+        "counts": {
+          "native": 7,
+          "credit": 8,
+          "batch": 92
+        },
+        "uncaughtCount": 2
+      }
+    }
+  ],
+  "realPollingBackendRecovery": {
+    "creditSummary": {
+      "httpStatus": 200,
+      "code": "0000"
+    },
+    "batch": {
+      "httpStatus": 200,
+      "code": "0000"
+    }
+  },
+  "explicitExpiryChecks": [
+    {
+      "case": "4010",
+      "passed": true,
+      "expired": {
+        "path": "https://testagent.xspaceagi.com/login",
+        "cookiePresent": false,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        }
+      },
+      "restored": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        }
+      },
+      "hostSyncReturnedFalseAfterExpiry": true
+    },
+    {
+      "case": "4011",
+      "passed": true,
+      "expired": {
+        "path": "https://testagent.xspaceagi.com/login",
+        "cookiePresent": false,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        }
+      },
+      "restored": {
+        "path": "https://testagent.xspaceagi.com/home",
+        "cookiePresent": true,
+        "page": {
+          "ready": "true",
+          "hasUserInfo": true,
+          "retry": false,
+          "hasReloadButton": false,
+          "toastCount": 0
+        }
+      },
+      "hostSyncReturnedFalseAfterExpiry": true
+    }
+  ],
+  "localCacheNote": "Explicit expiry removes the ticket and returns to login. Existing frontend display/session-status caches can remain; the main-process sync still returns false without a ticket. The initial assertion requiring display-cache deletion was removed because it is not the authentication contract.",
+  "interactiveLogin": {
+    "candidate": "not passed",
+    "passwordLoginHttpStatus": 200,
+    "businessCode": "0001",
+    "message": "校验参数异常",
+    "browserManualLoginPassed": true,
+    "browserAutomatedFormSubmitFailed": true,
+    "candidateNativeButtonInputFailedAfterRefresh": true,
+    "debuggerDetachedAlsoFailed": true,
+    "specificProviderVerifyCodeUnavailable": true
+  },
+  "windowsInstallerEvidence": "docs/acceptance/20261020-stable-windows-source-verification.json",
+  "remaining": [
+    "Diagnose captcha rejection and pass fresh interactive login in the candidate",
+    "Only then start official packaging",
+    "After packages are built, validate the actual installer, upgrade, uninstall UI, UAC and Explorer/taskbar icons"
+  ],
+  "productPackagingStarted": false,
+  "realInstallationModified": false,
+  "realUserDataModified": false,
+  "credentialsRecorded": false
+}

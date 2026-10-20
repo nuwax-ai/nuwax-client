@@ -26,8 +26,11 @@
 - [x] `win-pc` 原生 Shell/NSIS：隔离卸载 7 项、路径识别 14 项、快捷方式目标与图标属性 7 项通过；实际 Explorer/任务栏图标显示仍需包级验收。
 - [x] 留存源码哈希与 61 项真机隔离结果：`docs/acceptance/20261020-stable-windows-source-verification.json`；未改该机器正在使用的 Nuwax 安装与真实资料。
 - [x] 商业版全量回归：244 个文件通过、3048 项通过、18 项既有跳过；初次缺少 mcp-proxy 准备资源，执行现有 prepare:mcp-proxy 后全量通过。主进程与界面源码构建成功，overlay、基座边界和宿主桥契约检查通过。
-- [x] 按 REVIEW.md 及 pre-commit-quality-review 完成本次候选审查：安装事务和所有权清理由 build 脚本负责；installer.nsh 仅编排；业务会话保留在主进程；未引入新依赖或改变基座 pin。没有已知重要问题。
-- [ ] 等用户发布 PC Web 后，在 `win-pc` 以 direct 模式连接 `https://testagent.xspaceagi.com`，验证真实客户端登录、接口失败、恢复与全局轮询；不以本地 fixture 代替此项。
+- [x] 按 REVIEW.md 及 pre-commit-quality-review 完成本次候选审查：安装事务和所有权清理由 build 脚本负责；installer.nsh 仅编排；业务会话保留在主进程；未引入新依赖或改变基座 pin。
+- [x] 用户已发布 PC Web 测试环境；`win-pc` 已以单个隔离验证实例运行候选源码，direct 连接 `https://testagent.xspaceagi.com`。
+- [x] direct 核心行为：503、502 HTML、断网、普通业务错误保留会话并显示重试，真实后端恢复后均回到首页；4010/4011 明确失效清 ticket 并进入登录页，主进程不接受残留展示缓存作为会话凭证。
+- [x] 全局轮询按真实计时器验证五组积分/batch 故障（503、业务错误、网络错误、4010、4011、HTTP 401），无登录跳转、提示或新增未处理拒绝；恢复后两接口真实返回 0000。证据：`docs/acceptance/20261020-stable-client-direct-verification.json`。
+- [ ] 客户端全新交互登录：同机 Chrome 手动登录已通过，客户端登录仍返回 0001（验证码校验参数异常），发生在主进程 syncSession 前。以上已登录态测试使用用户在同域 Chrome 建立的有效测试会话进行恢复；不视为客户端交互登录通过。待取得验证码服务端 VerifyCode 定位具体拒绝原因。
 - [ ] 确认真机结果后，才启动新版本打包。安装包生成后另做包级安装/升级/卸载验收。
 
 当前打包仍暂停。上述验证运行源码和合成 NSIS 夹具，未生成新的产品安装包；完整产品安装/升级/卸载向导、UAC 和更新分发尚未验收。
