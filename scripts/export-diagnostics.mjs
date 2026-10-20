@@ -44,10 +44,10 @@ function git(...command) {
   catch { return null; }
 }
 
-const ports = [19099, ...Array.from({ length: 8 }, (_, i) => 61002 + i), 61173];
+const legacyPorts = [19099, ...Array.from({ length: 8 }, (_, i) => 61002 + i), 61173];
 const componentAllowlist = new Set([
   'AuthLifecycle', 'CommercialAuth', 'LoopbackGateway', 'FileServer',
-  'Lanproxy', 'AutoUpdater', 'Sandbox', 'Electron',
+  'Lanproxy', 'AutoUpdater', 'Sandbox', 'Electron', 'LocalPorts',
 ]);
 function listening(port) {
   return new Promise((done) => {
@@ -60,6 +60,7 @@ function listening(port) {
 }
 
 const summaries = [];
+const runtimeEndpoints = new Map();
 if (existsSync(logDir)) {
   for (const name of readdirSync(logDir).filter((n) => /^main\.\d{4}-\d{2}-\d{2}\.log$/.test(n)).sort().slice(-3)) {
     const path = join(logDir, name);
@@ -69,11 +70,14 @@ if (existsSync(logDir)) {
     const components = {};
     const codes = {};
     for (const line of data.split('\n')) {
+      const endpoint = line.match(/\[LocalPorts\] (agent|fileServer|ttyd|ttydInternal|gateway) (reserved|ready) 127\.0\.0\.1:(\d{4,5}) generation=(\d+)/);
+      if (endpoint && Number(endpoint[3]) >= 20000 && Number(endpoint[3]) <= 29999)
+        runtimeEndpoints.set(endpoint[1], { service: endpoint[1], host: '127.0.0.1', port: Number(endpoint[3]), status: endpoint[2], generation: Number(endpoint[4]) });
       const level = line.match(/\b(ERROR|WARN|INFO|DEBUG)\b/i)?.[1]?.toLowerCase();
       if (level && level in levels) levels[level]++;
       const component = line.match(/\[([A-Za-z][A-Za-z0-9]{1,35})\]/)?.[1];
       if (componentAllowlist.has(component)) components[component] = (components[component] ?? 0) + 1;
-      for (const code of line.match(/\b(?:EPERM|EACCES|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOENT|EPIPE)\b/g) ?? []) {
+      for (const code of line.match(/\b(?:EPERM|EACCES|EADDRINUSE|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOENT|EPIPE)\b/g) ?? []) {
         codes[code] = (codes[code] ?? 0) + 1;
       }
     }
@@ -81,6 +85,7 @@ if (existsSync(logDir)) {
   }
 }
 
+const ports = runtimeEndpoints.size ? [...new Set([...runtimeEndpoints.values()].map((endpoint) => endpoint.port))] : legacyPorts;
 const portChecks = await Promise.all(ports.map(async (port) => ({ port, listening: await listening(port) })));
 const snapshot = {
   schemaVersion: 1,
@@ -94,6 +99,7 @@ const snapshot = {
   logSummaries: summaries,
   // Port reachability is a clue, not proof of process ownership or health.
   localPortReachability: portChecks,
+  localEndpoints: [...runtimeEndpoints.values()],
 };
 writeFileSync(output, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
 console.log(`[diagnostics] 已保存 ${output}；只包含日志级别、组件和错误码统计，不包含原始日志正文`);

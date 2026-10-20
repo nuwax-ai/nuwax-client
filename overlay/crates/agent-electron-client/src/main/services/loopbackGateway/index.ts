@@ -25,10 +25,13 @@ import { readSetting, writeSetting } from "../../db";
 import { DEFAULT_SERVER_HOST } from "@shared/constants";
 import { currentTicket, mirrorGatewaySetCookies, ticketEpoch, setLoopbackTicketOrigin, advanceTicketEpoch, abortGatewayTicketMirror } from "../commercialTicketSession";
 import { getConfiguredPorts } from "../startupPorts";
+import { getLocalPortManager } from "../localPorts";
+import { initializeCommercialLocalPorts } from "../commercialLocalPorts";
 import {
   startLoopbackGateway,
   DEFAULT_BACKEND_PREFIXES,
   type LoopbackGatewayHandle,
+  type LoopbackGatewayOptions,
 } from "./gateway";
 import { setGatewayRequestRouting } from "../businessRequestRouting";
 import { setGatewayRequestContext } from "./requestContext";
@@ -282,7 +285,8 @@ async function ensureLoopbackGatewayNow(): Promise<
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   // 端口校验：配置值可能与服务端口族冲突（如误填 ttyd 默认口 60009——会反把
   // ttyd 挤掉）或越界，一律回落默认 46800 并告警。
-  const configured = step1?.gatewayPort;
+  const localPorts = initializeCommercialLocalPorts();
+  const configured = localPorts ? undefined : step1?.gatewayPort;
   let fixedPort = DEFAULT_LOOPBACK_GATEWAY_PORT;
   if (configured !== undefined) {
     const servicePorts = Object.values(getConfiguredPorts()).filter(
@@ -305,7 +309,7 @@ async function ensureLoopbackGatewayNow(): Promise<
   try {
     const config = packagedGatewayConfig();
     const requestSecret = randomBytes(32).toString("hex");
-    running = await startLoopbackGateway({
+    const gatewayOptions: LoopbackGatewayOptions = {
       targetOrigin,
       distDir: distMode ? resolveNuwaxDistDir() : undefined,
       fixedPort,
@@ -344,7 +348,22 @@ async function ensureLoopbackGatewayNow(): Promise<
         }
       },
       trustedRequestSecret: requestSecret,
-    });
+    };
+    if (localPorts) {
+      const result = await localPorts.start("gateway", async (port) => {
+        try {
+          running = await startLoopbackGateway({ ...gatewayOptions, fixedPort: port, strictPort: true });
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: String(error), errorCode: (error as NodeJS.ErrnoException).code };
+        }
+      }, async () => { await running?.close(); running = undefined; });
+      if (!result.success) throw new Error(result.error);
+    } else {
+      running = await startLoopbackGateway(gatewayOptions);
+    }
+
+    if (!running) throw new Error("Page gateway did not start");
     runningPackagedConfig = config;
     await setLoopbackTicketOrigin(running.origin);
     // Cookie 镜像也是 await；关闭意图可能在 start 或镜像期间到达。
@@ -417,6 +436,7 @@ async function stopLoopbackGatewayNow(): Promise<void> {
   running = undefined;
   stopAbsoluteUrlNormalization();
   await handle.close();
+  await getLocalPortManager()?.release("gateway");
   writeSetting(LOOPBACK_RUNTIME_KEY, { enabled: false, origin: null });
   log.info("[LoopbackGateway] stopped");
 }

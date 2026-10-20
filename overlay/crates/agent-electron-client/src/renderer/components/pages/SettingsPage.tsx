@@ -3,13 +3,12 @@
  *
  * 功能：
  * - 服务（服务域名、工作区目录）
- * - 高级（端口，默认折叠）
  * - 系统（开机自启、本地化加速、主题）
  * - 目录（应用数据、日志）
  *
  * 交互语义（与旧「表单编辑解锁」版对齐，仅范式变化）：
  * - 服务域名：行内提交 → 确认弹窗 → configureServerHost 事务（清 token→停服→写库→刷新回环网关）
- * - 端口/工作区：行内提交保存 step1_config，提示需重启服务生效
+ * - 工作区：行内提交保存 step1_config
  */
 
 import React, { useState, useEffect, useCallback, Suspense } from "react";
@@ -18,14 +17,12 @@ import {
   Button,
   Space,
   Input,
-  InputNumber,
   Select,
   Spin,
   Switch,
   message,
   Modal,
 } from "antd";
-import { RightOutlined } from "@ant-design/icons";
 import {
   APP_DISPLAY_NAME,
   APP_DATA_DIR_NAME,
@@ -51,16 +48,8 @@ const DevToolsPanel = IS_DEV
   ? React.lazy(() => import("../dev/DevToolsPanel"))
   : null;
 
-type PortKey = "fileServerPort" | "agentPort" | "ttydPort";
-
 /** 「允许锁屏运行」档位（与 shared/types/electron.d.ts PowerPolicyMode 对齐） */
 type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
-const PORT_LABELS: Record<PortKey, string> = {
-  fileServerPort: "Claw.Settings.saveConfig.fileServerPort",
-  agentPort: "Claw.Settings.saveConfig.agentPort",
-  ttydPort: "Claw.Settings.saveConfig.ttydPort",
-};
-
 // 行式列表的单行：左标签+描述、右控件
 function SettingsRow(props: {
   label: React.ReactNode;
@@ -101,11 +90,6 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<Step1Config | null>(null);
   const [hostDraft, setHostDraft] = useState<string | null>(null);
-  const [portDrafts, setPortDrafts] = useState<
-    Partial<Record<PortKey, number | null>>
-  >({});
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
   // 系统设置
   const [autolaunchEnabled, setAutolaunchEnabled] = useState(false);
   const [autolaunchLoading, setAutolaunchLoading] = useState(false);
@@ -288,32 +272,6 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
         }
       },
     });
-  };
-
-  // ========== 端口：行内提交，保存后提示需重启生效 ==========
-  const commitPort = async (key: PortKey) => {
-    if (!(key in portDrafts)) return;
-    const draft = portDrafts[key];
-    setPortDrafts((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-    const saved = config?.[key];
-    if (draft == null || draft === saved) return;
-    setSaving(true);
-    try {
-      const latest = await setupService.getStep1Config();
-      await setupService.saveStep1Config({ ...latest, [key]: draft });
-      setConfig({ ...latest, [key]: draft });
-      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-      message.info(t("Claw.Settings.saveConfig.restartHint"));
-    } catch (error) {
-      console.error("Failed to save port:", error);
-      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-    } finally {
-      setSaving(false);
-    }
   };
 
   // ========== 工作区目录：修改 / 打开（动作实现收口 services/core/workspaceDir，
@@ -503,53 +461,6 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
             }
           />
         </div>
-      </div>
-
-      {/* 高级（端口，默认折叠） */}
-      <div className={styles.group}>
-        <button
-          type="button"
-          className={styles.advancedToggle}
-          onClick={() => setAdvancedOpen((open) => !open)}
-        >
-          <RightOutlined
-            className={
-              advancedOpen
-                ? `${styles.chevron} ${styles.chevronOpen}`
-                : styles.chevron
-            }
-          />
-          <span>{t("Claw.Settings.group.advanced")}</span>
-        </button>
-        {advancedOpen && (
-          <div className={styles.groupCard}>
-            {(Object.keys(PORT_LABELS) as PortKey[]).map((key) => (
-              <SettingsRow
-                key={key}
-                label={t(PORT_LABELS[key])}
-                control={
-                  <InputNumber
-                    min={1}
-                    max={65535}
-                    style={{ width: 120 }}
-                    value={
-                      key in portDrafts ? portDrafts[key] : config?.[key]
-                    }
-                    disabled={saving}
-                    onChange={(value) =>
-                      setPortDrafts((prev) => ({
-                        ...prev,
-                        [key]: value,
-                      }))
-                    }
-                    onBlur={() => commitPort(key)}
-                    onPressEnter={() => commitPort(key)}
-                  />
-                }
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {/* 系统 */}
