@@ -252,5 +252,31 @@
         "overlay/crates/agent-electron-client/build/windows-per-user-install.nsh": "aff61c0fe7472c2b57c9013d32d3343097432ab971f66af158e09bfe0efff756"
       }
     }
+  },
+  "release318": {
+    "sourceCommit": "87710c67de4df309c9590edbb238fe5cb1e73fe1",
+    "tag": "v3.0.18",
+    "pr": "https://github.com/nuwax-ai/nuwax-client/pull/38",
+    "sourceGates": "passed",
+    "buildRun": "https://github.com/nuwax-ai/nuwax-client/actions/runs/39402205795",
+    "buildAttempt": 2,
+    "resume": "cancelled Windows x64 and Intel macOS jobs only; successful platform assets retained",
+    "stableFeedSynced": false
+  },
+  "followup319": {
+    "branch": "fix/stable-3.0.19",
+    "baseline": "87710c67de4df309c9590edbb238fe5cb1e73fe1",
+    "sourceCommit": "a6e4f8001f7027cd7ae9d7faffd9033bf9c013aa",
+    "cherryPickSource": "1a9070b59ae9b70f8c5a449f028d0635a661a664",
+    "scope": "Preserve ticket for trusted logged-in code/send requests (reset password / bind email); keep anonymous login and untrusted-origin boundaries",
+    "pinsUnchanged": true,
+    "targetedTests": {
+      "command": "pnpm exec vitest run src/main/services/sessionAuthInjection.test.ts src/main/services/loopbackGateway/gateway.test.ts src/main/services/ticketCookiePolicy.test.ts",
+      "passed": 113,
+      "files": 3
+    },
+    "review": "REVIEW.md checked for the delta; release tag CI will run complete source gates",
+    "installedPackageAcceptance": "delegated to user; further device QA stopped at user request",
+    "stableFeedSynced": false
   }
 }
