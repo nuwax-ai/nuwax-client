@@ -86,6 +86,7 @@ if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 if (APP_NAME_IDENTIFIER === "nuwax") {
   configureCaptureBackend(app.commandLine);
   configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
+  if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
 }
 
 // 处理 EPIPE 错误（社区最佳实践）
