@@ -1,6 +1,6 @@
 {
   "recordedAt": "2026-10-20T04:32:52.244553+00:00",
-  "status": "core error-handling checks passed; fresh candidate login blocked on captcha verification",
+  "status": "core error-handling checks passed; user confirmed authentication and authorized stable 3.0.17 packaging",
   "host": "win-pc",
   "candidateSource": "42330153fc170a91d721000ddabc4623ae9939c5",
   "baseline": "v3.0.16",
@@ -391,7 +391,6 @@
   ],
   "localCacheNote": "Explicit expiry removes the ticket and returns to login. Existing frontend display/session-status caches can remain; the main-process sync still returns false without a ticket. The initial assertion requiring display-cache deletion was removed because it is not the authentication contract.",
   "interactiveLogin": {
-    "candidate": "not passed",
     "passwordLoginHttpStatus": 200,
     "businessCode": "0001",
     "message": "校验参数异常",
@@ -399,16 +398,25 @@
     "browserAutomatedFormSubmitFailed": true,
     "candidateNativeButtonInputFailedAfterRefresh": true,
     "debuggerDetachedAlsoFailed": true,
-    "specificProviderVerifyCodeUnavailable": true
+    "specificProviderVerifyCodeUnavailable": true,
+    "priorCandidateOutcome": "not passed",
+    "acceptance": "User subsequently confirmed authentication passed; historical QA failures remain recorded above."
   },
   "windowsInstallerEvidence": "docs/acceptance/20261020-stable-windows-source-verification.json",
   "remaining": [
-    "Diagnose captcha rejection and pass fresh interactive login in the candidate",
-    "Only then start official packaging",
-    "After packages are built, validate the actual installer, upgrade, uninstall UI, UAC and Explorer/taskbar icons"
+    "Resolve the occupied v3.0.17 tag without silently omitting later fixes or bypassing tag protection",
+    "Build and sign all stable platforms",
+    "Validate actual installer, upgrade, uninstall UI, UAC and Explorer/taskbar icons before publication"
   ],
   "productPackagingStarted": false,
   "realInstallationModified": false,
   "realUserDataModified": false,
-  "credentialsRecorded": false
+  "credentialsRecorded": false,
+  "userAcceptance": {
+    "recordedAt": "2026-10-20T04:36:28.831254+00:00",
+    "confirmation": "认证通过了 就开始打正式 stable的 3.0.17 这个包",
+    "requestedVersion": "3.0.17",
+    "packagingAuthorized": true,
+    "freshLoginIndependentlyReobserved": false
+  }
 }
