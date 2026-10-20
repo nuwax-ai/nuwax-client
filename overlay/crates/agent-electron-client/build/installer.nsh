@@ -26,7 +26,13 @@
   !endif
 !macroend
 
+; This hook runs before assistedInstaller emits the install-mode page functions.
+!macro customWelcomePage
+  !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
+!macroend
+
 !macro customHeader
+  !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
   Name "女娲Nuwax"
   BrandingText "女娲Nuwax ${VERSION}"
   !insertmacro nuwaxUninstallStrings
