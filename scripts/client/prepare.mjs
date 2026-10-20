@@ -6,6 +6,7 @@ import * as core from './core.mjs';
 import { ensureCommercialDependencies } from './commercial-dependencies.mjs';
 import { captureSourceLockFile, prepareCaptureResources } from './capture-resources.mjs';
 import { terminalCompatLockFile, prepareTerminalCompatResources } from './terminal-compat-resources.mjs';
+import sourcePatches from '../source-patches.cjs';
 
 const ignoredInputs = new Set(['node_modules', '.git', 'dist', 'release', '.cache', 'target']);
 export const sourceNames = ['nuwax-file-server', 'claude-code-acp-ts'];
@@ -42,6 +43,7 @@ export function commercialEnv(root, overrides = {}) {
     NUWAX_UPDATE_FEED_BASE: config.product.feedBase,
     NUWAX_DOWNLOAD_PAGE_URL: config.product.downloadUrl,
     NUWAX_PORT_OFFSET: String(config.product.portOffset),
+    NUWAX_LOCAL_PORT_MODE: 'auto',
     NUWAX_FRONTEND_DIST: p.dist,
     TARGET_ARCH: process.arch,
     ...overrides,
@@ -207,17 +209,21 @@ async function prepareSource(p, name, source, options, tools, state, save) {
     await tools.git(cacheDir, ['checkout', '--detach', `origin/${source.branch}`]);
   }
   const sha = await tools.git(cacheDir, ['rev-parse', 'HEAD']);
-  const key = tools.fingerprint([sha, options.platform, options.arch, process.versions.node, inputDigest([path.join(cacheDir, 'package.json'), path.join(cacheDir, 'package-lock.json')])]);
+  const patch = name === 'nuwax-file-server' ? sourcePatches.fileServerPatch(p.root, source.url) : undefined;
+  const key = tools.fingerprint([sha, patch?.hash, options.platform, options.arch, process.versions.node, inputDigest([path.join(cacheDir, 'package.json'), path.join(cacheDir, 'package-lock.json')])]);
   if (!legacyPayload && state.sources?.[name]?.key === key && state.sources?.[name]?.artifact === artifact() && sourcePayloadReady(name, destination) && fs.existsSync(path.join(destination, 'node_modules'))) {
     console.log(`[prepare] 复用 ${name} @ ${sha.slice(0, 9)}`);
     return;
   }
-  const install = fileReady(path.join(cacheDir, 'package-lock.json')) ? ['ci', '--ignore-scripts', '--include=dev'] : ['install', '--ignore-scripts', '--no-package-lock', '--include=dev'];
-  await tools.run('npm', install, { cwd: cacheDir, env: { ...process.env, CI: 'true' } });
-  const sourcePackage = tools.readJson(path.join(cacheDir, 'package.json'));
-  if (sourcePackage.scripts?.build) await tools.npmRun(cacheDir, 'build');
-  else await tools.run('npm', ['exec', '--no', '--', 'tsc'], { cwd: cacheDir });
-  if (!sourcePayloadReady(name, cacheDir)) throw new Error(`[prepare] ${name} 构建没有生成完整的 CLI/服务入口及运行依赖`);
+  const patched = patch ? sourcePatches.createPatchedSource(cacheDir, patch.file) : undefined;
+  const buildDir = patched?.directory ?? cacheDir;
+  try {
+  const install = fileReady(path.join(buildDir, 'package-lock.json')) ? ['ci', '--ignore-scripts', '--include=dev'] : ['install', '--ignore-scripts', '--no-package-lock', '--include=dev'];
+  await tools.run('npm', install, { cwd: buildDir, env: { ...process.env, CI: 'true' } });
+  const sourcePackage = tools.readJson(path.join(buildDir, 'package.json'));
+  if (sourcePackage.scripts?.build) await tools.npmRun(buildDir, 'build');
+  else await tools.run('npm', ['exec', '--no', '--', 'tsc'], { cwd: buildDir });
+  if (!sourcePayloadReady(name, buildDir)) throw new Error(`[prepare] ${name} 构建没有生成完整的 CLI/服务入口及运行依赖`);
   if (legacyPayload) {
     const backup = path.join(p.cache, 'legacy-resources', `${name}-${randomUUID()}`);
     fs.mkdirSync(path.dirname(backup), { recursive: true });
@@ -231,14 +237,17 @@ async function prepareSource(p, name, source, options, tools, state, save) {
   fs.rmSync(destination, { recursive: true, force: true });
   fs.mkdirSync(destination, { recursive: true });
   for (const entry of ['dist', 'node_modules', 'package.json', 'LICENSE', 'LICENSE.md']) {
-    const from = path.join(cacheDir, entry);
+    const from = path.join(buildDir, entry);
     if (fs.existsSync(from)) fs.cpSync(from, path.join(destination, entry), { recursive: true, filter: (file) => !/(?:^|[\\/])node_modules[\\/]\.bin(?:[\\/]|$)/.test(file) });
   }
   fs.writeFileSync(path.join(destination, '.commit-hash'), `${sha}\n`);
   tools.atomicJson(ownershipFile, { url: source.url, branch: source.branch, sha });
   state.sources ??= {};
   state.sources[name] = { key, sha, artifact: artifact(), url: source.url, branch: source.branch };
+  if (patch) fs.writeFileSync(path.join(destination, '.source-patch-sha256'), `${patch.hash}\n`);
   save();
+  } finally { patched?.dispose(); }
+
 }
 
 /** Shared preparation for dev and pack. Existing developer sources are never updated. */

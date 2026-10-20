@@ -277,6 +277,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         );
     },
     emitRegistrationTrace,
+    async (signal) => { const { reconnectLanproxyNow } = await import("./processHandlers"); await reconnectLanproxyNow(signal); },
   );
   ipcMain.handle("services:syncConfig", (event) =>
     isHostSender(event) ? lifecycle.sync() : { success: false, error: "untrusted sender" },
