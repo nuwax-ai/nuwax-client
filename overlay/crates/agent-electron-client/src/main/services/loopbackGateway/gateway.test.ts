@@ -220,11 +220,7 @@ describe("loopback gateway（透明反代）", () => {
       expect(up.captured.cookie).toBe("a=1; b=2");
       expect(up.captured.auth).toBeUndefined();
     }
-    for (const route of [
-      "/api/user/passwordLogin",
-      "/api/user/codeLogin",
-      "/api/user/code/send",
-    ]) {
+    for (const route of ["/api/user/passwordLogin", "/api/user/codeLogin"]) {
       for (const prefix of ["", `/__backend/${new URL(up.origin).host}`]) {
         await fetch(`${gw.origin}${prefix}${route}?x=1`, {
           headers: { cookie: "ticket=OLD" },
@@ -427,6 +423,30 @@ describe("loopback gateway（透明反代）", () => {
       headers: { origin: gw.origin, [GATEWAY_REQUEST_HEADER]: secret },
     });
     expect(seen).toEqual([undefined, undefined, "ticket=USER-TOKEN"]);
+  });
+
+  it("lends the stored ticket to a trusted code/send caller (settings reset password / bind email)", async () => {
+    const seen: Array<string | undefined> = [];
+    const up = await startUpstream((req, res) => {
+      seen.push(req.headers.cookie);
+      res.writeHead(204).end();
+    });
+    const secret = "trusted-frame-secret";
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin,
+      getTicket: () => "USER-TOKEN",
+      trustedRequestSecret: secret,
+      fixedPort: 0,
+    });
+    gateways.push(gw);
+    for (const prefix of ["", `/__backend/${new URL(up.origin).host}`]) {
+      await fetch(`${gw.origin}${prefix}/api/user/code/send`, {
+        method: "POST",
+        headers: { origin: gw.origin, cookie: "ticket=OLD", [GATEWAY_REQUEST_HEADER]: secret },
+      });
+    }
+    await fetch(`${gw.origin}/api/user/code/send`, { method: "POST", headers: { cookie: "ticket=OLD" } });
+    expect(seen).toEqual(["ticket=USER-TOKEN", "ticket=USER-TOKEN", undefined]);
   });
 
   it("does not forward the browser-to-loopback fetch metadata on capability-authorized backend requests", async () => {

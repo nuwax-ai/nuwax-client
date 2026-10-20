@@ -1,4 +1,6 @@
 !ifndef BUILD_UNINSTALLER
+; This file is included before common.nsh defines APP_EXECUTABLE_FILENAME.
+; PRODUCT_FILENAME is already supplied by electron-builder at that point.
 ; UAC callbacks run in the original user's installer instance, including when
 ; elevation used another account. Its PLUGINSDIR also owns that user's snapshot.
 Function nuwaxRepairCurrentUserShortcuts
@@ -7,7 +9,7 @@ Function nuwaxRepairCurrentUserShortcuts
   Push $R2
   InitPluginsDir
   File /oname=$PLUGINSDIR\repair-shortcuts.ps1 "${BUILD_RESOURCES_DIR}\repair-shortcuts.ps1"
-  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action "$0" -Scope CurrentUser -StatePath "$PLUGINSDIR\nuwax-user-shortcuts.json" -AppExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}" -AppId "${APP_ID}"`
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action "$0" -Scope CurrentUser -StatePath "$PLUGINSDIR\nuwax-user-shortcuts.json" -AppExe "$INSTDIR\${PRODUCT_FILENAME}.exe" -AppId "${APP_ID}"`
   Pop $R0
   Pop $R1
   DetailPrint "$R1"
@@ -25,7 +27,7 @@ Function nuwaxRepairCommonShortcuts
   Push $R2
   InitPluginsDir
   File /oname=$PLUGINSDIR\repair-shortcuts.ps1 "${BUILD_RESOURCES_DIR}\repair-shortcuts.ps1"
-  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action "$0" -Scope AllUsers -StatePath "$PLUGINSDIR\nuwax-common-shortcuts.json" -AppExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}" -AppId "${APP_ID}"`
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action "$0" -Scope AllUsers -StatePath "$PLUGINSDIR\nuwax-common-shortcuts.json" -AppExe "$INSTDIR\${PRODUCT_FILENAME}.exe" -AppId "${APP_ID}"`
   Pop $R0
   Pop $R1
   DetailPrint "$R1"

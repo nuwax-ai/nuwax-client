@@ -84,6 +84,11 @@ describe("business cookie session boundary", () => {
     expect(applySessionAuthHeaders(request({ url: `${businessOrigin}/api/user/passwordLogin`, requestHeaders: headers }), context).Cookie).toBe("a=1");
     expect(applySessionAuthHeaders(request({ frame: { url: "https://external.example/embed" }, requestHeaders: headers }), context).Cookie).toBe("a=1");
   });
+  it("keeps ticket on login-state code/send from trusted frames (settings reset password / bind)", () => {
+    const url = `${businessOrigin}/api/user/code/send`;
+    expect(applySessionAuthHeaders(request({ url, requestHeaders: { Cookie: "ticket=new; a=1" } }), context).Cookie).toBe("ticket=new; a=1");
+    expect(applySessionAuthHeaders(request({ url, frame: { url: "https://external.example/embed" }, requestHeaders: { Cookie: "ticket=new" } }), context).Cookie).toBeUndefined();
+  });
   it("adds gateway capability only for trusted frames", () => {
     const trusted = applySessionAuthHeaders(request({ url: `${gatewayOrigin}/api/me`, requestHeaders: { Cookie: "ticket=new" } }), context);
     expect(trusted[GATEWAY_REQUEST_HEADER]).toBe("secret");

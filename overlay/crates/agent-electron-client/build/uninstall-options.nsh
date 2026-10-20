@@ -60,6 +60,7 @@ Var nuwaxDataLocal
 !macroend
 
 !macro customUnWelcomePage
+  !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
   UninstPage custom un.nuwaxDataPageCreate un.nuwaxDataPageLeave
   Function un.nuwaxDataPageCreate
     ${if} ${isUpdated}
