@@ -1,0 +1,438 @@
+{
+  "recordedAt": "2026-10-20T02:45:24.587212+00:00",
+  "baseline": "v3.0.16",
+  "branch": "fix/login-service-errors",
+  "backportSource": "42aae090f2e00ab58936ca99a49e80c6f360274e",
+  "host": "win-pc",
+  "operatingSystem": "Windows 11 build 26200",
+  "scope": "Pre-package native source and synthetic installer validation",
+  "productPackagesBuilt": false,
+  "realInstallationModified": false,
+  "realUserDataModified": false,
+  "caseCount": 61,
+  "checks": [
+    {
+      "name": "upgrade-recovery",
+      "cases": [
+        {
+          "case": "all-conflicts",
+          "passed": true,
+          "blockedPrepareUsesFreshStatePath": true,
+          "dataHashesPreserved": true,
+          "restoreRetryCompleted": true
+        },
+        {
+          "case": "partial-restore",
+          "passed": true,
+          "blockedPrepareUsesFreshStatePath": true,
+          "dataHashesPreserved": true,
+          "restoreRetryCompleted": true
+        },
+        {
+          "case": "interrupted-app-only",
+          "passed": true,
+          "priorBackupPreserved": true,
+          "workspaceConflictBlocked": false
+        },
+        {
+          "case": "interrupted-with-workspace",
+          "passed": true,
+          "priorBackupPreserved": true,
+          "workspaceConflictBlocked": false
+        },
+        {
+          "case": "interrupted-workspace-conflict",
+          "passed": true,
+          "priorBackupPreserved": true,
+          "workspaceConflictBlocked": true
+        },
+        {
+          "case": "interrupted-incomplete-prepare",
+          "passed": true,
+          "priorBackupPreserved": true,
+          "workspaceConflictBlocked": false
+        },
+        {
+          "case": "payload-extras-basic",
+          "passed": true,
+          "missingEntriesRestoredInPlace": true,
+          "newPayloadPreserved": true,
+          "collisionBackupsRetained": true
+        },
+        {
+          "case": "payload-extras-interrupted",
+          "passed": true,
+          "missingEntriesRestoredInPlace": true,
+          "newPayloadPreserved": true,
+          "collisionBackupsRetained": true
+        },
+        {
+          "case": "payload-extras-failure",
+          "passed": true,
+          "missingEntriesRestoredInPlace": true,
+          "newPayloadPreserved": true,
+          "collisionBackupsRetained": true
+        },
+        {
+          "case": "payload-extras-links",
+          "passed": true,
+          "missingEntriesRestoredInPlace": true,
+          "newPayloadPreserved": true,
+          "collisionBackupsRetained": true
+        }
+      ],
+      "passed": true,
+      "seconds": 37.22,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-installer-recovery-test-4a1c185b219d40d3adec6c892038492c"
+    },
+    {
+      "name": "uninstall-data",
+      "cases": [
+        {
+          "case": "default-keeps-data",
+          "passed": true
+        },
+        {
+          "case": "checked",
+          "passed": true
+        },
+        {
+          "case": "locked-preflight-and-retry",
+          "passed": true
+        },
+        {
+          "case": "escaping-inventory",
+          "passed": true
+        },
+        {
+          "case": "linked-program-directory",
+          "passed": true
+        },
+        {
+          "case": "linked-data-root",
+          "passed": true
+        },
+        {
+          "case": "nested-data-link",
+          "passed": true
+        },
+        {
+          "case": "overlapping-install-data",
+          "passed": true
+        },
+        {
+          "case": "large-inventory",
+          "files": 6002,
+          "elapsedSeconds": 6.418430799999999,
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "seconds": 21.56,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-uninstall-data-6261d7e9b8bc41e99751fc80bf0fa50d"
+    },
+    {
+      "name": "backup-retention",
+      "cases": [
+        {
+          "case": "one-latest-and-seven-day-window",
+          "passed": true
+        },
+        {
+          "case": "newest-retained-after-seven-days",
+          "passed": true
+        },
+        {
+          "case": "legacy",
+          "passed": true
+        },
+        {
+          "case": "unfinished",
+          "passed": true
+        },
+        {
+          "case": "wrong-install",
+          "passed": true
+        },
+        {
+          "case": "unknown",
+          "passed": true
+        },
+        {
+          "case": "modified",
+          "passed": true
+        },
+        {
+          "case": "modified-uninstaller",
+          "passed": true
+        },
+        {
+          "case": "tampered-inventory",
+          "passed": true
+        },
+        {
+          "case": "corrupt",
+          "passed": true
+        },
+        {
+          "case": "link",
+          "passed": true
+        },
+        {
+          "case": "active-recovery",
+          "passed": true
+        },
+        {
+          "case": "prepare-record-restore",
+          "passed": true
+        },
+        {
+          "case": "detached-cleanup-completes",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "seconds": 21.88,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-backup-retention-test-81af5c94b19f4297890c37ca99b92e3a"
+    },
+    {
+      "name": "native-nsis-uninstall",
+      "cases": [
+        {
+          "case": "standalone-locked",
+          "exitCode": 2,
+          "registryPreserved": true,
+          "cleanupReached": false,
+          "payloadResidual": true,
+          "uninstallerPreserved": true,
+          "uninstallerHashPreserved": true,
+          "outsideSentinelUnchanged": true,
+          "installWorkspaceSurvives": true,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "standalone-locked-retry",
+          "exitCode": 0,
+          "registryPreserved": false,
+          "cleanupReached": true,
+          "payloadResidual": false,
+          "outsideSentinelUnchanged": true,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "updated-locked",
+          "exitCode": 2,
+          "registryPreserved": true,
+          "cleanupReached": false,
+          "payloadResidual": true,
+          "uninstallerPreserved": true,
+          "uninstallerHashPreserved": true,
+          "outsideSentinelUnchanged": true,
+          "installWorkspaceSurvives": true,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "updated-locked-retry",
+          "exitCode": 0,
+          "registryPreserved": false,
+          "cleanupReached": true,
+          "payloadResidual": false,
+          "outsideSentinelUnchanged": true,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "standalone-normal",
+          "exitCode": 0,
+          "registryPreserved": false,
+          "cleanupReached": true,
+          "payloadResidual": false,
+          "uninstallerPreserved": false,
+          "uninstallerHashPreserved": false,
+          "outsideSentinelUnchanged": true,
+          "installWorkspaceSurvives": true,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "updated-normal",
+          "exitCode": 0,
+          "registryPreserved": false,
+          "cleanupReached": true,
+          "payloadResidual": false,
+          "uninstallerPreserved": false,
+          "uninstallerHashPreserved": false,
+          "outsideSentinelUnchanged": true,
+          "installWorkspaceSurvives": false,
+          "actualApplicationInvoked": false
+        },
+        {
+          "case": "standalone-missing-uninstaller",
+          "exitCode": 2,
+          "registryPreserved": true,
+          "cleanupReached": false,
+          "payloadResidual": true,
+          "uninstallerPreserved": false,
+          "uninstallerHashPreserved": false,
+          "outsideSentinelUnchanged": true,
+          "installWorkspaceSurvives": true,
+          "actualApplicationInvoked": false
+        }
+      ],
+      "passed": true,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-nsis-fixture-628fdcd6-46e8-4067-b27a-6136309a022e",
+      "source": {
+        "vendorSha256": "cf22e42a863c186e281e208abd7574af2863c080f1fb6567fe6ee05c439c0f24",
+        "hookSha256": "6e2161d2e56a5193574d8e894ec2a9f618768e6b05190735643b51825ba1d119",
+        "compilerSha256": "f409ceaceb3a424c60f897d826a9bf894b6c6a67c7aae0b44c705c03c981fcb3",
+        "sourceSha256": "d597fc9384d43ece3b3ad4c2634d28373f26782d86abe92f9c564bc6a086ed1a",
+        "builderSha256": "e06ee4a72a6e7e1a369185ac4c28d419930e9674506556426c8122228b1b8fdc"
+      }
+    },
+    {
+      "name": "native-shell-shortcuts",
+      "cases": [
+        {
+          "case": "stale-target-and-icon",
+          "passed": true
+        },
+        {
+          "case": "working-directory",
+          "passed": true
+        },
+        {
+          "case": "application-identity",
+          "passed": true
+        },
+        {
+          "case": "other-live-installation-preserved",
+          "passed": true
+        },
+        {
+          "case": "idempotent",
+          "passed": true
+        },
+        {
+          "case": "start-menu-alias-restored",
+          "passed": true
+        },
+        {
+          "case": "desktop-opt-out-preserved",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-shortcut-fixture-4540cfd297b74a579dce6a58780858fc",
+      "realShortcutModified": false
+    },
+    {
+      "name": "native-nsis-install-path",
+      "cases": [
+        {
+          "case": "no-registration",
+          "passed": true,
+          "status": "none"
+        },
+        {
+          "case": "custom-path-with-spaces",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "legacy-command-only",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "legacy-location-only",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "stale-location",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "trailing-separator",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "command-arguments-not-executed",
+          "passed": true,
+          "status": "resolved"
+        },
+        {
+          "case": "conflicting-registrations",
+          "passed": true,
+          "status": "conflict"
+        },
+        {
+          "case": "missing-uninstaller",
+          "passed": true,
+          "status": "invalid"
+        },
+        {
+          "case": "relative-location",
+          "passed": true,
+          "status": "invalid"
+        },
+        {
+          "case": "unquoted-command",
+          "passed": true,
+          "status": "invalid"
+        },
+        {
+          "case": "wrong-uninstaller-name",
+          "passed": true,
+          "status": "invalid"
+        },
+        {
+          "case": "unterminated-command",
+          "passed": true,
+          "status": "invalid"
+        },
+        {
+          "case": "drive-root",
+          "passed": true,
+          "status": "invalid"
+        }
+      ],
+      "passed": true,
+      "fixtureRoot": "C:\\Users\\soddygo\\AppData\\Local\\Temp\\nuwax-path-fixture-73e33m5a",
+      "source": {
+        "headerSha256": "63e9c687f00eed566c4b62a9a3964b6da3021d89fa01e8c2bc4c53bc3fd21b56",
+        "sourceSha256": "cc7a26e2ed231619b310ede27a6b49b6956bda4650f7d0f72e73a0e2bebb4ebf",
+        "compilerSha256": "f409ceaceb3a424c60f897d826a9bf894b6c6a67c7aae0b44c705c03c981fcb3"
+      }
+    }
+  ],
+  "localTests": {
+    "command": "node --test scripts/uninstall-payload.test.mjs scripts/installer-archive-policy.test.mjs",
+    "passed": 23,
+    "failed": 0
+  },
+  "sourceSha256": {
+    "overlay/crates/agent-electron-client/build/installer-backup-retention.ps1": "4a6d3c0a163e5cf4022639b41926b58d8ccd970d3125c83d5675902e25cb77c3",
+    "overlay/crates/agent-electron-client/build/installer.nsh": "6e2161d2e56a5193574d8e894ec2a9f618768e6b05190735643b51825ba1d119",
+    "overlay/crates/agent-electron-client/build/normalize-old-install.ps1": "3ce61ebc436d6f7f9558a3b135a01fab3a3e0bedb1148f99f4f84a4b95ea7d53",
+    "overlay/crates/agent-electron-client/build/repair-shortcuts.ps1": "8f501557d5d124c6396a8eab0d5e4441abbd7b642364d6cbe31316f865f74e85",
+    "overlay/crates/agent-electron-client/build/shortcut-repair.nsh": "5020d78932b99f98bd7f6f2c52dc6ff14ace8ca55cb058f502a6dba19f825ada",
+    "overlay/crates/agent-electron-client/build/uninstall-data.ps1": "15b9ebccb3de9cf4cafa50365808fb4b8f4ecf1b354ac30bccb0fa6c07e055b3",
+    "overlay/crates/agent-electron-client/build/uninstall-options.nsh": "effe93e2f0763a41a754134bd2e3949954fa4a27d34fc152056afdc9b03356ef",
+    "overlay/crates/agent-electron-client/build/windows-install-path.nsh": "63e9c687f00eed566c4b62a9a3964b6da3021d89fa01e8c2bc4c53bc3fd21b56",
+    "overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs": "ddf9226afbbb6ac155d02ee0785e3b554201441d28a734f0d8abfd777e3033ad",
+    "overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs": "d473259eb6c9966a31b5aff397532df46f8e4d219f4e3c64b9aec59bf7c897be",
+    "scripts/acceptance/windows-uninstall-fixture.py": "23bfb78b9fef3cdd15735cddf70192d32ab16f0c6774860d8f80fcfd1e9996d1",
+    "scripts/test-installer-backup-retention.ps1": "b39ad776b57d1d70c0f00768cf464ed7d7f4b152086de9478380863c10924766",
+    "scripts/test-installer-recovery.ps1": "f77969d00ed8c5e6b1fa99677aad8b5643b9d8b9d129519f3c6d63ed03f62a74",
+    "scripts/test-shortcut-repair.ps1": "07bd3f460aaa1161d62c31d79fd22a6f07d50940ab07e84bbc5cb76701d157bf",
+    "scripts/test-uninstall-data.ps1": "a6b1e11a35a3a1894fd7a7efcb3ae043ca3a913b5968eec8a6a3a4449b067afd",
+    "scripts/uninstall-payload.test.mjs": "776cb81b633846066b5a659622e1a4db290df585d4aebf02ae0b06c0aa83ec75"
+  },
+  "limits": [
+    "No new product installer or signed package was built or executed.",
+    "Synthetic NSIS fixtures execute canonical hooks against fake files and random HKCU keys only.",
+    "Full installed-package upgrade, uninstall wizard checkbox, elevation/UAC, Explorer/taskbar icon rendering, EV signing, and updater delivery remain package acceptance work.",
+    "The real running Nuwax installation and its user data were preserved."
+  ]
+}

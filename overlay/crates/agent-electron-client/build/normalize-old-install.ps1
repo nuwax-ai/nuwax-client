@@ -1,7 +1,9 @@
 param(
-  [ValidateSet('Prepare', 'Restore', 'Rollback')][string]$Action = 'Prepare',
+  [ValidateSet('Prepare', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup')][string]$Action = 'Prepare',
   [string]$InstallDir,
-  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath
+  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath,
+  [string]$PayloadInventoryPath,
+  [switch]$CleanupRuntime
 )
 
 # The old electron-builder uninstaller recursively removes InstallDir. Preserve
@@ -10,9 +12,8 @@ param(
 # names and trailing dots/spaces without enumerating those paths.
 $ErrorActionPreference = 'Stop'
 $uninstallerName = 'Uninstall Nuwax.exe'
-# Only the Electron payload has a predictable name. Restore every other
-# top-level entry to its original location: workspaceDir may be any directory
-# chosen by the user, including the installation root itself.
+# Known payload files stay in recovery. Payload directories can also contain
+# user files; restore missing descendants without replacing the new payload.
 $appEntryNames = @(
   'Nuwax.exe',
   'locales',
@@ -109,6 +110,38 @@ function Move-Entry([string]$Source, [string]$Destination, [bool]$IsDirectory) {
   }
 }
 
+function Restore-PayloadExtras([string]$Source, [string]$Destination) {
+  $extendedSource = Get-ExtendedPath $Source
+  $extendedDestination = Get-ExtendedPath $Destination
+  if (-not (Test-EntryExists $extendedSource)) { return }
+  $sourceAttributes = [System.IO.File]::GetAttributes($extendedSource)
+  $isDirectory = ($sourceAttributes -band [System.IO.FileAttributes]::Directory) -ne 0
+  if (-not (Test-EntryExists $extendedDestination)) {
+    # Rename a missing subtree atomically, including links and reserved names.
+    # A retry scans the remaining backup, so an interrupted rename is not
+    # repeated and never needs to overwrite the returned entry.
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restore-intent'; original = $Destination; backup = $Source })
+    Move-Entry $extendedSource $extendedDestination $isDirectory
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restored'; original = $Destination; backup = $Source })
+    $script:payloadRestored++
+    return
+  }
+  $destinationAttributes = [System.IO.File]::GetAttributes($extendedDestination)
+  if (-not $isDirectory -or
+      ($sourceAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::Directory) -eq 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    # Existing files, type conflicts and linked directories belong to the new
+    # install. Keep their old counterparts in recovery; never traverse a link.
+    $script:payloadCollisions++
+    return
+  }
+  foreach ($entry in [System.IO.Directory]::GetFileSystemEntries($extendedSource)) {
+    $name = [System.IO.Path]::GetFileName($entry)
+    Restore-PayloadExtras ($entry.Substring(4)) ([System.IO.Path]::Combine($Destination, $name))
+  }
+}
+
 function Get-MarkerPath([string]$Root) {
   $hash = [System.Security.Cryptography.SHA256]::Create()
   try {
@@ -126,6 +159,10 @@ function Get-MarkerPath([string]$Root) {
   )
 }
 
+$script:recoveryRuntimePath = $PSCommandPath
+. (Join-Path $PSScriptRoot 'installer-backup-retention.ps1')
+if ($CleanupRuntime -and $Action -ne 'Cleanup') { throw 'CleanupRuntime is only valid for background cleanup.' }
+
 $statePathFull = [System.IO.Path]::GetFullPath($StatePath)
 $stateFile = Get-ExtendedPath $statePathFull
 $fromState = $null
@@ -135,9 +172,9 @@ if ([System.IO.File]::Exists($stateFile)) {
 $records = $null
 $recoveryDir = $fromState
 
-if ($Action -eq 'Prepare') {
+if ($Action -in @('Prepare', 'RecordPayload', 'Cleanup')) {
   if (-not $InstallDir) {
-    throw 'Prepare requires InstallDir.'
+    throw "$Action requires InstallDir."
   }
   $root = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd([char]92)
 } else {
@@ -175,6 +212,17 @@ if ($statePathFull.StartsWith($root + '\', $pathComparison)) {
 
 $marker = Get-MarkerPath $root
 $extendedMarker = Get-ExtendedPath $marker
+$recoveryMutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)))
+$mutexHeld = $false
+try { $mutexHeld = $recoveryMutex.WaitOne(30000) }
+catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
+if (-not $mutexHeld) { $recoveryMutex.Dispose(); throw 'Another recovery operation is active for this installation.' }
+try {
+
+if ($Action -eq 'Cleanup') {
+  Invoke-RecoveryRetention $root
+  exit 0
+}
 
 # StatePath lives in NSIS PLUGINSDIR. The sibling marker survives a process
 # restart, while the JSONL manifest inside recovery records each individual
@@ -234,6 +282,14 @@ if ($recoveryDir) {
   }
 }
 
+if ($Action -eq 'RecordPayload') {
+  if ($recoveryDir) {
+    if (-not $PayloadInventoryPath) { throw 'RecordPayload requires an embedded inventory.' }
+    Save-RecoveryPayloadInventory $PayloadInventoryPath
+  }
+  exit 0
+}
+
 if ($Action -eq 'Rollback') {
   if (-not $recoveryDir) {
     exit 0
@@ -290,7 +346,7 @@ if ($Action -eq 'Rollback') {
     }
   }
   if ($conflicts -eq 0 -and $missing -eq 0 -and $moveFailures.Count -eq 0 -and $uninstallerPresent) {
-    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned })
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
     if ([System.IO.File]::Exists($extendedMarker)) {
       [System.IO.File]::Delete($extendedMarker)
     }
@@ -305,7 +361,56 @@ if ($Action -eq 'Rollback') {
   exit 3
 }
 
-if ($Action -eq 'Restore') {
+$resumeRestoreBeforePrepare = $false
+if ($Action -eq 'Prepare' -and $recoveryDir) {
+  $lastTerminal = -1
+  $lastPartialRestore = -1
+  $lastPrepareChange = -1
+  $lastComplete = -1
+  for ($index = 0; $index -lt $records.Count; $index++) {
+    $status = [string]$records[$index].status
+    if ($status -in @('restore-complete', 'rollback-complete')) {
+      $lastTerminal = $index
+    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'payload-restore-intent', 'payload-restored', 'restore-incomplete')) {
+      $lastPartialRestore = $index
+    } elseif ($status -in @('planned', 'moved')) {
+      $lastPrepareChange = $index
+    } elseif ($status -eq 'complete') {
+      $lastComplete = $index
+    }
+  }
+  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
+    # A prior Restore/Rollback finished but marker cleanup was interrupted.
+    if ([System.IO.File]::Exists($extendedMarker)) {
+      [System.IO.File]::Delete($extendedMarker)
+    }
+    if ([System.IO.File]::Exists($stateFile)) {
+      [System.IO.File]::Delete($stateFile)
+    }
+    $recoveryDir = $null
+    $manifestPath = $null
+    $plans.Clear()
+    $planByOriginal.Clear()
+    $usedBackups.Clear()
+  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
+    throw 'Recovery has an unfinished Restore/Rollback; refusing to mix a new installation into it.'
+  } elseif ($lastComplete -gt $lastPrepareChange) {
+    # Prepare completed, but extraction or a later reinstall repopulated the
+    # application before Restore ran. Finish the previous workspace restore
+    # first, then preserve the current install in a separate transaction.
+    # Restore keeps old payload backups and refuses workspace collisions.
+    foreach ($plan in $plans) {
+      if ($appEntryNames -contains [System.IO.Path]::GetFileName([string]$plan.original)) {
+        if (Test-EntryExists (Get-ExtendedPath ([string]$plan.original))) {
+          $resumeRestoreBeforePrepare = $true
+          break
+        }
+      }
+    }
+  }
+}
+
+if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare) {
   if (-not $recoveryDir) {
     exit 0
   }
@@ -333,10 +438,15 @@ if ($Action -eq 'Restore') {
   }
   $restored = 0
   $conflicts = 0
+  $script:payloadRestored = 0
+  $script:payloadCollisions = 0
   foreach ($plan in $plans) {
     $original = [string]$plan.original
     $name = [System.IO.Path]::GetFileName($original)
     if ($appEntryNames -contains $name) {
+      if ([bool]$plan.directory) {
+        Restore-PayloadExtras ([string]$plan.backup) $original
+      }
       continue
     }
 
@@ -367,49 +477,31 @@ if ($Action -eq 'Restore') {
     $restored++
   }
   if ($conflicts -gt 0) {
-    # 即使所有条目都冲突，也要保留 marker 和可重试的未完成状态。
+    # Keep the marker and unfinished state even when every entry conflicts.
     Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-incomplete'; restored = $restored; conflicts = $conflicts })
     Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
     exit 3
   }
-  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts })
+  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts; payloadExtrasRestored = $script:payloadRestored; payloadCollisionsRetained = $script:payloadCollisions; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
   if ([System.IO.File]::Exists($extendedMarker)) {
     [System.IO.File]::Delete($extendedMarker)
   }
-  Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
-  exit 0
-}
-
-if ($recoveryDir) {
-  $lastTerminal = -1
-  $lastPartialRestore = -1
-  $lastPrepareChange = -1
-  for ($index = 0; $index -lt $records.Count; $index++) {
-    $status = [string]$records[$index].status
-    if ($status -in @('restore-complete', 'rollback-complete')) {
-      $lastTerminal = $index
-    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
-      $lastPartialRestore = $index
-    } elseif ($status -in @('planned', 'moved')) {
-      $lastPrepareChange = $index
-    }
+  Write-Output "Restored $restored non-application entries and $script:payloadRestored missing payload-directory entries; $script:payloadCollisions existing payload paths retained in $recoveryDir"
+  if (-not $resumeRestoreBeforePrepare) {
+    try { Start-RecoveryRetention $root }
+    catch { Write-Output ('Backup retention skipped: ' + $_.Exception.Message) }
+    exit 0
   }
-  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
-    # A prior Restore/Rollback finished but marker cleanup was interrupted.
-    if ([System.IO.File]::Exists($extendedMarker)) {
-      [System.IO.File]::Delete($extendedMarker)
-    }
-    if ([System.IO.File]::Exists($stateFile)) {
-      [System.IO.File]::Delete($stateFile)
-    }
-    $recoveryDir = $null
-    $manifestPath = $null
-    $plans.Clear()
-    $planByOriginal.Clear()
-    $usedBackups.Clear()
-  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
-    throw 'Recovery has an unfinished Restore/Rollback; refusing to mix a new installation into it.'
+  if ([System.IO.File]::Exists($stateFile)) {
+    [System.IO.File]::Delete($stateFile)
   }
+  $recoveryDir = $null
+  $manifestPath = $null
+  $plans.Clear()
+  $planByOriginal.Clear()
+  $usedBackups.Clear()
+  $restoredWorkspaces.Clear()
+  $restoreIntents.Clear()
 }
 
 if (-not [System.IO.Directory]::Exists($extendedRoot)) {
@@ -562,3 +654,11 @@ try {
 }
 
 Write-Output "Preserved $($plans.Count) old installation entries in $recoveryDir"
+} finally {
+  if ($mutexHeld) { $recoveryMutex.ReleaseMutex() }
+  $recoveryMutex.Dispose()
+  if ($CleanupRuntime) {
+    try { Remove-RecoveryRetentionRuntime ([IO.Path]::GetDirectoryName($script:recoveryRuntimePath)) $root }
+    catch { Write-Output ('Cleanup runtime retained: ' + $_.Exception.Message) }
+  }
+}
