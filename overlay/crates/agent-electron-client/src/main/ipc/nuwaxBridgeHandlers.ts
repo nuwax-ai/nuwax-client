@@ -668,14 +668,19 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (!response.ok || payload?.code !== "0000" || !resolvedAccount) {
         emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin,
           status: response.status, code: registrationTraceCode(payload?.code) });
-        if (response.status === 401 || ["4010", "4011"].includes(payload?.code)) await expire();
-        return false;
+        if (["4010", "4011"].includes(payload?.code)) {
+          await expire();
+          return false;
+        }
+        throw new Error("Cookie session validation unavailable");
       }
       account = resolvedAccount;
     } catch (error) {
       emitRegistrationTrace({ stage: "sync-session-validation-error", origin: businessOrigin });
       log.warn("[NuwaxBridge] cookie session validation failed", error);
-      return false;
+      // false means a missing/expired session. Service failures must reach the
+      // caller as errors so the page can retry without redirecting to login.
+      throw new Error("Cookie session validation unavailable");
     }
     if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin() ||
         ticket !== currentTicket() || !isCurrentDocument(event)) return false;
