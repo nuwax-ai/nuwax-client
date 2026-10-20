@@ -70,7 +70,7 @@
 - [ ] soddy M4 真包验证：Finder、菜单、关于页，以及 Dock 原固定项升级后、运行中和退出后的悬停名称均为「女娲Nuwax」。不能用 Bundle 字段正确代替 Dock 观察。
 - [ ] Win 11 UTM 经 Windows App 与 soddy M4 复验 direct 登录和自然计时全局轮询。
 - [x] 用户指定建立规范的 `release/v3.0`：从 `6c3a2c0a` 建线，PR #38 已转向该线且可合并；旧 `release/v3.0.x` 保留。
-- [ ] PR #38 回流 `release/v3.0`；正式签名、安装包验收通过后才切换 3.0.18 更新源。PC Web 由用户发布；SimplySign 手机认证保留人工操作。
+- [x] PR #38 已合入 `release/v3.0`，合并提交 `87710c67`，固定标签 `v3.0.18`；正式签名、安装包验收通过后才切换更新源。PC Web 由用户发布；SimplySign 手机认证保留人工操作。
 
 兼容边界：Windows NSIS 开启宿主拥有的下载→校验→退出清理→安装→重启任务，桥支持 installing 与可选 installAfterDownload；旧宿主、macOS、Linux、MSI 保持原行为。查看日志不触发下载。3.0.16/17 发起升级仍使用旧入口步骤，3.0.18 发起后续 Windows NSIS 升级才具备完整一键策略。
 
@@ -83,3 +83,17 @@
 - 当前用户/全用户完整安装、一键升级下载/安装/重启、UAC、失败重试及跨范围图标遗留尚未完成包级验收，交由用户验证。停止本轮安装测试与临时任务。
 - macOS Finder 本地化、运行时与菜单名称已验证；已有 Dock 固定项保留 GUID，但运行中和退出后的缓存悬停仍显示 Nuwax。仅在本轮测试中重新加载 Dock 后观察到女娲Nuwax；未在产品中增加自动重启 Dock 或改写用户固定项的迁移代码。旧固定项即时刷新继续列为待验收项，不能据此宣称完全通过。
 - 保留 v3.0.17 标签和产物；3.0.18 只推进正式构建与签名 Draft，不执行 stable OSS/S3 更新源同步。
+
+## 3.0.19 登录态发码修复与出包
+
+用户要求核对 `fix/stable-3.0.18-code-send-ticket` 并允许使用 3.0.19。从已合入稳定线的 `87710c67` 创建 `fix/stable-3.0.19`，保留 3.0.18 的名称、Windows 一键升级、安装器与登录/静默轮询修复，不改变基座、前端或产物 pin。
+
+- [x] 以 cherry-pick 保留来源 `1a9070b59ae9b70f8c5a449f028d0635a661a664`，新提交 `a6e4f8001f7027cd7ae9d7faffd9033bf9c013aa`。
+- [x] `/api/user/code/send` 允许可信登录态携带 ticket，修复设置页重置密码/绑定邮箱被当成匿名发码而提示「校验参数异常」。密码登录及验证码登录继续剥离旧 ticket；非可信来源及网关 capability 校验保持原约束。
+- [x] 后端 `UserController.sendCode` 按登录态决定是否校验图形验证码，与该请求策略一致；未修改后端或 PC Web。
+- [x] 商业 overlay 同步后，sessionAuthInjection、loopbackGateway/gateway、ticketCookiePolicy 三组共 113 项通过，覆盖 direct/loopback 可信发码与非可信请求隔离。
+- [x] 按 REVIEW.md 完成此增量一次审查，复用 3.0.18 全量结果，发布仍由 tag CI 执行社区/商业/前端完整门禁。
+- [ ] PR 回流 `release/v3.0`，固定新标签 `v3.0.19`，制作五平台正式签名 Draft。
+- [ ] 用户完成安装包验收后，再切正式更新源。
+
+用户明确 3.0.18 可以继续：保留标签 `v3.0.18` 和已完成平台产物；构建 `39402205795` 已恢复第 2 次尝试，只重跑取消的 Windows x64 / macOS Intel x64，不重复成功的平台和源码门禁。3.0.19 独立出包，两版均不提前同步 stable 更新源。按用户指示停止继续真机 QA，Windows 一键升级完整流程、UAC、图标遗留与旧 Dock 固定项刷新由用户安装验收。
