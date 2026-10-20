@@ -32,5 +32,5 @@
 ## 剩余验收与集成
 
 - 真实安装包的 Windows 10 1809、macOS、Linux 验收，以及真实账号下的平台注册、隧道文件上传下载和终端全链路尚未完成，不用单元测试替代。
-- 已按用户授权进入提交与 PR 集成：基座中立改动提交为 `d3792bae`，合入最新 main 后通过基座 PR [#38](https://github.com/nuwax-ai/nuwa-electron-shell/pull/38) 回流；待其合入 main 后更新商业 pin，再经商业 PR 回流 `release/v3.1`。基座提交前 staged 纯净检查通过，16 个文件且无商业 overlay；旧 pin 至候选基座的 overlay 兼容审查为 0 个重叠变化。
+- 基座 PR [#38](https://github.com/nuwax-ai/nuwa-electron-shell/pull/38) 已通过 CI 并合入 main，商业 pin 更新为实际 main 合并提交 `c07df8923a7bf061cf42cae6597a32d3d9a851eb`。基座提交前 staged 纯净检查通过，16 个文件且无商业 overlay；旧 pin 至新基座的 overlay 兼容审查为 0 个重叠变化。商业改动将经 PR 回流 `release/v3.1`，并保留该线最新 Windows 安装目录修复。
 - 没有创建发布 tag、签名或推进更新指针。
