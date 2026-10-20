@@ -159,10 +159,11 @@ function installAndBuild() {
   }
 
   console.log('[prepare-nuwax-file-server] 安装依赖...');
-  exec(`cd "${buildSourceDir}" && npm install --ignore-scripts`);
+  // Windows 的临时副本可能与仓库不在同一盘符，cwd 必须由子进程设置。
+  exec('npm install --ignore-scripts', { cwd: buildSourceDir });
 
   console.log('[prepare-nuwax-file-server] 构建项目...');
-  exec(`cd "${buildSourceDir}" && npm run build`);
+  exec('npm run build', { cwd: buildSourceDir });
 }
 
 /**
