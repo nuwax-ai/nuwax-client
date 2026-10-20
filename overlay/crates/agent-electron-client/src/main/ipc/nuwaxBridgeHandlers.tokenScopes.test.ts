@@ -476,8 +476,37 @@ describe("cookie 会话与旧 token 桥", () => {
     mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "invalid-account-ticket", path: "/", secure: true,
       domain: new URL(HOST_ORIGIN).hostname }] as never);
     mocks.netFetch.mockReset().mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { nickName: "昵称" } })));
-    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(false);
+    await expect(handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).rejects.toThrow("Cookie session validation unavailable");
     expect(mocks.startIM).not.toHaveBeenCalled();
+  });
+
+  it.each(["500", "503", "502-html", "network", "business"])("验证异常 %s 保留 Cookie/设备注册，重试后恢复", async (failure) => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    settings.set("auth.saved_key", "existing-device-key");
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "existing-ticket", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    mocks.netFetch.mockReset().mockImplementationOnce(async () => {
+      if (failure === "network") throw new TypeError("Failed to fetch");
+      if (failure === "502-html") return new Response("<html>Bad Gateway</html>", { status: 502 });
+      return new Response(JSON.stringify({ code: "5000", data: null }), { status: failure === "business" ? 200 : Number(failure) });
+    });
+    await expect(handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).rejects.toThrow("Cookie session validation unavailable");
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBe("existing-ticket");
+    expect(settings.get("auth.saved_key")).toBe("existing-device-key");
+    expect(mocks.storage).not.toHaveBeenCalled();
+    expect(mocks.startIM).not.toHaveBeenCalled();
+    mocks.netFetch.mockImplementation(async () => new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(true);
+  });
+
+  it.each(["4010", "4011", "http-401"])("明确认证失效 %s 仍清会话并返回 false", async (code) => {
+    settings.set("nuwax.loopback", { enabled: false, origin: null });
+    mocks.cookiesGet.mockResolvedValue([{ name: "ticket", value: "expired-ticket", path: "/", secure: true,
+      domain: new URL(HOST_ORIGIN).hostname }] as never);
+    mocks.netFetch.mockReset().mockResolvedValue(new Response(JSON.stringify({ code }), { status: code === "http-401" ? 401 : 200 }));
+    expect(await handlers.get("auth:syncSession")!(senderEvent(HOST_ORIGIN))).toBe(false);
+    expect(settings.get(`nuwax.ticket.${HOST_ORIGIN}`)).toBeFalsy();
+    expect(mocks.storage).toHaveBeenCalled();
   });
 
   it("老账号登录后重复恢复会话成功，设备注册失败也不清除有效登录", async () => {
