@@ -33,6 +33,77 @@ Var windowsMachinePathStatus
   ${endif}
 !macroend
 
+; Check both registry views. An unreadable key is not evidence of absence.
+; The caller preserves $0/$1 and initializes $R9 to zero.
+!macro windowsCheckUninstallKey ROOT_KEY REGISTRY_KEY
+  ; KEY_READ with KEY_WOW64_64KEY, then KEY_WOW64_32KEY.
+  StrCpy $R4 "0x20119"
+  ${while} $R4 != ""
+    !if "${ROOT_KEY}" == "HKCU"
+      System::Call 'advapi32::RegOpenKeyExW(p 0x80000001, w "${REGISTRY_KEY}", i 0, i $R4, *p .r0)i.r1'
+    !else if "${ROOT_KEY}" == "HKLM"
+      System::Call 'advapi32::RegOpenKeyExW(p 0x80000002, w "${REGISTRY_KEY}", i 0, i $R4, *p .r0)i.r1'
+    !else
+      !error "Unsupported installation registry root: ${ROOT_KEY}"
+    !endif
+    ${if} $1 == 0
+      System::Call 'advapi32::RegCloseKey(p r0)i'
+      StrCpy $R9 "1"
+    ${elseif} $1 != 2
+    ${andif} $1 != 3
+      StrCpy $R9 "1"
+    ${endif}
+    ${if} $R4 == "0x20119"
+      StrCpy $R4 "0x20219"
+    ${else}
+      StrCpy $R4 ""
+    ${endif}
+  ${endwhile}
+!macroend
+
+; A private directory hint can outlive a removed per-user installation. The
+; vendor reads that hint before selecting scope, even without an uninstall
+; entry. Remove only this orphaned value: existing directories, uninstall
+; metadata, unavailable drives and access errors must keep the safety stop.
+!macro windowsRemoveOrphanedInstallLocation ROOT_KEY INSTALL_PATH
+  Push $0
+  Push $1
+  StrCpy $R9 "0"
+  !insertmacro windowsCheckUninstallKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}"
+  !ifdef UNINSTALL_REGISTRY_KEY_2
+    !insertmacro windowsCheckUninstallKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY_2}"
+  !endif
+  StrCpy $R3 ${INSTALL_PATH} 2 1
+  ${if} $R9 == "0"
+  ${andif} $R3 == ":\"
+    StrCpy $R5 "${INSTALL_PATH}"
+    StrLen $R3 $R5
+    ${if} $R3 > 3
+      StrCpy $R3 $R5 3
+      System::Call 'kernel32::GetDriveTypeW(w "$R3")i.s'
+      Pop $R3
+      ${if} $R3 == 3
+        System::Call 'kernel32::GetFileAttributesW(w "$R5")i.r0 ?e'
+        Pop $R4
+        ${if} $0 == -1
+          ${if} $R4 == 2
+          ${orif} $R4 == 3
+            ClearErrors
+            DeleteRegValue ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
+            ${ifNot} ${Errors}
+              DetailPrint "Removed orphaned installation directory hint (${ROOT_KEY}): ${INSTALL_PATH}"
+              StrCpy ${INSTALL_PATH} ""
+            ${endif}
+          ${endif}
+        ${endif}
+      ${endif}
+    ${endif}
+  ${endif}
+  ClearErrors
+  Pop $1
+  Pop $0
+!macroend
+
 !macro windowsWriteRegisteredPath ROOT_KEY INSTALL_PATH
   WriteRegStr ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation "${INSTALL_PATH}"
   !if "${ROOT_KEY}" == "HKLM"
@@ -68,6 +139,10 @@ Var windowsMachinePathStatus
     !endif
   ${endif}
   ReadRegStr $R6 ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${if} $R0 == ""
+  ${andif} $R6 != ""
+    !insertmacro windowsRemoveOrphanedInstallLocation ${ROOT_KEY} $R6
+  ${endif}
   ${if} $R0 != ""
   ${orif} $R6 != ""
     StrCpy ${STATUS} "invalid"
