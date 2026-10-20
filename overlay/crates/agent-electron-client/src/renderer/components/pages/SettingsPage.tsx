@@ -91,6 +91,8 @@ function SettingsRow(props: {
 }
 
 export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorization?: () => void } = {}) {
+  const isMacPlatform = /mac/i.test(navigator.platform);
+
   // 主题
   const { themeMode, setThemeMode } = useTheme();
 
