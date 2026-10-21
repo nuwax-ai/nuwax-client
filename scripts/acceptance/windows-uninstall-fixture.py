@@ -36,6 +36,7 @@ def prepare_source(phase, run_id):
     }), encoding='utf-8')
     # The only registry operations target this random non-Uninstall test key.
     source = f'''Unicode true
+!define BUILD_UNINSTALLER
 Name "NuwaxRemovalFixture-{run_id}"
 OutFile "builder.exe"
 RequestExecutionLevel user
@@ -133,7 +134,7 @@ kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,wint
 kernel.CreateFileW.restype=wintypes.HANDLE
 kernel.CloseHandle.argtypes=[wintypes.HANDLE];kernel.CloseHandle.restype=wintypes.BOOL
 rows=[]
-for case,updated,locked in [('standalone-locked',False,True),('updated-locked',True,True),('standalone-normal',False,False),('updated-normal',True,False),('standalone-missing-uninstaller',False,False)]:
+for case,updated,locked in [('standalone-locked',False,True),('updated-locked',True,True),('standalone-normal',False,False),('updated-normal',True,False),('standalone-missing-uninstaller',False,False),('updated-missing-uninstaller',True,False)]:
  install=root/'fake-install'
  if install.exists():raise ValueError('previous fixture residue unexpectedly remains')
  install.mkdir();(install/'Nuwax.exe').write_bytes(b'NOT AN EXECUTABLE: fake payload')
@@ -141,7 +142,7 @@ for case,updated,locked in [('standalone-locked',False,True),('updated-locked',T
  (install/'workspace').mkdir();(install/'workspace/user.txt').write_bytes(b'fake user data U1 must be tracked separately')
  outside=root/'outside-sentinel.txt';outside.write_bytes(b'outside fake install must survive')
  original_hash=hashlib.sha256(uninstaller.read_bytes()).hexdigest()
- if case=='standalone-missing-uninstaller':uninstaller.unlink()
+ if case.endswith('-missing-uninstaller'):uninstaller.unlink()
  with winreg.CreateKey(winreg.HKEY_CURRENT_USER,reg) as key:
   winreg.SetValueEx(key,'FixtureOnly',0,winreg.REG_SZ,'not a real uninstall registration')
   winreg.SetValueEx(key,'UninstallString',0,winreg.REG_SZ,'"'+str(uninstaller)+'" /currentuser')
@@ -239,11 +240,12 @@ def main():
             row = cases[case]
             if not (row['exitCode'] == 0 and not row['registryPreserved'] and row['cleanupReached'] and not row['payloadResidual']):
                 raise RuntimeError('normal removal failed')
-        if not cases['standalone-normal']['installWorkspaceSurvives']:
-            raise RuntimeError('standalone uninstall deleted unknown installation workspace')
-        row = cases['standalone-missing-uninstaller']
-        if not (row['exitCode'] != 0 and row['registryPreserved'] and not row['cleanupReached'] and row['payloadResidual'] and row['installWorkspaceSurvives']):
-            raise RuntimeError('backup preflight failure did not preserve data')
+            if not row['installWorkspaceSurvives']:
+                raise RuntimeError(case + ' deleted unknown installation workspace')
+        for case in ['standalone-missing-uninstaller', 'updated-missing-uninstaller']:
+            row = cases[case]
+            if not (row['exitCode'] != 0 and row['registryPreserved'] and not row['cleanupReached'] and row['payloadResidual'] and row['installWorkspaceSurvives']):
+                raise RuntimeError('backup preflight failure did not preserve data')
     if not all(r['outsideSentinelUnchanged'] for r in result['cases']):
         raise RuntimeError('fixture crossed its directory boundary')
     result['assertionsPassed'] = True

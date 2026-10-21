@@ -4,6 +4,14 @@
 !define NUWAX_OLD_UNINSTALLER_OVERRIDE
 !macroundef uninstallOldVersion
 !macro uninstallOldVersion ROOT_KEY
+  !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
+    ${if} $installMode == "all"
+      ; The selected machine installation has its own files and registration.
+      ; Never migrate/remove another per-user copy as a side effect of repair.
+      StrCpy $R0 0
+      ClearErrors
+    ${else}
+  !endif
   StrCpy $R4 "$PLUGINSDIR\nuwax-old-shell.txt"
   !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
     StrCpy $R4 "$PLUGINSDIR\nuwax-old-current.txt"
@@ -71,5 +79,8 @@
     Push "${ROOT_KEY}"
     Call uninstallOldVersion
   ${endif}
+  !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
+    ${endif}
+  !endif
 !macroend
 !endif

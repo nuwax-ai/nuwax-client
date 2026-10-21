@@ -248,6 +248,10 @@ function Test-InterruptedUpgrade([string]$CaseName, [bool]$Workspace, [bool]$Con
     # Model a process interruption before the durable complete record.
     $lines = [IO.File]::ReadAllLines($oldManifest)
     [IO.File]::WriteAllLines($oldManifest, [string[]]$lines[0..($lines.Count - 2)], [Text.UTF8Encoding]::new($false))
+    $manifestHash = Get-FixtureHash $oldManifest
+    $recordPayload = Invoke-Recovery 'RecordPayload' $state $install
+    Assert-True ($recordPayload.ExitCode -ne 0) 'Payload removal accepted incomplete preservation.'
+    Assert-True ((Get-FixtureHash $oldManifest) -eq $manifestHash) 'Rejected payload removal changed recovery records.'
   }
 
   # The installer died after Prepare. A reinstall or partial extraction has

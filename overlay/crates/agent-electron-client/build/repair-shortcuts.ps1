@@ -3,7 +3,8 @@ param(
   [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope,
   [string]$StatePath,
   [string]$AppExe,
-  [string]$AppId = 'com.nuwax-ai.nuwax'
+  [string]$AppId = 'com.nuwax-ai.nuwax',
+  [string]$ProtectedAppExe = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,7 +68,7 @@ function Get-NuwaxShortcutId($Shell, [string]$Path) {
 }
 
 function Invoke-NuwaxShortcutRepair {
-  param([string]$Action, [string]$StatePath, [string]$AppExe, [string]$AppId, [object[]]$Roots)
+  param([string]$Action, [string]$StatePath, [string]$AppExe, [string]$AppId, [object[]]$Roots, [string]$ProtectedAppExe = '')
   $AppExe = [IO.Path]::GetFullPath($AppExe)
   if ([IO.Path]::GetFileName($AppExe) -ine 'Nuwax.exe') { throw 'Unexpected Nuwax executable name.' }
   if ($Action -eq 'Repair' -and -not [IO.File]::Exists($AppExe)) { throw 'Installed Nuwax executable is missing.' }
@@ -122,6 +123,9 @@ function Invoke-NuwaxShortcutRepair {
       if ((Get-NuwaxShortcutId $shell $temporary) -cne $AppId) { throw 'Shortcut identity changed.' }
       $link = $wsh.CreateShortcut($temporary)
       $target = [string]$link.TargetPath
+      # A registered copy in the other scope can be partially damaged. Its
+      # absent executable does not make its aliases belong to this repair.
+      if ($ProtectedAppExe -and $target -ieq $ProtectedAppExe -and $target -ine $AppExe) { continue }
       # Do not retarget a different live installation or access network targets.
       if ($target -notmatch '^[A-Za-z]:\\' -or [IO.Path]::GetFileName($target) -ine 'Nuwax.exe') { continue }
       if ($target -ine $AppExe -and [IO.File]::Exists($target)) { continue }
@@ -162,7 +166,7 @@ function Invoke-NuwaxShortcutRepair {
 if ($MyInvocation.InvocationName -ne '.') {
   try {
     if (-not $Action -or -not $Scope -or -not $StatePath -or -not $AppId) { throw 'Missing shortcut repair arguments.' }
-    $result = Invoke-NuwaxShortcutRepair $Action $StatePath $AppExe $AppId @(Get-NuwaxShortcutRoots $Scope)
+    $result = Invoke-NuwaxShortcutRepair $Action $StatePath $AppExe $AppId @(Get-NuwaxShortcutRoots $Scope) $ProtectedAppExe
     if ($Action -eq 'Remove') {
       $hive = if ($Scope -eq 'AllUsers') { [Microsoft.Win32.RegistryHive]::LocalMachine } else { [Microsoft.Win32.RegistryHive]::CurrentUser }
       $views = @([Microsoft.Win32.RegistryView]::Registry32)

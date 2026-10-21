@@ -50,6 +50,11 @@ Assert ((Get-NuwaxShortcutId $shell $alias) -ceq $appId) 'Shortcut application i
 Assert ((Hash $other) -eq $otherHash) 'A different live installation was retargeted.'
 $again=Invoke-NuwaxShortcutRepair 'Repair' $state $newApp $appId $menuRoots
 Assert ($again.Changed -eq 0 -and $again.Failed -eq 0) 'Repeated repair was not idempotent.'
+$otherBytes=[IO.File]::ReadAllBytes($otherApp)
+[IO.File]::Delete($otherApp)
+$protected=Invoke-NuwaxShortcutRepair 'Repair' $state $newApp $appId $menuRoots $otherApp
+Assert ($protected.Changed -eq 0 -and (Hash $other) -eq $otherHash) 'A damaged installation in the other scope lost its alias.'
+[IO.File]::WriteAllBytes($otherApp,$otherBytes)
 [IO.File]::Delete($alias)
 $restored=Invoke-NuwaxShortcutRepair 'Repair' $state $newApp $appId $menuRoots
 Assert ([IO.File]::Exists($alias) -and $restored.Changed -eq 1) 'A captured Start menu alias was not restored.'
@@ -65,4 +70,4 @@ $removed=Invoke-NuwaxShortcutRepair 'Remove' $state $newApp $appId $menuRoots
 Assert ($removed.Changed -eq 1 -and $removed.Failed -eq 0 -and ![IO.File]::Exists($alias)) 'Exact-target alias was not removed.'
 Assert ((Hash $other) -eq $otherHash) 'Removing aliases changed another installation.'
 Assert ((Hash $template) -eq $templateHash) 'The real shortcut template was changed.'
-@{passed=$true;fixtureRoot=$fixtureRoot;realShortcutModified=$false;syntheticExecutablesRun=$false;cases=@('stale-target-and-icon','working-directory','application-identity','other-live-installation-preserved','idempotent','start-menu-alias-restored','desktop-opt-out-preserved','exact-target-remove','remove-preserves-other-installation')} | ConvertTo-Json -Depth 4
+@{passed=$true;fixtureRoot=$fixtureRoot;realShortcutModified=$false;syntheticExecutablesRun=$false;cases=@('stale-target-and-icon','working-directory','application-identity','other-live-installation-preserved','idempotent','start-menu-alias-restored','desktop-opt-out-preserved','exact-target-remove','remove-preserves-other-installation','damaged-other-scope-alias-preserved')} | ConvertTo-Json -Depth 4
