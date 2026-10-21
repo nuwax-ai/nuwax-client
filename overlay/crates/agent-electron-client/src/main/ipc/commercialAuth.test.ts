@@ -444,3 +444,110 @@ describe("registration cookie consistency", () => {
     expect(start).not.toHaveBeenCalled();
   });
 });
+
+
+describe("NW-151 401 双样本确认 — 网关抖动单次 401 不再直接判登出", () => {
+  function fixtureWithExpired() {
+    const start = vi.fn(async () => ({ success: true }));
+    const stop = vi.fn(async () => ({ success: true }));
+    const expired = vi.fn();
+    return { flow: initializeCommercialAuth(start, stop, vi.fn(), expired), start, stop, expired };
+  }
+  const loginOk = () => new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } }));
+  const regOk = () => new Response(JSON.stringify({ code: "0000", data: {
+    configKey: "new", serverHost: "tunnel.example.com", serverPort: 443,
+  } }));
+  const resp401 = () => new Response("unauthorized", { status: 401 });
+
+  it("session-check 首 401、1.5s 复核 200：注册继续且不触发登出", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.settings.set("step1_config", { serverHost: origin });
+      mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+      mocks.fetch
+        .mockResolvedValueOnce(resp401())
+        .mockResolvedValueOnce(loginOk())
+        .mockResolvedValueOnce(regOk());
+      const { flow, expired } = fixtureWithExpired();
+      const pending = flow.start();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect((await pending).success).toBe(true);
+      expect(expired).not.toHaveBeenCalled();
+      expect(mocks.fetch).toHaveBeenCalledTimes(3);
+      expect(mocks.fetch.mock.calls[0][0]).toContain("getLoginInfo");
+      expect(mocks.fetch.mock.calls[1][0]).toContain("getLoginInfo");
+      expect(mocks.fetch.mock.calls[2][0]).toContain("reg/v2");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("session-check 双 401：复核仍 401 才触发登出", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.settings.set("step1_config", { serverHost: origin });
+      mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+      mocks.fetch.mockResolvedValueOnce(resp401()).mockResolvedValueOnce(resp401());
+      const { flow, expired } = fixtureWithExpired();
+      const pending = flow.start().catch(() => null);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await pending;
+      expect(expired).toHaveBeenCalledTimes(1);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reg v2 首 401、复核 200：注册继续且不触发登出", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.settings.set("step1_config", { serverHost: origin });
+      mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+      mocks.fetch
+        .mockResolvedValueOnce(loginOk())
+        .mockResolvedValueOnce(resp401())
+        .mockResolvedValueOnce(regOk());
+      const { flow, expired } = fixtureWithExpired();
+      const pending = flow.start();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect((await pending).success).toBe(true);
+      expect(expired).not.toHaveBeenCalled();
+      expect(mocks.fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("业务码 4010 保持立即登出：无 1.5s 复核、无第二次 reg 请求", async () => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    mocks.fetch
+      .mockResolvedValueOnce(loginOk())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "4010", message: "kicked" })));
+    const { flow, expired } = fixtureWithExpired();
+    await flow.start().catch(() => null);
+    expect(expired).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("复核窗口内票证轮换：按 Session changed 中止，不吞轮换守卫", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.settings.set("step1_config", { serverHost: origin });
+      mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");
+      mocks.fetch.mockResolvedValueOnce(resp401()).mockResolvedValueOnce(loginOk());
+      const { flow, expired, start } = fixtureWithExpired();
+      const pending = flow.start();
+      await vi.advanceTimersByTimeAsync(1_499);
+      mocks.settings.set(`nuwax.ticket.${origin}`, "new-ticket");
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await pending).success).toBe(false);
+      expect(expired).not.toHaveBeenCalled();
+      expect(mocks.fetch).toHaveBeenCalledTimes(1);
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
