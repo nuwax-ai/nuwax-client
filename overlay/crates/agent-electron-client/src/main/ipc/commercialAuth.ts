@@ -358,7 +358,8 @@ export function initializeCommercialAuth(
       localPorts.invalidateBusiness();
       const [stopped, cua] = await Promise.allSettled([stop(), suspendCua("sessionEnded")]);
       if (stopped.status === "rejected") throw stopped.reason;
-      if (cua.status === "rejected") throw cua.reason;
+      // NW-173：CUA 清理尽力而为——失败降级告警，不阻塞服务重启主流程（invalidated() 同款语义）。
+      if (cua.status === "rejected") log.warn("[CommercialAuth] failed-hook: CUA cleanup degraded:", cua.reason);
       if (!stopped.value.success) throw new Error(stopped.value.error || "Service cleanup failed");
     } : undefined,
     commit: (value) => {
@@ -393,7 +394,16 @@ export function initializeCommercialAuth(
       const cuaStop = suspendCua("sessionEnded");
       const results = await Promise.allSettled([stop(), cuaStop]);
       if (results[0].status === "rejected") throw results[0].reason;
-      if (results[1].status === "rejected") return { success: false, error: "Computer Use cleanup failed" };
+      // NW-173：CUA daemon 清理尽力而为——失败只告警并后台补试一次，不再作为
+      // 「Computer Use cleanup failed」致命错误阻塞登录/重启主流程（弹窗与发消息变离线同链双缓解）。
+      if (results[1].status === "rejected") {
+        log.warn("[CommercialAuth] CUA cleanup degraded (restart continues):", results[1].reason);
+        const retry = setTimeout(() => {
+          void suspendCua("sessionEnded").catch((err) =>
+            log.warn("[CommercialAuth] CUA cleanup retry failed:", err));
+        }, 5_000);
+        retry.unref?.();
+      }
       return results[0].value;
     },
     changed,

@@ -425,6 +425,30 @@ describe("stopExtras — 退出期附加清理接线", () => {
 });
 
 
+describe("NW-173 CUA 清理降级 — stop 链不再被 suspendCua 失败拖死", () => {
+  it("suspendCua 拒绝时 flow.stop() 仍按服务停止结果返回（不再报 Computer Use cleanup failed）", async () => {
+    const { suspendCua } = await import("../services/cua/computerUse");
+    suspendCua.mockReset();
+    suspendCua.mockRejectedValue(new Error("helperStillRunning"));
+    const { flow, stop } = fixture();
+    vi.useFakeTimers();
+    try {
+      const result = await flow.stop();
+      expect(result).toEqual({ success: true }); // 服务 stop 成功即成功；CUA 仅降级
+      expect(stop).toHaveBeenCalledTimes(1);
+      // 5s 后台补试一次（unref timer）。调用共 3 次：lifecycle 先 invalidated() 挂一次、
+      // stop 链初次一次、补试一次——全部为 "sessionEnded"，且无一次把失败上抛。
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(suspendCua).toHaveBeenCalledTimes(3);
+      expect(suspendCua.mock.calls.every((c) => c[0] === "sessionEnded")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      suspendCua.mockReset();
+      suspendCua.mockResolvedValue(undefined);
+    }
+  });
+});
+
 describe("registration cookie consistency", () => {
   it("rejects a late response when the cookie rotates before user verification completes", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
