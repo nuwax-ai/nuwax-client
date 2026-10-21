@@ -111,6 +111,88 @@
   File /oname=$PLUGINSDIR\installer-backup-retention.ps1 "${BUILD_RESOURCES_DIR}\installer-backup-retention.ps1"
 !macroend
 
+!ifndef BUILD_UNINSTALLER
+Var nuwaxPendingInstallPath
+Var nuwaxRequireRecoverySnapshot
+
+!macro nuwaxInspectRecovery TARGET
+  StrCpy $nuwaxPendingInstallPath "${TARGET}"
+  !insertmacro nuwaxRecoveryScripts
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Inspect -InstallDir "$nuwaxPendingInstallPath" -StatePath "$PLUGINSDIR\nuwax-inspect-state.txt" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
+  Pop $R0
+  Pop $R1
+!macroend
+
+; Registration can disappear after the old uninstaller succeeds but before
+; extraction/restore. Resolve only the selected directory's verified
+; snapshot before the updater creates fallback metadata in a guessed scope.
+!macro nuwaxResolvePendingInstall
+  StrCpy $nuwaxRequireRecoverySnapshot ""
+  ${if} $INSTDIR != $windowsRegisteredCurrentPath
+  ${andif} $INSTDIR != $windowsRegisteredMachinePath
+    !insertmacro nuwaxInspectRecovery $INSTDIR
+    ${if} $R0 == 0
+      StrCpy $R2 $R1 15
+      ${if} $R2 == "RECOVERY_SCOPE "
+        StrCpy $R2 $R1 26
+        StrCpy $R3 $R1 27
+        ${if} $R2 == "RECOVERY_SCOPE CurrentUser"
+          ${if} ${isForAllUsers}
+            StrCpy $R0 2
+          ${else}
+            !ifndef INSTALL_MODE_PER_ALL_USERS
+              StrCpy $installMode "CurrentUser"
+              SetShellVarContext current
+              StrCpy $windowsRegisteredCurrentPath "$nuwaxPendingInstallPath"
+              StrCpy $windowsCurrentPathStatus "resolved"
+              StrCpy $perUserInstallationFolder "$nuwaxPendingInstallPath"
+              StrCpy $hasPerUserInstallation "1"
+            !else
+              StrCpy $R0 2
+            !endif
+          ${endif}
+        ${elseif} $R3 == "RECOVERY_SCOPE LocalMachine"
+          ${if} ${isForCurrentUser}
+            StrCpy $R0 2
+          ${else}
+            !ifdef INSTALL_MODE_PER_ALL_USERS_REQUIRED
+              StrCpy $installMode "all"
+              SetShellVarContext all
+              StrCpy $windowsRegisteredMachinePath "$nuwaxPendingInstallPath"
+              StrCpy $windowsMachinePathStatus "resolved"
+              StrCpy $perMachineInstallationFolder "$nuwaxPendingInstallPath"
+              !ifndef INSTALL_MODE_PER_ALL_USERS
+                StrCpy $hasPerMachineInstallation "1"
+              !endif
+            !else
+              StrCpy $R0 2
+            !endif
+          ${endif}
+        ${else}
+          StrCpy $R0 2
+        ${endif}
+        StrCpy $INSTDIR "$nuwaxPendingInstallPath"
+        StrCpy $nuwaxRequireRecoverySnapshot "-RequireRegistrationSnapshot"
+      ${else}
+        StrCpy $R2 $R1 19
+        ${if} $R2 != "NO_PENDING_RECOVERY"
+          StrCpy $R0 2
+        ${endif}
+      ${endif}
+    ${endif}
+    ${if} $R0 != 0
+      StrCpy $R1 "Cannot verify pending recovery identity, path or selected scope. $R1"
+      !insertmacro nuwaxLogRecoveryFailure Inspect
+      ${ifNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "无法核验待恢复记录的产品、路径或安装范围。请使用原账户和原安装范围重试。现存文件、登记与备份已保留。详情：$TEMP\Nuwax-installer-recovery.log"
+      ${endif}
+      SetErrorLevel 2
+      Quit
+    ${endif}
+  ${endif}
+!macroend
+!endif
+
 
 !macro customRemoveFiles
   !insertmacro windowsRequireRegisteredPath
@@ -166,7 +248,7 @@
     DetailPrint "正在保全原安装并检查恢复状态，请稍候；所有个人文件将保留..."
     !insertmacro nuwaxRecoveryScripts
     SectionGetSize 0 $R7
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -AllowMissingUninstaller $nuwaxRepairConfirmed -RequiredSpaceKB "$R7" -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -AllowMissingUninstaller $nuwaxRepairConfirmed $nuwaxRequireRecoverySnapshot -RequiredSpaceKB "$R7" -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
     Pop $R0
     Pop $R1
     DetailPrint "$R1"

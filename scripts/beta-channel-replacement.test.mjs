@@ -20,7 +20,7 @@ test('replacement requires the exact Beta target, old version and old bytes', ()
     [identity, 'beta', old, { ...policy, fromVersion: '3.1.0-beta.4' }], [identity, 'beta', old, null],
   ]) assert.equal(allowsBetaChannelReplacement(target, folder, bytes, permission), false);
   assert.equal(readBetaChannelReplacement(identity).tag, identity.tag);
-  assert.equal(readBetaChannelReplacement(parseReleaseTag('v3.0.20-beta.2')).tag, 'v3.0.20-beta.2');
+  for (const tag of ['v3.0.20-beta.2', 'v3.0.20-beta.3']) assert.equal(readBetaChannelReplacement(parseReleaseTag(tag)).tag, tag);
   assert.equal(readBetaChannelReplacement(parseReleaseTag('v0.0.0-beta.1')), null);
   assert.equal(readBetaChannelReplacement(parseReleaseTag('v3.0.20')), null);
 });
