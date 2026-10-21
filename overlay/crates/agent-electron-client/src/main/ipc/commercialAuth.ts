@@ -229,16 +229,30 @@ export function initializeCommercialAuth(
       const portsGeneration = localPorts?.generation;
       const sessionStartedAt = Date.now();
       report("session-check-start");
-      const sessionResponse = await net.fetch(`${origin}/api/user/getLoginInfo`, {
+      const sessionCheckFetch = () => net.fetch(`${origin}/api/user/getLoginInfo`, {
         method: "GET", redirect: "error", credentials: "omit",
-        headers: { ...nativeTicketHeaders(ticket), "x-client-type": "nuwax" },
+        headers: { ...nativeTicketHeaders(ticket!), "x-client-type": "nuwax" },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
+      let sessionResponse = await sessionCheckFetch();
       report("session-check-response", { status: sessionResponse.status, elapsedMs: Date.now() - sessionStartedAt });
       if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
-      if (sessionResponse.status === 401) expired?.();
+      // NW-151：401 双样本确认——网关抖动可能单次误报 401（观测到的偶发误登出）；
+      // 等 1.5s 复核一次，复 401 才判登出。业务码 4010/4011 是服务端明确判定，
+      // 不走此路径（见 payload 判定处，保持立即）。
+      if (sessionResponse.status === 401) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+          throw new Error("Session changed during registration");
+        sessionResponse = await sessionCheckFetch();
+        report("session-check-response", { status: sessionResponse.status, elapsedMs: Date.now() - sessionStartedAt });
+        if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+          throw new Error("Session changed during registration");
+        await ticketSession.mirrorNativeResponseTicket(sessionResponse, origin, requestEpoch);
+        if (sessionResponse.status === 401) expired?.();
+      }
       ticket = currentTicket();
       if (!ticket) throw new Error("Session expired during registration");
       if (!sessionResponse.ok) throw new Error(`Session HTTP ${sessionResponse.status}`);
@@ -253,7 +267,7 @@ export function initializeCommercialAuth(
       const savedKey = readSetting("auth.saved_key");
       const regStartedAt = Date.now();
       report("reg-request");
-      const response = await net.fetch(`${origin}/api/sandbox/config/reg/v2`, {
+      const regFetch = () => net.fetch(`${origin}/api/sandbox/config/reg/v2`, {
         method: "POST",
         redirect: "error",
         // net.fetch otherwise adds defaultSession's jar cookie even when our
@@ -263,7 +277,7 @@ export function initializeCommercialAuth(
         headers: {
           "Content-Type": "application/json",
           "x-client-type": "nuwax",
-          ...nativeTicketHeaders(ticket),
+          ...nativeTicketHeaders(ticket!),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         body: JSON.stringify({
@@ -289,11 +303,24 @@ export function initializeCommercialAuth(
         report("reg-network-error", { elapsedMs: Date.now() - regStartedAt });
         throw error;
       });
+      let response = await regFetch();
       report("reg-response", { status: response.status, elapsedMs: Date.now() - regStartedAt });
       if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       await ticketSession.mirrorNativeResponseTicket(response, origin, requestEpoch);
-      if (response.status === 401) expired?.();
+      // NW-151：reg 401 同款双样本确认——401 属鉴权层判定，服务端未执行写
+      // 操作，重发同一请求体无业务副作用；复 401 才判登出。
+      if (response.status === 401) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+          throw new Error("Session changed during registration");
+        response = await regFetch();
+        report("reg-response", { status: response.status, elapsedMs: Date.now() - regStartedAt });
+        if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
+          throw new Error("Session changed during registration");
+        await ticketSession.mirrorNativeResponseTicket(response, origin, requestEpoch);
+        if (response.status === 401) expired?.();
+      }
       ticket = currentTicket();
       if (!ticket) throw new Error("Session expired during registration");
       signal.throwIfAborted();
