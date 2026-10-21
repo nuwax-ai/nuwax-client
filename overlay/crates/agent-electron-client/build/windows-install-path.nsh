@@ -118,11 +118,27 @@ Var windowsCommandLineInstallPath
         ${if} $0 == -1
           ${if} $R4 == 2
           ${orif} $R4 == 3
-            ClearErrors
-            DeleteRegValue ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
-            ${ifNot} ${Errors}
-              DetailPrint "Removed orphaned installation directory hint (${ROOT_KEY}): ${INSTALL_PATH}"
-              StrCpy ${INSTALL_PATH} ""
+            !ifmacrodef nuwaxInspectRecovery
+              ; A legacy uninstaller may have removed the directory while a
+              ; recovery is pending. Its remaining private hint still matters.
+              Push $R0
+              Push $R1
+              !insertmacro nuwaxInspectRecovery $R5
+              StrCpy $R3 $R1 19
+              ${if} $R0 != 0
+              ${orif} $R3 != "NO_PENDING_RECOVERY"
+                StrCpy $R9 "1"
+              ${endif}
+              Pop $R1
+              Pop $R0
+            !endif
+            ${if} $R9 == "0"
+              ClearErrors
+              DeleteRegValue ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
+              ${ifNot} ${Errors}
+                DetailPrint "Removed orphaned installation directory hint (${ROOT_KEY}): ${INSTALL_PATH}"
+                StrCpy ${INSTALL_PATH} ""
+              ${endif}
             ${endif}
           ${endif}
         ${endif}

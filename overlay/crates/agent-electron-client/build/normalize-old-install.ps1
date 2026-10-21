@@ -173,13 +173,16 @@ function Get-RegistrationSnapshot([switch]$RecordedScope) {
         $key = $pendingHive.OpenSubKey([string]$entry.path)
         if (-not $key) { continue }
         try {
-          if (-not $entry.existed -or @($key.GetValueNames()).Count -ne @($entry.values).Count) {
+          if (-not $entry.existed) {
             throw 'Product registration changed after preservation; no registration was replaced.'
           }
-          foreach ($item in $entry.values) {
-            $live = $key.GetValue([string]$item.name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-            if ([string]$key.GetValueKind([string]$item.name) -ne $item.kind -or
-                (ConvertTo-Json -InputObject $live -Compress -Depth 8) -cne (ConvertTo-Json -InputObject $item.value -Compress -Depth 8)) {
+          # Legacy removal can delete a key or just some of its values. Only
+          # still-present values must match; never replace a new/changed value.
+          foreach ($name in $key.GetValueNames()) {
+            $expected = @($entry.values | Where-Object { $_.name -eq $name })
+            $live = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ($expected.Count -ne 1 -or [string]$key.GetValueKind($name) -ne $expected[0].kind -or
+                (ConvertTo-Json -InputObject $live -Compress -Depth 8) -cne (ConvertTo-Json -InputObject $expected[0].value -Compress -Depth 8)) {
               throw 'Product registration changed after preservation; no registration was replaced.'
             }
           }

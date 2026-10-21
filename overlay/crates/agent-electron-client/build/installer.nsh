@@ -115,6 +115,14 @@
 Var nuwaxPendingInstallPath
 Var nuwaxRequireRecoverySnapshot
 
+!macro nuwaxInspectRecovery TARGET
+  StrCpy $nuwaxPendingInstallPath "${TARGET}"
+  !insertmacro nuwaxRecoveryScripts
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Inspect -InstallDir "$nuwaxPendingInstallPath" -StatePath "$PLUGINSDIR\nuwax-inspect-state.txt" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
+  Pop $R0
+  Pop $R1
+!macroend
+
 ; Registration can disappear after the old uninstaller succeeds but before
 ; extraction/restore. Resolve only the selected directory's verified
 ; snapshot before the updater creates fallback metadata in a guessed scope.
@@ -122,11 +130,7 @@ Var nuwaxRequireRecoverySnapshot
   StrCpy $nuwaxRequireRecoverySnapshot ""
   ${if} $INSTDIR != $windowsRegisteredCurrentPath
   ${andif} $INSTDIR != $windowsRegisteredMachinePath
-    StrCpy $nuwaxPendingInstallPath "$INSTDIR"
-    !insertmacro nuwaxRecoveryScripts
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Inspect -InstallDir "$nuwaxPendingInstallPath" -StatePath "$PLUGINSDIR\nuwax-inspect-state.txt" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
-    Pop $R0
-    Pop $R1
+    !insertmacro nuwaxInspectRecovery $INSTDIR
     ${if} $R0 == 0
       StrCpy $R2 $R1 15
       ${if} $R2 == "RECOVERY_SCOPE "

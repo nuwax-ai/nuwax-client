@@ -1,6 +1,7 @@
 # Run only against a freshly generated, random synthetic product identity.
 param([Parameter(Mandatory = $true)][string]$PackageRoot,
-  [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser')
+  [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser',
+  [switch]$OrphanHintOnly)
 $ErrorActionPreference = 'Stop'
 $m = Get-Content -LiteralPath (Join-Path $PackageRoot 'qa-meta.json') -Raw | ConvertFrom-Json
 if ($m.kind -ne 'Synthetic Nuwax installer recovery QA' -or -not $m.syntheticPayload -or -not $m.nativeWindows -or
@@ -32,8 +33,10 @@ foreach ($name in @('CurrentUser', 'LocalMachine')) {
 }
 [IO.Directory]::CreateDirectory($root) | Out-Null
 [IO.File]::WriteAllText((Join-Path $root 'owner.txt'), $m.guid)
-function Run([string]$flags) {
-  $p = Start-Process $installer -ArgumentList ('/S ' + $flags + ' /D=' + $install) -PassThru
+function Run([string]$flags, [switch]$NoDirectory) {
+  $arguments = '/S ' + $flags
+  if (-not $NoDirectory) { $arguments += ' /D=' + $install }
+  $p = Start-Process $installer -ArgumentList $arguments -PassThru
   Assert ($p.WaitForExit(120000)) ('Own installer timeout: ' + $p.Id)
   return $p.ExitCode
 }
@@ -68,9 +71,23 @@ function Interrupt-AfterUninstall([int]$KeepIndex = -1) {
   Remove-Registration -KeepIndex $KeepIndex
 }
 try {
+  if ($OrphanHintOnly) {
+    $hive = Open-Hive $scopeName
+    try {
+      $key = $hive.CreateSubKey($keys[0])
+      try { $key.SetValue('InstallLocation', (Join-Path $root 'missing old directory')) } finally { $key.Dispose() }
+    } finally { $hive.Dispose() }
+  }
   Assert ((Run $scopeFlag) -eq 0) 'Initial synthetic install failed'
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($workspace)) | Out-Null
   [IO.File]::WriteAllText($workspace, $m.guid)
+  if ($OrphanHintOnly) {
+    Assert-Installed
+    Assert ((Run ($scopeFlag + ' /UNINSTALL')) -eq 0) 'Own orphan-hint fixture cleanup failed'
+    Assert ([IO.File]::ReadAllText($workspace) -eq $m.guid) 'Orphan-hint cleanup lost workspace'
+    @{ passed = $true; cases = @('orphan-hint-without-recovery-is-cleared'); scope = $Scope; fixtureRoot = $root; syntheticPayload = $true; productionInstallationTouched = $false } | ConvertTo-Json -Depth 5
+    return
+  }
   Remove-Registration
   Assert ((Run ($scopeFlag + ' --updated')) -eq 0) 'Update metadata repair lost the explicit original target'
   Assert-Installed
@@ -91,16 +108,17 @@ try {
   Assert ((Run '') -eq 0) 'Full installer could not infer recorded scope'
   Assert-Installed
   $cases += 'unregistered-full-install-restores-original-scope-and-workspace'
-  foreach ($flags in @('--updated', '/REPAIR', 'partial-payload', 'private-registration-remains', 'uninstall-registration-remains')) {
-    $keep = if ($flags -eq 'private-registration-remains') { 0 } elseif ($flags -eq 'uninstall-registration-remains') { 1 } else { -1 }
+  foreach ($flags in @('--updated', '/REPAIR', 'partial-payload', 'private-registration-remains', 'uninstall-registration-remains', 'missing-directory-private-remains', 'missing-directory-uninstall-remains')) {
+    $keep = if ($flags -in @('private-registration-remains', 'missing-directory-private-remains')) { 0 } elseif ($flags -in @('uninstall-registration-remains', 'missing-directory-uninstall-remains')) { 1 } else { -1 }
     Interrupt-AfterUninstall -KeepIndex $keep
     $arguments = $flags
     if ($flags -eq 'partial-payload') {
       [IO.File]::Copy((Join-Path $PackageRoot ('app\' + $m.identity + '.exe')), $exe)
       $arguments = ''
     }
+    if ($flags -like 'missing-directory-*') { [IO.Directory]::Delete($install, $false) }
     if ($keep -ge 0) { $arguments = '' }
-    Assert ((Run $arguments) -eq 0) ('Pending recovery failed: ' + $flags)
+    Assert ((Run $arguments -NoDirectory:($flags -like 'missing-directory-*')) -eq 0) ('Pending recovery failed: ' + $flags)
     Assert-Installed
     $cases += ('unregistered-retry-' + $flags.TrimStart([char[]]'-/'))
   }

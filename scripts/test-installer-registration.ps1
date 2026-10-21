@@ -82,6 +82,11 @@ try {
   Assert ([IO.File]::Exists((Join-Path $install 'Uninstall Nuwax.exe'))) 'Failed installation lost uninstall entry'
   Assert ([IO.File]::ReadAllText((Join-Path $install 'Nuwax.exe')) -eq 'partial new app must not be overwritten') 'Registration recovery overwrote files'
   $key = $hive.OpenSubKey($private, $true)
+  try { $key.DeleteValue('InstallLocation') } finally { $key.Dispose() }
+  $partial = Run 'Inspect'; Assert ($partial.code -eq 0) $partial.output
+  $restored = Run 'RestoreRegistration'; Assert ($restored.code -eq 0) $restored.output
+  $cases += 'inspect-allows-deleted-values-with-matching-survivors'
+  $key = $hive.OpenSubKey($private, $true)
   try { $key.SetValue('ChangedAfterInspection', 'must survive') } finally { $key.Dispose() }
   $changedRegistration = Run 'Prepare' '-RequireRegistrationSnapshot'
   Assert ($changedRegistration.code -ne 0 -and $changedRegistration.output -match 'registration changed') 'Pending recovery replaced reappeared registration'
