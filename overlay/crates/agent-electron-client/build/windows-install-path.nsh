@@ -13,6 +13,18 @@ Var windowsCommandLineInstallPath
   StrCpy $R9 ${INPUT} 2 1
   ${if} $R9 == ":\"
     GetFullPathName ${OUTPUT} "${INPUT}"
+    ; NSIS can fail to expand a directory that does not exist yet. Keep its
+    ; long-name expansion for existing paths, then resolve a fresh target
+    ; lexically without creating it before the ownership/safety checks.
+    ${if} ${OUTPUT} == ""
+      System::Call 'kernel32::GetFullPathNameW(w "${INPUT}", i ${NSIS_MAX_STRLEN}, w .s, p 0)i.R9'
+      Pop ${OUTPUT}
+      ${if} $R9 == 0
+      ${orif} $R9 >= ${NSIS_MAX_STRLEN}
+        StrCpy ${OUTPUT} ""
+      ${endif}
+    ${endif}
+    ClearErrors
     StrCpy $R9 ${OUTPUT} 1 -1
     ${while} $R9 == "\"
       StrCpy ${OUTPUT} ${OUTPUT} -1

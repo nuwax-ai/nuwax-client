@@ -94,8 +94,11 @@
   !insertmacro windowsNormalizeInstallDirectory $INSTDIR $R1
   ${if} $R1 == ""
     StrCpy $R0 2
-    StrCpy $R1 "Installation target is not a safe local application directory."
+    StrCpy $R1 'Installation target is not a safe local application directory: "$INSTDIR" (scope=$installMode).'
     !insertmacro nuwaxLogRecoveryFailure InstallTarget
+    ${ifNot} ${Silent}
+      MessageBox MB_OK|MB_ICONSTOP "无法确认安全的安装目录，请重新选择本地应用目录。详情：$TEMP\Nuwax-installer-recovery.log"
+    ${endif}
     SetErrorLevel 2
     Quit
   ${endif}
