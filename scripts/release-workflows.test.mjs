@@ -37,6 +37,27 @@ test('all pointer publications share one queue and current tools verify a separa
   assert.match(sync, /node scripts\/publish-release-pointers.mjs/);
 });
 
+test('manual beta sync accepts current and historical runner labels but still requires every platform', () => {
+  const text = workflow('sync-electron-to-oss.yml');
+  const command = text.match(/gh run view "\$BUILD_RUN_ID"[^\n]*node --input-type=module -e '([^']+)'/s)?.[1];
+  assert.ok(command, 'manual sync executes the shared platform guard');
+  const jobsFor = intel => ['macos-latest arm64', intel, 'windows-latest x64', 'ubuntu-24.04 x64', 'ubuntu-24.04-arm arm64']
+    .map(suffix => ({ name: `Build Electron (${suffix})`, status: 'completed', conclusion: 'success' }));
+  const invoke = jobs => spawnSync(process.execPath, ['--input-type=module', '-e', command], {
+    cwd: new URL('..', import.meta.url), encoding: 'utf8', input: JSON.stringify({ jobs }),
+  });
+  for (const intel of ['macos-26-intel x64', 'macos-15-intel x64', 'macos-latest x64']) {
+    const result = invoke(jobsFor(intel));
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const failedWindows = jobsFor('macos-26-intel x64');
+  failedWindows[2].conclusion = 'failure';
+  failedWindows.push(...jobsFor('macos-15-intel x64').filter(job => job.name.includes('macos-')));
+  for (const jobs of [failedWindows, jobsFor('macos-26-intel x64').slice(1), []]) {
+    assert.equal(invoke(jobs).status, 1);
+  }
+});
+
 test('published update notes preserve complete UTF-8 text and old-version recovery instructions', () => {
   const assignment = workflow('sync-electron-to-oss.yml').split('\n').find(line => line.trimStart().startsWith('NOTES='));
   assert.ok(assignment, 'workflow extracts release notes');

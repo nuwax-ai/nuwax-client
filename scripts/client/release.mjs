@@ -26,6 +26,16 @@ export function releaseIdentity(channel, version, tag) {
     windows: identity.channel === 'stable' ? `Nuwax.Setup.${identity.version}.exe` : `Nuwax-Setup-${identity.version}-unsigned.exe` };
 }
 
+// GitHub runner image names change; retain the five required platform pairs.
+export function hasSuccessfulBetaBuilds(jobs) {
+  if (!Array.isArray(jobs)) return false;
+  const passed = new Set(jobs.filter(job => job.status === 'completed' && job.conclusion === 'success').flatMap(job => {
+    const match = /^Build Electron \((macos|windows|ubuntu)-[^ ()]+ (x64|arm64)\)$/.exec(job.name);
+    return match ? [`${match[1] === 'ubuntu' ? 'linux' : match[1]}-${match[2]}`] : [];
+  }));
+  return platforms.every(platform => passed.has(platform));
+}
+
 function remoteTagSha(output, tag) {
   const lines = output.trim().split('\n').map((line) => line.split(/\s+/));
   return lines.find(([, ref]) => ref === `refs/tags/${tag}^{}`)?.[0]
@@ -417,13 +427,7 @@ export async function release(root, options = {}, injected = {}) {
   if (identity.channel === 'stable') requireSuccess(buildResult, build.databaseId);
   else if (buildResult.conclusion !== 'success') {
     const result = buildResult.jobs ? buildResult : await tools.gh(['run', 'view', String(build.databaseId), '--repo', settings.repo, '--json', 'jobs']);
-    // Runner image labels change across immutable historical tags. Require the
-    // five platform/architecture pairs rather than today's exact image names.
-    const passed = new Set((result.jobs || []).filter(job => job.status === 'completed' && job.conclusion === 'success').flatMap(job => {
-      const match = /^Build Electron \((macos|windows|ubuntu)-[^ ()]+ (x64|arm64)\)$/.exec(job.name);
-      return match ? [`${match[1] === 'ubuntu' ? 'linux' : match[1]}-${match[2]}`] : [];
-    }));
-    if (!platforms.every(platform => passed.has(platform)))
+    if (!hasSuccessfulBetaBuilds(result.jobs))
       throw new Error(`beta 五平台构建未全部成功：run ${build.databaseId}`);
     tools.log('[release] beta 构建完成，自动同步失败；继续同步重试');
   }

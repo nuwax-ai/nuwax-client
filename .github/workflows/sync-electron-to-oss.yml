@@ -127,15 +127,10 @@ jobs:
               BUILD_RUN_ID="$(echo "$BUILD_RUNS" | jq -r --arg tag "$RELEASE_TAG" --arg sha "$(git -C release-source rev-parse HEAD)" '
                 first(.[] | select(.headBranch == $tag and .headSha == $sha and .event == "push") | .databaseId) // empty')"
               [ -n "$BUILD_RUN_ID" ] || { echo "::error::${RELEASE_TAG} 没有对应的构建 run"; exit 1; }
-              gh run view "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs | jq -e '
-                .jobs as $jobs |
-                ["Build Electron (macos-latest arm64)",
-                 "Build Electron (macos-latest x64)",
-                 "Build Electron (windows-latest x64)",
-                 "Build Electron (ubuntu-24.04 x64)",
-                 "Build Electron (ubuntu-24.04-arm arm64)"] |
-                all(.[]; . as $name | any($jobs[]; .name == $name and
-                  .status == "completed" and .conclusion == "success"))
+              gh run view "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs | node --input-type=module -e '
+                import fs from "node:fs";
+                import { hasSuccessfulBetaBuilds } from "./scripts/client/release.mjs";
+                if (!hasSuccessfulBetaBuilds(JSON.parse(fs.readFileSync(0, "utf8")).jobs)) process.exit(1);
               ' >/dev/null || {
                 echo "::error::${RELEASE_TAG} 的五个平台构建没有全部成功（run ${BUILD_RUN_ID}）"
                 exit 1
