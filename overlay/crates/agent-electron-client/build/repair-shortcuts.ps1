@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('Capture', 'Repair')][string]$Action,
+  [ValidateSet('Capture', 'Repair', 'Remove')][string]$Action,
   [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope,
   [string]$StatePath,
   [string]$AppExe,
@@ -99,6 +99,14 @@ function Invoke-NuwaxShortcutRepair {
         $bytes = [Convert]::FromBase64String($saved[$path].Bytes)
       } else { continue }
       if ($bytes.Length -gt 262144) { throw 'Shortcut is unexpectedly large.' }
+      if ($Action -eq 'Remove') {
+        $link = $wsh.CreateShortcut($path)
+        if ([string]::Equals([string]$link.TargetPath, $AppExe, [StringComparison]::OrdinalIgnoreCase)) {
+          [IO.File]::Delete($path)
+          $changed++
+        }
+        continue
+      }
       if ($Action -eq 'Capture') {
         # Keep the first copy across NSIS retries; old uninstallers may remove it.
         if (-not $saved.ContainsKey($path)) {
@@ -130,7 +138,7 @@ function Invoke-NuwaxShortcutRepair {
       $temporary = $null
       $changed++
       if (-not ('Nuwax.ShortcutNotify' -as [type])) {
-        Add-Type -TypeDefinition 'namespace Nuwax { public static class ShortcutNotify { [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] public static extern void SHChangeNotify(int e, uint f, string p, System.IntPtr q); } }'
+        Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.HashSet[string]].Assembly.Location) -TypeDefinition 'namespace Nuwax { public static class ShortcutNotify { [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] public static extern void SHChangeNotify(int e, uint f, string p, System.IntPtr q); } }'
       }
       [Nuwax.ShortcutNotify]::SHChangeNotify(0x2000, 0x1005, $path, [IntPtr]::Zero)
     } catch {
@@ -143,6 +151,9 @@ function Invoke-NuwaxShortcutRepair {
   if ($Action -eq 'Capture') {
     [IO.File]::WriteAllText($StatePath, (ConvertTo-Json -InputObject @($saved.Values) -Depth 4), (New-Object Text.UTF8Encoding($false)))
   } elseif ($changed) {
+    if (-not ('Nuwax.ShortcutNotify' -as [type])) {
+      Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.HashSet[string]].Assembly.Location) -TypeDefinition 'namespace Nuwax { public static class ShortcutNotify { [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)] public static extern void SHChangeNotify(int e, uint f, string p, System.IntPtr q); } }'
+    }
     [Nuwax.ShortcutNotify]::SHChangeNotify(0x8000000, 0x1000, $null, [IntPtr]::Zero)
   }
   return [pscustomobject]@{ Action = $Action; Changed = $changed; Failed = $failed; Captured = $saved.Count }
@@ -152,6 +163,25 @@ if ($MyInvocation.InvocationName -ne '.') {
   try {
     if (-not $Action -or -not $Scope -or -not $StatePath -or -not $AppId) { throw 'Missing shortcut repair arguments.' }
     $result = Invoke-NuwaxShortcutRepair $Action $StatePath $AppExe $AppId @(Get-NuwaxShortcutRoots $Scope)
+    if ($Action -eq 'Remove') {
+      $hive = if ($Scope -eq 'AllUsers') { [Microsoft.Win32.RegistryHive]::LocalMachine } else { [Microsoft.Win32.RegistryHive]::CurrentUser }
+      $views = @([Microsoft.Win32.RegistryView]::Registry32)
+      if ([Environment]::Is64BitOperatingSystem) { $views += [Microsoft.Win32.RegistryView]::Registry64 }
+      foreach ($view in $views) {
+        $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+        $key = $null
+        try {
+          $key = $base.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+          if ($key) {
+            $value = [string]$key.GetValue($AppId, '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $target = ''
+            if ($value -match '^\s*"([^"]+)"(?:\s|$)') { $target = $Matches[1] }
+            elseif ($value -match '^\s*([^"\r\n]+?\.exe)(?:\s|$)') { $target = $Matches[1] }
+            if ([string]::Equals($target, $AppExe, [StringComparison]::OrdinalIgnoreCase)) { $key.DeleteValue($AppId, $false) }
+          }
+        } finally { if ($key) { $key.Dispose() }; $base.Dispose() }
+      }
+    }
     $result | ConvertTo-Json -Compress
     if ($result.Failed) { exit 1 }
   } catch {

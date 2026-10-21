@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-backup-retention-test-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixture) | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixture 'owner.txt'), 'Synthetic backups only')
+[IO.File]::WriteAllText((Join-Path $fixture 'System.dll'), 'Native NSIS plugin shadow fixture')
 $utf8 = [Text.UTF8Encoding]::new($false)
 function Assert($condition, [string]$message) { if (!$condition) { throw $message } }
 function Put([string]$path, [string]$value) {
@@ -21,6 +22,7 @@ function Run([string]$action, [string]$install, [string]$state, [string]$invento
   $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $RecoveryScript + '" -Action ' + $action + ' -InstallDir "' + $install + '" -StatePath "' + $state + '"'
   if ($inventory) { $psi.Arguments += ' -PayloadInventoryPath "' + $inventory + '"' }
   $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.WorkingDirectory = $fixture
   $p = [Diagnostics.Process]::Start($psi)
   $stdout = $p.StandardOutput.ReadToEndAsync(); $stderr = $p.StandardError.ReadToEndAsync()
   if (!$p.WaitForExit(30000)) { $p.Kill(); throw 'Recovery test exceeded 30 seconds' }
@@ -51,6 +53,16 @@ function Seed([string]$case, [int]$days, [string]$mode = 'owned') {
   )
   if ($mode -eq 'legacy') { $records = @($records | Where-Object { $_.status -ne 'payload-inventory-recorded' }); [IO.File]::Delete("$backup\payload-inventory.json") }
   if ($mode -eq 'unfinished') { $records[$records.Count - 1].status = 'restore-incomplete' }
+  if ($mode -in @('registration', 'modified-registration', 'unproven-registration')) {
+    Put "$backup\registration.json" '{"keys":[]}'
+    if ($mode -ne 'unproven-registration') {
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $digest = [Convert]::ToBase64String($sha.ComputeHash([IO.File]::ReadAllBytes("$backup\registration.json"))) }
+      finally { $sha.Dispose() }
+      $records = @($records[0..($records.Count - 2)]) + @(@{ status = 'registration-snapshot-recorded'; sha256 = $digest }, $records[-1])
+    }
+    if ($mode -eq 'modified-registration') { [IO.File]::AppendAllText("$backup\registration.json", 'changed') }
+  }
   if ($mode -eq 'wrong-install') { $records[0].installDir = "$parent\other-install" }
   Put "$backup\manifest.jsonl" (($records | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join [Environment]::NewLine)
   if ($mode -eq 'unknown') { Put "$backup\entry-000001\user-collision.txt" 'PERSONAL DATA' }
@@ -79,7 +91,7 @@ $older = Seed 'latest-old' 40; $latestOld = Seed 'latest-old' 20
 $result = Run 'Cleanup' $older.install $older.state
 Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($older.backup) -and [IO.Directory]::Exists($latestOld.backup)) ('Newest aged backup was not retained: ' + $result.output)
 $rows += @{ case = 'newest-retained-after-seven-days'; passed = $true }
-foreach ($mode in @('legacy', 'unfinished', 'wrong-install', 'unknown', 'modified', 'modified-uninstaller', 'tampered-inventory', 'corrupt', 'link')) {
+foreach ($mode in @('legacy', 'unfinished', 'wrong-install', 'unknown', 'modified', 'modified-uninstaller', 'tampered-inventory', 'corrupt', 'link', 'modified-registration', 'unproven-registration')) {
   $protected = Seed $mode 30 $mode; $latest = Seed $mode 1
   $before = Hash "$($protected.backup)\entry-000000"
   $result = Run 'Cleanup' $protected.install $protected.state
@@ -89,6 +101,10 @@ foreach ($mode in @('legacy', 'unfinished', 'wrong-install', 'unknown', 'modifie
   if ($mode -eq 'link') { Assert ([IO.File]::ReadAllText("$($protected.parent)\outside\sentinel.txt") -eq 'OUTSIDE') 'Link destination changed' }
   $rows += @{ case = $mode; passed = $true }
 }
+$registered = Seed 'registration' 30 'registration'; $latest = Seed 'registration' 1
+$result = Run 'Cleanup' $registered.install $registered.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($registered.backup)) ('Verified expired registry snapshot retained: ' + $result.output)
+$rows += @{ case = 'verified-registration-snapshot'; passed = $true }
 $active = Seed 'active' 30; $latest = Seed 'active' 1
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $rootHash = [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($active.install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }

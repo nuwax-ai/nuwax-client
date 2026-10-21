@@ -61,5 +61,8 @@ $null=Invoke-NuwaxShortcutRepair 'Capture' $desktopState $newApp $appId $desktop
 [IO.File]::Delete($desktopLink)
 $null=Invoke-NuwaxShortcutRepair 'Repair' $desktopState $newApp $appId $desktopRoots
 Assert (![IO.File]::Exists($desktopLink)) 'An opted-out desktop shortcut was recreated.'
+$removed=Invoke-NuwaxShortcutRepair 'Remove' $state $newApp $appId $menuRoots
+Assert ($removed.Changed -eq 1 -and $removed.Failed -eq 0 -and ![IO.File]::Exists($alias)) 'Exact-target alias was not removed.'
+Assert ((Hash $other) -eq $otherHash) 'Removing aliases changed another installation.'
 Assert ((Hash $template) -eq $templateHash) 'The real shortcut template was changed.'
-@{passed=$true;fixtureRoot=$fixtureRoot;realShortcutModified=$false;syntheticExecutablesRun=$false;cases=@('stale-target-and-icon','working-directory','application-identity','other-live-installation-preserved','idempotent','start-menu-alias-restored','desktop-opt-out-preserved')} | ConvertTo-Json -Depth 4
+@{passed=$true;fixtureRoot=$fixtureRoot;realShortcutModified=$false;syntheticExecutablesRun=$false;cases=@('stale-target-and-icon','working-directory','application-identity','other-live-installation-preserved','idempotent','start-menu-alias-restored','desktop-opt-out-preserved','exact-target-remove','remove-preserves-other-installation')} | ConvertTo-Json -Depth 4
