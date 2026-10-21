@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseReleaseTag, parseReleaseVersion, compareReleaseVersions } from './release-version.mjs';
+import { readBetaChannelReplacement, allowsBetaChannelReplacement } from './beta-channel-replacement.mjs';
 
 const mirrors = ['s3', 'oss'];
 function pointerVersion(bytes, folder) {
@@ -16,7 +17,7 @@ function pointerVersion(bytes, folder) {
   return version;
 }
 
-export async function publishPointers(identity, bytes, adapter, finalize = async () => {}, signal) {
+export async function publishPointers(identity, bytes, adapter, finalize = async () => {}, signal, replacement = readBetaChannelReplacement(identity)) {
   const checkInterrupted = () => signal?.throwIfAborted();
   checkInterrupted();
   const candidate = JSON.parse(Buffer.from(bytes).toString());
@@ -34,11 +35,12 @@ export async function publishPointers(identity, bytes, adapter, finalize = async
     const comparison = current === null ? 1 : compareReleaseVersions(identity.version, current);
     if (comparison < 0) {
       if (identity.channel === 'stable' && folder === 'beta') continue;
-      throw new Error(`禁止 ${folder} 通道从 ${current} 降级到 ${identity.version}`);
+      if (!allowsBetaChannelReplacement(identity, folder, values[0], replacement))
+        throw new Error(`禁止 ${folder} 通道从 ${current} 降级到 ${identity.version}`);
     }
     if (comparison === 0 && !Buffer.from(values[0]).equals(Buffer.from(bytes)))
       throw new Error(`${folder}: 同版本指针内容不同，禁止替换发布来源`);
-    if (comparison > 0) update.push(folder);
+    if (comparison !== 0) update.push(folder);
   }
   const touched = [];
   try {
