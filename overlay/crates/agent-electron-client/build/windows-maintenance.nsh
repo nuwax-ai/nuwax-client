@@ -95,7 +95,7 @@ FunctionEnd
     ${if} ${isUpdated}
       Abort
     ${endif}
-    !insertmacro windowsRefreshRegisteredPaths
+    !insertmacro windowsInitRegisteredPaths
     ${if} $windowsRegisteredCurrentPath == ""
     ${andif} $windowsRegisteredMachinePath == ""
     ${andif} $windowsCurrentPathStatus == "none"
