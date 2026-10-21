@@ -4,6 +4,21 @@
 !define NUWAX_OLD_UNINSTALLER_OVERRIDE
 !macroundef uninstallOldVersion
 !macro uninstallOldVersion ROOT_KEY
+  ${if} $nuwaxMaintenanceAction == "uninstall"
+    ; Repair-before-uninstall must not create or rename default aliases that
+    ; belong to another copy. This runs after the vendor computed this flag.
+    StrCpy $keepShortcuts "true"
+    StrCpy $oldStartMenuLink $newStartMenuLink
+    StrCpy $oldDesktopLink $newDesktopLink
+  ${endif}
+  !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
+    ${if} $installMode == "all"
+      ; The selected machine installation has its own files and registration.
+      ; Never migrate/remove another per-user copy as a side effect of repair.
+      StrCpy $R0 0
+      ClearErrors
+    ${else}
+  !endif
   StrCpy $R4 "$PLUGINSDIR\nuwax-old-shell.txt"
   !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
     StrCpy $R4 "$PLUGINSDIR\nuwax-old-current.txt"
@@ -31,7 +46,7 @@
       CopyFiles /SILENT "$R5" "$PLUGINSDIR\nuwax-legacy-uninstaller.exe"
       ${ifNot} ${Errors}
         ClearErrors
-        ExecWait '"$PLUGINSDIR\nuwax-legacy-uninstaller.exe" /S /KEEP_APP_DATA --updated $R7 _?=$R6' $R0
+        ExecWait '"$PLUGINSDIR\nuwax-legacy-uninstaller.exe" /S /KEEP_APP_DATA --keep-shortcuts --updated $R7 _?=$R6' $R0
         ${if} ${Errors}
           StrCpy $R0 2
         ${endif}
@@ -71,5 +86,8 @@
     Push "${ROOT_KEY}"
     Call uninstallOldVersion
   ${endif}
+  !if "${ROOT_KEY}" == "HKEY_CURRENT_USER"
+    ${endif}
+  !endif
 !macroend
 !endif

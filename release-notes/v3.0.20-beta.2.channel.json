@@ -1,0 +1,6 @@
+{
+  "tag": "v3.0.20-beta.2",
+  "fromVersion": "3.1.0-beta.5",
+  "fromSha256": "f9496fd32d00c09750f157f2eeda615aa1bda2df6ffd24ad0e360530a402a04e",
+  "reason": "Beta 通道切回 3.0 维护线；已安装 3.1 Beta 的用户手动安装本版。"
+}

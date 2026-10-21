@@ -466,6 +466,9 @@ if ($Action -eq 'Detach') {
 
 if ($Action -eq 'RecordPayload') {
   if ($recoveryDir) {
+    if (@($records | Where-Object { $_.status -eq 'complete' }).Count -eq 0) {
+      throw 'Payload removal requires completed preservation. Use the complete installer to resume recovery.'
+    }
     if (-not $PayloadInventoryPath) { throw 'RecordPayload requires an embedded inventory.' }
     Save-RecoveryPayloadInventory $PayloadInventoryPath
   }

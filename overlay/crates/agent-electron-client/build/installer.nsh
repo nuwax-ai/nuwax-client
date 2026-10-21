@@ -52,6 +52,14 @@
   BrandingText "女娲Nuwax ${VERSION}"
   !insertmacro nuwaxUninstallStrings
   !insertmacro windowsInstallPathStrings
+  !ifdef BUILD_UNINSTALLER
+    ; The stock tail deletes default links by name and revokes the shared
+    ; AppUserModelId. Exact target/identity cleanup below owns this instead.
+    !ifdef isKeepShortcuts
+      !undef isKeepShortcuts
+    !endif
+    !define isKeepShortcuts '1 == 1'
+  !endif
   ; Cleanup is an explicit, default-off choice; never inherit builder's
   ; unconditional data deletion, including while an old version is updated.
   !ifdef DELETE_APP_DATA_ON_UNINSTALL
@@ -107,37 +115,23 @@
 !macro customRemoveFiles
   !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
-    ; The old uninstaller is the trusted source of its own payload inventory.
-    ; Legacy uninstallers leave no proof and their backups remain protected.
+    ; Record this uninstaller's own inventory for the parent's preserved backup.
+    ; Unknown files must survive even a direct --updated invocation.
     !insertmacro nuwaxRecoveryScripts
     !insertmacro nuwaxExtractUninstallInventory
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+    StrCpy $R6 "CurrentUser"
+    ${if} $installMode == "all"
+      StrCpy $R6 "LocalMachine"
+    ${endif}
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -RegistryScope "$R6" -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
     Pop $R0
     Pop $R1
     ${if} $R0 != 0
       !insertmacro nuwaxLogRecoveryFailure RecordPayload
+      !insertmacro nuwaxStopStandaloneUninstall "无法核验升级恢复记录，卸载入口和现存文件已保留，请使用完整安装包修复。"
     ${endif}
-    ClearErrors
-    CreateDirectory "$PLUGINSDIR\old-install"
-
-    Push ""
-    Call un.atomicRMDir
-    Pop $R0
-
-    ${if} $R0 != 0
-      DetailPrint "File is busy, aborting: $R0"
-
-      Push ""
-      Call un.restoreFiles
-      Pop $R0
-
-      Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install".`
-    ${endif}
-
-    RMDir /r $INSTDIR
-  ${else}
-    !insertmacro nuwaxRemoveOwnedFiles
   ${endif}
+  !insertmacro nuwaxRemoveOwnedFiles
 !macroend
 
 ; electron-builder 25's default CHECK_APP_RUNNING only stops matching Nuwax.exe
@@ -335,9 +329,6 @@
       ${orIf} ${UAC_IsAdmin}
         !insertmacro nuwaxUpdateShortcuts Capture
         !insertmacro nuwaxPrepareOldInstall SHELL_CONTEXT nuwax-old-shell.txt
-        ${if} $installMode == "all"
-          !insertmacro nuwaxPrepareOldInstall HKEY_CURRENT_USER nuwax-old-current.txt
-        ${endIf}
       ${endif}
     !endif
   ${endIf}
@@ -429,6 +420,9 @@
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
   ${endif}
   !insertmacro nuwaxUpdateShortcuts Repair
+  ; A preserved shortcut can intentionally target another installed copy.
+  ; Always launch the selected executable after this installation finishes.
+  StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   ${if} $nuwaxRecoveryWarning == "1"
   ${andifNot} ${Silent}
     MessageBox MB_OK|MB_ICONEXCLAMATION "当前安装已修复，现存文件已保留。上次备份已丢失或无法自动恢复，其中的旧文件无法保证找回，请核对您的文件。诊断记录保留在原安装目录旁。"

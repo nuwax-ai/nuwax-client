@@ -1,12 +1,12 @@
 # Real NSIS package, random QA identity, synthetic payload only. The caller
-# stages the package/meta/legacy-exit-2.exe into a new owned local directory.
+# stages the complete generated package into a new owned local directory.
 param([Parameter(Mandatory = $true)][string]$PackageRoot,
   [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser')
 $ErrorActionPreference = 'Stop'
 $meta = [IO.File]::ReadAllText((Join-Path $PackageRoot 'qa-meta.json')) | ConvertFrom-Json
 if ($meta.kind -ne 'Synthetic Nuwax installer recovery QA' -or -not $meta.syntheticPayload -or -not $meta.nativeWindows -or
     $meta.guid -notmatch '^[0-9a-f-]{36}$' -or $meta.identity -notmatch '^NuwaxRecoveryQA[0-9a-f]{8}$') { throw 'Invalid QA identity' }
-$installer = Join-Path $PackageRoot 'RecoveryQA-Setup.exe'
+$installer = Join-Path $PackageRoot 'installers\RecoveryQA-Setup.exe'
 if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ine $meta.installerSha256) { throw 'Wrong QA package bytes' }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-maintenance-fixture-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
@@ -32,10 +32,11 @@ function Put([string]$file, [string]$content) {
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file)) | Out-Null
   [IO.File]::WriteAllText($file, $content)
 }
-function Run-Package([string]$flags = '', [switch]$ForwardSlashes) {
+function Run-Package([string]$flags = '', [switch]$ForwardSlashes, [string]$TargetOverride = '') {
   $scopeArgument = if ($Scope -eq 'AllUsers') { '/allusers' } else { '/currentuser' }
   Write-Output ('RUN_PACKAGE ' + $flags) | Out-Host
   $directory = if ($ForwardSlashes) { $install.Replace('\', '/') } else { $install }
+  if ($TargetOverride) { $directory = $TargetOverride }
   $p = Start-Process -FilePath $installer -ArgumentList ('/S ' + $scopeArgument + ' ' + $flags + ' /D=' + $directory) -PassThru
   if (-not $p.WaitForExit(120000)) { throw ('Own QA installer is still active: PID ' + $p.Id) }
   return $p.ExitCode
@@ -63,6 +64,11 @@ try {
   Assert ((Run-Package) -eq 0) 'Fresh package installation failed'
   Assert-Installed
   $cases += @{ case = 'fresh-custom-directory'; passed = $true }
+  $wrong = Join-Path $root 'unregistered relocation'
+  Assert ((Run-Package -TargetOverride $wrong) -ne 0) 'Registered installation was silently relocated'
+  Assert (-not [IO.File]::Exists((Join-Path $wrong ($meta.identity + '.exe')))) 'Rejected relocation wrote a payload'
+  Assert-Installed
+  $cases += @{ case = 'registered-directory-retained'; passed = $true }
   Assert ((Run-Package '' -ForwardSlashes) -eq 0) 'Forward-slash /D argument was truncated'
   Assert-Installed
   $cases += @{ case = 'forward-slash-directory'; passed = $true }
