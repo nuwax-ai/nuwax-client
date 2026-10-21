@@ -153,6 +153,9 @@ Var nuwaxDataLocal
   DetailPrint "$R1"
   ; Remove aliases and startup only when both the app identity and the exact
   ; target path match this installation. Other products/copies remain intact.
+  ; The updating parent keeps and repairs aliases; do not erase custom pins
+  ; which intentionally aren't recreated after a user's desktop/pin opt-out.
+  ${ifNot} ${isUpdated}
   File /oname=$PLUGINSDIR\repair-shortcuts.ps1 "${BUILD_RESOURCES_DIR}\repair-shortcuts.ps1"
   ${if} $installMode == "all"
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action Remove -Scope AllUsers -StatePath "$PLUGINSDIR\uninstall-shortcuts.json" -AppExe "$INSTDIR\${PRODUCT_FILENAME}.exe" -AppId "${APP_ID}"`
@@ -169,6 +172,7 @@ Var nuwaxDataLocal
   ${if} $R0 != 0
     !insertmacro nuwaxLogRecoveryFailure UninstallUserEntries
     !insertmacro nuwaxStopStandaloneUninstall "无法清理本安装的快捷方式或自启动项，卸载入口已保留。请重试。"
+  ${endif}
   ${endif}
   ClearErrors
   ${if} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"

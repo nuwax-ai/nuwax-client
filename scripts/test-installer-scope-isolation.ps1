@@ -99,7 +99,23 @@ try {
   Assert ([IO.File]::Exists($userExe)) 'Ambiguous-scope rejection removed other files'
   User-Paths $userDir
   $cases += @{ case = 'shared-directory-scope-conflict'; passed = $true }
+  $retargeted = @{}
+  foreach ($file in $aliases.Keys) {
+    $link = $wsh.CreateShortcut($file)
+    $link.TargetPath = $machineExe
+    $link.Save()
+    $retargeted[$file] = (Get-FileHash -LiteralPath $file).Hash
+  }
+  Assert ((Run 'currentuser' $userDir) -eq 0) 'Per-user repair with a machine-target default alias failed'
+  foreach ($file in $retargeted.Keys) {
+    Assert ((Get-FileHash -LiteralPath $file).Hash -eq $retargeted[$file]) 'Repair overwrote a default alias targeting the other scope'
+  }
+  $cases += @{ case = 'repair-preserves-default-other-target-aliases'; passed = $true }
   Assert ((Run 'currentuser' $userDir '/UNINSTALL') -eq 0) 'Selected per-user uninstall failed'
+  foreach ($file in $retargeted.Keys) {
+    Assert ([IO.File]::Exists($file) -and (Get-FileHash -LiteralPath $file).Hash -eq $retargeted[$file]) 'Vendor cleanup removed a default alias targeting the other scope'
+  }
+  $cases += @{ case = 'uninstall-preserves-other-target-aliases'; passed = $true }
   Assert ((Read-Path $machine) -eq $machineDir) 'Per-user uninstall changed machine registration'
   Assert ((Get-FileHash -LiteralPath (Join-Path $machineDir ($m.identity + '.exe'))).Hash -ieq $m.executableSha256) 'Per-user uninstall changed machine payload'
   Assert ((Run 'allusers' $machineDir '/UNINSTALL') -eq 0) 'Selected all-users uninstall failed'

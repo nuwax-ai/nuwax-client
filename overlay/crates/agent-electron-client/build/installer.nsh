@@ -52,6 +52,14 @@
   BrandingText "女娲Nuwax ${VERSION}"
   !insertmacro nuwaxUninstallStrings
   !insertmacro windowsInstallPathStrings
+  !ifdef BUILD_UNINSTALLER
+    ; The stock tail deletes default links by name and revokes the shared
+    ; AppUserModelId. Exact target/identity cleanup below owns this instead.
+    !ifdef isKeepShortcuts
+      !undef isKeepShortcuts
+    !endif
+    !define isKeepShortcuts '1 == 1'
+  !endif
   ; Cleanup is an explicit, default-off choice; never inherit builder's
   ; unconditional data deletion, including while an old version is updated.
   !ifdef DELETE_APP_DATA_ON_UNINSTALL
@@ -412,6 +420,9 @@
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
   ${endif}
   !insertmacro nuwaxUpdateShortcuts Repair
+  ; A preserved shortcut can intentionally target another installed copy.
+  ; Always launch the selected executable after this installation finishes.
+  StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   ${if} $nuwaxRecoveryWarning == "1"
   ${andifNot} ${Silent}
     MessageBox MB_OK|MB_ICONEXCLAMATION "当前安装已修复，现存文件已保留。上次备份已丢失或无法自动恢复，其中的旧文件无法保证找回，请核对您的文件。诊断记录保留在原安装目录旁。"
