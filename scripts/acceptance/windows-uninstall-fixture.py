@@ -36,6 +36,7 @@ def prepare_source(phase, run_id):
     }), encoding='utf-8')
     # The only registry operations target this random non-Uninstall test key.
     source = f'''Unicode true
+!define BUILD_UNINSTALLER
 Name "NuwaxRemovalFixture-{run_id}"
 OutFile "builder.exe"
 RequestExecutionLevel user

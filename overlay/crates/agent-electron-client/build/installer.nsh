@@ -335,9 +335,6 @@
       ${orIf} ${UAC_IsAdmin}
         !insertmacro nuwaxUpdateShortcuts Capture
         !insertmacro nuwaxPrepareOldInstall SHELL_CONTEXT nuwax-old-shell.txt
-        ${if} $installMode == "all"
-          !insertmacro nuwaxPrepareOldInstall HKEY_CURRENT_USER nuwax-old-current.txt
-        ${endIf}
       ${endif}
     !endif
   ${endIf}

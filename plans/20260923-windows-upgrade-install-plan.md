@@ -40,5 +40,6 @@
 - 基线：`release/v3.0`，初始 `470a5373`，隔离分支 `fix/windows-installer-recovery`；保留主工作区与其他任务修改。
 - 3.0 已包含卸载性能、备份保留、自定义路径及任务栏图标修复（`1a6d6279`、`934f280e`），不重复合并历史任务。只回迁 3.1 的孤立私有路径登记修复（`39f4c3f1e`）。本分支已快进跟随 `a34ec02a`，保留基座 `d12d001a` 与两个前端 pin。
 - 本轮扩大现行契约第 5 节：事务重试、失效指针归档、完整包维护、旧卸载器失败接管、登记快照、路径校验及精确快捷方式/启动项清理。恢复状态由 PowerShell 统一维护，NSIS 负责界面与编排，不改 vendor 模板。
+- 原生交互验证补齐路径与范围边界：拒绝已有安装的意外目录迁移；重申显式范围；all-users 操作保留其他 per-user 副本及其损坏时的别名；共同目录双重登记与无选择的静默并存调用停止。并存副本夹具见 `scripts/test-installer-scope-isolation.ps1`。
 - 源码与夹具检查结果见 `docs/acceptance/20261021-windows-installer-recovery-source-verification.json`；Windows 原生 NSIS 的随机 QA 身份和合成载荷验证与真实商业包验收分开。用户操作方案见现行契约第 6 节。
 - 先经 PR 回流 `release/v3.0`，再独立同步到 `release/v3.1`，不引入整条 3.1。签名商业包与真实旧版本安装验收通过后才进入发布，不改写历史 tag 和产物。

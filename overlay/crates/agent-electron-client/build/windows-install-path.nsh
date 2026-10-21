@@ -252,17 +252,34 @@ Var windowsCommandLineInstallPath
 
 !macro windowsRequireRegisteredPath
   StrCpy $R0 $windowsCurrentPathStatus
+  StrCpy $R7 $windowsRegisteredCurrentPath
   ${if} $installMode == "all"
     StrCpy $R0 $windowsMachinePathStatus
-    !ifndef BUILD_UNINSTALLER
-      ; The vendor's all-users installer also removes a per-user installation.
-      ; Validate that second registration before preservation or uninstallation.
-      ${if} $windowsCurrentPathStatus == "invalid"
-      ${orif} $windowsCurrentPathStatus == "conflict"
-        StrCpy $R0 $windowsCurrentPathStatus
-      ${endif}
-    !endif
+    StrCpy $R7 $windowsRegisteredMachinePath
   ${endif}
+  ; Shared bytes registered in both scopes have no single safe owner.
+  ${if} $windowsRegisteredCurrentPath != ""
+  ${andif} $windowsRegisteredCurrentPath == $windowsRegisteredMachinePath
+    StrCpy $R0 "conflict"
+  ${endif}
+  !ifndef BUILD_UNINSTALLER
+    ${if} ${Silent}
+    ${andif} $windowsRegisteredCurrentPath != ""
+    ${andif} $windowsRegisteredMachinePath != ""
+    ${andif} $windowsCommandLineInstallPath == ""
+    ${andifNot} ${isForCurrentUser}
+    ${andifNot} ${isForAllUsers}
+      StrCpy $R0 "conflict"
+    ${endif}
+    !insertmacro windowsNormalizeInstallDirectory $INSTDIR $R8
+    ${if} $R7 != ""
+    ${andif} $R8 != $R7
+      StrCpy $R0 "conflict"
+    ${elseif} $nuwaxMaintenanceAction != ""
+    ${andif} $R7 == ""
+      StrCpy $R0 "conflict"
+    ${endif}
+  !endif
   ${if} $R0 == "invalid"
   ${orif} $R0 == "conflict"
     DetailPrint "Cannot safely resolve the registered installation path ($R0)."
@@ -331,6 +348,7 @@ Var windowsCommandLineInstallPath
 
 !macro windowsInitRegisteredPaths
   !insertmacro windowsRefreshRegisteredPaths
+  !insertmacro windowsApplyExplicitInstallMode
   !ifndef INSTALL_MODE_PER_ALL_USERS
     ; Recover an otherwise invisible all-users install before the vendor's
     ; silent-upgrade elevation check. Explicit scope flags remain authoritative.
@@ -430,6 +448,7 @@ Var windowsCommandLineInstallPath
   ; passes _?=, which initMultiUser may overwrite; resolve its selected scope
   ; directly rather than comparing that temporary/default INSTDIR to /D.
   !insertmacro windowsRefreshRegisteredPaths
+  !insertmacro windowsApplyExplicitInstallMode
   !ifndef INSTALL_MODE_PER_ALL_USERS
     ${if} $windowsMachinePathStatus != "none"
     ${andif} $windowsCurrentPathStatus == "none"
@@ -467,5 +486,18 @@ Var windowsCommandLineInstallPath
       StrCpy $isForceCurrentInstall "1"
     ${endif}
   ${endif}
+!macroend
+
+!macro windowsApplyExplicitInstallMode
+  ; Builder's chained GetOptions calls can retain the first lookup's error
+  ; flag when both scopes exist. Its default can then override /currentuser.
+  ; StdUtils tests each explicit flag independently in both entry points.
+  !ifndef INSTALL_MODE_PER_ALL_USERS
+    ${if} ${isForCurrentUser}
+      !insertmacro setInstallModePerUser
+    ${elseif} ${isForAllUsers}
+      !insertmacro setInstallModePerAllUsers
+    ${endif}
+  !endif
 !macroend
 !endif
