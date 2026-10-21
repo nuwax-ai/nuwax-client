@@ -57,6 +57,8 @@ export interface LoopbackGatewayOptions {
   backendPrefixes?: string[];
   /** 固定端口（origin 稳定的关键）；缺省 46800。占用时回退随机端口。 */
   fixedPort?: number;
+  /** Let the host allocator handle bind errors without an unrestricted port-0 fallback. */
+  strictPort?: boolean;
   /** 主进程的 ticket 镜像；只向具备受信请求能力的业务请求注入。 */
   getTicket: () => string | null;
   ticketEpoch?: () => number;
@@ -593,7 +595,7 @@ export async function startLoopbackGateway(
       });
   }
 
-  return await new Promise((resolve) => {
+  return await new Promise((resolve, reject) => {
     const connections = new Set<Duplex>();
     const upgradeSockets = new Set<Duplex>();
     const upgradeRequests = new Set<http.ClientRequest>();
@@ -766,6 +768,7 @@ export async function startLoopbackGateway(
     };
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (closing) return;
+      if (opts.strictPort) { destroyConnections(); reject(err); return; }
       if (err.code === "EADDRINUSE" && !server.listening) {
         listen(0, true);
         return;

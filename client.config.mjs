@@ -7,12 +7,12 @@ export default Object.freeze({
     identifier: 'nuwax',
     feedBase: 'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',
     downloadUrl: 'https://nuwax.com',
+    // Renderer development port and legacy constants; runtime services use automatic ports.
     portOffset: 1000,
   }),
   frontend: Object.freeze({
     mode: 'dist',
     port: 3000,
-    gatewayPort: 46800,
     buildNodeOptions: '--max-old-space-size=4096',
     devNodeOptions: '--max-old-space-size=8192',
   }),

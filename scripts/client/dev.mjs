@@ -71,13 +71,12 @@ export async function dev(root, options = {}) {
   const mode = options.frontend ?? config.frontend.mode;
   const frontendPort = options.frontendPort ?? options.port ?? config.frontend.port;
   const rendererPort = 60173 + Number(config.product.portOffset);
-  const gatewayPort = config.frontend.gatewayPort ?? 46800;
   const prepared = await (options.prepare ?? prepare)(root, { ...options, frontend: mode });
   if (options.dryRun) {
-    console.log(`[dev] dry-run: frontend=${mode}, Vite=${rendererPort}, gateway=${gatewayPort}${mode === 'source' ? `, HMR=${frontendPort}` : ''}`);
+    console.log(`[dev] dry-run: frontend=${mode}, Vite=${rendererPort}, gateway=automatic${mode === 'source' ? `, HMR=${frontendPort}` : ''}`);
     return prepared;
   }
-  for (const port of [rendererPort, gatewayPort, ...(mode === 'source' ? [frontendPort] : [])]) await assertPortAvailable(port);
+  for (const port of [rendererPort, ...(mode === 'source' ? [frontendPort] : [])]) await assertPortAvailable(port);
   const logs = path.join(root, 'logs');
   fs.mkdirSync(logs, { recursive: true });
   const env = commercialEnv(root, { NODE_ENV: 'development', ...(mode === 'source' ? { NUWAX_WEBVIEW_ORIGIN: `http://localhost:${frontendPort}` } : { NUWAX_WEBVIEW_ORIGIN: '' }) });
