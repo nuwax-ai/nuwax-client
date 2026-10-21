@@ -1,12 +1,12 @@
 # Real NSIS package, random QA identity, synthetic payload only. The caller
-# stages the package/meta/legacy-exit-2.exe into a new owned local directory.
+# stages the complete generated package into a new owned local directory.
 param([Parameter(Mandatory = $true)][string]$PackageRoot,
   [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser')
 $ErrorActionPreference = 'Stop'
 $meta = [IO.File]::ReadAllText((Join-Path $PackageRoot 'qa-meta.json')) | ConvertFrom-Json
 if ($meta.kind -ne 'Synthetic Nuwax installer recovery QA' -or -not $meta.syntheticPayload -or -not $meta.nativeWindows -or
     $meta.guid -notmatch '^[0-9a-f-]{36}$' -or $meta.identity -notmatch '^NuwaxRecoveryQA[0-9a-f]{8}$') { throw 'Invalid QA identity' }
-$installer = Join-Path $PackageRoot 'RecoveryQA-Setup.exe'
+$installer = Join-Path $PackageRoot 'installers\RecoveryQA-Setup.exe'
 if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash -ine $meta.installerSha256) { throw 'Wrong QA package bytes' }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-maintenance-fixture-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null

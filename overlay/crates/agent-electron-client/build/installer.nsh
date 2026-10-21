@@ -107,37 +107,23 @@
 !macro customRemoveFiles
   !insertmacro windowsRequireRegisteredPath
   ${if} ${isUpdated}
-    ; The old uninstaller is the trusted source of its own payload inventory.
-    ; Legacy uninstallers leave no proof and their backups remain protected.
+    ; Record this uninstaller's own inventory for the parent's preserved backup.
+    ; Unknown files must survive even a direct --updated invocation.
     !insertmacro nuwaxRecoveryScripts
     !insertmacro nuwaxExtractUninstallInventory
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+    StrCpy $R6 "CurrentUser"
+    ${if} $installMode == "all"
+      StrCpy $R6 "LocalMachine"
+    ${endif}
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -RegistryScope "$R6" -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
     Pop $R0
     Pop $R1
     ${if} $R0 != 0
       !insertmacro nuwaxLogRecoveryFailure RecordPayload
+      !insertmacro nuwaxStopStandaloneUninstall "无法核验升级恢复记录，卸载入口和现存文件已保留，请使用完整安装包修复。"
     ${endif}
-    ClearErrors
-    CreateDirectory "$PLUGINSDIR\old-install"
-
-    Push ""
-    Call un.atomicRMDir
-    Pop $R0
-
-    ${if} $R0 != 0
-      DetailPrint "File is busy, aborting: $R0"
-
-      Push ""
-      Call un.restoreFiles
-      Pop $R0
-
-      Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install".`
-    ${endif}
-
-    RMDir /r $INSTDIR
-  ${else}
-    !insertmacro nuwaxRemoveOwnedFiles
   ${endif}
+  !insertmacro nuwaxRemoveOwnedFiles
 !macroend
 
 ; electron-builder 25's default CHECK_APP_RUNNING only stops matching Nuwax.exe

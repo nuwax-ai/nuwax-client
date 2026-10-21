@@ -118,6 +118,10 @@ Var nuwaxDataLocal
   ${if} $installMode == "all"
     StrCpy $R6 "LocalMachine"
   ${endif}
+  ; The updating parent has just completed Prepare and owns the pending
+  ; transaction. Do not restore its staged files into the extraction target.
+  ; RecordPayload has validated that transaction before this macro runs.
+  ${ifNot} ${isUpdated}
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Reconcile -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\uninstall-reconcile.txt" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
   Pop $R0
   Pop $R1
@@ -126,6 +130,7 @@ Var nuwaxDataLocal
     !insertmacro nuwaxStopStandaloneUninstall "旧版文件恢复未完成，请使用完整安装包的维护选项修复后卸载。文件与卸载入口已保留。"
   ${endif}
   DetailPrint "$R1"
+  ${endif}
   File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
   !insertmacro nuwaxExtractUninstallInventory
   StrCpy $R3 ""
