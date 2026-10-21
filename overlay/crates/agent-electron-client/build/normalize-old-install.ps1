@@ -1,11 +1,12 @@
 param(
-  [ValidateSet('Prepare', 'Reconcile', 'Detach', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup', 'RestoreRegistration')][string]$Action = 'Prepare',
+  [ValidateSet('Inspect', 'Prepare', 'Reconcile', 'Detach', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup', 'RestoreRegistration')][string]$Action = 'Prepare',
   [string]$InstallDir,
   [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath,
   [string]$PayloadInventoryPath,
   [switch]$CleanupRuntime,
   [switch]$Repair,
   [switch]$AllowMissingUninstaller,
+  [switch]$RequireRegistrationSnapshot,
   [long]$RequiredSpaceKB = 0,
   [ValidateSet('CurrentUser', 'LocalMachine')][string]$RegistryScope = 'CurrentUser',
   [string]$InstallRegistryKey,
@@ -119,26 +120,84 @@ function Save-RegistrationSnapshot {
         $keys += @{ path = $name; existed = [bool]$key; values = $values }
       } finally { if ($key) { $key.Dispose() } }
     }
-    [IO.File]::WriteAllText($snapshotPath, (@{ scope = $RegistryScope; view = [string]$view; keys = $keys } | ConvertTo-Json -Depth 8), $utf8)
+    [IO.File]::WriteAllText($snapshotPath, (@{ scope = $RegistryScope; userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; view = [string]$view; keys = $keys } | ConvertTo-Json -Depth 8), $utf8)
     Add-ManifestRecord $manifestPath ([ordered]@{ status = 'registration-snapshot-recorded'; sha256 = (Get-RecoveryHash $snapshotPath) })
   } finally { $base.Dispose() }
 }
 
-function Restore-RegistrationSnapshot {
+function Get-RegistrationSnapshot([switch]$RecordedScope) {
   $snapshotPath = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'registration.json')
-  if (-not (Test-EntryExists $snapshotPath)) { return }
+  if (-not (Test-EntryExists $snapshotPath)) { return $null }
   $proof = @($records | Where-Object { $_.status -eq 'registration-snapshot-recorded' })
   if (-not $proof.Count -or (Get-RecoveryHash $snapshotPath) -ne $proof[-1].sha256) { throw 'Registration snapshot was changed or is incomplete.' }
   if (-not $InstallRegistryKey -or -not $UninstallRegistryKey) { throw 'Rollback requires the original product registry keys.' }
   $snapshot = [IO.File]::ReadAllText($snapshotPath, $utf8) | ConvertFrom-Json
-  if ($snapshot.scope -ne $RegistryScope -or $snapshot.keys.Count -ne 2) { throw 'Registration snapshot scope does not match this operation.' }
-  $hive = [Microsoft.Win32.RegistryHive]::$RegistryScope
+  if ($snapshot.scope -notin @('CurrentUser', 'LocalMachine') -or $snapshot.keys.Count -ne 2 -or
+      (-not $RecordedScope -and $snapshot.scope -ne $RegistryScope)) { throw 'Registration snapshot scope does not match this operation.' }
+  if ($snapshot.scope -eq 'CurrentUser') {
+    $sid = $snapshot.PSObject.Properties['userSid']
+    if ((($RecordedScope -or $RequireRegistrationSnapshot) -and -not $sid) -or ($sid -and $sid.Value -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) {
+      throw 'Cannot verify the original Windows user for this recovery; use the original account. Files were retained.'
+    }
+  }
   $view = if ([Environment]::Is64BitOperatingSystem) { [Microsoft.Win32.RegistryView]::Registry64 } else { [Microsoft.Win32.RegistryView]::Registry32 }
   if ($snapshot.view -ne [string]$view) { throw 'Registration snapshot view does not match this operation.' }
+  $paths = @($snapshot.keys | ForEach-Object { [string]$_.path } | Sort-Object -Unique)
+  if ($paths.Count -ne 2) { throw 'Registration snapshot contains duplicate product keys.' }
+  foreach ($entry in $snapshot.keys) {
+    if ($entry.path -notin @($InstallRegistryKey, $UninstallRegistryKey)) { throw 'Registration snapshot contains a different product key.' }
+  }
+  if ($RecordedScope -or $RequireRegistrationSnapshot) {
+    $matchedPath = $false
+    foreach ($entry in $snapshot.keys) {
+      foreach ($item in $entry.values) {
+        $candidate = $null
+        if ($item.name -eq 'InstallLocation' -and $item.value) { $candidate = [string]$item.value }
+        elseif ($entry.path -eq $UninstallRegistryKey -and $item.name -eq 'UninstallString' -and $item.value) {
+          $command = [regex]::Match([string]$item.value, '^"(.+)\\' + [regex]::Escape($uninstallerName) + '"(?:\s|$)')
+          if (-not $command.Success) { throw 'Pending recovery has an unrecognized uninstall command.' }
+          $candidate = $command.Groups[1].Value
+        }
+        if ($candidate) {
+          if (-not [string]::Equals([IO.Path]::GetFullPath($candidate).TrimEnd([char]92), $root, $pathComparison)) {
+            throw 'Pending registration belongs to a different installation path.'
+          }
+          $matchedPath = $true
+        }
+      }
+    }
+    if (-not $matchedPath) { throw 'Pending registration has no verified installation path.' }
+    $pendingHive = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::$($snapshot.scope), $view)
+    try {
+      foreach ($entry in $snapshot.keys) {
+        $key = $pendingHive.OpenSubKey([string]$entry.path)
+        if (-not $key) { continue }
+        try {
+          if (-not $entry.existed -or @($key.GetValueNames()).Count -ne @($entry.values).Count) {
+            throw 'Product registration changed after preservation; no registration was replaced.'
+          }
+          foreach ($item in $entry.values) {
+            $live = $key.GetValue([string]$item.name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ([string]$key.GetValueKind([string]$item.name) -ne $item.kind -or
+                (ConvertTo-Json -InputObject $live -Compress -Depth 8) -cne (ConvertTo-Json -InputObject $item.value -Compress -Depth 8)) {
+              throw 'Product registration changed after preservation; no registration was replaced.'
+            }
+          }
+        } finally { $key.Dispose() }
+      }
+    } finally { $pendingHive.Dispose() }
+  }
+  return $snapshot
+}
+
+function Restore-RegistrationSnapshot {
+  $snapshot = Get-RegistrationSnapshot
+  if (-not $snapshot) { return }
+  $hive = [Microsoft.Win32.RegistryHive]::$RegistryScope
+  $view = if ([Environment]::Is64BitOperatingSystem) { [Microsoft.Win32.RegistryView]::Registry64 } else { [Microsoft.Win32.RegistryView]::Registry32 }
   $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
   try {
     foreach ($entry in $snapshot.keys) {
-      if ($entry.path -notin @($InstallRegistryKey, $UninstallRegistryKey)) { throw 'Registration snapshot contains a different product key.' }
       if (-not $entry.existed) { continue }
       $key = $base.CreateSubKey([string]$entry.path)
       try {
@@ -147,7 +206,7 @@ function Restore-RegistrationSnapshot {
           $value = $item.value
           if ($kind -eq [Microsoft.Win32.RegistryValueKind]::DWord) { $value = [int]$value }
           elseif ($kind -eq [Microsoft.Win32.RegistryValueKind]::QWord) { $value = [long]$value }
-          elseif ($kind -eq [Microsoft.Win32.RegistryValueKind]::Binary) { $value = [byte[]]$value }
+          elseif ($kind -in @([Microsoft.Win32.RegistryValueKind]::Binary, [Microsoft.Win32.RegistryValueKind]::None)) { $value = [byte[]]$value }
           elseif ($kind -eq [Microsoft.Win32.RegistryValueKind]::MultiString) { $value = [string[]]$value }
           $key.SetValue([string]$item.name, $value, $kind)
         }
@@ -277,7 +336,7 @@ if (Test-EntryExists $stateFile) {
 $records = $null
 $recoveryDir = $fromState
 
-if ($Action -in @('Prepare', 'Reconcile', 'RecordPayload', 'Cleanup')) {
+if ($Action -in @('Inspect', 'Prepare', 'Reconcile', 'RecordPayload', 'Cleanup')) {
   if (-not $InstallDir) {
     throw "$Action requires InstallDir."
   }
@@ -370,12 +429,14 @@ if ($recoveryDir) {
   $manifestPath = [System.IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'manifest.jsonl')
   Assert-NoRecoveryRedirect $recoveryDir
   $backupExists = Test-EntryExists (Get-ExtendedPath $recoveryDir)
-  if ($Action -in @('Prepare', 'Reconcile') -and -not $backupExists) {
+  if ($RequireRegistrationSnapshot -and -not $backupExists) {
+    throw 'Verified pending backup is no longer available; files and state were retained.'
+  } elseif ($Action -in @('Prepare', 'Reconcile') -and -not $backupExists) {
     Archive-RecoveryPointers 'backup-missing'
     $recoveryDir = $null
     $manifestPath = $null
     $records = $null
-  } elseif ($Repair -and $Action -eq 'Prepare') {
+  } elseif ($Repair -and $Action -eq 'Prepare' -and -not $RequireRegistrationSnapshot) {
     if (Test-EntryExists $manifestPath) {
       # Read errors remain fatal. Only JSON decoding can be bypassed by an
       # explicit repair, and a readable foreign transaction is never adopted.
@@ -425,6 +486,29 @@ if ($recoveryDir) {
     } elseif ($record.status -eq 'workspace-restore-intent') {
       $restoreIntents.Add([string]$record.original) | Out-Null
     }
+  }
+}
+
+if ($Action -eq 'Inspect') {
+  if (-not $recoveryDir) { Write-Output 'NO_PENDING_RECOVERY'; exit 0 }
+  $snapshot = Get-RegistrationSnapshot -RecordedScope
+  if (-not $snapshot -or -not @($snapshot.keys | Where-Object { $_.existed }).Count) {
+    throw 'Pending recovery has no verified product registration; files and state were retained.'
+  }
+  Write-Output ('RECOVERY_SCOPE ' + $snapshot.scope)
+  exit 0
+}
+
+if ($Action -eq 'Prepare' -and $RequireRegistrationSnapshot) {
+  if (-not $recoveryDir -or -not (Get-RegistrationSnapshot)) { throw 'Verified pending registration is no longer available; retry the complete installer.' }
+  # A power loss can occur after the legacy uninstaller removed registration.
+  # Restore that retry entry before starting another preservation transaction.
+  Restore-RegistrationSnapshot
+  $originalUninstaller = [IO.Path]::Combine($extendedRoot, $uninstallerName)
+  $savedUninstaller = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'uninstaller-backup.exe')
+  if (-not (Test-EntryExists $originalUninstaller) -and (Test-EntryExists $savedUninstaller)) {
+    [IO.Directory]::CreateDirectory($extendedRoot) | Out-Null
+    [IO.File]::Copy($savedUninstaller, $originalUninstaller, $false)
   }
 }
 

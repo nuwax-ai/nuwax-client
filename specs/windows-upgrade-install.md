@@ -41,6 +41,8 @@
 
 维护保持原安装位置和 per-user/all-users 范围，同时核对产品私有键、卸载命令和目录载荷；标准卸载项 `InstallLocation` 为空本身不代表损坏。`/D=` 保留 NSIS 解析后的完整路径，包括空格和正斜杠，并在写入前拒绝磁盘根目录、用户目录根及系统目录。保全前检查同卷空间，保存两个产品登记键的带类型快照与校验摘要。
 
+旧卸载器已删除全部登记而新载荷或恢复尚未完成时，原目录重试必须先只读核验该目录的活动事务、登记快照摘要、两个产品键和原路径，再沿用快照中的安装范围。per-user 快照另记录并核对原账户 SID；显式选择另一范围、同范围已有其他登记、身份信息不足或记录损坏时停止并保留现场。开始保全前再次核验，并恢复原登记及缺失的卸载入口；不能把有待恢复文件的原目录当成全新安装后返回成功。此检查不扫描其他目录；登记全失时，用户须选择原安装目录。历史 per-user 快照缺少可核验的账户身份且登记也已消失时，需支持人员核对，不自动推断归属。
+
 已有安装收到不同于所选登记位置的 `/D=` 时停止，维护不迁移安装目录。显式 `/currentuser`、`/allusers` 在安装和卸载入口重新核对，避免旧模板默认范围覆盖调用者选择。all-users 维护不顺带保全或卸载另一个 per-user 副本；其他范围的已登记副本即使可执行文件缺失，其快捷方式也保留。两个范围指向同一物理目录时停止；两个独立副本并存而静默调用没有指定范围或路径时要求明确选择。
 
 新安装器先保全全部现存文件，再尝试运行旧卸载器。缺失、不能启动或返回非零时，只有核验保全完成且原目录仅剩未改变的卸载器后，才允许接管并写入完整新载荷与新卸载器。失败时独立恢复登记和缺失的旧卸载入口；文件恢复冲突保留双方并返回失败。选择卸载时运行新卸载器并返回其真实结果，期间不启动客户端。
@@ -55,15 +57,16 @@
 
 PowerShell 内联 C# 的编译依赖绑定到已加载的 .NET 程序集绝对路径，避免 NSIS 插件目录中的原生 `System.dll` 被误当成托管依赖。卸载和备份清理夹具均保留此同名文件回归。
 
-验证入口：`scripts/test-installer-recovery.ps1`、`test-installer-registration.ps1`、`test-installer-backup-retention.ps1`、`test-uninstall-data.ps1`，以及 `scripts/acceptance/windows-uninstall-fixture.py`。`scripts/acceptance/windows-installer-recovery.cjs` 必须在 Windows 使用固定 electron-builder 25.1.8 构建随机产品身份的无签名合成载荷，再运行 `scripts/test-installer-maintenance.ps1` 分别检查两种范围。旧 tag 安装器源码使用相同 QA 身份重新编译后，可用 `scripts/test-installer-legacy-upgrade.ps1` 验证兼容性。此夹具不能代替签名完整包、真实 3.0.16/3.0.19 载荷、交互 UAC、物理离线磁盘及实际自动更新端到端验收。
+验证入口：`scripts/test-installer-recovery.ps1`、`test-installer-registration.ps1`、`test-installer-backup-retention.ps1`、`test-uninstall-data.ps1`，以及 `scripts/acceptance/windows-uninstall-fixture.py`。`scripts/acceptance/windows-installer-recovery.cjs` 必须在 Windows 使用固定 electron-builder 25.1.8 构建随机产品身份的无签名合成载荷，再运行 `scripts/test-installer-maintenance.ps1` 和 `test-installer-pending-recovery.ps1` 分别检查两种范围。旧 tag 安装器源码使用相同 QA 身份重新编译后，可用 `scripts/test-installer-legacy-upgrade.ps1` 验证兼容性。此夹具不能代替签名完整包、真实 3.0.16/3.0.19 载荷、交互 UAC、物理离线磁盘及实际自动更新端到端验收。
 
 ## 6. 修复版本交付后的操作方案
 
 以下维护入口需要包含本次修复的完整安装包；历史 3.0.16/3.0.19 包不提供这些新选项。
 
 1. 用原 Windows 账号运行已验签的完整包，确认原安装位置及安装范围。需要升级或恢复使用时选择“修复或升级”；原卸载入口不能使用时选择“卸载”，安装器会修复卸载入口后接着卸载。
+   若应用和卸载项均已消失，但原目录旁仍有活动恢复记录，仍选择原目录；安装器核验记录后恢复原范围和个人文件。无法确认原账户或记录身份时先保留现场，由支持人员核对。
 2. 默认保留本地数据。只在确实需要清除当前账号数据时，在新卸载向导勾选删除数据。原安装目录中的未知文件、外部项目和其他产品保持原位。
 3. 提示旧备份清单损坏、恢复冲突或安装只剩部分文件时，核对安装路径，再明确勾选“保留旧备份和现存文件，另建事务修复”。旧备份仍在原安装目录旁，之后可根据归档原因和事务清单找回文件。若备份目录已经丢失，安装器会归档失效指针并继续，丢失备份中的独有文件无法保证找回。
 4. 遇到权限、占用、空间不足或磁盘不可用时，保存两份 TEMP 诊断日志与安装目录旁的恢复材料，按日志阶段解除具体问题，再重跑完整包。多个登记位置冲突时明确选择原目录；不能确认时交由支持核对私有登记和卸载命令。
 
-企业静默维护可使用新完整包 `/S /REPAIR /currentuser /D=原安装目录`；所有用户范围使用 `/allusers`。需要先修复再卸载时再加 `/UNINSTALL`。`/D=` 必须放在参数末尾。静默卸载仍保留数据；明确删除数据需使用交互卸载向导。自动升级失败时，支持人员可从日志的 `Prepare`、`Detach`、`Restore`、`ResolvePath`、`Uninstall` 等阶段定位原因。
+企业静默维护可使用新完整包 `/S /REPAIR /currentuser /D=原安装目录`；所有用户范围使用 `/allusers`。需要先修复再卸载时再加 `/UNINSTALL`。`/D=` 必须放在参数末尾。静默卸载仍保留数据；明确删除数据需使用交互卸载向导。自动升级失败时，支持人员可从日志的 `Inspect`、`Prepare`、`Detach`、`Restore`、`ResolvePath`、`Uninstall` 等阶段定位原因。

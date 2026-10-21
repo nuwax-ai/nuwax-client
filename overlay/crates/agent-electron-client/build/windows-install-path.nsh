@@ -379,6 +379,10 @@ Var windowsCommandLineInstallPath
       StrCpy $INSTDIR $windowsRegisteredCurrentPath
     ${endif}
   ${endif}
+  !ifmacrodef nuwaxResolvePendingInstall
+    !insertmacro nuwaxResolvePendingInstall
+  !endif
+  StrCpy $R0 "$windowsCommandLineInstallPath"
   ${if} ${isUpdated}
     ; The updater supplies the running executable's directory. It can repair
     ; missing/stale metadata only when this product's uninstaller is present;
