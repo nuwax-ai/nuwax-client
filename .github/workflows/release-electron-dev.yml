@@ -595,8 +595,8 @@ jobs:
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           SKIP_PREPARE: "1"
-          # QA only; public tag pushes retain the default 7z installer policy.
-          NUWAX_WINDOWS_INSTALLER_ARCHIVE: ${{ runner.os == 'Windows' && needs.prepare.outputs.windows_archive == 'zip-qa' && 'zip-qa' || '' }}
+          # Public Windows builds use the shared ZIP policy; QA may compare 7z.
+          NUWAX_WINDOWS_INSTALLER_ARCHIVE: ${{ runner.os == 'Windows' && (needs.prepare.outputs.windows_archive == '7z' && '7z-qa' || needs.prepare.outputs.windows_archive == 'zip-qa' && 'zip-qa') || '' }}
           # 商业版品牌注入（构建期经 esbuild/vite define 固化）：
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
