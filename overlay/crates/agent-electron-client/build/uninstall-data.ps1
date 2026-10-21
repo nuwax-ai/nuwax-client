@@ -4,11 +4,31 @@ param(
   [Parameter(Mandatory = $true)][string]$ProfileDir,
   [Parameter(Mandatory = $true)][string]$RoamingDir,
   [Parameter(Mandatory = $true)][string]$LocalDir,
+  [ValidateSet('CurrentUser', 'LocalMachine')][string]$RegistryScope = 'CurrentUser',
   [switch]$DeleteLocalData
 )
 
 $ErrorActionPreference = 'Stop'
 $comparison = [StringComparison]::OrdinalIgnoreCase
+$script:uninstallPhase = 'Preflight'
+$script:uninstallTarget = $InstallDir
+trap {
+  $cause = $_.Exception
+  while ($cause.InnerException) { $cause = $cause.InnerException }
+  $failure = [ordered]@{ atUtc = [DateTime]::UtcNow.ToString('o'); action = 'Uninstall';
+    phase = $script:uninstallPhase; installDir = $InstallDir; scope = $RegistryScope;
+    target = $script:uninstallTarget; deleteLocalData = [bool]$DeleteLocalData;
+    error = $cause.Message; exceptionType = $cause.GetType().FullName; errorId = $_.FullyQualifiedErrorId }
+  try {
+    [IO.File]::AppendAllText((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-uninstall-events.jsonl'),
+      ($failure | ConvertTo-Json -Compress) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+  } catch { }
+  [Console]::Error.WriteLine(($failure | ConvertTo-Json -Compress))
+  # Program removal has completed at this stage; a partial data cleanup must
+  # retain its retry entry without claiming that every user file still exists.
+  if ($script:uninstallPhase -eq 'LocalDataRemoval') { exit 3 }
+  exit 1
+}
 
 # NSIS runs from a plugin directory containing a native System.dll. Bind
 # compiler references to loaded framework assemblies, never that directory.
@@ -88,6 +108,31 @@ public static class NuwaxUninstallPaths {
     }
     Progress("delete-complete", checkedFiles, files.Length);
   }
+
+  public static void RemoveDataEntry(string path, bool directory) {
+    FileAttributes? attributes = ExistingAttributes(path);
+    if (!attributes.HasValue) return;
+    // Git pack/index files in app-managed workspaces are commonly read-only.
+    // Only the explicitly selected local-data pass calls this helper. Links
+    // are unlinked without changing attributes on their destination.
+    bool readOnly = (attributes.Value & (FileAttributes.ReadOnly | FileAttributes.ReparsePoint)) == FileAttributes.ReadOnly;
+    if (readOnly) {
+      AssertNoReparseAncestors(path);
+      File.SetAttributes(path, attributes.Value & ~FileAttributes.ReadOnly);
+    }
+    try { if (directory) Directory.Delete(path, false); else File.Delete(path); }
+    catch {
+      if (readOnly) {
+        try {
+          AssertNoReparseAncestors(path);
+          FileAttributes? remaining = ExistingAttributes(path);
+          if (remaining.HasValue && (remaining.Value & FileAttributes.ReparsePoint) == 0)
+            File.SetAttributes(path, remaining.Value | FileAttributes.ReadOnly);
+        } catch { /* Preserve the original removal error for diagnosis. */ }
+      }
+      throw;
+    }
+  }
 }
 '@
 
@@ -128,6 +173,7 @@ if ($files.Count -eq 0 -or $manifest.executable -notin $manifest.files) { throw 
 [NuwaxUninstallPaths]::PreflightFiles($files)
 
 function Remove-OwnedData([string]$Target) {
+  $script:uninstallTarget = $Target
   $attributes = Existing-Attributes $Target
   if ($null -eq $attributes) { return }
   if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -136,8 +182,9 @@ function Remove-OwnedData([string]$Target) {
     else { [IO.File]::Delete($Target) }
   } elseif ($attributes -band [IO.FileAttributes]::Directory) {
     foreach ($entry in [IO.Directory]::GetFileSystemEntries($Target)) { Remove-OwnedData $entry }
-    [IO.Directory]::Delete($Target, $false)
-  } else { [IO.File]::Delete($Target) }
+    $script:uninstallTarget = $Target
+    [NuwaxUninstallPaths]::RemoveDataEntry($Target, $true)
+  } else { [NuwaxUninstallPaths]::RemoveDataEntry($Target, $false) }
 }
 
 $dataTargets = @()
@@ -150,6 +197,7 @@ if ($DeleteLocalData) {
         $target.StartsWith($root + '\', $comparison)) { throw 'Installation and local data directories overlap; refusing local data deletion.' }
   }
 }
+$script:uninstallPhase = 'ProgramRemoval'
 [NuwaxUninstallPaths]::RemoveFiles($files)
 foreach ($directory in ($directories | Sort-Object Length -Descending)) {
   Assert-NoReparseAncestors $directory
@@ -157,5 +205,6 @@ foreach ($directory in ($directories | Sort-Object Length -Descending)) {
     [IO.Directory]::Delete($directory, $false)
   }
 }
+$script:uninstallPhase = 'LocalDataRemoval'
 foreach ($target in $dataTargets) { Remove-OwnedData $target }
 Write-Output ('Removed owned program files. Local data deletion requested: ' + [bool]$DeleteLocalData + '. Unknown installation files are retained.')

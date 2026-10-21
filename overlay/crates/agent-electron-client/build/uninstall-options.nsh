@@ -140,15 +140,19 @@ Var nuwaxDataLocal
   SetShellVarContext current
   ; The inventory pass runs in a hidden PowerShell process; explain the wait.
   DetailPrint "正在检查并移除程序文件，请稍候；文件较多时需要数分钟..."
-  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\uninstall-data.ps1" -InstallDir "$INSTDIR" -ManifestPath "$PLUGINSDIR\uninstall-payload.json" -ProfileDir "$PROFILE" -RoamingDir "$APPDATA" -LocalDir "$LOCALAPPDATA" $R3`
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\uninstall-data.ps1" -InstallDir "$INSTDIR" -ManifestPath "$PLUGINSDIR\uninstall-payload.json" -ProfileDir "$PROFILE" -RoamingDir "$APPDATA" -LocalDir "$LOCALAPPDATA" -RegistryScope "$R6" $R3`
   Pop $R0
   Pop $R1
   ${if} $installMode == "all"
     SetShellVarContext all
   ${endif}
   ${if} $R0 != 0
+    ${if} $R0 == 3
+      !insertmacro nuwaxLogRecoveryFailure UninstallLocalData
+      !insertmacro nuwaxStopStandaloneUninstall "程序文件已移除，但本地数据清理未完成。剩余数据与卸载入口已保留。详情：$TEMP\Nuwax-uninstall-events.jsonl"
+    ${endif}
     !insertmacro nuwaxLogRecoveryFailure Uninstall
-    !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，程序文件可能被占用或路径不安全。个人文件与卸载入口已保留，请解除占用后重试。"
+    !insertmacro nuwaxStopStandaloneUninstall "程序文件未完全移除，本地数据清理未开始。卸载入口已保留。详情：$TEMP\Nuwax-uninstall-events.jsonl"
   ${endif}
   DetailPrint "$R1"
   ; Remove aliases and startup only when both the app identity and the exact
