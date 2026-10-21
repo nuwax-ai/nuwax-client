@@ -119,13 +119,38 @@ function Invoke-NuwaxShortcutRepair {
       }
       [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
       $temporary = Join-Path ([IO.Path]::GetDirectoryName($path)) ('.nuwax-shortcut-' + [Guid]::NewGuid().ToString('N') + '.lnk')
+      if ($ProtectedAppExe -and $exists -and $saved.ContainsKey($path)) {
+        # Builder can overwrite the default alias before this callback. Recover
+        # the captured other-copy link byte-for-byte, after verifying its ID and
+        # actual target; never trust a target supplied only as snapshot metadata.
+        $original = [Convert]::FromBase64String($saved[$path].Bytes)
+        if ($original.Length -gt 262144) { throw 'Captured shortcut is unexpectedly large.' }
+        [IO.File]::WriteAllBytes($temporary, $original)
+        if ((Get-NuwaxShortcutId $shell $temporary) -cne $AppId) { throw 'Captured shortcut identity changed.' }
+        $originalTarget = [string]$wsh.CreateShortcut($temporary).TargetPath
+        if ($originalTarget -ieq $ProtectedAppExe -and $originalTarget -ine $AppExe) {
+          if ([Convert]::ToBase64String($bytes) -cne $saved[$path].Bytes) {
+            [IO.File]::Replace($temporary, $path, [NullString]::Value)
+            $temporary = $null
+            $changed++
+          }
+          continue
+        }
+      }
       [IO.File]::WriteAllBytes($temporary, $bytes)
       if ((Get-NuwaxShortcutId $shell $temporary) -cne $AppId) { throw 'Shortcut identity changed.' }
       $link = $wsh.CreateShortcut($temporary)
       $target = [string]$link.TargetPath
       # A registered copy in the other scope can be partially damaged. Its
       # absent executable does not make its aliases belong to this repair.
-      if ($ProtectedAppExe -and $target -ieq $ProtectedAppExe -and $target -ine $AppExe) { continue }
+      if ($ProtectedAppExe -and $target -ieq $ProtectedAppExe -and $target -ine $AppExe) {
+        if (-not $exists) {
+          [IO.File]::Move($temporary, $path)
+          $temporary = $null
+          $changed++
+        }
+        continue
+      }
       # Do not retarget a different live installation or access network targets.
       if ($target -notmatch '^[A-Za-z]:\\' -or [IO.Path]::GetFileName($target) -ine 'Nuwax.exe') { continue }
       if ($target -ine $AppExe -and [IO.File]::Exists($target)) { continue }
