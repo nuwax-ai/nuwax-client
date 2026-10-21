@@ -91,6 +91,7 @@ const env = noInject || noEnv
       NUWAX_DOWNLOAD_PAGE_URL:
         process.env.NUWAX_DOWNLOAD_PAGE_URL || 'https://nuwax.com',
       NUWAX_PORT_OFFSET: process.env.NUWAX_PORT_OFFSET || '1000',
+      NUWAX_LOCAL_PORT_MODE: 'auto',
       NUWAX_FRONTEND_DIST: process.env.NUWAX_FRONTEND_DIST || path.join(rootDir, 'nuwax-dist'),
     };
 
