@@ -61,4 +61,16 @@ describe("commercial webview language mirror", () => {
     expect(changeLanguage.mock.calls).toEqual([["zh-cn"]]);
   });
 
+  it.each(["zh-cn", "en-us", "zh-tw", "zh-hk"])("renders readable vision-test failures without placeholder braces in %s", async (language) => {
+    settings.set("nuwax.webview_lang", language);
+    const lang = await import("./i18n");
+    await lang.initI18n();
+    const key = "Claw.Settings.computerUse.vlmErrors.visionVerificationFailed";
+    const error = lang.t(key);
+    const message = lang.t("Claw.Settings.computerUse.vlmTestFail", { err: error });
+    expect(error).not.toBe(key);
+    expect(message).toContain(error);
+    expect(message).not.toMatch(/[{}]/);
+  });
+
 });
