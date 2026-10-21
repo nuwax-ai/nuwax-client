@@ -45,6 +45,30 @@ foreach ($delete in @($false,$true)) {
   Assert ([IO.File]::ReadAllText("$($f.base)\outside\sentinel.txt") -eq 'fixture') 'External data lost'
   $rows+=@{case=$name;passed=$true}
 }
+$f=Fixture 'readonly-data-kept-by-default'
+$readonly="$($f.profile)\.nuwax-u1-qa\run\project\.git\objects\pack\pack.idx"
+Put $readonly 'git pack index'
+[IO.File]::SetAttributes($readonly,([IO.FileAttributes]::ReadOnly -bor [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::Archive))
+[IO.File]::SetAttributes("$($f.install)\resources\user-added.txt",[IO.FileAttributes]::ReadOnly)
+$beforeAttributes=[IO.File]::GetAttributes($readonly)
+Assert ((Invoke-Uninstall $f) -eq 0) 'Unchecked readonly local data blocked program uninstall'
+Assert ([IO.File]::ReadAllText($readonly) -eq 'git pack index') 'Unchecked readonly data changed'
+Assert ([IO.File]::GetAttributes($readonly) -eq $beforeAttributes) 'Unchecked data attributes changed'
+Assert (([IO.File]::GetAttributes("$($f.install)\resources\user-added.txt") -band [IO.FileAttributes]::ReadOnly) -ne 0) 'Unknown readonly installation file changed'
+$rows+=@{case='readonly-data-kept-by-default';passed=$true}
+$f=Fixture 'checked-readonly-git-data'
+foreach($data in @("$($f.profile)\.nuwax-u1-qa\run\project\.git\objects\pack\pack.idx", "$($f.roaming)\NuwaxU1QA\hidden-cache.dat", "$($f.local)\nuwax-u1-qa-updater\readonly-cache.dat")) {
+  Put $data 'readonly app data'
+  [IO.File]::SetAttributes($data,([IO.FileAttributes]::ReadOnly -bor [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::Archive))
+}
+[IO.File]::SetAttributes("$($f.profile)\.nuwax-u1-qa\run\project\.git\objects\pack",[IO.FileAttributes]::ReadOnly)
+[IO.File]::SetAttributes("$($f.roaming)\NuwaxU1QA",([IO.FileAttributes]::ReadOnly -bor [IO.FileAttributes]::Hidden))
+Assert ((Invoke-Uninstall $f $true) -eq 0) 'Explicit deletion failed on readonly Git/cache files or directories'
+Assert (!(Test-Path "$($f.profile)\.nuwax-u1-qa")) 'Explicit readonly profile data retained'
+Assert (!(Test-Path "$($f.roaming)\NuwaxU1QA")) 'Explicit readonly roaming data retained'
+Assert (!(Test-Path "$($f.local)\nuwax-u1-qa-updater")) 'Explicit readonly updater data retained'
+Assert (Test-Path "$($f.install)\resources\user-added.txt") 'Readonly-data uninstall removed unknown program file'
+$rows+=@{case='checked-readonly-git-data';passed=$true}
 $f=Fixture 'nsis-system-dll-shadow'
 Put (Join-Path $f.base 'System.dll') 'Native NSIS plugin, not a managed assembly'
 Assert ((Invoke-Uninstall $f $false $f.base) -eq 0) 'NSIS System.dll shadowed framework compiler references'
@@ -75,9 +99,11 @@ Assert ((Invoke-Uninstall $f $true) -ne 0) 'Redirected data root accepted'
 Assert (Test-Path "$($f.install)\NuwaxU1QA.exe") 'Unsafe data path partly removed program'
 $rows+=@{case='linked-data-root';passed=$true}
 $f=Fixture 'nested-data-link'
+[IO.File]::SetAttributes("$($f.base)\outside\sentinel.txt",[IO.FileAttributes]::ReadOnly)
 New-Item -ItemType Junction -Path "$($f.profile)\.nuwax-u1-qa\linked-project" -Target "$($f.base)\outside"|Out-Null
 Assert ((Invoke-Uninstall $f $true) -eq 0) 'Nested data-link removal failed'
 Assert ([IO.File]::ReadAllText("$($f.base)\outside\sentinel.txt") -eq 'fixture') 'Nested link followed to external project'
+Assert (([IO.File]::GetAttributes("$($f.base)\outside\sentinel.txt") -band [IO.FileAttributes]::ReadOnly) -ne 0) 'External readonly attributes changed through a nested link'
 $rows+=@{case='nested-data-link';passed=$true}
 $f=Fixture 'overlapping-install-data'
 $overlap="$($f.profile)\.nuwax-u1-qa\application"
@@ -87,6 +113,46 @@ Assert ((Invoke-Uninstall $f $true) -ne 0) 'Overlapping install/data directories
 Assert (Test-Path "$overlap\NuwaxU1QA.exe") 'Overlap partly removed program'
 Assert (Test-Path "$overlap\workspace\personal.txt") 'Overlap deleted unknown install data'
 $rows+=@{case='overlapping-install-data';passed=$true}
+$f=Fixture 'locked-readonly-local-data'
+$data="$($f.profile)\.nuwax-u1-qa\workspace\user.txt"
+[IO.File]::SetAttributes($data,[IO.FileAttributes]::ReadOnly)
+$lock=[IO.File]::Open($data,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+try { Assert ((Invoke-Uninstall $f $true) -eq 3) 'Locked local data did not report the data-cleanup phase' } finally { $lock.Dispose() }
+Assert ([IO.File]::Exists($data)) 'Locked local data was lost'
+Assert (([IO.File]::GetAttributes($data) -band [IO.FileAttributes]::ReadOnly) -ne 0) 'Failed deletion did not restore readonly data attributes'
+Assert (!(Test-Path "$($f.install)\NuwaxU1QA.exe")) 'Data failure incorrectly reported before program removal'
+$events=@([IO.File]::ReadAllLines((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-uninstall-events.jsonl'))|ForEach-Object {$_|ConvertFrom-Json}|Where-Object {$_.installDir -eq $f.install})
+Assert ($events.Count -and $events[-1].phase -eq 'LocalDataRemoval' -and $events[-1].target -eq $data -and $events[-1].deleteLocalData) 'Missing exact data-failure diagnostic'
+Assert ((Invoke-Uninstall $f $true) -eq 0) 'Released local data did not support retry'
+$rows+=@{case='locked-readonly-local-data-and-retry';passed=$true}
+$f=Fixture 'denied-readonly-local-data'
+$data="$($f.profile)\.nuwax-u1-qa\workspace\user.txt"
+[IO.File]::SetAttributes($data,[IO.FileAttributes]::ReadOnly)
+$dataParent=[IO.Path]::GetDirectoryName($data)
+$deniedParentAcl=[IO.Directory]::GetAccessControl($dataParent)
+$parentRule=New-Object Security.AccessControl.FileSystemAccessRule ([Security.Principal.WindowsIdentity]::GetCurrent().User),([Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles),([Security.AccessControl.AccessControlType]::Deny)
+$deniedParentAcl.AddAccessRule($parentRule);[IO.Directory]::SetAccessControl($dataParent,$deniedParentAcl)
+$deniedAcl=[IO.File]::GetAccessControl($data)
+$rule=New-Object Security.AccessControl.FileSystemAccessRule ([Security.Principal.WindowsIdentity]::GetCurrent().User),([Security.AccessControl.FileSystemRights]::Delete),([Security.AccessControl.AccessControlType]::Deny)
+$deniedAcl.AddAccessRule($rule);[IO.File]::SetAccessControl($data,$deniedAcl)
+# Some elevated Windows test tokens can override explicit DACL denials. Check
+# that precondition on a separate owned file; run this case as a standard user.
+$probe=Join-Path $dataParent 'permission-probe.txt';Put $probe
+$probeAcl=[IO.File]::GetAccessControl($probe);$probeAcl.AddAccessRule($rule);[IO.File]::SetAccessControl($probe,$probeAcl)
+$enforcesDeny=$false;try{[IO.File]::Delete($probe)}catch{$enforcesDeny=$true}
+try { if($enforcesDeny){Assert ((Invoke-Uninstall $f $true) -eq 3) 'ACL denial was bypassed or misclassified'} } finally {
+  $restoredAcl=[IO.File]::GetAccessControl($data);$restoredAcl.RemoveAccessRuleSpecific($rule);[IO.File]::SetAccessControl($data,$restoredAcl)
+  $restoredParentAcl=[IO.Directory]::GetAccessControl($dataParent);$restoredParentAcl.RemoveAccessRuleSpecific($parentRule);[IO.Directory]::SetAccessControl($dataParent,$restoredParentAcl)
+  if([IO.File]::Exists($probe)){$probeAcl=[IO.File]::GetAccessControl($probe);$probeAcl.RemoveAccessRuleSpecific($rule);[IO.File]::SetAccessControl($probe,$probeAcl);[IO.File]::Delete($probe)}
+}
+if($enforcesDeny){
+  Assert ([IO.File]::ReadAllText($data) -eq 'fixture') 'ACL-denied data was modified'
+  Assert (([IO.File]::GetAttributes($data) -band [IO.FileAttributes]::ReadOnly) -ne 0) 'ACL-denied data attributes changed'
+  $events=@([IO.File]::ReadAllLines((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-uninstall-events.jsonl'))|ForEach-Object {$_|ConvertFrom-Json}|Where-Object {$_.installDir -eq $f.install})
+  Assert ($events.Count -and $events[-1].phase -eq 'LocalDataRemoval' -and $events[-1].exceptionType -eq 'System.UnauthorizedAccessException') 'ACL denial lost its original exception'
+  Assert ((Invoke-Uninstall $f $true) -eq 0) 'ACL-corrected local-data retry failed'
+  $rows+=@{case='denied-readonly-local-data-and-retry';passed=$true}
+}else{$rows+=@{case='denied-readonly-local-data-and-retry';skipped=$true;reason='Token overrides DACL denial; standard-user run required'}}
 $f=Fixture 'large-inventory'
 $files=New-Object 'System.Collections.Generic.List[string]'
 $files.Add('NuwaxU1QA.exe');$files.Add('resources/app.asar')

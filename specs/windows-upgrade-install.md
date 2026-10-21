@@ -55,6 +55,8 @@
 
 诊断保存在 `%TEMP%\Nuwax-installer-recovery.log` 和 `Nuwax-installer-recovery-events.jsonl`，包含阶段、原始错误、路径、范围及状态位置；原安装目录旁保留事务清单和归档原因。退出码 2 必须结合阶段日志定位，不能一概解释为程序仍运行。沿用现有安装实例限制和按安装路径的恢复互斥，不通过窗口猜测锁持有者。
 
+只有明确勾选删除本地数据时，才可清除自有数据普通文件及目录的只读属性后删除，包括应用内工作区的 Git pack/index 文件；删除失败时尽力恢复只读属性。不改变 ACL，不修改链接目标，也不改变默认保留数据和载荷预检。若程序载荷已移除而数据清理中断，提示必须说明“本地数据清理未完成、剩余数据与卸载入口保留”，不能承诺全部个人文件仍在。`Nuwax-uninstall-events.jsonl` 以 UTF-8 保存 `Preflight`、`ProgramRemoval`、`LocalDataRemoval` 阶段、范围、目标路径、显式数据选择及原始异常；PowerShell 的数据阶段退出码 3 由 NSIS 映射为卸载失败并保留重试入口。
+
 PowerShell 内联 C# 的编译依赖绑定到已加载的 .NET 程序集绝对路径，避免 NSIS 插件目录中的原生 `System.dll` 被误当成托管依赖。卸载和备份清理夹具均保留此同名文件回归。
 
 验证入口：`scripts/test-installer-recovery.ps1`、`test-installer-registration.ps1`、`test-installer-backup-retention.ps1`、`test-uninstall-data.ps1`，以及 `scripts/acceptance/windows-uninstall-fixture.py`。`scripts/acceptance/windows-installer-recovery.cjs` 必须在 Windows 使用固定 electron-builder 25.1.8 构建随机产品身份的无签名合成载荷，再运行 `scripts/test-installer-maintenance.ps1` 和 `test-installer-pending-recovery.ps1` 分别检查两种范围。旧 tag 安装器源码使用相同 QA 身份重新编译后，可用 `scripts/test-installer-legacy-upgrade.ps1` 验证兼容性。此夹具不能代替签名完整包、真实 3.0.16/3.0.19 载荷、交互 UAC、物理离线磁盘及实际自动更新端到端验收。
