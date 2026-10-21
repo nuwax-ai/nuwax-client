@@ -8,6 +8,7 @@ import {
   DEFAULT_SERVER_HOST,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
+import { initializeCommercialLocalPorts } from "../services/commercialLocalPorts";
 import { currentBusinessOrigin } from "../services/commercialSessionScope";
 import { currentTicket } from "../services/commercialTicketSession";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
@@ -130,7 +131,9 @@ export function initializeCommercialAuth(
   changed: (phase: string, error?: string) => void,
   expired?: () => void,
   trace?: (event: RegistrationTrace) => void,
+  reconnect?: (signal: AbortSignal) => Promise<void>,
 ) {
+  const localPorts = initializeCommercialLocalPorts();
   // Cookie auth is intentionally incompatible with legacy token-only sessions.
   // Delete both the token and the old token-paired ticket mirror once, then
   // require a fresh backend Set-Cookie login. Registration keys are preserved.
@@ -220,7 +223,10 @@ export function initializeCommercialAuth(
       if (!ticket) throw new Error("Login required");
       const ticketSession = await import("../services/commercialTicketSession");
       const requestEpoch = ticketSession.ticketEpoch();
+      await localPorts?.prepare(["agent", "fileServer", "ttyd"], signal);
+      signal.throwIfAborted();
       const ports = getConfiguredPorts();
+      const portsGeneration = localPorts?.generation;
       const sessionStartedAt = Date.now();
       report("session-check-start");
       const sessionResponse = await net.fetch(`${origin}/api/user/getLoginInfo`, {
@@ -315,8 +321,19 @@ export function initializeCommercialAuth(
         value.serverPort > 65535
       )
         throw new Error("Incomplete registration response");
-      return { ...value, origin, account };
+      return { ...value, origin, account, portsGeneration };
     },
+    registrationCurrent: (value) => !localPorts || value.portsGeneration === localPorts.generation,
+    servicesReady: () => !localPorts || ["agent", "fileServer", "ttyd"].every((service) =>
+      localPorts.get(service as "agent" | "fileServer" | "ttyd")?.status === "ready"),
+    reconnect,
+    failed: localPorts ? async () => {
+      localPorts.invalidateBusiness();
+      const [stopped, cua] = await Promise.allSettled([stop(), suspendCua("sessionEnded")]);
+      if (stopped.status === "rejected") throw stopped.reason;
+      if (cua.status === "rejected") throw cua.reason;
+      if (!stopped.value.success) throw new Error(stopped.value.error || "Service cleanup failed");
+    } : undefined,
     commit: (value) => {
       writeSetting("auth.config_key", value.configKey);
       writeSetting("auth.saved_key", value.configKey);
@@ -340,7 +357,10 @@ export function initializeCommercialAuth(
       trace?.({ attempt: registrationAttempt, stage: "reg-committed", origin: value.origin });
       // 注册返回的 ticket 不覆盖 ACCESS_TOKEN；商业版仅由网页登录建立登录态。
     },
-    invalidated: () => { void suspendCua("sessionEnded").catch(() => undefined); },
+    invalidated: () => {
+      localPorts?.invalidateBusiness();
+      void suspendCua("sessionEnded").catch(() => undefined);
+    },
     start,
     stop: async () => {
       const cuaStop = suspendCua("sessionEnded");
@@ -350,11 +370,14 @@ export function initializeCommercialAuth(
       return results[0].value;
     },
     changed,
-    // 退出期附加清理：CUA daemon 不随引擎树/进程注册表回收（detached/PPID=1），
-    // 由 before-quit 的 cleanupAllProcesses 经本钩子停止（will-quit 钩子在
-    // app.exit(0) 主退出路径上不触发，双触发幂等）。
-    stopExtras: () => suspendCua("appQuit"),
+    // CUA daemon 不随进程树回收；退出仍沿用 3.0 的清理入口。
+    stopExtras: async () => {
+      await localPorts?.dispose();
+      await suspendCua("appQuit");
+    },
   });
+  localPorts?.setOperationSignalProvider(() => flow.operationSignal);
+  localPorts?.setBeforePublish(async (signal) => { await flow.reconcileRegistration(signal); });
   setCommercialLifecycle(flow);
   return flow;
 }
