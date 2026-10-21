@@ -113,6 +113,19 @@ Var nuwaxDataLocal
   ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
     !insertmacro nuwaxStopStandaloneUninstall "卸载程序缺失，卸载已停止，原安装文件和卸载登记未删除。"
   ${endif}
+  !insertmacro nuwaxRecoveryScripts
+  StrCpy $R6 "CurrentUser"
+  ${if} $installMode == "all"
+    StrCpy $R6 "LocalMachine"
+  ${endif}
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Reconcile -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\uninstall-reconcile.txt" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
+  Pop $R0
+  Pop $R1
+  ${if} $R0 != 0
+    !insertmacro nuwaxLogRecoveryFailure UninstallReconcile
+    !insertmacro nuwaxStopStandaloneUninstall "旧版文件恢复未完成，请使用完整安装包的维护选项修复后卸载。文件与卸载入口已保留。"
+  ${endif}
+  DetailPrint "$R1"
   File /oname=$PLUGINSDIR\uninstall-data.ps1 "${BUILD_RESOURCES_DIR}\uninstall-data.ps1"
   !insertmacro nuwaxExtractUninstallInventory
   StrCpy $R3 ""
@@ -133,6 +146,25 @@ Var nuwaxDataLocal
     !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，程序文件可能被占用或路径不安全。个人文件与卸载入口已保留，请解除占用后重试。"
   ${endif}
   DetailPrint "$R1"
+  ; Remove aliases and startup only when both the app identity and the exact
+  ; target path match this installation. Other products/copies remain intact.
+  File /oname=$PLUGINSDIR\repair-shortcuts.ps1 "${BUILD_RESOURCES_DIR}\repair-shortcuts.ps1"
+  ${if} $installMode == "all"
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action Remove -Scope AllUsers -StatePath "$PLUGINSDIR\uninstall-shortcuts.json" -AppExe "$INSTDIR\${PRODUCT_FILENAME}.exe" -AppId "${APP_ID}"`
+    Pop $R0
+    Pop $R1
+    ${if} $R0 != 0
+      !insertmacro nuwaxLogRecoveryFailure UninstallCommonEntries
+      !insertmacro nuwaxStopStandaloneUninstall "无法清理本安装的快捷方式或自启动项，卸载入口已保留。请重试。"
+    ${endif}
+  ${endif}
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\repair-shortcuts.ps1" -Action Remove -Scope CurrentUser -StatePath "$PLUGINSDIR\uninstall-shortcuts.json" -AppExe "$INSTDIR\${PRODUCT_FILENAME}.exe" -AppId "${APP_ID}"`
+  Pop $R0
+  Pop $R1
+  ${if} $R0 != 0
+    !insertmacro nuwaxLogRecoveryFailure UninstallUserEntries
+    !insertmacro nuwaxStopStandaloneUninstall "无法清理本安装的快捷方式或自启动项，卸载入口已保留。请重试。"
+  ${endif}
   ClearErrors
   ${if} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
     Delete "$INSTDIR\${UNINSTALL_FILENAME}"

@@ -10,11 +10,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $comparison = [StringComparison]::OrdinalIgnoreCase
 
+# NSIS runs from a plugin directory containing a native System.dll. Bind
+# compiler references to loaded framework assemblies, never that directory.
 # The shipped inventory contains tens of thousands of files. Keep repeated path
 # walks in .NET to avoid per-ancestor PowerShell invocation overhead. Recheck
 # ancestors on every pass: cached attributes could miss a directory replaced
 # by a junction during removal.
-Add-Type -TypeDefinition @'
+Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.HashSet[string]].Assembly.Location) -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text.RegularExpressions;

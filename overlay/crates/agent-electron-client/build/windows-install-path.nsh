@@ -6,14 +6,12 @@ Var windowsRegisteredCurrentPath
 Var windowsRegisteredMachinePath
 Var windowsCurrentPathStatus
 Var windowsMachinePathStatus
+Var windowsCommandLineInstallPath
 
-!macro windowsValidateInstallDirectory INPUT OUTPUT
+!macro windowsNormalizeInstallDirectory INPUT OUTPUT
   StrCpy ${OUTPUT} ""
   StrCpy $R9 ${INPUT} 2 1
   ${if} $R9 == ":\"
-  ${andif} ${FileExists} "${INPUT}\${UNINSTALL_FILENAME}"
-    ; The parent installer may already have preserved the application's files
-    ; outside this directory. Its registered uninstaller remains until removal.
     GetFullPathName ${OUTPUT} "${INPUT}"
     StrCpy $R9 ${OUTPUT} 1 -1
     ${while} $R9 == "\"
@@ -33,8 +31,112 @@ Var windowsMachinePathStatus
   ${endif}
 !macroend
 
+!macro windowsValidateInstallDirectory INPUT OUTPUT
+  StrCpy ${OUTPUT} ""
+  StrCpy $R9 ${INPUT} 2 1
+  ${if} $R9 == ":\"
+    ; The parent installer may already have preserved the application's files
+    ; outside this directory. Its registered uninstaller remains until removal.
+    ; A complete installer can repair a missing uninstaller. An existing
+    ; directory still needs this product's payload identity; a nonexistent
+    ; directory is accepted only as the already-registered path candidate.
+    StrCpy $R9 ""
+    ${if} ${FileExists} "${INPUT}\${UNINSTALL_FILENAME}"
+      StrCpy $R9 "identified"
+    ${elseif} ${FileExists} "${INPUT}\${PRODUCT_FILENAME}.exe"
+    ${andif} ${FileExists} "${INPUT}\resources\app.asar"
+      StrCpy $R9 "identified"
+    ${else}
+      System::Call 'kernel32::GetFileAttributesW(w "${INPUT}")i.s ?e'
+      Pop $R4
+      Pop $R3
+      ${if} $R3 == -1
+        ${if} $R4 == 2
+        ${orif} $R4 == 3
+          StrCpy $R9 "missing"
+        ${endif}
+      ${endif}
+    ${endif}
+    ${if} $R9 != ""
+    !insertmacro windowsNormalizeInstallDirectory ${INPUT} ${OUTPUT}
+    ${endif}
+  ${endif}
+!macroend
+
+; Check both registry views. An unreadable key is not evidence of absence.
+; The caller preserves $0/$1 and initializes $R9 to zero.
+!macro windowsCheckUninstallKey ROOT_KEY REGISTRY_KEY
+  ; KEY_READ with KEY_WOW64_64KEY, then KEY_WOW64_32KEY.
+  StrCpy $R4 "0x20119"
+  ${while} $R4 != ""
+    !if "${ROOT_KEY}" == "HKCU"
+      System::Call 'advapi32::RegOpenKeyExW(p 0x80000001, w "${REGISTRY_KEY}", i 0, i $R4, *p .r0)i.r1'
+    !else if "${ROOT_KEY}" == "HKLM"
+      System::Call 'advapi32::RegOpenKeyExW(p 0x80000002, w "${REGISTRY_KEY}", i 0, i $R4, *p .r0)i.r1'
+    !else
+      !error "Unsupported installation registry root: ${ROOT_KEY}"
+    !endif
+    ${if} $1 == 0
+      System::Call 'advapi32::RegCloseKey(p r0)i'
+      StrCpy $R9 "1"
+    ${elseif} $1 != 2
+    ${andif} $1 != 3
+      StrCpy $R9 "1"
+    ${endif}
+    ${if} $R4 == "0x20119"
+      StrCpy $R4 "0x20219"
+    ${else}
+      StrCpy $R4 ""
+    ${endif}
+  ${endwhile}
+!macroend
+
+; A private directory hint can outlive a removed per-user installation. The
+; vendor reads that hint before selecting scope, even without an uninstall
+; entry. Remove only this orphaned value: existing directories, uninstall
+; metadata, unavailable drives and access errors must keep the safety stop.
+!macro windowsRemoveOrphanedInstallLocation ROOT_KEY INSTALL_PATH
+  Push $0
+  Push $1
+  StrCpy $R9 "0"
+  !insertmacro windowsCheckUninstallKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}"
+  !ifdef UNINSTALL_REGISTRY_KEY_2
+    !insertmacro windowsCheckUninstallKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY_2}"
+  !endif
+  StrCpy $R3 ${INSTALL_PATH} 2 1
+  ${if} $R9 == "0"
+  ${andif} $R3 == ":\"
+    StrCpy $R5 "${INSTALL_PATH}"
+    StrLen $R3 $R5
+    ${if} $R3 > 3
+      StrCpy $R3 $R5 3
+      System::Call 'kernel32::GetDriveTypeW(w "$R3")i.s'
+      Pop $R3
+      ${if} $R3 == 3
+        System::Call 'kernel32::GetFileAttributesW(w "$R5")i.r0 ?e'
+        Pop $R4
+        ${if} $0 == -1
+          ${if} $R4 == 2
+          ${orif} $R4 == 3
+            ClearErrors
+            DeleteRegValue ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
+            ${ifNot} ${Errors}
+              DetailPrint "Removed orphaned installation directory hint (${ROOT_KEY}): ${INSTALL_PATH}"
+              StrCpy ${INSTALL_PATH} ""
+            ${endif}
+          ${endif}
+        ${endif}
+      ${endif}
+    ${endif}
+  ${endif}
+  ClearErrors
+  Pop $1
+  Pop $0
+!macroend
+
 !macro windowsWriteRegisteredPath ROOT_KEY INSTALL_PATH
   WriteRegStr ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation "${INSTALL_PATH}"
+  WriteRegStr ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}" InstallLocation "${INSTALL_PATH}"
   !if "${ROOT_KEY}" == "HKLM"
     WriteRegStr ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}" UninstallString '$\"${INSTALL_PATH}\${UNINSTALL_FILENAME}$\" /allusers'
     WriteRegStr ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}" QuietUninstallString '$\"${INSTALL_PATH}\${UNINSTALL_FILENAME}$\" /allusers /S'
@@ -68,6 +170,10 @@ Var windowsMachinePathStatus
     !endif
   ${endif}
   ReadRegStr $R6 ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${if} $R0 == ""
+  ${andif} $R6 != ""
+    !insertmacro windowsRemoveOrphanedInstallLocation ${ROOT_KEY} $R6
+  ${endif}
   ${if} $R0 != ""
   ${orif} $R6 != ""
     StrCpy ${STATUS} "invalid"
@@ -160,6 +266,12 @@ Var windowsMachinePathStatus
   ${if} $R0 == "invalid"
   ${orif} $R0 == "conflict"
     DetailPrint "Cannot safely resolve the registered installation path ($R0)."
+    FileOpen $R1 "$TEMP\Nuwax-installer-recovery.log" a
+    ${ifNot} ${Errors}
+      FileSeek $R1 0 END
+      FileWrite $R1 "$\r$\n${VERSION} phase=ResolvePath status=$R0 scope=$installMode current=$windowsRegisteredCurrentPath machine=$windowsRegisteredMachinePath$\r$\n"
+      FileClose $R1
+    ${endif}
     ${ifNot} ${Silent}
       MessageBox MB_OK|MB_ICONSTOP "$(windowsInstallPathInvalid)"
     ${endif}
@@ -227,7 +339,7 @@ Var windowsMachinePathStatus
     ${andifNot} ${isForCurrentUser}
       StrCpy $installMode "all"
       SetShellVarContext all
-      ${StdUtils.GetParameter} $R0 "D" ""
+      StrCpy $R0 "$windowsCommandLineInstallPath"
       ${if} $R0 == ""
       ${andif} $windowsRegisteredMachinePath != ""
         StrCpy $INSTDIR $windowsRegisteredMachinePath
@@ -236,7 +348,10 @@ Var windowsMachinePathStatus
   !endif
   ; initMultiUser can have selected a fallback before HKLM was writable. Keep
   ; explicit /D intact, otherwise use the resolved directory for this scope.
-  ${StdUtils.GetParameter} $R0 "D" ""
+  StrCpy $R0 "$windowsCommandLineInstallPath"
+  ${if} $R0 != ""
+    StrCpy $INSTDIR "$R0"
+  ${endif}
   ${if} $R0 == ""
     ${if} $installMode == "all"
     ${andif} $windowsRegisteredMachinePath != ""
