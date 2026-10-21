@@ -691,7 +691,10 @@ function initializeClientUpdater(): void {
         "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
       );
     },
-    { installAfterDownload: process.platform === "win32" },
+    {
+      installAfterDownload:
+        process.platform === "win32" || process.platform === "darwin",
+    },
   );
 }
 

@@ -278,5 +278,60 @@
     "review": "REVIEW.md checked for the delta; release tag CI will run complete source gates",
     "installedPackageAcceptance": "delegated to user; further device QA stopped at user request",
     "stableFeedSynced": false
+  },
+  "release319Observed": {
+    "tag": "v3.0.19",
+    "source": "470a537318c7311844d9b3163a3ae00b2a28a6ba",
+    "isDraft": false,
+    "publishedAt": "2026-10-20T13:39:43Z",
+    "assetCount": 28,
+    "url": "https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.19",
+    "observationOnly": true
+  },
+  "followup320": {
+    "date": "2026-10-21",
+    "branch": "fix/stable-3.0.20-updater",
+    "stableBaseline": "a4fbf66e",
+    "basePin": "d12d001a0d51e28513cba2b60e76413275cad161",
+    "basePr": "https://github.com/nuwax-ai/nuwa-electron-shell/pull/40",
+    "baseCi": "passed",
+    "frontendAndDistPinsUnchanged": true,
+    "scope": "Enable existing host-owned one-click download, verify, install and restart on macOS; retain Windows NSIS behavior, Linux/MSI/old-host boundaries and existing stable local-port repairs",
+    "existingUi": {
+      "readyLabel": "新版本就绪",
+      "visibleWhen": "update available or downloaded; idle shows host version",
+      "openNotes": "click or hover for 0.8 seconds",
+      "action": "更新并重启升级",
+      "viewingNotesStartsUpdate": false
+    },
+    "gates": {
+      "baseUpdaterPlatform": {
+        "passed": 119,
+        "files": 2
+      },
+      "frontendBadgeAndService": {
+        "passed": 27,
+        "files": 3
+      },
+      "commercialFull": {
+        "passed": 3108,
+        "skipped": 18
+      },
+      "mainProductionBuild": "passed",
+      "rendererProductionBuild": "passed",
+      "overlayConsistency": "passed",
+      "pinBoundary": "passed",
+      "overlayCompatibility": "passed; no managed base path delta"
+    },
+    "review": "REVIEW.md and pre-commit-quality-review checked for this increment",
+    "packageAcceptance": "pending user verification; no additional device QA",
+    "stableFeedSyncPerformed": false,
+    "logSha256": {
+      "base-updater-tests.log": "f8f339c00c9676e3b6650f513f9ff8b71c80c57f7949a5463352c925c9f44e27",
+      "frontend-updater-tests.log": "9defcfbdfdf87e6bbf3f4853923160f1d29d63890f8f4310aa6c0163a35fe0ca",
+      "commercial-full.log": "bc07939bf8c3fba7145ff08eeb7ae33c145a31aa4b010b062c1c68c773d40c50",
+      "main-build-final.log": "2f9b3878e6edb9f27c374307fa725637793c3480ceefe2f5e149794adffdc5ef",
+      "renderer-build-final.log": "f9fd6f80d48bdd57bc0f05c22bc34e7bde0fc9a97be860387b451cc148c04b53"
+    }
   }
 }
