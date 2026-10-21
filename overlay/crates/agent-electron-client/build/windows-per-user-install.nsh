@@ -30,7 +30,7 @@
       Pop $0
     ${endif}
     ; Preserve vendor /D handling and the existing-installation lookup above.
-    ${StdUtils.GetParameter} $R0 "D" ""
+    StrCpy $R0 "$windowsCommandLineInstallPath"
     ${if} $R0 != ""
       StrCpy $INSTDIR $R0
     ${endif}

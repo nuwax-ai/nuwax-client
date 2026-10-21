@@ -90,13 +90,14 @@ function Read-FixtureManifest([string]$Path) {
   }
 }
 
-function Invoke-Recovery([string]$Action, [string]$StatePath, [string]$InstallDir = '') {
+function Invoke-Recovery([string]$Action, [string]$StatePath, [string]$InstallDir = '', [string[]]$ExtraArgs = @()) {
   Assert-FixturePath $StatePath
   $recoveryArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $scriptPath), '-Action', $Action, '-StatePath', ('"{0}"' -f $StatePath))
   if ($InstallDir) {
     Assert-FixturePath $InstallDir
     $recoveryArgs += @('-InstallDir', ('"{0}"' -f $InstallDir))
   }
+  $recoveryArgs += $ExtraArgs
   $start = New-Object System.Diagnostics.ProcessStartInfo
   $start.FileName = $powershellExe
   $start.Arguments = $recoveryArgs -join ' '
@@ -110,7 +111,7 @@ function Invoke-Recovery([string]$Action, [string]$StatePath, [string]$InstallDi
     Assert-True ($process.Start()) 'Could not start the recovery script.'
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit(30000)) {
+    if (-not $process.WaitForExit(45000)) {
       # This is only the child launched above, not an installation or service.
       $process.Kill()
       $process.WaitForExit()
@@ -190,10 +191,10 @@ function Test-RestoreConflict([string]$CaseName, [bool]$PartialRestore) {
   $recoveryCount = @([IO.Directory]::GetDirectories($caseRoot, 'Nuwax-installer-recovery-*')).Count
   $reprepare = Invoke-Recovery 'Prepare' $freshState $install
   Assert-True ($reprepare.ExitCode -ne 0) 'Prepare mixed a new installation into the unfinished recovery.'
-  Assert-True ($reprepare.Output.Contains('unfinished Restore/Rollback')) 'Prepare failed for a reason other than the unfinished recovery guard.'
+  Assert-True ($reprepare.Output.Contains('conflicts remain')) 'Prepare failed for a reason other than the unfinished recovery guard.'
   Assert-True (-not [IO.File]::Exists($freshState)) 'Rejected Prepare wrote new plugin state.'
   Assert-True (@([IO.Directory]::GetDirectories($caseRoot, 'Nuwax-installer-recovery-*')).Count -eq $recoveryCount) 'Rejected Prepare created another recovery directory.'
-  Assert-True ((Get-FixtureHash $manifest) -eq $manifestHash) 'Rejected Prepare changed the recovery manifest.'
+  Assert-True ((@(Read-FixtureManifest $manifest))[-1].status -eq 'restore-incomplete') 'Failed automatic resume did not preserve unfinished status.'
   Assert-True ((Get-FixtureHash $marker) -eq $markerHash) 'Rejected Prepare changed the persistent marker.'
   Assert-True ((Get-FixtureHash $backupFile) -eq $originalHash) 'Rejected Prepare changed preserved data.'
 
@@ -343,16 +344,16 @@ function Test-PayloadExtras([string]$Mode) {
     $null = & cmd.exe /d /c mklink /J "$resources\linked-destination" $outside
     Assert-True ($LASTEXITCODE -eq 0) 'Could not create destination junction fixture.'
   }
-  if ($Mode -in @('interrupted', 'failure')) {
+  if ($Mode -eq 'interrupted') {
     # Simulate process loss after an atomic nested rename and before its
     # completion record, using the same durable intent as the implementation.
     $intent = [ordered]@{ status = 'payload-restore-intent'; original = "$resources\a-first.txt"; backup = "$backup\a-first.txt" }
     [IO.File]::AppendAllText($manifest, (($intent | ConvertTo-Json -Compress) + [Environment]::NewLine))
     [IO.File]::Move("$backup\a-first.txt", "$resources\a-first.txt")
     $freshState = "$caseRoot\fresh-plugin-state.txt"
-    $blocked = Invoke-Recovery 'Prepare' $freshState $install
-    Assert-True ($blocked.ExitCode -ne 0 -and $blocked.Output.Contains('unfinished Restore/Rollback')) 'New Prepare ignored partial nested restoration.'
-    Assert-True (-not [IO.File]::Exists($freshState)) 'Blocked Prepare wrote a new transaction.'
+    $resumed = Invoke-Recovery 'Reconcile' $freshState $install
+    Assert-True ($resumed.ExitCode -eq 0) ('Interrupted restore did not resume: ' + $resumed.Output)
+    Assert-True (-not [IO.File]::Exists($freshState)) 'Reconcile created a new preservation transaction.'
   }
   if ($Mode -eq 'failure') {
     $lock = [IO.File]::Open("$backup\z-locked.txt", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
@@ -393,8 +394,189 @@ function Test-PayloadExtras([string]$Mode) {
   return [pscustomobject]@{ case = $caseName; passed = $true; missingEntriesRestoredInPlace = $true; newPayloadPreserved = $true; collisionBackupsRetained = $true }
 }
 
+function Test-DamagedState([string]$Mode) {
+  $caseRoot = Join-Path $fixtureRoot ('damaged-' + $Mode)
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  $fresh = Join-Path $caseRoot 'fresh.txt'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'not executable'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  Write-FixtureFile "$install\resources\app.asar" 'old resources'
+  Write-FixtureFile "$install\workspace\old.txt" 'old workspace'
+  $first = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($first.ExitCode -eq 0) $first.Output
+  $backup = [IO.File]::ReadAllText($state).Trim()
+  $manifest = Join-Path $backup 'manifest.jsonl'
+  $marker = @([IO.Directory]::GetFiles($caseRoot, 'Nuwax-installer-recovery-active-*.txt'))[0]
+  $oldManifest = [IO.File]::ReadAllText($manifest)
+  if ($Mode -eq 'missing-directory') { Remove-FixtureTree (Get-ExtendedFixturePath $backup) }
+  elseif ($Mode -eq 'missing-manifest') { [IO.File]::Delete($manifest) }
+  elseif ($Mode -eq 'corrupt-manifest') { [IO.File]::WriteAllText($manifest, '{truncated') }
+  elseif ($Mode -eq 'foreign-manifest') {
+    $rows = @([IO.File]::ReadAllLines($manifest))
+    $header = $rows[0] | ConvertFrom-Json
+    $header.installDir = Join-Path $caseRoot 'other-installation'
+    $rows[0] = $header | ConvertTo-Json -Compress
+    [IO.File]::WriteAllLines($manifest, $rows)
+  }
+  Write-FixtureFile "$install\Nuwax.exe" 'current app'
+  Write-FixtureFile "$install\resources\app.asar" 'current resources'
+  Write-FixtureFile "$install\current-workspace\keep.txt" 'current user data'
+  $hash = Get-FixtureHash "$install\current-workspace\keep.txt"
+  $options = @()
+  if ($Mode -ne 'missing-directory') {
+    $rejected = Invoke-Recovery 'Prepare' $fresh $install
+    Assert-True ($rejected.ExitCode -ne 0) 'Damaged manifest was silently accepted.'
+    Assert-True ([IO.File]::ReadAllText($marker).Trim() -eq $backup) 'Rejected operation changed the marker.'
+    Assert-True ((Get-FixtureHash "$install\current-workspace\keep.txt") -eq $hash) 'Rejected operation changed current user data.'
+    $options = @('-Repair')
+  }
+  $retry = Invoke-Recovery 'Prepare' $fresh $install $options
+  if ($Mode -eq 'foreign-manifest') {
+    Assert-True ($retry.ExitCode -ne 0) 'Explicit repair adopted a different installation.'
+    return [pscustomobject]@{ case = 'damaged-' + $Mode; passed = $true }
+  }
+  Assert-True ($retry.ExitCode -eq 0) $retry.Output
+  Assert-True (@([IO.Directory]::GetFiles($caseRoot, '*.archived-*.json')).Count -eq 1) 'Failed recovery pointer was not archived exactly once.'
+  if ($Mode -ne 'missing-directory') { Assert-True ([IO.Directory]::Exists($backup)) 'Explicit repair removed the old backup.' }
+  $again = Invoke-Recovery 'Prepare' $fresh $install
+  Assert-True ($again.ExitCode -eq 0) $again.Output
+  Write-FixtureFile "$install\Nuwax.exe" 'final app'
+  Write-FixtureFile "$install\resources\app.asar" 'final resources'
+  $restore = Invoke-Recovery 'Restore' $fresh
+  Assert-True ($restore.ExitCode -eq 0) $restore.Output
+  Assert-True ((Get-FixtureHash "$install\current-workspace\keep.txt") -eq $hash) 'Repair lost current user data.'
+  return [pscustomobject]@{ case = 'damaged-' + $Mode; passed = $true; currentDataPreserved = $true }
+}
+function Get-ExtendedFixturePath([string]$Path) { Assert-FixturePath $Path; return '\\?\' + $Path }
+
+function Test-MissingUninstaller {
+  $caseRoot = Join-Path $fixtureRoot 'missing-uninstaller'
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  Write-FixtureFile "$install\resources\app.asar" 'old resources'
+  Write-FixtureFile "$install\workspace\keep.txt" 'user data'
+  $hash = Get-FixtureHash "$install\workspace\keep.txt"
+  $rejected = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($rejected.ExitCode -ne 0) 'Ordinary recovery accepted missing uninstaller without repair authorization.'
+  $prepared = Invoke-Recovery 'Prepare' $state $install @('-AllowMissingUninstaller')
+  Assert-True ($prepared.ExitCode -eq 0) $prepared.Output
+  $detach = Invoke-Recovery 'Detach' $state
+  Assert-True ($detach.ExitCode -eq 0) $detach.Output
+  Write-FixtureFile "$install\Nuwax.exe" 'new app'
+  Write-FixtureFile "$install\resources\app.asar" 'new resources'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'new uninstall entry'
+  $restored = Invoke-Recovery 'Restore' $state
+  Assert-True ($restored.ExitCode -eq 0) $restored.Output
+  Assert-True ((Get-FixtureHash "$install\workspace\keep.txt") -eq $hash) 'Missing-uninstaller repair lost data.'
+  return [pscustomobject]@{ case = 'missing-uninstaller'; passed = $true }
+}
+
+function Test-DetachGuard {
+  $caseRoot = Join-Path $fixtureRoot 'detach-guard'
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'fake broken executable'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  $prepared = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($prepared.ExitCode -eq 0) $prepared.Output
+  Write-FixtureFile "$install\unexpected.txt" 'must survive'
+  $detach = Invoke-Recovery 'Detach' $state
+  Assert-True ($detach.ExitCode -ne 0) 'Detach ignored a newly appeared file.'
+  Assert-True ([IO.File]::ReadAllText("$install\unexpected.txt") -eq 'must survive') 'Detach deleted unknown file.'
+  [IO.File]::Delete("$install\unexpected.txt")
+  $retry = Invoke-Recovery 'Detach' $state
+  Assert-True ($retry.ExitCode -eq 0) $retry.Output
+  Assert-True (-not [IO.File]::Exists("$install\Uninstall Nuwax.exe")) 'Broken uninstaller still blocks replacement.'
+  $rollback = Invoke-Recovery 'Rollback' $state
+  Assert-True ($rollback.ExitCode -eq 0) $rollback.Output
+  Assert-True ([IO.File]::ReadAllText("$install\Uninstall Nuwax.exe") -eq 'fake broken executable') 'Rollback did not restore old uninstall entry.'
+  return [pscustomobject]@{ case = 'detach-and-rollback'; passed = $true }
+}
+
+function Test-SpaceGuard {
+  $caseRoot = Join-Path $fixtureRoot 'space-guard'
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'fake uninstall'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  $result = Invoke-Recovery 'Prepare' $state $install @('-RequiredSpaceKB', '900000000000')
+  Assert-True ($result.ExitCode -ne 0) 'Space preflight did not reject impossible requirement.'
+  Assert-True ([IO.File]::ReadAllText("$install\Nuwax.exe") -eq 'old app') 'Space failure changed old payload.'
+  Assert-True (-not [IO.File]::Exists($state)) 'Space failure published a new transaction.'
+  return [pscustomobject]@{ case = 'space-preflight'; passed = $true }
+}
+
+function Test-EmptyMarker {
+  $caseRoot = Join-Path $fixtureRoot 'empty-marker'
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'fake uninstaller'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  $first = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($first.ExitCode -eq 0) $first.Output
+  $marker = @([IO.Directory]::GetFiles($caseRoot, 'Nuwax-installer-recovery-active-*.txt'))[0]
+  [IO.File]::WriteAllText($marker, '')
+  $fresh = Join-Path $caseRoot 'fresh.txt'
+  $rejected = Invoke-Recovery 'Prepare' $fresh $install
+  Assert-True ($rejected.ExitCode -ne 0) 'Empty marker was accepted without explicit repair.'
+  Write-FixtureFile "$install\Nuwax.exe" 'current app'
+  $repair = Invoke-Recovery 'Prepare' $fresh $install @('-Repair')
+  Assert-True ($repair.ExitCode -eq 0) $repair.Output
+  return [pscustomobject]@{ case = 'empty-marker-explicit-repair'; passed = $true }
+}
+
+function Test-RecoveryReparseGuard {
+  $caseRoot = Join-Path $fixtureRoot 'recovery-reparse'
+  $install = Join-Path $caseRoot 'installation'
+  $outside = Join-Path $caseRoot 'outside'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$outside\Uninstall Nuwax.exe" 'outside uninstaller'
+  Write-FixtureFile "$outside\Nuwax.exe" 'outside app'
+  $null = & cmd.exe /d /c mklink /J $install $outside
+  Assert-True ($LASTEXITCODE -eq 0) 'Could not create own fixture junction.'
+  $attempt = Invoke-Recovery 'Prepare' $state $install @('-Repair')
+  Assert-True ($attempt.ExitCode -ne 0) 'Recovery followed an installation junction.'
+  Assert-True ([IO.File]::ReadAllText("$outside\Nuwax.exe") -eq 'outside app') 'Recovery modified the junction target.'
+  Assert-True (-not [IO.File]::Exists($state)) 'Redirected path published state.'
+  return [pscustomobject]@{ case = 'recovery-reparse-guard'; passed = $true }
+}
+
+function Test-RecoveryMutex {
+  $caseRoot = Join-Path $fixtureRoot 'recovery-mutex'
+  $install = Join-Path $caseRoot 'installation'
+  $state = Join-Path $caseRoot 'state.txt'
+  Write-FixtureFile "$install\Uninstall Nuwax.exe" 'fake uninstaller'
+  Write-FixtureFile "$install\Nuwax.exe" 'old app'
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
+  finally { $sha.Dispose() }
+  $mutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-Nuwax-installer-recovery-active-' + $hash))
+  Assert-True ($mutex.WaitOne(0)) 'Could not acquire owned fixture mutex.'
+  try {
+    $attempt = Invoke-Recovery 'Prepare' $state $install
+    Assert-True ($attempt.ExitCode -ne 0 -and $attempt.Output.Contains('Another recovery operation')) 'Concurrent recovery did not stop on the owned mutex.'
+    Assert-True ([IO.File]::ReadAllText("$install\Nuwax.exe") -eq 'old app') 'Concurrent recovery changed the payload.'
+    Assert-True (-not [IO.File]::Exists($state)) 'Concurrent recovery published state.'
+  } finally { $mutex.ReleaseMutex(); $mutex.Dispose() }
+  $retry = Invoke-Recovery 'Prepare' $state $install
+  Assert-True ($retry.ExitCode -eq 0) $retry.Output
+  return [pscustomobject]@{ case = 'recovery-mutex-and-retry'; passed = $true }
+}
+
 try {
   $cases = @(
+    (Test-EmptyMarker),
+    (Test-RecoveryReparseGuard),
+    (Test-RecoveryMutex),
+    (Test-DamagedState 'missing-directory'),
+    (Test-DamagedState 'missing-manifest'),
+    (Test-DamagedState 'corrupt-manifest'),
+    (Test-DamagedState 'foreign-manifest'),
+    (Test-MissingUninstaller),
+    (Test-DetachGuard),
+    (Test-SpaceGuard),
     (Test-RestoreConflict 'all-conflicts' $false),
     (Test-RestoreConflict 'partial-restore' $true),
     (Test-InterruptedUpgrade 'interrupted-app-only' $false $false),

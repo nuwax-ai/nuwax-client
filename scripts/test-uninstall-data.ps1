@@ -21,11 +21,12 @@ function Fixture([string]$Name) {
   @{schemaVersion=1;executable='NuwaxU1QA.exe';files=@('NuwaxU1QA.exe','resources/app.asar');directories=@('resources');dataDirectoryName='.nuwax-u1-qa';appDataName='NuwaxU1QA';updaterCacheName='nuwax-u1-qa-updater'}|ConvertTo-Json -Depth 4|Set-Content -Encoding UTF8 $manifest
   return @{base=$base;install=$install;profile=$profile;roaming=$roaming;local=$local;manifest=$manifest}
 }
-function Invoke-Uninstall($f, [bool]$Delete = $false) {
+function Invoke-Uninstall($f, [bool]$Delete = $false, [string]$WorkingDirectory = '') {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
   $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $ScriptPath + '" -InstallDir "' + $f.install + '" -ManifestPath "' + $f.manifest + '" -ProfileDir "' + $f.profile + '" -RoamingDir "' + $f.roaming + '" -LocalDir "' + $f.local + '"' + $(if ($Delete) { ' -DeleteLocalData' } else { '' })
   $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardError=$true; $psi.RedirectStandardOutput=$true
+  if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
   $p=[Diagnostics.Process]::Start($psi)
   if (!$p.WaitForExit(90000)) { $p.Kill(); throw 'Uninstall fixture exceeded 90 seconds.' }
   $stdout=$p.StandardOutput.ReadToEnd(); $stderr=$p.StandardError.ReadToEnd(); $p.WaitForExit()
@@ -44,6 +45,11 @@ foreach ($delete in @($false,$true)) {
   Assert ([IO.File]::ReadAllText("$($f.base)\outside\sentinel.txt") -eq 'fixture') 'External data lost'
   $rows+=@{case=$name;passed=$true}
 }
+$f=Fixture 'nsis-system-dll-shadow'
+Put (Join-Path $f.base 'System.dll') 'Native NSIS plugin, not a managed assembly'
+Assert ((Invoke-Uninstall $f $false $f.base) -eq 0) 'NSIS System.dll shadowed framework compiler references'
+Assert (Test-Path "$($f.install)\workspace\personal.txt") 'Plugin-directory uninstall removed workspace'
+$rows+=@{case='nsis-system-dll-shadow';passed=$true}
 $f=Fixture 'locked-preflight'
 $lock=[IO.File]::Open("$($f.install)\resources\app.asar",[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
 try { Assert ((Invoke-Uninstall $f $true) -ne 0) 'Locked payload accepted' } finally { $lock.Dispose() }

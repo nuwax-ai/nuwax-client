@@ -7,6 +7,7 @@ import config from '../../client.config.mjs';
 import { run, git, withLock } from './core.mjs';
 import { parseReleaseVersion, parseReleaseTag, releaseSequenceFindings, compareReleaseVersions } from '../release-version.mjs';
 import { hashResponse, mapLimit, verifyS3Asset, VERIFY_CONCURRENCY } from '../release-storage-integrity.mjs';
+import { readBetaChannelReplacement, allowsBetaChannelReplacement } from '../beta-channel-replacement.mjs';
 
 const platforms = ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64', 'linux-arm64'];
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -299,7 +300,7 @@ async function pointers(tools, settings, identity) {
   return { value, bytes: Buffer.from(s3) };
 }
 
-async function preventPointerDowngrade(tools, settings, identity) {
+export async function preventPointerDowngrade(tools, settings, identity, replacement = readBetaChannelReplacement(identity)) {
   const folder = identity.channel === 'stable' ? 'latest' : 'beta';
   await Promise.all([settings.s3Base, settings.ossBase].map(async (base) => {
     let bytes;
@@ -310,7 +311,8 @@ async function preventPointerDowngrade(tools, settings, identity) {
     }
     const version = JSON.parse(Buffer.from(bytes).toString()).version;
     try { parseReleaseVersion(version); } catch { throw new Error('当前通道指针版本无效，停止同步'); }
-    if (compareReleaseVersions(version, identity.version) > 0) throw new Error(`禁止 ${identity.channel} 通道从 ${version} 降级到 ${identity.version}；历史版本仅可继续构建或签名`);
+    if (compareReleaseVersions(version, identity.version) > 0 && !allowsBetaChannelReplacement(identity, folder, bytes, replacement))
+      throw new Error(`禁止 ${identity.channel} 通道从 ${version} 降级到 ${identity.version}；历史版本仅可继续构建或签名`);
   }));
 }
 

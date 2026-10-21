@@ -62,7 +62,7 @@ function Save-RecoveryPayloadInventory([string]$InventoryPath) {
 
 function Initialize-RecoveryRetentionIO {
   if ('NuwaxRecoveryRetentionIO' -as [type]) { return }
-  Add-Type -TypeDefinition @'
+  Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.HashSet[string]].Assembly.Location) -TypeDefinition @'
 using System;
 using System.IO;
 using System.Collections.Generic;
@@ -70,7 +70,7 @@ using System.Security.Cryptography;
 
 public static class NuwaxRecoveryRetentionIO {
   static readonly HashSet<string> Controls = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-    "manifest.jsonl", "payload-inventory.json", "uninstaller-backup.exe"
+    "manifest.jsonl", "payload-inventory.json", "uninstaller-backup.exe", "registration.json"
   };
   static void Guard(string path) {
     for (string p = path; !String.IsNullOrEmpty(p); p = Path.GetDirectoryName(p)) {
@@ -93,10 +93,12 @@ public static class NuwaxRecoveryRetentionIO {
     return true;
   }
   public static bool Prune(string root, Dictionary<string,string> moves,
-      Dictionary<string,string> hashes, HashSet<string> ownedDirectories, string uninstallerHash) {
+      Dictionary<string,string> hashes, HashSet<string> ownedDirectories, string uninstallerHash, string registrationHash) {
     Guard(root);
     string uninstaller = Path.Combine(root, "uninstaller-backup.exe");
     if (File.Exists(uninstaller) && Hash(uninstaller) != uninstallerHash) return false;
+    string registration = Path.Combine(root, "registration.json");
+    if (File.Exists(registration) && Hash(registration) != registrationHash) return false;
     var files = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
     var directories = new List<string>();
     var pending = new Stack<KeyValuePair<string,string>>();
@@ -137,11 +139,12 @@ public static class NuwaxRecoveryRetentionIO {
       Guard(entry);
       if (!Controls.Contains(Path.GetFileName(entry)) || (File.GetAttributes(entry) & FileAttributes.Directory) != 0) return false;
     }
-    foreach (string name in new [] { "uninstaller-backup.exe", "payload-inventory.json", "manifest.jsonl" }) {
+    foreach (string name in new [] { "uninstaller-backup.exe", "payload-inventory.json", "registration.json", "manifest.jsonl" }) {
       string file = Path.Combine(root, name);
       if (File.Exists(file)) {
         Guard(file);
         if (name == "uninstaller-backup.exe" && Hash(file) != uninstallerHash) throw new IOException("Uninstaller backup changed during cleanup.");
+        if (name == "registration.json" && Hash(file) != registrationHash) throw new IOException("Registration snapshot changed during cleanup.");
         File.Delete(file);
       }
     }
@@ -176,7 +179,9 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
           -not [string]::Equals([string]$history[0].installDir, $InstallRoot, $pathComparison) -or
           -not [string]::Equals([string]$history[0].recoveryDir, $plainFolder, $pathComparison)) { continue }
       $terminal = $history[$history.Count - 1]
-      if ($terminal.status -notin @('restore-complete', 'rollback-complete')) { $protected++; continue }
+      if ($terminal.status -notin @('restore-complete', 'rollback-complete')) {
+        $protected++; Write-Output "Backup retained: $plainFolder; reason=unfinished-transaction"; continue
+      }
       $finished = [IO.File]::GetLastWriteTimeUtc($manifest)
       if ($terminal.completedAtUtc) { $finished = [DateTime]::Parse($terminal.completedAtUtc, [Globalization.CultureInfo]::InvariantCulture).ToUniversalTime() }
       if ($finished -lt $created) { $finished = $created }
@@ -188,11 +193,16 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
   for ($i = 0; $i -lt $ordered.Count; $i++) {
     $candidate = $ordered[$i]
     if ($i -eq 0 -or [string]::Equals($candidate.path, $KeepDirectory, $pathComparison) -or
-        $candidate.finished -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
+        $candidate.finished -gt [DateTime]::UtcNow.AddDays(-7)) {
+      Write-Output ('Backup retained: ' + $candidate.path + '; reason=latest-or-seven-day-window')
+      continue
+    }
     try {
       Initialize-RecoveryRetentionIO
       $proof = @($candidate.history | Where-Object { $_.status -eq 'payload-inventory-recorded' })
-      if ($proof.Count -eq 0 -or $proof[$proof.Count - 1].uninstallerSha256 -notmatch '^[a-f0-9]{64}$') { $protected++; continue }
+      if ($proof.Count -eq 0 -or $proof[$proof.Count - 1].uninstallerSha256 -notmatch '^[a-f0-9]{64}$') {
+        $protected++; Write-Output ('Backup retained: ' + $candidate.path + '; reason=missing-old-payload-ownership'); continue
+      }
       $inventoryPath = [IO.Path]::Combine($candidate.extended, 'payload-inventory.json')
       if ([NuwaxRecoveryRetentionIO]::Hash($inventoryPath) -ne $proof[$proof.Count - 1].sha256) { $protected++; continue }
       $inventory = [IO.File]::ReadAllText($inventoryPath, $utf8) | ConvertFrom-Json
@@ -216,8 +226,19 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
             [IO.Path]::GetFileName([string]$record.backup) -notmatch '^entry-[0-9]{6,}$') { throw 'Invalid recovery move.' }
         $moves.Add([IO.Path]::GetFileName([string]$record.backup), [IO.Path]::GetFileName([string]$record.original))
       }
-      if ([NuwaxRecoveryRetentionIO]::Prune($candidate.extended, $moves, $hashes, $directories, $proof[$proof.Count - 1].uninstallerSha256)) { $deleted++ }
-      else { $protected++ }
+      $registrationHash = ''
+      $registrationPath = [IO.Path]::Combine($candidate.extended, 'registration.json')
+      if (Test-EntryExists $registrationPath) {
+        $registrationProof = @($candidate.history | Where-Object { $_.status -eq 'registration-snapshot-recorded' })
+        if (-not $registrationProof.Count) { throw 'Registration snapshot ownership is missing.' }
+        # The transaction uses base64 digests; the pruning IO uses hex.
+        $registrationHash = [BitConverter]::ToString([Convert]::FromBase64String($registrationProof[-1].sha256)).Replace('-', '').ToLowerInvariant()
+      }
+      if ([NuwaxRecoveryRetentionIO]::Prune($candidate.extended, $moves, $hashes, $directories, $proof[$proof.Count - 1].uninstallerSha256, $registrationHash)) {
+        $deleted++; Write-Output ('Backup deleted: ' + $candidate.path + '; reason=verified-expired-payload')
+      } else {
+        $protected++; Write-Output ('Backup retained: ' + $candidate.path + '; reason=unknown-or-modified-content')
+      }
     } catch { $protected++; Write-Output ('Backup retained: ' + $candidate.path + ': ' + $_.Exception.Message) }
   }
   Write-Output "Backup retention: deleted=$deleted protected=$protected; keep latest=1, older backups expire after 7 days."

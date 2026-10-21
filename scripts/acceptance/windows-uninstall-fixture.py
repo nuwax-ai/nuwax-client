@@ -46,6 +46,7 @@ SilentUnInstall silent
 !define UNINSTALL_FILENAME "Uninstall Nuwax.exe"
 !define VERSION "0.0.0"
 !define PRODUCT_FILENAME "Nuwax"
+!define APP_ID "com.nuwax.fixture.{run_id}"
 !define APP_PACKAGE_NAME "nuwax-fixture"
 !define INSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
 !define UNINSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
@@ -187,13 +188,16 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--nsis-root', type=Path, help='Pinned nsis-3.0.4.1 cache directory')
     parser.add_argument('--baseline-header', type=Path, help='Optional pre-fix canonical installer.nsh for before/after proof')
+    parser.add_argument('--vendor-uninstaller', type=Path, help='Explicit pinned builder 25.1.8 uninstaller.nsh for an isolated worktree')
     args = parser.parse_args()
     if os.name != 'nt' and not args.ssh_host:
         parser.error('An explicit Windows SSH host is required from another platform')
     SSH_HOST, BASELINE = args.ssh_host, args.baseline_header
     phase = 'before' if BASELINE else 'after'
     vendors = list((CLIENT / 'nuwa-electron-shell/node_modules/.pnpm').glob('app-builder-lib@25.1.8*/node_modules/app-builder-lib/templates/nsis/uninstaller.nsh'))
-    if len(vendors) != 1:
+    if args.vendor_uninstaller:
+        vendors = [args.vendor_uninstaller.resolve()]
+    if len(vendors) != 1 or not vendors[0].is_file():
         raise ValueError('Exactly one pinned app-builder-lib 25.1.8 is required')
     VENDOR = vendors[0]
     default_nsis = (Path(os.environ['LOCALAPPDATA']) / 'electron-builder/Cache/nsis/nsis-3.0.4.1' if os.name == 'nt'
