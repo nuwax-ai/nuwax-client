@@ -915,6 +915,7 @@ export const localFilesFeature: DesktopFeature = {
   products: ["nuwax"],
   enabledByDefault: true,
   // 本机文件直访尚未提测，本次上线强制关闭，避免历史设置重新启用。
+  lockedOff: "3.0.22 preserves the existing local-file release boundary",
   bridge: { namespaces: ["localFiles"] },
   requests: { authorize: authorizeLocalFilesRequest, isSource: isLocalFilesRequestSource },
   schemes: [

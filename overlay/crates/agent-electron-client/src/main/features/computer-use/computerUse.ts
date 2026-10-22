@@ -567,6 +567,10 @@ async function launchDaemon(helperRoot: string): Promise<string> {
  */
 export async function stopDaemon(): Promise<void> {
   const helperPath = findHelperApp();
+  const literal = (value: string) => value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+  const executable = helperPath ? literal(helperExecutable(helperPath))
+    : IS_MAC ? "/.*/Nuwax Computer Use" : "/.*/NuwaxComputerUse";
+  const servingPrefix = `^${executable} serve --socket `;
   let stopped = false;
   if (helperPath) {
     try {
@@ -583,7 +587,7 @@ export async function stopDaemon(): Promise<void> {
   try {
     if (stopped) return;
     if (!IS_WIN) {
-      await pexec("pkill", ["-f", `serve --socket ${endpoint().socketPath}`], { timeout: 1500 });
+      await pexec("pkill", ["-KILL", "-f", `${servingPrefix}${literal(endpoint().socketPath)}( |$)`], { timeout: 1500 });
     }
   } catch {
     // 未在运行，无需清理
@@ -600,16 +604,12 @@ export async function stopDaemon(): Promise<void> {
       // 包含升级前固定 pipe 与新的随机 pipe；按同产品 serve 命令线兜底清理。
       await pexec("powershell", [
         "-NoProfile", "-Command",
-        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+        "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'NuwaxComputerUse.exe' -and $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
       ], { timeout: 1500 }).catch(() => undefined);
     } else {
-      await pexec("pkill", ["-f", `serve --socket ${LEGACY_SOCKET_PATH}`], { timeout: 1500 }).catch(() => undefined);
+      await pexec("pkill", ["-KILL", "-f", `${servingPrefix}${literal(LEGACY_SOCKET_PATH)}( |$)`], { timeout: 1500 }).catch(() => undefined);
       // token/manifest 丢失时无法恢复旧随机端点；按产品 helper 名清理孤儿 daemon。
-      const helperPattern = IS_MAC
-        ? "Nuwax Computer Use.*serve --socket"
-        : "NuwaxComputerUse.*serve --socket";
-      await pexec("pkill", ["-f", helperPattern], { timeout: 1500 }).catch(() => undefined);
-
+      await pexec("pkill", ["-KILL", "-f", servingPrefix + ".*"], { timeout: 1500 }).catch(() => undefined);
     }
   }
 }

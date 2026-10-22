@@ -156,10 +156,10 @@ describe("startDesktopFeatures", () => {
   });
 
   it.each([
-    [undefined, true],
-    [true, true],
+    [undefined, false],
+    [true, false],
     [false, false],
-  ])("本机文件直访默认开启，设置覆盖 %s 时注册结果为 %s", async (override, expected) => {
+  ])("3.0 本机文件直访保持关闭，历史设置 %s 不能改变注册结果 %s", async (override, expected) => {
 
     const localFiles = desktopFeatures.find((f) => f.id === "local-files")!;
     const register = vi.spyOn(localFiles, "register").mockReturnValue({ dispose: vi.fn() });
@@ -167,7 +167,7 @@ describe("startDesktopFeatures", () => {
     const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
     try {
       const out = startDesktopFeatures(options({ ipcMain, isEnabled: readEnabled }), [localFiles]);
-      expect(readEnabled).toHaveBeenCalledWith("local-files", true);
+      expect(readEnabled).not.toHaveBeenCalled();
       expect(out.ids).toEqual(expected ? ["local-files"] : []);
       expect(isDesktopFeatureRegistered("local-files")).toBe(expected);
       expect(register).toHaveBeenCalledTimes(expected ? 1 : 0);

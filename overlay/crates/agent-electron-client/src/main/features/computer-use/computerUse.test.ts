@@ -325,6 +325,20 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
 });
 
 describe("cua 开关与启动收敛", () => {
+  it("未设置开关时默认关闭，启动只清除旧 MCP 条目，不安装或启动 helper", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.settings.set("mcp_local_config", JSON.stringify({ mcpServers: {
+      cua: { command: "old-helper", args: ["mcp"] },
+      other: { command: "other-server", args: [] },
+    } }));
+    await ensureCuaOnBoot();
+    expect(readMcpServers()).toEqual({ other: { command: "other-server", args: [] } });
+    expect(fs.existsSync(stableHelperPath())).toBe(false);
+    expect(mocks.spawnCalls).toEqual([]);
+    expect(mocks.execCalls).toEqual([]);
+    expect((await getCuaStatus()).enabled).toBe(false);
+  });
+
   it("setCuaEnabled(false)→持久化关闭+移除条目+协议停机", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     mocks.settings.set(
@@ -362,6 +376,10 @@ describe("cua 开关与启动收敛", () => {
     // Fallbacks must terminate the daemon and never match a bare product name.
     expect(kills.every(call => call.args.includes("-KILL"))).toBe(true);
     expect(kills.every(call => call.args.some(arg => arg.startsWith("^") && arg.includes(" serve --socket ")))).toBe(true);
+    const pattern = kills[kills.length - 1].args[kills[kills.length - 1].args.length - 1];
+    const command = path.join(stableHelperPath(), "Contents", "MacOS", "Nuwax Computer Use") + " serve --socket /owned-endpoint";
+    expect(new RegExp(pattern).test(command)).toBe(true);
+    expect(new RegExp(pattern).test("node -e '" + command + "'")).toBe(false);
   });
 
   it("ensureCuaOnBoot：开关开但 helper 消失→清理僵尸条目", async () => {
