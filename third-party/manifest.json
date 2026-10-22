@@ -232,10 +232,10 @@
     "computer-use": {
       "id": "computer-use",
       "name": "Nuwax Computer Use helper",
-      "version": "0.28.2",
+      "version": "0.38.0",
       "license": "MIT",
       "licenseFile": "third-party/licenses/computer-use.txt",
-      "sourceUrl": "https://github.com/trycua/cua/tree/625118a9076e51da2f57b6a5d475972030197443",
+      "sourceUrl": "https://github.com/trycua/cua/tree/85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19",
       "modified": true,
       "checkIntegrity": true,
       "notes": "Nuwax identity and private-endpoint patches: docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch in the corresponding nuwax-client source revision."
