@@ -9,8 +9,8 @@
 #   win: "$OUT_DIR/NuwaxComputerUse.exe"
 #
 # 环境变量：
-#   CUA_COMMIT            锁定的 cua 仓 commit（默认 625118a90，升级须连同 SDK 版本四契约一起换）
-#   CUA_VERSION           写进 Info.plist 的版本串（默认 0.28.2）
+#   CUA_COMMIT            锁定的 cua 仓 commit（默认 85e2b1318，升级须迁移商业补丁并验证原生协议和宿主白名单）
+#   CUA_VERSION           写进 Info.plist 的版本串（默认 0.38.0）
 #   TARGET_TRIPLE         Rust target（必填，如 aarch64-apple-darwin / x86_64-pc-windows-msvc）
 #   OUT_DIR               产物目录（必填，一般=agent-electron-client/resources/computer-use）
 #   ICON_ICNS             mac 图标源（默认直接复用商业版主应用的 canonical icon.icns）
@@ -18,8 +18,8 @@
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
 set -euo pipefail
 
-CUA_COMMIT="${CUA_COMMIT:-625118a9076e51da2f57b6a5d475972030197443}"
-CUA_VERSION="${CUA_VERSION:-0.28.2}"
+CUA_COMMIT="${CUA_COMMIT:-85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19}"
+CUA_VERSION="${CUA_VERSION:-0.38.0}"
 TARGET_TRIPLE="${TARGET_TRIPLE:?TARGET_TRIPLE required}"
 OUT_DIR="${OUT_DIR:?OUT_DIR required}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,8 +41,8 @@ if [ -n "${NUWAX_CUA_SOURCE_DIR:-}" ]; then
 else
   [ -f "$PATCH_FILE" ] || { echo "::error::patch not found: $PATCH_FILE"; exit 1; }
   echo "[cua-helper] cloning trycua/cua @ $CUA_COMMIT ..."
-  # The helper only uses this Rust workspace. Avoid fetching the upstream's
-  # documentation/media history on every new developer machine.
+  # The driver links the shared telemetry config reader and embeds two static
+  # JSON registries. Include their source inputs without fetching media history.
   if [[ "$CUA_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
     git init --quiet "$WORK_DIR/cua"
     git -C "$WORK_DIR/cua" remote add origin https://github.com/trycua/cua.git
@@ -50,7 +50,9 @@ else
   else
     git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua.git "$WORK_DIR/cua"
   fi
-  git -C "$WORK_DIR/cua" sparse-checkout set libs/cua-driver/rust
+  git -C "$WORK_DIR/cua" sparse-checkout set \
+    libs/cua-driver/rust libs/cua/crates/cua-telemetry \
+    libs/cua/crates/cua-teleport/src/ux libs/images
   git -C "$WORK_DIR/cua" checkout --quiet "$CUA_COMMIT"
   echo "[cua-helper] applying nuwax patch ..."
   # Windows checkout with core.autocrlf may turn this tracked patch into CRLF;
@@ -83,6 +85,14 @@ grep -q 'nuwax_window_preview' \
 }
 
 # ---------- 构建 ----------
+# Git Bash puts /usr/bin before the inherited Visual Studio PATH. Its link.exe
+# is the Unix hard-link utility, so rustc's MSVC host build scripts must resolve
+# the linker from the active vcvars environment first.
+if [[ "$TARGET_TRIPLE" == *-windows-msvc ]] && [ -n "${VCToolsInstallDir:-}" ] && command -v cygpath >/dev/null 2>&1; then
+  MSVC_BIN="$(cygpath -u "$VCToolsInstallDir")/bin/Host${VSCMD_ARG_HOST_ARCH:-x64}/${VSCMD_ARG_TGT_ARCH:-x64}"
+  [ ! -f "$MSVC_BIN/link.exe" ] || export PATH="$MSVC_BIN:$PATH"
+fi
+
 # cua 仓 rust-toolchain.toml 钉 1.97.1：cargo 会切到该工具链，target 必须装进它——
 # target add 须在仓内目录执行（让 rustup 解析钉住工具链；在仓外执行会装到默认 stable 上，
 # CI 实证 mac x64 交叉腿两连挂 E0463）。瞬时下载失败重试一次。

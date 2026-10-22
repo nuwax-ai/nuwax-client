@@ -113,8 +113,13 @@ export async function prepareComputerUse(root, { tools = core, platform = proces
   const helper = path.join(helperDir, platform === 'darwin' ? 'Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use' : platform === 'win32' ? 'NuwaxComputerUse.exe' : 'NuwaxComputerUse');
   const stateFile = path.join(p.cache, 'computer-use.json');
   const inputs = [path.join(root, 'scripts/computer-use'), path.join(root, 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'), path.join(p.client, 'public/icon.icns')];
-  if (process.env.NUWAX_CUA_SOURCE_DIR) inputs.push(path.join(process.env.NUWAX_CUA_SOURCE_DIR, 'libs/cua-driver/rust'));
-  const key = tools.fingerprint([platform, arch, process.env.CUA_COMMIT ?? '625118a90', process.env.CUA_VERSION ?? '0.28.2', inputDigest(inputs)]);
+  if (process.env.NUWAX_CUA_SOURCE_DIR) {
+    for (const input of ['libs/cua-driver/rust', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry',
+      'libs/cua/crates/cua-teleport/src/ux/targets.json', 'libs/images/sandbox-images.json']) {
+      inputs.push(path.join(process.env.NUWAX_CUA_SOURCE_DIR, input));
+    }
+  }
+  const key = tools.fingerprint([platform, arch, process.env.CUA_COMMIT ?? '85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19', process.env.CUA_VERSION ?? '0.38.0', inputDigest(inputs)]);
   let state;
   try { state = tools.readJson(stateFile); } catch { state = null; }
   if (!refreshResources && state?.key === key && state?.artifact === inputDigest([helperDir]) && fileReady(helper)) return helperDir;

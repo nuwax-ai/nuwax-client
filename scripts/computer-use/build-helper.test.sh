@@ -24,6 +24,9 @@ exit 0
 EOF
 cat > "$TMP/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
+if [ -n "${EXPECTED_LINKER:-}" ]; then
+  [ "$(command -v link.exe)" = "$EXPECTED_LINKER" ] || exit 91
+fi
 exit 0
 EOF
 chmod +x "$TMP/bin/rustup" "$TMP/bin/cargo"
@@ -34,3 +37,16 @@ PATH="$TMP/bin:$PATH" NUWAX_CUA_SOURCE_DIR="$SOURCE" \
 cmp "$SOURCE/libs/cua-driver/rust/target/$TARGET/release/cua-driver.exe" \
   "$TMP/out/NuwaxComputerUse.exe"
 echo "Windows helper artifact path: OK"
+
+# Git Bash's Unix link.exe must not shadow the vcvars MSVC linker.
+mkdir -p "$TMP/vs/bin/Hostx64/x64"
+touch "$TMP/bin/link.exe" "$TMP/vs/bin/Hostx64/x64/link.exe"
+chmod +x "$TMP/bin/link.exe" "$TMP/vs/bin/Hostx64/x64/link.exe"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$2"\n' > "$TMP/bin/cygpath"
+chmod +x "$TMP/bin/cygpath"
+PATH="$TMP/bin:$PATH" NUWAX_CUA_SOURCE_DIR="$SOURCE" \
+  VCToolsInstallDir="$TMP/vs" VSCMD_ARG_HOST_ARCH=x64 VSCMD_ARG_TGT_ARCH=x64 \
+  EXPECTED_LINKER="$TMP/vs/bin/Hostx64/x64/link.exe" \
+  TARGET_TRIPLE="$TARGET" OUT_DIR="$TMP/msvc-out" \
+  bash "$SCRIPT_DIR/build-helper.sh" >/dev/null
+echo "MSVC linker keeps precedence over Git Bash: OK"

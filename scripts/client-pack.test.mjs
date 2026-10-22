@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
-import { builderConfig, pack, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
+import { builderConfig, pack, prepareComputerUse, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
 import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { packagedResources } from './prepare-release-updater.mjs';
 
@@ -57,6 +57,40 @@ test('unsigned environment suppresses signing and automatic prepare', () => {
   assert.equal(env.WINDOWS_CERTIFICATE_PASSWORD, '');
   assert.equal(env.APPLE_API_KEY, '');
   assert.equal(env.NUWAX_APP_IDENTIFIER, 'nuwax');
+});
+
+test('helper cache rebuilds when a shared upstream registry changes', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-cua-cache-'));
+  const previousSource = process.env.NUWAX_CUA_SOURCE_DIR;
+  t.after(() => {
+    if (previousSource === undefined) delete process.env.NUWAX_CUA_SOURCE_DIR;
+    else process.env.NUWAX_CUA_SOURCE_DIR = previousSource;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  process.env.NUWAX_CUA_SOURCE_DIR = path.join(root, 'upstream');
+  const registry = path.join(process.env.NUWAX_CUA_SOURCE_DIR, 'libs/images/sandbox-images.json');
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  fs.writeFileSync(registry, '{"revision":1}');
+  const p = core.paths(root);
+  const helperDir = path.join(p.client, 'resources/computer-use');
+  fs.mkdirSync(path.join(p.client, 'resources/git/bin'), { recursive: true });
+  fs.writeFileSync(path.join(p.client, 'resources/git/bin/bash.exe'), 'test runner');
+  let builds = 0;
+  const tools = { ...core, run: async (command) => {
+    if (command.endsWith('bash.exe')) {
+      builds++;
+      fs.mkdirSync(helperDir, { recursive: true });
+      fs.writeFileSync(path.join(helperDir, 'NuwaxComputerUse.exe'), `build ${builds}`);
+    }
+    return { stdout: '', stderr: '' };
+  } };
+  const options = { tools, platform: 'win32', arch: 'x64' };
+  await prepareComputerUse(root, options);
+  await prepareComputerUse(root, options);
+  assert.equal(builds, 1, 'unchanged inputs reuse the verified helper');
+  fs.writeFileSync(registry, '{"revision":2}');
+  await prepareComputerUse(root, options);
+  assert.equal(builds, 2, 'the shared registry is compiled into the helper');
 });
 
 test('pack output protects source/module/cache paths and resolves symlink aliases', async (t) => {

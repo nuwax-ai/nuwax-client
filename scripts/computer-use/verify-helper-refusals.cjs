@@ -31,7 +31,13 @@ const refused = (sc) => !!sc && (sc.status === "refused" || sc.effect === "refus
 const CASES = [
   ["get_window_state", { pid: 999999, window_id: 999999 }, (r) => r.result?.isError === true ? null : "read failure must set isError"],
   ["click", { pid: 999999, window_id: 999999, element_index: 3, snapshot_id: "bogus" }, (r) => refused(r.result?.structuredContent) ? null : "bad snapshot must be a refusal"],
-  ["click", { element_token: "s00000001:11" }, (r) => r.result?.structuredContent?.code === "tool_invocation_failed" ? null : "argument validation code changed"],
+  // 0.38 accepts pid-less element tokens and refuses unknown tokens explicitly;
+  // both shapes must remain a provable no-delivery outcome for cuaOutcome.ts.
+  ["click", { element_token: "s00000001:11" }, (r) => {
+    const sc = r.result?.structuredContent;
+    return r.result?.isError === true && (sc?.code === "tool_invocation_failed" ||
+      refused(sc) && sc.refusal?.code === "stale_element_token") ? null : "unknown token must be a refusal";
+  }],
   ["scroll", { pid: 999999, direction: "down" }, (r) => refused(r.result?.structuredContent) ? null : "missing target must be a refusal"],
   ["get_browser_state", { target_id: "bogus", tab_id: "bogus" }, (r) => refused(r.result?.structuredContent) ? null : "stale binding must be a refusal"],
   ["browser_click", { target_id: "bogus", tab_id: "bogus", ref: "p1:1" }, (r) => refused(r.result?.structuredContent) ? null : "browser click on stale binding must be a refusal"],

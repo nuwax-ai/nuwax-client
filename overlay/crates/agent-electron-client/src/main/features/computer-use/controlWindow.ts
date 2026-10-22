@@ -23,14 +23,14 @@ export function createCuaControlWindow(options: {
   taskAction?: (id: string, action: "bind" | "pause" | "resume" | "stop" | "mode" | "takeover", value?: unknown) => Promise<unknown>;
 }) {
   let view: WebContentsView | null = null, owner: BrowserWindow | null = null;
-  let url = "", disposed = false, loaded = false, selected: string | null = null;
+  let url = "", disposed = false, loaded = false, hiddenByOwner = false, selected: string | null = null;
   const saved = options.readPreference?.() as { expanded?: boolean; bounds?: { width?: number; height?: number } } | null;
   let expanded = saved?.expanded === true;
   const preferredWidth = Number.isFinite(saved?.bounds?.width) ? Math.max(320, Math.min(520, saved!.bounds!.width!)) : 420;
   const preferredHeight = Number.isFinite(saved?.bounds?.height) ? Math.max(200, Math.min(480, saved!.bounds!.height!)) : 320;
   const presentation = () => ({ taskId: selected, expanded });
   const alive = () => !!view && !view.webContents.isDestroyed();
-  const visible = () => alive() && loaded && !!owner && !owner.isDestroyed() && owner.isVisible() && !owner.isMinimized()
+  const visible = () => alive() && loaded && !hiddenByOwner && !!owner && !owner.isDestroyed() && owner.isVisible() && !owner.isMinimized()
     && options.getRuntime().multiwindow === true && !!options.getRuntime().taskId;
   const send = (channel: string, value: unknown) => { if (alive()) view!.webContents.send(channel, value); };
   const preview = createCuaPreviewController({
@@ -75,9 +75,15 @@ export function createCuaControlWindow(options: {
     try { return await options.taskAction?.(id, action as "bind" | "pause" | "resume" | "stop" | "mode" | "takeover", value) ?? { success: false }; }
     catch { return { success: false }; }
   });
+  // Native close-to-tray events can precede the isVisible/isMinimized change.
+  const onOwnerHide = () => { hiddenByOwner = true; sync(); };
+  const onOwnerShow = () => {
+    hiddenByOwner = false; sync();
+    setImmediate(() => { if (!disposed) sync(); });
+  };
   const trackOwner = (main: BrowserWindow, method: "on" | "removeListener") => {
-    main[method]("show", sync); main[method]("hide", sync);
-    main[method]("minimize", sync); main[method]("restore", sync);
+    main[method]("show", onOwnerShow); main[method]("hide", onOwnerHide);
+    main[method]("minimize", onOwnerHide); main[method]("restore", onOwnerShow);
     main[method]("resize", sync); main[method]("enter-full-screen", sync); main[method]("leave-full-screen", sync);
   };
   const destroySurface = () => {
@@ -100,7 +106,7 @@ export function createCuaControlWindow(options: {
     const main = options.getMainWindow();
     if (!main || main.isDestroyed()) { destroySurface(); return; }
     if (owner !== main || !alive()) {
-      destroySurface(); owner = main;
+      destroySurface(); owner = main; hiddenByOwner = !main.isVisible() || main.isMinimized();
       const created = new WebContentsView({ webPreferences: {
         preload: options.preloadPath ?? path.join(__dirname, "..", "preload", "cuaControls.js"),
         sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false,

@@ -67,3 +67,11 @@
 - 连续真机任务后 helper 在线，但 list_windows 明确返回 session_ended，导致后续窗口选择失败。先提交 `7fbe3d52` 保存失败回归。
 - 每次宿主工具读取使用新的随机 host session，经端点身份验证与 session_begin 确认后发起；同一连接 EOF 自动清理自己的资源。控制方法不共享/复活模型会话，也不复用过期隐式会话。
 - 整批三问追加复核：窗口生命周期只归 controlWindow.ts 和现有宿主 windows 端口；renderer 普通控制和多窗口视图各有唯一呈现入口；预览捕获/暂停执行仍保留原独立控制器。未新增通用套件专属字段，退出前销毁及登录校验不放宽。
+
+## 用户追加：对照 cua-driver 当前更新
+
+- 官方稳定版本 0.38.0，固定发布 SHA `85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19`；不跟随当天 main，也不引入 Cua Spaces、Harness 或 pi-agent 产品。
+- 从原 0.28.2 源码迁移商业补丁：保留同 Team/bundle 权限主体、私有端点证明及能力鉴权、数据目录、精确窗口/epoch/撤销/drain、独立预览；原补丁直接 apply 在 5 个文件失败，已在隔离源码逐项解决。
+- 上游新增共享 telemetry 编译依赖，构建需带入对应 workspace 清单及两份静态 JSON；仍显式关闭 telemetry，产品新增工具继续受现有白名单约束，不直接开放批量执行或脚本工具。
+- 隔离迁移源码的 macOS cargo check 通过；driver/contract/core/macOS 单元测试 2145 通过、8 跳过。接下来生成唯一正式补丁、同步构建 pin、完成双平台构建和协议检查后安装验收。
+- `win-dbg` 已创建独立源码检出，保留既有项目；首轮准备遇到 Windows 路径长度限制，已迁至较短的专用目录继续。Windows 安装、交互会话操作与截图仍待完成，不能计作通过。

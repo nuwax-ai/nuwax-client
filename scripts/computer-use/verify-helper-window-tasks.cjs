@@ -15,7 +15,7 @@ const socketPath = process.platform === "win32" ? "\\\\.\\pipe\\cua-tasks-" + cr
 const tokenFile = path.join(root, "token");
 const token = crypto.randomBytes(32).toString("hex");
 fs.writeFileSync(tokenFile, token, { mode: 0o600 });
-const env = { ...process.env, CUA_DRIVER_NUWAX_TOKEN_FILE: tokenFile, CUA_DRIVER_DATA_HOME: root, CUA_DRIVER_NUWAX_WINDOW_TASKS: "1" };
+const env = { ...process.env, CUA_DRIVER_NUWAX_TOKEN_FILE: tokenFile, CUA_DRIVER_DATA_HOME: root, CUA_DRIVER_NUWAX_WINDOW_TASKS: "1", CUA_DRIVER_RS_TELEMETRY_ENABLED: "false" };
 const daemon = spawn(binary, ["serve", "--socket", socketPath, "--permission-mode", "unrestricted", "--dangerously-bypass-approvals", "--no-permissions-gate"], { env, stdio: "ignore" });
 let proxy;
 function native(request, authenticated = true) {

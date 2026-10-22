@@ -1,10 +1,10 @@
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
-index 1d10b31..3adf83e 100644
+index 82f7dff4..590c79ae 100644
 --- a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
-@@ -271,6 +271,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
+@@ -343,6 +343,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
  }
-
+ 
  fn profile_root() -> Result<PathBuf, BrowserRefusal> {
 +    // Nuwax: 宿主统一数据目录优先——浏览器 profile 内聚进宿主目录的 browser-profiles/
 +    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
@@ -14,13 +14,13 @@ index 1d10b31..3adf83e 100644
          return Ok(PathBuf::from(root));
      }
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
-index 004ece3..c8988e3 100644
+index 730433e0..d0b79744 100644
 --- a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
-@@ -7,6 +7,73 @@
-
+@@ -9,6 +9,73 @@ use std::time::Duration;
+ 
  use serde::{Deserialize, Serialize};
-
+ 
 +/// Nuwax's standalone helper is reachable only through a per-installation
 +/// private endpoint. This capability is shared with its MCP proxy through a
 +/// mode-0600 file, never through the persisted MCP configuration itself.
@@ -91,38 +91,37 @@ index 004ece3..c8988e3 100644
  /// Versioned identity returned by the daemon before an imported SDK or an MCP
  /// proxy is allowed to treat an endpoint as ready.
  #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-@@ -205,7 +272,7 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
- /// deadline so slow accessibility walks and large screenshots are supported.
+@@ -218,7 +285,7 @@ pub const REPLY_DEADLINE: Duration = Duration::from_millis(crate::tool_schema::T
+ /// slow accessibility walks and large screenshots are supported.
  #[cfg(unix)]
  pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
 -    use std::io::Read;
-+    use std::io::{BufRead, Read, Write};
++    use std::io::{BufRead, Read};
      use std::os::unix::net::UnixStream;
-     use std::time::{Duration, Instant};
-
-@@ -215,7 +282,18 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
-     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-
+     use std::time::Instant;
+ 
+@@ -233,7 +300,17 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
+     set_timeout_unless_peer_closed(stream.set_write_timeout(Some(Duration::from_secs(5))))?;
+ 
      let mut writer = stream.try_clone()?;
 -    let line = serde_json::to_string(request)? + "\n";
 +    let token = nuwax_endpoint_token()?;
 +    if let Some(token) = token.as_deref() {
 +        let nonce = uuid::Uuid::new_v4().simple().to_string();
-+        writer.write_all(
-+            format!("{{\"method\":\"metadata\",\"args\":{{\"nuwax_nonce\":\"{nonce}\"}}}}\n")
-+                .as_bytes(),
-+        )?;
++        let challenge = serde_json::to_string(&serde_json::json!({"method": "metadata", "args": {"nuwax_nonce": nonce}}))? + "\n";
++        crate::socket_io::write_all_with_retry(&mut writer, challenge.as_bytes(), Instant::now() + REPLY_DEADLINE)?;
++        set_timeout_unless_peer_closed(stream.set_read_timeout(Some(Duration::from_secs(10))))?;
 +        let mut proof = String::new();
 +        std::io::BufReader::new(stream.try_clone()?).read_line(&mut proof)?;
 +        nuwax_verify_metadata_proof(&serde_json::from_str(&proof)?, token, &nonce)?;
 +    }
 +    let line = nuwax_request_line(request, token.as_deref())?;
-     let write_deadline = Instant::now() + Duration::from_secs(120);
+     let write_deadline = Instant::now() + REPLY_DEADLINE;
      crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
-
-@@ -276,7 +354,19 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
+ 
+@@ -304,7 +381,19 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
          };
-
+ 
          let mut writer = pipe.try_clone()?;
 -        writer.write_all((serde_json::to_string(request)? + "\n").as_bytes())?;
 +        let token = nuwax_endpoint_token()?;
@@ -139,12 +138,12 @@ index 004ece3..c8988e3 100644
 +        }
 +        writer.write_all(nuwax_request_line(request, token.as_deref())?.as_bytes())?;
          writer.flush()?;
-
+ 
          let response_line = BufReader::new(pipe)
-@@ -298,6 +388,31 @@ mod tests {
-         DaemonResponse, ToolObservationOrigin,
+@@ -327,6 +416,32 @@ mod tests {
      };
-
+     use std::time::Duration;
+ 
 +    #[test]
 +    fn nuwax_challenge_proves_server_and_action_requires_capability() {
 +        let token = "a".repeat(64);
@@ -170,14 +169,15 @@ index 004ece3..c8988e3 100644
 +        );
 +    }
 +
++
      #[test]
-     fn socket_path_keeps_the_selected_namespace() {
-         let path = socket_path_for_namespace("cua-driver-test");
+     fn the_reply_deadline_outlasts_every_tool_budget() {
+         let mut budgets_ms = vec![crate::tool_schema::TIMEOUT_MS_MAX];
 diff --git a/libs/cua-driver/rust/crates/cua-driver/Cargo.toml b/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
-index 8e114a2..238ef59 100644
+index 1ae75553..fd44b8a2 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
 +++ b/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
-@@ -23,6 +23,7 @@ pip-preview = { path = "../pip-preview" }
+@@ -25,6 +25,7 @@ pip-preview = { path = "../pip-preview" }
  async-trait = "0.1"
  httparse = "1.10.1"
  base64 = { workspace = true }
@@ -185,22 +185,31 @@ index 8e114a2..238ef59 100644
  uuid = { workspace = true }
  zeroize = { workspace = true }
  # Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
-@@ -57,6 +58,7 @@ windows = { version = "0.61", features = [
+@@ -53,7 +54,7 @@ fs2 = { workspace = true }
+ cap-std = "4.0.3"
+ cap-fs-ext = "4.0.3"
+ rustix = { version = "1.1", features = ["fs", "process"] }
+-image = { workspace = true }
++
+ 
+ # Used by crate::bundle::parent_is_not_launchd() for the TCC
+ # auto-relaunch detection path on Unix (only the macOS heuristic
+@@ -70,6 +71,7 @@ windows = { version = "0.61", features = [
      "Win32_Foundation",
      "Win32_Security",
      "Win32_System_Threading",
 +    "Win32_UI_WindowsAndMessaging",
  ] }
-
+ 
  [target.'cfg(target_os = "linux")'.dependencies]
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-index 75331d1..e591678 100644
+index d3d0fb47..85393d10 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
 @@ -51,11 +51,21 @@ pub fn state_namespace() -> &'static str {
      }
  }
-
+ 
 -pub fn user_home_subdirectory() -> &'static str {
 +/// Nuwax 宿主数据目录覆盖：设置时驱动全部自有落盘（安装/遥测标记、版本检查缓存等）
 +/// 内聚进宿主目录（如 ~/.nuwax/computer-use）。返回绝对路径时，调用方的
@@ -221,17 +230,15 @@ index 75331d1..e591678 100644
 +        ".cua-driver".to_owned()
      }
  }
-
-@@ -86,9 +96,31 @@ pub fn app_name() -> &'static str {
- }
-
+ 
+@@ -87,9 +97,30 @@ pub fn app_name() -> &'static str {
+ 
+ #[cfg(target_os = "macos")]
  pub fn app_bundle_path() -> String {
-+    if let Some(path) = current_running_bundle_path() {
-+        return path;
-+    }
++    if let Some(path) = current_running_bundle_path() { return path; }
      format!("/Applications/{}.app", app_name())
  }
-
+ 
 +/// Nuwax: when the driver runs inside a host helper bundle, relaunch and
 +/// permission-host flows must target that bundle (its TCC identity), not the
 +/// upstream CuaDriver.app in /Applications.
@@ -251,10 +258,11 @@ index 75331d1..e591678 100644
 +    None
 +}
 +
++
  pub fn bundle_id() -> &'static str {
      if is_local_installation() {
          LOCAL_BUNDLE_ID
-@@ -105,13 +137,43 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
+@@ -106,13 +137,43 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
          .ok()
          .and_then(|path| std::fs::canonicalize(path).ok())
          .is_some_and(|path| {
@@ -266,7 +274,7 @@ index 75331d1..e591678 100644
 +                .is_some_and(|path| inside_stable_bundle_dir(path))
          })
  }
-
+ 
 +/// Nuwax: embedding hosts ship the driver inside their own LSUIElement helper
 +/// bundle (e.g. "Nuwax Computer Use.app"). Such a bundle carries the same
 +/// stable TCC responsibility identity as CuaDriver.app, so the
@@ -303,11 +311,11 @@ index 75331d1..e591678 100644
  /// (case-insensitive). Anything else, including unset, is falsy.
  #[cfg(target_os = "windows")]
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-index 46584ae..d91852b 100644
+index 40987092..bac7e238 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-@@ -4448,22 +4448,23 @@ fn diagnose_tcc_db_section() -> String {
-
+@@ -5194,22 +5194,23 @@ fn diagnose_tcc_db_section() -> String {
+ 
  fn diagnose_config_paths_section() -> String {
      let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
 +    // user_home_subdirectory 已可为绝对路径（Nuwax CUA_DRIVER_DATA_HOME 覆盖），
@@ -342,34 +350,31 @@ index 46584ae..d91852b 100644
              "updater plist",
              format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"),
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
-index 0d72ffc..73fc03e 100644
+index 70954682..24b389ed 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
-@@ -422,6 +422,10 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
+@@ -422,6 +422,7 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
  }
-
+ 
  pub fn history_root() -> PathBuf {
-+    // Nuwax: 宿主统一数据目录优先——history 不再落 Application Support/<namespace> 等外部目录
-+    if let Some(dir) = crate::bundle::data_home_override() {
-+        return dir.join("computer-history");
-+    }
-     #[cfg(target_os = "macos")]
-     {
-         let home = std::env::var_os("HOME")
++    if let Some(dir) = crate::bundle::data_home_override() { return dir.join("computer-history"); }
+     if let Some(home) = std::env::var_os("CUA_DRIVER_RS_HOME").filter(|value| !value.is_empty()) {
+         return PathBuf::from(home).join("computer-history");
+     }
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
-index 5d6ac1f..74cf0f1 100644
+index a7abdcbc..9472d099 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
-@@ -26,6 +26,7 @@ mod driver_service_http;
+@@ -30,6 +30,7 @@ mod extension_manager;
  mod history_runtime;
  mod mcp_envelope;
  mod mcp_http;
 +mod nuwax_tasks;
+ mod perception_cli;
  mod private_worker;
  mod proxy;
- mod release_channel;
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs b/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
-index fb9d11b..6530408 100644
+index fb9d11b8..65304088 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
 @@ -358,8 +358,12 @@ where
@@ -388,7 +393,7 @@ index fb9d11b..6530408 100644
      let mut ack = Vec::new();
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs b/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs
 new file mode 100644
-index 0000000..2bdc3dc
+index 00000000..2bdc3dc5
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs
 @@ -0,0 +1,886 @@
@@ -1279,7 +1284,7 @@ index 0000000..2bdc3dc
 +    }
 +}
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
-index 401a09b..84cdbdd 100644
+index 02b4498b..df873fd1 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
 @@ -463,8 +463,10 @@ async fn run_control_connection(
@@ -1295,7 +1300,7 @@ index 401a09b..84cdbdd 100644
          Err(e) => {
              warn!("control connection: serialize session_begin failed: {e}");
              return;
-@@ -922,7 +924,13 @@ async fn forward_tool_call(
+@@ -923,7 +925,13 @@ async fn forward_tool_call(
      daemon_observes_tool_calls: bool,
      output_schema: Option<serde_json::Value>,
  ) -> Response {
@@ -1310,11 +1315,11 @@ index 401a09b..84cdbdd 100644
          method: "call".into(),
          name: Some(name.clone()),
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-index 67e123b..ce5beb5 100644
+index fce88c4f..407cb9f9 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-@@ -383,6 +383,11 @@ pub fn default_uia_pipe_path() -> String {
-
+@@ -356,6 +356,11 @@ pub fn default_uia_pipe_path() -> String {
+ 
  /// Returns the platform default PID file path.
  pub fn default_pid_file_path() -> String {
 +    // Nuwax: 宿主数据目录覆盖（与 user_home_subdirectory 同一开关）——
@@ -1325,7 +1330,7 @@ index 67e123b..ce5beb5 100644
      let namespace = crate::bundle::state_namespace();
      #[cfg(target_os = "macos")]
      {
-@@ -486,8 +491,13 @@ async fn invoke_daemon_tool(
+@@ -459,9 +464,14 @@ async fn invoke_daemon_tool(
      let mut args = req
          .args
          .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -1334,15 +1339,16 @@ index 67e123b..ce5beb5 100644
 +        Err(response) => return response,
 +    };
      cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
-     let effective_session = apply_session_identity(&mut args, &req.session_id);
+     let effective_session =
+         cua_driver_core::tool_args::apply_session_identity(&mut args, req.session_id.as_deref());
 +    crate::nuwax_tasks::note_session(&_nuwax_task_permit, effective_session.as_deref());
      let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
      let observation = observation_transport.map(|transport| {
          (
-@@ -571,13 +581,14 @@ async fn invoke_daemon_tool(
+@@ -547,13 +557,14 @@ async fn invoke_daemon_tool(
          sdk.begin_tool_call(&tool_name, &args, transport, client_kind)
      });
-
+ 
 -    let result_value = match sdk.invoke_raw(&tool_name, args).await {
 +    let mut result_value = match sdk.invoke_raw(&tool_name, args).await {
          Ok(result) => result,
@@ -1355,10 +1361,10 @@ index 67e123b..ce5beb5 100644
      DaemonResponse::ok(observe_daemon_result(
          observation,
          session_context,
-@@ -675,11 +686,90 @@ fn permission_gate_response_for_state(
+@@ -653,11 +664,90 @@ fn permission_gate_response_for_state(
      ))
  }
-
+ 
 -fn daemon_metadata_response() -> DaemonResponse {
 -    DaemonResponse::ok(
 -        serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
@@ -1449,9 +1455,9 @@ index 67e123b..ce5beb5 100644
 +    }
 +    DaemonResponse::ok(metadata)
  }
-
+ 
  fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
-@@ -981,7 +1071,10 @@ pub async fn run_serve(
+@@ -959,7 +1049,10 @@ pub async fn run_serve(
      let embedded = cua_driver_core::embedded_mode();
      // Embedded endpoints are host-owned. The daemon must never unlink an
      // arbitrary pre-existing path between the host's safety check and bind.
@@ -1460,11 +1466,11 @@ index 67e123b..ce5beb5 100644
 +        socket_path,
 +        embedded || std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some(),
 +    )?;
-
+ 
      let listener =
          UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-@@ -1015,11 +1108,20 @@ pub async fn run_serve(
-
+@@ -993,11 +1086,20 @@ pub async fn run_serve(
+ 
      // Idle-session and recording maintenance is owned by the SDK runtime so
      // direct embedded applications and daemon-backed clients behave alike.
 -    if let Some(port) = crate::mcp_http::configured_port()? {
@@ -1480,15 +1486,15 @@ index 67e123b..ce5beb5 100644
 +    if let Some(port) = mcp_http_port {
          crate::mcp_http::spawn(sdk.clone(), port)?;
      }
-
+ 
 -    let _envelope_http = match crate::driver_service_http::configured_port()? {
 +    let _envelope_http = match envelope_http_port {
          Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
          None => None,
      };
-@@ -1053,6 +1155,11 @@ pub async fn run_serve(
+@@ -1032,6 +1134,11 @@ pub async fn run_serve(
                      let mut trusted_session: Option<TrustedConnectionSession> = None;
-
+ 
                      while let Ok(Some(line)) = lines.next_line().await {
 +                        if !nuwax_request_authorized(&line) {
 +                            let resp = DaemonResponse::err("Nuwax endpoint capability required", 77);
@@ -1498,7 +1504,7 @@ index 67e123b..ce5beb5 100644
                          let req: DaemonRequest = match serde_json::from_str(&line) {
                              Ok(r) => r,
                              Err(e) => {
-@@ -1079,7 +1186,7 @@ pub async fn run_serve(
+@@ -1058,7 +1165,7 @@ pub async fn run_serve(
                                  return;
                              }
                              "metadata" => {
@@ -1507,7 +1513,7 @@ index 67e123b..ce5beb5 100644
                                  let _ = writer.write_all(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
-@@ -1192,6 +1299,14 @@ pub async fn run_serve(
+@@ -1171,6 +1278,14 @@ pub async fn run_serve(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
                              }
@@ -1522,9 +1528,9 @@ index 67e123b..ce5beb5 100644
                              "call" => {
                                  let resp = invoke_daemon_tool(&reg, req).await;
                                  let _ = writer.write_all(
-@@ -1738,11 +1853,20 @@ pub async fn run_serve(
+@@ -1715,11 +1830,20 @@ pub async fn run_serve(
      tokio::pin!(parent_liveness);
-
+ 
      // Idle-session and recording maintenance is owned by the SDK runtime.
 -    if let Some(port) = crate::mcp_http::configured_port()? {
 +    let mcp_http_port = crate::mcp_http::configured_port()?;
@@ -1539,26 +1545,24 @@ index 67e123b..ce5beb5 100644
 +    if let Some(port) = mcp_http_port {
          crate::mcp_http::spawn(sdk.clone(), port)?;
      }
-
+ 
 -    let _envelope_http = match crate::driver_service_http::configured_port()? {
 +    let _envelope_http = match envelope_http_port {
          Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
          None => None,
      };
-@@ -1751,7 +1875,9 @@ pub async fn run_serve(
-     loop {
+@@ -1757,7 +1881,7 @@ pub async fn run_serve(
+ 
          // All daemons use the current-user descriptor. Embedded daemons also
          // reserve the pipe name with their first instance.
 -        let first_pipe_instance = embedded && first_pipe;
-+        let first_pipe_instance = (embedded
-+            || std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some())
-+            && first_pipe;
-         let server = if sec_attrs_ptr.is_null() {
++        let first_pipe_instance = (embedded || std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some()) && first_pipe;
+         let created = if sec_attrs_ptr.is_null() {
              ServerOptions::new()
                  .first_pipe_instance(first_pipe_instance)
-@@ -1814,6 +1940,11 @@ pub async fn run_serve(
+@@ -1843,6 +1967,11 @@ pub async fn run_serve(
                      let mut trusted_session: Option<TrustedConnectionSession> = None;
-
+ 
                      while let Ok(Some(line)) = lines.next_line().await {
 +                        if !nuwax_request_authorized(&line) {
 +                            let resp = DaemonResponse::err("Nuwax endpoint capability required", 77);
@@ -1568,7 +1572,7 @@ index 67e123b..ce5beb5 100644
                          let req: DaemonRequest = match serde_json::from_str(&line) {
                              Ok(r) => r,
                              Err(e) => {
-@@ -1837,7 +1968,7 @@ pub async fn run_serve(
+@@ -1866,7 +1995,7 @@ pub async fn run_serve(
                                  return;
                              }
                              "metadata" => {
@@ -1577,7 +1581,7 @@ index 67e123b..ce5beb5 100644
                                  let _ = writer.write_all(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
-@@ -1933,6 +2064,14 @@ pub async fn run_serve(
+@@ -1962,6 +2091,14 @@ pub async fn run_serve(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
                              }
@@ -1593,12 +1597,12 @@ index 67e123b..ce5beb5 100644
                                  let resp = invoke_daemon_tool(&reg, req).await;
                                  let _ = writer.write_all(
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
-index 2453fec..c02b839 100644
+index 0d1ed600..357f1611 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
-@@ -2194,6 +2194,10 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
+@@ -2238,6 +2238,10 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
  }
-
+ 
  fn telemetry_home_dir() -> Option<PathBuf> {
 +    // Nuwax: 宿主统一数据目录优先（与 user_home_subdirectory 同一开关）
 +    if let Some(dir) = crate::bundle::data_home_override() {
@@ -1608,12 +1612,12 @@ index 2453fec..c02b839 100644
          return Some(PathBuf::from(path));
      }
 diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
-index a2691a0..4511c09 100644
+index 4ab3a745..07688778 100644
 --- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
 +++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
-@@ -164,6 +164,10 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
+@@ -163,6 +163,10 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
  }
-
+ 
  fn restore_token_path() -> Option<PathBuf> {
 +    // Nuwax: 宿主数据目录覆盖——restore token 内聚进宿主目录（如 ~/.nuwax/computer-use）
 +    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
@@ -1623,10 +1627,10 @@ index a2691a0..4511c09 100644
      Some(base.join("cua-driver").join("libei-persistent.token"))
  }
 diff --git a/libs/cua-driver/rust/crates/platform-macos/src/capture.rs b/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
-index b0eea64..973a829 100644
+index dff4d82b..d96b93fb 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
 +++ b/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
-@@ -1105,3 +1105,11 @@ mod tests {
+@@ -1615,3 +1615,11 @@ mod tests {
          assert_eq!(SPAWNED_WORK.load(AtomicOrdering::SeqCst), 2);
      }
  }
@@ -1639,7 +1643,7 @@ index b0eea64..973a829 100644
 +    screenshot_window_bytes_sck(window_id)
 +}
 diff --git a/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs b/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
-index 7596841..69c2269 100644
+index 682a6ff8..433213c6 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
 +++ b/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
 @@ -524,6 +524,9 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
@@ -1653,7 +1657,7 @@ index 7596841..69c2269 100644
          if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
              let _ = app.activateWithOptions(NSApplicationActivationOptions(0));
 diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
-index 280f81c..1c04049 100644
+index b7617427..4a4a5003 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
 +++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
 @@ -45,6 +45,8 @@ fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
@@ -1686,7 +1690,7 @@ index 280f81c..1c04049 100644
          bundle_id,
      ))
  }
-@@ -549,12 +558,37 @@ mod tests {
+@@ -555,12 +564,37 @@ mod tests {
              ),
              Some("com.trycua.driver.local")
          );
@@ -1701,7 +1705,7 @@ index 280f81c..1c04049 100644
              None
          );
      }
-
+ 
 +    #[test]
 +    fn nuwax_direct_capture_evidence_uses_host_data_home() {
 +        let _guard = env_lock();
@@ -1725,18 +1729,20 @@ index 280f81c..1c04049 100644
      fn evidence_store_is_scoped_to_the_current_driver_identity() {
          let home =
 diff --git a/libs/cua-driver/rust/crates/platform-macos/src/windows.rs b/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
-index 64fdf26..c761483 100644
+index 052e5f83..4e307c62 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
 +++ b/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
-@@ -78,6 +78,14 @@ pub fn visible_windows() -> Vec<WindowInfo> {
+@@ -83,6 +83,16 @@ pub fn visible_windows() -> Vec<WindowInfo> {
      visible_windows_with_space_snapshot().windows
  }
-
+ 
 +/// Host status overlays must also yield to floating panels, menus and picture-in-picture.
 +pub fn nuwax_visible_windows_any_layer() -> Vec<WindowInfo> {
 +    enumerate_windows(
 +        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
 +        LayerFilter::AnyLayer,
++        None,
++        false,
 +    ).windows
 +}
 +
@@ -1744,10 +1750,10 @@ index 64fdf26..c761483 100644
      enumerate_windows(
          kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
 diff --git a/libs/cua-driver/rust/crates/platform-windows/src/capture.rs b/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
-index eb2e52c..038986a 100644
+index 453b0b71..fb295e5d 100644
 --- a/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
 +++ b/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
-@@ -780,3 +780,9 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
+@@ -835,3 +835,9 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
  pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
      cua_driver_core::image_utils::png_dimensions(data)
  }

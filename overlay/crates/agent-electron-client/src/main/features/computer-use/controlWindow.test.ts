@@ -80,6 +80,16 @@ describe("Computer Use control surface follows the main client window", () => {
     s.main.visible = false; s.main.emit("hide"); s.dispose.showTask("task");
     expect(s.main.visible).toBe(true); expect(v.visible).toBe(true); expect(s.action).not.toHaveBeenCalled(); s.dispose();
   });
+  it("stops preview work when hide/minimize arrives before native visibility changes", async () => {
+    const s = setup(); await flush(); s.dispose.showTask("task"); const v = mocks.views[0];
+    s.main.emit("hide");
+    expect(v.visible).toBe(false); expect(mocks.select).toHaveBeenLastCalledWith(null);
+    s.update(); expect(v.visible).toBe(false);
+    s.main.emit("show"); expect(v.visible).toBe(true);
+    s.main.emit("minimize"); expect(v.visible).toBe(false);
+    s.update(); expect(v.visible).toBe(false);
+    s.main.emit("restore"); expect(v.visible).toBe(true); s.dispose();
+  });
   it("closes owned contents with the main window and ignores late loads before reopening", async () => {
     mocks.deferred = true; const s = setup(); const old = mocks.views[0];
     s.main.destroyed = true; s.main.emit("closed"); expect(old.webContents.isDestroyed()).toBe(true);
