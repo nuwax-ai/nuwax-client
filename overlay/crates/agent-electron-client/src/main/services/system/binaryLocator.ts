@@ -13,6 +13,7 @@ import { execFileSync, execSync } from "child_process";
 import log from "electron-log";
 import { getAppDataDir, getAppBinDir, getResourcesPath } from "./appPaths";
 import { isWindows } from "./shellEnv";
+import { resolveTtydBinary } from "./ttydPlatform";
 
 // ==================== Electron 内置 Node.js 路径 ====================
 
@@ -292,16 +293,12 @@ export function getLanproxyEntryPath(): string {
 // ==================== ttyd ====================
 
 export function getTtydBinPath(): string {
-  const resourcesPath = getResourcesPath();
-  const binariesDir = path.join(resourcesPath, "ttyd", "binaries");
-  const binDir = path.join(resourcesPath, "ttyd", "bin");
-  const exeName = isWindows() ? "ttyd.exe" : "ttyd";
-  const platformKey = `${process.platform}-${process.arch}`;
-  const binaryPath = path.join(binariesDir, platformKey, exeName);
-  if (fs.existsSync(binaryPath)) return binaryPath;
-  const binPath = path.join(binDir, exeName);
-  if (fs.existsSync(binPath)) return binPath;
-  return path.join(binDir, exeName);
+  return resolveTtydBinary({
+    resourcesPath: getResourcesPath(),
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+  });
 }
 
 // ==================== nuwaxcode ====================

@@ -9,6 +9,7 @@ import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
 import { captureSourceLockFile, inspectCaptureResource } from './capture-resources.mjs';
 import { CAPTURE_RESOURCE_FILES, captureWindowSourceLockFile, inspectCaptureWindowResource } from './capture-window-resources.mjs';
 import { generateThirdPartyNotices, shippedResourcePaths } from './third-party-notices.mjs';
+import { terminalCompatLockFile, inspectTerminalCompatResource } from './terminal-compat-resources.mjs';
 import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
 import updater from '../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
@@ -79,6 +80,11 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp']);
   result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use', 'capture', 'third-party'].includes(entry.to?.split('/')[0]) && !legacySandboxResources.has(entry.to));
   result.extraResources.push({ from: frontendDist, to: 'nuwax-dist', filter: ['**/*', '!.git', '!.git/**', '!README.md'] });
+  if (platform !== 'win32') {
+    for (const entry of result.extraResources) {
+      if (typeof entry === 'object' && entry.to === 'ttyd') entry.filter = [...(entry.filter ?? ['**/*']), '!legacy/**'];
+    }
+  }
   if (helperDir) result.extraResources.push({ from: helperDir, to: 'computer-use', filter: ['**/*'] });
   if (captureDir) result.extraResources.push({ from: captureDir, to: `capture/${path.basename(captureDir)}`, filter: CAPTURE_RESOURCE_FILES });
   if (noticesDir) result.extraResources.push({ from: noticesDir, to: 'third-party', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] });
@@ -166,6 +172,9 @@ export async function pack(root, options = {}) {
     }
   }
   const noticesDir = path.join(p.cache, 'third-party', `${platform}-${arch}`);
+  if (platform === 'win32' && fs.existsSync(terminalCompatLockFile(root)) && !inspectTerminalCompatResource(root, { platform, arch, tools })) {
+    throw new Error('[pack] Windows 10 1511 terminal resources are missing or changed; run npm run prepare:terminal-compat');
+  }
   const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, noticesDir, platform, arch, builderVersions });
   await (options.generateNotices ?? generateThirdPartyNotices)(root, { strict: true, outDir: noticesDir, resourcePaths: shippedResourcePaths(generated, p.client, platform), platform, arch });
   fs.mkdirSync(p.cache, { recursive: true });

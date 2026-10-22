@@ -3,6 +3,8 @@ overlay/** text=auto eol=lf
 overlay/**/*.png -text
 overlay/**/*.ico -text
 overlay/**/*.icns -text
+# Source verification binds the upstream WinPTY license bytes on Windows too.
+third-party/licenses/winpty.txt text eol=lf
 
 # Keep bundled source patches byte-stable on Windows.
 resources/source-patches/*.patch text eol=lf whitespace=-blank-at-eol

@@ -7,14 +7,14 @@
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
-# workflow_dispatch / codex/beta-qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
+# workflow_dispatch / qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
 # manifest 的 qa-v完整版本是独立构建标识，不创建 tag/Release，不改更新指针。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/v{x.y.z}-beta.1.md
 #   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
-#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 codex/beta-qa/ 分支。
+#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 qa/ 分支。
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -41,7 +41,7 @@ on:
     tags:
       - "v*-beta.*"
     branches:
-      - "codex/beta-qa/**"
+      - "qa/**"
   workflow_dispatch:
     inputs:
       version:
@@ -119,8 +119,8 @@ jobs:
               node scripts/release-version.mjs "$TAG" beta > /tmp/build-release-identity
               VERSION="$(sed -n 's/^version=//p' /tmp/build-release-identity)"
               ;;
-            push:refs/heads/codex/beta-qa/*)
-              VERSION="${BUILD_REF#refs/heads/codex/beta-qa/}"
+            push:refs/heads/qa/*)
+              VERSION="${BUILD_REF#refs/heads/qa/}"
               QA_BUILD=true
               WINDOWS_ARCHIVE=zip-qa
               ;;
@@ -448,6 +448,18 @@ jobs:
         run: npm run prepare:all
         timeout-minutes: 15
 
+      - name: Setup Windows terminal compatibility compiler
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache-dependency-path: native/legacy-terminal/go.sum
+
+      - name: Prepare Windows 10 1511 terminal compatibility resources
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node scripts/prepare-terminal-compat.mjs --platform win32 --arch "${{ matrix.arch }}"
+
       # Capture is a commercial resource: base prepare:all does not prepare it.
       # Use a native Intel runner for macOS x64, and an explicit MSYS2 toolchain
       # on Windows. The release helper installs the audited Winpthreads split
@@ -654,6 +666,7 @@ jobs:
       # Check the actual default runtime paths, not just builder configuration.
       # A missing encoder/record/notices prevents either Release or QA upload.
       - name: Verify packaged capture resources
+        id: packaged_resources
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.arch }}
@@ -666,7 +679,22 @@ jobs:
             OUT_DIR="$NUWAX_WINDOWS_OUTPUT_DIR"
           fi
           node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
-          node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+          echo "output_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Verify packaged updater configuration
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+
+      - name: Verify packaged Windows terminal compatibility resources
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/prepare-terminal-compat.mjs --platform win32 --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
 
       - name: Record platform source and verify macOS signature
         shell: bash

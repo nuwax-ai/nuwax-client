@@ -30,7 +30,8 @@
     "sync:oss": "node scripts/client/forward.mjs sync:oss",
     "doctor": "node scripts/client/cli.mjs doctor",
     "setup": "node scripts/client/cli.mjs setup",
-    "prepare:capture": "node scripts/prepare-capture-resources.mjs"
+    "prepare:capture": "node scripts/prepare-capture-resources.mjs",
+    "prepare:terminal-compat": "node scripts/prepare-terminal-compat.mjs"
   },
   "dependencies": {
     "archiver": "7.0.1",
