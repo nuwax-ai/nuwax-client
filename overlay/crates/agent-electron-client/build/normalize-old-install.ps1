@@ -1,7 +1,16 @@
 param(
-  [ValidateSet('Prepare', 'Restore', 'Rollback')][string]$Action = 'Prepare',
+  [ValidateSet('Inspect', 'Prepare', 'Reconcile', 'Detach', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup', 'RestoreRegistration')][string]$Action = 'Prepare',
   [string]$InstallDir,
-  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath
+  [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath,
+  [string]$PayloadInventoryPath,
+  [switch]$CleanupRuntime,
+  [switch]$Repair,
+  [switch]$AllowMissingUninstaller,
+  [switch]$RequireRegistrationSnapshot,
+  [long]$RequiredSpaceKB = 0,
+  [ValidateSet('CurrentUser', 'LocalMachine')][string]$RegistryScope = 'CurrentUser',
+  [string]$InstallRegistryKey,
+  [string]$UninstallRegistryKey
 )
 
 # The old electron-builder uninstaller recursively removes InstallDir. Preserve
@@ -9,10 +18,17 @@ param(
 # the uninstaller starts. Moving a parent also preserves nested reserved device
 # names and trailing dots/spaces without enumerating those paths.
 $ErrorActionPreference = 'Stop'
+trap {
+  $failure = [ordered]@{ atUtc = [DateTime]::UtcNow.ToString('o'); action = $Action; installDir = $InstallDir;
+    scope = $RegistryScope; state = $StatePath; error = $_.Exception.Message; category = [string]$_.CategoryInfo.Category;
+    errorId = $_.FullyQualifiedErrorId; exceptionType = $_.Exception.GetType().FullName }
+  try { [IO.File]::AppendAllText((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-installer-recovery-events.jsonl'), ($failure | ConvertTo-Json -Compress) + [Environment]::NewLine) } catch { }
+  [Console]::Error.WriteLine(($failure | ConvertTo-Json -Compress))
+  exit 1
+}
 $uninstallerName = 'Uninstall Nuwax.exe'
-# Only the Electron payload has a predictable name. Restore every other
-# top-level entry to its original location: workspaceDir may be any directory
-# chosen by the user, including the installation root itself.
+# Known payload files stay in recovery. Payload directories can also contain
+# user files; restore missing descendants without replacing the new payload.
 $appEntryNames = @(
   'Nuwax.exe',
   'locales',
@@ -51,6 +67,155 @@ function Test-EntryExists([string]$Path) {
   } catch [System.IO.DirectoryNotFoundException] {
     return $false
   }
+}
+
+function Get-RecoveryHash([string]$Path) {
+  $stream = [IO.File]::OpenRead($Path)
+  $hash = [Security.Cryptography.SHA256]::Create()
+  try { return [Convert]::ToBase64String($hash.ComputeHash($stream)) }
+  finally { $hash.Dispose(); $stream.Dispose() }
+}
+
+function Assert-NoRecoveryRedirect([string]$Path) {
+  for ($current = $Path; $current; $current = [IO.Path]::GetDirectoryName($current)) {
+    if ((Test-EntryExists $current) -and
+        (([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+      throw "Recovery path is redirected: $current"
+    }
+  }
+}
+
+function Archive-RecoveryPointers([string]$Reason) {
+  # Leave every backup byte in place. The archived pointer is diagnostic data,
+  # not a completed transaction and never qualifies for retention cleanup.
+  $archive = $marker + '.archived-' + [Guid]::NewGuid().ToString('N')
+  $report = [ordered]@{ reason = $Reason; action = $Action; installDir = $root;
+    recoveryDir = $recoveryDir; observedAtUtc = [DateTime]::UtcNow.ToString('o') }
+  [IO.File]::WriteAllText((Get-ExtendedPath ($archive + '.json')), ($report | ConvertTo-Json -Compress), $utf8)
+  if (Test-EntryExists $extendedMarker) { [IO.File]::Move($extendedMarker, (Get-ExtendedPath ($archive + '.pointer'))) }
+  if (Test-EntryExists $stateFile) { [IO.File]::Delete($stateFile) }
+  Write-Output "RECOVERY_WARNING $Reason; previous backup cannot be restored automatically: $recoveryDir; diagnostic=$archive.json"
+}
+
+function Save-RegistrationSnapshot {
+  if (-not $InstallRegistryKey -and -not $UninstallRegistryKey) { return }
+  $snapshotPath = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'registration.json')
+  if (Test-EntryExists $snapshotPath) { return }
+  $hive = [Microsoft.Win32.RegistryHive]::$RegistryScope
+  $view = if ([Environment]::Is64BitOperatingSystem) { [Microsoft.Win32.RegistryView]::Registry64 } else { [Microsoft.Win32.RegistryView]::Registry32 }
+  $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+  try {
+    $keys = @()
+    foreach ($name in @($InstallRegistryKey, $UninstallRegistryKey)) {
+      if (-not $name -or $name -notmatch '^Software\\' -or $name -match '[\r\n]') { throw 'Invalid product registration key.' }
+      $key = $base.OpenSubKey($name, $false)
+      try {
+        $values = @()
+        if ($key) {
+          foreach ($value in $key.GetValueNames()) {
+            $values += @{ name = $value; kind = [string]$key.GetValueKind($value);
+              value = $key.GetValue($value, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
+          }
+        }
+        $keys += @{ path = $name; existed = [bool]$key; values = $values }
+      } finally { if ($key) { $key.Dispose() } }
+    }
+    [IO.File]::WriteAllText($snapshotPath, (@{ scope = $RegistryScope; userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; view = [string]$view; keys = $keys } | ConvertTo-Json -Depth 8), $utf8)
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'registration-snapshot-recorded'; sha256 = (Get-RecoveryHash $snapshotPath) })
+  } finally { $base.Dispose() }
+}
+
+function Get-RegistrationSnapshot([switch]$RecordedScope) {
+  $snapshotPath = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'registration.json')
+  if (-not (Test-EntryExists $snapshotPath)) { return $null }
+  $proof = @($records | Where-Object { $_.status -eq 'registration-snapshot-recorded' })
+  if (-not $proof.Count -or (Get-RecoveryHash $snapshotPath) -ne $proof[-1].sha256) { throw 'Registration snapshot was changed or is incomplete.' }
+  if (-not $InstallRegistryKey -or -not $UninstallRegistryKey) { throw 'Rollback requires the original product registry keys.' }
+  $snapshot = [IO.File]::ReadAllText($snapshotPath, $utf8) | ConvertFrom-Json
+  if ($snapshot.scope -notin @('CurrentUser', 'LocalMachine') -or $snapshot.keys.Count -ne 2 -or
+      (-not $RecordedScope -and $snapshot.scope -ne $RegistryScope)) { throw 'Registration snapshot scope does not match this operation.' }
+  if ($snapshot.scope -eq 'CurrentUser') {
+    $sid = $snapshot.PSObject.Properties['userSid']
+    if ((($RecordedScope -or $RequireRegistrationSnapshot) -and -not $sid) -or ($sid -and $sid.Value -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) {
+      throw 'Cannot verify the original Windows user for this recovery; use the original account. Files were retained.'
+    }
+  }
+  $view = if ([Environment]::Is64BitOperatingSystem) { [Microsoft.Win32.RegistryView]::Registry64 } else { [Microsoft.Win32.RegistryView]::Registry32 }
+  if ($snapshot.view -ne [string]$view) { throw 'Registration snapshot view does not match this operation.' }
+  $paths = @($snapshot.keys | ForEach-Object { [string]$_.path } | Sort-Object -Unique)
+  if ($paths.Count -ne 2) { throw 'Registration snapshot contains duplicate product keys.' }
+  foreach ($entry in $snapshot.keys) {
+    if ($entry.path -notin @($InstallRegistryKey, $UninstallRegistryKey)) { throw 'Registration snapshot contains a different product key.' }
+  }
+  if ($RecordedScope -or $RequireRegistrationSnapshot) {
+    $matchedPath = $false
+    foreach ($entry in $snapshot.keys) {
+      foreach ($item in $entry.values) {
+        $candidate = $null
+        if ($item.name -eq 'InstallLocation' -and $item.value) { $candidate = [string]$item.value }
+        elseif ($entry.path -eq $UninstallRegistryKey -and $item.name -eq 'UninstallString' -and $item.value) {
+          $command = [regex]::Match([string]$item.value, '^"(.+)\\' + [regex]::Escape($uninstallerName) + '"(?:\s|$)')
+          if (-not $command.Success) { throw 'Pending recovery has an unrecognized uninstall command.' }
+          $candidate = $command.Groups[1].Value
+        }
+        if ($candidate) {
+          if (-not [string]::Equals([IO.Path]::GetFullPath($candidate).TrimEnd([char]92), $root, $pathComparison)) {
+            throw 'Pending registration belongs to a different installation path.'
+          }
+          $matchedPath = $true
+        }
+      }
+    }
+    if (-not $matchedPath) { throw 'Pending registration has no verified installation path.' }
+    $pendingHive = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::$($snapshot.scope), $view)
+    try {
+      foreach ($entry in $snapshot.keys) {
+        $key = $pendingHive.OpenSubKey([string]$entry.path)
+        if (-not $key) { continue }
+        try {
+          if (-not $entry.existed) {
+            throw 'Product registration changed after preservation; no registration was replaced.'
+          }
+          # Legacy removal can delete a key or just some of its values. Only
+          # still-present values must match; never replace a new/changed value.
+          foreach ($name in $key.GetValueNames()) {
+            $expected = @($entry.values | Where-Object { $_.name -eq $name })
+            $live = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ($expected.Count -ne 1 -or [string]$key.GetValueKind($name) -ne $expected[0].kind -or
+                (ConvertTo-Json -InputObject $live -Compress -Depth 8) -cne (ConvertTo-Json -InputObject $expected[0].value -Compress -Depth 8)) {
+              throw 'Product registration changed after preservation; no registration was replaced.'
+            }
+          }
+        } finally { $key.Dispose() }
+      }
+    } finally { $pendingHive.Dispose() }
+  }
+  return $snapshot
+}
+
+function Restore-RegistrationSnapshot {
+  $snapshot = Get-RegistrationSnapshot
+  if (-not $snapshot) { return }
+  $hive = [Microsoft.Win32.RegistryHive]::$RegistryScope
+  $view = if ([Environment]::Is64BitOperatingSystem) { [Microsoft.Win32.RegistryView]::Registry64 } else { [Microsoft.Win32.RegistryView]::Registry32 }
+  $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+  try {
+    foreach ($entry in $snapshot.keys) {
+      if (-not $entry.existed) { continue }
+      $key = $base.CreateSubKey([string]$entry.path)
+      try {
+        foreach ($item in $entry.values) {
+          $kind = [Microsoft.Win32.RegistryValueKind]::$($item.kind)
+          $value = $item.value
+          if ($kind -eq [Microsoft.Win32.RegistryValueKind]::DWord) { $value = [int]$value }
+          elseif ($kind -eq [Microsoft.Win32.RegistryValueKind]::QWord) { $value = [long]$value }
+          elseif ($kind -in @([Microsoft.Win32.RegistryValueKind]::Binary, [Microsoft.Win32.RegistryValueKind]::None)) { $value = [byte[]]$value }
+          elseif ($kind -eq [Microsoft.Win32.RegistryValueKind]::MultiString) { $value = [string[]]$value }
+          $key.SetValue([string]$item.name, $value, $kind)
+        }
+      } finally { $key.Dispose() }
+    }
+  } finally { $base.Dispose() }
 }
 
 function Add-ManifestRecord([string]$ManifestPath, [object]$Record) {
@@ -92,6 +257,8 @@ function Write-AtomicText([string]$Path, [string]$Value) {
 }
 
 function Read-Manifest([string]$ManifestPath) {
+  $plain = if ($ManifestPath.StartsWith('\\?\')) { $ManifestPath.Substring(4) } else { $ManifestPath }
+  Assert-NoRecoveryRedirect $plain
   $records = New-Object 'System.Collections.Generic.List[object]'
   foreach ($line in [System.IO.File]::ReadAllLines($ManifestPath, $utf8)) {
     if (-not [string]::IsNullOrWhiteSpace($line)) {
@@ -106,6 +273,38 @@ function Move-Entry([string]$Source, [string]$Destination, [bool]$IsDirectory) {
     [System.IO.Directory]::Move($Source, $Destination)
   } else {
     [System.IO.File]::Move($Source, $Destination)
+  }
+}
+
+function Restore-PayloadExtras([string]$Source, [string]$Destination) {
+  $extendedSource = Get-ExtendedPath $Source
+  $extendedDestination = Get-ExtendedPath $Destination
+  if (-not (Test-EntryExists $extendedSource)) { return }
+  $sourceAttributes = [System.IO.File]::GetAttributes($extendedSource)
+  $isDirectory = ($sourceAttributes -band [System.IO.FileAttributes]::Directory) -ne 0
+  if (-not (Test-EntryExists $extendedDestination)) {
+    # Rename a missing subtree atomically, including links and reserved names.
+    # A retry scans the remaining backup, so an interrupted rename is not
+    # repeated and never needs to overwrite the returned entry.
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restore-intent'; original = $Destination; backup = $Source })
+    Move-Entry $extendedSource $extendedDestination $isDirectory
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'payload-restored'; original = $Destination; backup = $Source })
+    $script:payloadRestored++
+    return
+  }
+  $destinationAttributes = [System.IO.File]::GetAttributes($extendedDestination)
+  if (-not $isDirectory -or
+      ($sourceAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::Directory) -eq 0 -or
+      ($destinationAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    # Existing files, type conflicts and linked directories belong to the new
+    # install. Keep their old counterparts in recovery; never traverse a link.
+    $script:payloadCollisions++
+    return
+  }
+  foreach ($entry in [System.IO.Directory]::GetFileSystemEntries($extendedSource)) {
+    $name = [System.IO.Path]::GetFileName($entry)
+    Restore-PayloadExtras ($entry.Substring(4)) ([System.IO.Path]::Combine($Destination, $name))
   }
 }
 
@@ -126,18 +325,23 @@ function Get-MarkerPath([string]$Root) {
   )
 }
 
+$script:recoveryRuntimePath = $PSCommandPath
+. (Join-Path $PSScriptRoot 'installer-backup-retention.ps1')
+if ($CleanupRuntime -and $Action -ne 'Cleanup') { throw 'CleanupRuntime is only valid for background cleanup.' }
+
 $statePathFull = [System.IO.Path]::GetFullPath($StatePath)
 $stateFile = Get-ExtendedPath $statePathFull
 $fromState = $null
-if ([System.IO.File]::Exists($stateFile)) {
+Assert-NoRecoveryRedirect $statePathFull
+if (Test-EntryExists $stateFile) {
   $fromState = [System.IO.File]::ReadAllText($stateFile, $utf8).Trim()
 }
 $records = $null
 $recoveryDir = $fromState
 
-if ($Action -eq 'Prepare') {
+if ($Action -in @('Inspect', 'Prepare', 'Reconcile', 'RecordPayload', 'Cleanup')) {
   if (-not $InstallDir) {
-    throw 'Prepare requires InstallDir.'
+    throw "$Action requires InstallDir."
   }
   $root = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd([char]92)
 } else {
@@ -169,19 +373,44 @@ if ($root -notmatch '^[A-Za-z]:\\') {
 }
 $extendedRoot = Get-ExtendedPath $root
 $parent = [System.IO.Path]::GetDirectoryName($root)
+Assert-NoRecoveryRedirect $root
+$drive = [IO.DriveInfo]::new($volumeRoot)
+if (-not $drive.IsReady -or $drive.DriveType -ne [IO.DriveType]::Fixed) { throw 'Installation drive is not an available fixed local drive.' }
+if ($RequiredSpaceKB -lt 0) { throw 'Invalid required space.' }
+if ($Action -eq 'Prepare' -and $RequiredSpaceKB -gt 0 -and ($drive.AvailableFreeSpace / 1KB) -lt $RequiredSpaceKB) {
+  throw 'Insufficient free space for the complete repair payload.'
+}
 if ($statePathFull.StartsWith($root + '\', $pathComparison)) {
   throw 'Recovery state must be outside the installation directory.'
 }
 
 $marker = Get-MarkerPath $root
 $extendedMarker = Get-ExtendedPath $marker
+$recoveryMutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)))
+$mutexHeld = $false
+try { $mutexHeld = $recoveryMutex.WaitOne(30000) }
+catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
+if (-not $mutexHeld) { $recoveryMutex.Dispose(); throw 'Another recovery operation is active for this installation.' }
+try {
+
+if ($Action -eq 'Cleanup') {
+  Invoke-RecoveryRetention $root
+  exit 0
+}
 
 # StatePath lives in NSIS PLUGINSDIR. The sibling marker survives a process
 # restart, while the JSONL manifest inside recovery records each individual
 # intent before its rename.
 $fromMarker = $null
-if ([System.IO.File]::Exists($extendedMarker)) {
+if (Test-EntryExists $extendedMarker) {
+  Assert-NoRecoveryRedirect $marker
   $fromMarker = [System.IO.File]::ReadAllText($extendedMarker, $utf8).Trim()
+  if (-not $fromMarker) {
+    if ($Repair -and $Action -eq 'Prepare') {
+      Archive-RecoveryPointers 'empty-persistent-marker'
+      $fromState = $null
+    } else { throw 'Persistent recovery marker is empty. Use the complete installer repair option.' }
+  }
 }
 if ($fromState -and $fromMarker -and -not [string]::Equals($fromState, $fromMarker, $pathComparison)) {
   throw 'Installer state and persistent recovery marker disagree.'
@@ -201,9 +430,38 @@ if ($recoveryDir) {
     throw 'Recovery state does not point to a sibling recovery directory.'
   }
   $manifestPath = [System.IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'manifest.jsonl')
-  if (-not [System.IO.File]::Exists($manifestPath)) {
-    throw "Recovery manifest is missing: $recoveryDir"
+  Assert-NoRecoveryRedirect $recoveryDir
+  $backupExists = Test-EntryExists (Get-ExtendedPath $recoveryDir)
+  if ($RequireRegistrationSnapshot -and -not $backupExists) {
+    throw 'Verified pending backup is no longer available; files and state were retained.'
+  } elseif ($Action -in @('Prepare', 'Reconcile') -and -not $backupExists) {
+    Archive-RecoveryPointers 'backup-missing'
+    $recoveryDir = $null
+    $manifestPath = $null
+    $records = $null
+  } elseif ($Repair -and $Action -eq 'Prepare' -and -not $RequireRegistrationSnapshot) {
+    if (Test-EntryExists $manifestPath) {
+      # Read errors remain fatal. Only JSON decoding can be bypassed by an
+      # explicit repair, and a readable foreign transaction is never adopted.
+      $lines = [IO.File]::ReadAllLines($manifestPath, $utf8)
+      $header = $null
+      if ($lines.Count) { try { $header = $lines[0] | ConvertFrom-Json } catch { } }
+      if ($header -and $header.status -eq 'start' -and
+          (-not [string]::Equals($header.installDir, $root, $pathComparison) -or
+           -not [string]::Equals($header.recoveryDir, $recoveryDir, $pathComparison))) {
+        throw 'Recovery manifest belongs to a different installation.'
+      }
+    }
+    Archive-RecoveryPointers 'explicit-repair-protected-previous-backup'
+    $recoveryDir = $null
+    $manifestPath = $null
+    $records = $null
+  } elseif (-not (Test-EntryExists $manifestPath)) {
+    throw "Recovery manifest is missing: $recoveryDir. Use the complete installer repair option; the backup was retained."
   }
+}
+
+if ($recoveryDir) {
   if ($null -eq $records) {
     $records = Read-Manifest $manifestPath
   }
@@ -234,7 +492,81 @@ if ($recoveryDir) {
   }
 }
 
-if ($Action -eq 'Rollback') {
+if ($Action -eq 'Inspect') {
+  if (-not $recoveryDir) { Write-Output 'NO_PENDING_RECOVERY'; exit 0 }
+  $snapshot = Get-RegistrationSnapshot -RecordedScope
+  if (-not $snapshot -or -not @($snapshot.keys | Where-Object { $_.existed }).Count) {
+    throw 'Pending recovery has no verified product registration; files and state were retained.'
+  }
+  Write-Output ('RECOVERY_SCOPE ' + $snapshot.scope)
+  exit 0
+}
+
+if ($Action -eq 'Prepare' -and $RequireRegistrationSnapshot) {
+  if (-not $recoveryDir -or -not (Get-RegistrationSnapshot)) { throw 'Verified pending registration is no longer available; retry the complete installer.' }
+  # A power loss can occur after the legacy uninstaller removed registration.
+  # Restore that retry entry before starting another preservation transaction.
+  Restore-RegistrationSnapshot
+  $originalUninstaller = [IO.Path]::Combine($extendedRoot, $uninstallerName)
+  $savedUninstaller = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'uninstaller-backup.exe')
+  if (-not (Test-EntryExists $originalUninstaller) -and (Test-EntryExists $savedUninstaller)) {
+    [IO.Directory]::CreateDirectory($extendedRoot) | Out-Null
+    [IO.File]::Copy($savedUninstaller, $originalUninstaller, $false)
+  }
+}
+
+if ($Action -eq 'RestoreRegistration') {
+  if (-not $recoveryDir) { throw 'No prepared registration snapshot.' }
+  Restore-RegistrationSnapshot
+  $originalUninstaller = [IO.Path]::Combine($extendedRoot, $uninstallerName)
+  $savedUninstaller = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'uninstaller-backup.exe')
+  if (-not (Test-EntryExists $originalUninstaller) -and (Test-EntryExists $savedUninstaller)) {
+    [IO.Directory]::CreateDirectory($extendedRoot) | Out-Null
+    [IO.File]::Copy($savedUninstaller, $originalUninstaller, $false)
+  }
+  Write-Output 'Original registration restored; file recovery remains available.'
+  exit 0
+}
+
+if ($Action -eq 'Detach') {
+  if (-not $recoveryDir -or @($records | Where-Object { $_.status -eq 'complete' }).Count -eq 0) {
+    throw 'Cannot retire an old uninstaller without completed preservation.'
+  }
+  # A failed legacy uninstaller is never given permission to delete unknown
+  # content. Prepare must have moved every other top-level entry out first.
+  if (Test-EntryExists $extendedRoot) {
+    foreach ($entry in [IO.Directory]::GetFileSystemEntries($extendedRoot)) {
+      if ([IO.Path]::GetFileName($entry) -cne $uninstallerName) { throw 'Installation was repopulated after preservation; refusing old-uninstaller fallback.' }
+      $attributes = [IO.File]::GetAttributes($entry)
+      if (($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -ne 0) { throw 'Old uninstaller is not a regular file.' }
+      $backup = [IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'uninstaller-backup.exe')
+      if (-not (Test-EntryExists $backup) -or (Get-RecoveryHash $entry) -ne (Get-RecoveryHash $backup)) {
+        throw 'Old uninstaller changed after preservation.'
+      }
+      [IO.File]::Delete($entry)
+    }
+  }
+  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'old-uninstaller-detached'; observedAtUtc = [DateTime]::UtcNow.ToString('o') })
+  Write-Output 'Preserved installation is ready for complete-payload repair; old registration is retained until replacement.'
+  exit 0
+}
+
+if ($Action -eq 'RecordPayload') {
+  if ($recoveryDir) {
+    if (@($records | Where-Object { $_.status -eq 'complete' }).Count -eq 0) {
+      throw 'Payload removal requires completed preservation. Use the complete installer to resume recovery.'
+    }
+    if (-not $PayloadInventoryPath) { throw 'RecordPayload requires an embedded inventory.' }
+    Save-RecoveryPayloadInventory $PayloadInventoryPath
+  }
+  exit 0
+}
+
+$needsRollback = $Action -in @('Prepare', 'Reconcile') -and $recoveryDir -and
+  (@($records | Where-Object { $_.status -eq 'complete' }).Count -eq 0 -or
+   (@($records | Where-Object { $_.status -eq 'rolled-back' }).Count -gt 0 -and
+    @($records | Where-Object { $_.status -eq 'rollback-complete' }).Count -eq 0))
+if ($Action -eq 'Rollback' -or $needsRollback) {
   if (-not $recoveryDir) {
     exit 0
   }
@@ -289,8 +621,10 @@ if ($Action -eq 'Rollback') {
       $moveFailures.Add("Uninstaller: $($_.Exception.Message)")
     }
   }
-  if ($conflicts -eq 0 -and $missing -eq 0 -and $moveFailures.Count -eq 0 -and $uninstallerPresent) {
-    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned })
+  $originalHadUninstaller = @($records | Where-Object { $_.status -eq 'uninstaller-backed-up' }).Count -gt 0
+  if ($conflicts -eq 0 -and $missing -eq 0 -and $moveFailures.Count -eq 0 -and ($uninstallerPresent -or -not $originalHadUninstaller)) {
+    Restore-RegistrationSnapshot
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'rollback-complete'; returned = $returned; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
     if ([System.IO.File]::Exists($extendedMarker)) {
       [System.IO.File]::Delete($extendedMarker)
     }
@@ -298,14 +632,69 @@ if ($Action -eq 'Rollback') {
       [System.IO.File]::Delete($stateFile)
     }
     Write-Output "Rolled back $returned old installation entries to $root"
-    exit 0
+    if ($Action -ne 'Prepare') { exit 0 }
+    $recoveryDir = $null
+    $manifestPath = $null
+    $records = $null
+    $plans.Clear()
+    $planByOriginal.Clear()
+    $usedBackups.Clear()
+  } else {
+    Write-Output "Rollback incomplete: returned=$returned conflicts=$conflicts missing=$missing uninstallerPresent=$uninstallerPresent recovery=$recoveryDir $($moveFailures -join '; ')"
+    exit 3
   }
-
-  Write-Output "Rollback incomplete: returned=$returned conflicts=$conflicts missing=$missing uninstallerPresent=$uninstallerPresent recovery=$recoveryDir $($moveFailures -join '; ')"
-  exit 3
 }
 
-if ($Action -eq 'Restore') {
+$resumeRestoreBeforePrepare = $false
+if ($Action -in @('Prepare', 'Reconcile') -and $recoveryDir) {
+  $lastTerminal = -1
+  $lastPartialRestore = -1
+  $lastPrepareChange = -1
+  $lastComplete = -1
+  for ($index = 0; $index -lt $records.Count; $index++) {
+    $status = [string]$records[$index].status
+    if ($status -in @('restore-complete', 'rollback-complete')) {
+      $lastTerminal = $index
+    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'payload-restore-intent', 'payload-restored', 'restore-incomplete')) {
+      $lastPartialRestore = $index
+    } elseif ($status -in @('planned', 'moved')) {
+      $lastPrepareChange = $index
+    } elseif ($status -eq 'complete') {
+      $lastComplete = $index
+    }
+  }
+  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
+    # A prior Restore/Rollback finished but marker cleanup was interrupted.
+    if ([System.IO.File]::Exists($extendedMarker)) {
+      [System.IO.File]::Delete($extendedMarker)
+    }
+    if ([System.IO.File]::Exists($stateFile)) {
+      [System.IO.File]::Delete($stateFile)
+    }
+    $recoveryDir = $null
+    $manifestPath = $null
+    $plans.Clear()
+    $planByOriginal.Clear()
+    $usedBackups.Clear()
+  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
+    $resumeRestoreBeforePrepare = $true
+  } elseif ($lastComplete -gt $lastPrepareChange) {
+    # Prepare completed, but extraction or a later reinstall repopulated the
+    # application before Restore ran. Finish the previous workspace restore
+    # first, then preserve the current install in a separate transaction.
+    # Restore keeps old payload backups and refuses workspace collisions.
+    foreach ($plan in $plans) {
+      if ($appEntryNames -contains [System.IO.Path]::GetFileName([string]$plan.original)) {
+        if (Test-EntryExists (Get-ExtendedPath ([string]$plan.original))) {
+          $resumeRestoreBeforePrepare = $true
+          break
+        }
+      }
+    }
+  }
+}
+
+if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare -or ($Action -eq 'Reconcile' -and $recoveryDir)) {
   if (-not $recoveryDir) {
     exit 0
   }
@@ -333,10 +722,15 @@ if ($Action -eq 'Restore') {
   }
   $restored = 0
   $conflicts = 0
+  $script:payloadRestored = 0
+  $script:payloadCollisions = 0
   foreach ($plan in $plans) {
     $original = [string]$plan.original
     $name = [System.IO.Path]::GetFileName($original)
     if ($appEntryNames -contains $name) {
+      if ([bool]$plan.directory) {
+        Restore-PayloadExtras ([string]$plan.backup) $original
+      }
       continue
     }
 
@@ -367,62 +761,47 @@ if ($Action -eq 'Restore') {
     $restored++
   }
   if ($conflicts -gt 0) {
-    # 即使所有条目都冲突，也要保留 marker 和可重试的未完成状态。
+    # Keep the marker and unfinished state even when every entry conflicts.
     Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-incomplete'; restored = $restored; conflicts = $conflicts })
     Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
     exit 3
   }
-  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts })
+  Add-ManifestRecord $manifestPath ([ordered]@{ status = 'restore-complete'; restored = $restored; conflicts = $conflicts; payloadExtrasRestored = $script:payloadRestored; payloadCollisionsRetained = $script:payloadCollisions; completedAtUtc = [DateTime]::UtcNow.ToString('o') })
   if ([System.IO.File]::Exists($extendedMarker)) {
     [System.IO.File]::Delete($extendedMarker)
   }
-  Write-Output "Restored $restored non-application entries; $conflicts conflicts remain in $recoveryDir"
-  exit 0
+  Write-Output "Restored $restored non-application entries and $script:payloadRestored missing payload-directory entries; $script:payloadCollisions existing payload paths retained in $recoveryDir"
+  if (-not $resumeRestoreBeforePrepare -or $Action -eq 'Reconcile') {
+    try { Start-RecoveryRetention $root }
+    catch { Write-Output ('Backup retention skipped: ' + $_.Exception.Message) }
+    exit 0
+  }
+  if ([System.IO.File]::Exists($stateFile)) {
+    [System.IO.File]::Delete($stateFile)
+  }
+  $recoveryDir = $null
+  $manifestPath = $null
+  $plans.Clear()
+  $planByOriginal.Clear()
+  $usedBackups.Clear()
+  $restoredWorkspaces.Clear()
+  $restoreIntents.Clear()
 }
 
-if ($recoveryDir) {
-  $lastTerminal = -1
-  $lastPartialRestore = -1
-  $lastPrepareChange = -1
-  for ($index = 0; $index -lt $records.Count; $index++) {
-    $status = [string]$records[$index].status
-    if ($status -in @('restore-complete', 'rollback-complete')) {
-      $lastTerminal = $index
-    } elseif ($status -in @('workspace-restore-intent', 'workspace-restored', 'restore-incomplete')) {
-      $lastPartialRestore = $index
-    } elseif ($status -in @('planned', 'moved')) {
-      $lastPrepareChange = $index
-    }
-  }
-  if ($lastTerminal -gt $lastPartialRestore -and $lastTerminal -gt $lastPrepareChange) {
-    # A prior Restore/Rollback finished but marker cleanup was interrupted.
-    if ([System.IO.File]::Exists($extendedMarker)) {
-      [System.IO.File]::Delete($extendedMarker)
-    }
-    if ([System.IO.File]::Exists($stateFile)) {
-      [System.IO.File]::Delete($stateFile)
-    }
-    $recoveryDir = $null
-    $manifestPath = $null
-    $plans.Clear()
-    $planByOriginal.Clear()
-    $usedBackups.Clear()
-  } elseif ($lastPartialRestore -ge 0 -or $lastTerminal -ge 0) {
-    throw 'Recovery has an unfinished Restore/Rollback; refusing to mix a new installation into it.'
-  }
-}
+if ($Action -eq 'Reconcile') { exit 0 }
 
-if (-not [System.IO.Directory]::Exists($extendedRoot)) {
+if (-not (Test-EntryExists $extendedRoot)) {
   if ($recoveryDir) {
     Write-Output "Old installation already preserved in $recoveryDir"
   }
-  exit 0
+  if (-not $AllowMissingUninstaller) { exit 0 }
+  [IO.Directory]::CreateDirectory($extendedRoot) | Out-Null
 }
 if (([System.IO.File]::GetAttributes($extendedRoot) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
   throw 'Refusing to inspect an installation directory that is a reparse point.'
 }
 $uninstaller = [System.IO.Path]::Combine($extendedRoot, $uninstallerName)
-if (-not [System.IO.File]::Exists($uninstaller)) {
+if (-not (Test-EntryExists $uninstaller) -and -not $AllowMissingUninstaller) {
   throw "Expected old uninstaller is missing: $uninstallerName"
 }
 
@@ -445,10 +824,10 @@ foreach ($entry in $topLevel) {
   }
   $toMove.Add($entry)
 }
-if ($uninstallerCount -ne 1) {
+if ($uninstallerCount -ne 1 -and -not ($AllowMissingUninstaller -and $uninstallerCount -eq 0)) {
   throw 'Expected exactly one old uninstaller.'
 }
-if (-not $recoveryDir -and $toMove.Count -eq 0) {
+if (-not $recoveryDir -and $toMove.Count -eq 0 -and -not $AllowMissingUninstaller) {
   exit 0
 }
 
@@ -468,13 +847,16 @@ if (-not $recoveryDir) {
 # the manifest intent and the move, a later Prepare reconciles source/backup.
 Write-AtomicText $extendedMarker $recoveryDir
 Write-AtomicText $stateFile $recoveryDir
+Save-RegistrationSnapshot
 
 try {
   # The old uninstaller is the only file left in InstallDir. Keep a small
   # complete copy so Rollback can restore it if the old uninstaller deletes its
   # original before failing. Publish the copy atomically before any moves.
   $uninstallerBackup = [System.IO.Path]::Combine((Get-ExtendedPath $recoveryDir), 'uninstaller-backup.exe')
-  if (-not [System.IO.File]::Exists($uninstallerBackup)) {
+  if (-not (Test-EntryExists $uninstaller)) {
+    Add-ManifestRecord $manifestPath ([ordered]@{ status = 'uninstaller-missing-before-repair' })
+  } elseif (-not [System.IO.File]::Exists($uninstallerBackup)) {
     Add-ManifestRecord $manifestPath ([ordered]@{ status = 'uninstaller-backup-intent'; original = $root + '\' + $uninstallerName })
     $temporaryBackup = $uninstallerBackup + '.tmp-' + [System.Guid]::NewGuid().ToString('N')
     try {
@@ -562,3 +944,11 @@ try {
 }
 
 Write-Output "Preserved $($plans.Count) old installation entries in $recoveryDir"
+} finally {
+  if ($mutexHeld) { $recoveryMutex.ReleaseMutex() }
+  $recoveryMutex.Dispose()
+  if ($CleanupRuntime) {
+    try { Remove-RecoveryRetentionRuntime ([IO.Path]::GetDirectoryName($script:recoveryRuntimePath)) $root }
+    catch { Write-Output ('Cleanup runtime retained: ' + $_.Exception.Message) }
+  }
+}

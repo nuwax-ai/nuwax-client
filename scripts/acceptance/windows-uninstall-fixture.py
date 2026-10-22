@@ -30,8 +30,13 @@ def prepare_source(phase, run_id):
     removal = vendor[vendor.index('  # delete the installed files'):vendor.index('  ${ifNot} ${isKeepShortcuts}')]
     header = BASELINE.read_text(encoding='utf-8') if phase == 'before' else (CLIENT / 'overlay/crates/agent-electron-client/build/installer.nsh').read_text(encoding='utf-8')
     (folder / 'canonical.nsh').write_text(header,encoding='utf-8')
+    (folder / 'payload.json').write_text(json.dumps({
+        'schemaVersion': 1, 'executable': 'Nuwax.exe', 'files': ['Nuwax.exe'], 'directories': [],
+        'dataDirectoryName': '.nuwax-fixture', 'appDataName': 'Nuwax', 'updaterCacheName': 'nuwax-fixture-updater',
+    }), encoding='utf-8')
     # The only registry operations target this random non-Uninstall test key.
     source = f'''Unicode true
+!define BUILD_UNINSTALLER
 Name "NuwaxRemovalFixture-{run_id}"
 OutFile "builder.exe"
 RequestExecutionLevel user
@@ -40,18 +45,31 @@ SilentUnInstall silent
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 !define UNINSTALL_FILENAME "Uninstall Nuwax.exe"
+!define VERSION "0.0.0"
+!define PRODUCT_FILENAME "Nuwax"
+!define APP_ID "com.nuwax.fixture.{run_id}"
+!define APP_PACKAGE_NAME "nuwax-fixture"
+!define INSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
+!define UNINSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
+!define BUILD_RESOURCES_DIR "{CLIENT / 'overlay/crates/agent-electron-client/build'}"
+!define NUWAX_UNINSTALL_MANIFEST "{folder / 'payload.json'}"
 !define isUpdated '"$updateMode" == "1"'
 Var updateMode
+Var installMode
 !include "canonical.nsh"
 Function un.onInit
   StrCpy $INSTDIR "$EXEDIR\\fake-install"
   StrCpy $updateMode "0"
+  StrCpy $installMode "current"
   ${{GetParameters}} $R0
   ${{GetOptions}} $R0 "--updated" $R1
   ${{IfNot}} ${{Errors}}
     StrCpy $updateMode "1"
   ${{EndIf}}
   ClearErrors
+  !ifmacrodef windowsRepairRegisteredPaths
+    !insertmacro windowsRepairRegisteredPaths
+  !endif
   SetOutPath "$EXEDIR"
   InitPluginsDir
 FunctionEnd
@@ -73,7 +91,7 @@ SectionEnd
     (folder / 'fixture.nsi').write_text(source,encoding='utf-8')
     compiler_env = os.environ.copy()
     compiler_env['NSISDIR'] = str(COMPILER.parent.parent)
-    r = subprocess.run([str(COMPILER), '-V3', 'fixture.nsi'], cwd=folder, env=compiler_env, capture_output=True, timeout=30)
+    r = subprocess.run([str(COMPILER), '-V3', 'fixture.nsi'], cwd=folder, env=compiler_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
     (folder / 'compile.log').write_bytes(r.stdout + r.stderr)
     if r.returncode:
         print((r.stdout + r.stderr).decode(errors='replace')[-5000:])
@@ -116,7 +134,7 @@ kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,wint
 kernel.CreateFileW.restype=wintypes.HANDLE
 kernel.CloseHandle.argtypes=[wintypes.HANDLE];kernel.CloseHandle.restype=wintypes.BOOL
 rows=[]
-for case,updated,locked in [('standalone-locked',False,True),('updated-locked',True,True),('standalone-normal',False,False),('updated-normal',True,False),('standalone-missing-uninstaller',False,False)]:
+for case,updated,locked in [('standalone-locked',False,True),('updated-locked',True,True),('standalone-normal',False,False),('updated-normal',True,False),('standalone-missing-uninstaller',False,False),('updated-missing-uninstaller',True,False)]:
  install=root/'fake-install'
  if install.exists():raise ValueError('previous fixture residue unexpectedly remains')
  install.mkdir();(install/'Nuwax.exe').write_bytes(b'NOT AN EXECUTABLE: fake payload')
@@ -124,8 +142,11 @@ for case,updated,locked in [('standalone-locked',False,True),('updated-locked',T
  (install/'workspace').mkdir();(install/'workspace/user.txt').write_bytes(b'fake user data U1 must be tracked separately')
  outside=root/'outside-sentinel.txt';outside.write_bytes(b'outside fake install must survive')
  original_hash=hashlib.sha256(uninstaller.read_bytes()).hexdigest()
- if case=='standalone-missing-uninstaller':uninstaller.unlink()
- with winreg.CreateKey(winreg.HKEY_CURRENT_USER,reg) as key:winreg.SetValueEx(key,'FixtureOnly',0,winreg.REG_SZ,'not a real uninstall registration')
+ if case.endswith('-missing-uninstaller'):uninstaller.unlink()
+ with winreg.CreateKey(winreg.HKEY_CURRENT_USER,reg) as key:
+  winreg.SetValueEx(key,'FixtureOnly',0,winreg.REG_SZ,'not a real uninstall registration')
+  winreg.SetValueEx(key,'UninstallString',0,winreg.REG_SZ,'"'+str(uninstaller)+'" /currentuser')
+  winreg.SetValueEx(key,'InstallLocation',0,winreg.REG_SZ,str(install))
  trace=root/'cleanup-trace.txt'
  if trace.exists():trace.unlink()
  handle=None
@@ -156,7 +177,7 @@ for case,updated,locked in [('standalone-locked',False,True),('updated-locked',T
 result={'recordedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'phase':payload['phase'],'fixtureRoot':str(root),
         'runId':payload['runId'],'cases':rows,'source':{k:payload[k] for k in ['vendorSha256','hookSha256','compilerSha256','sourceSha256','builderSha256']},
         'realRegistryOrInstallationTouched':False,'ownRegistryCleaned':not reg_present(),'onlySyntheticUninstallerExecuted':True,
-        'limits':['No real Nuwax uninstall executed','U1 install-directory user-data preservation remains open','ACL and interruption cases not covered']}
+        'limits':['No real Nuwax uninstall executed','Local-data checkbox requires separate interactive package acceptance','ACL and interruption cases not covered']}
 print(json.dumps(result))
 '''
 
@@ -168,13 +189,16 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--nsis-root', type=Path, help='Pinned nsis-3.0.4.1 cache directory')
     parser.add_argument('--baseline-header', type=Path, help='Optional pre-fix canonical installer.nsh for before/after proof')
+    parser.add_argument('--vendor-uninstaller', type=Path, help='Explicit pinned builder 25.1.8 uninstaller.nsh for an isolated worktree')
     args = parser.parse_args()
     if os.name != 'nt' and not args.ssh_host:
         parser.error('An explicit Windows SSH host is required from another platform')
     SSH_HOST, BASELINE = args.ssh_host, args.baseline_header
     phase = 'before' if BASELINE else 'after'
     vendors = list((CLIENT / 'nuwa-electron-shell/node_modules/.pnpm').glob('app-builder-lib@25.1.8*/node_modules/app-builder-lib/templates/nsis/uninstaller.nsh'))
-    if len(vendors) != 1:
+    if args.vendor_uninstaller:
+        vendors = [args.vendor_uninstaller.resolve()]
+    if len(vendors) != 1 or not vendors[0].is_file():
         raise ValueError('Exactly one pinned app-builder-lib 25.1.8 is required')
     VENDOR = vendors[0]
     default_nsis = (Path(os.environ['LOCALAPPDATA']) / 'electron-builder/Cache/nsis/nsis-3.0.4.1' if os.name == 'nt'
@@ -190,7 +214,7 @@ def main():
     (WORK / ('uninstall-u2-' + phase + '-input.json')).write_text(json.dumps({k:v for k,v in payload.items() if k!='builderB64'},indent=2)+'\n')
     code = REMOTE.replace('payload=PAYLOAD', 'payload=json.loads(base64.b64decode('+repr(base64.b64encode(json.dumps(payload).encode()).decode())+'))')
     command = (['ssh','-o','BatchMode=yes','-o','ConnectTimeout=8',SSH_HOST,'python','-'] if SSH_HOST else [sys.executable,'-'])
-    r = subprocess.run(command,input=code.encode('utf-8'),capture_output=True,timeout=145)
+    r = subprocess.run(command,input=code.encode('utf-8'),stdout=subprocess.PIPE, stderr=subprocess.PIPE,timeout=145)
     if r.returncode:
         print(r.stderr.decode(errors='replace')[-1600:])
         raise RuntimeError('synthetic fixture failed')
@@ -216,9 +240,12 @@ def main():
             row = cases[case]
             if not (row['exitCode'] == 0 and not row['registryPreserved'] and row['cleanupReached'] and not row['payloadResidual']):
                 raise RuntimeError('normal removal failed')
-        row = cases['standalone-missing-uninstaller']
-        if not (row['exitCode'] != 0 and row['registryPreserved'] and not row['cleanupReached'] and row['payloadResidual'] and row['installWorkspaceSurvives']):
-            raise RuntimeError('backup preflight failure did not preserve data')
+            if not row['installWorkspaceSurvives']:
+                raise RuntimeError(case + ' deleted unknown installation workspace')
+        for case in ['standalone-missing-uninstaller', 'updated-missing-uninstaller']:
+            row = cases[case]
+            if not (row['exitCode'] != 0 and row['registryPreserved'] and not row['cleanupReached'] and row['payloadResidual'] and row['installWorkspaceSurvives']):
+                raise RuntimeError('backup preflight failure did not preserve data')
     if not all(r['outsideSentinelUnchanged'] for r in result['cases']):
         raise RuntimeError('fixture crossed its directory boundary')
     result['assertionsPassed'] = True

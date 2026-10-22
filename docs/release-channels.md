@@ -51,6 +51,8 @@ stable 用户只读取 `latest/latest.json`；beta 用户读取 `beta/latest.jso
 
 beta 发布只推进 beta 指针。stable 发布推进 stable 指针，在版本更高时也提升 beta 指针；已有更高 beta 时保留它。同步工作流共用并发锁，在版本目录和来源哈希验证后读取两镜像原指针，拒绝不一致、同版本换来源和降级；写入后回读核对，失败恢复已写指针。镜像尚无指针时视为首次发布。
 
+明确切换 Beta 维护线时，可在目标发布提交中增加 `release-notes/<tag>.channel.json`，固定目标 Beta tag、原 Beta 版本和原指针完整 SHA256，并说明原因。CLI 与指针事务只允许该目标替换两镜像中完全匹配的旧指针；stable、其他 tag、旧指针被推进或改写时仍拒绝降级，失败仍回滚。3.0.20 的 Beta 候选使用此记录从 `3.1.0-beta.5` 切回 3.0 维护线；`beta.1`、`beta.2` 已停止且未发布，后续源码使用下一可用 Beta 编号。已经安装 3.1 Beta 的客户端需手动安装 3.0 Beta。
+
 路径保留 `nuwax-electron/<stable-tag>/` 和 `nuwax-electron/beta-build/<beta-tag>/`。新元数据必须携带 yml URL；原有字段及旧标签目录不迁移。手动同步使用 workflow 所在提交的工具，来源验证对目标 tag 的独立检出执行。
 
 ## S3 校验与同步耗时

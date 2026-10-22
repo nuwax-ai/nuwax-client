@@ -4,13 +4,17 @@ const path = require('node:path');
 
 const ENV_KEY = 'NUWAX_WINDOWS_INSTALLER_ARCHIVE';
 const SUPPORTED_BUILDER_VERSION = '25.1.8';
+const ZIP_COMPRESSION = 'normal';
 const ZIP_OPTIONS = Object.freeze({ differentialPackage: false, useZip: true });
+const SEVEN_ZIP_OPTIONS = Object.freeze({ differentialPackage: true, useZip: false });
+const BLOCKMAP_HOOK = path.join(__dirname, 'installer-blockmap.cjs');
+const LEGACY_BLOCKMAP_HOOK = 'scripts/build/installer-blockmap.cjs';
 
 function resolveInstallerArchiveMode({ env = process.env, platform } = {}) {
   const mode = env[ENV_KEY];
-  if (mode == null || mode === '') return '';
-  if (mode !== 'zip-qa') throw new Error(`[installer-archive] Unknown ${ENV_KEY} mode: ${mode}`);
-  if (platform !== 'win32') throw new Error('[installer-archive] zip-qa requires an exclusive Windows build target');
+  if (mode == null || mode === '') return platform === 'win32' ? 'zip' : '';
+  if (!['zip-qa', '7z-qa'].includes(mode)) throw new Error(`[installer-archive] Unknown ${ENV_KEY} mode: ${mode}`);
+  if (platform !== 'win32') throw new Error('[installer-archive] QA archive mode requires an exclusive Windows build target');
   return mode;
 }
 
@@ -53,30 +57,43 @@ function checkCliOverrides(argv) {
     if (/^(--(?:no-)?config|-c)\.nsis\.(differentialPackage|useZip)(?:=|$)/.test(arg)) {
       throw new Error('[installer-archive] zip-qa policy owns the archive CLI pair');
     }
+    if (/^(--(?:no-)?config|-c)\.afterAllArtifactBuild(?:=|$)/.test(arg)) {
+      throw new Error('[installer-archive] policy owns the installer blockmap hook');
+    }
   }
 }
 
-function applyInstallerArchivePolicy(config, { env = process.env, platform, builderVersions, argv = [] } = {}) {
-  if (!resolveInstallerArchiveMode({ env, platform })) return config;
+function applyInstallerArchivePolicy(config, { env = process.env, platform, builderVersions, argv = [], hook = BLOCKMAP_HOOK } = {}) {
+  const mode = resolveInstallerArchiveMode({ env, platform });
+  if (!mode) return config;
   if (builderVersions?.electronBuilder !== SUPPORTED_BUILDER_VERSION || builderVersions?.appBuilderLib !== SUPPORTED_BUILDER_VERSION) {
-    throw new Error(`[installer-archive] zip-qa requires installed electron-builder and app-builder-lib ${SUPPORTED_BUILDER_VERSION}`);
+    throw new Error(`[installer-archive] Windows archive policy requires installed electron-builder and app-builder-lib ${SUPPORTED_BUILDER_VERSION}`);
   }
   if (config.nsis != null && (typeof config.nsis !== 'object' || Array.isArray(config.nsis))) {
     throw new Error('[installer-archive] zip-qa requires an object nsis configuration');
   }
   const nsis = config.nsis ?? {};
-  for (const [key, expected] of Object.entries(ZIP_OPTIONS)) {
+  const options = mode === '7z-qa' ? SEVEN_ZIP_OPTIONS : ZIP_OPTIONS;
+  for (const [key, expected] of Object.entries(options)) {
     if (Object.hasOwn(nsis, key) && nsis[key] !== expected) {
       throw new Error(`[installer-archive] Conflicting configured nsis.${key} for zip-qa`);
     }
   }
+  if (mode !== '7z-qa' && config.afterAllArtifactBuild && ![hook, BLOCKMAP_HOOK, LEGACY_BLOCKMAP_HOOK].includes(config.afterAllArtifactBuild)) {
+    throw new Error('[installer-archive] Compose the existing afterAllArtifactBuild hook before replacing it');
+  }
   checkCliOverrides(argv);
-  // 只改变成对的归档选项；资源、目标、版本、签名与发布字段原样保留。
-  return { ...config, nsis: { ...nsis, ...ZIP_OPTIONS } };
+  // ZIP 直接解压到目标目录；EXE 的独立 blockmap 保留更新器的差分下载协议。
+  return { ...config, nsis: { ...nsis, ...options }, ...(mode === '7z-qa' ? {} : { compression: ZIP_COMPRESSION, afterAllArtifactBuild: hook }) };
 }
 
 function installerArchiveCliArgs(config, options) {
+  const mode = resolveInstallerArchiveMode(options);
   if (applyInstallerArchivePolicy(config, options) === config) return [];
+  const archiveArgs = mode === '7z-qa'
+    ? ['--config.nsis.differentialPackage=true', '--config.nsis.useZip=false']
+    : ['--config.nsis.differentialPackage=false', '--config.nsis.useZip=true', `--config.afterAllArtifactBuild=${LEGACY_BLOCKMAP_HOOK}`];
+  if (mode === 'zip') return archiveArgs;
   let publishCount = 0;
   const argv = options.argv ?? [];
   for (let i = 0; i < argv.length; i++) {
@@ -91,15 +108,15 @@ function installerArchiveCliArgs(config, options) {
   }
   // QA 归档不得依赖 CI/tag 自动发布策略，且不靠追加参数覆盖调用方的冲突。
   if (publishCount !== 1) throw new Error('[installer-archive] zip-qa requires explicit --publish never');
-  return [
-    '--config.nsis.differentialPackage=false',
-    '--config.nsis.useZip=true',
-  ];
+  return archiveArgs;
 }
 
 module.exports = {
   ENV_KEY,
   SUPPORTED_BUILDER_VERSION,
+  ZIP_COMPRESSION,
+  BLOCKMAP_HOOK,
+  LEGACY_BLOCKMAP_HOOK,
   resolveInstallerArchiveMode,
   resolveBuilderPlatform,
   installedBuilderVersions,

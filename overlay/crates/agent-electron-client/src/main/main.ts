@@ -65,6 +65,7 @@ import {
 import { openLogDirectory } from "./ipc/appHandlers";
 import { shouldInjectWebviewPerfBridge } from "./ipc/bridgeTrust";
 import { migrateDataDir, migrateSettingsPaths } from "./bootstrap/migrate";
+import { configureCommercialAppIdentity } from "./bootstrap/appIdentity";
 import { getDeviceId, logSystemInfo } from "./services/system/deviceId";
 import { initWebviewPolicy, configureSharedWebview } from "./services/system/webviewPolicy";
 import { stopAllEngines } from "./services/engines/engineManager";
@@ -84,9 +85,8 @@ if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
   configureCaptureBackend(app.commandLine);
-  app.setName("Nuwax");
+  configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
-  app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
 }
 
 // 处理 EPIPE 错误（社区最佳实践）
@@ -675,6 +675,29 @@ async function cleanupAllProcesses(): Promise<void> {
   log.info("[Cleanup] All processes stopped");
 }
 
+// 更新入口须在 Windows 窗口/IPC 可调用前完成策略和清理回调初始化。
+function initializeClientUpdater(): void {
+  initAutoUpdater(
+    () => mainWindow,
+    cleanupAllProcesses,
+    () => {
+      // 在 quitAndInstall 前被调用：
+      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
+      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
+      //   保留 Squirrel.Mac 的正常退出流程
+      isQuitting = true;
+      isInstallingUpdate = true;
+      log.info(
+        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
+      );
+    },
+    {
+      installAfterDownload:
+        process.platform === "win32" || process.platform === "darwin",
+    },
+  );
+}
+
 // App lifecycle
 
 /**
@@ -795,6 +818,8 @@ app.whenReady().then(async () => {
       : (readSetting("i18n.active_lang") as string | undefined);
   setMainLang(savedLang || DEFAULT_MAIN_LANG);
 
+  if (process.platform === "win32") initializeClientUpdater();
+
   const ctx: HandlerContext = {
     getMainWindow: () => mainWindow,
     lanproxy,
@@ -906,21 +931,7 @@ app.whenReady().then(async () => {
     await initTrayManager();
   }
 
-  initAutoUpdater(
-    () => mainWindow,
-    cleanupAllProcesses,
-    () => {
-      // 在 quitAndInstall 前被调用：
-      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
-      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
-      //   保留 Squirrel.Mac 的正常退出流程
-      isQuitting = true;
-      isInstallingUpdate = true;
-      log.info(
-        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
-      );
-    },
-  );
+  if (process.platform !== "win32") initializeClientUpdater();
 });
 
 app.on("window-all-closed", () => {

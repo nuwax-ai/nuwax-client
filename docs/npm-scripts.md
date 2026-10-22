@@ -96,3 +96,10 @@ stable` 的兼容壳，真身在 `scripts/client/release.mjs`。`sign:win`/`veri
 `check:appdir`（应用目录字面量）、`check-ports(:dev)`（启动端口检查）、`lint(:fix)`。
 
 S3 上传验证由 `scripts/release-storage-integrity.mjs` 共用于 Actions 与 CLI：新资产优先服务端 SHA256/大小，缺少校验值时限四路完整回读；逐文件打印方式与耗时。`s3Checksums` 是可选来源记录，旧 tag 不要求补写。GitHub 只读轮询遇到 EOF、连接超时或 502/503/504 时最多重试两次，发布写操作不会因此重复执行。
+
+
+## Windows 首装归档
+
+Windows NSIS 默认使用 ZIP 直接解压到安装目录，压缩级别为 normal，并为最终 EXE 生成独立 blockmap，保留更新器的差分重建能力。实际提速与包体积取舍需用安装包计时验证，记录见 [3.0 安装性能计划](../plans/20261021-windows-install-performance-plan.md)。
+
+对照测试可设置 `NUWAX_WINDOWS_INSTALLER_ARCHIVE=7z-qa` 或 `zip-qa`；仅允许独立 Windows 目标，旧打包入口必须明确 `--publish never`。QA 的标识、产物隔离和发布保护沿用当前版本线规则；非 Windows 构建保持原归档行为。

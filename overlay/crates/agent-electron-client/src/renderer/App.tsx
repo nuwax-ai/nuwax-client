@@ -2015,16 +2015,16 @@ function App() {
                   </Tooltip>
                 ) : updateState.status === "downloaded" ? (
                   <Tooltip
-                    title={t("Claw.About.installUpdate")}
+                    title={t("Claw.App.UpdateTag.update")}
                     mouseEnterDelay={0.7}
                   >
                     <Button
                       type="text"
                       size="small"
-                      aria-label={t("Claw.About.installUpdate")}
+                      aria-label={t("Claw.App.UpdateTag.update")}
                       onClick={handleOpenAbout}
                       style={{
-                        // 橙底安装 icon：点击进入关于页确认重启安装。
+                        // 橙底安装 icon：点击进入关于页查看日志和升级。
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",

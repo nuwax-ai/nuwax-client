@@ -17,7 +17,7 @@
 | `refactor` | 不改行为的等价重构 | `refactor/qa-optimization-0912` |
 | `chore` | 构建 / 依赖 / 脚本杂务 | `chore/bump-base-pin` |
 | `docs` | 纯文档改动 | `docs/branch-naming` |
-| `release` | 版本线，格式固定（§2.3） | `release/v1.0.x` |
+| `release` | 版本线，格式固定（§2.3） | `release/v3.0` |
 | `codex` | agent 自治工作分支（会话隔离用） | `codex/download-redirect-closeout` |
 | `archive` | 完结分支的归档去向，冻结不进提交 | `archive/electron-client-1.0-full` |
 | `dependabot` | bot 专用前缀，人工不使用 | `dependabot/github_actions/…` |
@@ -26,20 +26,21 @@
 
 ### 2.1 main（主干）
 
-- 唯一集成分支，只经 PR 合入，不直接 push。
+- 集成主干，只经 PR 合入，不直接 push；维护中的版本线按 §2.3 接收定向 PR。
 - 发布不由 main 驱动，由 tag 驱动（§2.5）。
 
 ### 2.2 工作分支（feat / fix / refactor / chore / docs / codex）
 
-- 从 main 切出，PR 回 main；合并即删（§5）。
-- ⚠️ **CI 触发是硬约束**：`ci.yml` 的 push 触发**只挂 `main`**（2026-09-17 收窄，对齐 nuwaclaw 基座仓口径；此前曾挂 `feat/**`，工作分支每次 push 都跑 30 分钟全套门禁属纯噪音）。所有工作分支（`feat/*`、`fix/*`、`codex/*` 等）**push 一律不跑 CI**，开 PR 回 main 后由 `pull_request` 跑双轨门禁（全覆盖）。
+- 从目标主干或版本线切出，PR 回同一目标线；合并后按 §5 清理。
+- CI 按 `.github/workflows/ci.yml`：`main` 与 `release/**` 的 push、定向 PR 均运行完整门禁；普通工作分支 push 不重复运行。
 
-### 2.3 release/vX.Y.x（版本线）
+### 2.3 release/vX.Y（版本线）
 
-- 格式固定：`release/v<major>.<minor>.x`，末位 `x` 为字面通配——patch 位由 tag 递进，分支名不随 patch 变化。
-- 从 main（或收尾提交）切出；线上只进 cherry-pick 与发布收尾提交（release-notes、pin bump），不进新功能。
-- **回流**：对应正式 tag（`vX.Y.Z`）验证转正后，将线 PR 回 main（可 fast-forward），随后删除该线。不回流 = 主干与发布产物长期分叉。
-- 现状（定档日）：`release/v1.0.x` 领先 main 19 个提交，基点 `codex/download-redirect-closeout@2043f755`；`electron-v1.0.4` 已转正，待回流。
+- 格式固定：`release/v<major>.<minor>`，patch 由不可变 tag 递进，分支名不随 patch 变化。
+- 从目标版本已验证的提交创建；工作分支从该线切出，经 PR 回流该线。功能回补须明确范围和来源，不整体混入其他版本。
+- 当前 3.0 稳定线为 `release/v3.0`，按用户决定从已验证的 3.0.17 收尾提交 `6c3a2c0a` 建线；`fix/stable-3.0.18` 仅提交本次名称与升级改动。
+- 旧 `release/v3.0.x` 含其他 beta 功能，保留历史，不作为本次 3.0.18 的合并目标；不重写旧分支或 3.0.17 标签。
+- 3.1 线为 `release/v3.1`。跨线回补保留来源；需要回流主干时另开 PR，不要求用 fast-forward 混并整条版本线。
 
 ### 2.4 archive/*
 
@@ -55,9 +56,9 @@
 - 版本使用 X.Y.Z / X.Y.Z-beta.N，beta 从 1 开始并按最大已占用序号加一；可多轮 beta 同号转正、直接或连续 stable。正式 tag 创建后关闭同号 beta；Draft 占版本，失败只续跑原 tag/SHA，源码变更升号。详见 [更新通道规范](./release-channels.md)。
 - 历史 tag 不删除、不移动、不重打。同一 tag、同一 SHA 可续跑构建和签名；同步不得降低任一存储的当前通道版本。需要改源码时使用新的版本。`npm run release` 在预检与新 tag 创建前校验两通道远端标签；直接推送 tag 前也须遵守同一规则。
 
-### 2.6 已知缺口（待办）
+### 2.6 本地验证边界
 
-- `ci.yml` push 触发不含 `release/**`：版本线上的 push 不跑双轨门禁，需手动执行 `npm run base:test` + `npm run test:commercial`（注意 base:test 会清 overlay，跑完记得 `overlay:sync` 还原）。若版本线活动频繁，可把 `release/**` 加进 push 触发，待拍板。
+- `base:test` 会清除 overlay，须在隔离副本运行；商业测试在已同步 overlay 的基座中单独运行。发布调用完整社区、商业及前端门禁。
 
 ## 3. 基座仓 nuwa-electron-shell
 
@@ -77,8 +78,8 @@
 
 | 阶段 | 规则 |
 |---|---|
-| 工作分支合入 main | 合并即删：删远端与本地分支，不留墓碑 |
-| 版本线 | 正式 tag 转正 + 回流 main 后删除 |
+| 工作分支合入目标线 | 合并后清理；保留仍被 pin 或 QA 使用的分支 |
+| 版本线 | 维护期间保留；停止维护且完成必要回流后再归档 |
 | 有考古价值的完结线 | 挪 `archive/<slug>` 归档，冻结 |
 | 长期挂着的本地实验分支 | 定期清理；不推远端的不受本规范约束 |
 
@@ -107,11 +108,11 @@
 ## 8. 速查
 
 ```bash
-# 新建工作分支（push 不触发 CI；开 PR 回 main 才跑双轨门禁）
-git checkout -b feat/<slug> main
+# 从目标版本线新建工作分支，PR 回同一版本线
+git checkout -b fix/<slug> origin/release/v3.0
 
-# 切版本线
-git checkout -b release/v3.0.x main
+# 新版本线从明确验证过的提交创建
+git checkout -b release/vX.Y <verified-commit>
 
 # beta 可连续发布，也可同号转正；正式 tag 创建后关闭同号 beta
 npm run release -- --version 3.0.11-beta.6 --dry-run
@@ -120,6 +121,6 @@ npm run release -- --version 3.0.11-beta.6
 npm run release -- --version 3.0.11 --stage sign
 npm run release -- --tag v3.0.11 --stage sync
 
-# 版本线回流（转正后）
-git checkout main && git merge --ff-only origin/release/v3.0.x && git push origin main
+# 修复经 PR 回目标线；跨版本回流另建 PR
+gh pr create --base release/v3.0 --head fix/<slug>
 ```

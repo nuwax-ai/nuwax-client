@@ -3,22 +3,68 @@
 ;
 ; 背景：productName 一个值同时决定「显示名」与「产物文件名」，而商业身份要求
 ; 文件名/包名一律 ASCII（Nuwax-Setup-*.exe / Nuwax.app / deb 包名 nuwax），
-; 故 productName 必须保持 ASCII "Nuwax"，中文名只能在向导 UI 层单独覆盖。
+; 故 productName 必须保持 ASCII "Nuwax"，中文名在向导 UI 层单独覆盖。
 ;
 ; 机制：electron-builder 的 common.nsh 先执行
 ;     BrandingText "${PRODUCT_NAME} ${VERSION}"   ← 底部版本行
 ;     Name "${PRODUCT_NAME}"                      ← 向导标题与正文
 ; 而本文件的 customHeader 宏由 installer.nsi 在其**之后**插入；NSIS 中后写的
-; 同名指令覆盖先写的 → 只重写 Name 即可让标题/正文变中文。
+; 同名指令覆盖先写的，统一标题、正文和底部版本行的用户可见名称。
 ;
-; ⚠️ 刻意不重写 BrandingText：底部「Nuwax 1.0.4」保持 ASCII（产品要求）。
 ; 卸载程序文件名走 PRODUCT_FILENAME（同为 ASCII），与 autoUpdater 的
 ; app.getName() → "Nuwax" 对齐，改动不影响自动更新查找卸载程序。
 ; NSIS Unicode 默认开启（nsis.unicode !== false），中文字面量安全。
 ; ---------------------------------------------------------------------------
 
+!include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-path.nsh"
+
+!macro preInit
+  !ifndef BUILD_UNINSTALLER
+    ; NSIS removes its /D tail from $CMDLINE before initMultiUser runs.
+    ; Capture it from Windows before any scope callback resets INSTDIR.
+    System::Call 'kernel32::GetCommandLineW() w .R0'
+    ${GetOptions} $R0 "/D=" $R1
+    ${ifNot} ${Errors}
+      ; GetOptions treats '/' as a delimiter; use it only to detect /D.
+      ; NSIS has already parsed its full tail into INSTDIR, including spaces
+      ; and forward slashes. Canonicalize that value before scope callbacks.
+      GetFullPathName $windowsCommandLineInstallPath "$INSTDIR"
+    ${else}
+      StrCpy $windowsCommandLineInstallPath ""
+    ${endif}
+    ClearErrors
+    !insertmacro check64BitAndSetRegView
+    !insertmacro windowsRepairRegisteredPaths
+  !endif
+!macroend
+
+; This hook runs before assistedInstaller emits the install-mode page functions.
+!macro customWelcomePage
+  !include "${BUILD_RESOURCES_DIR}\windows-maintenance.nsh"
+  !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
+!macroend
+
 !macro customHeader
+  !include "${BUILD_RESOURCES_DIR}\windows-maintenance.nsh"
+  !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
   Name "女娲Nuwax"
+  BrandingText "女娲Nuwax ${VERSION}"
+  !insertmacro nuwaxUninstallStrings
+  !insertmacro windowsInstallPathStrings
+  !ifdef BUILD_UNINSTALLER
+    ; The stock tail deletes default links by name and revokes the shared
+    ; AppUserModelId. Exact target/identity cleanup below owns this instead.
+    !ifdef isKeepShortcuts
+      !undef isKeepShortcuts
+    !endif
+    !define isKeepShortcuts '1 == 1'
+  !endif
+  ; Cleanup is an explicit, default-off choice; never inherit builder's
+  ; unconditional data deletion, including while an old version is updated.
+  !ifdef DELETE_APP_DATA_ON_UNINSTALL
+    !undef DELETE_APP_DATA_ON_UNINSTALL
+  !endif
 !macroend
 
 !macro nuwaxStopStandaloneUninstall MESSAGE
@@ -30,61 +76,147 @@
   Quit
 !macroend
 
-; The vendor standalone branch ignores RMDir errors and then removes the
-; registration. Keep a retry entry when files remain; its uninstaller may have
-; been deleted before a locked payload made RMDir fail. The --updated branch
-; retains the vendor atomic rename/restore behavior used by the parent installer.
-!macro customRemoveFiles
-  ${if} ${isUpdated}
-    CreateDirectory "$PLUGINSDIR\old-install"
+; nsExec captures the useful PowerShell error in R1. Keep it after the wizard
+; exits, including failures before a recovery directory has been created.
+!macro nuwaxLogRecoveryFailure ACTION
+  DetailPrint "${ACTION} failed: exit=$R0"
+  DetailPrint "$R1"
+  ClearErrors
+  FileOpen $R2 "$TEMP\Nuwax-installer-recovery.log" a
+  ${ifNot} ${Errors}
+    FileSeek $R2 0 END
+    FileWrite $R2 "$\r$\n${VERSION} ${ACTION} exit=$R0$\r$\n$R1$\r$\n"
+    FileClose $R2
+  ${endif}
+!macroend
 
-    Push ""
-    Call un.atomicRMDir
-    Pop $R0
-
-    ${if} $R0 != 0
-      DetailPrint "File is busy, aborting: $R0"
-
-      Push ""
-      Call un.restoreFiles
-      Pop $R0
-
-      Abort `Can't rename "$INSTDIR" to "$PLUGINSDIR\old-install".`
+!macro nuwaxRequireSafeInstallTarget
+  !insertmacro windowsNormalizeInstallDirectory $INSTDIR $R1
+  ${if} $R1 == ""
+    StrCpy $R0 2
+    StrCpy $R1 'Installation target is not a safe local application directory: "$INSTDIR" (scope=$installMode).'
+    !insertmacro nuwaxLogRecoveryFailure InstallTarget
+    ${ifNot} ${Silent}
+      MessageBox MB_OK|MB_ICONSTOP "无法确认安全的安装目录，请重新选择本地应用目录。详情：$TEMP\Nuwax-installer-recovery.log"
     ${endif}
+    SetErrorLevel 2
+    Quit
+  ${endif}
+!macroend
 
-    RMDir /r $INSTDIR
-  ${else}
-    InitPluginsDir
-    ClearErrors
-    CopyFiles /SILENT "$INSTDIR\${UNINSTALL_FILENAME}" "$PLUGINSDIR\nuwax-uninstaller-backup.exe"
-    ${if} ${Errors}
-      !insertmacro nuwaxStopStandaloneUninstall "无法保存卸载程序，卸载已停止，原安装文件和卸载登记未删除。"
-    ${endif}
+!include "${BUILD_RESOURCES_DIR}\shortcut-repair.nsh"
 
-    ; un.onInit sets the current directory to INSTDIR. Move out before removing
-    ; it, otherwise our own directory handle can leave an empty install root.
-    SetOutPath "$PLUGINSDIR"
-    ClearErrors
-    RMDir /r $INSTDIR
-    StrCpy $R0 0
-    ${if} ${Errors}
-      StrCpy $R0 1
-    ${endif}
-    ${if} ${FileExists} "$INSTDIR\*.*"
-      StrCpy $R0 1
-    ${endif}
+; Standalone failures stop before registration cleanup and keep the uninstaller
+; for retry. Updates retain the atomic rename/restore path of the parent installer.
+!macro nuwaxRecoveryScripts
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+  File /oname=$PLUGINSDIR\installer-backup-retention.ps1 "${BUILD_RESOURCES_DIR}\installer-backup-retention.ps1"
+!macroend
 
-    ${if} $R0 != 0
-      ${ifNot} ${FileExists} "$INSTDIR\${UNINSTALL_FILENAME}"
-        ClearErrors
-        CopyFiles /SILENT "$PLUGINSDIR\nuwax-uninstaller-backup.exe" "$INSTDIR\${UNINSTALL_FILENAME}"
-        ${if} ${Errors}
-          !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，且无法恢复卸载程序。系统卸载登记已保留，请使用原安装包修复后重试。"
+!ifndef BUILD_UNINSTALLER
+Var nuwaxPendingInstallPath
+Var nuwaxRequireRecoverySnapshot
+
+!macro nuwaxInspectRecovery TARGET
+  StrCpy $nuwaxPendingInstallPath "${TARGET}"
+  !insertmacro nuwaxRecoveryScripts
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Inspect -InstallDir "$nuwaxPendingInstallPath" -StatePath "$PLUGINSDIR\nuwax-inspect-state.txt" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
+  Pop $R0
+  Pop $R1
+!macroend
+
+; Registration can disappear after the old uninstaller succeeds but before
+; extraction/restore. Resolve only the selected directory's verified
+; snapshot before the updater creates fallback metadata in a guessed scope.
+!macro nuwaxResolvePendingInstall
+  StrCpy $nuwaxRequireRecoverySnapshot ""
+  ${if} $INSTDIR != $windowsRegisteredCurrentPath
+  ${andif} $INSTDIR != $windowsRegisteredMachinePath
+    !insertmacro nuwaxInspectRecovery $INSTDIR
+    ${if} $R0 == 0
+      StrCpy $R2 $R1 15
+      ${if} $R2 == "RECOVERY_SCOPE "
+        StrCpy $R2 $R1 26
+        StrCpy $R3 $R1 27
+        ${if} $R2 == "RECOVERY_SCOPE CurrentUser"
+          ${if} ${isForAllUsers}
+            StrCpy $R0 2
+          ${else}
+            !ifndef INSTALL_MODE_PER_ALL_USERS
+              StrCpy $installMode "CurrentUser"
+              SetShellVarContext current
+              StrCpy $windowsRegisteredCurrentPath "$nuwaxPendingInstallPath"
+              StrCpy $windowsCurrentPathStatus "resolved"
+              StrCpy $perUserInstallationFolder "$nuwaxPendingInstallPath"
+              StrCpy $hasPerUserInstallation "1"
+            !else
+              StrCpy $R0 2
+            !endif
+          ${endif}
+        ${elseif} $R3 == "RECOVERY_SCOPE LocalMachine"
+          ${if} ${isForCurrentUser}
+            StrCpy $R0 2
+          ${else}
+            !ifdef INSTALL_MODE_PER_ALL_USERS_REQUIRED
+              StrCpy $installMode "all"
+              SetShellVarContext all
+              StrCpy $windowsRegisteredMachinePath "$nuwaxPendingInstallPath"
+              StrCpy $windowsMachinePathStatus "resolved"
+              StrCpy $perMachineInstallationFolder "$nuwaxPendingInstallPath"
+              !ifndef INSTALL_MODE_PER_ALL_USERS
+                StrCpy $hasPerMachineInstallation "1"
+              !endif
+            !else
+              StrCpy $R0 2
+            !endif
+          ${endif}
+        ${else}
+          StrCpy $R0 2
+        ${endif}
+        StrCpy $INSTDIR "$nuwaxPendingInstallPath"
+        StrCpy $nuwaxRequireRecoverySnapshot "-RequireRegistrationSnapshot"
+      ${else}
+        StrCpy $R2 $R1 19
+        ${if} $R2 != "NO_PENDING_RECOVERY"
+          StrCpy $R0 2
         ${endif}
       ${endif}
-      !insertmacro nuwaxStopStandaloneUninstall "卸载未完成，部分文件可能被占用或权限不足。卸载入口已保留，请解除占用或权限限制后重试。"
+    ${endif}
+    ${if} $R0 != 0
+      StrCpy $R1 "Cannot verify pending recovery identity, path or selected scope. $R1"
+      !insertmacro nuwaxLogRecoveryFailure Inspect
+      ${ifNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "无法核验待恢复记录的产品、路径或安装范围。请使用原账户和原安装范围重试。现存文件、登记与备份已保留。详情：$TEMP\Nuwax-installer-recovery.log"
+      ${endif}
+      SetErrorLevel 2
+      Quit
     ${endif}
   ${endif}
+!macroend
+!endif
+
+
+!macro customRemoveFiles
+  !insertmacro windowsRequireRegisteredPath
+  ${if} ${isUpdated}
+    ; Record this uninstaller's own inventory for the parent's preserved backup.
+    ; Unknown files must survive even a direct --updated invocation.
+    !insertmacro nuwaxRecoveryScripts
+    !insertmacro nuwaxExtractUninstallInventory
+    StrCpy $R6 "CurrentUser"
+    ${if} $installMode == "all"
+      StrCpy $R6 "LocalMachine"
+    ${endif}
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action RecordPayload -RegistryScope "$R6" -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-payload-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+    Pop $R0
+    Pop $R1
+    ${if} $R0 != 0
+      !insertmacro nuwaxLogRecoveryFailure RecordPayload
+      !insertmacro nuwaxStopStandaloneUninstall "无法核验升级恢复记录，卸载入口和现存文件已保留，请使用完整安装包修复。"
+    ${endif}
+  ${endif}
+  !insertmacro nuwaxRemoveOwnedFiles
 !macroend
 
 ; electron-builder 25's default CHECK_APP_RUNNING only stops matching Nuwax.exe
@@ -107,79 +239,46 @@
 ; including user workspaces when they were placed there. Preserve every entry
 ; outside that directory before invoking it.
 !macro nuwaxPrepareOldInstall ROOT_KEY STATE_FILE
-  ; This macro also expands from customInit, before installUtil.nsh is included.
-  ; Use NSIS registry reads and the functions that installUtil defines later.
-  ReadRegStr $R3 ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}" UninstallString
-  ${if} $R3 == ""
-    !ifdef UNINSTALL_REGISTRY_KEY_2
-      ReadRegStr $R3 ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
+  StrCpy $R5 "$windowsRegisteredCurrentPath"
+  StrCpy $R6 "CurrentUser"
+  ${if} $installMode == "all"
+    !if "${ROOT_KEY}" != "HKEY_CURRENT_USER"
+      StrCpy $R5 "$windowsRegisteredMachinePath"
+      StrCpy $R6 "LocalMachine"
     !endif
   ${endif}
-
-  ${if} $R3 != ""
-    Push $R3
-    Call GetInQuotes
-    Pop $R4
-    ReadRegStr $R5 ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ${if} $R5 == ""
-    ${andIf} $R4 != ""
-      Push $R4
-      Call GetFileParent
-      Pop $R5
-    ${endif}
-
-    ; Registry data can be stale or malformed. Never let uninstallOldVersion
-    ; delete a directory that has not passed the preservation step.
-    StrCpy $R7 0
-    ${if} $R5 != ""
-    ${andIf} $R4 != ""
-      StrCpy $R6 $R5 1 -1
-      ${if} $R6 == "\"
-        StrCpy $R5 $R5 -1
-      ${endif}
-      ${StdUtils.GetDrivePart} $R6 "$R5"
-      ${if} $R5 != "$R6"
-      ${andIf} $R5 != "$R6\"
-      ${andIf} $R4 == "$R5\${UNINSTALL_FILENAME}"
-      ${andIf} ${FileExists} "$R4"
-        StrCpy $R7 1
-      ${endif}
-    ${endif}
-
-    ${if} $R7 != 1
-      MessageBox MB_OK|MB_ICONSTOP "无法安全确认旧版安装路径，已停止升级并保留原有文件。请联系支持。"
-      SetErrorLevel 2
-      Quit
-    ${endif}
-
-    ; A missing InstallLocation is normal for older per-user installs. Its
-    ; ReadRegStr leaves NSIS's error flag set even after GetFileParent supplies
-    ; a verified path; do not carry that stale flag into the upgrade steps.
-    ClearErrors
-    DetailPrint `Preserving old "${PRODUCT_NAME}" installation in $R5 (${ROOT_KEY})`
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
-    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}"`
+  ${if} $R5 != ""
+    DetailPrint "正在保全原安装并检查恢复状态，请稍候；所有个人文件将保留..."
+    !insertmacro nuwaxRecoveryScripts
+    SectionGetSize 0 $R7
+    nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Prepare -AllowMissingUninstaller $nuwaxRepairConfirmed $nuwaxRequireRecoverySnapshot -RequiredSpaceKB "$R7" -InstallDir "$R5" -StatePath "$PLUGINSDIR\${STATE_FILE}" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
     Pop $R0
     Pop $R1
+    DetailPrint "$R1"
+    StrCpy $R3 $R1 16
+    ${if} $R3 == "RECOVERY_WARNING"
+      StrCpy $nuwaxRecoveryWarning "1"
+    ${endif}
     ${if} $R0 != 0
-      MessageBox MB_OK|MB_ICONSTOP "旧版安装文件保全失败，升级已停止。原文件或备份保留在旧安装目录旁的 Nuwax-installer-recovery 目录。错误码：$R0"
+      !insertmacro nuwaxLogRecoveryFailure Prepare
+      ${ifNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "旧版文件保全未完成。请解除占用或使用完整安装包的维护选项重试。现存文件与备份已保留。详情：$TEMP\Nuwax-installer-recovery.log"
+      ${endif}
       SetErrorLevel 2
       Quit
-    ${endif}
-    ${if} $R1 != ""
-      DetailPrint "$R1"
     ${endif}
   ${endif}
 !macroend
 
 !macro nuwaxRestoreOldInstall STATE_FILE
   ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-    File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
+    !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Restore -StatePath "$PLUGINSDIR\${STATE_FILE}"`
     Pop $R0
     Pop $R1
     ${if} $R0 != 0
-      MessageBox MB_OK|MB_ICONSTOP "新版已安装，但旧版工作区自动恢复失败。旧文件保留在旧安装目录旁的 Nuwax-installer-recovery 目录，请联系支持。错误码：$R0"
+      !insertmacro nuwaxLogRecoveryFailure Restore
+      MessageBox MB_OK|MB_ICONSTOP "新版已安装，但旧版工作区自动恢复失败。旧文件保留在旧安装目录旁的 Nuwax-installer-recovery 目录，请联系支持。错误码：$R0" /SD IDOK
       SetErrorLevel 2
       Quit
     ${endif}
@@ -202,19 +301,25 @@
   ${endif}
   ${if} $R8 == 1
     StrCpy $R8 "missing"
+    StrCpy $R6 "CurrentUser"
+    ${if} $installMode == "all"
+      !if "${STATE_FILE}" == "nuwax-old-shell.txt"
+        StrCpy $R6 "LocalMachine"
+      !endif
+    ${endif}
     ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
-      File /oname=$PLUGINSDIR\normalize-old-install.ps1 "${BUILD_RESOURCES_DIR}\normalize-old-install.ps1"
-      nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Rollback -StatePath "$PLUGINSDIR\${STATE_FILE}"`
+      !insertmacro nuwaxRecoveryScripts
+      nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Rollback -StatePath "$PLUGINSDIR\${STATE_FILE}" -RegistryScope "$R6" -InstallRegistryKey "${INSTALL_REGISTRY_KEY}" -UninstallRegistryKey "${UNINSTALL_REGISTRY_KEY}"`
       Pop $R8
       Pop $R9
       DetailPrint "$R9"
     ${endif}
     ${if} $R8 == 0
-      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，已恢复原有安装文件。新版安装已停止，请联系支持。"
+      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，已恢复原有安装文件。新版安装已停止，请联系支持。" /SD IDOK
     ${elseif} $R8 == "missing"
-      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，未找到自动恢复记录。新版安装已停止，请联系支持。"
+      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，未找到自动恢复记录。新版安装已停止，请联系支持。" /SD IDOK
     ${else}
-      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，自动恢复未完成。旧文件保留在旧安装目录旁的 Nuwax-installer-recovery 目录，请联系支持。恢复码：$R8"
+      MessageBox MB_OK|MB_ICONSTOP "旧版卸载失败，自动恢复未完成。旧文件保留在旧安装目录旁的 Nuwax-installer-recovery 目录，请联系支持。恢复码：$R8" /SD IDOK
     ${endif}
     SetErrorLevel 2
     Quit
@@ -230,6 +335,18 @@
 !macroend
 
 !macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+    !ifmacrodef uninstallOldVersion
+      !include "${BUILD_RESOURCES_DIR}\windows-old-uninstaller.nsh"
+    !endif
+  !endif
+  !ifndef BUILD_UNINSTALLER
+    ; Scope callbacks can reparse /D; restore its full (possibly spaced) value.
+    !insertmacro windowsInitRegisteredPaths
+    !insertmacro nuwaxRequireSafeInstallTarget
+    !insertmacro nuwaxConfirmMaintenanceTarget
+    !insertmacro windowsRequireRegisteredPath
+  !endif
   ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
     !insertmacro nuwaxFindAppProcess $R0
     ${if} $R0 == 0
@@ -295,10 +412,8 @@
       ; installs prepare exactly the registrations that installSection removes.
       ${if} $installMode != "all"
       ${orIf} ${UAC_IsAdmin}
+        !insertmacro nuwaxUpdateShortcuts Capture
         !insertmacro nuwaxPrepareOldInstall SHELL_CONTEXT nuwax-old-shell.txt
-        ${if} $installMode == "all"
-          !insertmacro nuwaxPrepareOldInstall HKEY_CURRENT_USER nuwax-old-current.txt
-        ${endIf}
       ${endif}
     !endif
   ${endIf}
@@ -308,11 +423,77 @@
 ; instance. That is the process that actually uninstalls an all-users copy, so
 ; perform the same close and directory preflight before it reaches the section.
 !macro customInit
+  !insertmacro nuwaxInitMaintenance
+  !insertmacro windowsInitRegisteredPaths
+  !insertmacro nuwaxRequireSafeInstallTarget
+  ${if} ${Silent}
+  ${orif} ${isUpdated}
+    !insertmacro nuwaxConfirmMaintenanceTarget
+    !insertmacro windowsRequireRegisteredPath
+  ${endif}
+  ${if} $nuwaxMaintenanceAction != ""
+  ${andif} $windowsCurrentPathStatus == "none"
+  ${andif} $windowsMachinePathStatus == "none"
+    SetErrorLevel 2
+    Quit
+  ${endif}
+  ${if} ${isUpdated}
+    SetAutoClose true
+  ${endif}
   ${if} ${UAC_IsInnerInstance}
     !insertmacro setInstallModePerAllUsers
+    !insertmacro windowsInitRegisteredPaths
     InitPluginsDir
     !insertmacro customCheckAppRunning
   ${endif}
+!macroend
+
+; 更新沿用正在运行副本的范围，首次安装仍由向导选择。/D 由更新器传入，
+; initMultiUser 已将其解析到 INSTDIR；注册表同时存在两种安装时也不能换副本。
+!macro customInstallMode
+  !insertmacro windowsSelectUpdateInstallMode
+!macroend
+
+; builder 的目录规整回调在跳过目录页后仍运行，会给自定义旧路径追加产品名。
+; 更新必须保持原目录；首装继续执行原模板的规整逻辑。
+!macro customPageAfterChangeDir
+  !insertmacro nuwaxMaintenancePage
+  !ifdef allowToChangeInstallationDirectory
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define MUI_PAGE_CUSTOMFUNCTION_PRE nuwaxInstFilesPre
+    Function nuwaxInstFilesPre
+      ${ifNot} ${isUpdated}
+      ${andif} $nuwaxMaintenanceAction == ""
+        Call instFilesPre
+      ${endif}
+    FunctionEnd
+  !endif
+!macroend
+
+; 只有成功安装后才进入完成页。升级直接以原桌面用户打开新版并跳过此页；
+; 首装保留默认的运行复选框和完成按钮。静默更新仍由 vendor 的 installSection 启动。
+!macro customFinishPage
+  Function nuwaxStartApp
+    ${if} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${else}
+      StrCpy $1 ""
+    ${endif}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  Function nuwaxFinishPagePre
+    ${if} ${isUpdated}
+      HideWindow
+      Call nuwaxStartApp
+      Abort
+    ${endif}
+  FunctionEnd
+
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE nuwaxFinishPagePre
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION nuwaxStartApp
+  !insertmacro MUI_PAGE_FINISH
 !macroend
 
 ; installSection invokes this after the old uninstaller, new payload extraction,
@@ -323,4 +504,13 @@
   ${if} $installMode == "all"
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
   ${endif}
+  !insertmacro nuwaxUpdateShortcuts Repair
+  ; A preserved shortcut can intentionally target another installed copy.
+  ; Always launch the selected executable after this installation finishes.
+  StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  ${if} $nuwaxRecoveryWarning == "1"
+  ${andifNot} ${Silent}
+    MessageBox MB_OK|MB_ICONEXCLAMATION "当前安装已修复，现存文件已保留。上次备份已丢失或无法自动恢复，其中的旧文件无法保证找回，请核对您的文件。诊断记录保留在原安装目录旁。"
+  ${endif}
+  !insertmacro nuwaxMaintenanceComplete
 !macroend

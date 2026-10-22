@@ -277,11 +277,11 @@ const updater = {
   check(): Promise<ClientUpdateCheckResult | null> {
     return ipcRenderer.invoke("updater:check");
   },
-  /** 下载更新（幂等：已在下载/已下载时由主进程侧守卫）。 */
+  /** 下载更新；installAfterDownload 策略由主进程继续安装并重启。 */
   download(): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke("updater:download");
   },
-  /** 重启并安装（仅 downloaded 状态有意义）。 */
+  /** 重启并安装；一键策略按需补齐下载，其他宿主须先下载。 */
   install(): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke("updater:install");
   },
