@@ -523,10 +523,51 @@ function daemonServeArgs(): string[] {
   ];
 }
 
+/** SIGKILL cannot unlink a Unix socket. Never replace a listening or foreign endpoint. */
+async function reclaimStaleDaemonSocket(): Promise<void> {
+  if (IS_WIN) return;
+  const selected = endpoint();
+  const directory = path.dirname(selected.socketPath);
+  const before = fs.lstatSync(selected.socketPath, { throwIfNoEntry: false });
+  if (!before) return;
+  const parent = fs.lstatSync(directory);
+  const owned = (stat: fs.Stats) => !process.getuid || stat.uid === process.getuid();
+  const privateDirectory = (stat: fs.Stats) => stat.isDirectory() && !stat.isSymbolicLink() && owned(stat) && (stat.mode & 0o077) === 0;
+  if (!privateDirectory(parent) || !before.isSocket() || !owned(before) || (before.mode & 0o077) !== 0)
+    throw new Error("endpointSocketUntrusted");
+
+  const state = await new Promise<"stale" | "gone" | "busy">((resolve) => {
+    const socket = net.connect(selected.socketPath);
+    let settled = false;
+    const finish = (result: "stale" | "gone" | "busy") => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(750, () => finish("busy"));
+    socket.on("connect", () => finish("busy"));
+    socket.on("close", () => finish("busy"));
+    socket.on("error", (error: NodeJS.ErrnoException) =>
+      finish(error.code === "ECONNREFUSED" ? "stale" : error.code === "ENOENT" ? "gone" : "busy"));
+  });
+  if (state === "gone") return;
+  if (state !== "stale") throw new Error("helperStillRunning");
+  const current = fs.lstatSync(selected.socketPath, { throwIfNoEntry: false });
+  if (!current) return;
+  const currentParent = fs.lstatSync(directory);
+  if (!privateDirectory(currentParent) || currentParent.dev !== parent.dev || currentParent.ino !== parent.ino ||
+      !current.isSocket() || !owned(current) || (current.mode & 0o077) !== 0 ||
+      current.dev !== before.dev || current.ino !== before.ino)
+    throw new Error("endpointSocketUntrusted");
+  fs.unlinkSync(selected.socketPath);
+}
+
 /** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win/linux 直跑二进制。 */
 async function launchDaemon(helperRoot: string): Promise<string> {
   const policy = prepareCuaPolicy();
   if (await isDaemonAlive()) return policy.sha256;
+  await reclaimStaleDaemonSocket();
   if (IS_MAC) {
     const child = spawn(
       "open",

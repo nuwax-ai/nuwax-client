@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   revokeOK: true,
   windowProbeGate: undefined as Promise<void> | undefined,
   windowProbeStarted: vi.fn(),
+  beforeRawSocketError: undefined as (() => void) | undefined,
 }));
 
 function policyHash(policyPath: string): string {
@@ -116,68 +117,82 @@ vi.mock("node:child_process", () => ({
     return { unref: vi.fn(), on: vi.fn() };
   },
 }));
-vi.mock("node:net", () => ({
-  default: {
-    connect: () => {
-      const listeners: Record<string, (...args: any[]) => void> = {};
-      const socket = {
-        setTimeout: vi.fn(),
-        destroy: vi.fn(),
-        on: (event: string, callback: (...args: any[]) => void) => {
-          listeners[event] = callback;
-          return socket;
-        },
-        write: (payload: string) => {
-          const request = JSON.parse(payload) as { method: string; name?: string; args?: { nuwax_nonce?: string } };
-          let reply: unknown = { ok: false };
-          if (request.method === "metadata") {
-            if (request.args?.nuwax_nonce) {
-              const token = fs.readFileSync(endpointTokenFile(), "utf8");
-              const proof = createHmac("sha256", token).update(request.args.nuwax_nonce).digest("hex");
-              reply = { ok: true, result: { nuwax_endpoint_proof: mocks.endpointProofValid ? proof : "0".repeat(64) } };
-            } else {
-              reply = { ok: true, result: { driver_version: "0.28.2", nuwax_window_tasks: 1, nuwax_window_preview: 1 } };
+vi.mock("node:net", async (importOriginal) => {
+  const actualNet = await importOriginal<typeof import("node:net")>();
+  return {
+    default: {
+      connect: (socketPath: string) => {
+        const listeners: Record<string, (...args: any[]) => void> = {};
+        let raw: import("node:net").Socket | undefined;
+        let timeout: [number, (() => void) | undefined] | undefined;
+        const socket = {
+          setTimeout: (ms: number, callback?: () => void) => { timeout = [ms, callback]; raw?.setTimeout(ms, callback); },
+          destroy: vi.fn(() => raw?.destroy()),
+          on: (event: string, callback: (...args: any[]) => void) => {
+            listeners[event] = callback;
+            return socket;
+          },
+          write: (payload: string) => {
+            const request = JSON.parse(payload) as { method: string; name?: string; args?: { nuwax_nonce?: string } };
+            let reply: unknown = { ok: false };
+            if (request.method === "metadata") {
+              if (request.args?.nuwax_nonce) {
+                const token = fs.readFileSync(endpointTokenFile(), "utf8");
+                const proof = createHmac("sha256", token).update(request.args.nuwax_nonce).digest("hex");
+                reply = { ok: true, result: { nuwax_endpoint_proof: mocks.endpointProofValid ? proof : "0".repeat(64) } };
+              } else {
+                reply = { ok: true, result: { driver_version: "0.28.2", nuwax_window_tasks: 1, nuwax_window_preview: 1 } };
+              }
+            } else if (request.method === "authorization_status") {
+              reply = { ok: true, result: {
+                permission_mode: "unrestricted",
+                permission_mode_valid: true,
+                managed_policy_active: mocks.policyActive,
+                managed_policy_valid: mocks.policyActive,
+                managed_policy_sha256: mocks.policyPath ? policyHash(mocks.policyPath) : "",
+              } };
+            } else if (request.method === "nuwax_task") {
+              mocks.nativeRequests.push(request);
+              reply = request.name === "revoke" && !mocks.revokeOK ? { ok: false } : request.name === "preview" ? { ok: true, result: { ...(request.args as any), width: 960, height: 540, jpeg: "A".repeat(100000) } }
+                : { ok: true, result: { valid: true, activated: true, foreground: mocks.nativeForeground, drained: mocks.drained, tasks: [] } };
+            } else if (request.method === "call" && request.name === "list_windows") {
+              reply = { ok: true, result: { structuredContent: { windows: [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
+            } else if (request.method === "call") {
+              reply = mocks.permissionGateAttempts-- > 0
+                ? { ok: false, error: "permissions_pending" }
+                : { ok: true, result: { structuredContent: {
+                accessibility: mocks.permissionGranted,
+                screen_recording: mocks.permissionGranted,
+                source: { attribution: "driver-daemon", bundle_id: "com.nuwax-ai.nuwax-computer-use" },
+              } } };
             }
-          } else if (request.method === "authorization_status") {
-            reply = { ok: true, result: {
-              permission_mode: "unrestricted",
-              permission_mode_valid: true,
-              managed_policy_active: mocks.policyActive,
-              managed_policy_valid: mocks.policyActive,
-              managed_policy_sha256: mocks.policyPath ? policyHash(mocks.policyPath) : "",
-            } };
-          } else if (request.method === "nuwax_task") {
-            mocks.nativeRequests.push(request);
-            reply = request.name === "revoke" && !mocks.revokeOK ? { ok: false } : request.name === "preview" ? { ok: true, result: { ...(request.args as any), width: 960, height: 540, jpeg: "A".repeat(100000) } }
-              : { ok: true, result: { valid: true, activated: true, foreground: mocks.nativeForeground, drained: mocks.drained, tasks: [] } };
-          } else if (request.method === "call" && request.name === "list_windows") {
-            reply = { ok: true, result: { structuredContent: { windows: [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
-          } else if (request.method === "call") {
-            reply = mocks.permissionGateAttempts-- > 0
-              ? { ok: false, error: "permissions_pending" }
-              : { ok: true, result: { structuredContent: {
-              accessibility: mocks.permissionGranted,
-              screen_recording: mocks.permissionGranted,
-              source: { attribution: "driver-daemon", bundle_id: "com.nuwax-ai.nuwax-computer-use" },
-            } } };
-          }
-          const answer = () => listeners.data?.(Buffer.from(`${JSON.stringify(reply)}\n`));
-          if (request.method === "nuwax_task" && request.name === "preview" && mocks.previewGate) {
-            void mocks.previewGate.then(() => listeners.data?.(Buffer.from(JSON.stringify(reply) + "\n"))); return;
-          }
-          if (request.method === "nuwax_task" && request.name === "window") {
-            mocks.windowProbeStarted();
-            if (mocks.windowProbeGate) { void mocks.windowProbeGate.then(answer); return; }
-          }
-          queueMicrotask(answer);
-        },
-      };
-      queueMicrotask(() => mocks.daemonReady ? listeners.connect?.()
-        : listeners.error?.(Object.assign(new Error("not listening"), { code: "ECONNREFUSED" })));
-      return socket;
+            const answer = () => listeners.data?.(Buffer.from(`${JSON.stringify(reply)}\n`));
+            if (request.method === "nuwax_task" && request.name === "preview" && mocks.previewGate) {
+              void mocks.previewGate.then(() => listeners.data?.(Buffer.from(JSON.stringify(reply) + "\n"))); return;
+            }
+            if (request.method === "nuwax_task" && request.name === "window") {
+              mocks.windowProbeStarted();
+              if (mocks.windowProbeGate) { void mocks.windowProbeGate.then(answer); return; }
+            }
+            queueMicrotask(answer);
+          },
+        };
+        queueMicrotask(() => {
+          if (!listeners.data) {
+            // The stale-path safety probe uses real Unix sockets; only protocol replies are mocked.
+            raw = actualNet.connect(socketPath);
+            if (timeout) raw.setTimeout(...timeout);
+            raw.on("connect", () => listeners.connect?.());
+            raw.on("close", () => listeners.close?.());
+            raw.on("error", error => { mocks.beforeRawSocketError?.(); listeners.error?.(error); });
+          } else if (mocks.daemonReady) listeners.connect?.();
+          else listeners.error?.(Object.assign(new Error("not listening"), { code: "ECONNREFUSED" }));
+        });
+        return socket;
+      },
     },
-  },
-}));
+  };
+});
 
 /** 测试宿主双实现：与原 db/mcp mock 同一 Map 后端，断言形态不变。 */
 function testHostPorts() {
@@ -297,6 +312,7 @@ beforeEach(() => {
   mocks.permissionGateAttempts = 0;
   mocks.gatewayOptions = undefined; mocks.nativeForeground = false; mocks.windowProbeGate = undefined;
   mocks.windowProbeStarted.mockClear();
+  mocks.beforeRawSocketError = undefined;
   // 测试进程无 resourcesPath：指到临时 bundled 目录（可按用例放置假 bundled helper）
   Object.defineProperty(process, "resourcesPath", {
     value: path.join(mocks.userDataURL, "resources"),
@@ -365,6 +381,49 @@ describe("cua 开关与启动收敛", () => {
     expect(result.error).toBe("endpointSocketUntrusted");
     expect(fs.readFileSync(socketPath, "utf8")).toBe("keep this file");
     expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
+  });
+
+  it("活跃 socket 即使不能通过身份握手也不删除或替换", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    const { socketPath, server } = await createEndpointSocket(false);
+    const identity = fs.lstatSync(socketPath);
+    mocks.autoReady = mocks.permissionGranted = true;
+    try {
+      const result = await setCuaEnabled(true);
+      expect(result).toMatchObject({ success: false, error: "helperStillRunning" });
+      expect(fs.lstatSync(socketPath).ino).toBe(identity.ino);
+      expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
+  it("探测期间端点被换成文件时保留替换物并拒绝启动", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    const { socketPath } = await createEndpointSocket(true);
+    mocks.beforeRawSocketError = () => {
+      fs.unlinkSync(socketPath);
+      fs.writeFileSync(socketPath, "replacement", { mode: 0o600 });
+    };
+    mocks.autoReady = mocks.permissionGranted = true;
+    const result = await setCuaEnabled(true);
+    expect(result).toMatchObject({ success: false, error: "endpointSocketUntrusted" });
+    expect(fs.readFileSync(socketPath, "utf8")).toBe("replacement");
+    expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
+  });
+
+  it("端点符号链接不跟随，也不删除其目标", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    const socketPath = (await getCuaStatus()).socketPath!;
+    const target = path.join(mocks.userDataURL, "keep.txt");
+    fs.writeFileSync(target, "keep");
+    fs.symlinkSync(target, socketPath);
+    mocks.autoReady = mocks.permissionGranted = true;
+    const result = await setCuaEnabled(true);
+    expect(result).toMatchObject({ success: false, error: "endpointSocketUntrusted" });
+    expect(fs.lstatSync(socketPath).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("keep");
   });
 
   it("未设置开关时默认关闭，启动只清除旧 MCP 条目，不安装或启动 helper", async () => {
