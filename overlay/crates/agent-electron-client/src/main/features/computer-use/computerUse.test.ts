@@ -346,6 +346,7 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
 describe("cua 开关与启动收敛", () => {
   it("强杀遗留的自有 Unix socket 经确认无人监听后回收，下次启用成功", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const { socketPath } = await createEndpointSocket(true);
     mocks.autoReady = mocks.permissionGranted = true;
     const result = await setCuaEnabled(true);
@@ -355,11 +356,13 @@ describe("cua 开关与启动收敛", () => {
 
   it("旧端点位置是普通文件时失败关闭，保留文件且不启动 helper", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const socketPath = (await getCuaStatus()).socketPath!;
     fs.writeFileSync(socketPath, "keep this file", { mode: 0o600 });
     mocks.autoReady = mocks.permissionGranted = true;
     const result = await setCuaEnabled(true);
     expect(result.success).toBe(false);
+    expect(result.error).toBe("endpointSocketUntrusted");
     expect(fs.readFileSync(socketPath, "utf8")).toBe("keep this file");
     expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
   });
