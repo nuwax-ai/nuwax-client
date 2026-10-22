@@ -96,10 +96,16 @@ FunctionEnd
       Abort
     ${endif}
     !insertmacro windowsInitRegisteredPaths
-    ${if} $windowsRegisteredCurrentPath == ""
-    ${andif} $windowsRegisteredMachinePath == ""
-    ${andif} $windowsCurrentPathStatus == "none"
-    ${andif} $windowsMachinePathStatus == "none"
+    StrCpy $R0 $windowsRegisteredCurrentPath
+    StrCpy $R1 $windowsCurrentPathStatus
+    ${if} $installMode == "all"
+      StrCpy $R0 $windowsRegisteredMachinePath
+      StrCpy $R1 $windowsMachinePathStatus
+    ${endif}
+    ; A copy in the other scope does not turn a fresh selected-scope install
+    ; into maintenance, which requires an existing selected-scope directory.
+    ${if} $R0 == ""
+    ${andif} $R1 == "none"
       ${if} $nuwaxMaintenanceAction != ""
         MessageBox MB_OK|MB_ICONSTOP "未找到可安全维护的 Nuwax 安装。请检查原安装位置或联系支持。"
         SetErrorLevel 2

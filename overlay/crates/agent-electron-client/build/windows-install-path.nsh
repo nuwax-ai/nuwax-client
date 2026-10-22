@@ -473,6 +473,14 @@ Var windowsCommandLineInstallPath
       StrCpy $windowsMachinePathStatus "conflict"
     ${endif}
   ${endif}
+  !ifndef INSTALL_MODE_PER_ALL_USERS
+    ${if} $installMode != "all"
+      ; The vendor's silent section treats this inventory flag as an elevation
+      ; request. Another scope's installed copy must not elevate this operation.
+      ; Keep its verified path separately for conflict and shortcut protection.
+      StrCpy $hasPerMachineInstallation "0"
+    ${endif}
+  !endif
 !macroend
 
 !macro windowsInitUninstallPath
