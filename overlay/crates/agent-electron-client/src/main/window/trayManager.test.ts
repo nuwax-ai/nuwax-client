@@ -94,6 +94,18 @@ vi.mock('../services/i18n', () => ({
   t: (key: string, count?: string) => count === undefined ? key : `${count} unread messages`,
 }));
 
+const activityState = vi.hoisted(() => ({
+  entries: [] as Array<{ featureId: string; activity: { actions: Array<{ id: string; labelKey: string; run(): void }> } }>,
+  listener: undefined as ((entries: any[]) => void) | undefined,
+}));
+vi.mock('../features', () => ({
+  desktopFeatureActivities: () => activityState.entries,
+  onDesktopFeatureActivitiesChanged: (fn: (entries: any[]) => void) => {
+    activityState.listener = fn;
+    return () => {};
+  },
+}));
+
 import { TrayManager, TrayStatus, createTrayManager, setTrayUnreadCount } from './trayManager';
 import { nativeImage, Menu } from 'electron';
 
@@ -138,22 +150,41 @@ describe('TrayManager', () => {
     expect(mockOptions.onShowWindow).not.toHaveBeenCalled();
   });
 
-  it('录制托盘可暂停/继续和停止，结束后移除动作', async () => {
+  it('进行中操作渲染为托盘动作项，按特性顺序展示，清除后移除', async () => {
     await trayManager.create();
-    const pause = vi.fn(), stop = vi.fn();
-    trayManager.setRecordingStopAction(stop);
-    trayManager.setRecordingPauseAction(pause, false);
+    const pause = vi.fn(), stop = vi.fn(), cuaStop = vi.fn();
+    activityState.entries = [
+      { featureId: 'computer-use', activity: { actions: [{ id: 'stop', labelKey: 'Claw.Cua.stop', run: cuaStop }] } },
+      { featureId: 'capture', activity: { actions: [
+        { id: 'pause', labelKey: 'Claw.Capture.pause', run: pause },
+        { id: 'stop', labelKey: 'Claw.Capture.stopRecording', run: stop },
+      ] } },
+    ];
+    activityState.listener!(activityState.entries);
     const current = () => vi.mocked(Menu.buildFromTemplate).mock.calls.at(-1)![0];
+    // 展示顺序 = 特性登记顺序
+    const labels = current().map(item => item.label);
+    expect(labels.indexOf('Claw.Cua.stop')).toBeLessThan(labels.indexOf('Claw.Capture.pause'));
     const pauseItem = current().find(item => item.label === 'Claw.Capture.pause');
     expect(pauseItem).toBeDefined(); pauseItem!.click!({} as never, {} as never, {} as never);
     expect(pause).toHaveBeenCalledOnce();
-    trayManager.setRecordingPauseAction(pause, true);
+    activityState.entries = [
+      { featureId: 'capture', activity: { actions: [
+        { id: 'pause', labelKey: 'Claw.Capture.resume', run: pause },
+        { id: 'stop', labelKey: 'Claw.Capture.stopRecording', run: stop },
+      ] } },
+    ];
+    activityState.listener!(activityState.entries);
     expect(current().some(item => item.label === 'Claw.Capture.pause')).toBe(false);
     expect(current().some(item => item.label === 'Claw.Capture.resume')).toBe(true);
     const stopItem = current().find(item => item.label === 'Claw.Capture.stopRecording');
     stopItem!.click!({} as never, {} as never, {} as never); expect(stop).toHaveBeenCalledOnce();
-    trayManager.setRecordingPauseAction(null, false); trayManager.setRecordingStopAction(null);
+    const cuaItem = current().find(item => item.label === 'Claw.Cua.stop');
+    expect(cuaItem).toBeUndefined();
+    activityState.entries = [];
+    activityState.listener!(activityState.entries);
     expect(current().some(item => String(item.label).startsWith('Claw.Capture.'))).toBe(false);
+    expect(current().some(item => item.label === 'Claw.Cua.stop')).toBe(false);
   });
 
   describe('create()', () => {

@@ -157,8 +157,8 @@ describe("screenshot", () => {
     expect(recordEngine.formats).not.toHaveBeenCalled(); expect(recordEngine.record).not.toHaveBeenCalled();
   });
 
-  it("权限被拒绝：permission-denied，引擎不被调用", async () => {
-    const { service, stillEngine } = setup({ getPermission: () => "denied" });
+  it.each(["denied", "not-determined"] as const)("权限 %s：进入引导，引擎不被调用", async permission => {
+    const { service, stillEngine } = setup({ getPermission: () => permission });
     expect(await service.screenshot(undefined)).toMatchObject({ success: false, code: "permission-denied" });
     expect(stillEngine.captureStill).not.toHaveBeenCalled();
   });

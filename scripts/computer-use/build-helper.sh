@@ -13,7 +13,7 @@
 #   CUA_VERSION           写进 Info.plist 的版本串（默认 0.28.2）
 #   TARGET_TRIPLE         Rust target（必填，如 aarch64-apple-darwin / x86_64-pc-windows-msvc）
 #   OUT_DIR               产物目录（必填，一般=agent-electron-client/resources/computer-use）
-#   ICON_ICNS             mac 图标源（默认取 overlay 同步后的 public/icon.icns 黑标）
+#   ICON_ICNS             mac 图标源（默认直接复用商业版主应用的 canonical icon.icns）
 #   SIGN_IDENTITY         mac Developer ID 身份（空=ad-hoc 签名，仅 dev 用；产品必须正签）
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
 set -euo pipefail
@@ -72,6 +72,16 @@ grep -q 'NUWAX_TOKEN_FILE_ENV' \
   echo "::error::Nuwax endpoint authentication patch missing"; exit 1;
 }
 
+grep -q 'mod nuwax_tasks;' \
+  "$SRC_DIR/libs/cua-driver/rust/crates/cua-driver/src/main.rs" || {
+  echo "::error::Nuwax window-task boundary patch missing"; exit 1;
+}
+
+grep -q 'nuwax_window_preview' \
+  "$SRC_DIR/libs/cua-driver/rust/crates/cua-driver/src/serve.rs" || {
+  echo "::error::Nuwax window preview capability patch missing"; exit 1;
+}
+
 # ---------- 构建 ----------
 # cua 仓 rust-toolchain.toml 钉 1.97.1：cargo 会切到该工具链，target 必须装进它——
 # target add 须在仓内目录执行（让 rustup 解析钉住工具链；在仓外执行会装到默认 stable 上，
@@ -102,8 +112,10 @@ if [ "$PLATFORM" = "mac" ]; then
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   cp "$BIN" "$APP/Contents/MacOS/Nuwax Computer Use"
   chmod +x "$APP/Contents/MacOS/Nuwax Computer Use"
-  ICON_ICNS="${ICON_ICNS:-$(cd "$REPO_ROOT" && find nuwa-electron-shell/crates/agent-electron-client/public -maxdepth 1 -name 'icon.icns' | head -1)}"
-  [ -n "$ICON_ICNS" ] && [ -f "$ICON_ICNS" ] || { echo "::error::icon.icns not found (overlay sync?)"; exit 1; }
+  # The dependency checkout can still contain the community AI icon. Read the
+  # same commercial source used for the main app without depending on sync order.
+  ICON_ICNS="${ICON_ICNS:-$REPO_ROOT/overlay/crates/agent-electron-client/public/icon.icns}"
+  [ -f "$ICON_ICNS" ] || { echo "::error::main application icon.icns not found: $ICON_ICNS"; exit 1; }
   cp "$ICON_ICNS" "$APP/Contents/Resources/AppIcon.icns"
   sed -e "s/@@CUA_VERSION@@/$CUA_VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
   printf 'APPL????' > "$APP/Contents/PkgInfo"

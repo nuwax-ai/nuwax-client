@@ -14,12 +14,31 @@ import { currentTicket } from "../services/commercialTicketSession";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
-import { suspendCua } from "../services/cua/computerUse";
+import { emitFeatureSessionInvalidated, runFeatureServicesStopping, settleDesktopFeaturesForQuit } from "../features";
 import {
   AuthLifecycle,
   setCommercialLifecycle,
   type ServiceResult,
 } from "../services/auth/lifecycle";
+
+const FEATURE_STOP_TIMEOUT_MS = 1500;
+
+/** Revocation is synchronous; a stalled optional feature must not hold the service queue. */
+async function stopFeaturesForServiceChange(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = runFeatureServicesStopping().then((result) => {
+    if (!result.success) log.warn("[CommercialAuth] Desktop feature cleanup degraded");
+  }).catch((error) => log.warn("[CommercialAuth] Desktop feature cleanup failed", error));
+  try {
+    await Promise.race([cleanup, new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        log.warn("[CommercialAuth] Desktop feature cleanup timed out; services may continue");
+        resolve();
+      }, FEATURE_STOP_TIMEOUT_MS);
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+  // Never schedule a fresh stop after restart: it could revoke a new task/session.
+}
 
 /** 注册上报的电脑名（三平台）：os.hostname 通吃 macOS/Windows/Linux，
  * 仅剥 macOS Bonjour 的 .local 尾巴（DONG-MBP128.local → DONG-MBP128）。 */
@@ -356,10 +375,8 @@ export function initializeCommercialAuth(
     reconnect,
     failed: localPorts ? async () => {
       localPorts.invalidateBusiness();
-      const [stopped, cua] = await Promise.allSettled([stop(), suspendCua("sessionEnded")]);
+      const [stopped] = await Promise.allSettled([stop(), stopFeaturesForServiceChange()]);
       if (stopped.status === "rejected") throw stopped.reason;
-      // NW-173：CUA 清理尽力而为——失败降级告警，不阻塞服务重启主流程（invalidated() 同款语义）。
-      if (cua.status === "rejected") log.warn("[CommercialAuth] failed-hook: CUA cleanup degraded:", cua.reason);
       if (!stopped.value.success) throw new Error(stopped.value.error || "Service cleanup failed");
     } : undefined,
     commit: (value) => {
@@ -387,30 +404,18 @@ export function initializeCommercialAuth(
     },
     invalidated: () => {
       localPorts?.invalidateBusiness();
-      void suspendCua("sessionEnded").catch(() => undefined);
+      emitFeatureSessionInvalidated();
     },
     start,
     stop: async () => {
-      const cuaStop = suspendCua("sessionEnded");
-      const results = await Promise.allSettled([stop(), cuaStop]);
-      if (results[0].status === "rejected") throw results[0].reason;
-      // NW-173：CUA daemon 清理尽力而为——失败只告警并后台补试一次，不再作为
-      // 「Computer Use cleanup failed」致命错误阻塞登录/重启主流程（弹窗与发消息变离线同链双缓解）。
-      if (results[1].status === "rejected") {
-        log.warn("[CommercialAuth] CUA cleanup degraded (restart continues):", results[1].reason);
-        const retry = setTimeout(() => {
-          void suspendCua("sessionEnded").catch((err) =>
-            log.warn("[CommercialAuth] CUA cleanup retry failed:", err));
-        }, 5_000);
-        retry.unref?.();
-      }
-      return results[0].value;
+      const [stopped] = await Promise.allSettled([stop(), stopFeaturesForServiceChange()]);
+      if (stopped.status === "rejected") throw stopped.reason;
+      return stopped.value;
     },
     changed,
-    // CUA daemon 不随进程树回收；退出仍沿用 3.0 的清理入口。
     stopExtras: async () => {
       await localPorts?.dispose();
-      await suspendCua("appQuit");
+      await settleDesktopFeaturesForQuit();
     },
   });
   localPorts?.setOperationSignalProvider(() => flow.operationSignal);

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { legacyAgentRunnerUnavailable } from "@shared/legacyAgentRunner";
 import type { SandboxPolicy } from "@shared/types/sandbox";
 import type { UpdateCheckOptions } from "@shared/types/updateTypes";
 import { hostFeatureNamespaces } from "./features";
@@ -92,16 +93,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }>,
   },
 
-  // Agent Runner management (via IPC to main process)
+  // Legacy compatibility surface: reject start locally before transmitting config.
   agentRunner: {
-    start: (config: {
+    start: (_config: {
       binPath: string;
       backendPort: number;
       proxyPort: number;
       apiKey: string;
       apiBaseUrl: string;
       defaultModel: string;
-    }) => ipcRenderer.invoke("agentRunner:start", config),
+    }) => Promise.resolve(legacyAgentRunnerUnavailable()),
     stop: () => ipcRenderer.invoke("agentRunner:stop"),
     status: () => ipcRenderer.invoke("agentRunner:status"),
   },
@@ -578,38 +579,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getHostname: () => ipcRenderer.invoke("app:getHostname"),
   },
 
+  permissionOnboarding: {
+    snapshot: () => ipcRenderer.invoke("permissions:onboarding:snapshot"),
+    markSeen: () => ipcRenderer.invoke("permissions:onboarding:seen"),
+    openSettings: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:settings", key),
+    showApp: () => ipcRenderer.invoke("permissions:onboarding:showApp"),
+    restart: () => ipcRenderer.invoke("permissions:onboarding:restart"),
+    showDragChip: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:showDragChip", key),
+    hideDragChip: () =>
+      ipcRenderer.invoke("permissions:onboarding:hideDragChip"),
+  },
+
   // Permissions (macOS)
   permissions: {
     check: () => ipcRenderer.invoke("permissions:check"),
     openSettings: (permissionKey: string) =>
       ipcRenderer.invoke("permissions:openSettings", permissionKey),
-  },
-
-  // Computer Use（cua helper；商业版 overlay 注入，基座无此命名空间）
-  computerUse: {
-    getRuntime: () => ipcRenderer.invoke("cua:getRuntime"),
-    pause: () => ipcRenderer.invoke("cua:pause"),
-    resume: () => ipcRenderer.invoke("cua:resume"),
-    stop: () => ipcRenderer.invoke("cua:stop"),
-    recover: () => ipcRenderer.invoke("cua:recover"),
-    selfTest: () => ipcRenderer.invoke("cua:selfTest"),
-    exportDiagnostics: () => ipcRenderer.invoke("cua:exportDiagnostics"),
-    clearHistory: () => ipcRenderer.invoke("cua:clearHistory"),
-    listWindows: () => ipcRenderer.invoke("cua:listWindows"),
-    setScope: (scope: import("@shared/types/cuaRuntime").CuaScope) => ipcRenderer.invoke("cua:setScope", scope),
-    getStatus: () => ipcRenderer.invoke("cua:getStatus"),
-    setEnabled: (enabled: boolean) =>
-      ipcRenderer.invoke("cua:setEnabled", enabled),
-    requestPermissions: () => ipcRenderer.invoke("cua:requestPermissions"),
-    installHelper: () => ipcRenderer.invoke("cua:installHelper"),
-    getVlmConfig: () => ipcRenderer.invoke("cua:getVlmConfig"),
-    setVlmConfig: (patch: {
-      clearApiKey?: boolean;
-      baseUrl?: string;
-      model?: string;
-      apiKey?: string;
-    }) => ipcRenderer.invoke("cua:setVlmConfig", patch),
-    testVlm: () => ipcRenderer.invoke("cua:testVlm"),
   },
 
   // 允许锁屏运行（电源保活档位；商业版 overlay 注入，基座无此命名空间）
@@ -676,6 +665,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "nuwax:layout-changed",
       "nuwax:open-same-window",
       "nuwax:open-client-settings",
+      "permissions:guide",
       "nuwax:loopback-changed",
       "nuwax:webview-nav-state",
       "nuwax:dismiss-topbar-menus",

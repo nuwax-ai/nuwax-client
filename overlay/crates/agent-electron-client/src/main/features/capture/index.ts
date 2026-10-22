@@ -20,13 +20,11 @@ import { createNativeImageEncoder } from "./stillEncoder";
 import { createCaptureWindows } from "./selectionWindows";
 import { createCaptureSourceStill, createCapturePortalFrame, createRecordEngine } from "./recorder";
 import { resolveCaptureFfmpeg } from "./encodingResources";
-import { captureBackendAvailable } from './linuxEnvironment';
+import { captureBackendAvailable, configureCaptureBackend } from './linuxEnvironment';
 import { resolveCapturePlatform } from './platforms';
 import { createScratchDir } from '../_kit/scratchDir';
 import { createCaptureClipboard } from './clipboard';
-import { createCaptureClipboardPlatform } from './platforms/clipboard';
-export { configureCaptureBackend } from './linuxEnvironment';
-export { canCopyCaptureFiles } from './platforms/clipboard';
+import { canCopyCaptureFiles, createCaptureClipboardPlatform } from './platforms/clipboard';
 
 const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const UNTRUSTED: CaptureResult = { success: false, code: "untrusted" };
@@ -37,6 +35,13 @@ const EXTENSIONS: Record<string, string> = {
 
 export const captureFeature: DesktopFeature = {
   id: "capture", products: ["nuwax"], enabledByDefault: true,
+  bridge: {
+    namespaces: ["capture"],
+    canUse: (capability) => capability !== "capture.copy.file" || canCopyCaptureFiles(),
+  },
+  beforeReady(commandLine) {
+    configureCaptureBackend(commandLine);
+  },
   register(ctx: FeatureContext): FeatureHandle {
     let service: CaptureService | null = null;
     let pendingService: Promise<CaptureService> | null = null;
@@ -67,23 +72,9 @@ export const captureFeature: DesktopFeature = {
       }
       return labels;
     };
-    const PERMISSION_PROMPT_DEFAULTS = {
-      title: "需要屏幕录制权限",
-      detail: "截图与录屏需要 macOS 屏幕录制权限。请在「系统设置 → 隐私与安全性 → 屏幕与系统录音」中开启「{0}」，并按系统提示重启应用后重试。也可在客户端「授权」页查看状态。",
-      openSettings: "打开系统设置",
-      cancel: "取消",
-    };
     const promptScreenPermission = createScreenPermissionPrompt({
       log: ctx.log,
-      labels: () => {
-        const labels = { ...PERMISSION_PROMPT_DEFAULTS };
-        for (const key of Object.keys(labels) as Array<keyof typeof labels>) {
-          const id = `Claw.Capture.permissionPrompt.${key}`;
-          const translated = ctx.translate?.(id);
-          if (translated && translated !== id) labels[key] = translated;
-        }
-        return labels;
-      },
+      openGuide: () => ctx.permissions?.openGuide("screen_recording") ?? false,
     });
 
     const clearSession = () => {
@@ -91,8 +82,7 @@ export const captureFeature: DesktopFeature = {
       for (const controller of pendingCopies.keys()) controller.abort();
       service?.endSession();
       owners.clear();
-      ctx.setRecordingStopAction?.(null);
-      ctx.setRecordingPauseAction?.(null, false);
+      ctx.activities.set(null);
       for (const entry of watched.values()) entry.cleanup();
       watched.clear();
       documentEpochs.clear();
@@ -143,15 +133,22 @@ export const captureFeature: DesktopFeature = {
         service = createCaptureService({ platform: process.platform, getPermission: getScreenPermission,
           onPermissionDenied: () => { void promptScreenPermission(); },
           windowVisibility,
-          getRecordingDurationLimit: () => recordingDurationMinutes(ctx.getSetting?.(RECORDING_DURATION_SETTING)) * 60_000,
+          getRecordingDurationLimit: () => recordingDurationMinutes(ctx.settings.read(RECORDING_DURATION_SETTING)) * 60_000,
           backendAvailable: () => captureBackendAvailable(app.commandLine),
           getDisplays: getAllDisplays, stillEngine: windows, stillEncoder: createNativeImageEncoder(),
           recordEngine: recorder, results, log: ctx.log });
         offState = service.onStateChange((state) => {
           const sender = active?.sender;
           if (sender && !sender.isDestroyed()) sender.send(active!.channel, state);
-          ctx.setRecordingStopAction?.(state === "recording" || state === "paused" ? () => recorder?.stop() : null);
-          ctx.setRecordingPauseAction?.(state === "recording" || state === "paused" ? () => recorder?.pauseOrResume() : null, state === 'paused');
+          if (state === "recording" || state === "paused") {
+            ctx.activities.set({ actions: [
+              { id: "pause", labelKey: state === "paused" ? "Claw.Capture.resume" : "Claw.Capture.pause",
+                run: () => { recorder?.pauseOrResume(); } },
+              { id: "stop", labelKey: "Claw.Capture.stopRecording", run: () => { recorder?.stop(); } },
+            ] });
+          } else {
+            ctx.activities.set(null);
+          }
           if (state === "idle") active = null;
         });
         return service;

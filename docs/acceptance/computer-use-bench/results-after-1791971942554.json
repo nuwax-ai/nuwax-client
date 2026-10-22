@@ -1,0 +1,82 @@
+{
+  "label": "after",
+  "commit": "b277525a",
+  "at": "2026-10-14T09:59:02.554Z",
+  "scope": "desktop",
+  "allowAttach": true,
+  "results": [
+    {
+      "task": "N1",
+      "success": true,
+      "agentCalls": 11,
+      "controllerSteps": 10,
+      "driverRefused": 0,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 1
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 17057,
+      "detail": "- AXStaticText = \"42\" (编辑字段)"
+    },
+    {
+      "task": "N2",
+      "success": true,
+      "agentCalls": 29,
+      "controllerSteps": 28,
+      "driverRefused": 0,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 1
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 57627
+    },
+    {
+      "task": "W1",
+      "success": true,
+      "agentCalls": 15,
+      "controllerSteps": 13,
+      "driverRefused": 1,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 2
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 14591,
+      "detail": "/submitted?name=Ada&email=ada%40example.com&city=Paris"
+    },
+    {
+      "task": "W2",
+      "success": true,
+      "agentCalls": 10,
+      "controllerSteps": 9,
+      "driverRefused": 0,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 1
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 8751
+    },
+    {
+      "task": "W3",
+      "success": true,
+      "agentCalls": 11,
+      "controllerSteps": 10,
+      "driverRefused": 1,
+      "driverErrors": 0,
+      "gatewayRejects": {
+        "observationRequired": 1
+      },
+      "pauses": [],
+      "interventions": 0,
+      "ms": 9908,
+      "detail": "slip=refused:route_unavailable"
+    }
+  ]
+}

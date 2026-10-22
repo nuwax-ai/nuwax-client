@@ -1,95 +1,109 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-const harness = vi.hoisted(() => ({
-  state: [] as unknown[], refs: [] as Array<{ current: any }>, cursor: 0, refCursor: 0,
-  effects: [] as Array<() => (() => void)>, setters: [] as unknown[],
-  buttons: [] as Array<{ children: string; onClick: () => Promise<void> }>,
-  check: vi.fn(), openSettings: vi.fn(), error: vi.fn(),
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { PermissionSnapshot } from "@shared/types/permissionOnboarding";
+const h = vi.hoisted(() => ({
+  snapshot: null as PermissionSnapshot | null,
+  cursor: 0,
+  target: "screen_recording",
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
-  useState: () => {
-    const index = harness.cursor++;
-    return [harness.state[index], (value: unknown) => { harness.state[index] = value; harness.setters.push(value); }];
+  useState: (initial: unknown) => {
+    const index = h.cursor++;
+    return [
+      index === 0 ? h.snapshot : index === 1 ? h.target : initial,
+      vi.fn(),
+    ];
   },
-  useRef: (initial: unknown) => {
-    const index = harness.refCursor++;
-    return harness.refs[index] ??= { current: initial };
-  },
-  useCallback: (callback: unknown) => callback,
-  useEffect: (effect: () => (() => void)) => { harness.effects.push(effect); },
+  useEffect: vi.fn(),
 }));
-vi.mock("antd", async () => {
-  const { default: React } = await import("react");
-  const Container = ({ children }: { children?: React.ReactNode }) => <span>{children}</span>;
-  return { Tag: Container, Spin: Container, message: { error: harness.error },
-    Button: (props: { children: string; onClick: () => Promise<void> }) => {
-      harness.buttons.push(props);
-      return <button>{props.children}</button>;
-    },
-  };
-});
-vi.mock("@ant-design/icons", async () => {
-  const { default: React } = await import("react");
-  const Icon = () => <span />;
-  return { CheckCircleOutlined: Icon, CloseCircleOutlined: Icon, QuestionCircleOutlined: Icon, ReloadOutlined: Icon, SettingOutlined: Icon };
-});
-vi.mock("../../services/core/i18n", () => ({ t: (key: string) => key }));
+vi.mock("../../services/core/i18n", () => ({
+  t: (key: string, ...args: string[]) => `${key} ${args.join(" ")}`,
+}));
 import PermissionsPage from "./PermissionsPage";
-
 beforeEach(() => {
-  vi.resetAllMocks(); vi.useFakeTimers();
-  harness.state = [[{ key: "notifications", name: "消息通知", description: "系统通知授权", status: "denied" }], false];
-  harness.refs = []; harness.cursor = 0; harness.refCursor = 0; harness.effects = []; harness.setters = []; harness.buttons = [];
-  const target = new EventTarget();
-  vi.stubGlobal("window", Object.assign(target, { electronAPI: { permissions: { check: harness.check, openSettings: harness.openSettings } } }));
-  harness.check.mockResolvedValue(harness.state[0]);
+  h.cursor = 0;
+  h.target = "screen_recording";
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  h.snapshot = {
+    platform: "darwin",
+    appName: "Electron",
+    appPath: "/dev/Electron.app",
+    seen: false,
+    helperAvailable: false,
+    items: [
+      { key: "screen_recording", status: "denied", probe: "denied" },
+      { key: "file_access", status: "unknown", probe: "unknown" },
+    ],
+  };
+  vi.stubGlobal("window", { electronAPI: { permissionOnboarding: {} } });
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-
-describe("notification permission row", () => {
-  it.each([["granted", "notificationsEnabled"], ["denied", "notificationsDisabled"], ["unknown", "unknown"]])(
-    "renders the correct label for %s", (status, key) => {
-      (harness.state[0] as any[])[0].status = status;
-      expect(renderToStaticMarkup(<PermissionsPage />)).toContain(`Claw.PermissionsPage.${key}`);
-    },
+afterEach(() => vi.unstubAllGlobals());
+it.each(["granted", "denied", "unknown", "restart_required"] as const)(
+  "renders %s with the exact app identity and manual steps",
+  (status) => {
+    h.snapshot!.items[0].status = status;
+    const html = renderToStaticMarkup(<PermissionsPage />);
+    expect(html).toContain(
+      `Claw.PermissionGuide.status.${
+        status === "restart_required" ? "restartRequired" : status
+      }`,
+    );
+    expect(html).toContain("Electron");
+    expect(html).toContain("/dev/Electron.app");
+    expect(html).toContain("Claw.PermissionGuide.step.screenRecording.step2");
+    expect(html).toContain("Claw.PermissionGuide.required");
+    expect(html).toContain("Claw.PermissionGuide.helperPending");
+  },
+);
+it("hides Windows permission content even if navigated directly", () => {
+  h.snapshot!.platform = "win32";
+  h.snapshot!.items = [];
+  expect(renderToStaticMarkup(<PermissionsPage />)).toBe("");
+});
+it("hides Windows permission content before any snapshot arrives", () => {
+  vi.stubGlobal("navigator", { platform: "Win32" });
+  h.snapshot = null;
+  expect(renderToStaticMarkup(<PermissionsPage />)).toBe("");
+});
+it("preserves Linux capture help without macOS permission controls", () => {
+  h.snapshot!.platform = "linux";
+  h.snapshot!.items = [];
+  const html = renderToStaticMarkup(<PermissionsPage />);
+  expect(html).toContain("Claw.PermissionGuide.linux");
+  expect(html).toContain("Claw.PermissionGuide.testCapture");
+  expect(html).not.toContain("Claw.PermissionGuide.openSettings");
+});
+it("does not claim helper access from the main app's grant", () => {
+  h.target = "helper_accessibility";
+  const html = renderToStaticMarkup(<PermissionsPage />);
+  expect(html).toContain("Claw.PermissionGuide.helperPending");
+  expect(html).not.toContain("Claw.PermissionGuide.step.accessibility.step2");
+});
+it("offers drag-add only for list-type rows and never for toggles", () => {
+  // screen_recording is granted by a toggle, not by adding to a list
+  expect(renderToStaticMarkup(<PermissionsPage />)).not.toContain(
+    "Claw.PermissionGuide.dragAdd",
   );
-  it("shows a settings failure instead of starting a poll", async () => {
-    renderToStaticMarkup(<PermissionsPage />);
-    harness.openSettings.mockResolvedValue({ success: false });
-    await harness.buttons.find((button) => button.children === "Claw.PermissionsPage.openSettings")!.onClick();
-    expect(harness.error).toHaveBeenCalledWith("Claw.PermissionsPage.cannotOpenSettings");
-    expect(vi.getTimerCount()).toBe(0);
-  });
-  it("refreshes on return and cleans up focus listeners and settings polling", async () => {
-    renderToStaticMarkup(<PermissionsPage />);
-    const cleanup = harness.effects[0]();
-    await Promise.resolve();
-    harness.openSettings.mockResolvedValue({ success: true });
-    await harness.buttons.find((button) => button.children === "Claw.PermissionsPage.openSettings")!.onClick();
-    expect(vi.getTimerCount()).toBe(2);
-    window.dispatchEvent(new Event("focus"));
-    expect(harness.check).toHaveBeenCalledTimes(2);
-    cleanup();
-    expect(vi.getTimerCount()).toBe(0);
-    window.dispatchEvent(new Event("focus"));
-    expect(harness.check).toHaveBeenCalledTimes(2);
-  });
-  it("ignores an older response after a return check has completed", async () => {
-    let resolveOld!: (value: unknown) => void;
-    harness.check.mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }));
-    renderToStaticMarkup(<PermissionsPage />);
-    const cleanup = harness.effects[0]();
-    const fresh = [{ key: "notifications", status: "granted" }];
-    harness.check.mockResolvedValueOnce(fresh);
-    window.dispatchEvent(new Event("focus"));
-    await Promise.resolve();
-    expect(harness.state[0]).toBe(fresh);
-    resolveOld([{ key: "notifications", status: "denied" }]);
-    await Promise.resolve();
-    expect(harness.state[0]).toBe(fresh);
-    cleanup();
-  });
+  h.target = "file_access";
+  h.cursor = 0;
+  const html = renderToStaticMarkup(<PermissionsPage />);
+  expect(html).toContain("Claw.PermissionGuide.dragAdd");
+  expect(html).toContain("Claw.PermissionGuide.badgeRecommended");
+  expect(html).toContain("Claw.PermissionGuide.badgeRequired");
+});
+it("keeps helper rows draggable only while a helper bundle path exists", () => {
+  h.snapshot!.items = [
+    { key: "helper_accessibility", status: "denied", probe: "denied" },
+  ];
+  h.target = "helper_accessibility";
+  const noPath = renderToStaticMarkup(<PermissionsPage />);
+  expect(noPath).not.toContain("Claw.PermissionGuide.dragAdd");
+  expect(noPath).toContain("Claw.PermissionGuide.helperPending");
+  h.snapshot!.helperAvailable = true;
+  h.snapshot!.helperAppAvailable = true;
+  h.cursor = 0;
+  const withPath = renderToStaticMarkup(<PermissionsPage />);
+  expect(withPath).toContain("Claw.PermissionGuide.dragAdd");
 });

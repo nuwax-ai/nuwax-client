@@ -1,7 +1,7 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
 import { disposeIMReceiver } from "./services/imReceiverRuntime";
-import { configureCaptureBackend, controlDesktopRecording, desktopFeatureSchemes, disposeDesktopFeatures, isDesktopFeatureRegistered } from "./features";
+import { prepareDesktopFeaturesBeforeReady, runDesktopActivity, disposeDesktopFeatures, settleDesktopFeaturesForQuit, isDesktopFeatureRegistered } from "./features";
 import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
@@ -17,6 +17,8 @@ import {
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import { pathToFileURL } from "node:url";
+import { guardHostNavigation } from "./services/system/hostNavigation";
 import log from "electron-log";
 import { initDatabase, closeDb, readSetting } from "./db";
 import { ManagedProcess } from "./processManager";
@@ -79,13 +81,13 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 
-const featureSchemes = desktopFeatureSchemes(APP_NAME_IDENTIFIER);
+const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
 if (APP_NAME_IDENTIFIER === "nuwax") {
-  configureCaptureBackend(app.commandLine);
   configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
+  // Keep the Windows updater/taskbar identity under the commercial product guard.
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
 }
 
@@ -273,6 +275,14 @@ function createWindow() {
     show: false,
   });
 
+  const indexPath = path.join(process.resourcesPath, "app.asar", "dist", "index.html");
+  const rendererEntry = isDev
+    ? `http://localhost:${DEFAULT_DEV_SERVER_PORT}/`
+    : pathToFileURL(indexPath).href;
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    guardHostNavigation(mainWindow.webContents, rendererEntry);
+  }
+
   // 为 webview guest 注入轻量 Bridge（NuwaClawBridge）。
   // 商业网页共享会话，桥由轻量 preload 按实际业务文档暴露。
   mainWindow.webContents.on(
@@ -302,7 +312,7 @@ function createWindow() {
   // Load the app
   if (isDev) {
     const devCacheBust = Date.now();
-    const devUrl = `http://localhost:${DEFAULT_DEV_SERVER_PORT}/?_ncd=${devCacheBust}`;
+    const devUrl = `${rendererEntry}?_ncd=${devCacheBust}`;
     void mainWindow.webContents.session
       .clearCache()
       .catch((err) => log.warn("[DevCache] clearCache failed:", err))
@@ -316,12 +326,6 @@ function createWindow() {
     // 生产环境：dist 目录被打包到 app.asar 中
     // 用 loadFile 让 Electron 内部走 pathToFileURL，避免 Windows 上路径含空格 / 中文 / 反斜杠时
     // 拼出畸形 file:// URL，进而影响 Monaco 等通过 window.location.href 解析相对路径的资源加载
-    const indexPath = path.join(
-      process.resourcesPath,
-      "app.asar",
-      "dist",
-      "index.html",
-    );
     log.info("Loading app from:", indexPath);
     mainWindow.loadFile(indexPath);
   }
@@ -409,7 +413,7 @@ function createWindow() {
   if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
     // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
     // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
-    const shortcutOptions = { platform: process.platform, controlRecording: controlDesktopRecording };
+    const shortcutOptions = { platform: process.platform, controlRecording: (action: "pause" | "stop") => runDesktopActivity("capture", action) };
     bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction, shortcutOptions);
     mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
       bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction, shortcutOptions);
@@ -650,7 +654,8 @@ async function cleanupAllProcesses(): Promise<void> {
   }
 
   // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
-  await runCleanupStep("Desktop features stop", disposeDesktopFeatures);
+  // Both paths share the same feature shutdown promise, including daemon cleanup.
+  await runCleanupStep("Desktop features stop", disposeDesktopFeatures, Math.max(stepTimeoutMs, 8000));
 
   await runCleanupStep("Engine processes stop", () => {
     stopAllEngines();
@@ -690,12 +695,6 @@ function initializeClientUpdater(): void {
       log.info(
         "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
       );
-      if (process.platform === "darwin") {
-        setTimeout(() => {
-          log.info("[App] macOS update quit safety timeout, calling app.exit(0)");
-          app.exit(0);
-        }, 5000);
-      }
     },
     {
       installAfterDownload:
@@ -1011,10 +1010,10 @@ app.on("before-quit", (e) => {
     log.info(
       "[App] Before quit - update install in progress, ensuring exit for installer",
     );
-    try {
-      const { stopDaemon } = require("./services/cua/computerUse");
-      void stopDaemon().catch(() => undefined);
-    } catch {}
+    // Share the pre-install cleanup; do not reload the removed legacy CUA entry.
+    void settleDesktopFeaturesForQuit().catch((error) =>
+      log.warn("[App] Update feature cleanup failed", error),
+    );
     closeDb();
     setTimeout(() => {
       log.info("[App] Exiting process for update installer");

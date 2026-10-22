@@ -13,6 +13,9 @@ printf 'com.nuwax-ai.nuwax-computer-use\n' > \
   "$SOURCE/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs"
 printf 'NUWAX_TOKEN_FILE_ENV\n' > \
   "$SOURCE/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs"
+mkdir -p "$SOURCE/libs/cua-driver/rust/crates/cua-driver/src"
+printf 'mod nuwax_tasks;\n' > "$SOURCE/libs/cua-driver/rust/crates/cua-driver/src/main.rs"
+printf 'nuwax_window_preview\n' > "$SOURCE/libs/cua-driver/rust/crates/cua-driver/src/serve.rs"
 printf 'windows-cua-binary' > "$SOURCE/libs/cua-driver/rust/target/$TARGET/release/cua-driver.exe"
 
 cat > "$TMP/bin/rustup" <<'EOF'

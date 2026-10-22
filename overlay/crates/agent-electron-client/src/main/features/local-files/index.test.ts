@@ -121,6 +121,7 @@ function harness() {
     ipc,
     hostIpc: { handle: vi.fn(), dispose: vi.fn() },
     workspace,
+    permissions: { openGuide: vi.fn(), onFileAccessError: vi.fn(async (_error: unknown, _current: () => boolean) => {}) },
     lifecycle,
     scratch: {} as FeatureContext["scratch"],
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -185,6 +186,7 @@ function harness() {
     one,
     two,
     runtime,
+    permissions: ctx.permissions,
     listeners,
     invoke,
     resolve,
@@ -199,6 +201,30 @@ function harness() {
 }
 
 describe("local files IPC/context ownership", () => {
+  it("does not guide an old operation whose OS error arrives after logout", async () => {
+    const h = harness();
+    let reject!: (error: unknown) => void;
+    h.workspace.resolveRoot.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+    const pending = h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, { cId: 1, sandboxId: "local-device" });
+    h.lifecycle.emitSessionEnd("logout");
+    reject(Object.assign(new Error("blocked"), { code: "EPERM" }));
+    await pending;
+    expect(h.permissions.onFileAccessError.mock.calls[0][1]()).toBe(false);
+  });
+
+  it("passes real OS failures to the host and invalidates delayed guidance after logout", async () => {
+    const h = harness();
+    const error = Object.assign(new Error("blocked"), { code: "EPERM" });
+    h.workspace.resolveRoot.mockRejectedValueOnce(error);
+    expect(await h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, { cId: 1, sandboxId: "local-device" }))
+      .toMatchObject({ success: false, code: "permission-denied" });
+    expect(h.permissions.onFileAccessError).toHaveBeenCalledWith(error, expect.any(Function));
+    const current = h.permissions.onFileAccessError.mock.calls[0][1];
+    expect(current()).toBe(true);
+    h.lifecycle.emitSessionEnd("logout");
+    expect(current()).toBe(false);
+  });
+
   it("declares the scheme without bypassCSP and refuses untrusted/remote/unresolved callers", async () => {
     expect(localFilesFeature.schemes?.[0]).toMatchObject({
       scheme: "nuwax-local",

@@ -1,5 +1,3 @@
-vi.mock("../services/cua/computerUse", () => ({ suspendCua: vi.fn(async () => undefined), ensureCuaOnBoot: vi.fn(async () => undefined), registerCuaQuitCleanup: vi.fn() }));
-vi.mock("./cuaRuntimeHandlers", () => ({ registerCuaRuntimeHandlers: vi.fn() }));
 /** nuwaxBridgeHandlers 的 cookie 会话、升级和业务域切换回归。 */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -317,7 +315,14 @@ describe("host activity read-only IPC", () => {
 describe("native IM preference IPC", () => {
   it('canUse 重新检查受信顶层、文档代次、开关和注册状态；启动 getContext 可先探测', async () => {
     const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
-    const registered = vi.spyOn(desktopFeatures, 'isDesktopFeatureRegistered').mockReturnValue(true);
+    // 注册/开关判定已下沉到特性汇合点；本用例以等价可控门模拟其结果，
+    // 聚合语义本身由 features/index.test 的 canUse 归属用例覆盖。
+    const gate = new Map<string, boolean>([['capture', true], ['localFiles', true]]);
+    const featureIds: Record<string, string> = { capture: "capture", localFiles: "local-files" };
+    const featureGate = vi.spyOn(desktopFeatures, 'isFeatureCapabilityAvailable')
+      .mockImplementation((namespace: string) => gate.has(namespace)
+        ? gate.get(namespace)! && settings.get(`features.${featureIds[namespace]}.enabled`) !== false
+        : undefined);
     const frame = { url: `${GW_ORIGIN}/home`, processId: 100, routingId: 200 };
     const sender = { id: 300, mainFrame: frame, getURL: () => frame.url };
     const event = { sender, senderFrame: frame }; const probe = handlers.get(CAN_USE_IPC)!;
@@ -328,16 +333,16 @@ describe("native IM preference IPC", () => {
     for (const name of ['unknown', 'auth.getToken', 'auth.persistToken', 'capture.record.unknown']) expect(probe(event, name)).toBe(false);
     expect(probe({ ...event, senderFrame: { ...frame } }, 'capture')).toBe(false);
     settings.set('features.capture.enabled', false); expect(probe(event, 'capture')).toBe(false);
-    settings.delete('features.capture.enabled'); registered.mockReturnValue(false); expect(probe(event, 'capture')).toBe(false);
-    registered.mockReturnValue(true);
+    settings.delete('features.capture.enabled'); gate.set('capture', false); expect(probe(event, 'capture')).toBe(false);
+    gate.set('capture', true);
     expect(probe(event, 'localFiles.listFiles')).toBe(true);
     settings.set('features.local-files.enabled', false); expect(probe(event, 'localFiles')).toBe(false);
-    settings.delete('features.local-files.enabled'); registered.mockReturnValue(false); expect(probe(event, 'localFiles')).toBe(false);
-    registered.mockReturnValue(true);
+    settings.delete('features.local-files.enabled'); gate.set('localFiles', false); expect(probe(event, 'localFiles')).toBe(false);
+    gate.set('localFiles', true);
     await handlers.get('auth:clear')!(event); expect(probe(event, 'native.openWindow')).toBe(false);
     handlers.get('auth:getContext')!(event); expect(probe(event, 'im')).toBe(true);
     frame.url = 'https://external.example/home'; expect(probe(event, 'im')).toBe(false);
-    registered.mockRestore(); product.mockRestore();
+    featureGate.mockRestore(); product.mockRestore();
   });
   it("unread is available only after auth binding and changes recheck top-frame/account/origin", async () => {
     const frame = {url: `${GW_ORIGIN}/home`, processId: 14, routingId: 24};

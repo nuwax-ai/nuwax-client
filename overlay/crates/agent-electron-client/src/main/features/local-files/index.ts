@@ -366,6 +366,11 @@ export class LocalFilesRuntime {
         root: grant.root,
         origin: grant.context.owner.origin,
         streams: grant.streams,
+        onAccessError: error => {
+          void this.ctx.permissions?.onFileAccessError(error, () =>
+            this.grants.get(grant.id) === grant && this.valid(grant.context)
+          ).catch(error => this.ctx.log.warn("[LocalFiles] permission guide failed", error));
+        },
         valid: () =>
           this.grants.get(grant.id) === grant && this.valid(grant.context),
       });
@@ -641,9 +646,15 @@ export class LocalFilesRuntime {
       ipc.handle<IpcMainInvokeEvent, A, LocalFilesResult<T>>(
         channel,
         async (event, ...args) => {
+          const epoch = this.epoch;
+          const identity = identityKey(this.ctx.workspace?.getIdentity());
           try {
             return { success: true, data: await callback(event, ...args) };
           } catch (error) {
+            void this.ctx.permissions?.onFileAccessError(error, () =>
+              !this.disposed && this.epoch === epoch && identity !== "" &&
+              identity === identityKey(this.ctx.workspace?.getIdentity()) && !!this.ctx.workspace?.isCurrentDocument(event)
+            ).catch(error => this.ctx.log.warn("[LocalFiles] permission guide failed", error));
             return failure(error);
           }
         },
@@ -903,6 +914,9 @@ export const localFilesFeature: DesktopFeature = {
   id: "local-files",
   products: ["nuwax"],
   enabledByDefault: true,
+  // 本机文件直访尚未提测，本次上线强制关闭，避免历史设置重新启用。
+  bridge: { namespaces: ["localFiles"] },
+  requests: { authorize: authorizeLocalFilesRequest, isSource: isLocalFilesRequestSource },
   schemes: [
     {
       scheme: LOCAL_FILES_SCHEME,

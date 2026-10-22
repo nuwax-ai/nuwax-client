@@ -1,6 +1,17 @@
 import type { IpcRenderer } from "electron";
 import { LOCAL_FILES_API_VERSION, LOCAL_FILES_IPC as CH, type HostLocalFilesBridge } from "@shared/features/local-files/contract";
 
+/** canUse 的 localFiles 侧探测：特性可用性 + 异步后二次授权。 */
+export async function localFilesCapabilityProbe(
+  capability: { methods: readonly string[]; variant?: string },
+  name: string,
+  bridge: { localFiles?: HostLocalFilesBridge },
+  authorize: (name: string) => Promise<boolean>,
+): Promise<boolean> {
+  const caps = await bridge.localFiles?.getCapabilities?.();
+  return caps?.available === true && await authorize(name) === true;
+}
+
 export function createLocalFilesBridge(ipc: Pick<IpcRenderer, "invoke">): HostLocalFilesBridge {
   return {
     pickDirectory: () => ipc.invoke(CH.PICK_DIRECTORY),

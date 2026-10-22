@@ -6,11 +6,26 @@
 > Linux 为代码落地+上游文档口径（真机验证待做，标注 ⚠️）。
 > 2026-09-24 实现更新：开启 Computer Use 时客户端一次确认全范围操作；macOS 随后由系统分别授权辅助功能、屏幕录制和直接捕获，全部实测就绪才启用。未完成时确认状态持久保留，设置页回来可继续；关闭清除待办。Windows/Linux 无 macOS TCC，Wayland portal 的系统授权仍按 compositor 会话要求出现。正式安装包验收待做。
 
+## 2026-10-17 授权引导入口与状态契约
+
+- 当前主程序入口统一为「设置 → 授权」。首次主界面就绪显示总览，关闭、稍后设置、完成均不影响普通聊天；`nuwax.permissionOnboarding.v1` 记录已展示，旧 `nuwax.fullDiskAccessPrompt` 的 dismissed 继续免打扰。该标记不是授权凭证。
+- 2026-10-22 起（feat/computer-use-multiwindow 批次）：授权引导改为 Gemini 式悬浮弹层 + 行式列表承载首次总览与 `permissions:guide` 受阻跳转（居中浮层，挂载即轮询、关闭即停）；「设置 → 授权」tab 复用同一组件作常驻管理入口。「完成/稍后设置」永远可点，不按未授权禁用——权限只限制依赖功能，不阻断登录与聊天。
+- 拖拽添加（仅 macOS、仅加列表型权限 file_access/helper 两项）：点击「拖拽添加」= 深链打开对应系统设置面板 + 弹出独立 always-on-top 浮条（frameless、非激活、不抢系统设置焦点，复用 CUA controlWindow 范式与专用 preload）。浮条把主进程解析出的主体 `.app` 包经 `webContents.startDrag` 拖入系统设置列表；键白名单 → 主进程解析路径（主程序用快照身份，helper 用适配器 `appPath()`，快照以 `helperAppAvailable` 暴露），renderer 永远不传路径。拖拽失败浮条内联显示手动兜底；展开详情的手动「+ 添加」步骤始终保留。拖入不改变状态判定：仍以轮询 + restart_required 契约为准。
+- 主程序 macOS 三项按当前进程身份检查：屏幕录制、全磁盘访问、通知。当前窗口识别使用 CoreGraphics 边界查询，不依赖辅助功能，因此新引导不向主程序索取该权限；旧 permissions API 保持兼容。安装版通常为 Nuwax，开发版为 Electron；页面展示真实 exe 对应的应用包路径。
+- `permissionOnboarding.snapshot()` 返回 `{ platform, appName, appPath, seen, helperAvailable, helperAppAvailable, items }`；单项含 `{ key, probe, status }`，probe 为 granted/denied/unknown，status 另含 restart_required。本次运行中屏幕/FDA 从 denied 到 granted 后要求重启，unknown 不清除已知待重启状态；只打开设置或焦点返回不能判定已授权。启动时已 granted 不要求重启。
+- 仅可见的授权页每 1.5s（上次检测完成后）刷新，focus/visibility 恢复立即复查；关闭、切页、隐藏文档后停止，迟到结果丢弃。主进程合并重叠检测；FDA 探针不再弹原生引导或重启框。
+- 仅明确点击「打开系统设置」时请求主程序屏幕捕获登记；打开引导、启动与轮询不请求权限。深链集中于 `macPermissions.ts`，失败回退隐私与安全性总页（通知回系统设置），手动操作路径始终展示。一键重启走 relaunch + quit，执行正常服务清理。
+- `permissions:guide` 是主进程发给可信宿主的定向导航事件，目标为 overview、screen_recording、file_access、notifications、helper_accessibility、helper_screen_recording。新增 onboarding IPC 仅可信宿主主 frame 可调用；不接受任意 URL 或应用路径。
+- 截屏未决定/拒绝权限进入 screen_recording 步骤；不自动恢复截图。本地文件直访仅实际 EACCES/EPERM 且 FDA 明确 denied 时进入 file_access，延迟检测受文档/身份/生命周期校验；路径边界、安全策略、网络错误不解释成系统授权。当前基线的 local-files 关闭门控保留。
+- **Computer Use 对接预留**：`registerHelperPermissionAdapter({ check, request, appPath? })` 的 check 必须只查询 helper 自身权限，不拉起或请求；request 仅用户点击时调用；appPath 返回 helper 已安装包路径（有值时快照 helperAppAvailable=true，拖拽添加才对 helper 生效）。未注册适配器时不生成 helper 授权条目，明确显示未接入说明；不以主程序权限充当 helper 授权。本事项未合入或修改 Computer Use 产品分支，下文旧 helper 验证记录不构成新产品接通的证据。
+- Windows/Linux 不列 macOS TCC 项；Windows 展示 Win32/UIPI 说明，Linux 展示 X11/Wayland portal 差异并提供主动截图自测。自测取消或失败不改变授权标记。
+- macOS 13/14/15/26 深链定位、正式签名包的 TCC 身份、FDA/屏幕重启生效，以及 Windows/Linux/Wayland 真机交互仍需人工验收；本任务不修改本机权限。
+
 ## 总表
 
 | 平台 | 组件 | 需要的授权 | 授权时机 | 持久性 |
 |---|---|---|---|---|
-| macOS | 客户端 | **全磁盘访问（建议）**：文件链路（file-server 浏览「我的电脑」`fs/roots`/`fs/children`、引擎读写工作区）是**裸 readdir/IO，不经系统文件选择器**，被 TCC 拦时静默 EPERM 不弹系统授权框——桌面/文稿/下载/资源库等受保护目录只有 FDA 一次覆盖（文件夹级 TCC 在本链路无采集入口）。初始化检测+一次性引导+设置页状态行（2026-09-21 批次起，`services/fullDiskAccess.ts`） | 初始化弹窗（拒绝后永不再弹，设置页为唯一再入口） | 持久（注意 dev 身份漂移，见下「授权对象」） |
+| macOS | 客户端 | **全磁盘访问（建议）**：文件链路（file-server 浏览「我的电脑」`fs/roots`/`fs/children`、引擎读写工作区）是**裸 readdir/IO，不经系统文件选择器**，被 TCC 拦时静默 EPERM 不弹系统授权框——桌面/文稿/下载/资源库等受保护目录只有 FDA 一次覆盖（文件夹级 TCC 在本链路无采集入口）。纯子进程探针+统一引导状态（`services/fullDiskAccess.ts` / `permissionOnboarding.ts`） | 首次总览（可跳过）、设置页与实际文件权限受阻时 | 持久（注意 dev 身份漂移，见下「授权对象」） |
 | macOS | Helper | **辅助功能 + 屏幕录制**（两项，一次性）；首次 SR 捕获可能再弹一次 SCK 同意框（同授权会话内点一次） | 设置页「去授权」引导 | **跨版本保留**（Developer ID 正签+稳定 bundle id com.nuwax-ai.nuwax-computer-use，Team 89GQ2RJVW7） |
 | Windows | 客户端 | 无 per-app 授权概念；beta 未签名触发 SmartScreen（正式版手签后消失） | 安装时 | — |
 | Windows | Helper | **零授权**（UIA/MSAA+PrintWindow 开箱即用）；WGC 捕获首次仅弹不可拒绝系统黄条（提示非授权） | 无 | — |
@@ -30,7 +45,7 @@
 | dev（`npm run base:dev`） | `node_modules` 里的 Electron.app（pnpm 路径随依赖重装/版本变化漂移，TCC 条目随之失效需重授） | **Electron** |
 | Computer Use helper | `Nuwax Computer Use.app`（launchd 拉起，独立身份） | Nuwax Computer Use |
 
-三者互不继承。「授权了没看到生效」的第一嫌疑=授错对象（如 dev 环境授给了 Nuwax）；客户端自 v1.0.x 全磁盘访问状态行（设置页，仅 mac）显示以**当前进程身份**实测的真值，可作判别入口（探针=open 系统 TCC.db，macOS 26.6 实证无授权时 Operation not permitted）。
+三者互不继承。「授权了没看到生效」的第一嫌疑=授错对象（如 dev 环境授给了 Nuwax）；客户端全磁盘访问引导项（设置页，仅 mac）显示以**当前进程身份**实测的真值，可作判别入口（探针=open 系统 TCC.db，macOS 26.6 实证无授权时 Operation not permitted）。
 
 ## 边界与治理红线
 

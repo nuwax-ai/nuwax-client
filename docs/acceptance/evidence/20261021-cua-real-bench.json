@@ -1,0 +1,3996 @@
+{
+  "schema": 1,
+  "scope": "development real-model pilot; not signed-package acceptance",
+  "runs": [
+    {
+      "file": "mac-baseline-05.json",
+      "sha256": "f89d5077dbb7ac1d6a7eff0cb5ce2bd4a645ae198038aeb4ec7b06b342343578",
+      "report": {
+        "suite": "desktop-v1",
+        "taskSetSha256": "1458df3ba44eb75347c90894418f240ec56c8cac84fa2b4a80d12518c939a566",
+        "at": "2026-10-21T03:43:28.728Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "b845420e44988d3a857535f2f804554a275908c400e1071adcb160ea00800102",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "624fdd312b12f4337b2ce85a1a555932507d5ae8e8dec7bd817bef832dcca9ce",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 1141,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "N01",
+            "iteration": 1,
+            "kind": "native",
+            "category": "native-text-replace",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 91064,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": false,
+                "code": "invalid_snapshot_id"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "TextEdit",
+            "stats": {
+              "steps": 5,
+              "refused": 2,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554222147,
+                "outcome": "ok",
+                "durationMs": 779
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792554238552,
+                "outcome": "ok",
+                "durationMs": 629
+              },
+              {
+                "sequence": 3,
+                "tool": "set_value",
+                "startedAt": 1792554245468,
+                "outcome": "refused",
+                "durationMs": 75
+              },
+              {
+                "sequence": 4,
+                "tool": "get_window_state",
+                "startedAt": 1792554253170,
+                "outcome": "ok",
+                "durationMs": 318
+              },
+              {
+                "sequence": 5,
+                "tool": "click",
+                "startedAt": 1792554298950,
+                "outcome": "refused",
+                "durationMs": 38
+              }
+            ],
+            "drained": true,
+            "requests": 6,
+            "imageInputs": 7,
+            "inputTokens": 122201,
+            "outputTokens": 2446,
+            "costUsd": null,
+            "modelMs": 87962,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "0f32cd90ecc2fd67e4ab5efdf8f3c06a0d899782a7ab2cd7f2a8b8cf6eef9a35",
+        "summary": {
+          "planned": 2,
+          "recorded": 2,
+          "passedUnassisted": 0,
+          "passedAssisted": 0,
+          "blocked": 1,
+          "unassistedSuccessRate": 0,
+          "completed": true,
+          "durationMsP50": 91064,
+          "durationMsP95": 91064,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "environment": 1,
+            "input-capability": 1
+          }
+        }
+      }
+    },
+    {
+      "file": "mac-baseline-06.json",
+      "sha256": "b7f2cdea7f2bf20422ea1118e09ae73d39f03c37311fa55a1695971192a2da4c",
+      "report": {
+        "suite": "desktop-v1",
+        "taskSetSha256": "d4cef38117074edc64fbae09c0e34393e852a0a2cda05994a753ce3cdc382926",
+        "at": "2026-10-21T03:45:47.002Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "b845420e44988d3a857535f2f804554a275908c400e1071adcb160ea00800102",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "dd44dcfb60ef9b6a9442771e1e7ffc1167260cfab2c83bfbb7847e6b16987539",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 60684,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "type_text",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 3,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554362400,
+                "outcome": "ok",
+                "durationMs": 5011
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792554379956,
+                "outcome": "ok",
+                "durationMs": 4670
+              },
+              {
+                "sequence": 3,
+                "tool": "type_text",
+                "startedAt": 1792554409985,
+                "outcome": "refused",
+                "durationMs": 29
+              }
+            ],
+            "drained": true,
+            "requests": 4,
+            "imageInputs": 3,
+            "inputTokens": 77473,
+            "outputTokens": 2015,
+            "costUsd": null,
+            "modelMs": 61198,
+            "errors": []
+          },
+          {
+            "task": "F02",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-replace",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 63980,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": false,
+                "code": "invalid_snapshot_id"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 4,
+              "refused": 2,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554428246,
+                "outcome": "ok",
+                "durationMs": 4534
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792554443913,
+                "outcome": "refused",
+                "durationMs": 73
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792554450856,
+                "outcome": "ok",
+                "durationMs": 4481
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792554474334,
+                "outcome": "refused",
+                "durationMs": 32
+              }
+            ],
+            "drained": true,
+            "requests": 5,
+            "imageInputs": 4,
+            "inputTokens": 89051,
+            "outputTokens": 1554,
+            "costUsd": null,
+            "modelMs": 75627,
+            "errors": []
+          },
+          {
+            "task": "F03",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "element-choice",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 80029,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": false,
+                "code": "invalid_snapshot_id"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 5,
+              "refused": 3,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554485165,
+                "outcome": "ok",
+                "durationMs": 5097
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792554501201,
+                "outcome": "ok",
+                "durationMs": 4737
+              },
+              {
+                "sequence": 3,
+                "tool": "click",
+                "startedAt": 1792554514428,
+                "outcome": "refused",
+                "durationMs": 72
+              },
+              {
+                "sequence": 4,
+                "tool": "get_window_state",
+                "startedAt": 1792554544638,
+                "outcome": "ok",
+                "durationMs": 347
+              },
+              {
+                "sequence": 5,
+                "tool": "click",
+                "startedAt": 1792554554718,
+                "outcome": "refused",
+                "durationMs": 16
+              }
+            ],
+            "drained": true,
+            "requests": 7,
+            "imageInputs": 9,
+            "inputTokens": 184613,
+            "outputTokens": 1624,
+            "costUsd": null,
+            "modelMs": 74828,
+            "errors": []
+          },
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 68583,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "snapshot_id_required"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "scroll",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 4,
+              "refused": 3,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 1
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554566110,
+                "outcome": "ok",
+                "durationMs": 6526
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792554581809,
+                "outcome": "refused",
+                "durationMs": 77
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792554585124,
+                "outcome": "ok",
+                "durationMs": 5641
+              },
+              {
+                "sequence": 4,
+                "tool": "scroll",
+                "startedAt": 1792554623630,
+                "outcome": "refused",
+                "durationMs": 37
+              }
+            ],
+            "drained": true,
+            "requests": 6,
+            "imageInputs": 4,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 60302,
+            "errors": [
+              "providerTimeoutOrCancelled"
+            ]
+          },
+          {
+            "task": "F05",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "loading-recovery",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 184614,
+            "reason": "timeLimit",
+            "failure": "timeout",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "snapshot_id_required"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": false,
+                "code": "stale_element_token"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 6,
+              "refused": 3,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 1
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554635303,
+                "outcome": "ok",
+                "durationMs": 5751
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792554648390,
+                "outcome": "ok",
+                "durationMs": 5591
+              },
+              {
+                "sequence": 3,
+                "tool": "click",
+                "startedAt": 1792554676215,
+                "outcome": "refused",
+                "durationMs": 98
+              },
+              {
+                "sequence": 4,
+                "tool": "get_window_state",
+                "startedAt": 1792554685483,
+                "outcome": "ok",
+                "durationMs": 305
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792554759218,
+                "outcome": "ok",
+                "durationMs": 315
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792554782427,
+                "outcome": "refused",
+                "durationMs": 75
+              }
+            ],
+            "drained": true,
+            "requests": 9,
+            "imageInputs": 13,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 172762,
+            "errors": [
+              "providerTimeoutOrCancelled"
+            ]
+          },
+          {
+            "task": "F06",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "dynamic-ui",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 83425,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "snapshot_id_required"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stats": {
+              "steps": 5,
+              "refused": 3,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554820373,
+                "outcome": "ok",
+                "durationMs": 7515
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792554839804,
+                "outcome": "ok",
+                "durationMs": 6912
+              },
+              {
+                "sequence": 3,
+                "tool": "click",
+                "startedAt": 1792554858103,
+                "outcome": "refused",
+                "durationMs": 70
+              },
+              {
+                "sequence": 4,
+                "tool": "get_window_state",
+                "startedAt": 1792554884472,
+                "outcome": "ok",
+                "durationMs": 556
+              },
+              {
+                "sequence": 5,
+                "tool": "click",
+                "startedAt": 1792554892717,
+                "outcome": "refused",
+                "durationMs": 28
+              }
+            ],
+            "drained": true,
+            "requests": 7,
+            "imageInputs": 9,
+            "inputTokens": 184942,
+            "outputTokens": 1606,
+            "costUsd": null,
+            "modelMs": 73039,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "0f32cd90ecc2fd67e4ab5efdf8f3c06a0d899782a7ab2cd7f2a8b8cf6eef9a35",
+        "summary": {
+          "planned": 6,
+          "recorded": 6,
+          "passedUnassisted": 0,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0,
+          "completed": true,
+          "durationMsP50": 68583,
+          "durationMsP95": 184614,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "input-capability": 5,
+            "timeout": 1
+          }
+        }
+      }
+    },
+    {
+      "file": "mac-after-01.json",
+      "sha256": "35510e7b33e87408f0a613f354829dd03794c5223e8899593e8a91d0561872d3",
+      "report": {
+        "suite": "desktop-v1",
+        "taskSetSha256": "3487eb54785c83d27ebac823e3e685158a1a9c399c741871bafc2999ed121958",
+        "at": "2026-10-21T03:56:24.996Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "2feea6bdb63688899b5674362a34f3560620843e360eed6b30706003a5671d25",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "0374b7b6057506a5e7ea9b704cc26e7c5408253e8881f891603f46f2dcc88168",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "0374b7b6057506a5e7ea9b704cc26e7c5408253e8881f891603f46f2dcc88168",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 101531,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 7,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792554999496,
+                "outcome": "ok",
+                "durationMs": 6314
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792555028503,
+                "outcome": "ok",
+                "durationMs": 2800
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555037281,
+                "outcome": "ok",
+                "durationMs": 5922
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792555049635,
+                "outcome": "ok",
+                "durationMs": 2409
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555057342,
+                "outcome": "ok",
+                "durationMs": 5984
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792555069523,
+                "outcome": "ok",
+                "durationMs": 2528
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792555077475,
+                "outcome": "ok",
+                "durationMs": 5743
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 9,
+            "imageInputs": 16,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 233400,
+            "outputTokens": 1656,
+            "costUsd": null,
+            "modelMs": 75318,
+            "errors": []
+          },
+          {
+            "task": "F02",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-replace",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 87954,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555102673,
+                "outcome": "ok",
+                "durationMs": 6006
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792555142369,
+                "outcome": "ok",
+                "durationMs": 2758
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555150493,
+                "outcome": "ok",
+                "durationMs": 6257
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555160847,
+                "outcome": "ok",
+                "durationMs": 2652
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555168725,
+                "outcome": "ok",
+                "durationMs": 6085
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 171030,
+            "outputTokens": 1741,
+            "costUsd": null,
+            "modelMs": 68189,
+            "errors": []
+          },
+          {
+            "task": "F03",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "element-choice",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 81174,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 7,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555189248,
+                "outcome": "ok",
+                "durationMs": 5637
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792555203820,
+                "outcome": "ok",
+                "durationMs": 2685
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555217377,
+                "outcome": "ok",
+                "durationMs": 391
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555223763,
+                "outcome": "ok",
+                "durationMs": 2464
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555231946,
+                "outcome": "ok",
+                "durationMs": 328
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792555237854,
+                "outcome": "ok",
+                "durationMs": 2476
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792555245380,
+                "outcome": "ok",
+                "durationMs": 5969
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 9,
+            "imageInputs": 8,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 254547,
+            "outputTokens": 1195,
+            "costUsd": null,
+            "modelMs": 66972,
+            "errors": []
+          },
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 35722,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "scroll",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 2,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555271265,
+                "outcome": "ok",
+                "durationMs": 6889
+              },
+              {
+                "sequence": 2,
+                "tool": "scroll",
+                "startedAt": 1792555295985,
+                "outcome": "refused",
+                "durationMs": 19
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 3,
+            "imageInputs": 1,
+            "observationsWithSnapshot": 1,
+            "inputTokens": 46682,
+            "outputTokens": 897,
+            "costUsd": null,
+            "modelMs": 33144,
+            "errors": []
+          },
+          {
+            "task": "F05",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "loading-recovery",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 88326,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555315872,
+                "outcome": "ok",
+                "durationMs": 5048
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792555332798,
+                "outcome": "ok",
+                "durationMs": 2704
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555349265,
+                "outcome": "ok",
+                "durationMs": 5973
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555361425,
+                "outcome": "ok",
+                "durationMs": 2518
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555368919,
+                "outcome": "ok",
+                "durationMs": 6368
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 181816,
+            "outputTokens": 841,
+            "costUsd": null,
+            "modelMs": 83368,
+            "errors": []
+          },
+          {
+            "task": "F06",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "dynamic-ui",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 65721,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": true
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555395600,
+                "outcome": "ok",
+                "durationMs": 4808
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792555408978,
+                "outcome": "ok",
+                "durationMs": 2780
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555417427,
+                "outcome": "ok",
+                "durationMs": 4641
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555426598,
+                "outcome": "ok",
+                "durationMs": 2454
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555434313,
+                "outcome": "ok",
+                "durationMs": 6062
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 182569,
+            "outputTokens": 977,
+            "costUsd": null,
+            "modelMs": 47017,
+            "errors": []
+          },
+          {
+            "task": "N01",
+            "iteration": 1,
+            "kind": "native",
+            "category": "native-text-replace",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 51313,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": true,
+                "code": "invalid_element_token"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "TextEdit",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 5,
+              "refused": 2,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555461249,
+                "outcome": "ok",
+                "durationMs": 954
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792555470129,
+                "outcome": "refused",
+                "durationMs": 70
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555482144,
+                "outcome": "ok",
+                "durationMs": 305
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792555485155,
+                "outcome": "ok",
+                "durationMs": 2850
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555490047,
+                "outcome": "ok",
+                "durationMs": 607
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 8,
+            "imageInputs": 7,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 179029,
+            "outputTokens": 1001,
+            "costUsd": null,
+            "modelMs": 51699,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "0f32cd90ecc2fd67e4ab5efdf8f3c06a0d899782a7ab2cd7f2a8b8cf6eef9a35",
+        "summary": {
+          "planned": 7,
+          "recorded": 7,
+          "passedUnassisted": 6,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0.8571428571428571,
+          "completed": true,
+          "durationMsP50": 81174,
+          "durationMsP95": 101531,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "input-capability": 1
+          }
+        }
+      }
+    },
+    {
+      "file": "mac-foreground-01.json",
+      "sha256": "6d636440161d99cd92ce916677c90182a2222c9d43c8262e4799f51988d6f420",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "0abc8d6de8a020a4d7d173d695217f86248746926e1dd3cc0a0ec8eeaa9b8ae9",
+        "at": "2026-10-21T04:07:29.790Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F04",
+            "kind": "fixture",
+            "category": "scroll"
+          }
+        ],
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "7b75981fa3badbaeae6c948aff11ec47295c3b210b6b16f6a07f54fcf6952af1",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "7915f0a290520cd4618ea11650fd27ad7a3c13eac4e2294bf6079d7f534bdd82",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "7915f0a290520cd4618ea11650fd27ad7a3c13eac4e2294bf6079d7f534bdd82",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "foreground",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 77430,
+            "reason": null,
+            "failure": "result-mismatch",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "scroll",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "foreground",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555658406,
+                "outcome": "ok",
+                "durationMs": 5056
+              },
+              {
+                "sequence": 2,
+                "tool": "scroll",
+                "startedAt": 1792555678834,
+                "outcome": "ok",
+                "durationMs": 4073
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555698012,
+                "outcome": "ok",
+                "durationMs": 4775
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555709588,
+                "outcome": "ok",
+                "durationMs": 1956
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555716907,
+                "outcome": "ok",
+                "durationMs": 5014
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 179075,
+            "outputTokens": 1040,
+            "costUsd": null,
+            "modelMs": 59289,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "0f32cd90ecc2fd67e4ab5efdf8f3c06a0d899782a7ab2cd7f2a8b8cf6eef9a35",
+        "summary": {
+          "planned": 1,
+          "recorded": 1,
+          "passedUnassisted": 0,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0,
+          "completed": true,
+          "durationMsMean": 77430,
+          "durationMsP50": 77430,
+          "durationMsP95": 77430,
+          "toolCallsMean": 5,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "result-mismatch": 1
+          },
+          "refusalCodes": {}
+        }
+      }
+    },
+    {
+      "file": "mac-foreground-02.json",
+      "sha256": "58bdaef2f74be681dbb5b98c40ad68d852ed5dabe56e4b7e62ba7ba50e08bed0",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "0abc8d6de8a020a4d7d173d695217f86248746926e1dd3cc0a0ec8eeaa9b8ae9",
+        "at": "2026-10-21T04:11:00.118Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F04",
+            "kind": "fixture",
+            "category": "scroll"
+          }
+        ],
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "89697a3b65be167fad26aab3728f92b9cc63c711ceadb2bdaa1c1e6f2dc55009",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "a6ee4bbdcda9acb8c1f4e5e0279e46b339b31c11520e2ec690d6d9f5290b71ab",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "a6ee4bbdcda9acb8c1f4e5e0279e46b339b31c11520e2ec690d6d9f5290b71ab",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "foreground",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 87087,
+            "reason": null,
+            "failure": "result-mismatch",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "scroll",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "foreground",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "picked": true,
+              "scrolled": true,
+              "visible": false,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792555881250,
+                "outcome": "ok",
+                "durationMs": 5148
+              },
+              {
+                "sequence": 2,
+                "tool": "scroll",
+                "startedAt": 1792555911002,
+                "outcome": "ok",
+                "durationMs": 4969
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792555925159,
+                "outcome": "ok",
+                "durationMs": 4881
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792555942978,
+                "outcome": "ok",
+                "durationMs": 2354
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792555951475,
+                "outcome": "ok",
+                "durationMs": 5097
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 219816,
+            "outputTokens": 1622,
+            "costUsd": null,
+            "modelMs": 69197,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "0f32cd90ecc2fd67e4ab5efdf8f3c06a0d899782a7ab2cd7f2a8b8cf6eef9a35",
+        "summary": {
+          "planned": 1,
+          "recorded": 1,
+          "passedUnassisted": 0,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0,
+          "completed": true,
+          "durationMsMean": 87087,
+          "durationMsP50": 87087,
+          "durationMsP95": 87087,
+          "toolCallsMean": 5,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "result-mismatch": 1
+          },
+          "refusalCodes": {}
+        }
+      }
+    },
+    {
+      "file": "mac-release-01.json",
+      "sha256": "e7cea8822222835dcf9f78efbcab63b912047b29986798e9f059a66719ac55e5",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "1458df3ba44eb75347c90894418f240ec56c8cac84fa2b4a80d12518c939a566",
+        "at": "2026-10-21T04:19:32.991Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F01",
+            "kind": "fixture",
+            "category": "text-input"
+          },
+          {
+            "id": "N01",
+            "kind": "native",
+            "category": "native-text-replace"
+          }
+        ],
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "7b75981fa3badbaeae6c948aff11ec47295c3b210b6b16f6a07f54fcf6952af1",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "ab6d98387cc1de505772d84f0a5eb11685aacdbd0c826c947ab034cc2023694a",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "ab6d98387cc1de505772d84f0a5eb11685aacdbd0c826c947ab034cc2023694a",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 35805,
+            "reason": "foregroundRequired",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "type_text",
+                "outcome": "refused",
+                "hasSnapshot": false,
+                "hasElementToken": false,
+                "code": "foreground_required"
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "name": false,
+              "city": false,
+              "submitted": false,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 3,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792556392433,
+                "outcome": "ok",
+                "durationMs": 811
+              },
+              {
+                "sequence": 2,
+                "tool": "get_window_state",
+                "startedAt": 1792556407050,
+                "outcome": "ok",
+                "durationMs": 543
+              },
+              {
+                "sequence": 3,
+                "tool": "type_text",
+                "startedAt": 1792556418032,
+                "outcome": "refused",
+                "durationMs": 25
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 4,
+            "imageInputs": 3,
+            "observationsWithSnapshot": 2,
+            "inputTokens": 80351,
+            "outputTokens": 1086,
+            "costUsd": null,
+            "modelMs": 39984,
+            "errors": []
+          },
+          {
+            "task": "N01",
+            "iteration": 1,
+            "kind": "native",
+            "category": "native-text-replace",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 42845,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "TextEdit",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "stats": {
+              "steps": 3,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792556428963,
+                "outcome": "ok",
+                "durationMs": 526
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792556441052,
+                "outcome": "ok",
+                "durationMs": 2719
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792556448864,
+                "outcome": "ok",
+                "durationMs": 528
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 5,
+            "imageInputs": 4,
+            "observationsWithSnapshot": 2,
+            "inputTokens": 103261,
+            "outputTokens": 1012,
+            "costUsd": null,
+            "modelMs": 41933,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "d40ddc4d4bcf7b0108f376c5c03bfba8f34bae6f23352e22a1d4ac067ae23b47",
+        "summary": {
+          "planned": 2,
+          "recorded": 2,
+          "passedUnassisted": 1,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0.5,
+          "completed": true,
+          "durationMsMean": 39325,
+          "durationMsP50": 35805,
+          "durationMsP95": 42845,
+          "toolCallsMean": 3,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "input-capability": 1
+          },
+          "refusalCodes": {
+            "foreground_required": 1
+          }
+        }
+      }
+    },
+    {
+      "file": "mac-mode-01.json",
+      "sha256": "af7b35e40bfb82f8b5b4efbf2b416d4458c9d46047745c2b148bd88a8979ae34",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "a4bf2aa1ca707d4ef3d8fcc7fb268ccaa6064dd77596f28c700a2670cc92dcb2",
+        "at": "2026-10-21T04:32:46.523Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F01",
+            "kind": "fixture",
+            "category": "text-input"
+          }
+        ],
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "58bd371170ce4a71f12fdccc65ecf5edd77161675f48868b5beb00bd63650cf0",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "f2a514a7ca771e8926126a4158d4d3b3afd10a9a4eb4392ed2fedf0e62085c37",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "f2a514a7ca771e8926126a4158d4d3b3afd10a9a4eb4392ed2fedf0e62085c37",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 2,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 58151,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "name": true,
+              "city": true,
+              "submitted": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 7,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792557179994,
+                "outcome": "ok",
+                "durationMs": 861
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792557187299,
+                "outcome": "ok",
+                "durationMs": 2742
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792557196820,
+                "outcome": "ok",
+                "durationMs": 617
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792557203965,
+                "outcome": "ok",
+                "durationMs": 1589
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792557211105,
+                "outcome": "ok",
+                "durationMs": 649
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792557218073,
+                "outcome": "ok",
+                "durationMs": 2584
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792557222312,
+                "outcome": "ok",
+                "durationMs": 804
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 10,
+            "imageInputs": 17,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 305873,
+            "outputTokens": 1016,
+            "costUsd": null,
+            "modelMs": 50500,
+            "errors": []
+          },
+          {
+            "task": "F01",
+            "iteration": 2,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 86352,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "refused",
+                "hasSnapshot": true,
+                "hasElementToken": false,
+                "code": "invalid_element_token"
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "name": true,
+              "city": true,
+              "submitted": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 10,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792557240533,
+                "outcome": "ok",
+                "durationMs": 967
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792557250540,
+                "outcome": "ok",
+                "durationMs": 2876
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792557260049,
+                "outcome": "ok",
+                "durationMs": 821
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792557267742,
+                "outcome": "ok",
+                "durationMs": 2496
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792557272933,
+                "outcome": "ok",
+                "durationMs": 575
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792557284467,
+                "outcome": "refused",
+                "durationMs": 73
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792557290453,
+                "outcome": "ok",
+                "durationMs": 670
+              },
+              {
+                "sequence": 8,
+                "tool": "get_window_state",
+                "startedAt": 1792557295532,
+                "outcome": "ok",
+                "durationMs": 562
+              },
+              {
+                "sequence": 9,
+                "tool": "click",
+                "startedAt": 1792557299030,
+                "outcome": "ok",
+                "durationMs": 2633
+              },
+              {
+                "sequence": 10,
+                "tool": "get_window_state",
+                "startedAt": 1792557308372,
+                "outcome": "ok",
+                "durationMs": 532
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 12,
+            "imageInputs": 32,
+            "observationsWithSnapshot": 6,
+            "inputTokens": 395869,
+            "outputTokens": 1880,
+            "costUsd": null,
+            "modelMs": 79662,
+            "errors": []
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "d40ddc4d4bcf7b0108f376c5c03bfba8f34bae6f23352e22a1d4ac067ae23b47",
+        "summary": {
+          "planned": 2,
+          "recorded": 2,
+          "passedUnassisted": 2,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 1,
+          "completed": true,
+          "durationMsMean": 72251.5,
+          "durationMsP50": 58151,
+          "durationMsP95": 86352,
+          "toolCallsMean": 8.5,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {},
+          "refusalCodes": {
+            "invalid_element_token": 1
+          }
+        }
+      }
+    },
+    {
+      "file": "mac-release-suite-01.json",
+      "sha256": "eb63dca8eab9485f8c2f7109dc9c97732ff4552e8e04f37aa86ceef62c9fce36",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "429861c3142be8333dbb0e940b15fe83538891fd7c3cd550157ef05e64546bc4",
+        "at": "2026-10-21T04:46:09.947Z",
+        "platform": "darwin",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F01",
+            "kind": "fixture",
+            "category": "text-input"
+          },
+          {
+            "id": "F02",
+            "kind": "fixture",
+            "category": "text-replace"
+          },
+          {
+            "id": "F03",
+            "kind": "fixture",
+            "category": "element-choice"
+          },
+          {
+            "id": "F04",
+            "kind": "fixture",
+            "category": "scroll"
+          },
+          {
+            "id": "F05",
+            "kind": "fixture",
+            "category": "loading-recovery"
+          },
+          {
+            "id": "F06",
+            "kind": "fixture",
+            "category": "dynamic-ui"
+          },
+          {
+            "id": "N01",
+            "kind": "native",
+            "category": "native-text-replace"
+          }
+        ],
+        "osRelease": "27.0.0",
+        "node": "v24.18.0",
+        "runtimeSha256": "58bd371170ce4a71f12fdccc65ecf5edd77161675f48868b5beb00bd63650cf0",
+        "source": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "db5492517c12dafe3ef6ac1b8a77c06d40ebcd01a88ff72f4b9a2700359ff17e",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "db5492517c12dafe3ef6ac1b8a77c06d40ebcd01a88ff72f4b9a2700359ff17e",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 65360,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "name": true,
+              "city": true,
+              "submitted": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 7,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792557986257,
+                "outcome": "ok",
+                "durationMs": 1013
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792557993544,
+                "outcome": "ok",
+                "durationMs": 4714
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792558007664,
+                "outcome": "ok",
+                "durationMs": 240
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792558014056,
+                "outcome": "ok",
+                "durationMs": 4785
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792558021119,
+                "outcome": "ok",
+                "durationMs": 244
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792558026886,
+                "outcome": "ok",
+                "durationMs": 4987
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792558037105,
+                "outcome": "ok",
+                "durationMs": 486
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 10,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 234337,
+            "outputTokens": 1043,
+            "costUsd": null,
+            "modelMs": 53913,
+            "errors": []
+          },
+          {
+            "task": "F02",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-replace",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 15395,
+            "reason": "targetClosed",
+            "failure": "window-lifecycle",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "note": false,
+              "submitted": false,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 1,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558050198,
+                "outcome": "ok",
+                "durationMs": 750
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGKILL"
+            },
+            "requests": 3,
+            "imageInputs": 1,
+            "observationsWithSnapshot": 1,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 21018,
+            "errors": [
+              "providerTimeoutOrCancelled",
+              "providerTimeoutOrCancelled"
+            ]
+          },
+          {
+            "task": "F03",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "element-choice",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 55865,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "choice": true,
+              "attachment": true,
+              "submitted": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 7,
+              "refused": 1,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558062773,
+                "outcome": "ok",
+                "durationMs": 835
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792558071249,
+                "outcome": "ok",
+                "durationMs": 2582
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792558085644,
+                "outcome": "ok",
+                "durationMs": 605
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792558093855,
+                "outcome": "ok",
+                "durationMs": 2386
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792558098191,
+                "outcome": "ok",
+                "durationMs": 609
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792558102053,
+                "outcome": "ok",
+                "durationMs": 2445
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792558106254,
+                "outcome": "ok",
+                "durationMs": 520
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 10,
+            "imageInputs": 17,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 281925,
+            "outputTokens": 1406,
+            "costUsd": null,
+            "modelMs": 54710,
+            "errors": []
+          },
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 31091,
+            "reason": "userTakingControl",
+            "failure": "input-capability",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "picked": false,
+              "scrolled": false,
+              "visible": false,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 1,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558119512,
+                "outcome": "ok",
+                "durationMs": 810
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 3,
+            "imageInputs": 1,
+            "observationsWithSnapshot": 1,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 33595,
+            "errors": [
+              "providerTimeoutOrCancelled"
+            ]
+          },
+          {
+            "task": "F05",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "loading-recovery",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 75513,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "loaded": true,
+              "confirmed": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 5,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558154663,
+                "outcome": "ok",
+                "durationMs": 1005
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792558158864,
+                "outcome": "ok",
+                "durationMs": 5021
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792558166637,
+                "outcome": "ok",
+                "durationMs": 538
+              },
+              {
+                "sequence": 4,
+                "tool": "click",
+                "startedAt": 1792558170784,
+                "outcome": "ok",
+                "durationMs": 4930
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792558180548,
+                "outcome": "ok",
+                "durationMs": 425
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 7,
+            "imageInputs": 9,
+            "observationsWithSnapshot": 3,
+            "inputTokens": 173842,
+            "outputTokens": 2092,
+            "costUsd": null,
+            "modelMs": 69374,
+            "errors": []
+          },
+          {
+            "task": "F06",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "dynamic-ui",
+            "status": "failed",
+            "interventions": 0,
+            "durationMs": 31807,
+            "reason": "runCancelled",
+            "failure": "result-mismatch",
+            "oraclePassed": false,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Chrome GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "refreshed": true,
+              "picked": false,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 3,
+              "refused": 0,
+              "uncertain": 0,
+              "pauses": 2,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558227776,
+                "outcome": "ok",
+                "durationMs": 1034
+              },
+              {
+                "sequence": 2,
+                "tool": "click",
+                "startedAt": 1792558239757,
+                "outcome": "ok",
+                "durationMs": 2630
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792558245314,
+                "outcome": "ok",
+                "durationMs": 803
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 5,
+            "imageInputs": 4,
+            "observationsWithSnapshot": 2,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 29803,
+            "errors": [
+              "providerTimeoutOrCancelled"
+            ]
+          }
+        ],
+        "agentSha256": "7c26750aebc711431ce434b9e494d2d72f54563acf0e27e96ca61033a3bf0abb",
+        "helperSha256": "d40ddc4d4bcf7b0108f376c5c03bfba8f34bae6f23352e22a1d4ac067ae23b47",
+        "summary": {
+          "planned": 7,
+          "recorded": 6,
+          "passedUnassisted": 3,
+          "passedAssisted": 0,
+          "blocked": 0,
+          "unassistedSuccessRate": 0.42857142857142855,
+          "completed": false,
+          "durationMsMean": 45838.5,
+          "durationMsP50": 31807,
+          "durationMsP95": 75513,
+          "toolCallsMean": 4,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "window-lifecycle": 1,
+            "input-capability": 1,
+            "result-mismatch": 1
+          },
+          "refusalCodes": {}
+        },
+        "blocker": "runCancelled"
+      }
+    },
+    {
+      "file": "windows-vm-native-01.json",
+      "sha256": "073a5fc632eb875be01feb56913cdc0b2038be71a684845055a1809069100a0d",
+      "report": {
+        "suite": "desktop-v1.1",
+        "taskSetSha256": "429861c3142be8333dbb0e940b15fe83538891fd7c3cd550157ef05e64546bc4",
+        "at": "2026-10-21T04:48:07.672Z",
+        "platform": "win32",
+        "arch": "arm64",
+        "plannedTasks": [
+          {
+            "id": "F01",
+            "kind": "fixture",
+            "category": "text-input"
+          },
+          {
+            "id": "F02",
+            "kind": "fixture",
+            "category": "text-replace"
+          },
+          {
+            "id": "F03",
+            "kind": "fixture",
+            "category": "element-choice"
+          },
+          {
+            "id": "F04",
+            "kind": "fixture",
+            "category": "scroll"
+          },
+          {
+            "id": "F05",
+            "kind": "fixture",
+            "category": "loading-recovery"
+          },
+          {
+            "id": "F06",
+            "kind": "fixture",
+            "category": "dynamic-ui"
+          },
+          {
+            "id": "N01",
+            "kind": "native",
+            "category": "native-text-replace"
+          }
+        ],
+        "osRelease": "10.0.26100",
+        "node": "v22.13.1",
+        "runtimeSha256": "58bd371170ce4a71f12fdccc65ecf5edd77161675f48868b5beb00bd63650cf0",
+        "source": {
+          "commit": null,
+          "dirtySha256": null
+        },
+        "runtimeBuildSource": {
+          "commit": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+          "dirtySha256": "db5492517c12dafe3ef6ac1b8a77c06d40ebcd01a88ff72f4b9a2700359ff17e",
+          "submodules": [
+            [
+              "c08080d127544b7e191e11fe722fa50a1b977679",
+              "nuwa-electron-shell"
+            ],
+            [
+              "95788407878e3e7dfe01b723eee976df07802bb6",
+              "nuwax"
+            ],
+            [
+              "20b6ff7fb0630c139df46716e0c119f1f5299735",
+              "nuwax-dist"
+            ]
+          ]
+        },
+        "mode": "background",
+        "modality": "hybrid",
+        "repeat": 1,
+        "timeoutMs": 180000,
+        "model": "glm-5.3-flash",
+        "prices": null,
+        "evidence": "development-real-model",
+        "preflight": {
+          "desktop": "interactive",
+          "agent": {
+            "passed": true,
+            "exitCode": 0,
+            "version": "1.17.11"
+          },
+          "helper": {
+            "windowTasks": 1,
+            "preview": 1
+          },
+          "vision": {
+            "passed": true
+          }
+        },
+        "results": [
+          {
+            "task": "F01",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-input",
+            "status": "passed",
+            "interventions": 0,
+            "durationMs": 51723,
+            "reason": null,
+            "failure": null,
+            "oraclePassed": true,
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "set_value",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              },
+              {
+                "tool": "click",
+                "outcome": "ok",
+                "hasSnapshot": true,
+                "hasElementToken": false
+              },
+              {
+                "tool": "get_window_state",
+                "outcome": "ok",
+                "hasSnapshot": false,
+                "hasElementToken": false
+              }
+            ],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "stage": "oracle",
+            "modelExecutionStarted": true,
+            "oracleChecks": {
+              "name": true,
+              "city": true,
+              "submitted": true,
+              "noWrongSelection": true
+            },
+            "stats": {
+              "steps": 7,
+              "refused": 2,
+              "uncertain": 0,
+              "pauses": 1,
+              "resumes": 1,
+              "violations": 0
+            },
+            "steps": [
+              {
+                "sequence": 1,
+                "tool": "get_window_state",
+                "startedAt": 1792558109186,
+                "outcome": "ok",
+                "durationMs": 933
+              },
+              {
+                "sequence": 2,
+                "tool": "set_value",
+                "startedAt": 1792558115068,
+                "outcome": "ok",
+                "durationMs": 58
+              },
+              {
+                "sequence": 3,
+                "tool": "get_window_state",
+                "startedAt": 1792558122797,
+                "outcome": "ok",
+                "durationMs": 281
+              },
+              {
+                "sequence": 4,
+                "tool": "set_value",
+                "startedAt": 1792558125657,
+                "outcome": "ok",
+                "durationMs": 1197
+              },
+              {
+                "sequence": 5,
+                "tool": "get_window_state",
+                "startedAt": 1792558131357,
+                "outcome": "ok",
+                "durationMs": 145
+              },
+              {
+                "sequence": 6,
+                "tool": "click",
+                "startedAt": 1792558134458,
+                "outcome": "ok",
+                "durationMs": 1366
+              },
+              {
+                "sequence": 7,
+                "tool": "get_window_state",
+                "startedAt": 1792558138222,
+                "outcome": "ok",
+                "durationMs": 153
+              }
+            ],
+            "drained": true,
+            "agentExit": {
+              "code": null,
+              "signal": "SIGTERM"
+            },
+            "requests": 11,
+            "imageInputs": 19,
+            "observationsWithSnapshot": 4,
+            "inputTokens": 227793,
+            "outputTokens": 941,
+            "costUsd": null,
+            "modelMs": 45388,
+            "errors": []
+          },
+          {
+            "task": "F02",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "text-replace",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 5525,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "F03",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "element-choice",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 4414,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "F04",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "scroll",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 5351,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "F05",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "loading-recovery",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 4106,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "F06",
+            "iteration": 1,
+            "kind": "fixture",
+            "category": "dynamic-ui",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 4387,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Edge GUI fixture",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          },
+          {
+            "task": "N01",
+            "iteration": 1,
+            "kind": "native",
+            "category": "native-text-replace",
+            "status": "blocked",
+            "interventions": 0,
+            "durationMs": 3938,
+            "reason": "backgroundTargetInForeground",
+            "failure": "environment",
+            "oraclePassed": false,
+            "calls": [],
+            "mode": "background",
+            "modality": "hybrid",
+            "application": "Notepad",
+            "failureStage": "targetPreparation",
+            "drained": true,
+            "requests": 0,
+            "imageInputs": 0,
+            "observationsWithSnapshot": 0,
+            "inputTokens": null,
+            "outputTokens": null,
+            "costUsd": null,
+            "modelMs": 0,
+            "errors": []
+          }
+        ],
+        "agentSha256": "de006b0e7a930601cb662135c8a24201526d0a600762c85f978de6929e39cada",
+        "agentArchitecture": "arm64",
+        "helperSha256": "2d52dc0335bd07e47966943196b184058c2f0f5a003610dd3ef52cbf150d276b",
+        "summary": {
+          "planned": 7,
+          "recorded": 7,
+          "passedUnassisted": 1,
+          "passedAssisted": 0,
+          "blocked": 6,
+          "unassistedSuccessRate": 0.14285714285714285,
+          "completed": true,
+          "durationMsMean": 51723,
+          "durationMsP50": 51723,
+          "durationMsP95": 51723,
+          "toolCallsMean": 7,
+          "totalCostUsd": null,
+          "costPerSuccessfulTaskUsd": null,
+          "failures": {
+            "environment": 6
+          },
+          "refusalCodes": {}
+        }
+      }
+    }
+  ],
+  "windowsArmAgentProbe": {
+    "code": 3221225477,
+    "signal": null,
+    "out": "",
+    "err": ""
+  },
+  "deviceBoundary": {
+    "windowsExecution": "local-vm-only",
+    "colleagueDeviceEvidenceWithdrawn": true,
+    "remoteCleanup": "unconfirmed-ssh-timeout",
+    "localTestTunnel": "closed"
+  },
+  "localWindowsVmAgentVariants": {
+    "arch": "arm64",
+    "node": "v22.13.1",
+    "results": [
+      {
+        "label": "installed-x64",
+        "sha256": "944734739689b803d489f74b456dca6ad642a852004d5372b0d4a6239be2c176",
+        "code": null,
+        "signal": "SIGTERM",
+        "out": "",
+        "err": ""
+      },
+      {
+        "label": "x64-baseline",
+        "sha256": "55bac90c68ca48944523f61ba9666283c78327a3117c7219938e86f6cc84a7da",
+        "code": 0,
+        "signal": null,
+        "out": "1.17.11\n",
+        "err": ""
+      },
+      {
+        "label": "native-arm64",
+        "sha256": "de006b0e7a930601cb662135c8a24201526d0a600762c85f978de6929e39cada",
+        "code": 0,
+        "signal": null,
+        "out": "1.17.11\n",
+        "err": ""
+      }
+    ]
+  },
+  "agentReleaseArchiveDigests": {
+    "version": "1.17.11",
+    "arm64": "23fdbf443b175d19fd6fd1eb16bfaad2bc57b2c52782b4eb74b636242107e13f",
+    "x64-baseline": "2463b398b7ed2c0c631565c1fe245dc06a92231275d612f267b8b41ceb352a25"
+  }
+}

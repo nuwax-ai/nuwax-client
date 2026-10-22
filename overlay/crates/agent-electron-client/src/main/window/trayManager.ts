@@ -17,6 +17,7 @@ import {
   AutoLaunchManager,
 } from "./autoLaunchManager";
 import { t } from "../services/i18n";
+import { desktopFeatureActivities, onDesktopFeatureActivitiesChanged, type ActivityEntry } from "../features";
 import { createIMBadgePng, formatIMBadgeCount, normalizeIMUnreadCount, paintWindowsTrayBadgeBitmap } from "../services/imBadgeImage";
 
 // ==================== Types ====================
@@ -60,35 +61,18 @@ export class TrayManager {
   private baseIcon: Electron.NativeImage | null = null;
   private badgeIcon: Electron.NativeImage | null = null;
   private badgeLabel = "";
-  private computerUseStopAction: (() => void) | null = null;
-
-  setComputerUseStopAction(action: (() => void) | null): void {
-    if (this.computerUseStopAction === action) return;
-    this.computerUseStopAction = action;
-    this.updateMenu();
-  }
-
-  private recordingStopAction: (() => void) | null = null;
-  private recordingPauseAction: (() => void) | null = null;
-  private recordingPaused = false;
-
-  setRecordingPauseAction(action: (() => void) | null, paused: boolean): void {
-    if (action === this.recordingPauseAction && paused === this.recordingPaused) return;
-    this.recordingPauseAction = action;
-    this.recordingPaused = paused;
-    this.updateMenu();
-  }
-
-  setRecordingStopAction(action: (() => void) | null): void {
-    if (action === this.recordingStopAction) return;
-    this.recordingStopAction = action;
-    this.updateMenu();
-  }
+  private featureActivityEntries: ActivityEntry[] = [];
+  private offFeatureActivities: (() => void) | null = null;
 
   constructor(options: TrayManagerOptions) {
     this.options = options;
     this.platform = options.platform ?? process.platform;
     this.autoLaunchManager = createAutoLaunchManager();
+    this.featureActivityEntries = desktopFeatureActivities();
+    this.offFeatureActivities = onDesktopFeatureActivitiesChanged((entries) => {
+      this.featureActivityEntries = entries;
+      this.updateMenu();
+    });
   }
 
   /**
@@ -213,15 +197,10 @@ export class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
-      ...(this.computerUseStopAction ? [{ label: t("Claw.Cua.stop"), click: () => this.computerUseStopAction?.() }, { type: "separator" as const }] : []),
-      ...(this.recordingPauseAction ? [{
-        label: t(this.recordingPaused ? "Claw.Capture.resume" : "Claw.Capture.pause"),
-        click: () => this.recordingPauseAction?.(),
-      }] : []),
-      ...(this.recordingStopAction ? [{
-        label: t("Claw.Capture.stopRecording"),
-        click: () => this.recordingStopAction?.(),
-      }, { type: "separator" as const }] : []),
+      ...this.featureActivityEntries.flatMap(({ activity }) => [
+        ...activity.actions.map((action) => ({ label: t(action.labelKey), click: () => action.run() })),
+        { type: "separator" as const },
+      ]),
       {
         label: t("Claw.Tray.showWindow"),
         click: () => this.options.onShowWindow(),

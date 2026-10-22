@@ -1,164 +1,10 @@
-From 3502a873ba35c549adfafc165b771f81f72213fd Mon Sep 17 00:00:00 2001
-From: dongdada29 <dongdada29@gmail.com>
-Date: Thu, 17 Sep 2026 17:23:58 +0800
-Subject: [PATCH 1/3] =?UTF-8?q?feat(nuwax):=20recognize=20host=20helper=20?=
- =?UTF-8?q?bundles=20in=20stability=20whitelist=20=E2=80=94=20Nuwax/NuwaCl?=
- =?UTF-8?q?aw=20Computer=20Use.app=20+=20CUA=5FDRIVER=5FBUNDLE=5FDIR=5FNAM?=
- =?UTF-8?q?ES=20env=20extension=20(skip=20responsibility-disclaim=20re-exe?=
- =?UTF-8?q?c=20inside=20host=20bundles)?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
----
- .../rust/crates/cua-driver/src/bundle.rs      | 37 +++++++++++++++++--
- 1 file changed, 33 insertions(+), 4 deletions(-)
-
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-index 75331d1..93f6acd 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-@@ -105,13 +105,42 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
-         .ok()
-         .and_then(|path| std::fs::canonicalize(path).ok())
-         .is_some_and(|path| {
--            path.to_str().is_some_and(|path| {
--                path.contains("/CuaDriver.app/Contents/MacOS/")
--                    || path.contains("/CuaDriverLocal.app/Contents/MacOS/")
--            })
-+            path.to_str().is_some_and(|path| inside_stable_bundle_dir(path))
-         })
- }
- 
-+/// Nuwax: embedding hosts ship the driver inside their own LSUIElement helper
-+/// bundle (e.g. "Nuwax Computer Use.app"). Such a bundle carries the same
-+/// stable TCC responsibility identity as CuaDriver.app, so the
-+/// responsibility-disclaim re-exec must be skipped for it as well or actions
-+/// silently lose the host bundle's TCC grants. Additional bundle directory
-+/// names may be declared via `CUA_DRIVER_BUNDLE_DIR_NAMES` (comma separated,
-+/// e.g. "My Helper.app,Other.app").
-+#[cfg(target_os = "macos")]
-+fn inside_stable_bundle_dir(path: &str) -> bool {
-+    const MACOS_SUFFIX: &str = "/Contents/MacOS/";
-+    const KNOWN_BUNDLE_DIRS: &[&str] = &[
-+        "CuaDriver.app",
-+        "CuaDriverLocal.app",
-+        "Nuwax Computer Use.app",
-+        "NuwaClaw Computer Use.app",
-+    ];
-+    let extras = std::env::var("CUA_DRIVER_BUNDLE_DIR_NAMES")
-+        .map(|value| {
-+            value
-+                .split(',')
-+                .map(|name| name.trim().to_string())
-+                .filter(|name| !name.is_empty())
-+                .collect::<Vec<_>>()
-+        })
-+        .unwrap_or_default();
-+    KNOWN_BUNDLE_DIRS
-+        .iter()
-+        .copied()
-+        .chain(extras.iter().map(|name| name.as_str()))
-+        .any(|dir| path.contains(&format!("/{dir}{MACOS_SUFFIX}")))
-+}
-+
- /// Returns `true` when the env var is one of `1|true|yes|on`
- /// (case-insensitive). Anything else, including unset, is falsy.
- #[cfg(target_os = "windows")]
--- 
-2.50.1 (Apple Git-155)
-
-
-From 3e739d6dfa7493287bc536a91d1c54150d42dece Mon Sep 17 00:00:00 2001
-From: dongdada29 <dongdada29@gmail.com>
-Date: Thu, 17 Sep 2026 17:38:59 +0800
-Subject: [PATCH 2/3] =?UTF-8?q?feat(nuwax):=20resolve=20app=5Fbundle=5Fpat?=
- =?UTF-8?q?h=20from=20the=20running=20helper=20bundle=20=E2=80=94=20permis?=
- =?UTF-8?q?sion-host/relaunch=20flows=20must=20target=20the=20host=20bundl?=
- =?UTF-8?q?e's=20TCC=20identity=20instead=20of=20hardcoded=20/Applications?=
- =?UTF-8?q?/CuaDriver.app?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
----
- .../rust/crates/cua-driver/src/bundle.rs      | 22 +++++++++++++++++++
- 1 file changed, 22 insertions(+)
-
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-index 93f6acd..36a6f99 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-@@ -86,9 +86,31 @@ pub fn app_name() -> &'static str {
- }
- 
- pub fn app_bundle_path() -> String {
-+    if let Some(path) = current_running_bundle_path() {
-+        return path;
-+    }
-     format!("/Applications/{}.app", app_name())
- }
- 
-+/// Nuwax: when the driver runs inside a host helper bundle, relaunch and
-+/// permission-host flows must target that bundle (its TCC identity), not the
-+/// upstream CuaDriver.app in /Applications.
-+#[cfg(target_os = "macos")]
-+fn current_running_bundle_path() -> Option<String> {
-+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
-+    let path = exe.to_str()?;
-+    if !inside_stable_bundle_dir(path) {
-+        return None;
-+    }
-+    let idx = path.find("/Contents/MacOS/")?;
-+    Some(path[..idx].to_string())
-+}
-+
-+#[cfg(not(target_os = "macos"))]
-+fn current_running_bundle_path() -> Option<String> {
-+    None
-+}
-+
- pub fn bundle_id() -> &'static str {
-     if is_local_installation() {
-         LOCAL_BUNDLE_ID
--- 
-2.50.1 (Apple Git-155)
-
-
-From 50b48814a6c2a6567c4d43d99bc29372eb0fa1ab Mon Sep 17 00:00:00 2001
-From: dongdada29 <dongdada29@gmail.com>
-Date: Sat, 19 Sep 2026 15:16:33 +0800
-Subject: [PATCH 3/3] =?UTF-8?q?feat(nuwax):=20CUA=5FDRIVER=5FDATA=5FHOME?=
- =?UTF-8?q?=20=E7=BB=9F=E4=B8=80=E6=95=B0=E6=8D=AE=E7=9B=AE=E5=BD=95?=
- =?UTF-8?q?=E8=A6=86=E7=9B=96=E2=80=94=E2=80=94=E9=A9=B1=E5=8A=A8=E5=85=A8?=
- =?UTF-8?q?=E9=83=A8=E8=87=AA=E6=9C=89=E8=90=BD=E7=9B=98=E5=86=85=E8=81=9A?=
- =?UTF-8?q?=E8=BF=9B=E5=AE=BF=E4=B8=BB=E7=9B=AE=E5=BD=95?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-user_home_subdirectory() 改返回 String 并支持绝对路径覆盖（调用方 home.join() 按
-Path 语义替换前缀，一处改动收编 telemetry/install 标记/version_check/release_channel
-等全部调用点）；同开关接入 serve pid 文件、platform-linux libei restore token、
-browser profile 根、history 根；telemetry 既有 ENV_TELEMETRY_HOME 与 browser 既有
-CUA_DRIVER_BROWSER_PROFILE_ROOT 保持次级优先。未设 env 时行为不变（上游兼容）。
----
- .../cua-driver-core/src/browser/prepare.rs    |  4 ++++
- .../rust/crates/cua-driver/src/bundle.rs      | 16 ++++++++++++---
- .../rust/crates/cua-driver/src/cli.rs         | 20 +++++++++++--------
- .../crates/cua-driver/src/history_runtime.rs  |  4 ++++
- .../rust/crates/cua-driver/src/serve.rs       |  5 +++++
- .../rust/crates/cua-driver/src/telemetry.rs   |  4 ++++
- .../platform-linux/src/wayland/libei.rs       |  4 ++++
- 7 files changed, 46 insertions(+), 11 deletions(-)
-
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
 index 1d10b31..3adf83e 100644
 --- a/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/browser/prepare.rs
 @@ -271,6 +271,10 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
  }
- 
+
  fn profile_root() -> Result<PathBuf, BrowserRefusal> {
 +    // Nuwax: 宿主统一数据目录优先——浏览器 profile 内聚进宿主目录的 browser-profiles/
 +    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
@@ -167,150 +13,6 @@ index 1d10b31..3adf83e 100644
      if let Some(root) = std::env::var_os("CUA_DRIVER_BROWSER_PROFILE_ROOT") {
          return Ok(PathBuf::from(root));
      }
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-index 36a6f99..3af0df0 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
-@@ -51,11 +51,21 @@ pub fn state_namespace() -> &'static str {
-     }
- }
- 
--pub fn user_home_subdirectory() -> &'static str {
-+/// Nuwax 宿主数据目录覆盖：设置时驱动全部自有落盘（安装/遥测标记、版本检查缓存等）
-+/// 内聚进宿主目录（如 ~/.nuwax/computer-use）。返回绝对路径时，调用方的
-+/// `home.join(...)` 会按 Path 语义直接替换前缀，一处改动收编全部调用点。
-+pub fn data_home_override() -> Option<std::path::PathBuf> {
-+    std::env::var_os("CUA_DRIVER_DATA_HOME").map(std::path::PathBuf::from)
-+}
-+
-+pub fn user_home_subdirectory() -> String {
-+    if let Some(dir) = data_home_override() {
-+        return dir.to_string_lossy().into_owned();
-+    }
-     if is_local_installation() {
--        ".cua-driver-local"
-+        ".cua-driver-local".to_owned()
-     } else {
--        ".cua-driver"
-+        ".cua-driver".to_owned()
-     }
- }
- 
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-index 46584ae..14388b9 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-@@ -4448,21 +4448,25 @@ fn diagnose_tcc_db_section() -> String {
- 
- fn diagnose_config_paths_section() -> String {
-     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-+    // user_home_subdirectory 已可为绝对路径（Nuwax CUA_DRIVER_DATA_HOME 覆盖），
-+    // 字符串拼接会叠出双路径——按绝对与否分别显示
-+    let user_data_dir = {
-+        let sub = crate::bundle::user_home_subdirectory();
-+        if std::path::Path::new(&sub).is_absolute() {
-+            sub
-+        } else {
-+            format!("{home}/{sub}")
-+        }
-+    };
-     let paths: &[(&str, String)] = &[
--        (
--            "user data dir",
--            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
--        ),
-+        ("user data dir", user_data_dir.clone()),
-         (
-             "config cache",
-             format!("{home}/Library/Caches/{}", crate::bundle::state_namespace()),
-         ),
-         (
-             "telemetry id",
--            format!(
--                "{home}/{}/.telemetry_id",
--                crate::bundle::user_home_subdirectory()
--            ),
-+            format!("{user_data_dir}/.telemetry_id"),
-         ),
-         (
-             "updater plist",
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
-index 0d72ffc..73fc03e 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
-@@ -422,6 +422,10 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
- }
- 
- pub fn history_root() -> PathBuf {
-+    // Nuwax: 宿主统一数据目录优先——history 不再落 Application Support/<namespace> 等外部目录
-+    if let Some(dir) = crate::bundle::data_home_override() {
-+        return dir.join("computer-history");
-+    }
-     #[cfg(target_os = "macos")]
-     {
-         let home = std::env::var_os("HOME")
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-index 67e123b..0ec9bb4 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-@@ -383,6 +383,11 @@ pub fn default_uia_pipe_path() -> String {
- 
- /// Returns the platform default PID file path.
- pub fn default_pid_file_path() -> String {
-+    // Nuwax: 宿主数据目录覆盖（与 user_home_subdirectory 同一开关）——
-+    // pid 文件不再落 ~/Library/Caches/cua-driver 等外部目录
-+    if let Some(dir) = crate::bundle::data_home_override() {
-+        return dir.join("cua-daemon.pid").to_string_lossy().into_owned();
-+    }
-     let namespace = crate::bundle::state_namespace();
-     #[cfg(target_os = "macos")]
-     {
-diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
-index 2453fec..c02b839 100644
---- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
-+++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
-@@ -2194,6 +2194,10 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
- }
- 
- fn telemetry_home_dir() -> Option<PathBuf> {
-+    // Nuwax: 宿主统一数据目录优先（与 user_home_subdirectory 同一开关）
-+    if let Some(dir) = crate::bundle::data_home_override() {
-+        return Some(dir);
-+    }
-     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
-         return Some(PathBuf::from(path));
-     }
-diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
-index a2691a0..4511c09 100644
---- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
-+++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
-@@ -164,6 +164,10 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
- }
- 
- fn restore_token_path() -> Option<PathBuf> {
-+    // Nuwax: 宿主数据目录覆盖——restore token 内聚进宿主目录（如 ~/.nuwax/computer-use）
-+    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
-+        return Some(PathBuf::from(dir).join("libei-persistent.token"));
-+    }
-     let base = dirs::config_dir()?;
-     Some(base.join("cua-driver").join("libei-persistent.token"))
- }
--- 
-2.50.1 (Apple Git-155)
-
-From f4ca0d6deccfb054cd99f1b816580e18a22ef791 Mon Sep 17 00:00:00 2001
-From: Nuwax CUA Patch <nuwax-cua@localhost>
-Date: Thu, 24 Sep 2026 00:41:33 +0800
-Subject: [PATCH 4/4] Secure Nuwax helper identity and endpoint
-
----
- .../rust/crates/cua-driver-core/src/daemon.rs | 121 +++++++++++++++-
- .../crates/cua-driver/src/mcp_envelope.rs     |   6 +-
- .../rust/crates/cua-driver/src/proxy.rs       |   6 +-
- .../rust/crates/cua-driver/src/serve.rs       | 134 ++++++++++++++++--
- .../src/tools/check_permissions.rs            |  38 ++++-
- 5 files changed, 284 insertions(+), 21 deletions(-)
-
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
 index 004ece3..c8988e3 100644
 --- a/libs/cua-driver/rust/crates/cua-driver-core/src/daemon.rs
@@ -471,6 +173,201 @@ index 004ece3..c8988e3 100644
      #[test]
      fn socket_path_keeps_the_selected_namespace() {
          let path = socket_path_for_namespace("cua-driver-test");
+diff --git a/libs/cua-driver/rust/crates/cua-driver/Cargo.toml b/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
+index 8e114a2..238ef59 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
++++ b/libs/cua-driver/rust/crates/cua-driver/Cargo.toml
+@@ -23,6 +23,7 @@ pip-preview = { path = "../pip-preview" }
+ async-trait = "0.1"
+ httparse = "1.10.1"
+ base64 = { workspace = true }
++image = { workspace = true }
+ uuid = { workspace = true }
+ zeroize = { workspace = true }
+ # Telemetry HTTP client. `ureq` over `reqwest` for the small dep footprint:
+@@ -57,6 +58,7 @@ windows = { version = "0.61", features = [
+     "Win32_Foundation",
+     "Win32_Security",
+     "Win32_System_Threading",
++    "Win32_UI_WindowsAndMessaging",
+ ] }
+
+ [target.'cfg(target_os = "linux")'.dependencies]
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+index 75331d1..e591678 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/bundle.rs
+@@ -51,11 +51,21 @@ pub fn state_namespace() -> &'static str {
+     }
+ }
+
+-pub fn user_home_subdirectory() -> &'static str {
++/// Nuwax 宿主数据目录覆盖：设置时驱动全部自有落盘（安装/遥测标记、版本检查缓存等）
++/// 内聚进宿主目录（如 ~/.nuwax/computer-use）。返回绝对路径时，调用方的
++/// `home.join(...)` 会按 Path 语义直接替换前缀，一处改动收编全部调用点。
++pub fn data_home_override() -> Option<std::path::PathBuf> {
++    std::env::var_os("CUA_DRIVER_DATA_HOME").map(std::path::PathBuf::from)
++}
++
++pub fn user_home_subdirectory() -> String {
++    if let Some(dir) = data_home_override() {
++        return dir.to_string_lossy().into_owned();
++    }
+     if is_local_installation() {
+-        ".cua-driver-local"
++        ".cua-driver-local".to_owned()
+     } else {
+-        ".cua-driver"
++        ".cua-driver".to_owned()
+     }
+ }
+
+@@ -86,9 +96,31 @@ pub fn app_name() -> &'static str {
+ }
+
+ pub fn app_bundle_path() -> String {
++    if let Some(path) = current_running_bundle_path() {
++        return path;
++    }
+     format!("/Applications/{}.app", app_name())
+ }
+
++/// Nuwax: when the driver runs inside a host helper bundle, relaunch and
++/// permission-host flows must target that bundle (its TCC identity), not the
++/// upstream CuaDriver.app in /Applications.
++#[cfg(target_os = "macos")]
++fn current_running_bundle_path() -> Option<String> {
++    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
++    let path = exe.to_str()?;
++    if !inside_stable_bundle_dir(path) {
++        return None;
++    }
++    let idx = path.find("/Contents/MacOS/")?;
++    Some(path[..idx].to_string())
++}
++
++#[cfg(not(target_os = "macos"))]
++fn current_running_bundle_path() -> Option<String> {
++    None
++}
++
+ pub fn bundle_id() -> &'static str {
+     if is_local_installation() {
+         LOCAL_BUNDLE_ID
+@@ -105,13 +137,43 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
+         .ok()
+         .and_then(|path| std::fs::canonicalize(path).ok())
+         .is_some_and(|path| {
+-            path.to_str().is_some_and(|path| {
+-                path.contains("/CuaDriver.app/Contents/MacOS/")
+-                    || path.contains("/CuaDriverLocal.app/Contents/MacOS/")
+-            })
++            path.to_str()
++                .is_some_and(|path| inside_stable_bundle_dir(path))
+         })
+ }
+
++/// Nuwax: embedding hosts ship the driver inside their own LSUIElement helper
++/// bundle (e.g. "Nuwax Computer Use.app"). Such a bundle carries the same
++/// stable TCC responsibility identity as CuaDriver.app, so the
++/// responsibility-disclaim re-exec must be skipped for it as well or actions
++/// silently lose the host bundle's TCC grants. Additional bundle directory
++/// names may be declared via `CUA_DRIVER_BUNDLE_DIR_NAMES` (comma separated,
++/// e.g. "My Helper.app,Other.app").
++#[cfg(target_os = "macos")]
++fn inside_stable_bundle_dir(path: &str) -> bool {
++    const MACOS_SUFFIX: &str = "/Contents/MacOS/";
++    const KNOWN_BUNDLE_DIRS: &[&str] = &[
++        "CuaDriver.app",
++        "CuaDriverLocal.app",
++        "Nuwax Computer Use.app",
++        "NuwaClaw Computer Use.app",
++    ];
++    let extras = std::env::var("CUA_DRIVER_BUNDLE_DIR_NAMES")
++        .map(|value| {
++            value
++                .split(',')
++                .map(|name| name.trim().to_string())
++                .filter(|name| !name.is_empty())
++                .collect::<Vec<_>>()
++        })
++        .unwrap_or_default();
++    KNOWN_BUNDLE_DIRS
++        .iter()
++        .copied()
++        .chain(extras.iter().map(|name| name.as_str()))
++        .any(|dir| path.contains(&format!("/{dir}{MACOS_SUFFIX}")))
++}
++
+ /// Returns `true` when the env var is one of `1|true|yes|on`
+ /// (case-insensitive). Anything else, including unset, is falsy.
+ #[cfg(target_os = "windows")]
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+index 46584ae..d91852b 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+@@ -4448,22 +4448,23 @@ fn diagnose_tcc_db_section() -> String {
+
+ fn diagnose_config_paths_section() -> String {
+     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
++    // user_home_subdirectory 已可为绝对路径（Nuwax CUA_DRIVER_DATA_HOME 覆盖），
++    // 字符串拼接会叠出双路径——按绝对与否分别显示
++    let user_data_dir = {
++        let sub = crate::bundle::user_home_subdirectory();
++        if std::path::Path::new(&sub).is_absolute() {
++            sub
++        } else {
++            format!("{home}/{sub}")
++        }
++    };
+     let paths: &[(&str, String)] = &[
+-        (
+-            "user data dir",
+-            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+-        ),
++        ("user data dir", user_data_dir.clone()),
+         (
+             "config cache",
+             format!("{home}/Library/Caches/{}", crate::bundle::state_namespace()),
+         ),
+-        (
+-            "telemetry id",
+-            format!(
+-                "{home}/{}/.telemetry_id",
+-                crate::bundle::user_home_subdirectory()
+-            ),
+-        ),
++        ("telemetry id", format!("{user_data_dir}/.telemetry_id")),
+         (
+             "updater plist",
+             format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"),
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
+index 0d72ffc..73fc03e 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs
+@@ -422,6 +422,10 @@ pub fn register_host_tools(registry: &mut ToolRegistry) {
+ }
+
+ pub fn history_root() -> PathBuf {
++    // Nuwax: 宿主统一数据目录优先——history 不再落 Application Support/<namespace> 等外部目录
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return dir.join("computer-history");
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var_os("HOME")
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index 5d6ac1f..74cf0f1 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -26,6 +26,7 @@ mod driver_service_http;
+ mod history_runtime;
+ mod mcp_envelope;
+ mod mcp_http;
++mod nuwax_tasks;
+ mod private_worker;
+ mod proxy;
+ mod release_channel;
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs b/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
 index fb9d11b..6530408 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs
@@ -489,8 +386,900 @@ index fb9d11b..6530408 100644
          .await?;
      writer.flush().await?;
      let mut ack = Vec::new();
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs b/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs
+new file mode 100644
+index 0000000..2bdc3dc
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver/src/nuwax_tasks.rs
+@@ -0,0 +1,886 @@
++//! Nuwax's authenticated window-task boundary. Input permits never come from model arguments.
++use cua_driver_core::daemon::{DaemonRequest, DaemonResponse};
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::collections::HashMap;
++use std::sync::{Arc, Mutex, OnceLock};
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++pub(crate) struct Context {
++    task_id: String,
++    epoch: u64,
++    binding_id: String,
++    pid: i32,
++    #[serde(default)]
++    host_pid: i32,
++    window_id: u64,
++    mode: String,
++}
++#[derive(Clone, Debug, Serialize)]
++struct Window {
++    valid: bool,
++    foreground: bool,
++    visible: bool,
++    stamp: String,
++    bounds: Value,
++}
++struct Task {
++    context: Context,
++    stamp: String,
++    revoked: bool,
++    in_flight: usize,
++    cursor_id: Option<String>,
++}
++#[derive(Default)]
++struct Registry {
++    tasks: HashMap<String, Task>,
++}
++fn registry() -> &'static Mutex<Registry> {
++    static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
++    REGISTRY.get_or_init(|| Mutex::new(Registry::default()))
++}
++fn process_locks() -> &'static Mutex<HashMap<i32, Arc<tokio::sync::Mutex<()>>>> {
++    static LOCKS: OnceLock<Mutex<HashMap<i32, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
++    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
++}
++pub(crate) fn enabled() -> bool {
++    cfg!(any(target_os = "macos", target_os = "windows"))
++        && std::env::var("CUA_DRIVER_NUWAX_WINDOW_TASKS").as_deref() == Ok("1")
++}
++fn context(value: Value) -> Result<Context, &'static str> {
++    let c: Context = serde_json::from_value(value).map_err(|_| "task_context_required")?;
++    if c.task_id.len() != 36
++        || c.binding_id.len() != 36
++        || c.epoch == 0
++        || c.pid <= 0
++        || c.window_id == 0
++        || !matches!(c.mode.as_str(), "background" | "foreground")
++    {
++        return Err("invalid_task_context");
++    }
++    Ok(c)
++}
++fn unavailable() -> Window {
++    Window {
++        valid: false,
++        foreground: false,
++        visible: false,
++        stamp: String::new(),
++        bounds: Value::Null,
++    }
++}
++fn status(task: &Task) -> Value {
++    json!({ "task_id": task.context.task_id, "epoch": task.context.epoch,
++        "drained": task.in_flight == 0, "revoked": task.revoked })
++}
++impl Registry {
++    fn bind(&mut self, c: Context, w: &Window) -> Result<Value, &'static str> {
++        if !w.valid {
++            return Err("target_closed");
++        }
++        if let Some(old) = self.tasks.get(&c.task_id) {
++            if c.epoch < old.context.epoch || (c.epoch == old.context.epoch && old.revoked) {
++                return Err("stale_task_epoch");
++            }
++            if c.binding_id == old.context.binding_id
++                && (old.stamp != w.stamp
++                    || c.pid != old.context.pid
++                    || c.window_id != old.context.window_id)
++            {
++                return Err("target_identity_changed");
++            }
++            if c != old.context && old.in_flight != 0 {
++                return Err("handoff_pending");
++            }
++            if c == old.context {
++                return Ok(status(old));
++            }
++        }
++        if self.tasks.values().any(|old| {
++            old.context.task_id != c.task_id
++                && old.context.pid == c.pid
++                && old.context.window_id == c.window_id
++                && (!old.revoked || old.in_flight != 0)
++        }) {
++            return Err("window_busy");
++        }
++        if self.tasks.values().any(|old| {
++            old.context.task_id != c.task_id
++                && (!old.revoked || old.in_flight != 0)
++                && (c.mode == "foreground" || old.context.mode == "foreground")
++        }) {
++            return Err("desktop_busy");
++        }
++        if self.tasks.len() >= 256 && !self.tasks.contains_key(&c.task_id) {
++            return Err("task_capacity");
++        }
++        let task = Task {
++            context: c.clone(),
++            stamp: w.stamp.clone(),
++            revoked: false,
++            in_flight: 0,
++            cursor_id: None,
++        };
++        let result = status(&task);
++        self.tasks.insert(c.task_id, task);
++        Ok(result)
++    }
++    fn revoke(&mut self, c: &Context) -> Result<Value, &'static str> {
++        let Some(task) = self.tasks.get_mut(&c.task_id) else {
++            return Ok(json!({ "task_id": c.task_id, "drained": true, "revoked": true }));
++        };
++        if c.epoch < task.context.epoch {
++            return Err("stale_task_epoch");
++        }
++        task.context.epoch = c.epoch;
++        task.revoked = true;
++        Ok(status(task))
++    }
++    fn admit(&mut self, c: &Context, w: &Window) -> Result<(), &'static str> {
++        let task = self.tasks.get_mut(&c.task_id).ok_or("task_not_bound")?;
++        if task.revoked || task.context != *c {
++            return Err("stale_task_epoch");
++        }
++        if !w.valid || task.stamp != w.stamp {
++            task.revoked = true;
++            return Err("target_identity_changed");
++        }
++        if c.mode == "background" && w.foreground {
++            task.revoked = true;
++            return Err("user_in_control");
++        }
++        task.in_flight += 1;
++        Ok(())
++    }
++}
++pub(crate) fn control(req: &DaemonRequest) -> DaemonResponse {
++    if !enabled() {
++        return DaemonResponse::err("window_tasks_unavailable", 77);
++    }
++    let name = req.name.as_deref().unwrap_or("");
++    if name == "states" {
++        let contexts: Vec<Context> = registry()
++            .lock()
++            .unwrap()
++            .tasks
++            .values()
++            .map(|t| t.context.clone())
++            .collect();
++        let states: Vec<Value> = contexts.iter().map(|c| {
++            let mut w = probe(c.pid, c.window_id, c.host_pid);
++            let (stamp, color) = {
++                let r = registry().lock().unwrap();
++                let task = r.tasks.get(&c.task_id);
++                (task.map(|t| t.stamp.clone()), task.and_then(|t| t.cursor_id.as_deref()).map(cursor_overlay::session_fill_hex))
++            };
++            if stamp.as_deref() != Some(w.stamp.as_str()) { w.valid = false; }
++            json!({ "task_id": c.task_id, "binding_id": c.binding_id, "epoch": c.epoch, "window": w, "color": color })
++        }).collect();
++        return DaemonResponse::ok(json!({ "tasks": states }));
++    }
++    let c = match context(req.args.clone().unwrap_or(Value::Null)) {
++        Ok(c) => c,
++        Err(error) => return DaemonResponse::err(error, 64),
++    };
++    let mut result = match name {
++        "bind" => {
++            let w = probe(c.pid, c.window_id, c.host_pid);
++            registry().lock().unwrap().bind(c.clone(), &w)
++        }
++        "revoke" => registry().lock().unwrap().revoke(&c),
++        "window" => {
++            let mut w = probe(c.pid, c.window_id, c.host_pid);
++            if registry()
++                .lock()
++                .unwrap()
++                .tasks
++                .get(&c.task_id)
++                .is_some_and(|t| t.context.binding_id == c.binding_id && t.stamp != w.stamp)
++            {
++                w.valid = false;
++            }
++            Ok(serde_json::to_value(w).unwrap())
++        }
++        "status" => {
++            let r = registry().lock().unwrap();
++            Ok(r.tasks
++                .get(&c.task_id)
++                .map(status)
++                .unwrap_or(json!({ "drained": true, "revoked": true })))
++        }
++        "forget" => {
++            let mut r = registry().lock().unwrap();
++            if r.tasks
++                .get(&c.task_id)
++                .is_some_and(|t| t.context.epoch != c.epoch || t.context.binding_id != c.binding_id)
++            {
++                Err("stale_task_epoch")
++            } else if r
++                .tasks
++                .get(&c.task_id)
++                .is_some_and(|t| !t.revoked || t.in_flight != 0)
++            {
++                Err("handoff_pending")
++            } else {
++                r.tasks.remove(&c.task_id);
++                Ok(json!({ "drained": true }))
++            }
++        }
++        _ => Err("unknown_task_control"),
++    };
++    if matches!(name, "revoke" | "status") {
++        if let Ok(value) = &mut result {
++            let cursor = {
++                let r = registry().lock().unwrap();
++                r.tasks
++                    .get(&c.task_id)
++                    .filter(|t| t.revoked && t.in_flight == 0)
++                    .and_then(|t| t.cursor_id.clone())
++            };
++            if let Some(cursor) = cursor {
++                cua_driver_core::session::end_session(&cursor);
++                value["drained"] =
++                    json!(cua_driver_core::session::retry_session_cleanup(&cursor).complete);
++            }
++        }
++    }
++    match result {
++        Ok(value) => DaemonResponse::ok(value),
++        Err(error) => DaemonResponse::err(error, 77),
++    }
++}
++pub(crate) fn observe_after(permit: &Option<Permit>, result: &mut Value) {
++    let Some(permit) = permit else {
++        return;
++    };
++    let c = registry()
++        .lock()
++        .unwrap()
++        .tasks
++        .get(&permit.id)
++        .map(|t| t.context.clone());
++    if let Some(c) = c {
++        if c.mode == "background" && probe(c.pid, c.window_id, c.host_pid).foreground {
++            if let Some(task) = registry().lock().unwrap().tasks.get_mut(&permit.id) {
++                task.revoked = true;
++            }
++            if !result["structuredContent"].is_object() {
++                result["structuredContent"] = json!({});
++            }
++            result["structuredContent"]["code"] = json!("user_in_control");
++        }
++    }
++}
++pub(crate) fn note_session(permit: &Option<Permit>, session: Option<&str>) {
++    if let Some(permit) = permit {
++        if let Some(task) = registry().lock().unwrap().tasks.get_mut(&permit.id) {
++            task.cursor_id = session.map(str::to_owned);
++        }
++    }
++}
++pub(crate) struct Permit {
++    id: String,
++    _lease: tokio::sync::OwnedMutexGuard<()>,
++}
++impl Drop for Permit {
++    fn drop(&mut self) {
++        if let Some(task) = registry().lock().unwrap().tasks.get_mut(&self.id) {
++            task.in_flight = task.in_flight.saturating_sub(1);
++        }
++    }
++}
++fn refusal(code: &str) -> DaemonResponse {
++    DaemonResponse::ok(
++        json!({ "isError": true, "content": [{ "type": "text", "text": code }],
++        "structuredContent": { "code": code, "effect": "refused", "retryable": false } }),
++    )
++}
++fn policy(c: &Context, tool: &str, args: &Value) -> Result<(), &'static str> {
++    const COMMON: &[&str] = &["check_permissions", "health_report", "get_config"];
++    if COMMON.contains(&tool) {
++        return Ok(());
++    }
++    const READS: &[&str] = &["get_window_state", "verify_state", "zoom"];
++    const WRITES: &[&str] = &[
++        "click",
++        "double_click",
++        "right_click",
++        "set_value",
++        "scroll",
++        "type_text",
++        "press_key",
++        "hotkey",
++        "drag",
++    ];
++    if !READS.contains(&tool) && !WRITES.contains(&tool) {
++        return Err("scope_violation");
++    }
++    if args["pid"].as_i64() != Some(i64::from(c.pid))
++        || args["window_id"].as_u64() != Some(c.window_id)
++        || !args["target"].is_null()
++        || args["scope"] == "desktop"
++        || !args["screenshot_out_file"].is_null()
++        || !args["debug_image_out"].is_null()
++    {
++        return Err("scope_violation");
++    }
++    if c.mode == "background" && WRITES.contains(&tool) {
++        if args["delivery_mode"] == "foreground"
++            || !args["x"].is_null()
++            || !args["y"].is_null()
++            || args
++                .get("modifier")
++                .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()))
++            || args
++                .get("button")
++                .is_some_and(|v| v.as_str().is_some_and(|s| s != "left"))
++        {
++            return Err("foreground_required");
++        }
++        // First supported background tier is exact-element semantics. Generic keyboard,
++        // pointer and drag routes cannot establish a no-global-input guarantee for every app.
++        if WRITES.contains(&tool)
++            && (!["click", "set_value", "scroll"].contains(&tool)
++                || (args["element_index"].as_u64().is_none()
++                    && args["element_token"].as_str().is_none()))
++        {
++            return Err("background_unavailable");
++        }
++    }
++    Ok(())
++}
++/// Check again after the process lease: a revoked queued call must never enter an actuator.
++pub(crate) async fn admit(tool: &str, args: &mut Value) -> Result<Option<Permit>, DaemonResponse> {
++    let raw = args.as_object_mut().and_then(|a| a.remove("_nuwax_task"));
++    if !enabled() {
++        return if raw.is_some() {
++            Err(refusal("window_tasks_unavailable"))
++        } else {
++            Ok(None)
++        };
++    }
++    let Some(raw) = raw else {
++        if ["check_permissions", "health_report", "list_windows"].contains(&tool) {
++            return Ok(None);
++        }
++        return Err(refusal("task_context_required"));
++    };
++    let c = context(raw).map_err(refusal)?;
++    policy(&c, tool, args).map_err(refusal)?;
++    let mutex = {
++        let mut locks = process_locks().lock().unwrap();
++        locks.retain(|_, lock| Arc::strong_count(lock) > 1);
++        locks
++            .entry(c.pid)
++            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
++            .clone()
++    };
++    let lease = mutex.lock_owned().await;
++    let w = probe(c.pid, c.window_id, c.host_pid);
++    registry().lock().unwrap().admit(&c, &w).map_err(refusal)?;
++    Ok(Some(Permit {
++        id: c.task_id,
++        _lease: lease,
++    }))
++}
++
++#[cfg(target_os = "macos")]
++fn mac_window_identity(pid: i32, wid: u32) -> Option<String> {
++    use platform_macos::ax::bindings::{
++        ax_get_window_id, copy_ax_windows, AXUIElementCreateApplication,
++    };
++    use std::ffi::c_void;
++    #[link(name = "CoreFoundation", kind = "framework")]
++    extern "C" {
++        fn CFRelease(value: *const c_void);
++        fn CFEqual(a: *const c_void, b: *const c_void) -> u8;
++    }
++    // Retain the AX identity, not a title or geometry: both may change during a task.
++    // usize stores an opaque retained CF reference; it is only used under this mutex.
++    struct Identity {
++        element: usize,
++        stamp: String,
++    }
++    impl Drop for Identity {
++        fn drop(&mut self) {
++            unsafe {
++                CFRelease(self.element as *const c_void);
++            }
++        }
++    }
++    static IDENTITIES: OnceLock<Mutex<HashMap<(i32, u32), Identity>>> = OnceLock::new();
++    unsafe {
++        let app = AXUIElementCreateApplication(pid);
++        if app.is_null() {
++            return None;
++        }
++        let windows = copy_ax_windows(app);
++        CFRelease(app.cast());
++        let mut selected = None;
++        for element in windows {
++            if selected.is_none() && ax_get_window_id(element) == Some(wid) {
++                selected = Some(element);
++            } else {
++                CFRelease(element.cast());
++            }
++        }
++        let element = selected?;
++        let mut identities = IDENTITIES
++            .get_or_init(|| Mutex::new(HashMap::new()))
++            .lock()
++            .unwrap();
++        let key = (pid, wid);
++        if let Some(old) = identities.get(&key) {
++            if CFEqual(old.element as *const c_void, element.cast()) != 0 {
++                CFRelease(element.cast());
++                return Some(old.stamp.clone());
++            }
++        } else if identities.len() >= 512 {
++            CFRelease(element.cast());
++            return None;
++        }
++        let stamp = uuid::Uuid::new_v4().to_string();
++        identities.insert(
++            key,
++            Identity {
++                element: element as usize,
++                stamp: stamp.clone(),
++            },
++        );
++        Some(stamp)
++    }
++}
++#[cfg(target_os = "macos")]
++fn probe(pid: i32, wid: u64, host_pid: i32) -> Window {
++    let Ok(wid) = u32::try_from(wid) else {
++        return unavailable();
++    };
++    let Some(w) = platform_macos::windows::window_info_by_id(wid).filter(|w| w.pid == pid) else {
++        return unavailable();
++    };
++    let Some(identity) = mac_window_identity(pid, wid) else {
++        return unavailable();
++    };
++    let stamp = unsafe {
++        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
++        let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
++        if libc::proc_pidinfo(
++            pid,
++            libc::PROC_PIDTBSDINFO,
++            0,
++            &mut info as *mut _ as *mut libc::c_void,
++            size,
++        ) != size
++        {
++            return unavailable();
++        }
++        format!(
++            "{}:{}:{}",
++            info.pbi_start_tvsec, info.pbi_start_tvusec, identity
++        )
++    };
++    let foreground = platform_macos::apps::frontmost_pid() == Some(pid)
++        && platform_macos::ax::bindings::focused_window_id_of_pid(pid).map_or(true, |id| id == wid);
++    let top = platform_macos::windows::nuwax_visible_windows_any_layer()
++        .into_iter()
++        .find(|other| {
++            other.pid != std::process::id() as i32
++                && !(other.pid == host_pid && other.title == "Nuwax Computer Use Badge")
++                && other.bounds.x < w.bounds.x + w.bounds.width
++                && other.bounds.x + other.bounds.width > w.bounds.x
++                && other.bounds.y < w.bounds.y + w.bounds.height
++                && other.bounds.y + other.bounds.height > w.bounds.y
++        });
++    Window {
++        valid: true,
++        foreground,
++        visible: w.is_on_screen && top.is_some_and(|top| top.window_id == wid),
++        stamp,
++        bounds: json!({ "x": w.bounds.x, "y": w.bounds.y, "width": w.bounds.width, "height": w.bounds.height }),
++    }
++}
++#[cfg(target_os = "windows")]
++fn probe(pid: i32, wid: u64, host_pid: i32) -> Window {
++    use windows::core::w;
++    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, RECT};
++    use windows::Win32::System::Threading::{
++        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
++    };
++    use windows::Win32::UI::WindowsAndMessaging::{
++        GetForegroundWindow, GetPropW, GetTopWindow, GetWindow, GetWindowRect, GetWindowTextW,
++        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetPropW, GW_HWNDNEXT,
++    };
++    let hwnd = HWND(wid as usize as *mut _);
++    unsafe {
++        if !IsWindow(Some(hwnd)).as_bool() {
++            return unavailable();
++        }
++        let mut owner = 0;
++        GetWindowThreadProcessId(hwnd, Some(&mut owner));
++        if owner != pid as u32 {
++            return unavailable();
++        }
++        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, owner) else {
++            return unavailable();
++        };
++        let (mut created, mut exited, mut kernel, mut user) = (
++            FILETIME::default(),
++            FILETIME::default(),
++            FILETIME::default(),
++            FILETIME::default(),
++        );
++        let result = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user);
++        let _ = CloseHandle(handle);
++        if result.is_err() {
++            return unavailable();
++        }
++        // Window properties are destroyed with the HWND; reuse in the same process cannot inherit this identity.
++        let key = w!("NuwaxComputerUse.WindowIdentity.v1");
++        let mut identity = GetPropW(hwnd, key);
++        if identity.is_invalid() {
++            let bytes = *uuid::Uuid::new_v4().as_bytes();
++            let value = ((u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize
++                & isize::MAX as usize)
++                | 1) as *mut _;
++            if SetPropW(hwnd, key, Some(HANDLE(value))).is_err() {
++                return unavailable();
++            }
++            identity = GetPropW(hwnd, key);
++        }
++        let mut rect = RECT::default();
++        if GetWindowRect(hwnd, &mut rect).is_err() {
++            return unavailable();
++        }
++        let mut top = HWND::default();
++        let mut candidate = GetTopWindow(None).unwrap_or_default();
++        for _ in 0..512 {
++            if candidate.is_invalid() {
++                break;
++            }
++            let mut candidate_pid = 0;
++            GetWindowThreadProcessId(candidate, Some(&mut candidate_pid));
++            let mut other = RECT::default();
++            let mut title = [0_u16; 128];
++            let title_len = GetWindowTextW(candidate, &mut title) as usize;
++            let badge = candidate_pid == host_pid as u32
++                && String::from_utf16_lossy(&title[..title_len]) == "Nuwax Computer Use Badge";
++            if !badge
++                && candidate_pid != std::process::id()
++                && IsWindowVisible(candidate).as_bool()
++                && !IsIconic(candidate).as_bool()
++                && GetWindowRect(candidate, &mut other).is_ok()
++                && other.left < rect.right
++                && other.right > rect.left
++                && other.top < rect.bottom
++                && other.bottom > rect.top
++            {
++                top = candidate;
++                break;
++            }
++            candidate = GetWindow(candidate, GW_HWNDNEXT).unwrap_or_default();
++        }
++        Window {
++            valid: true,
++            foreground: GetForegroundWindow() == hwnd,
++            visible: IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() && top == hwnd,
++            stamp: format!(
++                "{}:{}:{}",
++                created.dwHighDateTime, created.dwLowDateTime, identity.0 as usize
++            ),
++            bounds: json!({ "x": rect.left, "y": rect.top, "width": rect.right - rect.left, "height": rect.bottom - rect.top }),
++        }
++    }
++}
++#[cfg(not(any(target_os = "macos", target_os = "windows")))]
++fn probe(_: i32, _: u64, _: i32) -> Window {
++    unavailable()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn c(id: &str, wid: u64) -> Context {
++        Context {
++            task_id: id.into(),
++            binding_id: "binding".into(),
++            epoch: 1,
++            pid: 10,
++            host_pid: 0,
++            window_id: wid,
++            mode: "background".into(),
++        }
++    }
++    fn window() -> Window {
++        Window {
++            valid: true,
++            foreground: false,
++            visible: true,
++            stamp: "lifetime1".into(),
++            bounds: Value::Null,
++        }
++    }
++    #[test]
++    fn revoke_is_synchronous_and_drain_waits_for_in_flight_operations() {
++        let mut r = Registry::default();
++        let mut a = c("A", 1);
++        r.bind(a.clone(), &window()).unwrap();
++        r.admit(&a, &window()).unwrap();
++        a.epoch = 2;
++        assert_eq!(r.revoke(&a).unwrap()["drained"], false);
++        assert!(r.admit(&a, &window()).is_err());
++        assert!(r.bind(a.clone(), &window()).is_err());
++        r.tasks.get_mut("A").unwrap().in_flight = 0;
++        a.epoch = 3;
++        assert!(r.bind(a.clone(), &window()).is_ok());
++    }
++    #[test]
++    fn cross_task_targets_epochs_and_reused_native_identities_are_rejected() {
++        let mut r = Registry::default();
++        let a = c("A", 1);
++        r.bind(a.clone(), &window()).unwrap();
++        assert!(r.bind(c("B", 1), &window()).is_err());
++        assert!(r.bind(c("B", 2), &window()).is_ok());
++        let mut reused = window();
++        reused.stamp = "lifetime2".into();
++        assert!(r.admit(&a, &reused).is_err());
++        let mut old = a.clone();
++        old.epoch = 2;
++        assert!(r.bind(old, &reused).is_err());
++    }
++    #[test]
++    fn foreground_user_ownership_refuses_background_input() {
++        let mut r = Registry::default();
++        let a = c("A", 1);
++        r.bind(a.clone(), &window()).unwrap();
++        let mut active = window();
++        active.foreground = true;
++        assert_eq!(r.admit(&a, &active), Err("user_in_control"));
++    }
++    #[test]
++    fn foreground_lease_waits_for_every_other_task_to_drain() {
++        let mut r = Registry::default();
++        let mut a = c("A", 1);
++        r.bind(a.clone(), &window()).unwrap();
++        r.admit(&a, &window()).unwrap();
++        let mut b = c("B", 2);
++        b.mode = "foreground".into();
++        assert_eq!(r.bind(b.clone(), &window()), Err("desktop_busy"));
++        a.epoch += 1;
++        r.revoke(&a).unwrap();
++        assert_eq!(r.bind(b.clone(), &window()), Err("desktop_busy"));
++        r.tasks.get_mut("A").unwrap().in_flight = 0;
++        r.bind(b, &window()).unwrap();
++        assert_eq!(r.bind(c("C", 3), &window()), Err("desktop_busy"));
++    }
++    #[test]
++    fn background_read_coordinates_do_not_authorize_input() {
++        let a = c("A", 1);
++        assert!(policy(
++            &a,
++            "zoom",
++            &json!({"pid": 10, "window_id": 1, "x": 20, "y": 30})
++        )
++        .is_ok());
++        assert_eq!(
++            policy(
++                &a,
++                "click",
++                &json!({"pid": 10, "window_id": 1, "x": 20, "y": 30})
++            ),
++            Err("foreground_required")
++        );
++        assert!(policy(&a, "start_session", &json!({"capture": "desktop"})).is_err());
++        assert!(policy(
++            &a,
++            "get_accessibility_tree",
++            &json!({"pid": 10, "window_id": 1})
++        )
++        .is_err());
++    }
++    #[test]
++    fn background_never_authorizes_global_input_or_foreground_escalation() {
++        let a = c("A", 1);
++        for tool in [
++            "type_text",
++            "press_key",
++            "drag",
++            "clipboard_write",
++            "move_cursor",
++        ] {
++            assert!(policy(&a, tool, &json!({ "pid": 10, "window_id": 1 })).is_err());
++        }
++        assert!(policy(
++            &a,
++            "click",
++            &json!({ "pid": 10, "window_id": 1, "element_index": 0 })
++        )
++        .is_ok());
++        assert!(policy(
++            &a,
++            "click",
++            &json!({ "pid": 10, "window_id": 2, "element_index": 0 })
++        )
++        .is_err());
++        assert!(policy(
++            &a,
++            "click",
++            &json!({ "pid": 10, "window_id": 1, "element_index": 0, "delivery_mode": "foreground" })
++        )
++        .is_err());
++    }
++}
++
++// Host display reads deliberately do not grant action permits or model observation credit.
++fn preview_context(args: Value) -> Result<Context, &'static str> {
++    let c = context(args)?;
++    let w = probe(c.pid, c.window_id, c.host_pid);
++    let r = registry().lock().unwrap();
++    r.validate_preview(&c, &w)?;
++    Ok(c)
++}
++impl Registry {
++    fn validate_preview(&self, c: &Context, w: &Window) -> Result<(), &'static str> {
++        let t = self.tasks.get(&c.task_id).ok_or("task_not_bound")?;
++        if t.context.task_id != c.task_id
++            || t.context.binding_id != c.binding_id
++            || t.context.epoch != c.epoch
++            || t.context.pid != c.pid
++            || t.context.window_id != c.window_id
++            || t.context.host_pid != c.host_pid
++        {
++            return Err("stale_task_epoch");
++        }
++        if !w.valid || t.stamp != w.stamp {
++            return Err("target_identity_changed");
++        }
++        Ok(())
++    }
++}
++fn preview_capture(c: &Context) -> Result<Value, &'static str> {
++    use base64::Engine;
++    #[cfg(target_os = "macos")]
++    let png = platform_macos::capture::nuwax_preview_window(c.window_id as u32);
++    #[cfg(target_os = "windows")]
++    let png = platform_windows::capture::nuwax_preview_window(c.window_id);
++    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
++    let png: anyhow::Result<Vec<u8>> = Err(anyhow::anyhow!("unsupported"));
++    let png = png.map_err(|e| {
++        if e.to_string().contains("minimized") {
++            "preview_minimized"
++        } else {
++            "preview_unavailable"
++        }
++    })?;
++    let img = image::load_from_memory(&png)
++        .map_err(|_| "preview_unavailable")?
++        .thumbnail(960, 960)
++        .to_rgb8();
++    let mut bytes = Vec::new();
++    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 70)
++        .encode_image(&img)
++        .map_err(|_| "preview_unavailable")?;
++    if bytes.len() > 512 * 1024 {
++        return Err("preview_oversize");
++    }
++    preview_context(serde_json::to_value(c).unwrap())?;
++    Ok(
++        json!({"task_id": c.task_id, "binding_id": c.binding_id, "epoch": c.epoch,
++        "width": img.width(), "height": img.height(), "jpeg": base64::engine::general_purpose::STANDARD.encode(bytes)}),
++    )
++}
++/// Called only by the authenticated host endpoint, never listed as a model tool.
++pub(crate) async fn host_command(
++    sdk: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
++    req: DaemonRequest,
++) -> DaemonResponse {
++    if !enabled() {
++        return DaemonResponse::err("window_tasks_unavailable", 77);
++    }
++    let c = match preview_context(req.args.unwrap_or(Value::Null)) {
++        Ok(c) => c,
++        Err(e) => return DaemonResponse::err(e, 77),
++    };
++    if req.name.as_deref() == Some("preview") {
++        static CAPTURE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
++        let gate = CAPTURE
++            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
++            .clone();
++        let Ok(permit) = gate.try_acquire_owned() else {
++            return DaemonResponse::err("preview_busy", 77);
++        };
++        let result = tokio::task::spawn_blocking(move || {
++            let _permit = permit;
++            preview_capture(&c)
++        })
++        .await;
++        return match result {
++            Ok(Ok(v)) => DaemonResponse::ok(v),
++            Ok(Err(e)) => DaemonResponse::err(e, 77),
++            Err(_) => DaemonResponse::err("preview_unavailable", 77),
++        };
++    }
++    if req.name.as_deref() != Some("takeover") {
++        return DaemonResponse::err("unknown_task_control", 64);
++    }
++    {
++        let r = registry().lock().unwrap();
++        let Some(t) = r.tasks.get(&c.task_id) else {
++            return DaemonResponse::err("task_not_bound", 77);
++        };
++        if !t.revoked || t.in_flight != 0 {
++            return DaemonResponse::err("handoff_pending", 77);
++        }
++    }
++    let result = sdk
++        .invoke_raw(
++            "bring_to_front",
++            json!({"pid": c.pid, "window_id": c.window_id}),
++        )
++        .await;
++    let valid = preview_context(serde_json::to_value(&c).unwrap()).is_ok();
++    let focused = probe(c.pid, c.window_id, c.host_pid).foreground;
++    if result.is_ok_and(|v| v["isError"] != true) && valid && focused {
++        DaemonResponse::ok(json!({"activated": true}))
++    } else {
++        DaemonResponse::err("target_activation_failed", 77)
++    }
++}
++
++#[cfg(test)]
++mod preview_tests {
++    use super::*;
++    #[test]
++    fn preview_requires_live_binding_without_granting_action_permission() {
++        let mut r = Registry::default();
++        let mut c = Context {
++            task_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into(),
++            binding_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into(),
++            epoch: 1,
++            pid: 23,
++            host_pid: 24,
++            window_id: 25,
++            mode: "background".into(),
++        };
++        let mut w = Window {
++            valid: true,
++            foreground: false,
++            visible: true,
++            stamp: "identity".into(),
++            bounds: Value::Null,
++        };
++        assert_eq!(r.validate_preview(&c, &w), Err("task_not_bound"));
++        r.bind(c.clone(), &w).unwrap();
++        let old = c.clone();
++        c.epoch += 1;
++        r.revoke(&c).unwrap();
++        assert!(r.validate_preview(&c, &w).is_ok());
++        assert_eq!(r.tasks[&c.task_id].in_flight, 0);
++        assert!(r.tasks[&c.task_id].revoked);
++        assert_eq!(r.validate_preview(&old, &w), Err("stale_task_epoch"));
++        let mut other = c.clone();
++        other.binding_id = "cccccccc-cccc-cccc-cccc-cccccccccccc".into();
++        assert_eq!(r.validate_preview(&other, &w), Err("stale_task_epoch"));
++        w.stamp = "reused-native-id".into();
++        assert_eq!(r.validate_preview(&c, &w), Err("target_identity_changed"));
++    }
++}
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
-index 401a09b..3d3021a 100644
+index 401a09b..84cdbdd 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/proxy.rs
 @@ -463,8 +463,10 @@ async fn run_control_connection(
@@ -506,11 +1295,67 @@ index 401a09b..3d3021a 100644
          Err(e) => {
              warn!("control connection: serialize session_begin failed: {e}");
              return;
+@@ -922,7 +924,13 @@ async fn forward_tool_call(
+     daemon_observes_tool_calls: bool,
+     output_schema: Option<serde_json::Value>,
+ ) -> Response {
++    let nuwax_task = args.get("_nuwax_task").cloned();
+     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
++    if std::env::var_os(cua_driver_core::daemon::NUWAX_TOKEN_FILE_ENV).is_some() {
++        if let Some(context) = nuwax_task {
++            args["_nuwax_task"] = context;
++        }
++    }
+     let req = DaemonRequest {
+         method: "call".into(),
+         name: Some(name.clone()),
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-index 0ec9bb4..79f50cc 100644
+index 67e123b..ce5beb5 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
-@@ -680,11 +680,86 @@ fn permission_gate_response_for_state(
+@@ -383,6 +383,11 @@ pub fn default_uia_pipe_path() -> String {
+
+ /// Returns the platform default PID file path.
+ pub fn default_pid_file_path() -> String {
++    // Nuwax: 宿主数据目录覆盖（与 user_home_subdirectory 同一开关）——
++    // pid 文件不再落 ~/Library/Caches/cua-driver 等外部目录
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return dir.join("cua-daemon.pid").to_string_lossy().into_owned();
++    }
+     let namespace = crate::bundle::state_namespace();
+     #[cfg(target_os = "macos")]
+     {
+@@ -486,8 +491,13 @@ async fn invoke_daemon_tool(
+     let mut args = req
+         .args
+         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
++    let _nuwax_task_permit = match crate::nuwax_tasks::admit(&tool_name, &mut args).await {
++        Ok(permit) => permit,
++        Err(response) => return response,
++    };
+     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
+     let effective_session = apply_session_identity(&mut args, &req.session_id);
++    crate::nuwax_tasks::note_session(&_nuwax_task_permit, effective_session.as_deref());
+     let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
+     let observation = observation_transport.map(|transport| {
+         (
+@@ -571,13 +581,14 @@ async fn invoke_daemon_tool(
+         sdk.begin_tool_call(&tool_name, &args, transport, client_kind)
+     });
+
+-    let result_value = match sdk.invoke_raw(&tool_name, args).await {
++    let mut result_value = match sdk.invoke_raw(&tool_name, args).await {
+         Ok(result) => result,
+         Err(error) => {
+             observe_daemon_error(observation, 1);
+             return DaemonResponse::err(error, 1);
+         }
+     };
++    crate::nuwax_tasks::observe_after(&_nuwax_task_permit, &mut result_value);
+     DaemonResponse::ok(observe_daemon_result(
+         observation,
+         session_context,
+@@ -675,11 +686,90 @@ fn permission_gate_response_for_state(
      ))
  }
 
@@ -598,11 +1443,15 @@ index 0ec9bb4..79f50cc 100644
 +        };
 +        metadata["nuwax_endpoint_proof"] = serde_json::Value::String(proof);
 +    }
++    if cfg!(any(target_os = "macos", target_os = "windows")) {
++        metadata["nuwax_window_tasks"] = serde_json::json!(1);
++        metadata["nuwax_window_preview"] = serde_json::json!(1);
++    }
 +    DaemonResponse::ok(metadata)
  }
 
  fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
-@@ -986,7 +1061,10 @@ pub async fn run_serve(
+@@ -981,7 +1071,10 @@ pub async fn run_serve(
      let embedded = cua_driver_core::embedded_mode();
      // Embedded endpoints are host-owned. The daemon must never unlink an
      // arbitrary pre-existing path between the host's safety check and bind.
@@ -614,7 +1463,7 @@ index 0ec9bb4..79f50cc 100644
 
      let listener =
          UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
-@@ -1020,11 +1098,20 @@ pub async fn run_serve(
+@@ -1015,11 +1108,20 @@ pub async fn run_serve(
 
      // Idle-session and recording maintenance is owned by the SDK runtime so
      // direct embedded applications and daemon-backed clients behave alike.
@@ -637,7 +1486,7 @@ index 0ec9bb4..79f50cc 100644
          Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
          None => None,
      };
-@@ -1058,6 +1145,11 @@ pub async fn run_serve(
+@@ -1053,6 +1155,11 @@ pub async fn run_serve(
                      let mut trusted_session: Option<TrustedConnectionSession> = None;
 
                      while let Ok(Some(line)) = lines.next_line().await {
@@ -649,7 +1498,7 @@ index 0ec9bb4..79f50cc 100644
                          let req: DaemonRequest = match serde_json::from_str(&line) {
                              Ok(r) => r,
                              Err(e) => {
-@@ -1084,7 +1176,7 @@ pub async fn run_serve(
+@@ -1079,7 +1186,7 @@ pub async fn run_serve(
                                  return;
                              }
                              "metadata" => {
@@ -658,7 +1507,22 @@ index 0ec9bb4..79f50cc 100644
                                  let _ = writer.write_all(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
-@@ -1743,11 +1835,20 @@ pub async fn run_serve(
+@@ -1192,6 +1299,14 @@ pub async fn run_serve(
+                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                 ).await;
+                             }
++                            "nuwax_task" => {
++                                let resp = if matches!(req.name.as_deref(), Some("preview" | "takeover")) {
++                                    crate::nuwax_tasks::host_command(reg.clone(), req).await
++                                } else { crate::nuwax_tasks::control(&req) };
++                                let _ = writer.write_all(
++                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
++                                ).await;
++                            }
+                             "call" => {
+                                 let resp = invoke_daemon_tool(&reg, req).await;
+                                 let _ = writer.write_all(
+@@ -1738,11 +1853,20 @@ pub async fn run_serve(
      tokio::pin!(parent_liveness);
 
      // Idle-session and recording maintenance is owned by the SDK runtime.
@@ -681,7 +1545,7 @@ index 0ec9bb4..79f50cc 100644
          Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
          None => None,
      };
-@@ -1756,7 +1857,9 @@ pub async fn run_serve(
+@@ -1751,7 +1875,9 @@ pub async fn run_serve(
      loop {
          // All daemons use the current-user descriptor. Embedded daemons also
          // reserve the pipe name with their first instance.
@@ -692,7 +1556,7 @@ index 0ec9bb4..79f50cc 100644
          let server = if sec_attrs_ptr.is_null() {
              ServerOptions::new()
                  .first_pipe_instance(first_pipe_instance)
-@@ -1819,6 +1922,11 @@ pub async fn run_serve(
+@@ -1814,6 +1940,11 @@ pub async fn run_serve(
                      let mut trusted_session: Option<TrustedConnectionSession> = None;
 
                      while let Ok(Some(line)) = lines.next_line().await {
@@ -704,7 +1568,7 @@ index 0ec9bb4..79f50cc 100644
                          let req: DaemonRequest = match serde_json::from_str(&line) {
                              Ok(r) => r,
                              Err(e) => {
-@@ -1842,7 +1950,7 @@ pub async fn run_serve(
+@@ -1837,7 +1968,7 @@ pub async fn run_serve(
                                  return;
                              }
                              "metadata" => {
@@ -713,6 +1577,81 @@ index 0ec9bb4..79f50cc 100644
                                  let _ = writer.write_all(
                                      (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                  ).await;
+@@ -1933,6 +2064,14 @@ pub async fn run_serve(
+                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                 ).await;
+                             }
++                            "nuwax_task" => {
++                                let resp = if matches!(req.name.as_deref(), Some("preview" | "takeover")) {
++                                    crate::nuwax_tasks::host_command(reg.clone(), req).await
++                                } else { crate::nuwax_tasks::control(&req) };
++                                let _ = writer.write_all(
++                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
++                                ).await;
++                            }
+                             "call" => {
+                                 let resp = invoke_daemon_tool(&reg, req).await;
+                                 let _ = writer.write_all(
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+index 2453fec..c02b839 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+@@ -2194,6 +2194,10 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
+ }
+
+ fn telemetry_home_dir() -> Option<PathBuf> {
++    // Nuwax: 宿主统一数据目录优先（与 user_home_subdirectory 同一开关）
++    if let Some(dir) = crate::bundle::data_home_override() {
++        return Some(dir);
++    }
+     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
+         return Some(PathBuf::from(path));
+     }
+diff --git a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+index a2691a0..4511c09 100644
+--- a/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
++++ b/libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs
+@@ -164,6 +164,10 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
+ }
+
+ fn restore_token_path() -> Option<PathBuf> {
++    // Nuwax: 宿主数据目录覆盖——restore token 内聚进宿主目录（如 ~/.nuwax/computer-use）
++    if let Some(dir) = std::env::var_os("CUA_DRIVER_DATA_HOME") {
++        return Some(PathBuf::from(dir).join("libei-persistent.token"));
++    }
+     let base = dirs::config_dir()?;
+     Some(base.join("cua-driver").join("libei-persistent.token"))
+ }
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/capture.rs b/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
+index b0eea64..973a829 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/capture.rs
+@@ -1105,3 +1105,11 @@ mod tests {
+         assert_eq!(SPAWNED_WORK.load(AtomicOrdering::SeqCst), 2);
+     }
+ }
++
++/// Host preview must remain memory-only and must never fall back to a shell capture.
++pub fn nuwax_preview_window(window_id: u32) -> anyhow::Result<Vec<u8>> {
++    if !crate::windows::window_info_by_id(window_id).is_some_and(|w| w.is_on_screen) {
++        anyhow::bail!("preview target minimized or offscreen");
++    }
++    screenshot_window_bytes_sck(window_id)
++}
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs b/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
+index 7596841..69c2269 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/focus_steal.rs
+@@ -524,6 +524,9 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
+ /// Re-activate `pid` if it's still running. Safe to call from any
+ /// thread — Apple documents `activateWithOptions:` as thread-safe.
+ fn restore_focus(pid: i32) {
++    // Window tasks yield to a user activating the target. A reactive restore
++    // cannot distinguish that from app self-activation and must not fight it.
++    if std::env::var("CUA_DRIVER_NUWAX_WINDOW_TASKS").as_deref() == Ok("1") { return; }
+     unsafe {
+         if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+             let _ = app.activateWithOptions(NSApplicationActivationOptions(0));
 diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
 index 280f81c..1c04049 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
@@ -785,3 +1724,36 @@ index 280f81c..1c04049 100644
      #[test]
      fn evidence_store_is_scoped_to_the_current_driver_identity() {
          let home =
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/windows.rs b/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
+index 64fdf26..c761483 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/windows.rs
+@@ -78,6 +78,14 @@ pub fn visible_windows() -> Vec<WindowInfo> {
+     visible_windows_with_space_snapshot().windows
+ }
+
++/// Host status overlays must also yield to floating panels, menus and picture-in-picture.
++pub fn nuwax_visible_windows_any_layer() -> Vec<WindowInfo> {
++    enumerate_windows(
++        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
++        LayerFilter::AnyLayer,
++    ).windows
++}
++
+ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
+     enumerate_windows(
+         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/capture.rs b/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
+index eb2e52c..038986a 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/capture.rs
+@@ -780,3 +780,9 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
+ pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
+     cua_driver_core::image_utils::png_dimensions(data)
+ }
++
++/// WGC reads the selected window's compositor surface; no screen-DC fallback.
++pub fn nuwax_preview_window(window_id: u64) -> anyhow::Result<Vec<u8>> {
++    let (pixels, width, height) = crate::wgc::screenshot_window_via_wgc(window_id)?;
++    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)
++}

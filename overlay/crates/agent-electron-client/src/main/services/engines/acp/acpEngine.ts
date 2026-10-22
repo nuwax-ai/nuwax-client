@@ -1,4 +1,4 @@
-import { CuaEngineSessions } from "../../cua/sessionAuthority";
+import { createDesktopAgentSessions, type AgentTurn } from "../../../features";
 /**
  * AcpEngine — ACP protocol handler for claude-code & nuwaxcode.
  *
@@ -148,6 +148,44 @@ export interface EngineInitResult {
 
 const MCP_RETRY_DELAY_MS = 1200;
 const MCP_RECONNECT_WINDOW_MS = 4000;
+// Replaying a prompt cannot recover an HTTP 400, even during a recent MCP reconnect.
+function isHttpBadRequest(error: unknown): boolean {
+  if (error !== null && typeof error === "object") {
+    const { status, statusCode } = error as {
+      status?: unknown;
+      statusCode?: unknown;
+    };
+    if ([status, statusCode].some((value) => value === 400 || value === "400")) {
+      return true;
+    }
+  }
+  return /\b(?:HTTP(?:\/\d(?:\.\d)?)?\s+400|API(?:\s+Error)?[:\s]+400|400\s+Bad\s+Request)\b/i.test(
+    toErrorMessage(error),
+  );
+}
+
+function unwrapAcpBadRequest(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  const rpcError = error as Error & { code?: unknown; data?: unknown };
+  if (rpcError.code !== -32603 || !rpcError.data || typeof rpcError.data !== "object") {
+    return error;
+  }
+  const data = rpcError.data as {
+    details?: unknown;
+    message?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+  };
+  // The ACP SDK wraps a generic agent exception in Internal error/data.details,
+  // or places a JSON-encoded exception message directly in data.
+  if (typeof data.details === "string" && isHttpBadRequest(data.details)) {
+    return new Error(data.details);
+  }
+  if ([data.status, data.statusCode].some((value) => value === 400 || value === "400")) {
+    return new Error(`HTTP 400: ${typeof data.message === "string" ? data.message : "Bad Request"}`);
+  }
+  return error;
+}
 // Claude Code 的 session/new 会在 MCP 子进程完成 tools/list 前返回。
 // 首条 prompt 若立即发出，模型会在工具快照尚未包含慢启动的 npx MCP 时开始运行。
 // 实测 OpenUI MCP 在已命中 npx 缓存时仍需约 2.2 秒完成工具发现，因此为
@@ -184,7 +222,7 @@ interface AcpSession extends SessionWorkspaceRef {
 // Session counter removed — ACP protocol UUID is used as canonical session.id
 
 export class AcpEngine extends EventEmitter {
-  private readonly cuaSessions = new CuaEngineSessions();
+  private readonly agentSessions = createDesktopAgentSessions();
   private config: AgentConfig | null = null;
   private _ready = false;
   private acpConnection: AcpClientSideConnection | null = null;
@@ -879,7 +917,7 @@ export class AcpEngine extends EventEmitter {
   }
 
   async destroy(): Promise<void> {
-    this.cuaSessions.destroy();
+    this.agentSessions.destroy();
     // Cancel all active sessions
     for (const [, session] of this.sessions) {
       if (session.acpSessionId && this.activePromptSessions.has(session.id)) {
@@ -1036,7 +1074,7 @@ export class AcpEngine extends EventEmitter {
     restoreFlowagentsSessions(this.isolatedHome, sessionCwd);
 
     const timer = perfEmitter.start();
-    const resumeResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.resumeSession!({
+    const resumeResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.resumeSession!({
       sessionId,
       cwd: sessionCwd,
       mcpServers,
@@ -1114,7 +1152,7 @@ export class AcpEngine extends EventEmitter {
     const timer = perfEmitter.start();
     let loadResult: { modes?: unknown; configOptions?: unknown };
     try {
-      loadResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.loadSession!({
+      loadResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.loadSession!({
         sessionId,
         cwd: sessionCwd,
         mcpServers,
@@ -1228,7 +1266,7 @@ export class AcpEngine extends EventEmitter {
     };
     this.pendingNewSessionRegistration = true;
     try {
-      acpResult = await this.cuaSessions.setup(mcpServers, () => this.acpConnection!.newSession(newSessionParams), (result) => result.sessionId);
+      acpResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.newSession(newSessionParams), (result) => result.sessionId);
     } catch (err) {
       log.error(`${this.logTag} ❌ ACP newSession failed:`, err);
       throw err;
@@ -1327,13 +1365,13 @@ export class AcpEngine extends EventEmitter {
   }
 
   async deleteSession(id: string): Promise<boolean> {
-    this.cuaSessions.remove(id);
+    this.agentSessions.remove(id);
     return this.sessions.delete(id);
   }
 
   async abortSession(id?: string): Promise<boolean> {
-    if (id) this.cuaSessions.cancel(id);
-    else for (const sessionId of this.sessions.keys()) this.cuaSessions.cancel(sessionId);
+    if (id) this.agentSessions.cancel(id);
+    else for (const sessionId of this.sessions.keys()) this.agentSessions.cancel(sessionId);
     if (!this.acpConnection) return false;
 
     const cancelOne = async (
@@ -1454,7 +1492,7 @@ export class AcpEngine extends EventEmitter {
 
     if (promptContent.length === 0) throw new Error("Empty prompt");
 
-    let cuaTurn = 0;
+    let agentTurn: AgentTurn = { active: false, turns: new Map() };
     let cuaFailed = false;
     const promptTurn = this.bumpPromptTurn(sessionId);
     this.activePromptSessions.add(sessionId);
@@ -1480,11 +1518,20 @@ export class AcpEngine extends EventEmitter {
       { acpSessionId: session.acpSessionId },
     );
 
-    let resultText = "";
+    const resultText = "";
+    let promptResolved = false;
     const promptSentAt = Date.now();
     let firstUpdateAt: number | undefined;
+    let upstreamError: Error | undefined;
     const onProgress = (message: UnifiedSessionMessage) => {
       if (message.sessionId !== sessionId) return;
+      if (message.messageType === "agentSessionUpdate" && message.subType === "error") {
+        const data = message.data as { message?: unknown; error?: unknown } | null;
+        upstreamError = new Error(
+          toErrorMessage(data?.error ?? data?.message ?? "Agent reported an error"),
+        );
+        return;
+      }
       if (message.subType !== "agent_message_chunk") return;
       if (firstUpdateAt !== undefined) return;
       firstUpdateAt = Date.now();
@@ -1510,7 +1557,7 @@ export class AcpEngine extends EventEmitter {
     this.on("computer:progress", onProgress);
 
     try {
-      cuaTurn = this.cuaSessions.start(sessionId);
+      agentTurn = this.agentSessions.start(sessionId);
       log.info(`${this.logTag} Starting prompt`, {
         sessionId,
         acpSessionId: session.acpSessionId,
@@ -1549,16 +1596,20 @@ export class AcpEngine extends EventEmitter {
           }
 
           executePromptWithRetry(
-            () => this.acpConnection!.prompt(promptParams),
+            () => this.acpConnection!.prompt(promptParams).catch((error) => {
+              throw unwrapAcpBadRequest(error);
+            }),
             {
               // A lost prompt response can follow an applied desktop action. Never replay that prompt.
-              maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !cuaTurn ? 2 : 1,
+              maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !agentTurn.active ? 2 : 1,
               retryDelayMs: MCP_RETRY_DELAY_MS,
               logTag: this.logTag,
               sessionId,
               promptStartTime,
               shouldRetry: (err, errMsg) =>
+                !upstreamError &&
                 !isPromptCancellation(err) &&
+                !isHttpBadRequest(err) &&
                 this.isMcpReconnectFailure(errMsg),
               getRetryTelemetry: () => getMcpTransportSnapshot(this.acpProcess),
               onRetry: (info) => {
@@ -1579,6 +1630,30 @@ export class AcpEngine extends EventEmitter {
             .catch(reject);
         },
       );
+
+      // Some adapters report an upstream failure as an update, then resolve end_turn.
+      // Only end_turn is a successful completion; limits/refusal must reach the error sink.
+      promptResolved = true;
+      if (upstreamError) throw upstreamError;
+      switch (result.stopReason) {
+        case "end_turn":
+        case "cancelled":
+          break;
+        case "max_tokens":
+          throw new Error(
+            "Model output was truncated by the token limit (max_tokens). Continue the response or reduce the requested output.",
+          );
+        case "max_turn_requests":
+          throw new Error(
+            "Agent reached the turn request limit (max_turn_requests) before completing the task.",
+          );
+        case "refusal":
+          throw new Error("The model refused the request (refusal).");
+        default:
+          throw new Error(
+            `Agent stopped without completing the task (${result.stopReason ?? "missing stopReason"}).`,
+          );
+      }
 
       const completedAt = Date.now();
       waitTimer.end("acp.prompt.wait", {
@@ -1648,7 +1723,11 @@ export class AcpEngine extends EventEmitter {
         targetModelId:
           this.config?.model || this.config?.env?.OPENCODE_MODEL || null,
       });
-      const isMcpReconnect = this.isMcpReconnectFailure(errMsg);
+      const isMcpReconnect =
+        !promptResolved &&
+        !upstreamError &&
+        !isHttpBadRequest(error) &&
+        this.isMcpReconnectFailure(errMsg);
       const isCancelled = isPromptCancellation(error);
       const promptEndReason = isMcpReconnect
         ? "mcp_reconnecting"
@@ -1687,7 +1766,7 @@ export class AcpEngine extends EventEmitter {
         reason: promptEndReason,
       });
     } finally {
-      this.cuaSessions.finish(sessionId, cuaTurn, cuaFailed);
+      this.agentSessions.finish(sessionId, agentTurn, cuaFailed);
       this.off("computer:progress", onProgress);
       if (this.isCurrentPromptTurn(sessionId, promptTurn)) {
         this.activePromptSessions.delete(sessionId);

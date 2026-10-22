@@ -11,7 +11,11 @@ vi.mock("../services/commercialTicketSession", () => ({ currentTicket: () => "te
   mirrorNativeResponseTicket: async () => {} }));
 vi.mock("../services/nativeTicketCapability", () => ({ nativeTicketHeaders: () => ({ Cookie: "ticket=test-ticket" }) }));
 vi.mock("../services/system/deviceId", () => ({ getDeviceId: () => "device" }));
-vi.mock("../services/cua/computerUse", () => ({ suspendCua: (...args: unknown[]) => state.suspend(...args) }));
+vi.mock("../features", () => ({
+  emitFeatureSessionInvalidated: () => state.suspend("sessionEnded"),
+  runFeatureServicesStopping: async () => { await state.suspend("sessionEnded"); return { success: true }; },
+  settleDesktopFeaturesForQuit: async () => { await state.suspend("appQuit"); },
+}));
 import { initializeCommercialAuth } from "./commercialAuth";
 import { LocalPortManager, setLocalPortManager } from "../services/localPorts";
 

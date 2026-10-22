@@ -43,9 +43,11 @@ vi.mock("../services/startupPorts", () => ({
 vi.mock("../services/system/deviceId", () => ({
   getDeviceId: () => "commercial-device",
 }));
-// stopExtras 钩子引入的传递依赖：mock 掉避免拖入 cua 模块求值链
-vi.mock("../services/cua/computerUse", () => ({
-  suspendCua: vi.fn(async () => undefined),
+// 退出/停止钩子经桌面特性汇合点；mock 掉避免拖入整条特性求值链
+vi.mock("../features", () => ({
+  emitFeatureSessionInvalidated: vi.fn(),
+  runFeatureServicesStopping: vi.fn(async () => ({ success: true })),
+  settleDesktopFeaturesForQuit: vi.fn(async () => undefined),
 }));
 vi.mock("os", () => ({
   hostname: () => "fengfei-mac-xx.local",
@@ -416,36 +418,47 @@ describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
 });
 
 describe("stopExtras — 退出期附加清理接线", () => {
-  it("flow.stopExtras() 触达 CUA daemon 停止钩子（CUA daemon 不随引擎树回收，须经此钩子）", async () => {
+  it("flow.stopExtras() 等待桌面特性收尾（daemon 等不随引擎树回收，须经此钩子）", async () => {
     const { flow } = fixture();
     await flow.stopExtras();
-    const { suspendCua } = await import("../services/cua/computerUse");
-    expect(suspendCua).toHaveBeenCalledWith("appQuit");
+    const { settleDesktopFeaturesForQuit } = await import("../features");
+    expect(settleDesktopFeaturesForQuit).toHaveBeenCalled();
   });
 });
 
 
-describe("NW-173 CUA 清理降级 — stop 链不再被 suspendCua 失败拖死", () => {
-  it("suspendCua 拒绝时 flow.stop() 仍按服务停止结果返回（不再报 Computer Use cleanup failed）", async () => {
-    const { suspendCua } = await import("../services/cua/computerUse");
-    suspendCua.mockReset();
-    suspendCua.mockRejectedValue(new Error("helperStillRunning"));
+describe("NW-173 feature cleanup isolation", () => {
+  it("keeps service stop successful on cleanup rejection without a delayed retry against a new session", async () => {
+    const { runFeatureServicesStopping } = await import("../features");
+    const cleanup = vi.mocked(runFeatureServicesStopping);
+    cleanup.mockClear();
+    cleanup.mockRejectedValueOnce(new Error("helperStillRunning"));
     const { flow, stop } = fixture();
     vi.useFakeTimers();
     try {
-      const result = await flow.stop();
-      expect(result).toEqual({ success: true }); // 服务 stop 成功即成功；CUA 仅降级
+      expect(await flow.stop()).toEqual({ success: true });
       expect(stop).toHaveBeenCalledTimes(1);
-      // 5s 后台补试一次（unref timer）。调用共 3 次：lifecycle 先 invalidated() 挂一次、
-      // stop 链初次一次、补试一次——全部为 "sessionEnded"，且无一次把失败上抛。
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(suspendCua).toHaveBeenCalledTimes(3);
-      expect(suspendCua.mock.calls.every((c) => c[0] === "sessionEnded")).toBe(true);
-    } finally {
-      vi.useRealTimers();
-      suspendCua.mockReset();
-      suspendCua.mockResolvedValue(undefined);
-    }
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("bounds a stalled feature cleanup so service restart remains available", async () => {
+    const { runFeatureServicesStopping } = await import("../features");
+    const cleanup = vi.mocked(runFeatureServicesStopping);
+    let finish!: (result: { success: boolean }) => void;
+    cleanup.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { flow, stop } = fixture();
+    vi.useFakeTimers();
+    try {
+      let result: unknown;
+      const pending = flow.stop().then(value => { result = value; });
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(result).toEqual({ success: true });
+      expect(stop).toHaveBeenCalledTimes(1);
+      finish({ success: true });
+      await pending;
+    } finally { finish?.({ success: true }); vi.useRealTimers(); }
   });
 });
 

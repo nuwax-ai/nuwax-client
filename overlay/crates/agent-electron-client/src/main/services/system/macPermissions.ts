@@ -40,11 +40,28 @@ export async function openMacPrivacySettings(
     return true;
   } catch (e) {
     log.error(`[macPermissions] openExternal failed for "${pane}":`, e);
-    if (pane === "notifications") {
+    if (pane !== "notifications") {
       try {
-        return !(await shell.openPath("/System/Applications/System Settings.app"));
+        await shell.openExternal(
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
+        );
+        return true;
       } catch (fallbackError) {
-        log.error("[macPermissions] notification settings fallback failed:", fallbackError);
+        log.error(
+          "[macPermissions] privacy settings fallback failed:",
+          fallbackError,
+        );
+      }
+    } else {
+      try {
+        return !(await shell.openPath(
+          "/System/Applications/System Settings.app",
+        ));
+      } catch (fallbackError) {
+        log.error(
+          "[macPermissions] notification settings fallback failed:",
+          fallbackError,
+        );
       }
     }
     return false;
