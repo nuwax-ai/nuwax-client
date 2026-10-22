@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   windowProbeGate: undefined as Promise<void> | undefined,
   windowProbeStarted: vi.fn(),
   beforeRawSocketError: undefined as (() => void) | undefined,
+  rejectImplicitHostSession: false,
+  hostRequests: [] as Array<{ method: string; name?: string; session_id?: string }>,
+  closedHostSessions: [] as string[],
 }));
 
 function policyHash(policyPath: string): string {
@@ -125,15 +128,17 @@ vi.mock("node:net", async (importOriginal) => {
         const listeners: Record<string, (...args: any[]) => void> = {};
         let raw: import("node:net").Socket | undefined;
         let timeout: [number, (() => void) | undefined] | undefined;
+        let hostSession: string | undefined;
         const socket = {
           setTimeout: (ms: number, callback?: () => void) => { timeout = [ms, callback]; raw?.setTimeout(ms, callback); },
-          destroy: vi.fn(() => raw?.destroy()),
+          destroy: vi.fn(() => { raw?.destroy(); if (hostSession) { mocks.closedHostSessions.push(hostSession); hostSession = undefined; } }),
           on: (event: string, callback: (...args: any[]) => void) => {
             listeners[event] = callback;
             return socket;
           },
           write: (payload: string) => {
-            const request = JSON.parse(payload) as { method: string; name?: string; args?: { nuwax_nonce?: string } };
+            const request = JSON.parse(payload) as { method: string; name?: string; session_id?: string; args?: { nuwax_nonce?: string } };
+            mocks.hostRequests.push({ method: request.method, name: request.name, session_id: request.session_id });
             let reply: unknown = { ok: false };
             if (request.method === "metadata") {
               if (request.args?.nuwax_nonce) {
@@ -155,6 +160,10 @@ vi.mock("node:net", async (importOriginal) => {
               mocks.nativeRequests.push(request);
               reply = request.name === "revoke" && !mocks.revokeOK ? { ok: false } : request.name === "preview" ? { ok: true, result: { ...(request.args as any), width: 960, height: 540, jpeg: "A".repeat(100000) } }
                 : { ok: true, result: { valid: true, activated: true, foreground: mocks.nativeForeground, drained: mocks.drained, tasks: [] } };
+            } else if (request.method === "session_begin") {
+              hostSession = request.session_id; reply = { ok: true, result: { session_begin: true } };
+            } else if (request.method === "call" && mocks.rejectImplicitHostSession && (!request.session_id || request.session_id !== hostSession)) {
+              reply = { ok: true, result: { isError: true, content: [{ type: "text", text: "this session has ended; call start_session explicitly to reuse its label" }], structuredContent: { code: "session_ended" } } };
             } else if (request.method === "call" && request.name === "list_windows") {
               reply = { ok: true, result: { structuredContent: { windows: [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
             } else if (request.method === "call") {
@@ -313,6 +322,7 @@ beforeEach(() => {
   mocks.gatewayOptions = undefined; mocks.nativeForeground = false; mocks.windowProbeGate = undefined;
   mocks.windowProbeStarted.mockClear();
   mocks.beforeRawSocketError = undefined;
+  mocks.rejectImplicitHostSession = false; mocks.hostRequests.length = 0; mocks.closedHostSessions.length = 0;
   // 测试进程无 resourcesPath：指到临时 bundled 目录（可按用例放置假 bundled helper）
   Object.defineProperty(process, "resourcesPath", {
     value: path.join(mocks.userDataURL, "resources"),
@@ -900,6 +910,19 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
 
 
 describe("cua window selection lifecycle", () => {
+  it("uses fresh EOF-owned host sessions after the native implicit session has ended", async () => {
+    mocks.daemonReady = true;
+    mocks.rejectImplicitHostSession = true;
+    const expected = [{ pid: 25, windowId: 50, label: "Fixture — Document" }];
+    expect(await cuaModule.listCuaWindows()).toEqual(expected);
+    expect(await cuaModule.listCuaWindows()).toEqual(expected);
+    const begins = mocks.hostRequests.filter(r => r.method === "session_begin");
+    const calls = mocks.hostRequests.filter(r => r.method === "call");
+    expect(begins).toHaveLength(2);
+    expect(new Set(begins.map(r => r.session_id)).size).toBe(2);
+    expect(calls.map(r => r.session_id)).toEqual(begins.map(r => r.session_id));
+    expect(mocks.closedHostSessions).toEqual(begins.map(r => r.session_id));
+  });
   it("validates a live target, persists only scope kind and rejects a failed preference write", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
     vi.resetModules(); cuaModule = await loadCua();
