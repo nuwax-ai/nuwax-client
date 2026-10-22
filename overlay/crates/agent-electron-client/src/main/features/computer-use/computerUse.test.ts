@@ -172,7 +172,8 @@ vi.mock("node:net", () => ({
           queueMicrotask(answer);
         },
       };
-      queueMicrotask(() => listeners[mocks.daemonReady ? "connect" : "error"]?.());
+      queueMicrotask(() => mocks.daemonReady ? listeners.connect?.()
+        : listeners.error?.(Object.assign(new Error("not listening"), { code: "ECONNREFUSED" })));
       return socket;
     },
   },
@@ -259,6 +260,24 @@ function readMcpServers(): Record<string, { command?: string; args?: string[]; e
   return raw ? (JSON.parse(raw).mcpServers ?? {}) : {};
 }
 
+async function createEndpointSocket(stale: boolean) {
+  const socketPath = (await getCuaStatus()).socketPath!;
+  const actualNet = await vi.importActual<typeof import("node:net")>("node:net");
+  const original = stale ? socketPath + ".fixture" : socketPath;
+  const server = actualNet.createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(original, resolve);
+  });
+  fs.chmodSync(original, 0o600);
+  if (stale) {
+    // Renaming leaves a real stale socket after libuv closes its original path.
+    fs.renameSync(original, socketPath);
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+  return { socketPath, server };
+}
+
 beforeEach(() => {
   mocks.settings.clear();
   mocks.settingFailure = false;
@@ -325,6 +344,26 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
 });
 
 describe("cua 开关与启动收敛", () => {
+  it("强杀遗留的自有 Unix socket 经确认无人监听后回收，下次启用成功", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    const { socketPath } = await createEndpointSocket(true);
+    mocks.autoReady = mocks.permissionGranted = true;
+    const result = await setCuaEnabled(true);
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(socketPath)).toBe(false);
+  });
+
+  it("旧端点位置是普通文件时失败关闭，保留文件且不启动 helper", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    const socketPath = (await getCuaStatus()).socketPath!;
+    fs.writeFileSync(socketPath, "keep this file", { mode: 0o600 });
+    mocks.autoReady = mocks.permissionGranted = true;
+    const result = await setCuaEnabled(true);
+    expect(result.success).toBe(false);
+    expect(fs.readFileSync(socketPath, "utf8")).toBe("keep this file");
+    expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
+  });
+
   it("未设置开关时默认关闭，启动只清除旧 MCP 条目，不安装或启动 helper", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.settings.set("mcp_local_config", JSON.stringify({ mcpServers: {
