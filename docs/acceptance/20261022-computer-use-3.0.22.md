@@ -1,14 +1,12 @@
-# Computer Use · 3.0.22 整合验收候选
+# Computer Use · 3.0.22 整合验收候选 r4
 
-本候选从 3.0.22 基线 `0f16fc665b` 整合，运行时代码冻结于 `658b915c`，分支 `feat/computer-use-3.0.22-integration`。已按用户追加要求安装到 `mac-dbg` 做真机验证。完整 Agent 任务仍在等待可用会话模型，Windows 真机未验收；本候选未发布到更新源。
+运行时代码固定于 `9528d28d0c8fd30439da7c02503a01172da7ac87`，分支 `feat/computer-use-3.0.22-integration`。原生驱动已从 0.28.2 更新到官方 0.38.0，固定上游 `85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19`，不跟随 main。商业补丁、权限主体和产品边界保留，迁移细节见 [上游更新记录](20261022-cua-driver-0.38-upgrade.md)。
 
 ## 来源完整性与保全
 
-盘点了 53 个来源 worktree，另建独立整合 worktree，不改动来源工作区。逐工作区 HEAD、未提交改动及逐文件整合动作/摘要见 [来源清单](20261022-computer-use-3.0.22-sources.json)。对所有相关已提交历史进行行为核对，未用“旧 SHA 是否为祖先”单独判断是否遗漏。
+盘点 53 个来源 worktree，逐文件核对已提交历史和未提交实现，另建整合 worktree。来源代码、暂存区和用户 WIP 未覆盖。两条已结束 Claude 会话 `b373cfa2-a92a-4b2a-91cd-6b85633bb222`、`e7157a29-0021-42e7-b9eb-535d9fe3c8e1` 的实现保全于快照 `286916f31664dd8d68c89cb4584c4c964af59f7b`、分支 `chore/cua-source-snapshot-20261022` 和仓外 bundle。原监控定时已删除。
 
-Claude Code 两个已结束会话 `b373cfa2-a92a-4b2a-91cd-6b85633bb222`、`e7157a29-0021-42e7-b9eb-535d9fe3c8e1` 的最后实现已包含在原多窗口工作区快照 `286916f31664dd8d68c89cb4584c4c964af59f7b`，保留于 `chore/cua-source-snapshot-20261022` 及仓外 bundle。来源暂存区与未提交代码均保留。原会话监控定时任务已删除。
-
-最终再次核对：来源 Computer Use 代码未新增变化；多窗口验收文档新增了未完成的 Mac 7×5 历史结果，已原样保留在 [原记录](20261019-computer-use-multiwindow.md)，不计作本候选的验收通过。另一个工作区更新至 `6d0082c7`，该提交已是本次 3.0.22 基线的祖先。
+逐来源处置见 [清单](20261022-computer-use-3.0.22-sources.json)。最终 r4 审计再次核对来源字节，CUA 源码无后续遗漏；只有多窗口历史验收文档新增，原样保留，不冒充当前验收。`6d0082c7` 已是集成基线祖先；原发布工作区后来新增的 `a092b5b6` 只隐藏 SessionsPage 按钮，在本次范围外，仍保留原处。
 
 | 来源 | 内容及本候选落点 | 结论 |
 | --- | --- | --- |
@@ -25,62 +23,62 @@ Claude Code 两个已结束会话 `b373cfa2-a92a-4b2a-91cd-6b85633bb222`、`e715
 
 明确排除 nuwax-harness、pi-agent 产品/引擎、Nuwa Browser 新整合；相关源码保留在各自来源。基准目录的 `bench/harness.ts` 是测试框架，不是 nuwax-harness 产品。本机文件直访延续 3.0 的强制关闭；未因通用特性迁移意外启用。NW-151 鉴权、自动端口、老 Windows 终端、当前用户安装和 UAC 修复、原有更新提示继续沿用 3.0.22。
 
-## 默认关闭、退出与更新
+## 默认关闭、窗口归属、退出与更新
 
-- `computerUse.ts:617` 只在持久化 `computerUseEnabled === true` 时开启；未设置时关闭。特性清单中的 `enabledByDefault` 负责注册设置/IPC 入口，不代表启动 Computer Use。回归测试证明：即使 bundle 带有 helper，默认启动只清除旧 CUA MCP 配置，不安装、不启动 helper，其他 MCP 配置保留。已有用户的显式启用偏好保留。
-- `commercialAuth.ts:24` 给可选特性停止设置 1500ms 上限；失败或悬挂不阻塞主服务停止，撤权立即生效。删除可能在新服务启动后再次撤权的延迟重试。
-- `computerUse.ts:568` 协议停机调用有 1500ms 超时。macOS/Linux 兜底使用 SIGKILL，按 helper 可执行文件和 serve/socket 参数锚定；Windows 同时校验 exe 名与产品 socket 参数。不会以宽泛产品名杀其他命令。
-- `features/index.ts:219` 共享幂等退出 promise；`main.ts:574` 的退出步骤有上限，Computer Use 提前清理，`controlWindow.ts` 在 before-quit/dispose 后不再重建浮窗或接收迟到帧。
-- 更新仍由既有 `autoUpdater.ts` 的 10 秒安装前清理上限及安装交接处理。删除清理前启动的 macOS 5 秒 `app.exit` 竞态，更新 before-quit 路径不阻止安装器退出，并保留 500ms 最终兜底。
+- 缺失开关只按 `computerUseEnabled === true` 启用；默认不安装、不启动 helper、不注入 CUA MCP。已显式启用的历史偏好保留；两台验收机收尾明确关闭。
+- 普通模式使用客户端内现有控制条；多窗口预览是主窗口 `contentView` 内的 `WebContentsView`，默认收起。主窗口隐藏、关闭到托盘、最小化时同步隐藏，显示/恢复时同步显示；真正销毁时销毁拥有的视图，退出后迟到回调不能重建。没有独立桌面黑色控制窗，也不注册外部目标 badge。来源 badge 文件保留，这项呈现被用户新要求取代。
+- 任务绑定、能力、epoch、观察、预算、取消撤权与 drain 仍由宿主管理。预览独立于模型观察，不入观察额度、模型日志或磁盘。
+- 可选特性停止和原生协议停止各有 1500ms 上限；撤权先行，退出共享幂等清理 promise。兜底只按产品可执行路径与准确 serve/socket 参数终止，不按宽泛名称杀进程。保留安装前 10 秒清理上限，删除 macOS 提前 5 秒退出竞态。
+- 真机故障注入发现的旧 Unix socket 残留已修复：仅回收当前用户私有目录、私有权限、拒绝连接且探测前后 inode 一致的 socket；活动端点、普通文件、符号链接和替换竞态均保留。
+- 连续宿主读取使用新随机 host session，经 endpoint proof 和 session_begin 确认，EOF 清理自己的资源，避免过期隐式会话造成 session_ended。
+- r4 原生 hide 事件先于 isVisible 更新的真实时序已有失败回归和修复；hide/minimize 直接设置拥有者隐藏状态，show/restore 延迟布局同步。
 
-## 验证
+## 自动化与构建
 
 证据目录：`/Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4`。
 
-| 检查 | 结果与证据 |
+| 检查 | 最终结果 / 证据 |
 | --- | --- |
-| 商业完整测试 | 262 文件通过，1 文件跳过；3290 项通过、18 跳过；`commercial-acceptance-final.log` |
-| 社区隔离测试 | 1682 项通过、18 跳过；`community-tests.log`；在独立副本运行，不清理整合 overlay |
-| 外层脚本 | 374 项通过；`outer-scripts-verified.log` |
-| Electron 控制层 fixture | 正常退出并 PASS；独立 userData；真实 preload/IPC、陌生 sender、任务目标、预览迟到帧、收起不停止和清理；`electron-fixture-isolated.log` |
-| 新编译原生 helper | 固定上游 `625118a9076e51da2f57b6a5d475972030197443` 加本候选补丁；真实 endpoint proof、鉴权拒绝、MCP、窗口任务隔离及不支持操作拒绝检查通过；`native-*-verified.log` |
-| 原生宿主单元测试 | `cua-driver`、contract、core、macOS 的 lib/bin 1292 项通过、2 跳过；`native-host-unit-verified.log`。直接测试整个上游 workspace 会因 Linux 专用测试在 macOS 引用 cfg 排除模块而编译失败，记录于 `native-unit-verified.log`；未计作全平台通过 |
-| 构建 | 生产 main/renderer 构建成功；现存大 chunk 提示；`package-build.log` |
-| 边界/pin | import boundary、app data dir、overlay 检查及 `check:pin` 通过；基座脏文件均为 overlay 同步产物 |
-| TypeScript / ESLint | 无新增错误。全仓主进程 TypeScript 仍有基线 8 个错误；ESLint 从基线 70 个降至 64 个，无新增错误族。全仓静态检查未全绿，不声称通过；`tsc-main-*.log`、`eslint-*.json` |
+| 商业完整测试 | 3302 通过、18 跳过；263 文件通过、1 跳过；`commercial-r4-verified.log` |
+| 社区隔离测试 | 1682 通过、18 跳过；独立副本，不清除整合 overlay；`community-tests.log` |
+| 外层脚本 | 375 通过；含上游共享输入缓存与 Windows MSVC 链接器优先级回归；`outer-scripts-upstream-0.38.0-final.log` |
+| macOS 原生测试 | driver/contract/core/macOS 的 lib/bin 2145 通过、8 跳过；`upstream-0.38.0-host-tests.log` |
+| 原生协议 | 新 helper endpoint proof、鉴权拒绝、MCP、窗口隔离与撤权通过；`native-0.38.0-*.log`；Windows 交互桌面 session 2 检查通过，SSH session 0 的 GUI 失败不计通过 |
+| 构建与包 | macOS release 与 Windows 真机 MSVC release、生产 main/renderer、NSIS/MSI 构建通过；最终 asar 与入口/资源摘要核对一致 |
+| 静态 / 边界 | 修改文件 ESLint 无错误；主进程 TypeScript 仍有 8 个基线错误，不宣称全仓静态检查全绿；pin、overlay、导入与数据目录边界检查通过 |
+
+原 Electron fixture 覆盖 preload/IPC、陌生 sender、任务目标、预览迟到帧与清理。新增主窗口内视图另有 6 项生命周期回归，以及下述双平台真实窗口检查，不将旧 fixture 冒充新版独立端到端证据。
+
+## 真机安装与行为
+
+仅使用指定 mac-dbg 和 win-dbg；未在当前工作电脑安装或运行验收包。两台均保留旧应用和数据库，模型/账号密钥不回传。真实任务沿正常客户端聊天，使用设备现有 GLM-5.3-Flash；没有新增模型配置要求。
+
+| 项目 | mac-dbg | win-dbg |
+| --- | --- | --- |
+| 设备 | macOS 26.5.1 / arm64，louis，电脑 4418 | Windows 11 Pro 26200 / x64，soddygo，交互 session 2，电脑 soddy 4499 |
+| 真实安装 | 原 3.0.21 已备份；最终 r4 已装 `/Applications/Nuwax.app` | 原 ASAR 3.0.22-beta.2 已备份；NSIS 原路径升级为 3.0.22，安装器 exit 0 |
+| 驱动 | 公司同 Team helper，0.38.0；现有辅助功能/录屏授权有效 | MSVC helper 0.38.0；daemon/策略/gateway 及交互原生边界自检通过 |
+| Agent 操作 | 聊天 1742493；任务 df9e2b40：TextEdit 观察 → set_value → 重新观察，正文完全等于 `Computer Use 3.0.22 mac-dbg 0.38.0 PASS` | 聊天 1742520；任务 1eb19caa：Notepad UIA 观察 → set_value → diff 复核，正文完全等于 `Computer Use 3.0.22 win-dbg 0.38.0 PASS` |
+| 操作判定 | 3 步，0 拒绝/不确定/越权；后台 value_readback | 3 步，0 拒绝/不确定/越权；写入当下 effect=unverifiable，后续真实观察确认 2 行预期变化，不能只据写入返回判断成功 |
+| 提示归属 | 真 hide/close-to-tray/show/minimize/restore 均同步，只有主窗口内视图 | 同样全部通过；只有 1 个 BrowserWindow，子视图在主窗口边界内 |
+| 接管/停止 | 实际预览按钮，前台切到验收 TextEdit；userTakingControl → userStopped | 实际预览按钮，交互桌面 GetForegroundWindow=60293810，与验收 Notepad 相同；userTakingControl → userStopped |
+| 活动任务退出 | helper SIGSTOP，暂停任务仍存在时正常退出：主进程 2.262s、helper 1.617s、全部 26 个相关进程 7.057s 内结束；重启旧 socket 安全恢复 | 存在 paused 任务 (userTakingControl) 与 2 个 helper 进程时退出更新：旧主进程 29.774s、helper 20.324s~21.153s、全部 28 个关联进程 29.774s 内全部退出，无残留进程；update-r4-result.json |
+| 更新交接 | loopback 源真实下载、签名校验、Squirrel 替换与重启；旧主进程/helper/12 个相关进程全部结束，最终 ASAR 一致；随后普通退出 0.329s | loopback 源真实下载安装，NSIS 静默交接与重启；全部 28 个旧进程退出，新进程 PID 25668 成功以 --updated 启动，ASAR SHA256 (a3b9babb...) 与构建产物完全一致 |
+| 默认 OFF 收尾 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；最终显式关闭，原 Beta 订阅已恢复 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；设置页 UI 明确显示“● 已关闭”，截图 win-r4-settings-default-off.png，单次计划任务 Nuwax-CUA-Acceptance-20261022 已注销 |
+
+Windows 首轮模型声称 CUA 未加载；实际 ACP 配置、relay 进程和工具发现均存在。让模型实际调用 `mcp__cua__get_window_state` 后正常触发选窗并完成任务，没有改模型配置或绕过工具。相关 nuwax-openui/ask-question 的连接失败仍是独立问题，不将其隐藏，也不阻断本次 CUA 三步验收。
+
+两台更新交接测试仅把 updater.currentVersion 在内存模拟为 3.0.21，实际运行应用均为 3.0.22。用于证明真实下载、退出清理、安装器替换和重启，不冒充真实语义旧版本自动升级。Windows beta.2 → 3.0.22 则另有实际 NSIS 安装升级证据。
+
+## 包、截图与验收边界
+
+最新包和源码/依赖 pin 见 [包摘要](20261022-computer-use-3.0.22-package.json)、证据目录 `acceptance-package.json` 与 `SHA256SUMS`；r1/r2/r3 为历史候选，不能用于最终验收。
+
+- Mac：`Nuwax-3.0.22-Computer-Use-acceptance-r4-mac-arm64.zip`，704205874 bytes，SHA256 `66e53176b6106bf6e7a8232299085fb94e621cc4f15853e402200f939a336616`；公司 Developer ID 签名，未公证。
+- Windows：`Nuwax-3.0.22-Computer-Use-acceptance-r4-win-x64.exe`，950255569 bytes，SHA256 `d712be18e2f57e96128554876662bd339ad69cc70841be525478272e6cf151ef`；本地 unsigned NSIS 验收包。MSI 构建完成但未安装验收。
+- 关键截图在 `mac-dbg-evidence/mac-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result,textedit-result}.*` 和 `win-dbg-evidence/win-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result,update-installer}.*`。均为指定真机真实页面，Windows initial 截图选择电脑前的旧状态不作为验收图。
+- 尚未完成物理权限卡片拖放、多屏/DPI 与长时间稳定性；不声称全应用兼容、Windows 正式签名或全平台发布就绪。未创建 release/tag，未改线上更新指针。
 
 ## 整批质量自查
 
-按 `pre-commit-quality-review` 三问与 `REVIEW.md` 五遍检查本次全部集成差异；这是 writer 自查，不是 PR 自批。
-
-1. 内聚：CUA 状态、执行额度、取消、原生清理归属 `features/computer-use`；统一注册位于 `index.ts:26`，退出资源位于 `computerUse.ts:1071`，调用方只调用通用生命周期。已修复服务停止悬挂和原生终止无强杀的发现项。
-2. 分层：主进程特性通过 `_kit/types.ts`、`ports.ts` 和 `services/featureHost.ts:38` 获取宿主能力；renderer 与 preload 依赖共享契约，ACP 只使用通用会话参与者。删除旧 `services/cua` 与 `ipc/cuaRuntimeHandlers` 入口，避免重复注册。helper 权限适配在 `computer-use/index.ts:36` 注册、dispose 对称释放。
-3. 维护：原生补丁只有一个构建输入；任务 ID/绑定/epoch 由宿主管理；预览独立于模型观察，不入观察额度或磁盘。测试覆盖越权、迟到恢复、暂停、撤权/drain、默认关闭与有限等待。发现并恢复 local-files 的 `lockedOff` 边界。
-
-五遍复核：竞态与失败路径有回归；受信 IPC 与精确窗口/权限主体未放宽；共享协议、preload、UI 和四语言同步；代码仅在外层 overlay；测试记录区分自动化、合成 Electron 与真实设备。原生强杀回归在 `edd7850a` 先暴露失败，`658b915c` 修复后通过。
-
-结论：本批次相关自动化门通过，可作为本地验收候选；全仓既有静态检查债务保留，正式发布仍需安装包和真实升级验收。
-
-## 包与用户验收
-
-Mac arm64 3.0.22 验收包、整合源码 bundle、签名/版本/资源核验结果及 SHA256 统一记录于证据目录的 `acceptance-package.json`、`SHA256SUMS`；仓内另存 [包与真机摘要](20261022-computer-use-3.0.22-package.json)。ZIP 为 718541199 字节，SHA256 `6bc51e0f912b6d1bc2f2c1e92849f96839d78679d5b9c07d07617f55b5efe152`。包使用公司 Developer ID 签名，未公证；本次未创建 release/tag 或修改线上更新指针。
-
-### mac-dbg 真机检查点
-
-设备为 `mac-dbg` / macOS 26.5.1 (25F80) / arm64，用户 louis。原 `/Applications/Nuwax.app` 为 3.0.21，原程序和数据库已保留在该机 `Downloads/cua-3.0.22-acceptance-20261022/backup`；数据库备份留在设备，不回传。新包传输前后 SHA256 相同，安装后深度签名校验通过。当前电脑未安装或启动该验收包做真机测试。
-
-| 真机检查 | 结果及限度 |
-| --- | --- |
-| 默认关闭 | 保留账号和模型配置，仅移除已备份的历史开关字段进行测试：enabled=false、running=false、mcpInjected=false，无 helper 运行 |
-| 显式启用 | 成功安装/升级固定路径 helper；辅助功能和屏幕录制均 granted；daemon、策略、gateway 自检通过；多窗口开关开启成功 |
-| 权限 UI | 从真实菜单打开设置页，无白屏；权限引导浮层显示 5 项主体及 2 项 helper 授权；独立拖拽卡片实际显示/关闭。未将此记录等同于完成 System Settings 的物理拖放 |
-| 视觉连接 | 设备现有 glm-5.3-flash 配置，真实图像请求通过，13672ms；不读取或导出密钥 |
-| 原生目标窗口 | 独立 helper 测试进程、独立随机端点及自生成令牌，仅作用于本次创建的 TextEdit 文档：绑定、960×618 目标预览、146 元素观察、后台写入 PASS、重新观察确认、revoke/drain 和撤权后拒绝均通过。该项不冒充 Agent 会话端到端通过 |
-| 正常退出 | CUA 和多窗口开启、helper 运行时发送正常退出信号；主进程 0.628s 结束，记录的全部 17 个相关进程 5.549s 内结束，剩余 0；`quit-enabled.json` |
-| 更新交接 | 本机 loopback 更新源，运行时仅将 updater.currentVersion 模拟为 3.0.21，实际正在运行的是 3.0.22 候选；通过产品 check/download/安装前清理与真实 Squirrel 替换，helper 停止、旧主进程退出、新主进程重新启动。未改签名包，也未触碰线上更新源 |
-| 更新后代码 | 安装版本仍为 3.0.22，深度签名校验通过，app.asar SHA256 为 `f2fa1a8bcea4ef6e6552ee277643c08b3bf5d073d1fc71cf53ae40a07fbfd982`，与构建候选一致 |
-| Agent 完整任务 | 默认 Claude Code 返回 Authentication required，系统授权完成后仍复现；用户正在该机配置可用的会话模型。未记为通过 |
-
-真机原始结果与截图在证据目录 `mac-dbg-evidence/`，该机的原始文件保留于 `Downloads/cua-3.0.22-acceptance-20261022/`。更新测试期间临时使用 stable 订阅及本机 feed，原 Beta 订阅已单独记录，收尾时恢复；最终 CUA 开关应保持关闭。
-
-剩余：使用有效会话模型验证多窗口任务、画中画、暂停/接管/停止及活动任务退出；权限卡片的真实系统设置拖放；Windows 安装/更新、MSVC 签名包、DPI/多屏和长时间运行。旧历史基准的未完成项和浏览器后台滚动能力边界见原始记录。
+按 pre-commit-quality-review 三问与 REVIEW.md 五遍检查全部集成差异（writer 自查，不自批 PR）：功能状态/预算/撤权/清理内聚于 CUA；renderer/preload 依赖共享契约，特性通过通用宿主端口，ACP 只依赖通用会话参与者；唯一原生补丁、固定版本、严格工具白名单与独立预览可维护。旧 CUA 注册入口清除，local-files lockedOff、登录及更新边界保留。真实发现的退出悬挂、旧 socket、host session 和 hide 时序均先有失败证据，再修复并回归。

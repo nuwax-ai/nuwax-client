@@ -566,7 +566,7 @@
     "driftDisposition": "6d0082c7 is an ancestor of 0f16fc665b; only source documentation changed after snapshot and has been copied verbatim",
     "at": "2026-10-22T09:30:57.109799+00:00"
   },
-  "runtimeCommit": "658b915c",
+  "runtimeCommit": "9528d28d0c8fd30439da7c02503a01172da7ac87",
   "sourceSnapshotSha256": "0161eeb7569d3582d46fa622ea87a500109b2f35aedbc7196346493c8a61dc2f",
   "selectedFileDisposition": [
     {
@@ -1683,5 +1683,13 @@
       "action": "remove migrated old entry",
       "absentInCandidate": true
     }
-  ]
+  ],
+  "r4FinalAudit": {
+    "worktreeAudit": "/Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4/final-worktree-head-audit-r4.json",
+    "sourceBytes": "/Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4/final-source-bytes-r4.json",
+    "noAdditionalCuaCodeDrift": true,
+    "supersededPresentation": "User requested main-window-contained controls; external badge registration and independent control window replaced, source preserved",
+    "upstreamVersion": "0.38.0",
+    "upstreamCommit": "85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19"
+  }
 }
