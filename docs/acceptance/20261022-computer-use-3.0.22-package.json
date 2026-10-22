@@ -1,0 +1,97 @@
+{
+  "at": "2026-10-22T09:35:10.169Z",
+  "version": "3.0.22",
+  "platform": "darwin",
+  "arch": "arm64",
+  "app": "/Users/apple/.codex/worktrees/computer-use-3-0-complete/nuwax-client/release/3.0.22-cua-acceptance-signed/mac-arm64/Nuwax.app",
+  "runtimeCommit": "658b915c6",
+  "pins": {
+    "nuwa-electron-shell": "d12d001a0d51e28513cba2b60e76413275cad161",
+    "nuwax": "a420b1080e0b876300d5577efd54702e3f1ede55",
+    "nuwax-dist": "c58cc537db1d6c58540518a69ee95f2733746637"
+  },
+  "upstream": "625118a9076e51da2f57b6a5d475972030197443",
+  "patchSha256": "f3636e00f59c55fd79814cfde702d54e6d23c6a29e5a462f291bf2afd37920d2",
+  "helperSha256": "80e14df007ceaa30376bdd2f45f0a76dda0212055b6a9e13eeaab42f6b6f7f04",
+  "asarSha256": "f2fa1a8bcea4ef6e6552ee277643c08b3bf5d073d1fc71cf53ae40a07fbfd982",
+  "entryHashes": {
+    "dist/main/main.js": "1380360717f9caa1729733913c87673e45d153bd89df614881d201ae6f789a4a",
+    "dist/preload/index.js": "5853eca2965ea2c994558135f7cbc0b82d8c77293a1bf7766378b98e52a02c04",
+    "dist/preload/cuaControls.js": "ad2e40f87dfe7cad3f1d4fe38ed2e7b058bc5bab7d11619cb8ab28fcc1d12cf8",
+    "dist/preload/permissionChip.js": "33b082551318095beec50f862c65633a5742197eae50caa90a56efee3595c378"
+  },
+  "resourceDirectories": [
+    "app-update.yml",
+    "app.asar",
+    "app.asar.unpacked",
+    "better-sqlite3",
+    "capture",
+    "claude-code-acp-ts",
+    "computer-use",
+    "icon-dock.png",
+    "icon.icns",
+    "icon.ico",
+    "icon.png",
+    "lanproxy",
+    "locales",
+    "mcp-proxy-ts",
+    "node",
+    "nuwax-codex-acp-ts",
+    "nuwax-dist",
+    "nuwax-file-server",
+    "nuwaxcode",
+    "ripgrep",
+    "third-party",
+    "tray",
+    "ttyd",
+    "uv"
+  ],
+  "signatures": {
+    "app": "Executable=/Users/apple/.codex/worktrees/computer-use-3-0-complete/nuwax-client/release/3.0.22-cua-acceptance-signed/mac-arm64/Nuwax.app/Contents/MacOS/Nuwax\nIdentifier=com.nuwax-ai.nuwax\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=446 flags=0x10000(runtime) hashes=3+7 location=embedded\nVersionPlatform=1\nVersionMin=786432\nVersionSDK=1704192\nHash type=sha256 size=32\nCandidateCDHash sha256=18647cfe595e50f9ea2528bf674ec89b277d26e0\nCandidateCDHashFull sha256=18647cfe595e50f9ea2528bf674ec89b277d26e01fd4462a1b934c1fcbb3b6e6\nHash choices=sha256\nCMSDigest=18647cfe595e50f9ea2528bf674ec89b277d26e01fd4462a1b934c1fcbb3b6e6\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=16384\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=18647cfe595e50f9ea2528bf674ec89b277d26e0\nSignature size=9045\nAuthority=Developer ID Application: Chengdu Xspace Intelligent Technology Co., Ltd. (89GQ2RJVW7)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=Oct 22, 2026 at 17:34:02\nInfo.plist entries=35\nTeamIdentifier=89GQ2RJVW7\nRuntime Version=26.1.0\nSealed Resources version=2 rules=13 files=27628\nInternal requirements count=1 size=180\nTotal signatures=1\nChosen signature=1",
+    "helper": "Executable=/Users/apple/.codex/worktrees/computer-use-3-0-complete/nuwax-client/release/3.0.22-cua-acceptance-signed/mac-arm64/Nuwax.app/Contents/Resources/computer-use/Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use\nIdentifier=com.nuwax-ai.nuwax-computer-use\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=62635 flags=0x10000(runtime) hashes=1946+7 location=embedded\nVersionPlatform=1\nVersionMin=851968\nVersionSDK=1704448\nHash type=sha256 size=32\nCandidateCDHash sha256=4a8d843106eaf677d2bbefeaadb5e885f380fa2f\nCandidateCDHashFull sha256=4a8d843106eaf677d2bbefeaadb5e885f380fa2f833ba807fbc0ffa670a97473\nHash choices=sha256\nCMSDigest=4a8d843106eaf677d2bbefeaadb5e885f380fa2f833ba807fbc0ffa670a97473\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=22921216\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=4a8d843106eaf677d2bbefeaadb5e885f380fa2f\nSignature size=9045\nAuthority=Developer ID Application: Chengdu Xspace Intelligent Technology Co., Ltd. (89GQ2RJVW7)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTimestamp=Oct 22, 2026 at 17:33:37\nInfo.plist entries=11\nTeamIdentifier=89GQ2RJVW7\nRuntime Version=26.2.0\nSealed Resources version=2 rules=13 files=1\nInternal requirements count=1 size=192\nTotal signatures=1\nChosen signature=1"
+  },
+  "notarized": false,
+  "published": false,
+  "defaultEnabled": false,
+  "preserveExplicitUserOptIn": true,
+  "verificationLog": "package-verification.log",
+  "tests": {
+    "commercial": {
+      "passed": 3290,
+      "skipped": 18
+    },
+    "community": {
+      "passed": 1682,
+      "skipped": 18
+    },
+    "outerScripts": {
+      "passed": 374
+    },
+    "nativeHost": {
+      "passed": 1292,
+      "ignored": 2
+    }
+  },
+  "zip": {
+    "path": "/Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4/Nuwax-3.0.22-Computer-Use-acceptance-mac-arm64.zip",
+    "sha256": "6bc51e0f912b6d1bc2f2c1e92849f96839d78679d5b9c07d07617f55b5efe152",
+    "bytes": 718541199
+  },
+  "remoteAcceptance": {
+    "host": "mac-dbg",
+    "os": "macOS 26.5.1 (25F80)",
+    "arch": "arm64",
+    "installedPath": "/Applications/Nuwax.app",
+    "fromVersion": "3.0.21",
+    "installedVersion": "3.0.22",
+    "asarSha256AfterUpdate": "f2fa1a8bcea4ef6e6552ee277643c08b3bf5d073d1fc71cf53ae40a07fbfd982",
+    "normalQuitMainSeconds": 0.628,
+    "normalQuitOwnedProcessesGoneSeconds": 5.549,
+    "remainingOwnedProcesses": 0,
+    "updateHandoff": "passed on local-only feed; updater currentVersion simulated as 3.0.21; actual signed 3.0.22 payload installed and relaunched",
+    "visionModel": "glm-5.3-flash",
+    "visionTestPassed": true,
+    "nativeWindowReadWriteAndRevoke": "passed; isolated helper harness on real TextEdit window",
+    "agentTask": "pending valid conversation model; user configuring on mac-dbg"
+  }
+}

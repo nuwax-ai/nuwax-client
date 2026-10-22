@@ -162,3 +162,10 @@ Mac 修复后 **6/7**；这是试点样本，不是稳定成功率。Windows 本
 - 相关商业主进程/预览 40 项、renderer 控件 9 项共 49 项通过，主进程和 renderer 构建、import 边界及 overlay 一致性检查通过；`.cache/cua-pip-refinement/` 保存日志和截图。按 `REVIEW.md` 检查一次，复用未受影响的原生与社区隔离结果；没有发布或提交。
 
 视觉证据（合成任务的真实 Electron 渲染）：[展开与悬停](evidence/20261021-cua-pip-expanded.png)、[收起胶囊](evidence/20261021-cua-pip-compact.png)。
+
+## 2026-10-22 Mac 7×5 重复集（中断于第 5 轮，29/35 已记录）
+
+- 运行：desktop-v1.1、background+hybrid、glm-5.3-flash、WIP 助手（`mac-7x5-01.json`）；第 5 轮 F01 进行中被人工停止，该次按 runCancelled 记录、不计能力口径。
+- 有效结果 28 次：24 通过，无人接管成功率 85.7%（29/35 口径为 68.6%，completed:false）。耗时 P50 66.9s / P95 156.6s，平均工具调用 5.4 次。第 1 轮 7/7 全过（含 F04）。
+- 分任务：F01 4/4、F02 4/4、F03 3/4（1 次 timeLimit）、F04 1/4（2 次 foreground_required 拒绝 + 1 次结果不符，与 Chromium 后台滚动能力边界一致）、F05 4/4、F06 4/4、N01 4/4。
+- 缺口：第 5 轮 6 项未跑 + F01 第 5 次作废，待补一次 7×1 完成集。

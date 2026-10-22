@@ -1,0 +1,1687 @@
+{
+  "at": "2026-10-22T09:18:31.730606+00:00",
+  "baseline": "0f16fc665b",
+  "candidateBranch": "feat/computer-use-3.0.22-integration",
+  "preservedSnapshot": "286916f31664dd8d68c89cb4584c4c964af59f7b",
+  "worktreeCount": 53,
+  "worktrees": [
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client",
+      "head": "0f16fc665b34ef7570ce81ee3a5f51b04855b3fe",
+      "branch": "refs/heads/fix/stable-3.0.22",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/9a45/nuwax-client",
+      "head": "2eac9a1568921927bc28dd9090a704a1fd70166e",
+      "branch": "refs/heads/codex/update-ready-copy",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/automatic-local-ports/nuwax-client",
+      "head": "19288304b44d32e4b703e64fa55e7098d58efbe6",
+      "branch": "refs/heads/feat/automatic-local-ports",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/automatic-ports-3-0/nuwax-client",
+      "head": "30dc17950140b17f1402ef8cfb46c9ce58213b84",
+      "branch": "refs/heads/feat/automatic-ports-3.0",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/beta6-complete-20261018/nuwax-client",
+      "head": "d5101e91fda373a0659e1ce045f933294e9a61dc",
+      "branch": "refs/heads/codex/windows-permissions-update-feedback",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/client-3-1-beta/nuwax-client",
+      "head": "9c6ac5136d0966fed3032246e04abfabad0f1ff1",
+      "branch": "refs/heads/chore/3.1-beta-source-freeze",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/client-3-1-beta2-repairs/nuwax-client",
+      "head": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+      "branch": "refs/heads/chore/3.1-beta3-publication",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/client-3-1-beta4/nuwax-client",
+      "head": "3b1d4120ed11bd5af66ce077a668cf5dfc61ef62",
+      "branch": "refs/heads/chore/3.1-beta5-publication",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/computer-use-multiwindow/nuwax-client",
+      "head": "748748a930e44e5088e7b06f07fb5005dadfc51c",
+      "branch": "refs/heads/feat/computer-use-multiwindow",
+      "classification": "preserved-and-integrated",
+      "relatedUncommitted": [
+        " M docs/20260918-nuwax-permissions-matrix.md",
+        " M docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/computerUse.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/computerUse.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/controlWindow.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/index.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/mcpGateway.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/mcpGateway.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/runtimeHandlers.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/features/computer-use/taskController.ts",
+        " M overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.ts",
+        " M overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.ts",
+        " M overlay/crates/agent-electron-client/src/preload/features/computer-use.ts",
+        " M overlay/crates/agent-electron-client/src/preload/features/computer-use/controlPreload.ts",
+        " M overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.test.tsx",
+        " M overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.tsx",
+        " M overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaControls.test.tsx",
+        " M overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaControls.tsx",
+        " M overlay/crates/agent-electron-client/src/renderer/styles/components/PermissionsPage.module.css",
+        " M overlay/crates/agent-electron-client/src/shared/features/computer-use/contract.ts",
+        " M overlay/crates/agent-electron-client/src/shared/features/computer-use/presentation.ts",
+        " M overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.test.ts",
+        " M overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.ts",
+        " M plans/20261013-computer-use-product-plan.md",
+        " M scripts/acceptance/cua-controls.cjs",
+        " M scripts/computer-use/bench/README.md",
+        " M scripts/computer-use/build-helper.sh",
+        " M scripts/computer-use/build-helper.test.sh",
+        " M specs/computer-use-product.md",
+        "?? docs/acceptance/20261019-computer-use-multiwindow.md",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.test.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/taskPolicy.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/taskPreviewWindow.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.test.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.ts",
+        "?? overlay/crates/agent-electron-client/src/main/features/computer-use/windowBadges.ts",
+        "?? overlay/crates/agent-electron-client/src/main/services/permissionDragChip.test.ts",
+        "?? overlay/crates/agent-electron-client/src/main/services/permissionDragChip.ts",
+        "?? overlay/crates/agent-electron-client/src/preload/features/permissionChip.ts",
+        "?? overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaTaskPanel.tsx",
+        "?? plans/20261021-computer-use-acceptance-supplement.md",
+        "?? scripts/computer-use/bench/real-acp.mjs",
+        "?? scripts/computer-use/bench/real-anchor.swift",
+        "?? scripts/computer-use/bench/real-core.mjs",
+        "?? scripts/computer-use/bench/real-fixture.mjs",
+        "?? scripts/computer-use/bench/real-host.mjs",
+        "?? scripts/computer-use/bench/real-model.mjs",
+        "?? scripts/computer-use/bench/real-run.mjs",
+        "?? scripts/computer-use/bench/real-runtime.ts",
+        "?? scripts/computer-use/real-bench.test.mjs",
+        "?? scripts/computer-use/verify-helper-window-tasks.cjs"
+      ]
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/cua-vlm-test-3-0/nuwax-client",
+      "head": "6d0082c7ae2b4b3ddc8150f856bf07f8648965a2",
+      "branch": "refs/heads/fix/windows-fresh-install-path",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/host-capabilities-clipboard/nuwax-client",
+      "head": "1ea92ff36ed6a5ddcb47542a4e85514056eef520",
+      "branch": "refs/heads/codex/host-capabilities-clipboard",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/login-service-errors/nuwax-client",
+      "head": "2f34e8bc9ee5e9964ec8414a811ccfee09ec04d3",
+      "branch": "refs/heads/release/v3.0",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/merge-codex-release-20261014/nuwax-client",
+      "head": "c2f7df5f692f3d64fd5f7c3a25daf480100fe2b2",
+      "branch": "detached",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/nuwax-harness-poc/nuwax-client",
+      "head": "3b1d4120ed11bd5af66ce077a668cf5dfc61ef62",
+      "branch": "refs/heads/feat/nuwax-harness-integration",
+      "classification": "excluded-by-user-preserved-at-source",
+      "relatedUncommitted": [
+        " M overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.cua.test.ts",
+        " M overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts"
+      ]
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/pi-agent-isolation/nuwax-client",
+      "head": "02f17e66f0b59cd147211ed9524ce52d791bcdff",
+      "branch": "refs/heads/codex/pi-agent-acp-wip",
+      "classification": "excluded-by-user-preserved-at-source",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/release-3-0-17-beta/nuwax-client",
+      "head": "9520f6557c8d3cad04e9474626e5fcb4688315e7",
+      "branch": "refs/heads/codex/finder-display-name-zh-locales",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/release-3-0-20-beta/nuwax-client",
+      "head": "60dbaeaa693f9aa0002e46e440c3d5dacabce9a0",
+      "branch": "refs/heads/chore/3.0.20-beta3-publication",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/release31-complete/nuwax-client",
+      "head": "61703d91269e9fa04ac43a18ba23a930ab3d9b65",
+      "branch": "refs/heads/chore/3.1-complete-integration",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/settings-white-screen/nuwax-client",
+      "head": "4654c07b5282a184c58d8527ca4a2f371e70c665",
+      "branch": "refs/heads/fix/settings-platform-white-screen",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/stable-3-0-16-hotfix/nuwax-client",
+      "head": "d7c36eb3b0e20620f0d4f8853c0abbd784df9d45",
+      "branch": "refs/heads/codex/stable-3-0-16-hotfix",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/system-app-name/nuwax-client",
+      "head": "ec951c48d4a772957993122c7768598856270f70",
+      "branch": "refs/heads/codex/system-app-name",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/win10-1511-terminal/nuwax-client",
+      "head": "97d469d795ced00393327c2ca0d9fccabfa30ada",
+      "branch": "refs/heads/codex/win10-1511-terminal",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/windows-install-performance-3-0/nuwax-client",
+      "head": "a34ec02a7f2eeacb638987d59dd14019bb437b7f",
+      "branch": "refs/heads/fix/windows-install-performance-3.0",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/windows-installer-recovery/nuwax-client",
+      "head": "611381476359e4e092e2d984451e8086f00a56aa",
+      "branch": "refs/heads/fix/windows-installer-current-user-scope",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/windows-uninstall-performance/nuwax-client",
+      "head": "c7f6eea40c184a13df2ef450e7e9f9685f2ab179",
+      "branch": "refs/heads/codex/windows-custom-install-path",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/.codex/worktrees/windows-uninstall-readonly/nuwax-client",
+      "head": "6a7e6678f08444919531279125176745b7b4773c",
+      "branch": "refs/heads/fix/windows-uninstall-readonly",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/Documents/nuwax-stack-work/33300105/worktrees/nw151-retry-confirm",
+      "head": "f953eb6a6186c9014ba222d49029c7a5b34de110",
+      "branch": "refs/heads/nw151-401-retry-confirm",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/Documents/nuwax-stack-work/33300105/worktrees/nw173-cua-degrade",
+      "head": "c6a3dde99f81ace9e8c17071d610d94f9a1b258d",
+      "branch": "refs/heads/nw173-cua-cleanup-degrade",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/Documents/nuwax-stack-work/33300105/worktrees/p3-local-files",
+      "head": "46cd3c6d37b2f0760cb21b85c511b3d74d4620dc",
+      "branch": "refs/heads/codex/local-file-access",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-agent-runner-guard",
+      "head": "e315ed9c7a3a53c5ba1b53318299ed954b3936ba",
+      "branch": "refs/heads/codex/legacy-agent-runner-guard",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-beta5-windows-acceptance",
+      "head": "7452b2d00e3613eb5c1bd92d277e3f7e0d940c39",
+      "branch": "refs/heads/codex/beta5-windows-acceptance",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-computer-use-icon",
+      "head": "c57e43b5ba3cecc59d77c3dd0b627032539e4628",
+      "branch": "refs/heads/codex/computer-use-app-icon",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-fix-uninstall-hang",
+      "head": "4bae9a1205f89162fd370130bdb31c975d01de0b",
+      "branch": "refs/heads/fix/win-uninstall-slow-preflight",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-handoff",
+      "head": "88b51229c18970038cbf99eca77c3cc4aae12020",
+      "branch": "refs/heads/codex/handoff-receipt-20261017",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-host-navigation",
+      "head": "611ffcde3d86ced984dff71fae03ea991e89d662",
+      "branch": "refs/heads/codex/host-navigation-boundary",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-linux-pin",
+      "head": "1ea92ff36ed6a5ddcb47542a4e85514056eef520",
+      "branch": "detached",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-nsis-task-crash",
+      "head": "ed105dea9d3582975b2a730b747f50e52ad91782",
+      "branch": "refs/heads/codex/nsis-task-launch-crash",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-nw044",
+      "head": "765bbbe92be1c95bd45f572e8cfab854eb0f6669",
+      "branch": "refs/heads/codex/nw044-session-status",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-nw050",
+      "head": "38f986d6ea005a80e4aa956c584ae711f0c94b79",
+      "branch": "refs/heads/codex/nw050-prompt-errors",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-open-external",
+      "head": "537f1beed0143d8a8f16d873ab1497fa4a0ee6fd",
+      "branch": "refs/heads/codex/open-external-policy",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-plan",
+      "head": "7039be0e32f31f71c1d2f8004db6c775398b7631",
+      "branch": "refs/heads/feat/plan-mode-mcp",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-stable-3.0.18-code-send",
+      "head": "1a9070b59ae9b70f8c5a449f028d0635a661a664",
+      "branch": "refs/heads/fix/stable-3.0.18-code-send-ticket",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-u1-uninstall",
+      "head": "f80b52f6d2cecde665b640c40bfd3bad1fbc4140",
+      "branch": "refs/heads/codex/windows-uninstall-data",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-update-utf8",
+      "head": "54e6bd5bbec08111474daad277a08ed3f217552c",
+      "branch": "refs/heads/codex/update-metadata-utf8",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-upgrade-restore",
+      "head": "2094f3fc95c8cf1034f2049ba06ea5f1dbe50b75",
+      "branch": "refs/heads/codex/windows-upgrade-restore-unknown",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-upgrade-running-app",
+      "head": "10bbd929f0b0b2f5583d9da42c4879d54f5b377c",
+      "branch": "refs/heads/fix/windows-upgrade-running-app",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-utm-disk-space",
+      "head": "d0c7845f553a00329ab8f6933b3e43ae000d9e92",
+      "branch": "refs/heads/codex/utm-qa-disk-space",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-utm-signing",
+      "head": "12e51c3fc56fc36833e59885611df3636fc13a52",
+      "branch": "refs/heads/codex/utm-windows-signing",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client-windows-integration",
+      "head": "be5e30eb0320020ca0256ccd12d6e20538a02e6b",
+      "branch": "refs/heads/codex/windows-data-security-integration",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client/.claude/worktrees/clever-fermi-a294cb",
+      "head": "af38de001dd5f54c7751472671cdde42d555daa3",
+      "branch": "refs/heads/chore/overlay-merge-pr27-notes",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client/.claude/worktrees/desktop-capability-ports",
+      "head": "a8fe7927eb298e5ffd0359650409308e1bcf23c4",
+      "branch": "refs/heads/refactor/desktop-capability-ports",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client/.codex/worktrees/permission-onboarding",
+      "head": "62fa3c71d92c1b3c4800064146edd604401d28df",
+      "branch": "refs/heads/codex/permission-onboarding",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    },
+    {
+      "worktree": "/Users/apple/workspace/nuwax-client/.codex/worktrees/reenable-local-file-access",
+      "head": "daaf1253b9e4310494d6d547fc47239013d75044",
+      "branch": "refs/heads/codex/reenable-local-file-access",
+      "classification": "no-uncommitted-Computer-Use-code",
+      "relatedUncommitted": []
+    }
+  ],
+  "coverage": [
+    {
+      "area": "product-controls",
+      "sourceCommit": "8e19234c",
+      "behavior": "session authority, budgets, observation/write gate, cancellation, window scope, diagnostics",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "outcome-classification",
+      "sourceCommit": "b865254c",
+      "behavior": "ok/refused/uncertain helper results",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "per-target-observation",
+      "sourceCommit": "afb2ae13",
+      "behavior": "per-target observation credit, no-progress and violation limits",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "gateway-guidance",
+      "sourceCommit": "3e8927c7",
+      "behavior": "tool guidance and refusal accounting",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "browser-window-scope",
+      "sourceCommit": "4b391e7a",
+      "behavior": "browser profile use constrained to the bound window",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "failure-presentation",
+      "sourceCommit": "28556807",
+      "behavior": "no-progress, uncertain results and refused steps",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "single-allowance-owner",
+      "sourceCommit": "220b0616",
+      "behavior": "central allowance invariant and pending call revocation",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "scope-settings",
+      "sourceCommit": "eb05b6a5",
+      "behavior": "scope and diagnostics UI restored",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "vlm-reasoning-errors",
+      "sourceCommit": "2dbc6221",
+      "behavior": "real image verification, reasoning-model response parsing, readable errors",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "helper-identity",
+      "sourceCommit": "69bcd5c6",
+      "behavior": "identity unverified is distinct from missing system permission",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "helper-icon",
+      "sourceCommit": "c57e43b5",
+      "behavior": "canonical commercial app icon",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "permission-guide",
+      "sourceCommit": "62fa3c71",
+      "behavior": "guided permission state and exact subject identity",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "capability-ports",
+      "sourceCommit": "ca89aa34",
+      "behavior": "unified feature lifecycle and ACP session participants",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "multiwindow-preview",
+      "sourceCommit": "61703d91",
+      "behavior": "task registry, bounded preview, revoke/drain/takeover and PiP interactions",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "acceptance-criteria",
+      "sourceCommit": "93c6f078",
+      "behavior": "accepted benchmark and safety criteria",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "cleanup-degradation",
+      "sourceCommit": "b744305b",
+      "behavior": "optional CUA failure must not fail service restart",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    },
+    {
+      "area": "claude-complete-snapshot",
+      "sourceCommit": "286916f3",
+      "behavior": "permissions drag UI and Windows bench foreground-anchor preparation",
+      "status": "integrated-or-equivalent-with-3.0-boundaries"
+    }
+  ],
+  "explicitExclusions": [
+    "nuwax-harness engine/product",
+    "pi-agent engine",
+    "Nuwa Browser integration",
+    "enabling the previously locked local-files feature"
+  ],
+  "preserved3_0": [
+    "NW-151 authentication verification",
+    "automatic ports and cleanup",
+    "legacy Windows terminal compatibility",
+    "current-user installer/UAC fix",
+    "update installation handoff and localized messages"
+  ],
+  "finalRecheck": {
+    "sourceChangedPaths": [
+      "docs/acceptance/20261019-computer-use-multiwindow.md"
+    ],
+    "worktreeHeadDrift": [
+      {
+        "path": "/Users/apple/.codex/worktrees/login-service-errors/nuwax-client",
+        "old": "2f34e8bc9ee5e9964ec8414a811ccfee09ec04d3",
+        "new": "6d0082c7ae2b4b3ddc8150f856bf07f8648965a2"
+      }
+    ],
+    "driftDisposition": "6d0082c7 is an ancestor of 0f16fc665b; only source documentation changed after snapshot and has been copied verbatim",
+    "at": "2026-10-22T09:30:57.109799+00:00"
+  },
+  "runtimeCommit": "658b915c",
+  "sourceSnapshotSha256": "0161eeb7569d3582d46fa622ea87a500109b2f35aedbc7196346493c8a61dc2f",
+  "selectedFileDisposition": [
+    {
+      "path": "docs/20260917-computer-use-integration-v2.md",
+      "from": "docs/20260917-computer-use-integration-v2.md",
+      "action": "merge",
+      "sha256": "283ddfeeb7091eceacc61a7797f7a8bb931740c4138012e0a1aaf1eca2d3ee54"
+    },
+    {
+      "path": "docs/20260918-nuwax-permissions-matrix.md",
+      "from": "docs/20260918-nuwax-permissions-matrix.md",
+      "action": "merge",
+      "sha256": "aa7100624576ce4ec50f6d28d6f0d6f91e26224d7a573e55bbe26bb04fd02868"
+    },
+    {
+      "path": "docs/20260919-computer-use-capability-matrix.md",
+      "from": "docs/20260919-computer-use-capability-matrix.md",
+      "action": "merge",
+      "sha256": "f056b84d58bd2e7e1e833bd59716c74b958c496acf4cbac38bb355dea35c3148"
+    },
+    {
+      "path": "docs/acceptance/20261013-computer-use-product.md",
+      "from": "docs/acceptance/20261013-computer-use-product.md",
+      "action": "merge",
+      "sha256": "d9fe13a8392b5b8d54a829511e9038bb024659fd29a64667a5e6f58a40f9d5cb"
+    },
+    {
+      "path": "docs/acceptance/20261014-computer-use-control-layer.md",
+      "from": "docs/acceptance/20261014-computer-use-control-layer.md",
+      "action": "copy",
+      "sha256": "82239ed3f76bd7e225f0da92d1f92b06dcc96c58c5dca66e03ec0150d4fbe855"
+    },
+    {
+      "path": "docs/acceptance/20261018-computer-use-app-icon.json",
+      "from": "docs/acceptance/20261018-computer-use-app-icon.json",
+      "action": "copy",
+      "sha256": "d02748721c5ccedaddfd797a9d9209d9025f44680daa1bd355d75559218b7db5"
+    },
+    {
+      "path": "docs/acceptance/20261019-computer-use-multiwindow.md",
+      "from": "docs/acceptance/20261019-computer-use-multiwindow.md",
+      "action": "copy",
+      "sha256": "54ece33c4576502f3c3346540332e1845f40e62fa0bef23979331fd5ac0defda"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-after-1791971274300.json",
+      "from": "docs/acceptance/computer-use-bench/results-after-1791971274300.json",
+      "action": "copy",
+      "sha256": "d3f836f9126ce7dd105d76a3221e69c237d386ccac656a66bceab29f19fa7928"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-after-1791971942554.json",
+      "from": "docs/acceptance/computer-use-bench/results-after-1791971942554.json",
+      "action": "copy",
+      "sha256": "353fcfea65b38214501a4738bf9fb2864c8dfe9ea33057324fc138b87a82db5a"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-baseline-v2-1791971103226.json",
+      "from": "docs/acceptance/computer-use-bench/results-baseline-v2-1791971103226.json",
+      "action": "copy",
+      "sha256": "2cdb8047fd27f26af93b6c30fa09d7d4be053b83591550701a164e5ec19b6a94"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-baseline-v2-1791971171442.json",
+      "from": "docs/acceptance/computer-use-bench/results-baseline-v2-1791971171442.json",
+      "action": "copy",
+      "sha256": "873ef2e7abd5ff6bcda5f10f5633e2869ae76fcdf45b45e798706d9154e94d4c"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-window-1791972000654.json",
+      "from": "docs/acceptance/computer-use-bench/results-window-1791972000654.json",
+      "action": "copy",
+      "sha256": "f97e000c348e40cf996da5a8eb8941ceaf1d92510c4f687e20490079a513ab38"
+    },
+    {
+      "path": "docs/acceptance/computer-use-bench/results-window-1791972015019.json",
+      "from": "docs/acceptance/computer-use-bench/results-window-1791972015019.json",
+      "action": "copy",
+      "sha256": "1efa9f0c49ee76025fa2fc152c822f6a09dfee834fee60ed33ba06f2ce086e07"
+    },
+    {
+      "path": "docs/acceptance/evidence/20261021-cua-pip-compact.png",
+      "from": "docs/acceptance/evidence/20261021-cua-pip-compact.png",
+      "action": "copy",
+      "sha256": "720028843bbfef76af06c5dafbe234856b2a1d080476f579cdc8c0aa22061d67"
+    },
+    {
+      "path": "docs/acceptance/evidence/20261021-cua-pip-expanded.png",
+      "from": "docs/acceptance/evidence/20261021-cua-pip-expanded.png",
+      "action": "copy",
+      "sha256": "6a1c7cd42327b5e2283dba5ec7d16bfabd9d0810fe7a4b2ae4bb3766e9cfaf99"
+    },
+    {
+      "path": "docs/acceptance/evidence/20261021-cua-real-bench.json",
+      "from": "docs/acceptance/evidence/20261021-cua-real-bench.json",
+      "action": "copy",
+      "sha256": "e43e1d9144cbea5e50d81dfef6f294ed4bd0cf60c64106a6d743c3654e0dacd6"
+    },
+    {
+      "path": "docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch",
+      "from": "docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch",
+      "action": "merge",
+      "sha256": "f3636e00f59c55fd79814cfde702d54e6d23c6a29e5a462f291bf2afd37920d2"
+    },
+    {
+      "path": "docs/computer-use-poc/poc1-sdk-loop.mjs",
+      "from": "docs/computer-use-poc/poc1-sdk-loop.mjs",
+      "action": "merge",
+      "sha256": "b029b9abf09531e88bdbb549a12cbbbf799959d31c6fc59d5e93fb961245b7ba"
+    },
+    {
+      "path": "docs/computer-use-poc/poc2-vlm-loop.mjs",
+      "from": "docs/computer-use-poc/poc2-vlm-loop.mjs",
+      "action": "merge",
+      "sha256": "e2bd19d06bb9e9e85b1ad0a615267262e58e790a76cd0fcdc929385a11898a7f"
+    },
+    {
+      "path": "docs/computer-use-poc/round-1.png",
+      "from": "docs/computer-use-poc/round-1.png",
+      "action": "merge",
+      "sha256": "66e073f261cbcea82a5b911c668d951b77432d0994b1d77950285bafe1ada5a9"
+    },
+    {
+      "path": "docs/computer-use-poc/round-6.png",
+      "from": "docs/computer-use-poc/round-6.png",
+      "action": "merge",
+      "sha256": "863aeaeafcacfdec87a1c8038d7bb04d33b121e0fc7d3599fbbef984f8732bf4"
+    },
+    {
+      "path": "docs/computer-use-poc/shot-after.png",
+      "from": "docs/computer-use-poc/shot-after.png",
+      "action": "merge",
+      "sha256": "2b7a86d2d51e1d984df16ac52d7d2899077178e2fb20d0e566320d93349f565d"
+    },
+    {
+      "path": "docs/computer-use-poc/shot-before.png",
+      "from": "docs/computer-use-poc/shot-before.png",
+      "action": "merge",
+      "sha256": "dcfca9a299533481b2323f14f6a5ddfd7b14d5b0f99686887e65e170bcdc14fb"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/clear-shot.png",
+      "from": "docs/computer-use-poc/spike-e/clear-shot.png",
+      "action": "merge",
+      "sha256": "5e7a7cf5eee11791d22014888f78cc3cbca69228b755c3181dfe2edb0a1d82b0"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/final-shot.png",
+      "from": "docs/computer-use-poc/spike-e/final-shot.png",
+      "action": "merge",
+      "sha256": "66e073f261cbcea82a5b911c668d951b77432d0994b1d77950285bafe1ada5a9"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/helper-shot.png",
+      "from": "docs/computer-use-poc/spike-e/helper-shot.png",
+      "action": "merge",
+      "sha256": "2b7a86d2d51e1d984df16ac52d7d2899077178e2fb20d0e566320d93349f565d"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/patched-final.png",
+      "from": "docs/computer-use-poc/spike-e/patched-final.png",
+      "action": "merge",
+      "sha256": "863aeaeafcacfdec87a1c8038d7bb04d33b121e0fc7d3599fbbef984f8732bf4"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/signed-final.png",
+      "from": "docs/computer-use-poc/spike-e/signed-final.png",
+      "action": "merge",
+      "sha256": "863aeaeafcacfdec87a1c8038d7bb04d33b121e0fc7d3599fbbef984f8732bf4"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/spike-connect.mjs",
+      "from": "docs/computer-use-poc/spike-e/spike-connect.mjs",
+      "action": "merge",
+      "sha256": "8535711500f50cbf6f0cda1d48706f9ccc5ef96e7dae17a90b3e79275075761f"
+    },
+    {
+      "path": "docs/computer-use-poc/spike-e/spike-full.mjs",
+      "from": "docs/computer-use-poc/spike-e/spike-full.mjs",
+      "action": "merge",
+      "sha256": "5a1e9a76062c625985cb194cf9e601f170809e13b2ca1cc22f858e8e76896555"
+    },
+    {
+      "path": "docs/computer-use-poc/transcript.jsonl",
+      "from": "docs/computer-use-poc/transcript.jsonl",
+      "action": "merge",
+      "sha256": "fa5f53866255d3c1953e915169fdf1f4e1531eb92ea563207a8b9c275861269d"
+    },
+    {
+      "path": "docs/computer-use-poc/vlm-auto-final.png",
+      "from": "docs/computer-use-poc/vlm-auto-final.png",
+      "action": "merge",
+      "sha256": "863aeaeafcacfdec87a1c8038d7bb04d33b121e0fc7d3599fbbef984f8732bf4"
+    },
+    {
+      "path": "docs/computer-use-poc/vlm-auto-round1.png",
+      "from": "docs/computer-use-poc/vlm-auto-round1.png",
+      "action": "merge",
+      "sha256": "36adaa69291ad77943b6f4230f161e65c6ab5dd75038528f88a8aa48760ed219"
+    },
+    {
+      "path": "docs/computer-use-poc/vlm-auto-round4.png",
+      "from": "docs/computer-use-poc/vlm-auto-round4.png",
+      "action": "merge",
+      "sha256": "863aeaeafcacfdec87a1c8038d7bb04d33b121e0fc7d3599fbbef984f8732bf4"
+    },
+    {
+      "path": "docs/computer-use-poc/vlm-auto-transcript.jsonl",
+      "from": "docs/computer-use-poc/vlm-auto-transcript.jsonl",
+      "action": "merge",
+      "sha256": "8248b1ca17a7ab5ed831d9822eb3bbb8e1f3c5fc787a71a06ff203af07d4fb3c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/scripts/build/build-main-esbuild.js",
+      "from": "overlay/crates/agent-electron-client/scripts/build/build-main-esbuild.js",
+      "action": "merge",
+      "sha256": "4a59fd08df33d059243a7a1474b9c9b766d0f95fff64f5d16a13aa51f9e4004f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/_kit/activities.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/_kit/activities.ts",
+      "action": "copy",
+      "sha256": "ca13ee5a8e282d88cc8a96e86e11b08a99c39eedf1ff9caa94649ecf7305f68f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/_kit/agentSessions.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/_kit/agentSessions.ts",
+      "action": "copy",
+      "sha256": "2a3ae50c3df0b9af8d6ede208f4550901f67df93846a30a2f06d525574986fc5"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/_kit/lifecycle.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/_kit/lifecycle.ts",
+      "action": "merge",
+      "sha256": "dfff81ff5a47f547b7ac7ead5930f8df771c0e5d8fe055a81b54b24288b169a9"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/_kit/register.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/_kit/register.ts",
+      "action": "merge",
+      "sha256": "7148b10cebefd248e83a48ecba8d60a0a4f2da79c09fea563aafee421852aec6"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/_kit/types.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/_kit/types.ts",
+      "action": "merge",
+      "sha256": "7d50492de18df7560b7fcdaf3c3e02dfd819fe1773e2573f0d4f6e926c3c567f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/captureService.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/captureService.test.ts",
+      "action": "merge",
+      "sha256": "b6dd31e9176656eb31085fe41ad0a19010c6f608d95568d9e636584861222f01"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/captureService.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/captureService.ts",
+      "action": "merge",
+      "sha256": "6c9125214f76b2b2c416544b45c3cff54236e2607aa57f64f88300b3955688fd"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/index.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/index.test.ts",
+      "action": "merge",
+      "sha256": "97d64beedad5ef7891159757a8028c737ad579b7eb9d52ed681310d6c4e76f53"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/index.ts",
+      "action": "merge",
+      "sha256": "e8b10475012fba2d3df95324789ac8749d0d0f87dcca4df913eb6e7121bef15c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/permissionPrompt.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/permissionPrompt.test.ts",
+      "action": "merge",
+      "sha256": "f96ff5e358071b8fc760a9e00c61e429e4a3abeb0378984dbf1151ec8cc42b2f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/capture/permissionPrompt.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/capture/permissionPrompt.ts",
+      "action": "merge",
+      "sha256": "c463c5b5ac4fd0db56eedb8645a35128241efccdec9f259aaedb0bb60fbb9087"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/computerUse.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/computerUse.test.ts",
+      "action": "merge",
+      "sha256": "8f7aee4e868fec70399a2fb4dbadcbcfe946673932312e002dd1af7a6afe78de"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/computerUse.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/computerUse.ts",
+      "action": "merge",
+      "sha256": "a8eab90e2f7aeb38e5492af77866b065e212de39d5287a0ca446efb748266878"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/controlWindow.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/controlWindow.ts",
+      "action": "merge",
+      "sha256": "e055ec40c26ba8699bd4cf37fde34606ca405b5c9eeb3e767afceeb438f140ae"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/cuaGuidance.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/cuaGuidance.ts",
+      "action": "copy",
+      "sha256": "bbedef8b1f4bf21dc0cef7d8b0d81993714377567a2045e60759875385849323"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/cuaOutcome.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/cuaOutcome.test.ts",
+      "action": "copy",
+      "sha256": "b7675c8d8a366543667f191aebcd442509512e54c2cc64b289fe917b03f3515d"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/cuaOutcome.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/cuaOutcome.ts",
+      "action": "copy",
+      "sha256": "74e7938484677fd5c426387724a9ffe9350e0a7ada6855e23c189acfa9a83d2c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/index.ts",
+      "action": "copy",
+      "sha256": "59691d108586b18a65fd93e83881d01d7f80dd9a0616ff18e98e661d87fd49e7"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/mcpGateway.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway.test.ts",
+      "action": "merge",
+      "sha256": "61c370900f810ba85f514025b134af647143725d382f2cd1e036b063dfdcc635"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/mcpGateway.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway.ts",
+      "action": "merge",
+      "sha256": "b9da5f9b24ae9906925f643fd22e4bcd2019c6b3675fc2a448b302470f16500c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/ports.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/ports.ts",
+      "action": "copy",
+      "sha256": "cbebfd5addcee7a8f7b98d4f4988fc4c66f4a04fe56fa8b01d986bf9f0ddbf74"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.test.ts",
+      "action": "copy",
+      "sha256": "3f55fcd4b91114cd836218ed82b0cf4b440456cb7838c0b1a505720550a20b13"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/previewController.ts",
+      "action": "copy",
+      "sha256": "0ad44569d29775095f50b360f51a8e359a239670055695af4a6b0960c62b996c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/runtimeHandlers.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/cuaRuntimeHandlers.test.ts",
+      "action": "merge",
+      "sha256": "932dc1a7f14d8f7ab699aa0d019e9e2a40bd27473419f07a62ccac007733de42"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/sessionAuthority.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/sessionAuthority.test.ts",
+      "action": "merge",
+      "sha256": "560f4da346d3867d4776cae562c0ee4bb29668c517972e9faeeaf34c4ee66d6e"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/sessionAuthority.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/sessionAuthority.ts",
+      "action": "merge",
+      "sha256": "79d8ebf25917f43af263aa8906c708ecd1dcfd9e0989b94fbd53725f254bf794"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskController.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/taskController.test.ts",
+      "action": "merge",
+      "sha256": "f8a318fea2f34104db8f810bb14a7e50e64eac16bfc28bc9f0f5e6981429470c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskController.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/taskController.ts",
+      "action": "merge",
+      "sha256": "7cb3eee3bc018988374ba2e6c45b0e1f9e852dfea667f368ba1489925f85afae"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskPolicy.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskPolicy.ts",
+      "action": "copy",
+      "sha256": "7d8354808a59b2e8c32668f5c69ccce75cf3b44319096279f048d371f9561a6c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskPreviewWindow.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskPreviewWindow.ts",
+      "action": "copy",
+      "sha256": "e3ef796e5960f06bbded931b82c1df3f408f8e688e5f4d3e55550fb0ff84bc20"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.test.ts",
+      "action": "copy",
+      "sha256": "91d25a8460f6695eb2c0fb9dc556c24370e1082d4d2ec978f1c3b56b3f33c748"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/taskRegistry.ts",
+      "action": "copy",
+      "sha256": "2836b5b9791475da9589b004b508dbd21322b79b8ae28ddc3a985b8e562f6e21"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/vlmDiagnostics.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/vlmDiagnostics.test.ts",
+      "action": "merge",
+      "sha256": "c47e9c715b71c334e5e0ffaf6a81748206c10fb41e434338ef9eef6654307f47"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/vlmDiagnostics.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/vlmDiagnostics.ts",
+      "action": "merge",
+      "sha256": "f9ed7959bb04d8838511ac9f52cff34b5dbaa6583cf61dc18ca5789982afb027"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/windowBadges.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/computer-use/windowBadges.ts",
+      "action": "copy",
+      "sha256": "7a06e0b5946c2c81f2165da7d17151ee1bbdce189c363abc6905450fb389aef7"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/windowScope.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/windowScope.test.ts",
+      "action": "merge",
+      "sha256": "7037dab7fc68343c520829ea4fde195511184b9b1e814c6dbd6e995010b02bd4"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/computer-use/windowScope.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/cua/windowScope.ts",
+      "action": "merge",
+      "sha256": "91d9a6368f5a287b5500b61390fdf7d4994472c64e0d0c6d85abaf635e54c531"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/index.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/index.test.ts",
+      "action": "merge",
+      "sha256": "5abb06d33de4f60bd9e12c5677a3cbfacf239de57ee877d0b3a028dedc9d263d"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/index.ts",
+      "action": "merge",
+      "sha256": "9070ccd28099b16267572cf179e50780f807e442b39633575d8cd7c726acd67a"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/local-files/files.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/local-files/files.ts",
+      "action": "merge",
+      "sha256": "84555ad785e54f441be63637f989981ee7fe1f4b1d0495860b79a0cfb60f5947"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/local-files/index.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/local-files/index.test.ts",
+      "action": "merge",
+      "sha256": "5df09a85159865b88ec370d4ad10dd8cefcfcd994bd20f3898f151b89fcef56a"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/features/local-files/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/features/local-files/index.ts",
+      "action": "merge",
+      "sha256": "4cd743a2857c856d0c5a96ea0a11b7dc3e1dac66c24e7c37223216ad9332e5cc"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/commercialAuth.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/commercialAuth.test.ts",
+      "action": "merge",
+      "sha256": "e626ff56c72f3afdfedc74a7ae5be437a2d637eab7d31bf5a54bc32babfddac3"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/commercialAuth.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/commercialAuth.ts",
+      "action": "merge",
+      "sha256": "bc770305d1065edd230f5bd3bf3231fabe715841d1780427c48d15fb54da0630"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/cuaRuntimeHandlers.ts",
+      "action": "remove",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.computerState.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.computerState.test.ts",
+      "action": "merge",
+      "sha256": "85b7e7978f716489edd730974444a91fed2a007e9c543cf309a7a8fc4723f8ae"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.minWindowSize.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.minWindowSize.test.ts",
+      "action": "merge",
+      "sha256": "51388e4b626fa530ee829690cb7752a993d54bbe24b325f11acad82a68699582"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.newTaskAvailability.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.newTaskAvailability.test.ts",
+      "action": "merge",
+      "sha256": "2aa90af4b52f8f8c1e7aa59c258725648251fc2fc4c689457a9edd78b2880c90"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.tokenScopes.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.tokenScopes.test.ts",
+      "action": "merge",
+      "sha256": "b016a72523684b84a80587c2e1bcbd3c45cb616845ced2b822f4406e10ea4ab7"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.topbarMenuDismiss.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.topbarMenuDismiss.test.ts",
+      "action": "merge",
+      "sha256": "32c82497caecb167cc598f1c8565b6816a799941e534d7dc2080d6136a3b3447"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/nuwaxBridgeHandlers.ts",
+      "action": "merge",
+      "sha256": "a9e66078f23ecf63bf017eaf6e3c51390edde1fa33cb3b599acfb742e92245a5"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.test.ts",
+      "action": "copy",
+      "sha256": "16ce242af63b388bbbd45761984dd263ff4fec190b467291631390cda1f71acc"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/ipc/permissionOnboardingHandlers.ts",
+      "action": "copy",
+      "sha256": "a54756e691bc0ee770e6467d95b5a584ec11a55c17dffd76c27d6e35000d2391"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/main.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/main.ts",
+      "action": "merge",
+      "sha256": "dd46b1d62fa6e51dfef503d62217d6df6843a02b0ddca3242ee7c81cf38ef4a9"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.cua.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.cua.test.ts",
+      "action": "merge",
+      "sha256": "f17af2b9005faa5d07171cf00139a3b8a7f8de7ccb0de55f5b3aae84aaac4d80"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/engines/acp/acpEngine.ts",
+      "action": "merge",
+      "sha256": "db2511867903b5c2524edc58ad7b845bebc07b986b08562602f4894eb77263df"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/featureHost.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/featureHost.ts",
+      "action": "copy",
+      "sha256": "2cfcb145e00590873c202e2762d24aad915ed4e43be990f2b56aa1d8286e7dd9"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/fullDiskAccess.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/fullDiskAccess.test.ts",
+      "action": "merge",
+      "sha256": "e0ea30ec5fad609644895eaaec65c3a310d0550564ef5eac4bcc9f9b8ef003b6"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/fullDiskAccess.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/fullDiskAccess.ts",
+      "action": "merge",
+      "sha256": "540bd93ac442c936ae59dfb89d13c08c0ef6d9ca2aaa0a23eef9a21cfd449c4d"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/permissionDragChip.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/permissionDragChip.test.ts",
+      "action": "copy",
+      "sha256": "179dd72d47ae9e8e1e9d39245293e1867a86607e869ae168c0708efb789b2d41"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/permissionDragChip.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/permissionDragChip.ts",
+      "action": "copy",
+      "sha256": "f5e891435c55cf0316eab6f5ecff90240eabd13a8f0c9a9893bcfd19f0c55ba4"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.test.ts",
+      "action": "copy",
+      "sha256": "f07dcacabf143b232fc6102156f09f557ce6983f35b6d59b5b7afd7a5ea60a43"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/permissionOnboarding.ts",
+      "action": "copy",
+      "sha256": "a5b78114ad010db4911ac3d7452d5647f48c562d321b8a1cfc04b6f30045831c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/system/macPermissions.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/system/macPermissions.test.ts",
+      "action": "merge",
+      "sha256": "475354539d5b48ee57bf2589b2d5fcae06a05c06bbeda924a3eae842cb58df36"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/system/macPermissions.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/services/system/macPermissions.ts",
+      "action": "merge",
+      "sha256": "d51b3341b44d28a17819f47d980d958a440ed8cbed72161a27a4906a43f7c0bb"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/window/trayManager.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/window/trayManager.test.ts",
+      "action": "merge",
+      "sha256": "66cfe96fae1c184d207228c14864364f13c5580f9645a63603d588ccc98c2294"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/window/trayManager.ts",
+      "from": "overlay/crates/agent-electron-client/src/main/window/trayManager.ts",
+      "action": "merge",
+      "sha256": "4b31125835b57049b826d1e0c67433fe69dfe6f4093bb6b4f98d6c028904f383"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/canUse.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/canUse.ts",
+      "action": "merge",
+      "sha256": "64cd4eff84c6ef2a68b3b78e438f5f234bec09b8d7600cbea5872da96a6fa8ea"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/capture.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/capture.ts",
+      "action": "merge",
+      "sha256": "d72a906b64c3a7051c53a6a3630b25cb7c0443a8764a1e5b85a7ff3a2084d2ea"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/computer-use.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/computer-use.ts",
+      "action": "copy",
+      "sha256": "fb5381b88f0770458828a629d12a803e52dfc6263017853132389c648bb62eec"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/computer-use/controlPreload.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/cuaControls.ts",
+      "action": "merge",
+      "sha256": "0ab9976cb9d37297b2b01a629c6a2a85bc6ae838cc6b14fbe6ee7d4d40e673f4"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/index.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/index.test.ts",
+      "action": "merge",
+      "sha256": "8f1ec8738f79629fea15d5f7393cee18ed9dd594b8aeabcc19da9736cd64c818"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/index.ts",
+      "action": "merge",
+      "sha256": "325834049dd1d24e07fa5ff9b7fc6d60d194812085525b5085ad1c22c63f2e0f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/local-files.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/local-files.ts",
+      "action": "merge",
+      "sha256": "c15fa62d0e655a1a237586bf7db03be292cc8254f037f668afffb526ada9f6c0"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/features/permissionChip.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/features/permissionChip.ts",
+      "action": "copy",
+      "sha256": "9c7f918679693f851d3a509f2e853032523fb2f1721e50e11d93ec51e0a85acf"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/preload/index.ts",
+      "action": "merge",
+      "sha256": "324febdd78851fe1ad1703a36985e833a8939c162c1762dd68389fc94292a395"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/App.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/App.tsx",
+      "action": "merge",
+      "sha256": "9ee07cbcb9975c43d438b52a8d9dd3c02990e3d2427b49c93ce124c7c86a420f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/PermissionOnboardingEntry.test.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/PermissionOnboardingEntry.test.tsx",
+      "action": "copy",
+      "sha256": "193f35ebffde3c59e1f7e00c901dd25c5878d99693feeed1f23e6adee8591942"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/PermissionOnboardingEntry.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/PermissionOnboardingEntry.tsx",
+      "action": "copy",
+      "sha256": "014d079f2d4ecfcb45681f32cd1a4a13b5766bfd384c8ae1f399ff227b90ecdc"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.test.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.test.tsx",
+      "action": "merge",
+      "sha256": "c36bf97d6257885cf34429c63b521dc9ece702d1b5375ff0c27ada4b96c76bb0"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/pages/PermissionsPage.tsx",
+      "action": "merge",
+      "sha256": "62c4075462f084a91af27a8e9287d71b9582af3f8754e8e6db499872b7bf489f"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/pages/SettingsPage.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/pages/SettingsPage.tsx",
+      "action": "merge",
+      "sha256": "05943c8b18dcd063950b98ab848401acba3a546db1fc4f75005bbeee8c4f80cf"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/capture/CaptureLauncher.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/features/capture/CaptureLauncher.tsx",
+      "action": "merge",
+      "sha256": "ef2e66a7699ae8d6eb591018b7c1bd1e4838ca7a950ae9404bc50ccf42152954"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/ComputerUseSettings.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/ComputerUseSettings.tsx",
+      "action": "copy",
+      "sha256": "f65b532af4d2ffdf5d2ed066332747ac258134df836e2b6d70779bf6965c64f7"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaControls.test.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/CuaControls.test.tsx",
+      "action": "merge",
+      "sha256": "c9c07bb49913446a9315df8ae23dfc2d2356622cbdb8ce7c05c9f5ab2e674b53"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaControls.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/components/CuaControls.tsx",
+      "action": "merge",
+      "sha256": "522b9331a88fe778a62de0e808f70dc24e3b4e6496d2a501191be464239f107d"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaTaskPanel.tsx",
+      "from": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/CuaTaskPanel.tsx",
+      "action": "copy",
+      "sha256": "633acd1fd4848ce70081ccde5c3bbe9f1062462881dd271ca1e08398e96a7fc4"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/index.ts",
+      "from": "overlay/crates/agent-electron-client/src/renderer/features/computer-use/index.ts",
+      "action": "copy",
+      "sha256": "91948c8139c4a3ef89462a75e405b897c818ad8b60681553579d9bb3b1c85921"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/services/permissionPolling.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/renderer/services/permissionPolling.test.ts",
+      "action": "copy",
+      "sha256": "97045749c13e886b37fc71212985c3c5734cb1a8d540be7292d9a6d21c052dbc"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/services/permissionPolling.ts",
+      "from": "overlay/crates/agent-electron-client/src/renderer/services/permissionPolling.ts",
+      "action": "copy",
+      "sha256": "697d969bebab1732f85d1a339803a7aa2fdf2219ec8e4774576ac7d185c9d5d7"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/styles/components/PermissionsPage.module.css",
+      "from": "overlay/crates/agent-electron-client/src/renderer/styles/components/PermissionsPage.module.css",
+      "action": "copy",
+      "sha256": "93b0dd02e5166dfebe6abd3c3e693feae7e335337ef504cad3344f4e71d9233b"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/constants.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/constants.ts",
+      "action": "merge",
+      "sha256": "dc175290bb48d0353f1f5cba2018552123771069c44fa54f27569fe11a92b1c1"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/features/computer-use/contract.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/types/cuaRuntime.ts",
+      "action": "merge",
+      "sha256": "4515f460d5e90d774efa1a60d1d763769be7b26b14319ea9bd06a32b6fe897cc"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/features/computer-use/presentation.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/cuaPresentation.ts",
+      "action": "merge",
+      "sha256": "89b16234b9da708a6be79992fc345cb8da50d68bc47102ecbae2321e52761aa3"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/locales/en-US.json",
+      "from": "overlay/crates/agent-electron-client/src/shared/locales/en-US.json",
+      "action": "merge",
+      "sha256": "f4c5002bb571a18e28d93448a3545b5f2c6076f2fe49651733ca0f9c7ffc5807"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/locales/zh-CN.json",
+      "from": "overlay/crates/agent-electron-client/src/shared/locales/zh-CN.json",
+      "action": "merge",
+      "sha256": "710df67c209fa0a35c0b2778d558a604af2bf2d9f4db5305adcc35b091a39b18"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/locales/zh-HK.json",
+      "from": "overlay/crates/agent-electron-client/src/shared/locales/zh-HK.json",
+      "action": "merge",
+      "sha256": "f424158e7ee01b78263c8f4938e90316614a6a070c70cfb4c30d66d6860e31c4"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/locales/zh-TW.json",
+      "from": "overlay/crates/agent-electron-client/src/shared/locales/zh-TW.json",
+      "action": "merge",
+      "sha256": "27700df07f2f779ed07cea1db51bcc284dfe32d794e4a4489d970be2e589f2d9"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/types/cuaRuntime.ts",
+      "action": "remove",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/types/electron.d.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/types/electron.d.ts",
+      "action": "merge",
+      "sha256": "32f53494bda3e159ce77ff71975340b6ed21d873ec78b8b3a9cc6250b9eb814e"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.test.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.test.ts",
+      "action": "copy",
+      "sha256": "ec1a51d7a9b54eec67e5872cb44f117b809373bc7c98ee398cbb2a247103595c"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.ts",
+      "from": "overlay/crates/agent-electron-client/src/shared/types/permissionOnboarding.ts",
+      "action": "copy",
+      "sha256": "ed00e2d9c5a95f09c10266cc256373a92f1a306417119e1f215b4b70ef63255c"
+    },
+    {
+      "path": "plans/20261009-remove-legacy-computer-use-plan.md",
+      "from": "plans/20261009-remove-legacy-computer-use-plan.md",
+      "action": "merge",
+      "sha256": "4cb092b992d73a915b55f8e633c25545f346e57a417e7d45d2e14855e0045650"
+    },
+    {
+      "path": "plans/20261013-computer-use-product-intent.md",
+      "from": "plans/20261013-computer-use-product-intent.md",
+      "action": "merge",
+      "sha256": "757ac098e3dd572804df5cd0f01cdb58bd70e2a109980fd940c8dd4f289c4aa1"
+    },
+    {
+      "path": "plans/20261013-computer-use-product-plan.md",
+      "from": "plans/20261013-computer-use-product-plan.md",
+      "action": "merge",
+      "sha256": "917e75dacb5c71efb14672fece3be2db00a14b738c258f1c71a788629d8fd0c4"
+    },
+    {
+      "path": "plans/20261014-computer-use-control-layer-intent.md",
+      "from": "plans/20261014-computer-use-control-layer-intent.md",
+      "action": "copy",
+      "sha256": "4ce2001b70e3aaef2d4d5fefa0f1e44a9072d820a8846491f5afef9a5f3e64ed"
+    },
+    {
+      "path": "plans/20261014-computer-use-control-layer-plan.md",
+      "from": "plans/20261014-computer-use-control-layer-plan.md",
+      "action": "copy",
+      "sha256": "130d23533fa69b526389c20e3e9f674437d98758557122b8172c8e4d17af4b95"
+    },
+    {
+      "path": "plans/20261015-desktop-capability-ports-intent.md",
+      "from": "plans/20261015-desktop-capability-ports-intent.md",
+      "action": "copy",
+      "sha256": "63d33b59746ef5d00376c9f963db907d166afb777b60e6a3c5a89c1f12bd7720"
+    },
+    {
+      "path": "plans/20261015-desktop-capability-ports-plan.md",
+      "from": "plans/20261015-desktop-capability-ports-plan.md",
+      "action": "copy",
+      "sha256": "222638032500351ce752f7e6bcd3582c99991c7818183f666d3e810ab665b660"
+    },
+    {
+      "path": "plans/20261017-permission-onboarding-plan.md",
+      "from": "plans/20261017-permission-onboarding-plan.md",
+      "action": "copy",
+      "sha256": "b5083f1d5741ef779f03fe509e7c6b53a8731f9c733a9cd086359c89c0292a9a"
+    },
+    {
+      "path": "plans/20261021-computer-use-acceptance-supplement.md",
+      "from": "plans/20261021-computer-use-acceptance-supplement.md",
+      "action": "copy",
+      "sha256": "241b6bc1aa6b81230c391611c4aff025c2f5c5370cf8c2474f65f733b07b2743"
+    },
+    {
+      "path": "scripts/acceptance/cua-controls.cjs",
+      "from": "scripts/acceptance/cua-controls.cjs",
+      "action": "merge",
+      "sha256": "cb0ee0f424be10f15683163684bdc44f7f97b269ce44b8b2f6f23d58b9336144"
+    },
+    {
+      "path": "scripts/computer-use/Info.plist",
+      "from": "scripts/computer-use/Info.plist",
+      "action": "merge",
+      "sha256": "4416677a46388d8b8ccd14543a93b0017d6b2c354f0d26bed36293eb0b03f34f"
+    },
+    {
+      "path": "scripts/computer-use/bench/README.md",
+      "from": "scripts/computer-use/bench/README.md",
+      "action": "copy",
+      "sha256": "4a764383c112a4e47582ef71c4323600e6cfc906ba115bc5b99570e9ae5f7170"
+    },
+    {
+      "path": "scripts/computer-use/bench/daemon.cjs",
+      "from": "scripts/computer-use/bench/daemon.cjs",
+      "action": "copy",
+      "sha256": "b3bf9b99ff623b7bfcfb283a36ab17da7512092beef439797a8ee157d17c5482"
+    },
+    {
+      "path": "scripts/computer-use/bench/harness.ts",
+      "from": "scripts/computer-use/bench/harness.ts",
+      "action": "copy",
+      "sha256": "022d4fc1e7c558d1abc40f89047332434d775093679decd716cd3eb9c938abfe"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-acp.mjs",
+      "from": "scripts/computer-use/bench/real-acp.mjs",
+      "action": "copy",
+      "sha256": "3db14a848ae39077bdbc039f50b2e3bb38f61cfb041fea547e34e2b0bad96427"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-anchor.swift",
+      "from": "scripts/computer-use/bench/real-anchor.swift",
+      "action": "copy",
+      "sha256": "8a94e93ed57fbb9631395df4a5d7e7fdd093082137ed37dcfad23376e86aeba6"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-core.mjs",
+      "from": "scripts/computer-use/bench/real-core.mjs",
+      "action": "copy",
+      "sha256": "a39ee0b4d0fdf637c48bf1856e047910123192b5e75a2b73497a9b438d22a2c5"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-fixture.mjs",
+      "from": "scripts/computer-use/bench/real-fixture.mjs",
+      "action": "copy",
+      "sha256": "505b028f548c1080802a6719a16798cc13a19cc18179371ae74bc829c627f912"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-host.mjs",
+      "from": "scripts/computer-use/bench/real-host.mjs",
+      "action": "copy",
+      "sha256": "3579e345d8db4ac4e0413c9ed2789f42d8d8906489572334596109a94d157617"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-model.mjs",
+      "from": "scripts/computer-use/bench/real-model.mjs",
+      "action": "copy",
+      "sha256": "87896ddae562d6ef5effd4e56d12cbf38cc631cef774547ac344a7cd08f3a94d"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-run.mjs",
+      "from": "scripts/computer-use/bench/real-run.mjs",
+      "action": "copy",
+      "sha256": "14f39d21a791ac7824b7c084bb5a590b9dfedfdcd18409e9a1a03cc02a5a9db5"
+    },
+    {
+      "path": "scripts/computer-use/bench/real-runtime.ts",
+      "from": "scripts/computer-use/bench/real-runtime.ts",
+      "action": "copy",
+      "sha256": "b42a20dc0901a2b101851e34c7239fed97065fea1f00aee62da124cb1b57f704"
+    },
+    {
+      "path": "scripts/computer-use/bench/run.mjs",
+      "from": "scripts/computer-use/bench/run.mjs",
+      "action": "copy",
+      "sha256": "5b0ded1c9e30f6c47d726d6d6ad6e3a7a86a7cd7dfff0be48c033173eba838f3"
+    },
+    {
+      "path": "scripts/computer-use/bench/tasks.ts",
+      "from": "scripts/computer-use/bench/tasks.ts",
+      "action": "copy",
+      "sha256": "7d1bfe3712fd6cbe0bcea75b1873f07151895e3f235f3005d7b5eb3677294b37"
+    },
+    {
+      "path": "scripts/computer-use/build-helper.sh",
+      "from": "scripts/computer-use/build-helper.sh",
+      "action": "merge",
+      "sha256": "6a5f050df6e29702310a9cf1e84e184d25941856a4d5766bb97235688f3a7c51"
+    },
+    {
+      "path": "scripts/computer-use/build-helper.test.sh",
+      "from": "scripts/computer-use/build-helper.test.sh",
+      "action": "merge",
+      "sha256": "677eb5f5a7dfa7ac2d69873551c3e8073904b712baabc64a4e27ef5f07dbe483"
+    },
+    {
+      "path": "scripts/computer-use/real-bench.test.mjs",
+      "from": "scripts/computer-use/real-bench.test.mjs",
+      "action": "copy",
+      "sha256": "289bcd743f7fc03811a8f8a32f6a4be44484492ba04a6fc8f8eacfedb89bb0d4"
+    },
+    {
+      "path": "scripts/computer-use/verify-helper-endpoint.cjs",
+      "from": "scripts/computer-use/verify-helper-endpoint.cjs",
+      "action": "merge",
+      "sha256": "37a4e06066aaa859c8a9d794c5edcdb9e9cbaaa038424e16f0b5ae890be83fdd"
+    },
+    {
+      "path": "scripts/computer-use/verify-helper-refusals.cjs",
+      "from": "scripts/computer-use/verify-helper-refusals.cjs",
+      "action": "copy",
+      "sha256": "4663e4baa19c0210f8d3f62cc8bc98eea79f9903059e42ee0af757ca9984dc8d"
+    },
+    {
+      "path": "scripts/computer-use/verify-helper-window-tasks.cjs",
+      "from": "scripts/computer-use/verify-helper-window-tasks.cjs",
+      "action": "copy",
+      "sha256": "25290dc81d516444fd73cc6fb307a938cf25f020a63eca389c23a62942eac26f"
+    },
+    {
+      "path": "specs/computer-use-control-layer.md",
+      "from": "specs/computer-use-control-layer.md",
+      "action": "copy",
+      "sha256": "e6010cccab763285c7807836f3c35b40b1738412a548431b566b9e18a777863d"
+    },
+    {
+      "path": "specs/computer-use-product.md",
+      "from": "specs/computer-use-product.md",
+      "action": "merge",
+      "sha256": "11d209adcba652a16cc0c873f520a2d1d6cc0c7713cc4a095e15b0f0ab80ee18"
+    },
+    {
+      "path": "specs/desktop-capability-ports.md",
+      "from": "specs/desktop-capability-ports.md",
+      "action": "copy",
+      "sha256": "2dfbf9b5674100074116cc7bf14043e02c73ca9681bdaec60e3d66c299164fd1"
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/computerUse.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/computerUse.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/controlWindow.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/mcpGateway.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/ipc/cuaRuntimeHandlers.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/sessionAuthority.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/sessionAuthority.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/taskController.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/taskController.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/vlmDiagnostics.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/vlmDiagnostics.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/windowScope.test.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/main/services/cua/windowScope.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/preload/cuaControls.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/CuaControls.test.tsx",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/renderer/components/CuaControls.tsx",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    },
+    {
+      "path": "overlay/crates/agent-electron-client/src/shared/cuaPresentation.ts",
+      "action": "remove migrated old entry",
+      "absentInCandidate": true
+    }
+  ]
+}
