@@ -333,7 +333,15 @@ async function requestDaemon(method: string, name?: string, args?: Record<string
     let settled = false;
     let response = "";
     let proofAccepted = false;
+    // Direct host reads must not reuse the daemon's expiring implicit session.
+    // A control lease on this connection reaps only this call's session on EOF.
+    const hostSession = method === "call" ? `nuwax-host-${randomUUID()}` : undefined;
+    let sessionReady = !hostSession;
     const nonce = randomBytes(16).toString("hex");
+    const sendRequest = () => socket.write(`${JSON.stringify({
+      method, name, args, ...(hostSession ? { session_id: hostSession } : {}),
+      observation_origin: "direct", client_kind: "cli", nuwax_client_token: selected.token,
+    })}\n`);
     const finish = (result: DaemonReply | null = null) => {
       if (settled) return;
       settled = true;
@@ -363,11 +371,13 @@ async function requestDaemon(method: string, name?: string, args?: Record<string
                 actual.length !== expected.length ||
                 !timingSafeEqual(Buffer.from(actual), Buffer.from(expected))) return finish();
             proofAccepted = true;
-            socket.write(`${JSON.stringify({
-              method, name, args,
-              observation_origin: "direct", client_kind: "cli",
-              nuwax_client_token: selected.token,
-            })}\n`);
+            if (hostSession) socket.write(`${JSON.stringify({ method: "session_begin", session_id: hostSession,
+              nuwax_client_token: selected.token })}\n`);
+            else sendRequest();
+          } else if (!sessionReady) {
+            if (reply.ok !== true || reply.result?.session_begin !== true) return finish();
+            sessionReady = true;
+            sendRequest();
           } else {
             return finish(reply);
           }

@@ -306,11 +306,11 @@ button,select{font:inherit;color:inherit}button{cursor:pointer;-webkit-app-regio
 button:focus-visible,summary:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .shell{position:absolute;inset:36px 18px 35px;z-index:3}
-#viewport{position:absolute;inset:0;display:grid;place-items:center;-webkit-app-region:drag}
+#viewport{position:absolute;inset:0;display:grid;place-items:center;-webkit-app-region:no-drag}
 #image{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;pointer-events:none;border-radius:8px;box-shadow:0 0 0 1px #00000010,0 12px 28px #00000026,0 2px 6px #00000012}
 #status{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:32px 24px;background:var(--glass);border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px;line-height:1.7;box-shadow:0 10px 30px #00000018;backdrop-filter:blur(24px)}
 #status:before{content:"";width:30px;height:23px;border:1.5px solid currentColor;border-top-width:5px;border-radius:5px;opacity:.4}#status:empty{display:none}
-header{position:absolute;left:10px;right:auto;max-width:calc(100% - 20px);bottom:10px;height:24px;padding:0 8px;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--glass);backdrop-filter:blur(20px);opacity:0;transition:opacity .16s;-webkit-app-region:drag}body:hover header,.shell:focus-within header,body.is-paused header{opacity:1}
+header{position:absolute;left:10px;right:auto;max-width:calc(100% - 20px);bottom:10px;height:24px;padding:0 8px;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;background:var(--glass);backdrop-filter:blur(20px);opacity:0;transition:opacity .16s;-webkit-app-region:no-drag}body:hover header,.shell:focus-within header,body.is-paused header{opacity:1}
 #brand{display:none;font-size:12px;font-weight:650;letter-spacing:-.3px}#dot{width:5px;height:5px;border-radius:50%;background:#625cf5;flex:none}
 #title{border:0;background:transparent;padding:0;text-align:left;min-width:0;max-width:210px;font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;text-shadow:0 1px 8px #ffffff80}
 #mode{font-size:10px;white-space:nowrap;color:var(--muted)}

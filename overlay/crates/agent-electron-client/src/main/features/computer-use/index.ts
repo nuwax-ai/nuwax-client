@@ -12,7 +12,6 @@ import type { DesktopFeature, FeatureContext, FeatureHandle } from "../_kit/type
 import * as cua from "./computerUse";
 import { configureComputerUseHost } from "./ports";
 import { createCuaControlWindow } from "./controlWindow";
-import { createCuaWindowBadges } from "./windowBadges";
 import { CuaEngineSessions, cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaScope } from "@shared/features/computer-use/contract";
 
@@ -108,8 +107,9 @@ export const computerUseFeature: DesktopFeature = {
     ), { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:testVlm", () => cua.testVlm(), { success: false, error: "untrusted sender" });
 
-    // 控制浮窗：独立最小 preload、精确 sender 校验、阻断导航，急停常驻可见。
+    // 操作提示仅属于主窗口；独立最小 preload 和精确 sender 校验保持不变。
     const disposeControlWindow = createCuaControlWindow({
+      getMainWindow: () => ctx.windows.getMain(),
       getRuntime: cua.getCuaRuntime, subscribe: cua.onCuaRuntime,
       authenticated: () => ctx.session.isAuthenticated(), t: ctx.translate ?? ((key: string) => key),
       action: async (action) => {
@@ -135,7 +135,6 @@ export const computerUseFeature: DesktopFeature = {
     });
     const showPreview = (id: string) => disposeControlWindow.showTask(id);
     ctx.hostIpc.handle("cua:showTaskPreview", taskControl(async id => showPreview(id), true), { success: false });
-    const disposeBadges = createCuaWindowBadges(cua.onCuaWindowFrames, showPreview, ctx.translate);
 
     // 状态推送宿主窗口 + 托盘急停项（经通用进行中操作端口）。
     const stop = () => { void cua.stopCuaTask().catch(() => undefined); };
@@ -193,7 +192,6 @@ export const computerUseFeature: DesktopFeature = {
       offParticipant();
       offInvalidated(); offSessionEnd(); offStopping(); offStarting(); offQuit();
       disposeControlWindow();
-      disposeBadges();
       unsubscribe();
       ctx.activities.set(null);
       globalShortcut.unregister(CUA_STOP_SHORTCUT);

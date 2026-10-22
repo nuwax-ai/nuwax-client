@@ -48,8 +48,7 @@ export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
   const [runtime, accept] = useCuaRuntime(api);
   const { busy, run } = useCuaAction(t, accept);
   if (!api?.getRuntime || !runtime || (!runtime.taskId && runtime.phase !== "failed")) return null;
-  // Multiwindow tasks have one host-owned PiP surface, including when this page
-  // is hidden. Keep task administration in settings, not a second floating panel.
+  // Multiwindow tasks use the contained host view; avoid a duplicate control bar.
   if (runtime.multiwindow) return null;
 
   const reason = runtime.reason ? reasonText(t, runtime.reason) : null;
