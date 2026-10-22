@@ -41,6 +41,7 @@ on:
     tags:
       - "v*-beta.*"
     branches:
+      - "codex/beta-qa/**"
       - "qa/**"
   workflow_dispatch:
     inputs:
@@ -118,6 +119,11 @@ jobs:
               TAG="${BUILD_REF#refs/tags/}"
               node scripts/release-version.mjs "$TAG" beta > /tmp/build-release-identity
               VERSION="$(sed -n 's/^version=//p' /tmp/build-release-identity)"
+              ;;
+            push:refs/heads/codex/beta-qa/*)
+              VERSION="${BUILD_REF#refs/heads/codex/beta-qa/}"
+              QA_BUILD=true
+              WINDOWS_ARCHIVE=zip-qa
               ;;
             push:refs/heads/qa/*)
               VERSION="${BUILD_REF#refs/heads/qa/}"
