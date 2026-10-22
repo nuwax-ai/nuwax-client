@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -61,11 +61,26 @@ export function createCuaControlWindow(options: {
       window.showInactive();
     }
   };
+  const onBeforeQuit = () => {
+    disposed = true;
+    if (window && !window.isDestroyed()) {
+      window.destroy();
+    }
+    window = null;
+  };
+  app?.on?.("before-quit", onBeforeQuit);
   const unsubscribe = options.subscribe(update);
   update(options.getRuntime());
   return () => {
-    disposed = true; unsubscribe(); window?.destroy(); window = null;
-    ipcMain.removeHandler("cua:control:getRuntime"); ipcMain.removeHandler("cua:control:action");
+    disposed = true;
+    app?.removeListener?.("before-quit", onBeforeQuit);
+    unsubscribe();
+    if (window && !window.isDestroyed()) {
+      window.destroy();
+    }
+    window = null;
+    ipcMain.removeHandler("cua:control:getRuntime");
+    ipcMain.removeHandler("cua:control:action");
   };
 }
 

@@ -611,6 +611,16 @@ async function cleanupAllProcesses(): Promise<void> {
     await stopComputerServer();
   });
 
+  // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
+  // 置于长耗时步骤（引擎回收）前执行，防止被引擎超时耗尽总预算截断。
+  await runCleanupStep(
+    "Commercial extras stop",
+    async () => {
+      await commercialLifecycle?.stopExtras();
+    },
+    Math.max(stepTimeoutMs, 5000),
+  );
+
   await runCleanupStep("ttyd gateway stop", async () => {
     await stopTtydGateway();
   });
@@ -652,16 +662,6 @@ async function cleanupAllProcesses(): Promise<void> {
     log.info("[Cleanup] Process registry cleared");
   });
 
-  // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
-  // daemon 协议停机超时 4s + 兜底强杀，须高于默认步进超时（15s/6=2.5s）。
-  await runCleanupStep(
-    "Commercial extras stop",
-    async () => {
-      await commercialLifecycle?.stopExtras();
-    },
-    Math.max(stepTimeoutMs, 8000),
-  );
-
   // Await owned process trees before app.exit; fire-and-forget kill loses escalation.
   // NOTE: guiServer is a legacy placeholder and typically not started directly.
   await stopManagedProcesses([
@@ -690,6 +690,12 @@ function initializeClientUpdater(): void {
       log.info(
         "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
       );
+      if (process.platform === "darwin") {
+        setTimeout(() => {
+          log.info("[App] macOS update quit safety timeout, calling app.exit(0)");
+          app.exit(0);
+        }, 5000);
+      }
     },
     {
       installAfterDownload:
@@ -935,6 +941,13 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  if (isInstallingUpdate || isQuitting) {
+    log.info(
+      "[App] window-all-closed during update or quit, calling app.quit()",
+    );
+    app.quit();
+    return;
+  }
   // 窗口已隐藏到托盘，此事件不应触发
   // 如果触发，说明窗口被意外关闭，不退出应用
   log.info(
@@ -994,11 +1007,19 @@ app.on("before-quit", (e) => {
     // - cleanup 已在 installUpdate() 中先行触发，无需重复执行
     // - 不能调用 e.preventDefault()：各平台安装器依赖 app.quit() 的正常退出流程；
     //   若阻止退出再 app.exit(0)，安装器可能已经失去对退出时机的感知，导致安装失败
-    // 只关闭数据库后直接 return，让 Electron 正常完成退出，安装器接管
+    // 关闭数据库，确保 CUA daemon 停止，并在短延迟后强制退出以防未清理句柄阻止进程终止
     log.info(
-      "[App] Before quit - update install in progress, skipping preventDefault to allow installer",
+      "[App] Before quit - update install in progress, ensuring exit for installer",
     );
+    try {
+      const { stopDaemon } = require("./services/cua/computerUse");
+      void stopDaemon().catch(() => undefined);
+    } catch {}
     closeDb();
+    setTimeout(() => {
+      log.info("[App] Exiting process for update installer");
+      app.exit(0);
+    }, 500);
     return;
   }
 

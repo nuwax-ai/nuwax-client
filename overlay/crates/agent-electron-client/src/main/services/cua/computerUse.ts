@@ -475,7 +475,7 @@ export async function stopDaemon(): Promise<void> {
   if (helperPath) {
     try {
       await pexec(helperExecutable(helperPath), ["stop", "--socket", endpoint().socketPath], {
-        timeout: 4000,
+        timeout: 1500,
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: endpoint().tokenFile },
       });
       log.info("[Cua] daemon stopped via protocol");
@@ -497,7 +497,7 @@ export async function stopDaemon(): Promise<void> {
       const legacyEnv: NodeJS.ProcessEnv = { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false" };
       delete legacyEnv[ENDPOINT_TOKEN_ENV];
       await pexec(helperExecutable(helperPath), ["stop", "--socket", LEGACY_SOCKET_PATH], {
-        timeout: 4000, env: legacyEnv,
+        timeout: 1500, env: legacyEnv,
       }).catch(() => undefined);
     }
     if (IS_WIN) {
@@ -513,6 +513,12 @@ export async function stopDaemon(): Promise<void> {
         ? "Nuwax Computer Use.*serve --socket"
         : "NuwaxComputerUse.*serve --socket";
       await pexec("pkill", ["-f", helperPattern]).catch(() => undefined);
+      // macOS/Linux 强杀兜底：确保无残留进程（如 LaunchServices 独立派生）
+      if (IS_MAC) {
+        await pexec("pkill", ["-f", "Nuwax Computer Use"]).catch(() => undefined);
+      } else if (IS_LINUX) {
+        await pexec("pkill", ["-f", "NuwaxComputerUse"]).catch(() => undefined);
+      }
     }
   }
 }
