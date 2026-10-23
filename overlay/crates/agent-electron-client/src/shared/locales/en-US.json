@@ -1399,5 +1399,6 @@
   "Claw.Settings.computerUse.taskModel": "Task model",
   "Claw.Settings.computerUse.taskModelDescription": "Uses the Agent and model selected in the conversation. No separate setup is needed; the model must support images.",
   "Claw.Settings.computerUse.lockBehavior": "Computer operations pause when the screen locks. Resume manually after unlocking.",
-  "Claw.Settings.computerUse.advancedDiagnostics": "Independent image API diagnostics (advanced, optional)"
+  "Claw.Settings.computerUse.advancedDiagnostics": "Independent image API diagnostics (advanced, optional)",
+  "Claw.Cua.multiwindow.manageFromTray": "Open Computer Operations in the tray to manage tasks and view history."
 }

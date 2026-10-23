@@ -1399,5 +1399,6 @@
   "Claw.Settings.computerUse.taskModel": "任務模型",
   "Claw.Settings.computerUse.taskModelDescription": "使用目前對話的 Agent 和模型，無需另外設定。所選模型需要支援圖片理解。",
   "Claw.Settings.computerUse.lockBehavior": "鎖定螢幕時電腦操作會暫停，解鎖後可手動繼續。",
-  "Claw.Settings.computerUse.advancedDiagnostics": "獨立圖片介面診斷（進階，選用）"
+  "Claw.Settings.computerUse.advancedDiagnostics": "獨立圖片介面診斷（進階，選用）",
+  "Claw.Cua.multiwindow.manageFromTray": "請從系統匣的「電腦操作」開啟任務清單和歷史紀錄。"
 }

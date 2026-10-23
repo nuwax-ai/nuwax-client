@@ -5,7 +5,6 @@ import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-
 
 import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
-import { CuaTaskPanel } from "./CuaTaskPanel";
 const REASONS = new Set(CUA_REASON_KEYS);
 type T = (key: string, ...args: any[]) => string;
 const reasonText = (t: T, reason: string) => t(`Claw.Cua.reason.${REASONS.has(reason) ? reason : "generic"}`);
@@ -154,11 +153,12 @@ export function CuaSettingsRows({ api, t, Row }: { api?: ComputerUseAPI; t: T; R
   };
   return <>
     {api.setMultiwindowEnabled && <Row label={t("Claw.Cua.multiwindow.title")}
-      desc={t("Claw.Cua.multiwindow.description")}
-      control={<Button size="small" loading={busy} onClick={() => void run(() => api.setMultiwindowEnabled(!runtime.multiwindow))}>
+      desc={<>{t("Claw.Cua.multiwindow.description")} {t("Claw.Cua.multiwindow.manageFromTray")}</>}
+      control={<Space wrap size={6} style={{ justifyContent: "flex-end" }}><Button size="small" loading={busy} onClick={() => void run(() => api.setMultiwindowEnabled(!runtime.multiwindow))}>
         {t(runtime.multiwindow ? "Claw.Cua.multiwindow.disable" : "Claw.Cua.multiwindow.enable")}
-      </Button>} />}
-    {runtime.multiwindow ? <CuaTaskPanel api={api} runtime={runtime} t={t} accept={accept} /> : <Row
+      </Button>{runtime.recoverable && <Button size="small" disabled={busy || !!runtime.controlPending}
+        onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>}</Space>} />}
+    {!runtime.multiwindow && <Row
       label={t("Claw.Settings.computerUse.scope")}
       desc={t("Claw.Cua.scope.explanation")}
       control={<Select aria-label={t("Claw.Settings.computerUse.scope")} style={{ width: 240 }}
@@ -176,7 +176,7 @@ export function CuaSettingsRows({ api, t, Row }: { api?: ComputerUseAPI; t: T; R
             ? `（${check.name === "model" ? t("Claw.Cua.modelCheck") : reasonText(t, check.reason)}）` : ""}`).join("；")}
         </span>}
       </>}
-      control={<Space size={8}>
+      control={<Space wrap size={6} style={{ maxWidth: 240, justifyContent: "flex-end" }}>
         <Button size="small" loading={busy} onClick={() => void selfTest()}>{t("Claw.Cua.selfTest")}</Button>
         <Button size="small" onClick={() => void run(() => api.exportDiagnostics())}>{t("Claw.Cua.export")}</Button>
         <Button size="small" disabled={taskActive} onClick={() => void run(async () => {

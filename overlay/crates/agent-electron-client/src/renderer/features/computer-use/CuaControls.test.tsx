@@ -19,7 +19,7 @@ vi.mock("antd", async () => {
 });
 vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
 import { CuaControls, CuaSettingsRows } from "./CuaControls";
-const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn() };
+const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
   harness.states = [{ phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];

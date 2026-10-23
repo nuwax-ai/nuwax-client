@@ -1399,5 +1399,6 @@
   "Claw.Settings.computerUse.taskModel": "任务模型",
   "Claw.Settings.computerUse.taskModelDescription": "使用当前会话的 Agent 和模型，无需另外配置。所选模型需要支持图片理解。",
   "Claw.Settings.computerUse.lockBehavior": "锁屏时电脑操作会暂停，解锁后可手动继续。",
-  "Claw.Settings.computerUse.advancedDiagnostics": "独立图像接口诊断（高级，可选）"
+  "Claw.Settings.computerUse.advancedDiagnostics": "独立图像接口诊断（高级，可选）",
+  "Claw.Cua.multiwindow.manageFromTray": "任务列表和历史记录请从托盘的「电脑操作」打开。"
 }
