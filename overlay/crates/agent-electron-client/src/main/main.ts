@@ -178,6 +178,7 @@ if (!hasSingleInstanceLock) {
 
 app.on("second-instance", () => {
   log.info("[App] second-instance event received");
+  ensureDockVisible();
   if (!mainWindow) {
     pendingSecondInstanceFocus = true;
     if (app.isReady()) {
@@ -223,6 +224,55 @@ function getDockIconPath() {
     return path.join(process.resourcesPath, "icon-dock.png");
   }
   return path.join(process.cwd(), "public", "icon-dock.png");
+}
+
+/**
+ * 确保 macOS Dock 栏常驻显示应用图标，并保持激活策略为 regular。
+ * 避免因系统自启动 (openAsHidden) 或无窗口状态导致应用图标在 Dock 栏消失。
+ */
+function ensureDockVisible(): void {
+  if (process.platform !== "darwin") return;
+  try {
+    app.setActivationPolicy?.("regular");
+    if (app.dock) {
+      if (typeof app.dock.isVisible === "function") {
+        if (!app.dock.isVisible()) {
+          void app.dock.show();
+        }
+      } else {
+        void app.dock.show();
+      }
+    }
+  } catch (error) {
+    log.warn("[Dock] Failed to ensure dock visible:", error);
+  }
+}
+
+function setupDockIcon(): void {
+  if (process.platform !== "darwin") return;
+  ensureDockVisible();
+  if (app.dock) {
+    const iconPath = getDockIconPath();
+    log.info("Setting Dock icon from:", iconPath);
+    try {
+      const iconImage = nativeImage.createFromPath(iconPath);
+      log.info(
+        "Icon image size:",
+        iconImage.getSize(),
+        "isEmpty:",
+        iconImage.isEmpty(),
+      );
+      if (!iconImage.isEmpty()) {
+        app.dock.setIcon(iconImage);
+        log.info("Dock icon set successfully");
+      } else {
+        log.warn("Icon image is empty");
+      }
+    } catch (e) {
+      log.warn("Failed to set Dock icon:", e);
+    }
+    ensureDockVisible();
+  }
 }
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -374,6 +424,7 @@ function createWindow() {
     }
     mainWindow.focus();
     log.info("Main window shown (maximized)");
+    ensureDockVisible();
     // macOS 开发模式：窗口显示后再创建托盘，提高菜单栏图标出现概率
     if (process.platform === "darwin" && !app.isPackaged && !trayManager) {
       setTimeout(
@@ -400,6 +451,7 @@ function createWindow() {
     // 阻止关闭，改为隐藏
     e.preventDefault();
     mainWindow?.hide();
+    ensureDockVisible();
     log.info("[App] Window hidden to tray (close intercepted)");
   });
 
@@ -530,7 +582,9 @@ async function initTrayManager() {
       else openSettings();
     },
     onShowWindow: () => {
+      ensureDockVisible();
       if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.show();
         mainWindow.focus();
       } else {
@@ -783,28 +837,8 @@ app.whenReady().then(async () => {
     "x-client-type header injection enabled (skipped for localhost/127.0.0.1 dev origin)",
   );
 
-  // Set Dock icon on macOS (development mode needs this)
-  if (process.platform === "darwin" && app.dock) {
-    const iconPath = getDockIconPath();
-    log.info("Setting Dock icon from:", iconPath);
-    try {
-      const iconImage = nativeImage.createFromPath(iconPath);
-      log.info(
-        "Icon image size:",
-        iconImage.getSize(),
-        "isEmpty:",
-        iconImage.isEmpty(),
-      );
-      if (!iconImage.isEmpty()) {
-        app.dock.setIcon(iconImage);
-        log.info("Dock icon set successfully");
-      } else {
-        log.warn("Icon image is empty");
-      }
-    } catch (e) {
-      log.warn("Failed to set Dock icon:", e);
-    }
-  }
+  // Set Dock icon on macOS and ensure regular activation policy
+  setupDockIcon();
 
   migrateDataDir();
   initDatabase();
@@ -931,9 +965,10 @@ app.whenReady().then(async () => {
     mainWindow.focus();
   }
 
+  ensureDockVisible();
+
   // 非 macOS 或已打包：立即创建托盘。macOS 开发模式改为在 ready-to-show 后创建
   if (!(process.platform === "darwin" && !app.isPackaged)) {
-    if (process.platform === "darwin" && app.dock) app.dock.show();
     await initTrayManager();
   }
 
@@ -956,6 +991,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
+  ensureDockVisible();
   // macOS：点击 Dock 图标时，窗口若被隐藏到托盘则重新显示并聚焦
   if (!mainWindow) {
     createWindow();
