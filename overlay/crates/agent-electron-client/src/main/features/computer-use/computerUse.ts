@@ -862,11 +862,13 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
   }
   try {
     // 此调用只在用户接受一次性全范围确认后发出；系统授权未完成时保留待办。
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     persistConsentPending(true);
     // 任何旧条目先撤销；直到安装、系统授权和 daemon 双重探测全部通过才持久启用。
     persistEnabled(false);
     await syncCuaMcpConfig(false);
     const installed = await installCuaHelper();
+    if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     if (!installed.success || !installed.installedPath) {
       throw new Error(installed.error ?? "helperNotInstalled");
     }
@@ -1125,6 +1127,7 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
 /** Revoke synchronously before waiting for any lifecycle queue or OS operation. */
 export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaDisableEpoch++;
+  const permissionCleanup = permissionAttempt?.promise;
   cancelCuaPermissionRequest();
   pendingControls++;
   runtimeSuspended = true;
@@ -1134,7 +1137,13 @@ export function suspendCua(reason = "sessionEnded"): Promise<void> {
   windowTasks.stop(reason);
   cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
-  return serializeCua(suspendCuaRuntimeResources).finally(() => { pendingControls--; cuaTasks.notify(); });
+  // Standalone permission IPC is outside the lifecycle queue. Cancellation
+  // interrupts its 20-second poll; await only its bounded owned-host cleanup,
+  // alongside resource cleanup so an enable request cannot form a queue cycle.
+  return Promise.allSettled([serializeCua(suspendCuaRuntimeResources), permissionCleanup]).then(results => {
+    const failure = results.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  }).finally(() => { pendingControls--; cuaTasks.notify(); });
 }
 
 async function suspendCuaRuntimeResources(): Promise<void> {

@@ -13,4 +13,6 @@
 
 验证：初次 5 个测试文件 87 项通过；补充退出取消后 request ownership 5 项通过（44 项未重复），权限/IPC/polling 7 文件 56 项通过。合计覆盖 Computer Use 49 项与权限相关 57 项（最后补充 hide 打断未完成 enable 探测，onboarding 18 项通过）。ESLint 0 问题，主进程 TypeScript 仅原有 8 项错误，本次权限文件没有新增错误。日志保存在 /Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4/permission-fixes-20261023/。需由主代理继续指定真机验收，不将 mock 结果当作系统权限弹窗或真实拖拽验收。
 
-待主代理接手的原生补强：LaunchServices 派生可迟于 JS 的一次 exact pkill。上游 cli.rs 的权限宿主当前在请求完成后才打开 result-file，建议商业 native patch 将 O_NOFOLLOW 打开、当前用户私有普通文件校验移到请求前，持有句柄用于写回。JS 取消已先 unlink 再回收进程；原生补强前不能把极早取消视为封闭证明。
+原生补强已完成：LaunchServices 派生可迟于 JS 的一次 exact pkill，商业 patch 已将 O_NOFOLLOW 打开、当前用户私有普通文件校验移到请求前，持有句柄用于写回。JS 先 unlink 再回收进程。原生临时文件回归通过，macOS/Windows helper 均已重建。
+
+退出复核补齐：suspendCua 并行等待独立授权请求的取消后收尾，不等 20 秒轮询；安装途中取消通过 epoch 检查阻止新宿主派生。两项回归先失败后修复；51 项域测试及 3325 项商业测试通过。仍需最终安装候选 r6 的指定真机截图与生命周期验收。
