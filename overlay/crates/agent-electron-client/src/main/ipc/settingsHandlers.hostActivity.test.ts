@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn(),
   refresh: vi.fn(),
   warn: vi.fn(),
+  notifyCapture: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -24,8 +25,8 @@ vi.mock("../services/hostActivity", () => ({
 }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
-import { onCapturePreferencesChanged } from '../features/capture/preferences';
-import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/preferences';
+vi.mock("../features", () => ({ notifyCapturePreferencesChanged: mocks.notifyCapture }));
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/contract';
 
 beforeEach(() => {
   mocks.available = true;
@@ -34,12 +35,13 @@ beforeEach(() => {
   mocks.prepare.mockReset().mockReturnValue({ run: mocks.run });
   mocks.refresh.mockReset();
   mocks.warn.mockClear();
+  mocks.notifyCapture.mockReset();
   registerSettingsHandlers();
 });
 
 describe("settings:set host activity refresh", () => {
   it('capture accelerators reject reserved and duplicate keys and notify menus only after persistence', () => {
-    const notify = vi.fn(); const off = onCapturePreferencesChanged(notify);
+    const notify = mocks.notifyCapture;
     const set = mocks.handlers.get('settings:set')!;
     expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Shift+R')).toBe(false);
     expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+C')).toBe(false);
@@ -48,7 +50,6 @@ describe("settings:set host activity refresh", () => {
     expect(mocks.run).toHaveBeenCalledWith(CAPTURE_RECORD_SHORTCUT_SETTING, '"CmdOrCtrl+Alt+G"');
     expect(notify).toHaveBeenCalledOnce();
     expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(notify.mock.invocationCallOrder[0]);
-    off();
   });
   it("休眠设置先持久化再刷新，保留原成功返回", () => {
     expect(mocks.handlers.get("settings:set")!({}, "nuwax.dormancy", { enabled: false })).toBe(true);

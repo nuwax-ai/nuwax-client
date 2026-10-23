@@ -309,3 +309,7 @@ export function authorizeDesktopFeatureRequest(details: OnBeforeRequestListenerD
 export function isDesktopFeatureRequestSource(details: FeatureRequestSource): boolean {
   return forProduct(desktopFeatures, currentProduct).some((feature) => feature.requests?.isSource(details) === true);
 }
+
+/** Host integration stays behind the feature registry public entry. */
+export { notifyCapturePreferencesChanged, onCapturePreferencesChanged } from "./capture/preferences";
+export { routeCaptureShortcut } from "./capture/shortcutRouting";

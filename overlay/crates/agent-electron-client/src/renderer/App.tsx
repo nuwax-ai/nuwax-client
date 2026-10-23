@@ -87,7 +87,7 @@ import NuwaxHostWebview, {
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
 import { CuaControls } from "./features/computer-use";
-import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/preferences';
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/contract';
 import { CaptureLauncher } from "./features/capture";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";

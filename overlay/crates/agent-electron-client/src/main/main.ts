@@ -46,9 +46,9 @@ import {
 } from "@shared/constants";
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
-import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/preferences';
-import { routeCaptureShortcut } from './features/capture/shortcutRouting';
-import { onCapturePreferencesChanged } from './features/capture/preferences';
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/contract';
+import { routeCaptureShortcut } from './features';
+import { onCapturePreferencesChanged } from './features';
 import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";

@@ -4,8 +4,8 @@ import log from 'electron-log';
 import { readQuickInitConfig } from '../bootstrap/quickInit';
 import { DORMANCY_SETTING_KEY, refreshHostActivity } from '../services/hostActivity';
 import { APP_NAME_IDENTIFIER } from '@shared/constants';
-import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/preferences';
-import { notifyCapturePreferencesChanged } from '../features/capture/preferences';
+import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/contract';
+import { notifyCapturePreferencesChanged } from '../features';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {

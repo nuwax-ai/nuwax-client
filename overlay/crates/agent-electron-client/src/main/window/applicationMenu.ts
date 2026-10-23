@@ -2,7 +2,7 @@ import type { MenuItemConstructorOptions, WebContents } from "electron";
 import { I18N_KEYS } from "@shared/constants";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
-import { captureShortcut, recordShortcut, DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/preferences';
+import { captureShortcut, recordShortcut, DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/contract';
 import type { EditAction } from "../ipc/windowHandlers";
 
 export interface ApplicationMenuActions {

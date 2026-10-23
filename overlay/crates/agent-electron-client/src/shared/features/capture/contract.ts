@@ -184,3 +184,10 @@ export interface CaptureBridge {
   /** 增量能力，旧客户端可缺失；成功复制后可 release 原结果。 */
   copy?(resultId: string): Promise<CaptureCopyResult>;
 }
+
+/** Public settings and menu vocabulary shared by the host and capture UI. */
+export {
+  CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING,
+  DEFAULT_RECORD_SHORTCUT, DEFAULT_CAPTURE_SHORTCUT, parseCaptureShortcut,
+  captureShortcut, recordShortcut, displayCaptureShortcut, shortcutFromKeyboard,
+} from "./preferences";

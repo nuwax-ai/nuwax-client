@@ -41,7 +41,7 @@ import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
-import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, displayCaptureShortcut } from '@shared/features/capture/preferences';
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, displayCaptureShortcut } from '@shared/features/capture/contract';
 import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
 import { I18N_KEYS } from "@shared/constants";
 import { t } from "../services/core/i18n";
