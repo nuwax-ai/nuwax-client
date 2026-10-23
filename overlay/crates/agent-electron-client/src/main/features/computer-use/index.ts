@@ -12,6 +12,7 @@ import type { DesktopFeature, FeatureContext, FeatureHandle } from "../_kit/type
 import * as cua from "./computerUse";
 import { configureComputerUseHost } from "./ports";
 import { createCuaControlWindow } from "./controlWindow";
+import { createCuaTaskHistory } from "./taskHistory";
 import { CuaEngineSessions, cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaScope } from "@shared/features/computer-use/contract";
 
@@ -33,6 +34,7 @@ export const computerUseFeature: DesktopFeature = {
     });
 
     const offPermissionSubject = ctx.permissions?.registerExternalSubject?.({
+      enabled: async () => { const status = await cua.getCuaStatus(); return status.enabled || status.consentPending === true; },
       check: async () => {
         const status = await cua.getCuaStatus();
         const probe = (value: boolean | null) => value === true ? "granted" as const : value === false ? "denied" as const : "unknown" as const;
@@ -45,6 +47,16 @@ export const computerUseFeature: DesktopFeature = {
       appPath: cua.getCuaHelperAppPath,
     });
 
+    const history = createCuaTaskHistory(() => ctx.settings.read("computerUseTaskHistory"),
+      rows => { ctx.settings.write("computerUseTaskHistory", rows); });
+    ctx.hostIpc.handle("cua:getTaskHistory", () => history.list(), []);
+    ctx.hostIpc.handle("cua:clearTaskHistory", () => { history.clear(); return { success: true }; }, { success: false });
+    const openCenter = () => {
+      const main = ctx.windows.getMain();
+      if (!main || main.isDestroyed()) return;
+      if (main.isMinimized()) main.restore();
+      main.show(); main.focus(); main.webContents.send("cua:openCenter");
+    };
     const safeControl = (action: () => Promise<unknown>, needsLogin = false) => async () => {
       if (needsLogin && !ctx.session.isAuthenticated()) {
         return { success: false, error: "loginRequired", runtime: cua.getCuaRuntime() };
@@ -70,6 +82,7 @@ export const computerUseFeature: DesktopFeature = {
       if (!ctx.session.isAuthenticated() || typeof enabled !== "boolean") return { success: false, error: "loginRequired" };
       return cua.setMultiwindowEnabled(enabled);
     }, { success: false, error: "untrustedSender" });
+    ctx.hostIpc.handle("cua:takeOver", safeControl(() => cua.takeOverCua(), true), { success: false, error: "untrustedSender" });
     ctx.hostIpc.handle("cua:pause", safeControl(() => cua.pauseCuaTask()), { success: false, error: "untrustedSender" });
     ctx.hostIpc.handle("cua:resume", safeControl(() => cua.resumeCuaTask(), true), { success: false, error: "untrustedSender" });
     ctx.hostIpc.handle("cua:stop", safeControl(() => cua.stopCuaTask()), { success: false, error: "untrustedSender" });
@@ -133,23 +146,34 @@ export const computerUseFeature: DesktopFeature = {
         return cua.setWindowTaskMode(id, value);
       },
     });
-    const showPreview = (id: string) => disposeControlWindow.showTask(id);
+    const showPreview = (id: string) => {
+      const state = cua.getCuaRuntime();
+      if (state.multiwindow) return disposeControlWindow.showTask(id);
+      if (!ctx.session.isAuthenticated() || state.taskId !== id || !["running", "paused"].includes(state.phase)) return { success: false, error: "taskUnavailable" };
+      const main = ctx.windows.getMain();
+      if (!main || main.isDestroyed()) return { success: false, error: "taskUnavailable" };
+      if (main.isMinimized()) main.restore(); main.show(); main.focus(); main.webContents.send("cua:showPreview");
+      return { success: true };
+    };
     ctx.hostIpc.handle("cua:showTaskPreview", taskControl(async id => showPreview(id), true), { success: false });
 
     // 状态推送宿主窗口 + 托盘急停项（经通用进行中操作端口）。
     const stop = () => { void cua.stopCuaTask().catch(() => undefined); };
-    const unsubscribe = cua.onCuaRuntime((state) => {
+    const publish = (state: ReturnType<typeof cua.getCuaRuntime>) => {
+      history.record(state);
       const window = ctx.windows.getMain();
       if (window && !window.isDestroyed()) window.webContents.send("cua:runtime", state);
-      const active = state.tasks ? state.tasks.some((task) => ["running", "paused", "failed"].includes(task.phase))
-        : ["running", "paused", "failed"].includes(state.phase);
-      const actions = [{ id: "stop", labelKey: "Claw.Cua.stop", run: stop }];
-      if (state.multiwindow && state.tasks?.length) actions.unshift({
-        id: "preview", labelKey: "Claw.Cua.preview.expand",
-        run: () => { disposeControlWindow.showTask(); },
-      });
-      ctx.activities.set(active ? { actions } : null);
-    });
+      const active = state.tasks ? state.tasks.some(task => ["running", "paused"].includes(task.phase))
+        : ["running", "paused"].includes(state.phase);
+      const actions = [{ id: "center", labelKey: "Claw.Cua.center.open", run: openCenter }];
+      if (active) {
+        actions.push({ id: "preview", labelKey: "Claw.Cua.preview.expand", run: () => { showPreview(state.taskId ?? ""); } });
+        actions.push({ id: "stop", labelKey: "Claw.Cua.multiwindow.stopAll", run: stop });
+      }
+      ctx.activities.set({ actions });
+    };
+    const unsubscribe = cua.onCuaRuntime(publish);
+    publish(cua.getCuaRuntime());
 
     const registerShortcut = () => {
       try { cua.setCuaShortcutAvailable(globalShortcut.register(CUA_STOP_SHORTCUT, stop)); }
@@ -171,6 +195,8 @@ export const computerUseFeature: DesktopFeature = {
     powerMonitor.on("unlock-screen", unlock);
     powerMonitor.on("resume", wake);
     powerMonitor.on("suspend", suspend);
+    const onBeforeQuit = () => { cua.cancelCuaPermissionRequest(); };
+    app.on("before-quit", onBeforeQuit);
     const onWillQuit = () => { void cua.suspendCua("appQuit").catch(() => undefined); };
     app.on("will-quit", onWillQuit);
 
@@ -199,6 +225,7 @@ export const computerUseFeature: DesktopFeature = {
       powerMonitor.removeListener("unlock-screen", unlock); powerMonitor.removeListener("resume", wake);
       powerMonitor.removeListener("suspend", suspend);
       app.removeListener("will-quit", onWillQuit);
+      app.removeListener("before-quit", onBeforeQuit);
       ctx.hostIpc.dispose();
     } };
   },

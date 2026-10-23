@@ -1,6 +1,6 @@
 /**
- * 进行中操作：特性登记「正在进行、用户可随时干预」的操作及其动作（如录制的暂停/停止、
- * Computer Use 的急停），宿主统一渲染到托盘等常驻入口。每个特性同一时刻至多一项。
+ * 特性操作入口：登记当前可用的本机任务入口及进行中动作（如任务中心、录制暂停/停止），
+ * 宿主统一渲染到托盘。入口存在不代表任务运行，也不得触发后台服务启动。每个特性至多一组。
  *
  * 文案以 i18n 键登记，由宿主渲染时翻译，语言切换后无需特性重新登记。
  */
@@ -16,7 +16,7 @@ export interface FeatureActivity {
 }
 
 export interface FeatureActivities {
-  /** 登记或清除（null）本特性当前的进行中操作。 */
+  /** 登记或清除（null）本特性当前可用的操作入口与动作。 */
   set(activity: FeatureActivity | null): void;
 }
 
@@ -27,7 +27,7 @@ export interface ActivityEntry {
 
 export interface ActivityBoard {
   forFeature(featureId: string): FeatureActivities;
-  /** 按特性登记顺序（注册表顺序）返回当前进行中的操作。 */
+  /** 按特性登记顺序（注册表顺序）返回当前可用的操作入口。 */
   list(): ActivityEntry[];
   /** 执行某特性当前登记的动作；无此动作返回 false。 */
   run(featureId: string, actionId: string): boolean;

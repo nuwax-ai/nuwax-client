@@ -28,6 +28,8 @@ export interface PermissionSnapshot {
   helperAvailable: boolean;
   /** The registered helper exposes a bundle path, so drag-add can offer its real identity. */
   helperAppAvailable?: boolean;
+  /** Enabled or explicitly pending enable; installation alone is not permission intent. */
+  helperEnabled?: boolean;
   items: GuidedPermission[];
 }
 export interface PermissionOnboardingAPI {
@@ -41,6 +43,7 @@ export interface PermissionOnboardingAPI {
 }
 /** A future CU product adapter must check its own TCC identity without launching/requesting. */
 export interface HelperPermissionAdapter {
+  enabled?: () => boolean | Promise<boolean>;
   check(): Promise<{
     accessibility: PermissionProbe;
     screen_recording: PermissionProbe;

@@ -93,8 +93,17 @@ export interface ComputerUseStatus {
   error?: string | null;
 }
 
+/** User-visible local task summaries; deliberately not a replay or a native authorization. */
+export interface CuaTaskHistory {
+  taskId: string; label: string; phase: CuaPhase; startedAt: number; endedAt: number; stepCount: number;
+}
+
 export interface ComputerUseAPI {
+  getTaskHistory: () => Promise<CuaTaskHistory[]>;
+  clearTaskHistory: () => Promise<{ success: boolean }>;
+
   showTaskPreview: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+  takeOver: () => Promise<CuaControlResult>;
   takeOverTask: (taskId: string) => Promise<CuaControlResult>;
   getTasks: () => Promise<CuaTaskRuntime[]>;
   bindTarget: (taskId: string, target: Pick<CuaWindow, "pid" | "windowId">) => Promise<CuaControlResult>;

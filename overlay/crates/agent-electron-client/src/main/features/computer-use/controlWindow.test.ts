@@ -23,6 +23,7 @@ vi.mock("electron", async () => {
       }
       setVisible(value: boolean) { this.visible = value; }
       setBounds(value: any) { this.bounds = value; }
+      getBounds() { return this.bounds; }
       setBackgroundColor() {}
     },
   };
@@ -52,6 +53,7 @@ function setup(multiwindow = true) {
     subscribe: fn => { listener = fn; return vi.fn(); }, authenticated: () => true, t: key => key, action,
   });
   return { dispose, action, get main() { return main; }, replaceMain(next: MainWindow) { main = next; },
+    setRuntime(value: CuaRuntime) { runtime = value; listener(runtime); },
     update() { runtime = { ...runtime, revision: runtime.revision + 1 }; listener(runtime); } };
 }
 beforeEach(() => {
@@ -65,7 +67,7 @@ describe("Computer Use control surface follows the main client window", () => {
   it("keeps compact/expanded views within the client, including after resize", async () => {
     const s = setup(); await flush(); const v = mocks.views[0];
     expect(s.main.children).toEqual([v]); expect(v.visible).toBe(true); expect(v.bounds.height).toBe(42);
-    s.dispose.showTask("task"); expect(v.bounds.height).toBe(320);
+    s.dispose.showTask("task"); expect(v.bounds.height).toBe(220);
     s.main.width = 300; s.main.height = 180; s.main.emit("resize");
     expect(v.bounds.x).toBeGreaterThanOrEqual(0); expect(v.bounds.y).toBeGreaterThanOrEqual(0);
     expect(v.bounds.x + v.bounds.width).toBeLessThanOrEqual(300); expect(v.bounds.y + v.bounds.height).toBeLessThanOrEqual(180);
@@ -107,4 +109,37 @@ describe("Computer Use control surface follows the main client window", () => {
     expect(mocks.views).toHaveLength(1); expect(v.webContents.isDestroyed()).toBe(true);
     s.dispose(); expect(mocks.handlers.size).toBe(0); expect(s.main.listenerCount("show")).toBe(0);
   });
+  it("starts small at the top-right, clamps dragging and remembers position without controlling tasks", async () => {
+    const s = setup(); await flush(); s.dispose.showTask("task"); const v = mocks.views[0];
+    expect(v.bounds).toEqual({ x: 644, y: 48, width: 300, height: 220 });
+    const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
+    const move = mocks.handlers.get("cua:control:move")!;
+    expect(move(event, { x: Infinity, y: 0 })).toBeNull();
+    expect(move({ ...event, senderFrame: {} }, { x: 2, y: 2 })).toBeNull();
+    move(event, { x: -200, y: 10000 }); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(404);
+    s.update(); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(404);
+    expect(s.action).not.toHaveBeenCalled(); s.dispose();
+  });
+  it("closing hides capture until explicitly reopened while runtime updates keep the task alive", async () => {
+    const s = setup(); await flush(); const v = mocks.views[0]; const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
+    expect(mocks.handlers.get("cua:control:close")!(event)).toBe(true);
+    expect(v.visible).toBe(false); expect(mocks.select).toHaveBeenLastCalledWith(null);
+    s.update(); expect(v.visible).toBe(false); expect(s.action).not.toHaveBeenCalled();
+    s.dispose.showTask("task"); expect(v.visible).toBe(true); s.dispose();
+  });
+  it("only exposes live tasks and accepts a complete permutation without changing execution", async () => {
+    const s = setup(); await flush(); const v = mocks.views[0];
+    s.setRuntime({ taskId: "a", revision: 5, phase: "running", multiwindow: true,
+      tasks: [{ taskId: "a", phase: "running" }, { taskId: "b", phase: "paused" }, { taskId: "ended", phase: "completed" }] } as CuaRuntime);
+    const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
+    const get = mocks.handlers.get("cua:control:getRuntime")!, reorder = mocks.handlers.get("cua:control:reorder")!;
+    expect(get(event).tasks.map((t: any) => t.taskId)).toEqual(["a", "b"]);
+    expect(reorder(event, ["b", "b"])).toBeNull(); expect(reorder(event, ["ended", "a"])).toBeNull();
+    expect(reorder(event, ["b", "a"])).toEqual(["b", "a"]);
+    expect(get(event).tasks.map((t: any) => t.taskId)).toEqual(["b", "a"]);
+    expect(s.dispose.showTask("ended").success).toBe(false); expect(s.action).not.toHaveBeenCalled();
+    s.setRuntime({ taskId: "ended", revision: 6, phase: "completed", multiwindow: true, tasks: [{ taskId: "ended", phase: "completed" }] } as CuaRuntime);
+    expect(v.webContents.isDestroyed()).toBe(true); s.dispose();
+  });
+
 });

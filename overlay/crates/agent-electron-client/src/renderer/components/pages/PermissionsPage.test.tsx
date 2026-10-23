@@ -103,7 +103,20 @@ it("keeps helper rows draggable only while a helper bundle path exists", () => {
   expect(noPath).toContain("Claw.PermissionGuide.helperPending");
   h.snapshot!.helperAvailable = true;
   h.snapshot!.helperAppAvailable = true;
+  h.snapshot!.helperEnabled = true;
   h.cursor = 0;
   const withPath = renderToStaticMarkup(<PermissionsPage />);
   expect(withPath).toContain("Claw.PermissionGuide.dragAdd");
+});
+it("does not count disabled helper permissions as required or offer their buttons", () => {
+  h.snapshot!.helperAvailable = true;
+  h.snapshot!.helperAppAvailable = true;
+  h.snapshot!.helperEnabled = false;
+  h.snapshot!.items = [{ key: "helper_accessibility", status: "denied", probe: "denied" }];
+  h.target = "helper_accessibility";
+  const html = renderToStaticMarkup(<PermissionsPage />);
+  expect(html).toContain("Claw.PermissionGuide.helperDisabled");
+  expect(html).not.toContain("Claw.PermissionGuide.badgeRequired");
+  expect(html).not.toContain("Claw.PermissionGuide.openSettings");
+  expect(html).not.toContain("Claw.PermissionGuide.dragAdd");
 });

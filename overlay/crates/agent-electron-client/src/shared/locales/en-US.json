@@ -1380,5 +1380,20 @@
   "Claw.Cua.preview.stop": "Stop",
   "Claw.Cua.preview.takeoverShort": "Take over",
   "Claw.Cua.preview.windowSettings": "Window and input mode",
-  "Claw.Cua.preview.noPreview": "Select to preview"
+  "Claw.Cua.preview.noPreview": "Select to preview",
+  "Claw.Cua.preview.close": "Close preview (keep task running)",
+  "Claw.Cua.preview.moveEarlier": "Move earlier",
+  "Claw.Cua.preview.moveLater": "Move later",
+  "Claw.Cua.center.open": "Computer Use",
+  "Claw.Cua.center.active": "In progress",
+  "Claw.Cua.center.history": "History",
+  "Claw.Cua.center.emptyActive": "No windows are being operated",
+  "Claw.Cua.center.emptyHistory": "No task history yet",
+  "Claw.Cua.center.historyDescription": "Keeps the latest 100 local task summaries, without screenshots, input or clipboard content.",
+  "Claw.Settings.computerUse.pendingTitle": "Permission setup pending",
+  "Claw.Settings.computerUse.pendingDescription": "Computer Use starts only after permissions and checks pass. You can cancel this setup.",
+  "Claw.Settings.computerUse.cancelPreparation": "Cancel setup",
+  "Claw.Settings.computerUse.continueEnable": "Continue setup and enable",
+  "Claw.PermissionGuide.helperDisabled": "Computer Use is not enabled. Its own permissions are needed when you enable it.",
+  "Claw.Cua.preview.legacyTakeover": "Automation is paused. Switch to the target window to take control."
 }

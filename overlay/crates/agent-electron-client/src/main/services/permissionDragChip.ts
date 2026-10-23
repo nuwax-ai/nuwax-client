@@ -11,8 +11,8 @@ export interface DragChipIdentity {
   appPath: string;
 }
 
-const CHIP_LABEL_KEYS = ["dragChipTitle", "dragChipHint", "dragChipManual"] as const;
-export type DragChipLabels = Record<(typeof CHIP_LABEL_KEYS)[number], string>;
+type ChipLabelKey = "dragChipTitle" | "dragChipHint" | "dragChipManual";
+export type DragChipLabels = Record<ChipLabelKey, string>;
 
 const WIDTH = 300;
 const HEIGHT = 112;
@@ -92,14 +92,60 @@ async function appIcon(appPath: string): Promise<Electron.NativeImage | null> {
   return null;
 }
 
-export function createPermissionDragChip(options: { t: (key: string) => string }) {
+export function createPermissionDragChip(options: {
+  t: (key: string) => string;
+  getWindow: () => BrowserWindow | null;
+}) {
   let window: BrowserWindow | null = null;
   let url = "";
   let disposed = false;
   let identity: DragChipIdentity | null = null;
+  let requested = false;
+  let loaded = false;
+  let owner: BrowserWindow | null = null;
+  let hiddenByOwner = false;
+  const ownerListeners: Array<[string, () => void]> = [];
+
+  const unbindOwner = () => {
+    for (const [event, listener] of ownerListeners) (owner as NodeJS.EventEmitter | null)?.removeListener(event, listener);
+    ownerListeners.length = 0;
+    owner = null;
+  };
+  const syncVisibility = () => {
+    if (!window || window.isDestroyed()) return;
+    if (!disposed && requested && loaded && owner && !owner.isDestroyed() &&
+        !hiddenByOwner && owner.isVisible() && !owner.isMinimized()) window.showInactive();
+    else window.hide();
+  };
+  const bindOwner = (next: BrowserWindow) => {
+    if (owner === next) return;
+    unbindOwner();
+    owner = next;
+    hiddenByOwner = !next.isVisible() || next.isMinimized();
+    const bind = (event: string, listener: () => void) => {
+      (next as NodeJS.EventEmitter).on(event, listener);
+      ownerListeners.push([event, listener]);
+    };
+    for (const event of ["hide", "minimize", "close"]) bind(event, () => {
+      // Electron can deliver hide before isVisible() changes.
+      hiddenByOwner = true;
+      syncVisibility();
+    });
+    for (const event of ["show", "restore"]) bind(event, () => {
+      hiddenByOwner = false;
+      syncVisibility();
+      queueMicrotask(syncVisibility);
+    });
+    bind("closed", () => {
+      requested = false;
+      window?.destroy();
+      window = null;
+      unbindOwner();
+    });
+  };
 
   const labels = (): DragChipLabels => {
-    const read = (key: (typeof CHIP_LABEL_KEYS)[number]) =>
+    const read = (key: ChipLabelKey) =>
       options.t(`Claw.PermissionGuide.${key}`);
     return {
       dragChipTitle: read("dragChipTitle"),
@@ -116,10 +162,11 @@ export function createPermissionDragChip(options: { t: (key: string) => string }
 
   ipcMain.handle("permissions:onboarding:dragChip:start", async (event) => {
     if (!trusted(event) || !identity) return false;
-    const icon = await appIcon(identity.appPath);
-    if (!icon) return false;
+    const current = identity;
+    const icon = await appIcon(current.appPath);
+    if (!icon || identity !== current || !trusted(event) || disposed || !requested || hiddenByOwner) return false;
     // The renderer cancelled its HTML5 drag; the native session starts here.
-    event.sender.startDrag({ file: identity.appPath, icon });
+    event.sender.startDrag({ file: current.appPath, icon });
     return true;
   });
   ipcMain.handle("permissions:onboarding:dragChip:close", (event) => {
@@ -133,7 +180,7 @@ export function createPermissionDragChip(options: { t: (key: string) => string }
     // Snapshot so a key switch mid-flight can't pair a stale icon with a new name.
     const current = identity;
     void appIcon(current.appPath).then((icon) => {
-      if (window && !window.isDestroyed())
+      if (!disposed && identity === current && window && !window.isDestroyed())
         window.webContents.send("permissionChip:identity", {
           appName: current.appName,
           icon: icon ? icon.toDataURL() : null,
@@ -142,11 +189,17 @@ export function createPermissionDragChip(options: { t: (key: string) => string }
   };
 
   function show(next: DragChipIdentity): boolean {
+    if (disposed) return false;
+    const nextOwner = options.getWindow();
+    if (!nextOwner || nextOwner.isDestroyed()) return false;
+    bindOwner(nextOwner);
     identity = next;
+    requested = true;
     if (!window || window.isDestroyed()) {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       // Non-activating so System Settings keeps focus while the chip floats above it.
       window = new BrowserWindow({
+        parent: nextOwner,
         width: WIDTH,
         height: HEIGHT,
         x: Math.round(area.x + area.width - WIDTH - 20),
@@ -171,6 +224,7 @@ export function createPermissionDragChip(options: { t: (key: string) => string }
         },
       });
       const owned = window;
+      loaded = false;
       owned.setAlwaysOnTop(true, "floating");
       owned.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       owned.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -183,27 +237,35 @@ export function createPermissionDragChip(options: { t: (key: string) => string }
       owned.webContents.on("did-finish-load", publish);
       url = "data:text/html;charset=utf-8," + encodeURIComponent(permissionDragChipHtml(labels()));
       void owned.loadURL(url).then(() => {
-        if (!disposed && !owned.isDestroyed()) owned.showInactive();
+        if (!disposed && window === owned && !owned.isDestroyed()) {
+          loaded = true;
+          syncVisibility();
+        }
       }).catch(() => {
         if (!owned.isDestroyed()) owned.destroy();
         if (window === owned) window = null;
       });
     } else {
       publish();
-      if (!window.isMinimized()) window.showInactive();
+      syncVisibility();
     }
     return true;
   }
   function hide() {
+    requested = false;
     if (window && !window.isDestroyed()) window.hide();
   }
   function dispose() {
     disposed = true;
     identity = null;
+    requested = false;
+    unbindOwner();
     window?.destroy();
     window = null;
     ipcMain.removeHandler("permissions:onboarding:dragChip:start");
     ipcMain.removeHandler("permissions:onboarding:dragChip:close");
+    app.removeListener("before-quit", dispose);
   }
+  app.on("before-quit", dispose);
   return Object.assign(dispose, { show, hide });
 }

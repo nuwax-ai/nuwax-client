@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   daemonReady: false,
   autoReady: false,
   permissionGranted: false,
+  deferPermissionHost: false,
   policyActive: true,
   policyPath: "",
   captureReady: true,
@@ -103,7 +104,7 @@ vi.mock("node:child_process", () => ({
       mocks.policyPath = opts?.env?.CUA_DRIVER_MANAGED_POLICY_FILE ??
         args.find((arg) => arg.startsWith("CUA_DRIVER_MANAGED_POLICY_FILE="))?.split("=").slice(1).join("=") ?? "";
     }
-    if (args.includes("__permissions-host-request")) {
+    if (args.includes("__permissions-host-request") && !mocks.deferPermissionHost) {
       const resultFile = args[args.indexOf("--result-file") + 1];
       fs.writeFileSync(resultFile, JSON.stringify({ structuredContent: {
         accessibility: mocks.permissionGranted,
@@ -312,6 +313,7 @@ beforeEach(() => {
   mocks.daemonReady = false;
   mocks.autoReady = false;
   mocks.permissionGranted = false;
+  mocks.deferPermissionHost = false;
   mocks.policyActive = true;
   mocks.policyPath = "";
   mocks.captureReady = true;
@@ -528,6 +530,7 @@ describe("cua 开关与启动收敛", () => {
     expect(fs.statSync(endpointTokenFile()).mode & 0o077).toBe(0);
     const serve = mocks.spawnCalls.find((c) => c.args.includes("serve"));
     expect(serve!.args).toContain("--dangerously-bypass-approvals");
+    expect(serve!.args).toContain("--no-permissions-gate");
     expect(serve!.args.some((arg) => arg.startsWith("CUA_DRIVER_MANAGED_POLICY_FILE="))).toBe(true);
 
     mocks.permissionGranted = false;
@@ -704,6 +707,7 @@ describe("cua 开关与启动收敛", () => {
     expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseEnabled).toBe(true);
     expect(readMcpServers().cua).toBeUndefined();
     expect(mocks.spawnCalls.some((c) => c.args.includes("__permissions-host-request"))).toBe(false);
+    expect(mocks.spawnCalls.find(c => c.args.includes("serve"))?.args).toContain("--no-permissions-gate");
   });
 
   it("设置页早于启动收敛读取状态时不误清除持久开关", async () => {
@@ -716,6 +720,69 @@ describe("cua 开关与启动收敛", () => {
     await ensureCuaOnBoot();
     expect((await getCuaStatus()).enabled).toBe(true);
     expect(mocks.spawnCalls.some((c) => c.args.includes("__permissions-host-request"))).toBe(false);
+  });
+});
+
+describe("permission request ownership", () => {
+  it("coalesces concurrent clicks and precisely cleans the cancelled host", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    const first = cuaModule.requestCuaPermissions();
+    const second = cuaModule.requestCuaPermissions();
+    expect(first).toBe(second);
+    const hosts = mocks.spawnCalls.filter(c => c.args.includes("__permissions-host-request"));
+    expect(hosts).toHaveLength(1);
+    const resultFile = hosts[0].args[hosts[0].args.indexOf("--result-file") + 1];
+    expect(cuaModule.cancelCuaPermissionRequest()).toBe(true);
+    expect(await first).toMatchObject({ success: false, error: "operationCancelled" });
+    expect(fs.existsSync(resultFile)).toBe(false);
+    const cleanup = mocks.execCalls.find(c => c.cmd === "pkill" && c.args.some(a => a.includes("__permissions-host-request")));
+    expect(cleanup?.args).toEqual(["-KILL", "-f", expect.stringContaining(resultFile.replaceAll(".", "\\."))]);
+    expect(cleanup?.args[2]).toContain("^" + stableHelperPath().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    expect((await getCuaStatus()).accessibility).toBeNull();
+  });
+  it("bounds a silent host to twenty seconds and discards late result files", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    vi.useFakeTimers();
+    try {
+      const request = cuaModule.requestCuaPermissions();
+      const host = mocks.spawnCalls.find(c => c.args.includes("__permissions-host-request"))!;
+      const resultFile = host.args[host.args.indexOf("--result-file") + 1];
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await request).toMatchObject({ success: false, error: "timeout" });
+      fs.writeFileSync(resultFile, JSON.stringify({ structuredContent: { accessibility: true, screen_recording: true } }));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect((await getCuaStatus()).accessibility).toBeNull();
+      fs.rmSync(resultFile);
+    } finally { vi.useRealTimers(); }
+  });
+  it("disable cancels an in-flight enable without waiting for the permission timeout", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.deferPermissionHost = true;
+    const enabling = setCuaEnabled(true);
+    await vi.waitFor(() => expect(mocks.spawnCalls.some(c => c.args.includes("__permissions-host-request"))).toBe(true));
+    const disabling = setCuaEnabled(false);
+    const [on, off] = await Promise.all([enabling, disabling]);
+    expect(on).toMatchObject({ success: false, error: "operationCancelled" });
+    expect(off).toMatchObject({ success: true, status: { enabled: false, consentPending: false, mcpInjected: false } });
+    expect(mocks.spawnCalls.some(c => c.args.includes("serve"))).toBe(false);
+  });
+  it("session invalidation revokes the outstanding host before lifecycle cleanup", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    const request = cuaModule.requestCuaPermissions();
+    const suspended = cuaModule.suspendCua("sessionEnded");
+    expect(await request).toMatchObject({ success: false, error: "operationCancelled" });
+    await suspended;
+    expect((await getCuaStatus()).accessibility).toBeNull();
+  });
+  it("synchronously cancels an outstanding request before quit cleanup", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    const request = cuaModule.requestCuaPermissions();
+    expect(cuaModule.cancelCuaPermissionRequest()).toBe(true);
+    expect(await request).toMatchObject({ success: false, error: "operationCancelled" });
   });
 });
 

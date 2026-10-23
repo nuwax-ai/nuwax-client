@@ -93,6 +93,7 @@ export function getPermissionSnapshot(): Promise<PermissionSnapshot> {
         isFullDiskAccessPromptDismissed() === true,
       helperAvailable: !!helper,
       helperAppAvailable: !!helper?.appPath?.(),
+      helperEnabled: false,
       items: [],
     };
     if (process.platform !== "darwin") return snapshot;
@@ -115,6 +116,7 @@ export function getPermissionSnapshot(): Promise<PermissionSnapshot> {
     ];
     const adapter = helper;
     if (adapter) {
+      snapshot.helperEnabled = await Promise.resolve().then(() => adapter.enabled?.() ?? false).catch(() => false);
       const result = Promise.resolve().then(() => adapter.check());
       entries.push(
         [
@@ -144,20 +146,16 @@ export async function openGuidedPermissionSettings(
 ): Promise<boolean> {
   if (!isPermissionKey(key) || process.platform !== "darwin") return false;
   if (key === "helper_accessibility" || key === "helper_screen_recording") {
-    return helper
-      ? helper.request(
-          key === "helper_accessibility" ? "accessibility" : "screen_recording",
-        )
-      : false;
+    if (!helper?.appPath?.() || !(await helper.enabled?.())) return false;
+    return openMacPrivacySettings(key === "helper_accessibility" ? "accessibility" : "screen_recording");
   }
-  if (
-    key === "screen_recording" &&
-    systemPreferences.getMediaAccessStatus("screen") !== "granted"
-  ) {
-    await desktopCapturer
-      .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
-      .catch((error) => log.warn("[Permissions] screen request failed", error));
+  // Screen Recording has no add-app button. This explicit row action must
+  // register the host with TCC before opening the pane on a fresh install.
+  if (key === "screen_recording" && systemPreferences.getMediaAccessStatus("screen") !== "granted") {
+    await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+      .catch(error => log.warn("[Permissions] screen request failed", error));
   }
+  // Combined helper requests belong to the explicit Computer Use enable flow.
   return openMacPrivacySettings(key);
 }
 export function showPermissionApp(): boolean {
@@ -188,6 +186,13 @@ export function getPermissionDragIdentity(
   return { key, ...appIdentity() };
 }
 let dragChipPromise: Promise<ReturnType<typeof import("./permissionDragChip").createPermissionDragChip>> | undefined;
+let dragChipEpoch = 0;
+let dragChipDisposed = false;
+app.on("before-quit", () => {
+  dragChipDisposed = true;
+  dragChipEpoch++;
+  void dragChipPromise?.then(chip => chip()).catch(() => undefined);
+});
 function ensureDragChip() {
   // Single-flight: concurrent shows must not construct the palette twice.
   dragChipPromise ??= (async () => {
@@ -195,17 +200,25 @@ function ensureDragChip() {
       import("./permissionDragChip"),
       import("./i18n"),
     ]);
-    return createPermissionDragChip({ t });
+    const chip = createPermissionDragChip({ t, getWindow: () => getWindow?.() ?? null });
+    if (dragChipDisposed) chip();
+    return chip;
   })();
   return dragChipPromise;
 }
 export async function showPermissionDragChip(key: unknown): Promise<boolean> {
   if (!isPermissionKey(key)) return false;
+  if (dragChipDisposed) return false;
+  const epoch = dragChipEpoch;
   const identity = getPermissionDragIdentity(key);
   if (!identity) return false;
-  return (await ensureDragChip()).show(identity);
+  if (key.startsWith("helper_") && !(await helper?.enabled?.())) return false;
+  if (dragChipDisposed || epoch !== dragChipEpoch) return false;
+  const chip = await ensureDragChip();
+  return !dragChipDisposed && epoch === dragChipEpoch ? chip.show(identity) : false;
 }
 export function hidePermissionDragChip(): boolean {
+  dragChipEpoch++;
   // Never construct the palette just to hide it.
   if (!dragChipPromise) return true;
   void dragChipPromise.then((chip) => chip.hide()).catch(() => undefined);

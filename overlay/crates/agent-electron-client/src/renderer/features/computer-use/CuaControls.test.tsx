@@ -17,11 +17,12 @@ vi.mock("antd", async () => {
     Button: (props: any) => { harness.buttons.push(props); return <button disabled={props.disabled}>{props.children}</button>; },
   };
 });
+vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
 import { CuaControls, CuaSettingsRows } from "./CuaControls";
 const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
-  harness.states = [{ phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, []];
+  harness.states = [{ phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];
   api.getRuntime.mockResolvedValue(harness.states[0]); api.stop.mockResolvedValue({ success: true });
   vi.stubGlobal("window", Object.assign(new EventTarget(), { electronAPI: { on: vi.fn(), off: vi.fn() } }));
 });
@@ -43,7 +44,7 @@ describe("Computer Use controls", () => {
     expect(api.recover).toHaveBeenCalledOnce();
   });
   it("keeps emergency stop enabled during another pending operation", () => {
-    harness.states[1] = true;
+    harness.states[3] = true;
     expect(render()).toContain("Claw.Cua.shortcutUnavailable");
     expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop").disabled).toBeUndefined();
     expect(harness.buttons.find((b) => b.children === "Claw.Cua.pause").disabled).toBe(true);
@@ -54,9 +55,9 @@ describe("Computer Use controls", () => {
     expect(html).toContain("Claw.Cua.stopping");
     expect(html).not.toContain("Claw.Cua.reason.userPaused");
   });
-  it("does not mistake session end for verified business success", () => {
+  it("removes terminal sessions from the live-only floating control", () => {
     harness.states[0] = { ...harness.states[0], phase: "completed", resultObserved: false };
-    expect(render()).toContain("Claw.Cua.unobservedResult");
+    expect(render()).toBe("");
   });
   it("explains a resumable no-progress pause and labels refused steps", () => {
     harness.states[0] = { ...harness.states[0], phase: "paused", reason: "noProgress",

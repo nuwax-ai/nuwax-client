@@ -23,15 +23,30 @@ export function createCuaControlWindow(options: {
   taskAction?: (id: string, action: "bind" | "pause" | "resume" | "stop" | "mode" | "takeover", value?: unknown) => Promise<unknown>;
 }) {
   let view: WebContentsView | null = null, owner: BrowserWindow | null = null;
+  let dismissed = false;
+  let order: string[] = [];
   let url = "", disposed = false, loaded = false, hiddenByOwner = false, selected: string | null = null;
-  const saved = options.readPreference?.() as { expanded?: boolean; bounds?: { width?: number; height?: number } } | null;
+  const saved = options.readPreference?.() as { expanded?: boolean; position?: { x: number; y: number } } | null;
   let expanded = saved?.expanded === true;
-  const preferredWidth = Number.isFinite(saved?.bounds?.width) ? Math.max(320, Math.min(520, saved!.bounds!.width!)) : 420;
-  const preferredHeight = Number.isFinite(saved?.bounds?.height) ? Math.max(200, Math.min(480, saved!.bounds!.height!)) : 320;
-  const presentation = () => ({ taskId: selected, expanded });
+  const preferredWidth = 300, preferredHeight = 220;
+  let position = saved?.position && [saved.position.x, saved.position.y].every(Number.isFinite) ? saved.position : null;
+  const liveTasks = () => (options.getRuntime().tasks ?? []).filter(task => ["running", "paused"].includes(task.phase));
+  const runtime = () => {
+    const state = options.getRuntime();
+    const tasks = liveTasks();
+    return { ...state, tasks: tasks.sort((a, b) => order.indexOf(a.taskId) - order.indexOf(b.taskId)) };
+  };
+  const presentation = () => ({ taskId: selected, expanded, position: view?.getBounds() ?? position });
+  const save = () => options.writePreference?.({ expanded, position });
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const savePosition = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveTimer = null; if (!disposed) save(); }, 200);
+    saveTimer.unref();
+  };
   const alive = () => !!view && !view.webContents.isDestroyed();
   const visible = () => alive() && loaded && !hiddenByOwner && !!owner && !owner.isDestroyed() && owner.isVisible() && !owner.isMinimized()
-    && options.getRuntime().multiwindow === true && !!options.getRuntime().taskId;
+    && !dismissed && options.getRuntime().multiwindow === true && liveTasks().length > 0;
   const send = (channel: string, value: unknown) => { if (alive()) view!.webContents.send(channel, value); };
   const preview = createCuaPreviewController({
     identity: id => options.authenticated() ? options.previewIdentity?.(id) ?? null : null,
@@ -43,16 +58,18 @@ export function createCuaControlWindow(options: {
     const area = owner.getContentBounds();
     const width = Math.max(1, Math.min(preferredWidth, area.width - 32));
     const height = Math.max(1, Math.min(expanded ? preferredHeight : 42, area.height - 64));
-    view!.setBounds({ x: Math.max(0, area.width - width - 16), y: Math.max(0, area.height - height - 16), width, height });
+    const maxX = Math.max(0, area.width - width - 16), maxY = Math.max(0, area.height - height - 16);
+    view!.setBounds({ x: Math.max(0, Math.min(position?.x ?? maxX, maxX)),
+      y: Math.max(Math.min(40, maxY), Math.min(position?.y ?? 48, maxY)), width, height });
     const show = visible();
     view!.setVisible(show);
     preview.select(show && expanded && options.authenticated() ? selected : null);
     preview.sync();
   };
   const setPresentation = (id: string | null, open: boolean) => {
-    if (id && options.getRuntime().tasks?.some(task => task.taskId === id)) selected = id;
+    if (id && liveTasks().some(task => task.taskId === id)) selected = id;
     expanded = open;
-    options.writePreference?.({ expanded, bounds: { width: preferredWidth, height: preferredHeight } });
+    save();
     send("cua:control:presentation", presentation()); sync(); return presentation();
   };
   const trusted = (event: IpcMainInvokeEvent) => alive() && event.sender === view!.webContents
@@ -62,7 +79,26 @@ export function createCuaControlWindow(options: {
     if (!trusted(event) || !options.authenticated() || typeof open !== "boolean" || (id !== null && typeof id !== "string")) return null;
     return setPresentation(id as string | null, open);
   });
-  ipcMain.handle("cua:control:getRuntime", event => trusted(event) ? options.getRuntime() : null);
+  ipcMain.handle("cua:control:getRuntime", event => trusted(event) ? runtime() : null);
+  ipcMain.handle("cua:control:close", event => {
+    if (!trusted(event)) return false;
+    dismissed = true; sync(); return true;
+  });
+  ipcMain.handle("cua:control:move", (event, value: unknown) => {
+    const point = value as { x?: unknown; y?: unknown } | null;
+    if (!trusted(event) || !point || typeof point.x !== "number" || typeof point.y !== "number" ||
+        !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+    const area = owner!.getContentBounds(), bounds = view!.getBounds();
+    position = { x: Math.max(0, Math.min(Math.round(point.x), Math.max(0, area.width - bounds.width - 16))),
+      y: Math.max(Math.min(40, Math.max(0, area.height - bounds.height - 16)), Math.min(Math.round(point.y), Math.max(0, area.height - bounds.height - 16))) };
+    savePosition(); sync(); return presentation();
+  });
+  ipcMain.handle("cua:control:reorder", (event, ids: unknown) => {
+    if (!trusted(event) || !Array.isArray(ids) || ids.length > 32 || ids.some(id => typeof id !== "string")) return null;
+    const live = liveTasks().map(task => task.taskId);
+    if (ids.length !== live.length || new Set(ids).size !== live.length || ids.some(id => !live.includes(id))) return null;
+    order = [...ids]; send("cua:control:runtime", runtime()); return order;
+  });
   ipcMain.handle("cua:control:action", async (event, action: unknown) => {
     if (!trusted(event) || !["pause", "resume", "stop", "dismiss", "recover"].includes(String(action))) return { success: false };
     if (["resume", "recover"].includes(String(action)) && !options.authenticated()) return { success: false };
@@ -99,10 +135,10 @@ export function createCuaControlWindow(options: {
   const update = (state: CuaRuntime) => {
     if (disposed) return;
     // Single-window/desktop controls are already rendered inside App.tsx.
-    if (!state.multiwindow || (!state.taskId && state.phase !== "failed")) { destroySurface(); return; }
-    const current = state.tasks?.find(task => task.taskId === selected);
-    const live = state.tasks?.find(task => ["running", "paused"].includes(task.phase));
-    if (!current || (live && ["completed", "stopped", "failed"].includes(current.phase))) selected = live?.taskId ?? state.tasks?.[0]?.taskId ?? null;
+    const live = liveTasks();
+    if (!state.multiwindow || !live.length) { dismissed = false; destroySurface(); return; }
+    order = [...order.filter(id => live.some(task => task.taskId === id)), ...live.map(task => task.taskId).filter(id => !order.includes(id))];
+    if (!live.some(task => task.taskId === selected)) selected = order[0] ?? null;
     const main = options.getMainWindow();
     if (!main || main.isDestroyed()) { destroySurface(); return; }
     if (owner !== main || !alive()) {
@@ -123,11 +159,11 @@ export function createCuaControlWindow(options: {
       url = "data:text/html;charset=utf-8," + encodeURIComponent(taskControlWindowHtml(options.t));
       void wc.loadURL(url).then(() => {
         if (disposed || view !== created || wc.isDestroyed()) return;
-        loaded = true; send("cua:control:runtime", options.getRuntime());
+        loaded = true; send("cua:control:runtime", runtime());
         send("cua:control:presentation", presentation()); sync();
       }).catch(() => { if (view === created) destroySurface(); });
     } else {
-      send("cua:control:runtime", state); send("cua:control:presentation", presentation()); sync();
+      send("cua:control:runtime", runtime()); send("cua:control:presentation", presentation()); sync();
     }
   };
   const onBeforeQuit = () => { disposed = true; destroySurface(); };
@@ -136,19 +172,20 @@ export function createCuaControlWindow(options: {
   const unsubscribe = options.subscribe(update);
   update(options.getRuntime());
   const dispose = () => {
+    if (saveTimer) clearTimeout(saveTimer);
     disposed = true; preview.dispose(); unsubscribe(); destroySurface();
     app.removeListener("before-quit", onBeforeQuit); app.removeListener("browser-window-created", onWindowCreated);
-    for (const channel of ["getPresentation", "setPresentation", "getRuntime", "action", "listWindows", "taskAction"]) ipcMain.removeHandler("cua:control:" + channel);
+    for (const channel of ["getPresentation", "setPresentation", "getRuntime", "action", "listWindows", "taskAction", "move", "close", "reorder"]) ipcMain.removeHandler("cua:control:" + channel);
   };
   return Object.assign(dispose, { showTask(id?: string) {
-    id ??= selected ?? options.getRuntime().tasks?.[0]?.taskId;
-    if (!id || !options.authenticated() || !options.getRuntime().tasks?.some(task => task.taskId === id)) return { success: false, error: "taskUnavailable" };
+    id ??= selected ?? liveTasks()[0]?.taskId;
+    if (!id || !options.authenticated() || !liveTasks().some(task => task.taskId === id)) return { success: false, error: "taskUnavailable" };
     const main = options.getMainWindow();
     if (main && !main.isDestroyed()) {
       if (main.isMinimized()) main.restore();
       if (!main.isVisible()) main.show();
     }
-    update(options.getRuntime()); setPresentation(id, true); return { success: true };
+    dismissed = false; update(options.getRuntime()); setPresentation(id, true); return { success: true };
   } });
 }
 

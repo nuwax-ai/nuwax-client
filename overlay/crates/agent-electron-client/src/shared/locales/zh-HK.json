@@ -1380,5 +1380,20 @@
   "Claw.Cua.preview.stop": "停止",
   "Claw.Cua.preview.takeoverShort": "接管",
   "Claw.Cua.preview.windowSettings": "視窗與操作模式",
-  "Claw.Cua.preview.noPreview": "選取後查看畫面"
+  "Claw.Cua.preview.noPreview": "選取後查看畫面",
+  "Claw.Cua.preview.close": "關閉預覽（任務繼續）",
+  "Claw.Cua.preview.moveEarlier": "向前排列",
+  "Claw.Cua.preview.moveLater": "向後排列",
+  "Claw.Cua.center.open": "電腦操作",
+  "Claw.Cua.center.active": "進行中",
+  "Claw.Cua.center.history": "操作歷史",
+  "Claw.Cua.center.emptyActive": "目前沒有正在操作的視窗",
+  "Claw.Cua.center.emptyHistory": "暫無操作歷史",
+  "Claw.Cua.center.historyDescription": "保留最近 100 筆本機任務摘要，不含截圖、輸入或剪貼簿。",
+  "Claw.Settings.computerUse.pendingTitle": "等待完成授權",
+  "Claw.Settings.computerUse.pendingDescription": "授權完成並檢查通過後才啟用電腦操作；你可以取消本次準備。",
+  "Claw.Settings.computerUse.cancelPreparation": "取消啟用",
+  "Claw.Settings.computerUse.continueEnable": "繼續授權並啟用",
+  "Claw.PermissionGuide.helperDisabled": "電腦操作尚未啟用。開啟後再完成專屬授權。",
+  "Claw.Cua.preview.legacyTakeover": "自動操作已暫停，可切換到目標視窗親自操作。"
 }

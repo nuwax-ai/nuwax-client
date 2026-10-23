@@ -530,6 +530,9 @@ function daemonServeArgs(): string[] {
   return [
     "serve", "--socket", endpoint().socketPath,
     "--permission-mode", "unrestricted", "--dangerously-bypass-approvals",
+    // Startup/status reconciliation must never open a native permission gate.
+    // Explicit enable uses the dedicated permission host before MCP injection.
+    "--no-permissions-gate",
   ];
 }
 
@@ -617,6 +620,7 @@ async function launchDaemon(helperRoot: string): Promise<string> {
  * 导出供退出清理链消费（commercialAuth.stopExtras 与 will-quit 钩子双触发，幂等）。
  */
 export async function stopDaemon(): Promise<void> {
+  cancelCuaPermissionRequest();
   const helperPath = findHelperApp();
   const literal = (value: string) => value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
   const executable = helperPath ? literal(helperExecutable(helperPath))
@@ -836,7 +840,7 @@ export async function setCuaEnabled(enabled: boolean): Promise<{
   error?: string;
   status: CuaStatus;
 }> {
-  if (!enabled) cuaDisableEpoch++;
+  if (!enabled) { cuaDisableEpoch++; cancelCuaPermissionRequest(); }
   const epoch = cuaDisableEpoch;
   return serializeCua(() => setCuaEnabledUnlocked(enabled, epoch));
 }
@@ -1121,6 +1125,7 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
 /** Revoke synchronously before waiting for any lifecycle queue or OS operation. */
 export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaDisableEpoch++;
+  cancelCuaPermissionRequest();
   pendingControls++;
   runtimeSuspended = true;
   cuaTasks.setAvailable(false);
@@ -1150,6 +1155,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
   }
   pendingControls++;
   cuaDisableEpoch++;
+  cancelCuaPermissionRequest();
   runtimeSuspended = true;
   cuaTasks.pause(reason);
   cuaBindings.clear();
@@ -1472,93 +1478,123 @@ let lastPermissionHint: {
   screenRecording: boolean | null;
 } = { accessibility: null, screenRecording: null };
 
-/**
- * 触发/检查 helper 的 TCC 授权（权限宿主流）。
- * 未授权时系统会弹出「Nuwax Computer Use 想要控制…」引导窗（用户点「打开系统设置」完成）；
- * 已授权时立即返回结果且不再弹窗——因此可安全地作为状态复查动作重复调用。
- */
-export async function requestCuaPermissions(): Promise<CuaPermissionsResult> {
-  const helperPath = findHelperApp();
-  if (!IS_MAC || !helperPath) {
-    return {
-      success: false,
-      error: IS_MAC ? "helperNotInstalled" : "unsupportedPlatform",
-      accessibility: null,
-      screenRecording: null,
-    };
-  }
-  const resultFile = path.join(
-    os.tmpdir(),
-    `cua-driver-permissions-${process.pid}-${randomUUID()}.json`,
-  );
+type PermissionAttempt = {
+  epoch: number;
+  helperPath: string;
+  resultFile: string;
+  controller: AbortController;
+  error: "operationCancelled" | "timeout" | "permissionHostFailed";
+  promise: Promise<CuaPermissionsResult>;
+};
+let permissionAttempt: PermissionAttempt | undefined;
+
+/** Cancels only the currently owned request; never kills a daemon or another app. */
+export function cancelCuaPermissionRequest(): boolean {
+  const attempt = permissionAttempt;
+  if (!attempt) return false;
   lastPermissionHint = { accessibility: null, screenRecording: null };
+  // Revoke the host's private result-file lease before OS process cleanup.
+  try { fs.rmSync(attempt.resultFile, { force: true }); } catch { /* Cleanup retries below. */ }
+  attempt.controller.abort();
+  return true;
+}
+
+async function removePermissionHost(attempt: PermissionAttempt): Promise<void> {
+  // LaunchServices' `open` process is not the helper host. Match the exact helper
+  // executable, subcommand and unguessable result file rather than a process name.
+  const literal = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const command = `^${literal(helperExecutable(attempt.helperPath))} __permissions-host-request --result-file ${literal(attempt.resultFile)}( |$)`;
+  await pexec("pkill", ["-KILL", "-f", command], { timeout: 1500 }).catch(() => undefined);
+}
+
+/** Only an explicit enable action enters this single-flight, cancellable request. */
+export function requestCuaPermissions(): Promise<CuaPermissionsResult> {
+  if (permissionAttempt && !permissionAttempt.controller.signal.aborted && permissionAttempt.epoch === cuaDisableEpoch)
+    return permissionAttempt.promise;
+  const helperPath = findHelperApp();
+  if (!IS_MAC || !helperPath) return Promise.resolve({
+    success: false, error: IS_MAC ? "helperNotInstalled" : "unsupportedPlatform",
+    accessibility: null, screenRecording: null,
+  });
+  const attempt: PermissionAttempt = {
+    epoch: cuaDisableEpoch, helperPath,
+    resultFile: path.join(os.tmpdir(), `cua-driver-permissions-${process.pid}-${randomUUID()}.json`),
+    controller: new AbortController(), error: "operationCancelled",
+    promise: undefined!,
+  };
+  permissionAttempt = attempt;
+  attempt.promise = runPermissionRequest(attempt).then(result =>
+    attempt.controller.signal.aborted || attempt.epoch !== cuaDisableEpoch
+      ? { success: false, error: attempt.error, accessibility: null, screenRecording: null }
+      : result);
+  return attempt.promise;
+}
+
+async function runPermissionRequest(attempt: PermissionAttempt): Promise<CuaPermissionsResult> {
+  const empty = { accessibility: null, screenRecording: null };
+  const current = () => permissionAttempt === attempt && !attempt.controller.signal.aborted && attempt.epoch === cuaDisableEpoch;
+  let timer: NodeJS.Timeout | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    attempt.controller.signal.addEventListener("abort", () => reject(new Error(attempt.error)), { once: true });
+  });
+  // Attach a rejection observer even if launch/file creation fails before polling.
+  void aborted.catch(() => undefined);
   try {
-    fs.rmSync(resultFile, { force: true });
-    fs.writeFileSync(resultFile, "", { mode: 0o600 });
-  } catch {
-    // 结果文件写不进去时宿主自身会以安全码退出，此处不拦截
-  }
-  let spawnFailed = false;
-  try {
-    const child = spawn(
-      "open",
-      [
-        "-n", "-g", "--env", `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
-        "--env", "CUA_DRIVER_RS_TELEMETRY_ENABLED=false",
-        helperPath, "--args", "__permissions-host-request",
-        "--result-file", resultFile, "--probe-direct-capture",
-      ],
-      { detached: true, stdio: "ignore" },
-    );
-    child.on("error", () => { spawnFailed = true; });
+    fs.writeFileSync(attempt.resultFile, "", { mode: 0o600, flag: "wx" });
+    lastPermissionHint = empty;
+    timer = setTimeout(() => { attempt.error = "timeout"; attempt.controller.abort(); }, 20_000);
+    const child = spawn("open", [
+      "-n", "-g", "--env", `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
+      "--env", "CUA_DRIVER_RS_TELEMETRY_ENABLED=false",
+      attempt.helperPath, "--args", "__permissions-host-request",
+      "--result-file", attempt.resultFile, "--probe-direct-capture",
+    ], { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+      if (!current()) return;
+      attempt.error = "permissionHostFailed";
+      attempt.controller.abort();
+    });
     child.unref();
+    while (current()) {
+      await Promise.race([new Promise<void>(resolve => setTimeout(resolve, 500)), aborted]);
+      if (!current()) break;
+      let sc: {
+        accessibility?: boolean; screen_recording?: boolean;
+        screen_recording_capturable?: boolean; direct_capture_verification_error?: unknown;
+        direct_capture_verification?: { bundle_id?: string };
+        source?: { attribution?: string; bundle_id?: string };
+      };
+      try {
+        const raw = fs.readFileSync(attempt.resultFile, "utf-8");
+        if (!raw.trim()) continue;
+        sc = JSON.parse(raw).structuredContent ?? {};
+      } catch { continue; } // The host may still be writing.
+      if (!current()) break;
+      const hint = {
+        accessibility: typeof sc.accessibility === "boolean" ? sc.accessibility : null,
+        screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
+      };
+      lastPermissionHint = hint;
+      if (sc.accessibility && sc.screen_recording &&
+          (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== HELPER_BUNDLE_ID))
+        return { success: false, error: "helperIdentityUnverified", ...hint };
+      if (!sc.accessibility || !sc.screen_recording || sc.screen_recording_capturable !== true ||
+          sc.direct_capture_verification_error != null || sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID)
+        return { success: false, error: "permissionsRequired", ...hint };
+      return { success: true, ...hint };
+    }
+    return { success: false, error: "operationCancelled", ...empty };
   } catch {
-    fs.rmSync(resultFile, { force: true });
-    return { success: false, error: "permissionHostFailed", ...lastPermissionHint };
+    return { success: false, error: attempt.controller.signal.aborted ? attempt.error : "permissionHostFailed", ...empty };
+  } finally {
+    if (timer) clearTimeout(timer);
+    // This is a separate, narrowly owned host; stale permission UI must not
+    // outlive cancellation, timeout, app shutdown or a completed request.
+    try { fs.rmSync(attempt.resultFile, { force: true }); }
+    catch { log.warn("[Cua] permission host result cleanup failed"); }
+    await removePermissionHost(attempt);
+    if (permissionAttempt === attempt) permissionAttempt = undefined;
   }
-  // 权限宿主完成探测即退出并写结果；等待上限 20s
-  for (let i = 0; i < 40; i++) {
-    if (spawnFailed) {
-      fs.rmSync(resultFile, { force: true });
-      return { success: false, error: "permissionHostFailed", ...lastPermissionHint };
-    }
-    await new Promise((r) => setTimeout(r, 500));
-    try {
-      const raw = fs.readFileSync(resultFile, "utf-8");
-      if (raw.trim()) {
-        const sc = (JSON.parse(raw).structuredContent ?? {}) as {
-          accessibility?: boolean;
-          screen_recording?: boolean;
-          screen_recording_capturable?: boolean;
-          direct_capture_verification_error?: unknown;
-          direct_capture_verification?: { bundle_id?: string };
-          source?: { attribution?: string; bundle_id?: string };
-        };
-        lastPermissionHint = {
-          accessibility: typeof sc.accessibility === "boolean" ? sc.accessibility : null,
-          screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
-        };
-        fs.rmSync(resultFile, { force: true });
-        // Grants are present, but the probe did not run as our helper: an outdated or unpatched
-        // helper build. Asking the user to grant again would not help.
-        if (sc.accessibility && sc.screen_recording &&
-            (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== HELPER_BUNDLE_ID)) {
-          return { success: false, error: "helperIdentityUnverified", ...lastPermissionHint };
-        }
-        if (!sc.accessibility || !sc.screen_recording ||
-            sc.screen_recording_capturable !== true ||
-            sc.direct_capture_verification_error != null ||
-            sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID) {
-          return { success: false, error: "permissionsRequired", ...lastPermissionHint };
-        }
-        return { success: true, ...lastPermissionHint };
-      }
-    } catch {
-      // 尚未写完，继续轮询
-    }
-  }
-  fs.rmSync(resultFile, { force: true });
-  return { success: false, error: "timeout", ...lastPermissionHint };
 }
 
 // The conversation model owns task reasoning; this endpoint is an explicit synthetic-image diagnostic.
@@ -1592,6 +1628,11 @@ export async function captureCuaTaskPreview(id: string): Promise<import("@shared
   }
   return { taskId: id, status: "ready", frame: { ...identity, sequence: ++previewSequence,
     capturedAt: Date.now(), width: Number(data.width), height: Number(data.height), jpeg: data.jpeg } };
+}
+/** Legacy handoff revokes automation; exact native focus is available in window-task mode. */
+export async function takeOverCua(): Promise<CuaControlResult> {
+  if (multiwindow) return takeOverWindowTask(getCuaRuntime().taskId ?? "");
+  return pauseCuaTask("userTakingControl");
 }
 export async function takeOverWindowTask(id: string): Promise<CuaControlResult> {
   if (!previewCapable || !getCuaPreviewIdentity(id)) return taskResult(false, "helperUpgradeRequired");

@@ -29,7 +29,7 @@ vi.mock("./computerUse", () => ({
   selfTestCua: mocks.selfTest, clearCuaHistory: mocks.clear, getCuaRuntime: () => mocks.runtime,
   setCuaShortcutAvailable: mocks.shortcut,
   onCuaRuntime: (listener: any) => { mocks.listener = listener; return () => {}; },
-  suspendCua: vi.fn().mockResolvedValue(undefined),
+  suspendCua: vi.fn().mockResolvedValue(undefined), cancelCuaPermissionRequest: vi.fn(),
   ensureCuaOnBoot: vi.fn().mockResolvedValue(undefined),
   getCuaStatus: vi.fn(), getCuaHelperAppPath: vi.fn(() => "/owned/Nuwax Computer Use.app"),
   setCuaEnabled: vi.fn(), requestCuaPermissions: vi.fn(), installCuaHelper: vi.fn(),
@@ -137,14 +137,14 @@ describe("Computer Use trusted controls", () => {
     register(); mocks.listener!({ phase: "paused" });
     expect(mocks.send).toHaveBeenCalledWith("cua:runtime", { phase: "paused" });
   });
-  it("registers the emergency stop as a tray activity only while a task exists", () => {
+  it("keeps the task center in the tray after tasks finish and limits emergency stop to live work", () => {
     register();
     mocks.listener!({ phase: "running" });
     const active = mocks.activities.at(-1);
-    expect(active?.actions.map((action) => action.id)).toEqual(["stop"]);
-    active?.actions[0].run();
+    expect(active?.actions.map((action) => action.id)).toEqual(["center", "preview", "stop"]);
+    active?.actions.find(action => action.id === "stop")?.run();
     expect(mocks.stop).toHaveBeenCalledOnce();
     mocks.listener!({ phase: "idle" });
-    expect(mocks.activities.at(-1)).toBeNull();
+    expect(mocks.activities.at(-1)?.actions.map(action => action.id)).toEqual(["center"]);
   });
 });

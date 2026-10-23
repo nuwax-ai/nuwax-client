@@ -98,7 +98,9 @@ export default function PermissionsPage({
         )}
       </div>
     );
-  const items = snapshot.items;
+  // Installation does not mean the user enabled Computer Use. Its permissions
+  // become actionable only after that explicit enable intent.
+  const items = snapshot.items.filter(item => !helperKey(item.key) || snapshot.helperEnabled === true);
   const granted = items.filter((item) => item.status === "granted").length;
   const index = items.findIndex((item) => item.key === selected);
   const subject = (key: PermissionKey) =>
@@ -151,6 +153,7 @@ export default function PermissionsPage({
                   selected === item.key ? styles.selected : ""
                 }`}
               >
+                <div className={styles.rowSummary}>
                 <button
                   type="button"
                   id={`permission-row-${item.key}`}
@@ -171,14 +174,22 @@ export default function PermissionsPage({
                     {text(`status.${labelKey(item.status)}`)}
                   </Tag>
                 </button>
+                <Button
+                  className={styles.rowAction}
+                  loading={busy}
+                  onClick={() => void action(() => api!.openSettings(item.key))}
+                >
+                  {text("openSettings")}
+                </Button>
+                </div>
                 <div className={styles.rowBody}>
                   <p className={styles.description}>
                     {text(`purpose.${labelKey(item.key)}`)}
                   </p>
-                  <div className={styles.meta}>
+                  {selected === item.key && <div className={styles.meta}>
                     {text("subject", subject(item.key))} ·{" "}
                     {text(required(item.key))}
-                  </div>
+                  </div>}
                 </div>
                 {selected === item.key && (
                   <section
@@ -314,10 +325,10 @@ export default function PermissionsPage({
               </Button>
             </div>
           )}
-          {(!snapshot.helperAvailable || missingHelper) && (
+          {(!snapshot.helperEnabled || missingHelper) && (
             <div className={styles.notice}>
               <strong>Computer Use</strong>
-              <p className={styles.description}>{text("helperPending")}</p>
+              <p className={styles.description}>{text(snapshot.helperAppAvailable ? "helperDisabled" : "helperPending")}</p>
             </div>
           )}
           <details className={styles.help}>

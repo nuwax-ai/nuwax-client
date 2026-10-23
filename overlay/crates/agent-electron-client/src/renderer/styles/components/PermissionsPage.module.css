@@ -59,7 +59,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 12px 14px;
   border: 0;
   background: transparent;
@@ -67,6 +68,15 @@
   color: inherit;
   cursor: pointer;
   text-align: start;
+}
+.rowSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-end: 14px;
+}
+.rowAction {
+  flex-shrink: 0;
 }
 .rowHead:focus-visible {
   outline: 2px solid var(--color-primary, #438c76);

@@ -18,6 +18,7 @@ vi.mock("electron", () => ({
     getPath: () => "/Applications/Electron.app/Contents/MacOS/Electron",
     relaunch: mock.relaunch,
     quit: mock.quit,
+    on: vi.fn(),
   },
   shell: { showItemInFolder: mock.showItemInFolder },
   desktopCapturer: { getSources: mock.sources },
@@ -162,6 +163,8 @@ describe("permission onboarding snapshot", () => {
         screen_recording: "denied",
       }),
       request: vi.fn().mockResolvedValue(true),
+      enabled: () => true,
+      appPath: () => "/Applications/Nuwax Computer Use.app",
     };
     const unregister = service.registerHelperPermissionAdapter(adapter);
     const snapshot = await service.getPermissionSnapshot();
@@ -172,14 +175,15 @@ describe("permission onboarding snapshot", () => {
     expect(adapter.check).toHaveBeenCalledTimes(1);
     expect(adapter.request).not.toHaveBeenCalled();
     await service.openGuidedPermissionSettings("helper_screen_recording");
-    expect(adapter.request).toHaveBeenCalledWith("screen_recording");
+    expect(adapter.request).not.toHaveBeenCalled();
+    expect(mock.settings).toHaveBeenCalledWith("screen_recording");
     expect(mock.sources).not.toHaveBeenCalled();
     unregister();
     expect(
       await service.openGuidedPermissionSettings("helper_accessibility"),
     ).toBe(false);
   });
-  it("requests main screen access only in an explicit settings action", async () => {
+  it("registers only the host screen permission on its explicit row action", async () => {
     await service.openGuidedPermissionSettings("screen_recording");
     expect(mock.sources).toHaveBeenCalledTimes(1);
     expect(mock.settings).toHaveBeenCalledWith("screen_recording");
@@ -190,6 +194,20 @@ describe("permission onboarding snapshot", () => {
     expect(await service.openGuidedPermissionSettings("__proto__" as any)).toBe(
       false,
     );
+  });
+  it("distinguishes an installed but disabled helper and keeps its actions inactive", async () => {
+    const request = vi.fn();
+    service.registerHelperPermissionAdapter({
+      check: async () => ({ accessibility: "denied", screen_recording: "denied" }),
+      request,
+      appPath: () => "/Applications/Nuwax Computer Use.app",
+      enabled: () => false,
+    });
+    expect(await service.getPermissionSnapshot()).toMatchObject({ helperAvailable: true, helperAppAvailable: true, helperEnabled: false });
+    expect(await service.openGuidedPermissionSettings("helper_accessibility")).toBe(false);
+    expect(await service.showPermissionDragChip("helper_accessibility")).toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    expect(mock.settings).not.toHaveBeenCalled();
   });
   it("uses relaunch plus normal quit for cleanup", () => {
     service.restartForPermissions();
@@ -234,6 +252,19 @@ describe("permission onboarding snapshot", () => {
     // helper rows without a registered adapter path have nothing to drag
     expect(await service.showPermissionDragChip("helper_accessibility")).toBe(false);
     expect(service.hidePermissionDragChip()).toBe(true);
+  });
+  it("hide cancels a helper card still checking enable intent", async () => {
+    let release!: (enabled: boolean) => void;
+    service.registerHelperPermissionAdapter({
+      check: async () => ({ accessibility: "unknown", screen_recording: "unknown" }),
+      request: async () => false,
+      appPath: () => "/Applications/Nuwax Computer Use.app",
+      enabled: () => new Promise(resolve => { release = resolve; }),
+    });
+    const pending = service.showPermissionDragChip("helper_accessibility");
+    service.hidePermissionDragChip();
+    release(true);
+    expect(await pending).toBe(false);
   });
   it("only guides raw OS errors for a current document with FDA denied", async () => {
     const win = {

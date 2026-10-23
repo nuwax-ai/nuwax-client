@@ -648,6 +648,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "agent:event",
       "computer:progress",
       "cua:runtime",
+      "cua:openCenter",
+      "cua:showPreview",
       "update:status",
       "deps:syncCompleted",
       "autolaunch:changed",

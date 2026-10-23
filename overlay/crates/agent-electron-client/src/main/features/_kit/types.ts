@@ -71,6 +71,7 @@ export interface FeaturePermissionServices {
   onFileAccessError(error: unknown, stillCurrent: () => boolean): Promise<void>;
   /** An external permission subject keeps its own identity and request boundary. */
   registerExternalSubject?(subject: {
+    enabled?(): boolean | Promise<boolean>;
     check(): Promise<{ accessibility: "granted" | "denied" | "unknown"; screen_recording: "granted" | "denied" | "unknown" }>;
     request(key: "accessibility" | "screen_recording"): Promise<boolean>;
     appPath(): string | null;

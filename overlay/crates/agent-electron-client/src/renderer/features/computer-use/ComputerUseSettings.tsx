@@ -2,7 +2,7 @@
  * Computer Use 设置区块（渲染进程特性公开入口内容）。
  * 翻译函数、行组件与桥对象由调用方注入；不 import 客户端 i18n/样式/状态。
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Modal, Space, Switch, message } from "antd";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
 import { CuaSettingsRows } from "./CuaControls";
@@ -39,6 +39,8 @@ function vlmTestErrorText(t: T, error?: string): string {
 
 export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: ComputerUseAPI }) {
   // TCC 授权引导仅 mac（Windows 无辅助功能/屏幕录制 per-app 授权，UIA/截屏开箱即用）
+  const authorizationGeneration = useRef(0);
+  useEffect(() => () => { authorizationGeneration.current++; }, []);
   const isMacPlatform = /mac/i.test(navigator.platform);
   const [cuaStatus, setCuaStatus] = useState<ComputerUseStatus | null>(null);
   const [cuaEnablePendingPermission, setCuaEnablePendingPermission] = useState(false);
@@ -112,6 +114,8 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
   }, [api]);
 
   const handleCuaChange = async (checked: boolean) => {
+    const generation = ++authorizationGeneration.current;
+    if (!checked) setCuaPermChecking(false);
     if (checked && !cuaEnablePendingPermission && !cuaStatus?.consentPending) {
       const accepted = await new Promise<boolean>((resolve) => {
         Modal.confirm({
@@ -123,13 +127,14 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           onCancel: () => resolve(false),
         });
       });
-      if (!accepted) return;
+      if (!accepted || generation !== authorizationGeneration.current) return;
     } else if (!checked) {
       setCuaEnablePendingPermission(false);
     }
     setCuaApplying(true);
     try {
       const r = await api!.setEnabled(checked);
+      if (generation !== authorizationGeneration.current) return;
       if (r.status) {
         setCuaStatus(r.status);
         setCuaEnablePendingPermission(r.status.consentPending === true);
@@ -143,15 +148,17 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
     } catch {
       message.error(t("Claw.Toast.Error.configSaveFailed"));
     } finally {
-      setCuaApplying(false);
+      if (generation === authorizationGeneration.current) setCuaApplying(false);
     }
   };
 
   // 授权动作兼复查：已授权时立即返回且不再弹窗（见 computerUse 服务契约）
   const handleCuaRequestPermissions = async () => {
+    const generation = ++authorizationGeneration.current;
     setCuaPermChecking(true);
     try {
       const r = await api!.requestPermissions();
+      if (generation !== authorizationGeneration.current) return;
       setCuaStatus((prev) =>
         prev
           ? {
@@ -166,6 +173,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
         if (cuaEnablePendingPermission || cuaStatus?.consentPending) {
           setCuaApplying(true);
           const enabled = await api!.setEnabled(true);
+          if (generation !== authorizationGeneration.current) return;
           if (enabled.status) {
             setCuaStatus(enabled.status);
             setCuaEnablePendingPermission(enabled.status.consentPending === true);
@@ -183,8 +191,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
     } catch {
       message.error(t("Claw.Toast.Error.loadFailed"));
     } finally {
-      setCuaPermChecking(false);
-      setCuaApplying(false);
+      if (generation === authorizationGeneration.current) { setCuaPermChecking(false); setCuaApplying(false); }
     }
   };
 
@@ -262,6 +269,11 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           }
         />
       )}
+      {(cuaEnablePendingPermission || cuaStatus?.consentPending || cuaApplying || cuaPermChecking) && <Row
+        label={t("Claw.Settings.computerUse.pendingTitle")}
+        desc={t("Claw.Settings.computerUse.pendingDescription")}
+        control={<Button size="small" onClick={() => void handleCuaChange(false)}>{t("Claw.Settings.computerUse.cancelPreparation")}</Button>}
+      />}
       {isMacPlatform && (
         <Row
           label={t("Claw.Settings.computerUse.permissions")}
@@ -281,7 +293,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
               disabled={!cuaStatus?.installed}
               onClick={handleCuaRequestPermissions}
             >
-              {t("Claw.Settings.computerUse.requestPerm")}
+              {t(cuaEnablePendingPermission || cuaStatus?.consentPending ? "Claw.Settings.computerUse.continueEnable" : "Claw.Settings.computerUse.requestPerm")}
             </Button>
           }
         />

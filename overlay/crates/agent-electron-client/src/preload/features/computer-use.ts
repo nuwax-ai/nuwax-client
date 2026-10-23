@@ -6,7 +6,10 @@ export function createComputerUseBridge(
   ipc: Pick<IpcRenderer, "invoke">,
 ): ComputerUseAPI {
   return {
+    getTaskHistory: () => ipc.invoke("cua:getTaskHistory"),
+    clearTaskHistory: () => ipc.invoke("cua:clearTaskHistory"),
     showTaskPreview: (id) => ipc.invoke("cua:showTaskPreview", id),
+    takeOver: () => ipc.invoke("cua:takeOver"),
     takeOverTask: (id) => ipc.invoke("cua:takeOverTask", id),
     getTasks: () => ipc.invoke("cua:getTasks"),
     bindTarget: (id, target) => ipc.invoke("cua:bindTarget", id, target),

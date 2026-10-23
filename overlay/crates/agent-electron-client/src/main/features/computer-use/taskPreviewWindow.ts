@@ -18,9 +18,30 @@ for (const id of ["pause", "resume", "stop", "takeover"]) {
   el(id).title = labels[id === "takeover" ? "preview.takeover" : id];
   el(id).setAttribute("aria-label", el(id).title);
 }
-el("close").title = labels["preview.collapse"];
-el("close").setAttribute("aria-label", labels["preview.collapse"]);
-el("close").onclick = () => api.setPresentation(selected, false).then(present);
+el("close").title = labels["preview.close"];
+el("close").setAttribute("aria-label", labels["preview.close"]);
+el("close").onclick = () => api.close();
+let drag = null, presentationPosition = null;
+const dragHandle = document.querySelector("header");
+dragHandle.addEventListener("pointerdown", event => {
+  if (event.button !== 0 || event.target.closest("button")) return;
+  if (!presentationPosition) return;
+  drag = { id: event.pointerId, x: event.screenX, y: event.screenY, start: presentationPosition };
+  dragHandle.setPointerCapture(event.pointerId);
+});
+dragHandle.addEventListener("pointermove", event => {
+  if (!drag || event.pointerId !== drag.id) return;
+  void api.move({ x: drag.start.x + event.screenX - drag.x, y: drag.start.y + event.screenY - drag.y }).then(p => { if (p?.position) presentationPosition = p.position; });
+});
+const endDrag = () => { drag = null; };
+dragHandle.addEventListener("pointerup", endDrag);
+dragHandle.addEventListener("pointercancel", endDrag);
+for (const [id, action] of [["compactTakeover", "takeover"], ["compactStop", "stop"]]) {
+  el(id).innerHTML = icon(action);
+  el(id).title = labels[action === "takeover" ? "preview.takeover" : "stop"];
+  el(id).setAttribute("aria-label", el(id).title);
+  el(id).onclick = () => selected && run(selected, action);
+}
 el("all").title = labels["multiwindow.stopAll"];
 el("all").setAttribute("aria-label", labels["multiwindow.stopAll"]);
 el("refresh").textContent = labels["scope.refresh"];
@@ -46,6 +67,7 @@ function present(p) {
     clearFrame();
     el("status").textContent = labels["preview.loading"];
   }
+  if (p.position) presentationPosition = p.position;
   selected = p.taskId;
   expanded = p.expanded;
   document.body.classList.toggle("compact", !expanded);
@@ -101,7 +123,7 @@ function draw(s, force = false) {
   if (!s || !force && s.revision <= revision) return;
   runtime = s;
   revision = s.revision;
-  const tasks = s.tasks || [];
+  const tasks = (s.tasks || []).filter(task => ["running", "paused"].includes(task.phase));
   for (const [id, cached] of frames) {
     const task = tasks.find((t) => t.taskId === id);
     if (!task || !["running", "paused"].includes(task.phase) || task.bindingId !== cached.bindingId || task.epoch !== cached.epoch || task.reason === "screenLocked") {
@@ -140,6 +162,8 @@ function draw(s, force = false) {
   el("resume").disabled = !!current?.controlPending;
   el("takeover").disabled = terminal || !!current?.controlPending || !current?.scope?.windowId;
   el("stop").disabled = terminal;
+  el("compactStop").disabled = terminal;
+  el("compactTakeover").disabled = terminal || !!current?.controlPending || !current?.scope?.windowId;
   if (terminal) {
     clearFrame();
     el("status").textContent = labels["preview.ended"];
@@ -173,6 +197,24 @@ function draw(s, force = false) {
       el("tasksPanel").hidden = true;
     };
     row.append(pick);
+    const reorder = text("div", "");
+    reorder.className = "reorder";
+    for (const direction of [-1, 1]) {
+      const button = text("button", direction < 0 ? "↑" : "↓");
+      button.title = labels[direction < 0 ? "preview.moveEarlier" : "preview.moveLater"];
+      button.setAttribute("aria-label", button.title);
+      const index = tasks.indexOf(task), next = index + direction;
+      button.disabled = next < 0 || next >= tasks.length;
+      button.onclick = () => {
+        const ids = tasks.map(t => t.taskId);
+        [ids[index], ids[next]] = [ids[next], ids[index]];
+        // Display order does not change the execution revision. Refresh this
+        // view explicitly after the acknowledged presentation-only mutation.
+        void api.reorder(ids).then(order => order && api.getRuntime().then(s => draw(s, true)));
+      };
+      reorder.append(button);
+    }
+    row.append(reorder);
     const detail = document.createElement("div");
     detail.className = "detail";
     const target = document.createElement("select");
@@ -294,7 +336,7 @@ export function taskPreviewWindowHtml(t: (key: string) => string) {
   const keys = ["title", "pause", "resume", "stop", "recover", "stopping", "scope.choose", "scope.refresh", "reason.generic",
     "multiwindow.stopAll", "multiwindow.background", "multiwindow.foreground", "multiwindow.useForeground", "multiwindow.useBackground",
     "phase.running", "phase.paused", "phase.stopped", "phase.completed", "phase.failed",
-    "preview.pause", "preview.resume", "preview.stop", "preview.takeoverShort", "preview.expand", "preview.collapse", "preview.takeover", "preview.loading", "preview.unavailable", "preview.minimized",
+    "preview.close", "preview.moveEarlier", "preview.moveLater", "preview.pause", "preview.resume", "preview.stop", "preview.takeoverShort", "preview.expand", "preview.collapse", "preview.takeover", "preview.loading", "preview.unavailable", "preview.minimized",
     "preview.permissionsRequired", "preview.helperUpgradeRequired", "preview.delayed", "preview.ended", "preview.select", "preview.handoff", "preview.running", "preview.windowSettings", "preview.noPreview",
     ...CUA_REASON_KEYS.map(key => "reason." + key)];
   const labels = JSON.stringify(Object.fromEntries(keys.map(key => [key, t("Claw.Cua." + key)]))).replace(/</g, "\\u003c");
@@ -343,12 +385,21 @@ body.compact header{position:static;max-width:none;height:36px;padding:0 37px 0 
 body.compact #stack,body.compact #viewport,body.compact #primary,body.compact #error{display:none}body:not(.compact) #quick,body:not(.compact) #toggle{display:none}
 body.compact .icon{width:25px;height:25px;flex:none}body.compact #all{width:25px;height:25px}
 @media(prefers-color-scheme:dark){:root{--text:#eeeef0;--muted:#a4a6af;--glass:#292a30ed;--line:#ffffff16;--hover:#ffffff0b}.back-placeholder{background:linear-gradient(145deg,#33353b,#27292e)}#title{text-shadow:0 1px 8px #0008}#image{box-shadow:0 0 0 1px #ffffff16,0 12px 28px #0006,0 2px 6px #0003}#error{color:#ff9ba5}}
+
+.shell,body.stacked .shell,body.stacked-three .shell{inset:0;border:1px solid var(--line);border-radius:12px;background:var(--glass);overflow:hidden;box-shadow:0 2px 10px #00000012}
+header{top:0;bottom:auto;left:0;right:0;max-width:none;height:34px;padding:0 7px;opacity:1;border:0;border-radius:0;background:transparent;cursor:grab;touch-action:none}
+header:active{cursor:grabbing}#dragHandle{font-size:15px;color:var(--muted);flex:none}#title{font-size:11px;max-width:none;cursor:pointer}#mode{font-size:9px}#close{width:24px;height:24px;flex:none;margin-left:auto}
+#viewport{inset:36px 8px 38px}#image{border-radius:6px;box-shadow:none}#status{box-shadow:none;border:0;padding:12px;font-size:11px;gap:8px}
+#primary,#toolbar{top:auto;bottom:4px;opacity:1;transform:none;box-shadow:none;background:transparent;border-radius:0}#primary{left:8px}#toolbar{right:7px}#primary button,#toolbar button{width:27px;height:27px}#primary button span{display:inline;font-size:10px}#primary #takeover{width:auto;padding:0 6px}#stack,#all{display:none!important}
+#tasksPanel{top:33px;right:4px;max-height:calc(100% - 40px);width:calc(100% - 8px);border-radius:8px;box-shadow:0 4px 12px #0002}.reorder{display:flex;gap:4px;margin-top:3px}.reorder button{border:0;border-radius:4px;background:var(--hover);font-size:11px;padding:2px 8px}
+body.compact .shell{inset:0;border-radius:10px}body.compact header{position:static;height:38px;padding:0 7px;background:transparent}body.compact #brand{display:none}body.compact #toolbar{display:none}body.compact #close{display:flex}body.compact #mode{display:none}body.compact #title{font-size:11px}body.compact .icon{width:23px;height:23px}body:not(.compact) #toggle{display:flex}body:not(.compact) #compactTakeover,body:not(.compact) #compactStop{display:none}
+
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
   </style></head><body><div id="stack"></div><main class="shell">
   <div id="viewport"><img id="image" hidden alt=""><span id="status" role="status"></span></div>
-  <div id="primary"><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button><button id="takeover" class="icon"></button></div>
+  <div id="primary"><button id="takeover" class="icon"></button></div>
   <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="stop"></button><span class="separator"></span><button id="taskMenu" class="icon"><svg viewBox="0 0 20 20"><rect x="3" y="6" width="11" height="10" rx="2"/><path d="M6 3h9a2 2 0 0 1 2 2v8"/></svg><span id="taskCount"></span></button><button id="all" class="icon"><svg viewBox="0 0 20 20"><path d="M7 3h6l4 4v6l-4 4H7l-4-4V7Z"/><path d="M8 8h4v4H8Z"/></svg></button></div>
-  <header><span id="brand">Nuwax</span><span id="dot"></span><button id="title"></button><span id="mode"></span><button id="quick" class="icon"></button><button id="toggle" class="icon"></button></header>
+  <header><span id="dragHandle" aria-hidden="true">⠿</span><span id="brand">Nuwax</span><span id="dot"></span><button id="title"></button><span id="mode"></span><button id="quick" class="icon"></button><button id="toggle" class="icon"></button><button id="compactTakeover" class="icon"></button><button id="compactStop" class="icon"></button><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
   <section id="tasksPanel" hidden><div class="menu-head"><span id="menuTitle"></span><span><button id="refresh"></button><button id="recover" hidden></button></span></div><div id="tasks"></div></section><select id="selected" aria-label="Task"></select><p id="error" role="alert"></p></main><script nonce="${nonce}">
 ${previewClientSource.replace("__CUA_LABELS__", labels)}
   </script></body></html>`;

@@ -2308,7 +2308,7 @@ function App() {
                     body: { maxHeight: "76vh", overflowY: "auto" },
                   }}
                 >
-                  <PermissionsPage target={permissionTarget} onClose={closePermissionPanel} />
+                  {permissionPanelOpen && <PermissionsPage target={permissionTarget} onClose={closePermissionPanel} />}
                 </Modal>
               )}
               {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}

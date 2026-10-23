@@ -4,6 +4,7 @@ import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
 import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
 
 import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
+import { CuaTaskCenter } from "./CuaTaskCenter";
 import { CuaTaskPanel } from "./CuaTaskPanel";
 const REASONS = new Set(CUA_REASON_KEYS);
 type T = (key: string, ...args: any[]) => string;
@@ -44,26 +45,46 @@ function useCuaAction(t: T, accept: (state: CuaRuntime) => void) {
 
 /** Floating control bar; only visible while a task exists. */
 export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
-  const { token } = theme.useToken();
   const [runtime, accept] = useCuaRuntime(api);
+  return <><CuaTaskCenter api={api} runtime={runtime} accept={accept} t={t} />
+    <CuaControlBar api={api} runtime={runtime} accept={accept} t={t} /></>;
+}
+function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runtime: CuaRuntime | null; accept: (state: CuaRuntime) => void; t: T }) {
+  const { token } = theme.useToken();
+  const [closed, setClosed] = useState<string | null>(null);
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const drag = React.useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const { busy, run } = useCuaAction(t, accept);
-  if (!api?.getRuntime || !runtime || (!runtime.taskId && runtime.phase !== "failed")) return null;
+  useEffect(() => {
+    const show = () => setClosed(null);
+    window.electronAPI?.on("cua:showPreview", show);
+    return () => window.electronAPI?.off("cua:showPreview", show);
+  }, []);
+  if (!api?.getRuntime || !runtime || !["running", "paused"].includes(runtime.phase) || closed === runtime.taskId) return null;
   // Multiwindow tasks use the contained host view; avoid a duplicate control bar.
   if (runtime.multiwindow) return null;
 
   const reason = runtime.reason ? reasonText(t, runtime.reason) : null;
   const currentStep = runtime.steps.at(-1);
   return <aside aria-label={t("Claw.Cua.title")} aria-live="polite" style={{
-    position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", zIndex: 9999,
-    width: "max-content", maxWidth: "calc(100% - 48px)", padding: "12px 16px", borderRadius: 12,
+    position: "fixed", top: position?.y ?? 48, right: position ? undefined : 16, left: position?.x, zIndex: 9999,
+    width: 300, maxWidth: "calc(100% - 32px)", padding: "8px 10px", borderRadius: 12,
     background: token.colorBgElevated, color: token.colorText,
     boxShadow: "0 4px 24px #0003", border: "1px solid #8884",
   }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "grab", touchAction: "none" }}
+      onPointerDown={event => { if ((event.target as HTMLElement).closest("button")) return;
+        const box = event.currentTarget.parentElement!.getBoundingClientRect(); drag.current = { x: event.clientX, y: event.clientY, left: box.left, top: box.top }; event.currentTarget.setPointerCapture(event.pointerId); }}
+      onPointerMove={event => { if (!drag.current) return; const d = drag.current;
+        setPosition({ x: Math.max(0, Math.min(d.left + event.clientX - d.x, window.innerWidth - 316)), y: Math.max(0, Math.min(d.top + event.clientY - d.y, window.innerHeight - 180)) }); }}
+      onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
+      <strong>{t("Claw.Cua.title")}</strong><Button type="text" size="small" aria-label={t("Claw.Cua.preview.close")} onClick={() => setClosed(runtime.taskId)}>×</Button>
+    </div>
     <Space wrap>
-      <strong>{t("Claw.Cua.title")}</strong>
       <Tag color={runtime.phase === "running" ? "processing" : runtime.phase === "failed" ? "error" : "default"}>
         {t(runtime.controlPending ? "Claw.Cua.stopping" : `Claw.Cua.phase.${runtime.phase}`)}
       </Tag>
+      <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.takeOver())}>{t("Claw.Cua.preview.takeover")}</Button>
       {!!runtime.stepCount && <span>{t("Claw.Cua.steps", { count: runtime.stepCount })}</span>}
       {runtime.phase === "running" && <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.pause())}>{t("Claw.Cua.pause")}</Button>}
       {runtime.phase === "paused" && <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.resume())}>{t("Claw.Cua.resume")}</Button>}
@@ -73,6 +94,7 @@ export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
         const result = await api.clearHistory(); accept(await api.getRuntime()); return result;
       })}>{t("Claw.Cua.dismiss")}</Button>}
     </Space>
+    {runtime.reason === "userTakingControl" && <div style={{ fontSize: 12, marginTop: 6 }}>{t("Claw.Cua.preview.legacyTakeover")}</div>}
     <div style={{ marginTop: 6 }}>{runtime.scope?.kind === "window"
       ? `${t("Claw.Cua.scope.window")}: ${runtime.scope.label || t("Claw.Cua.scope.choose")}` : t("Claw.Cua.scope.desktop")}</div>
     {currentStep && <div style={{ marginTop: 6 }}>
