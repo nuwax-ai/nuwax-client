@@ -14,8 +14,8 @@ export interface DragChipIdentity {
 type ChipLabelKey = "dragChipTitle" | "dragChipHint" | "dragChipManual";
 export type DragChipLabels = Record<ChipLabelKey, string>;
 
-const WIDTH = 300;
-const HEIGHT = 112;
+const WIDTH = 380;
+const HEIGHT = 120;
 
 /**
  * Floating palette that stays above System Settings so the user can drag the
@@ -29,14 +29,14 @@ export function permissionDragChipHtml(labels: DragChipLabels): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
 <style>
 :root{color-scheme:light dark;--text:#303237;--muted:#777c84;--glass:#ffffffec;--line:#00000012;--accent:#438c76}
-*{box-sizing:border-box}body{margin:0;height:100vh;display:flex;align-items:center;gap:12px;padding:14px;background:transparent;color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
+*{box-sizing:border-box}body{margin:0;height:100vh;display:flex;align-items:center;gap:12px;padding:8px;background:transparent;color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
 #card{flex:1;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--glass);box-shadow:0 10px 30px #00000026;backdrop-filter:blur(24px)}
-#chip{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1.5px dashed var(--muted);border-radius:11px;cursor:grab;background:#ffffff50}
+#chip{display:flex;flex-shrink:0;align-items:center;gap:9px;padding:8px 12px;border:1.5px dashed var(--muted);border-radius:11px;cursor:grab;background:#ffffff50}
 #chip:active{cursor:grabbing;border-color:var(--accent)}
 #chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #icon{width:30px;height:30px;flex:none;pointer-events:none}
 #name{font-weight:650;font-size:12px;max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#text{min-width:0}
+#text{flex:1;min-width:0}
 #title{font-weight:600;font-size:12px;margin:0 0 3px}
 #hint{margin:0;font-size:11px;line-height:1.55;color:var(--muted)}
 #close{width:26px;height:26px;flex:none;align-self:flex-start;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:14px;cursor:pointer}
