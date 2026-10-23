@@ -1,0 +1,149 @@
+name: Warm trusted build resource caches
+
+# Tag-local caches cannot be read by the next tag. These entries are written
+# only on the default branch, which GitHub permits release tags to restore.
+# This workflow builds resources only; it has no release/signing credentials.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - nuwa-electron-shell
+      - scripts/computer-use/build-helper.sh
+      - scripts/client/**
+      - scripts/prepare-release-capture.mjs
+      - docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch
+      - third-party/**
+      - .github/actions/**
+      - .github/workflows/warm-build-resources.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-build-resources-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resources:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: Warm resources (${{ matrix.platform }} ${{ matrix.arch }})
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            arch: arm64
+          - platform: macos-26-intel
+            arch: x64
+          - platform: windows-latest
+            arch: x64
+          - platform: ubuntu-24.04
+            arch: x64
+          - platform: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Init pinned base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git submodule update --init nuwa-electron-shell
+          node scripts/sync-overlay.js
+      - name: Configure macOS compatibility target
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+          package_json_file: nuwa-electron-shell/package.json
+      - name: Install setuptools for native dependency install
+        shell: bash
+        run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools
+      - name: Build agent-kit dependency
+        shell: bash
+        working-directory: nuwa-electron-shell
+        run: |
+          pnpm -C crates/agent-kit install --ignore-workspace --prefer-offline
+          pnpm -C crates/agent-kit run build
+      - name: Install resource preparation dependencies
+        working-directory: nuwa-electron-shell
+        run: pnpm install --filter @nuwax-ai/nuwaclaw... --filter '!agent-gui-server'
+      - name: Restore bundled resource caches
+        uses: ./.github/actions/bundled-resource-cache
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Prepare fixed bundled resources
+        shell: bash
+        working-directory: nuwa-electron-shell/crates/agent-electron-client
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ github.token }}
+          NUWAX_APP_IDENTIFIER: nuwax
+        run: |
+          npm run prepare:node
+          npm run prepare:git
+          npm run prepare:uv
+          npm run prepare:nuwaxcode
+          npm run prepare:ripgrep
+      - name: Setup Linux native compilers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config nasm clang libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Setup macOS native compilers
+        if: runner.os == 'macOS'
+        run: |
+          command -v nasm >/dev/null || brew install nasm
+          command -v pkg-config >/dev/null || brew install pkgconf
+      - name: Setup Windows capture compiler
+        if: runner.os == 'Windows'
+        id: capture-msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-nasm
+            perl
+            make
+            diffutils
+            curl
+      - name: Restore unsigned native build caches
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.capture-msys2.outputs.msys2-location }}
+      - name: Prepare admitted unsigned capture resources
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          MSYS2_LOCATION: ${{ steps.capture-msys2.outputs.msys2-location }}
+          NUWAX_CAPTURE_MAC_SIGNING: 'false'
+        run: node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
+      - name: Prepare unsigned Computer Use helper
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
+        run: |
+          case "${{ runner.os }}/${{ matrix.arch }}" in
+            macOS/arm64) TARGET_TRIPLE=aarch64-apple-darwin ;;
+            macOS/x64) TARGET_TRIPLE=x86_64-apple-darwin ;;
+            Windows/x64) TARGET_TRIPLE=x86_64-pc-windows-msvc ;;
+            Linux/x64) TARGET_TRIPLE=x86_64-unknown-linux-gnu ;;
+            Linux/arm64) TARGET_TRIPLE=aarch64-unknown-linux-gnu ;;
+            *) exit 1 ;;
+          esac
+          export TARGET_TRIPLE
+          bash scripts/computer-use/build-helper.sh

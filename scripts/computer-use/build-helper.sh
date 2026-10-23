@@ -16,6 +16,8 @@
 #   ICON_ICNS             mac 图标源（默认直接复用商业版主应用的 canonical icon.icns）
 #   SIGN_IDENTITY         mac Developer ID 身份（空=ad-hoc 签名，仅 dev 用；产品必须正签）
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
+#   NUWAX_CUA_CACHE_DIR   未签名二进制缓存（默认 .cache/client-toolchain/cua-helper）
+#   NUWAX_CUA_NO_CACHE=1  强制重编；本地源码检出始终不读写共享缓存
 set -euo pipefail
 
 CUA_COMMIT="${CUA_COMMIT:-85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19}"
@@ -26,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PATCH_FILE="${REPO_ROOT}/docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch"
 WORK_DIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cua-build-$$"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 case "$TARGET_TRIPLE" in
   *-apple-darwin)   PLATFORM=mac ;;
@@ -99,16 +102,34 @@ fi
 (
   cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
   rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
-  echo "[cua-helper] cargo build --release -p cua-driver --features portal-input ($TARGET_TRIPLE) ..."
-  # portal-input=libei 输入通道（GNOME/KDE Wayland；不开则 GNOME Wayland 输入
-  # "no input backend" 无兜底）——上游官方 Linux 发行同款开启；纯 Rust 栈（reis）
-  # +libxkbcommon-dev，mac/win 为 target-gated 无影响。portal-capture 不开：
-  # 截屏主瀑布走免 feature 的 portal.Screenshot，逐窗 PipeWire 仅备用 API 未接线
-  cargo build --release -p cua-driver --features portal-input --target "$TARGET_TRIPLE"
 )
 
-BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
-[ "$PLATFORM" = "win" ] && BIN="${BIN}.exe"
+# Cache only the compiler output. Source/patch checks above still execute on a
+# hit, and the app bundle, icon, plist and signing identity are applied afresh.
+CACHE_ENABLED=false
+if [ -z "${NUWAX_CUA_SOURCE_DIR:-}" ] && [ "${NUWAX_CUA_NO_CACHE:-0}" != 1 ]; then
+  CACHE_ENABLED=true
+fi
+CACHED_BIN="$WORK_DIR/unsigned-helper"
+if [ "$CACHE_ENABLED" = true ] && node "$REPO_ROOT/scripts/client/native-build-cache.mjs" restore-helper "$SRC_DIR" "$TARGET_TRIPLE" "$CACHED_BIN"; then
+  BIN="$CACHED_BIN"
+else
+  (
+    cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
+    echo "[cua-helper] cargo build --locked --release -p cua-driver --features portal-input ($TARGET_TRIPLE) ..."
+    # portal-input=libei 输入通道（GNOME/KDE Wayland；不开则 GNOME Wayland 输入
+    # "no input backend" 无兜底）——上游官方 Linux 发行同款开启；纯 Rust 栈（reis）
+    # +libxkbcommon-dev，mac/win 为 target-gated 无影响。portal-capture 不开：
+    # 截屏主瀑布走免 feature 的 portal.Screenshot，逐窗 PipeWire 仅备用 API 未接线
+    cargo build --locked --release -p cua-driver --features portal-input --target "$TARGET_TRIPLE" --target-dir "$SRC_DIR/libs/cua-driver/rust/target"
+  )
+
+  BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
+  [ "$PLATFORM" = "win" ] && BIN="${BIN}.exe"
+  if [ "$CACHE_ENABLED" = true ]; then
+    node "$REPO_ROOT/scripts/client/native-build-cache.mjs" save-helper "$SRC_DIR" "$TARGET_TRIPLE" "$BIN"
+  fi
+fi
 [ -f "$BIN" ] || { echo "::error::built binary not found: $BIN"; exit 1; }
 BIN_MD5="$(md5 -q "$BIN" 2>/dev/null || md5sum "$BIN" | cut -d' ' -f1)"
 echo "[cua-helper] binary md5: $BIN_MD5"
