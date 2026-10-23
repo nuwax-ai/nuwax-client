@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   autoReady: false,
   permissionGranted: false,
   deferPermissionHost: false,
+  permissionCleanupGate: undefined as Promise<void> | undefined,
+  installGate: undefined as Promise<void> | undefined,
   policyActive: true,
   policyPath: "",
   captureReady: true,
@@ -95,6 +97,9 @@ vi.mock("node:child_process", () => ({
       cmd === "codesign"
         ? "Identifier=com.nuwax-ai.nuwax-computer-use\nTeamIdentifier=89GQ2RJVW7\n"
         : "";
+    const gate = cmd === "codesign" ? mocks.installGate
+      : cmd === "pkill" && args.some(arg => arg.includes("__permissions-host-request")) ? mocks.permissionCleanupGate : undefined;
+    if (gate) { void gate.then(() => cb(null, { stdout: "", stderr })); return; }
     cb(null, { stdout: "", stderr });
   },
   spawn: (cmd: string, args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
@@ -314,6 +319,8 @@ beforeEach(() => {
   mocks.autoReady = false;
   mocks.permissionGranted = false;
   mocks.deferPermissionHost = false;
+  mocks.permissionCleanupGate = undefined;
+  mocks.installGate = undefined;
   mocks.policyActive = true;
   mocks.policyPath = "";
   mocks.captureReady = true;
@@ -724,6 +731,31 @@ describe("cua 开关与启动收敛", () => {
 });
 
 describe("permission request ownership", () => {
+  it("quit waits for standalone permission host cleanup after cancelling its polling", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    let release!: () => void;
+    mocks.permissionCleanupGate = new Promise(resolve => { release = resolve; });
+    const request = cuaModule.requestCuaPermissions();
+    const suspended = cuaModule.suspendCua("appQuit");
+    try {
+      await vi.waitFor(() => expect(mocks.execCalls.some(c => c.cmd === "pkill" && c.args.some(a => a.includes("__permissions-host-request")))).toBe(true));
+      expect(await Promise.race([suspended.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 50))])).toBe(false);
+    } finally { release(); await Promise.all([request, suspended]); }
+  });
+  it("does not launch a permission host when cancelled during helper installation", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    let release!: () => void;
+    mocks.installGate = new Promise(resolve => { release = resolve; });
+    const enabling = setCuaEnabled(true);
+    await vi.waitFor(() => expect(mocks.execCalls.some(c => c.cmd === "codesign")).toBe(true));
+    const disabling = setCuaEnabled(false);
+    release();
+    const [on, off] = await Promise.all([enabling, disabling]);
+    expect(on).toMatchObject({ success: false, error: "disabledDuringEnable" });
+    expect(off.status.enabled).toBe(false);
+    expect(mocks.spawnCalls.some(c => c.args.includes("__permissions-host-request"))).toBe(false);
+  });
   it("coalesces concurrent clicks and precisely cleans the cancelled host", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     mocks.deferPermissionHost = true;
