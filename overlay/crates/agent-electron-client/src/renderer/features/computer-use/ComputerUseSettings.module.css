@@ -1,0 +1,58 @@
+/* Match the settings rows without adding padding around the rows inside details. */
+.lockBehavior {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.advancedDiagnostics {
+  border-top: 1px solid var(--color-border);
+}
+
+.advancedSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  list-style: none;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.advancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+.advancedSummary::after {
+  content: "";
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+
+.advancedSummary:hover {
+  background: var(--color-bg-section-header);
+}
+
+.advancedSummary:focus-visible {
+  outline: 2px solid var(--color-text-secondary);
+  outline-offset: -3px;
+}
+
+.advancedDiagnostics[open] > .advancedSummary {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.advancedDiagnostics[open] > .advancedSummary::after {
+  transform: rotate(45deg);
+}

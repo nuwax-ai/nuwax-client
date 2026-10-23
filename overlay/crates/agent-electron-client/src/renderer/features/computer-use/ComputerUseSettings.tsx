@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Modal, Space, Switch, message } from "antd";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
 import { CuaSettingsRows } from "./CuaControls";
+import styles from "./ComputerUseSettings.module.css";
 
 type T = (key: string, ...args: any[]) => string;
 type Row = (props: { label: React.ReactNode; desc?: React.ReactNode; control?: React.ReactNode }) => React.ReactElement;
@@ -305,9 +306,9 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
         label={t("Claw.Settings.computerUse.taskModel")}
         desc={t("Claw.Settings.computerUse.taskModelDescription")}
       />
-      <p style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>{t("Claw.Settings.computerUse.lockBehavior")}</p>
-      <details>
-      <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0" }}>{t("Claw.Settings.computerUse.advancedDiagnostics")}</summary>
+      <p className={styles.lockBehavior}>{t("Claw.Settings.computerUse.lockBehavior")}</p>
+      <details className={styles.advancedDiagnostics}>
+      <summary className={styles.advancedSummary}>{t("Claw.Settings.computerUse.advancedDiagnostics")}</summary>
       <Row
         label={t("Claw.Settings.computerUse.vlmModel")}
         desc={t("Claw.Settings.computerUse.vlmModelDesc")}
