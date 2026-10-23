@@ -159,22 +159,22 @@ describe("macOS 原生菜单语言与动作", () => {
     const commands = children(menu).filter((item) => item.type !== "separator");
     expect(commands.map((item) => item.label)).toEqual([screenshot, `${record} · MP4`, `${record} · GIF`]);
     commands.forEach((item) => item.click?.({} as never, {} as never, {} as never));
-    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
-    expect(commands.map((item) => item.accelerator)).toEqual(["CmdOrCtrl+Alt+S", "CmdOrCtrl+Alt+R", undefined]);
+    expect(capture.mock.calls).toEqual([["screenshot", "menu"], ["mp4", "menu"], ["gif", "menu"]]);
+    expect(commands.map((item) => item.accelerator)).toEqual(["CmdOrCtrl+Shift+A", "CmdOrCtrl+Shift+R", undefined]);
     const accelerators = template.flatMap(children).map((item) => item.accelerator).filter(Boolean);
     expect(new Set(accelerators).size).toBe(accelerators.length);
   });
 
-  it("本次发布隐藏捕获菜单，保留菜单动作和 macOS 快捷键", () => {
+  it("应用菜单展示捕获入口及当前配置的 macOS 快捷键", () => {
     const capture = vi.fn();
     const template = buildMacApplicationMenu(t, "Nuwax", { ...makeActions(), capture }, { captureAvailable: true });
     const menu = template.find((item) => item.label === "截图与录屏")!;
-    expect(menu.visible).toBe(false);
-    expect(template.filter((item) => item.visible !== false).map((item) => item.label)).not.toContain("截图与录屏");
+    expect(menu.visible).toBe(true);
+    expect(template.filter((item) => item.visible !== false).map((item) => item.label)).toContain("截图与录屏");
     const commands = children(menu).filter((item) => item.type !== "separator");
-    expect(commands.filter((item) => item.accelerator).every((item) => item.acceleratorWorksWhenHidden)).toBe(true);
+    expect(commands.filter((item) => item.accelerator)).toHaveLength(2);
     commands.forEach((item) => item.click?.({} as never, {} as never, {} as never));
-    expect(capture.mock.calls).toEqual([["screenshot"], ["mp4"], ["gif"]]);
+    expect(capture.mock.calls).toEqual([["screenshot", "menu"], ["mp4", "menu"], ["gif", "menu"]]);
   });
 
   it("特性关闭或动作缺失时移除捕获菜单及其 accelerator", () => {
@@ -194,7 +194,7 @@ describe("Win/Linux 捕获菜单应用内快捷键", () => {
     const [channel, handler] = target.on.mock.calls[0];
     expect(channel).toBe("before-input-event");
     const preventDefault = vi.fn();
-    for (const key of ["S", "r"]) handler({ preventDefault }, { key, type: "keyDown", control: true, alt: true });
+    for (const key of ["A", "r"]) handler({ preventDefault }, { key, type: "keyDown", control: true, shift: true });
     expect(dispatch.mock.calls).toEqual([["screenshot"], ["mp4"]]);
     expect(preventDefault).toHaveBeenCalledTimes(2);
     off();
@@ -203,11 +203,11 @@ describe("Win/Linux 捕获菜单应用内快捷键", () => {
 
   it.each([
     ["linux", "r", true, "stop", null, true],
-    ["linux", "r", false, "stop", "mp4", true],
+    ["linux", "r", false, "stop", null, false],
     ["linux", "p", true, "pause", null, true],
     ["linux", "p", false, "pause", null, false],
-    ["linux", "s", true, null, "screenshot", true],
-    ["win32", "r", true, null, "mp4", true],
+    ["linux", "s", true, null, null, false],
+    ["win32", "r", true, null, null, false],
     ["win32", "p", true, null, null, false],
   ] as const)("%s Ctrl+Alt+%s active=%s 路由当前录制或开始动作", (platform, key, active, control, action, consumed) => {
     const target = { on: vi.fn(), removeListener: vi.fn() };
@@ -235,4 +235,21 @@ describe("Win/Linux 捕获菜单应用内快捷键", () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
+});
+
+
+it('shortcut edits update native accelerators and already attached guest input handlers', () => {
+  const target = { on: vi.fn(), removeListener: vi.fn() };
+  let shortcut = 'CmdOrCtrl+Shift+A';
+  const dispatch = vi.fn();
+  bindCaptureMenuShortcuts(target as never, dispatch, { getScreenshotShortcut: () => shortcut });
+  const handler = target.on.mock.calls[0][1]; const event = { preventDefault: vi.fn() };
+  handler(event, { key: 'a', type: 'keyDown', control: true, shift: true });
+  shortcut = 'CmdOrCtrl+Alt+G';
+  handler(event, { key: 'a', type: 'keyDown', control: true, shift: true });
+  handler(event, { key: 'g', type: 'keyDown', control: true, alt: true });
+  expect(dispatch.mock.calls).toEqual([['screenshot'], ['screenshot']]);
+  const menu = buildMacApplicationMenu(key => key, 'Nuwax', { ...makeActions(), capture: vi.fn() }, { captureAvailable: true, captureShortcut: shortcut, recordShortcut: 'CmdOrCtrl+Shift+V' });
+  const commands = menu.flatMap(children).filter(item => item.label?.startsWith('Claw.Capture.'));
+  expect(commands.map(item => item.accelerator)).toEqual([shortcut, 'CmdOrCtrl+Shift+V', undefined]);
 });

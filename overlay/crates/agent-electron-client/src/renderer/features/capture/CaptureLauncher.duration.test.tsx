@@ -9,7 +9,7 @@ vi.mock('react', async original => ({
   ...await original<typeof import('react')>(),
   useState(value: unknown) {
     const index = hooks.cursor++; if (!(index in hooks.values)) hooks.values[index] = value;
-    return [hooks.values[index], (next: unknown) => { hooks.values[index] = next; }];
+    return [hooks.values[index], (next: unknown) => { hooks.values[index] = typeof next === 'function' ? (next as (value: unknown) => unknown)(hooks.values[index]) : next; }];
   },
   useRef(value: unknown) {
     const index = hooks.cursor++; if (!(index in hooks.values)) hooks.values[index] = { current: value };

@@ -63,7 +63,9 @@ export async function mountCaptureWindow(
     document.onkeydown = (e) => { if (e.key === 'Escape') bridge.action('cancel'); };
     bridge.onState(update); update(config.state); return;
   }
-  const captureMode = config.mode;
+  const captureActions = config.actions ?? [];
+  let captureMode = config.mode;
+  let captureAction = config.action ?? (config.mode === 'record' ? 'mp4' : 'screenshot');
   const previewPresentation = config.presentation === 'preview';
   const workArea = config.workArea;
   const painter = makePainter();
@@ -101,7 +103,8 @@ export async function mountCaptureWindow(
   const modeGroup = node('div', 'modeGroup'), actionGroup = node('div', 'actionGroup');
   top.append(modeGroup, actionGroup);
   const dockHint = node('div', 'dockHint', labels.annotationHint);
-  const dock = node('div', 'selectionDock'); dock.append(toolBar, properties, top, dockHint);
+  const captureModes = node('div', 'toolbar captureModes');
+  const dock = node('div', 'selectionDock'); dock.append(captureModes, toolBar, properties, top, dockHint);
   const hint = node('div', 'hint', labels.selectHint);
   const tooltip = node('div', 'tooltip'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip');
   const dimensions = node('div', 'dimensions');
@@ -284,6 +287,10 @@ export async function mountCaptureWindow(
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
     }
+    for (const action of captureActions) {
+      const b = buttons[`mode-${action}`];
+      b.classList.toggle('selected', captureAction === action); b.setAttribute('aria-pressed', String(captureAction === action));
+    }
     hint.textContent = sourceError || (crop ? labels.annotationHint : detecting() ? labels.windowSelectHint : labels.selectHint);
     placeDock();
     if (sourceError) hint.hidden = false;
@@ -364,6 +371,20 @@ export async function mountCaptureWindow(
   button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
   if (config.presentation === 'preview') buttons.window.hidden = true;
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
+  for (const action of captureActions) {
+    const label = action === 'screenshot' ? labels.screenshot : action === 'gif' ? labels.gifMode : labels.recordMode;
+    const b = button(captureModes, `mode-${action}`, label, () => {
+      if (busy) return;
+      finishText(); finishPropertyChange(); tool = null; selectedIndex = null;
+      captureAction = action; captureMode = action === 'screenshot' ? 'still' : 'record';
+      document.title = label;
+      buttonVisual(buttons.confirm, captureMode === 'record' ? 'record' : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, true);
+      draw();
+    });
+    buttonVisual(b, action === 'screenshot' ? 'camera' : action === 'gif' ? 'gif' : 'video', label, true);
+    b.title = action === 'screenshot' ? labels.screenshot : `${labels.record} · ${action.toUpperCase()}`;
+  }
+  captureModes.hidden = !captureActions.length;
   button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
     if (!crop || busy || crop.width < 1 || crop.height < 1) return;
@@ -372,7 +393,7 @@ export async function mountCaptureWindow(
     busy = true; active = null; draw();
     const output = node('canvas'); output.width = crop.width; output.height = crop.height;
     output.getContext('2d')!.drawImage(canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
-    try { await bridge.finish({ crop, ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
+    try { await bridge.finish({ crop, ...(captureActions.length ? { action: captureAction } : {}), ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
     finally { busy = false; }
   }
   button(actionGroup, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });

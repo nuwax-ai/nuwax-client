@@ -4,6 +4,8 @@ import log from 'electron-log';
 import { readQuickInitConfig } from '../bootstrap/quickInit';
 import { DORMANCY_SETTING_KEY, refreshHostActivity } from '../services/hostActivity';
 import { APP_NAME_IDENTIFIER } from '@shared/constants';
+import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/preferences';
+import { notifyCapturePreferencesChanged } from '../features/capture/preferences';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {
@@ -17,6 +19,14 @@ export function registerSettingsHandlers(): void {
   });
 
   ipcMain.handle('settings:set', (_, key: string, value: unknown) => {
+    if ([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING].includes(key)) {
+      const shortcut = value == null ? (key === CAPTURE_SHORTCUT_SETTING ? captureShortcut(null) : recordShortcut(null)) : parseCaptureShortcut(value);
+      if (!shortcut) return false;
+      const other = key === CAPTURE_SHORTCUT_SETTING ? recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)) : captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING));
+      if (shortcut === other) return false;
+      value = shortcut;
+    }
+    if (key === CAPTURE_HIDE_WINDOW_SETTING && value != null && typeof value !== 'boolean') return false;
     if (APP_NAME_IDENTIFIER === 'nuwax' && [AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY].includes(key)) return false;
     value = sanitizeCommercialPortSetting(key, value);
     const db = getDb();
@@ -36,6 +46,7 @@ export function registerSettingsHandlers(): void {
         log.warn('[Settings] Host activity refresh failed after saving dormancy setting', error);
       }
     }
+    if ([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING].includes(key)) notifyCapturePreferencesChanged();
     return true;
   });
 

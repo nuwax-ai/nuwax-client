@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, type CaptureResult } from '@shared/features/capture/contract';
+import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, type CaptureResult } from '@shared/features/capture/contract';
 import { createTrustedIpc } from '../_kit/trustedIpc';
 import { createFeatureLifecycle } from '../_kit/lifecycle';
 import type { FeatureContext, FeatureHandle } from '../_kit/types';
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => {
   let sequence = 0;
   return {
     power: emitter(), screen: emitter(), data,
-    captureStill: vi.fn(), record: vi.fn(), resolveFfmpeg: vi.fn(), showSaveDialog: vi.fn(),
+    captureStill: vi.fn(), record: vi.fn(), resolveFfmpeg: vi.fn(), showSaveDialog: vi.fn(), setActions: vi.fn(),
     windowDispose: vi.fn(), recorderDispose: vi.fn(), recorderStop: vi.fn(),
     copyTo: vi.fn(() => true), release: vi.fn((id: string) => { data.delete(id); }),
     copy: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock('electron', () => ({
 }));
 vi.mock('./electronDeps', () => ({ getScreenPermission: () => 'granted', getAllDisplays: () => [{ id: 1, scaleFactor: 2 }] }));
 vi.mock('./encodingResources', () => ({ resolveCaptureFfmpeg: mocks.resolveFfmpeg }));
-vi.mock('./selectionWindows', () => ({ createCaptureWindows: () => ({ captureStill: mocks.captureStill, setLabels: vi.fn(), dispose: mocks.windowDispose }) }));
+vi.mock('./selectionWindows', () => ({ createCaptureWindows: () => ({ captureStill: mocks.captureStill, setLabels: vi.fn(), setActions: mocks.setActions, dispose: mocks.windowDispose }) }));
 vi.mock('./recorder', () => ({
   createCaptureSourceStill: () => vi.fn(),
   createCapturePortalFrame: () => vi.fn(),
@@ -108,6 +108,27 @@ beforeEach(() => {
 afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
+  it('only an explicit trusted interactive call enables output switching for IM', async () => {
+    const sender = business();
+    await capture(sender);
+    expect(mocks.setActions).toHaveBeenLastCalledWith('screenshot', []);
+    expect(await invoke(CAPTURE_INTERACTIVE_IPC, sender, { action: 'screenshot' })).toMatchObject({ success: true });
+    expect(mocks.setActions).toHaveBeenLastCalledWith('screenshot', ['screenshot', 'mp4', 'gif']);
+    const calls = mocks.setActions.mock.calls.length;
+    expect(await invoke(CAPTURE_INTERACTIVE_IPC, new Sender(30, 'other'), { action: 'mp4' })).toMatchObject({ code: 'untrusted' });
+    expect(await invoke(CAPTURE_INTERACTIVE_IPC, sender, { action: 'unknown' })).toMatchObject({ code: 'invalid-argument' });
+    expect(mocks.setActions).toHaveBeenCalledTimes(calls);
+  });
+  it('opens screenshots while video resource verification is still pending', async () => {
+    const init = deferred<null>(); mocks.resolveFfmpeg.mockReturnValueOnce(init.promise);
+    const fullCaps = invoke(HOST_CAPTURE_IPC.GET_CAPABILITIES, host());
+    await Promise.resolve();
+    expect(await invoke(HOST_CAPTURE_IPC.GET_CAPABILITIES, host(), { includeRecording: false })).toMatchObject({ available: true });
+    expect((await capture(business())).mime).toBe('image/png');
+    expect(mocks.captureStill).toHaveBeenCalledOnce();
+    init.resolve(null); await fullCaps;
+    expect(mocks.resolveFfmpeg).toHaveBeenCalledOnce();
+  });
   it('copy 拒绝外域、子 frame、其他页面和失效句柄，仅原结果所有者可导出', async () => {
     const sender = business(); const result = await capture(sender);
     expect(await invoke(CAPTURE_IPC.COPY, new Sender(40, 'other'), result.resultId)).toMatchObject({ code: 'untrusted' });
@@ -243,7 +264,7 @@ describe('native capture entry point security', () => {
     expect(await invoke(HOST_CAPTURE_SAVE_IPC, sender, result.resultId)).toEqual({ success: false, canceled: true });
   });
   it('unregisters both entry points and disposes native resources', async () => {
-    await capture(business()); await handle.dispose();
+    await capture(business()); await invoke(HOST_CAPTURE_IPC.GET_CAPABILITIES, host()); await handle.dispose();
     expect(channels.size).toBe(0); expect(mocks.windowDispose).toHaveBeenCalled(); expect(mocks.recorderDispose).toHaveBeenCalled();
     expect(mocks.data.size).toBe(0);
   });

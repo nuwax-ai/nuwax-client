@@ -327,6 +327,18 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  */
 export const I18N_KEYS = {
   Capture: {
+    RECORD_MODE: "Claw.Capture.recordMode",
+    GIF_MODE: "Claw.Capture.gifMode",
+    HIDE_APP_WINDOW: "Claw.Capture.hideAppWindow",
+    SHORTCUT: "Claw.Capture.shortcut",
+    RECORD_SHORTCUT: "Claw.Capture.recordShortcut",
+    SHORTCUT_SAVE: "Claw.Capture.shortcutSave",
+    SHORTCUT_RESET: "Claw.Capture.shortcutReset",
+    SHORTCUT_HINT: "Claw.Capture.shortcutHint",
+    SHORTCUT_INVALID: "Claw.Capture.shortcutInvalid",
+    PREFERENCE_LOAD_FAILED: "Claw.Capture.preferenceLoadFailed",
+    PREFERENCE_SAVE_FAILED: "Claw.Capture.preferenceSaveFailed",
+
     COPY_IMAGE: "Claw.Capture.copyImage",
     COPY_FILE: "Claw.Capture.copyFile",
     IMAGE_COPIED: "Claw.Capture.imageCopied",

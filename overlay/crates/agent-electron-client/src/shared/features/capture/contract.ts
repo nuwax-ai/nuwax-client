@@ -36,9 +36,14 @@ export const HOST_CAPTURE_IPC: CaptureChannels = {
 export const HOST_CAPTURE_SAVE_IPC = "capture:host:save";
 /** 原生菜单仅向宿主壳发送命令，不进入业务页公开桥。 */
 export const HOST_CAPTURE_MENU_IPC = "capture:host:menu";
+export const CAPTURE_INTERACTIVE_IPC = 'capture:interactive';
+export const CAPTURE_SHORTCUT_REQUEST_IPC = 'capture:shortcut:request';
+export const CAPTURE_SHORTCUT_ACK_IPC = 'capture:shortcut:ack';
 export type CaptureMenuAction = "screenshot" | RecordOutput;
 
 export interface HostCaptureBridge extends CaptureBridge {
+  /** Host-only fast probe: still capture does not depend on video resource verification. */
+  getCapabilities(options?: { includeRecording?: boolean }): Promise<CaptureCapabilities>;
   save(resultId: string): Promise<{ success: boolean; canceled?: boolean; error?: string }>;
   onMenuAction?(listener: (action: CaptureMenuAction) => void): () => void;
 }
@@ -161,6 +166,10 @@ export type CaptureState =
 
 /** 渲染进程侧可见的桥形状。 */
 export interface CaptureBridge {
+  /** Explicitly allows selecting another output in the capture UI. Fixed screenshot/record calls keep their semantics. */
+  interactive?(options: { action: Exclude<CaptureMenuAction, "webm">; compression?: CaptureCompression; maxDurationMs?: number }): Promise<CaptureResult>;
+  /** IM claims a shortcut only while its own composer has focus; grant precedes run. */
+  onShortcut?(listener: { canHandle(): boolean; run(action: Exclude<CaptureMenuAction, "webm">): void }): () => void;
   getCapabilities(): Promise<CaptureCapabilities>;
   screenshot(options?: ScreenshotOptions): Promise<CaptureResult>;
   record(options: RecordOptions): Promise<CaptureResult>;

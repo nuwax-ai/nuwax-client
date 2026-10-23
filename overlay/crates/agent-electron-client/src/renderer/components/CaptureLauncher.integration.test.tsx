@@ -78,14 +78,14 @@ describe("壳菜单与原生采集控制器集成", () => {
   it.each([
     ["Win32", "screenshot"], ["Win32", "mp4"], ["Win32", "gif"],
     ["Linux x86_64", "screenshot"], ["Linux x86_64", "mp4"], ["Linux x86_64", "gif"],
-  ] as const)("%s 应用菜单默认隐藏时，宿主动作 %s 仍调用采集 API", async (platform, action) => {
+  ] as const)("%s 应用菜单默认显示时，宿主动作 %s 仍调用采集 API", async (platform, action) => {
     vi.stubGlobal("navigator", { platform });
     const ui = mount();
     const { default: TrafficLightToolbar } = await import("./TrafficLightToolbar");
     renderToStaticMarkup(<TrafficLightToolbar menuCollapsed={false} menuAvailable
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
       onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureAvailable onCapture={ui.onCapture} />);
-    expect(toolbarItems.some(item => item.key?.startsWith("capture-"))).toBe(false);
+    expect(toolbarItems.some(item => item.key?.startsWith("capture-"))).toBe(true);
     vi.mocked(ui.capture.onMenuAction!).mock.calls[0][0](action);
     await flush();
     expect(action === "screenshot" ? ui.capture.screenshot : ui.capture.record).toHaveBeenCalledOnce();

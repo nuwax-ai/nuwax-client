@@ -8,6 +8,7 @@ export interface CaptureWindowVisibility {
 /** 隐藏发起截屏的宿主窗口；等桌面合成器刷新后才采集，结束时恢复原可见状态。 */
 export function createCaptureWindowVisibility(options: {
   getWindow(): BrowserWindow | null;
+  shouldHide?(): boolean;
   canRestore?(): boolean;
   log: { warn(...args: unknown[]): void };
   settleMs?: number;
@@ -25,7 +26,7 @@ export function createCaptureWindowVisibility(options: {
   };
   return {
     async hide(signal) {
-      if (signal.aborted) return;
+      if (signal.aborted || options.shouldHide?.() === false) return;
       const parent = options.getWindow();
       if (!parent || parent.isDestroyed()) return;
       // 附属窗口一起隐藏，避免设置/弹出页面挡住目标；原先隐藏或最小化的窗口不恢复。

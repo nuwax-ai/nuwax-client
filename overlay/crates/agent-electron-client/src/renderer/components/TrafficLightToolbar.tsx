@@ -41,6 +41,7 @@ import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
 import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, displayCaptureShortcut } from '@shared/features/capture/preferences';
 import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
 import { I18N_KEYS } from "@shared/constants";
 import { t } from "../services/core/i18n";
@@ -96,6 +97,8 @@ export interface TrafficLightToolbarProps {
   onOpenWorkspace?: () => void;
   /** 本机采集能力可用时，Win/Linux 自绘菜单提供截图与录屏入口。 */
   captureAvailable?: boolean;
+  captureShortcut?: string;
+  recordShortcut?: string;
   /** 应用菜单展示策略，与采集能力及快捷键开关独立。 */
   captureMenuVisible?: boolean;
   /** 交由常驻 CaptureLauncher 执行，保留预览和保存流程。 */
@@ -167,6 +170,8 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   onModifyWorkspace,
   onOpenWorkspace,
   captureAvailable = false,
+  captureShortcut = DEFAULT_CAPTURE_SHORTCUT,
+  recordShortcut = DEFAULT_RECORD_SHORTCUT,
   captureMenuVisible = CAPTURE_APPLICATION_MENU_VISIBLE,
   onCapture,
   statusEntry,
@@ -410,14 +415,14 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {
             key: "capture-screenshot",
             icon: <CameraOutlined />,
-            label: menuRow(t("Claw.Capture.screenshot"), "Ctrl+Alt+S"),
+            label: menuRow(t("Claw.Capture.screenshot"), displayCaptureShortcut(captureShortcut, false)),
             onClick: () => startCaptureFromMenu("screenshot"),
           },
           { type: "divider" },
           ...(["mp4", "gif"] as const).map((output) => ({
             key: `capture-${output}`,
             icon: output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />,
-            label: menuRow(`${t("Claw.Capture.record")} · ${output.toUpperCase()}`, output === "mp4" ? "Ctrl+Alt+R" : undefined),
+            label: menuRow(`${t("Claw.Capture.record")} · ${output.toUpperCase()}`, output === "mp4" ? displayCaptureShortcut(recordShortcut, false) : undefined),
             onClick: () => startCaptureFromMenu(output),
           })),
         ]}

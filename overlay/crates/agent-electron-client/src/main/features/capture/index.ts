@@ -3,11 +3,12 @@ import { app, BrowserWindow, dialog, powerMonitor, screen } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import path from "node:path";
 import {
-  CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC,
+  CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC,
   type CaptureChannels, type CaptureCapabilities, type CaptureCopyResult, type CaptureResult, type CaptureSuccess,
 } from "@shared/features/capture/contract";
 import { DEFAULT_CAPTURE_WINDOW_LABELS, type CaptureWindowLabels } from "@shared/features/capture/windowContract";
 import { unavailableCapabilities } from "@shared/features/capture/unavailable";
+import { CAPTURE_HIDE_WINDOW_SETTING } from '@shared/features/capture/preferences';
 import { RECORDING_DURATION_SETTING, recordingDurationMinutes } from "@shared/features/capture/recordingPreferences";
 import type { DesktopFeature, FeatureContext, FeatureHandle } from "../_kit/types";
 import type { TrustedIpc } from "../_kit/trustedIpc";
@@ -15,6 +16,7 @@ import { createCaptureService, type CaptureService } from "./captureService";
 import { getAllDisplays, getScreenPermission } from "./electronDeps";
 import { createScreenPermissionPrompt } from "./permissionPrompt";
 import { createCaptureWindowVisibility } from "./windowVisibility";
+import { registerCaptureShortcutRouting } from './shortcutRouting';
 import { createResultStore, type ResultStore } from "./results";
 import { createNativeImageEncoder } from "./stillEncoder";
 import { createCaptureWindows } from "./selectionWindows";
@@ -45,6 +47,7 @@ export const captureFeature: DesktopFeature = {
   register(ctx: FeatureContext): FeatureHandle {
     let service: CaptureService | null = null;
     let pendingService: Promise<CaptureService> | null = null;
+    let pendingRecording: Promise<void> | null = null;
     let results: ResultStore | null = null;
     let windows: ReturnType<typeof createCaptureWindows> | null = null;
     let recorder: ReturnType<typeof createRecordEngine> | null = null;
@@ -59,6 +62,7 @@ export const captureFeature: DesktopFeature = {
       getWindow: () => active && !active.sender.isDestroyed()
         ? BrowserWindow.fromWebContents(active.sender.hostWebContents ?? active.sender) : null,
       canRestore: () => !disposed && !quitting,
+      shouldHide: () => ctx.settings.read(CAPTURE_HIDE_WINDOW_SETTING) === true,
       log: ctx.log,
     });
     const owners = new Map<string, { senderId: number; result: CaptureSuccess }>();
@@ -111,12 +115,21 @@ export const captureFeature: DesktopFeature = {
       } });
     };
 
-    const getService = (): Promise<CaptureService> => {
-      if (disposed) return Promise.reject(new Error("capture feature is disposed"));
-      if (pendingService) return pendingService;
-      pendingService = (async () => {
-        ctx.scratch.sweep(SCRATCH_TTL_MS);
+    const prepareRecording = (): Promise<void> => {
+      if (pendingRecording) return pendingRecording;
+      pendingRecording = (async () => {
         const ffmpeg = await resolveCaptureFfmpeg();
+        if (disposed) throw new Error('capture feature is disposed');
+        recorder = createRecordEngine({ adapter: resolveCapturePlatform(), windows: windows!, scratch: ctx.scratch,
+          log: ctx.log, ffmpeg, preloadPath: path.join(__dirname, '..', 'preload', 'captureRecording.js') });
+      })().catch(error => { pendingRecording = null; throw error; });
+      return pendingRecording;
+    };
+
+    const getService = (includeRecording = true): Promise<CaptureService> => {
+      if (disposed) return Promise.reject(new Error("capture feature is disposed"));
+      if (!pendingService) pendingService = (async () => {
+        ctx.scratch.sweep(SCRATCH_TTL_MS);
         if (disposed) throw new Error("capture feature is disposed");
         const labels = currentLabels();
         const recordingPreload = path.join(__dirname, "..", "preload", "captureRecording.js");
@@ -127,7 +140,6 @@ export const captureFeature: DesktopFeature = {
           captureWindowFrame: createCaptureSourceStill({ scratch: ctx.scratch, preloadPath: recordingPreload }),
           capturePortalFrame: createCapturePortalFrame({ scratch: ctx.scratch, preloadPath: recordingPreload }),
         });
-        recorder = createRecordEngine({ adapter, windows, scratch: ctx.scratch, log: ctx.log, ffmpeg, preloadPath: recordingPreload });
         results = createResultStore(ctx.scratch);
         captureClipboard = createCaptureClipboard(results, createScratchDir(path.join(ctx.scratch.root, '.clipboard')), createCaptureClipboardPlatform());
         service = createCaptureService({ platform: process.platform, getPermission: getScreenPermission,
@@ -136,7 +148,10 @@ export const captureFeature: DesktopFeature = {
           getRecordingDurationLimit: () => recordingDurationMinutes(ctx.settings.read(RECORDING_DURATION_SETTING)) * 60_000,
           backendAvailable: () => captureBackendAvailable(app.commandLine),
           getDisplays: getAllDisplays, stillEngine: windows, stillEncoder: createNativeImageEncoder(),
-          recordEngine: recorder, results, log: ctx.log });
+          recordEngine: {
+            formats: () => recorder?.formats() ?? { video: [], gif: false },
+            record: (...args) => recorder!.record(...args),
+          }, prepareRecording, results, log: ctx.log });
         offState = service.onStateChange((state) => {
           const sender = active?.sender;
           if (sender && !sender.isDestroyed()) sender.send(active!.channel, state);
@@ -153,20 +168,25 @@ export const captureFeature: DesktopFeature = {
         });
         return service;
       })().catch(error => { pendingService = null; throw error; });
-      return pendingService;
+      return includeRecording ? pendingService.then(async svc => { await prepareRecording(); return svc; }) : pendingService;
     };
 
     const invokeCapture = async (event: IpcMainInvokeEvent, channels: CaptureChannels,
-      kind: "screenshot" | "record", options: unknown): Promise<CaptureResult> => {
+      kind: "screenshot" | "record", options: unknown, interactive = channels === HOST_CAPTURE_IPC, recordingDurationMs?: unknown): Promise<CaptureResult> => {
       const epoch = generation;
       watchSender(event.sender);
       const documentEpoch = documentEpochs.get(event.sender.id) ?? 0;
-      const svc = await getService();
+      const svc = await getService(kind === "record");
       if (disposed || generation !== epoch || event.sender.isDestroyed() ||
         (documentEpochs.get(event.sender.id) ?? 0) !== documentEpoch) return { success: false, code: "canceled" };
       windows?.setLabels(currentLabels());
-      if (svc.getState() === "idle") active = { sender: event.sender, channel: channels.STATE_CHANGED };
-      const result = await svc[kind](options);
+      if (svc.getState() === "idle") {
+        active = { sender: event.sender, channel: channels.STATE_CHANGED };
+        const action = kind === 'screenshot' ? 'screenshot' : (options as { output?: unknown } | null)?.output;
+        windows?.setActions(action === 'gif' || action === 'webm' ? action : kind === 'record' ? 'mp4' : 'screenshot',
+          interactive ? ['screenshot', 'mp4', 'gif'] : []);
+      }
+      const result = kind === 'screenshot' ? await svc.screenshot(options, interactive, recordingDurationMs) : await svc.record(options, interactive);
       if (result.success) {
         if (disposed || generation !== epoch || event.sender.isDestroyed() ||
           (documentEpochs.get(event.sender.id) ?? 0) !== documentEpoch) {
@@ -179,8 +199,8 @@ export const captureFeature: DesktopFeature = {
     };
 
     const registerBridge = (ipc: TrustedIpc, channels: CaptureChannels) => {
-      ipc.handle<IpcMainInvokeEvent, [], Promise<CaptureCapabilities> | CaptureCapabilities>(channels.GET_CAPABILITIES,
-        async () => (await getService()).getCapabilities(), unavailableCapabilities(process.platform));
+      ipc.handle<IpcMainInvokeEvent, [{ includeRecording?: boolean }?], Promise<CaptureCapabilities> | CaptureCapabilities>(channels.GET_CAPABILITIES,
+        async (_event, options) => (await getService(channels !== HOST_CAPTURE_IPC || options?.includeRecording !== false)).getCapabilities(), unavailableCapabilities(process.platform));
       ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(channels.SCREENSHOT,
         (event, options) => invokeCapture(event, channels, "screenshot", options), UNTRUSTED);
       ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(channels.RECORD,
@@ -217,6 +237,14 @@ export const captureFeature: DesktopFeature = {
     };
     registerBridge(ctx.ipc, CAPTURE_IPC);
     registerBridge(ctx.hostIpc, HOST_CAPTURE_IPC);
+    const offShortcutRouting = registerCaptureShortcutRouting(ctx.ipc);
+    ctx.ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(CAPTURE_INTERACTIVE_IPC, (event, raw) => {
+      if (!raw || typeof raw !== 'object') return { success: false, code: 'invalid-argument' };
+      const { action, compression, maxDurationMs } = raw as { action?: unknown; compression?: unknown; maxDurationMs?: unknown };
+      if (!['screenshot', 'mp4', 'gif'].includes(String(action))) return { success: false, code: 'invalid-argument' };
+      return action === 'screenshot' ? invokeCapture(event, CAPTURE_IPC, 'screenshot', { compression }, true, maxDurationMs)
+        : invokeCapture(event, CAPTURE_IPC, 'record', { output: action, compression, maxDurationMs }, true);
+    }, UNTRUSTED);
     ctx.hostIpc.handle<IpcMainInvokeEvent, [unknown], Promise<{ success: boolean; canceled?: boolean; error?: string }> | { success: boolean; error: string }>(
       HOST_CAPTURE_SAVE_IPC, async (event, id) => {
         if (typeof id !== "string") return { success: false, error: "invalid result" };
@@ -247,11 +275,12 @@ export const captureFeature: DesktopFeature = {
     screen.on("display-removed", interrupt);
     return { async dispose() {
       disposed = true; clearSession();
-      offSessionEnd(); offQuit(); offState?.();
+      offSessionEnd(); offQuit(); offState?.(); offShortcutRouting();
       powerMonitor.removeListener("lock-screen", interrupt); powerMonitor.removeListener("suspend", interrupt);
       screen.removeListener("display-removed", interrupt);
       ctx.ipc.dispose(); ctx.hostIpc.dispose(); recorder?.dispose(); windows?.dispose(); captureClipboard?.dispose();
       if (pendingService) await pendingService.catch(() => undefined);
+      if (pendingRecording) await pendingRecording.catch(() => undefined);
     } };
   },
 };

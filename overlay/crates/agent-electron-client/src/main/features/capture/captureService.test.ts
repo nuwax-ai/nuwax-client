@@ -19,6 +19,8 @@ import { createResultStore, type ResultFs } from "./results";
 import { createNativeImageEncoder, type NativeImageLike } from "./stillEncoder";
 import type { ScratchDir } from "../_kit/scratchDir";
 import type { CaptureState } from "@shared/features/capture/contract";
+import type { CaptureSelection } from '@shared/features/capture/windowContract';
+import { CaptureModeSwitch } from './modeSwitch';
 
 const image = (width = 800, height = 600): NativeImageLike => ({
   getSize: () => ({ width, height }),
@@ -357,5 +359,41 @@ describe("record", () => {
     const out = await service.record({ output: "mp4" });
     expect(out).toMatchObject({ success: true, mime: "video/mp4", durationMs: 4200, width: 1280, qualityUsed: "medium" });
     expect(states).toEqual(["selecting", "recording", "encoding", "idle"]);
+  });
+});
+
+
+describe('interactive capture mode selection', () => {
+  const selection = { sourceId: 'screen:1', sourceKind: 'screen', sourceSize: { width: 800, height: 600 },
+    crop: { x: 10, y: 20, width: 320, height: 240 }, displayBounds: { x: 0, y: 0, width: 800, height: 600 }, displayId: '1', hdrToneMapped: false } as CaptureSelection;
+  it('switches screenshot to MP4 using the selected region, duration limit and same busy session', async () => {
+    const windowVisibility = { hide: vi.fn(async () => {}), restore: vi.fn() };
+    const record = vi.fn(async (_options, _signal, state) => {
+      state('recording'); return { data: Buffer.from('video'), mime: 'video/mp4', width: 320, height: 240,
+        durationMs: 1000, qualityUsed: 'high' as const, hdrToneMapped: false };
+    });
+    const prepareRecording = vi.fn(async () => {});
+    const { service } = setup({ windowVisibility, prepareRecording, getRecordingDurationLimit: () => 60000,
+      stillEngine: { captureStill: async () => { throw new CaptureModeSwitch('mp4', selection); } },
+      recordEngine: { formats: () => ({ video: ['mp4'], gif: false }), record } });
+    const states: CaptureState[] = []; service.onStateChange(state => states.push(state));
+    expect(await service.screenshot({}, true, 25000)).toMatchObject({ success: true, mime: 'video/mp4' });
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ output: 'mp4', maxDurationMs: 25000 }), expect.any(AbortSignal), expect.any(Function), selection);
+    expect(prepareRecording).toHaveBeenCalledOnce(); expect(windowVisibility.hide).toHaveBeenCalledOnce(); expect(windowVisibility.restore).toHaveBeenCalledOnce();
+    expect(states).toEqual(['selecting', 'recording', 'idle']);
+  });
+  it('switches recording to a screenshot without acquiring a second screenshot source', async () => {
+    const stillEngine = { captureStill: vi.fn() };
+    const { service } = setup({ stillEngine, recordEngine: { formats: () => ({ video: ['mp4'], gif: false }),
+      record: async () => { throw new CaptureModeSwitch('screenshot', { image: image(), hdrToneMapped: false }); } } });
+    expect(await service.record({ output: 'mp4' }, true)).toMatchObject({ success: true, mime: 'image/jpeg' });
+    expect(stillEngine.captureStill).not.toHaveBeenCalled();
+  });
+  it('fixed screenshot calls cannot silently return video', async () => {
+    const record = vi.fn();
+    const { service } = setup({ stillEngine: { captureStill: async () => { throw new CaptureModeSwitch('mp4', selection); } },
+      recordEngine: { formats: () => ({ video: ['mp4'], gif: false }), record } });
+    expect(await service.screenshot({})).toMatchObject({ success: false, code: 'failed' });
+    expect(record).not.toHaveBeenCalled();
   });
 });

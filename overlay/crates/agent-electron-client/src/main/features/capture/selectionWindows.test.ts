@@ -262,7 +262,7 @@ describe('multi-display selector focus', () => {
     const ordered = order === 'preferred-first' ? [preferred, other] : [other, preferred];
     for (const window of ordered) window.webContents.emit('did-finish-load');
     expect(mock.focused()).toBe(preferred.webContents.id);
-    expect(mock.timeline.slice(0, 3)).toEqual(['freeze', 'freeze', 'catalog']);
+    expect(mock.timeline.slice(0, 2)).toEqual(['freeze', 'catalog']);
     expect(preferred.options.title).toBe('截图');
     const key = { preventDefault: vi.fn() };
     preferred.webContents.emit('before-input-event', key, { type: 'keyDown', key: 'Escape' });
@@ -293,7 +293,7 @@ describe('hover window detection', () => {
     windows.dispose(); windows = createCaptureWindows({ platform: 'darwin', portal: false, log: mock.log, listWindows });
     const abort = new AbortController(); const pending = windows.captureStill(abort.signal);
     await vi.waitFor(() => expect(mock.windows).toHaveLength(2));
-    expect(mock.timeline.slice(0, 4)).toEqual(['freeze', 'freeze', 'windows', 'catalog']);
+    expect(mock.timeline.slice(0, 4)).toEqual(['freeze', 'freeze', 'catalog', 'windows']);
     expect(init(mock.windows[0]).regions).toEqual([{ x: 200, y: 100, width: 800, height: 600 }, { x: 2200, y: 0, width: 200, height: 400 }]);
     expect(init(mock.windows[1]).regions).toEqual([{ x: 0, y: 0, width: 200, height: 200 }]);
     expect(listWindows).toHaveBeenCalledOnce();
@@ -394,4 +394,24 @@ describe('capture sources on arbitrary displays', () => {
     mock.windows[1].webContents.emit('before-input-event', { preventDefault: vi.fn() }, { type: 'keyDown', key: 'Escape' });
     expect(await pending).toBeNull(); expect(mock.windows.every((window) => window.destroyed)).toBe(true);
   });
+});
+
+
+it('only interactive selectors can return a recording mode with the existing crop', async () => {
+  const crop = { x: 10, y: 20, width: 320, height: 240 };
+  const signal = new AbortController();
+  const fixed = windows.captureStill(signal.signal);
+  await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+  let owned = mock.windows[0]; let event = { sender: owned.webContents, senderFrame: owned.webContents.mainFrame };
+  expect(mock.handlers.get(CH.finish)!(event, { crop, action: 'mp4' })).toBe(false);
+  signal.abort(); expect(await fixed).toBeNull();
+  mock.windows.length = 0;
+  windows.setActions('screenshot', ['screenshot', 'mp4', 'gif']);
+  const changed = windows.captureStill(new AbortController().signal).catch(error => error);
+  await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+  owned = mock.windows[0]; event = { sender: owned.webContents, senderFrame: owned.webContents.mainFrame };
+  const config = mock.handlers.get(CH.init)!(event) as { action: string; actions: string[] };
+  expect(config.action).toBe('screenshot'); expect(config.actions).toEqual(['screenshot', 'mp4', 'gif']);
+  expect(mock.handlers.get(CH.finish)!(event, { crop, action: 'mp4' })).toBe(true);
+  expect(await changed).toMatchObject({ action: 'mp4', selected: { sourceId: 'screen:1', crop } });
 });

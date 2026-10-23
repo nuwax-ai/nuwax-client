@@ -4,6 +4,8 @@ import { Button, InputNumber, Modal, Select, Space, message } from "antd";
 import { CameraOutlined, CopyOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { CaptureCapabilities, CaptureMenuAction, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/preferences';
+import { CapturePreferences } from './CapturePreferences';
 import { DEFAULT_RECORDING_DURATION_MINUTES, MAX_RECORDING_DURATION_MINUTES, RECORDING_DURATION_SETTING, recordingDurationMinutes } from "@shared/features/capture/recordingPreferences";
 
 interface Props {
@@ -14,13 +16,15 @@ interface Props {
   onAvailabilityChange?(available: boolean): void;
   /** 壳自绘菜单使用同一个常驻控制器；卸载时清空动作，避免引用失效入口。 */
   onActionReady?(handler: ((action: CaptureMenuAction) => void) | null): void;
+  onShortcutChange?(shortcut: string): void;
+  onRecordShortcutChange?(shortcut: string): void;
   /** 等待设置弹窗实际关闭，避免把其关闭动画采进冻结帧。 */
   onCaptureStart?(): Promise<void>;
   settings?: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<unknown> };
 }
 
 /** 壳上的直接验收入口；业务页继续使用同一服务的独立受信桥。 */
-export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onCaptureStart, settings }) => {
+export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAvailabilityChange, onActionReady, onShortcutChange, onRecordShortcutChange, onCaptureStart, settings }) => {
   const [caps, setCaps] = useState<CaptureCapabilities | null>(null);
   const [state, setState] = useState<CaptureState>("idle");
   const [pending, setPending] = useState(false);
@@ -54,6 +58,17 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
     return () => { mounted = false; };
   }, [settings]);
 
+  useEffect(() => {
+    let mounted = true;
+    void settings?.get(CAPTURE_SHORTCUT_SETTING).then(value => {
+      if (mounted) onShortcutChange?.(captureShortcut(value));
+    }).catch(() => undefined);
+    void settings?.get(CAPTURE_RECORD_SHORTCUT_SETTING).then(value => {
+      if (mounted) onRecordShortcutChange?.(recordShortcut(value));
+    }).catch(() => undefined);
+    return () => { mounted = false; };
+  }, [settings, onShortcutChange, onRecordShortcutChange]);
+
   const changeDuration = (value: number | null) => {
     if (value === null || recordingDurationMinutes(value) !== value) return;
     durationRef.current = value;
@@ -82,9 +97,12 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   useEffect(() => {
     alive.current = true;
     if (!capture) return;
-    void capture.getCapabilities().then((value) => {
-      if (alive.current) { setCaps(value); onAvailabilityChange?.(value.available); }
+    void capture.getCapabilities({ includeRecording: false }).then((value) => {
+      if (alive.current) { setCaps(current => current ? { ...value, formats: current.formats } : value); onAvailabilityChange?.(value.available); }
     }).catch(() => { if (alive.current) { setCaps(null); onAvailabilityChange?.(false); } });
+    void capture.getCapabilities().then(value => {
+      if (alive.current) setCaps(value);
+    }).catch(() => undefined);
     const off = capture.onStateChange((next) => {
       stateRef.current = next;
       if (alive.current) setState(next);
@@ -118,9 +136,9 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
     setPending(true);
     let result: CaptureResult | undefined;
     try {
-      const currentCaps = await capture.getCapabilities();
+      const currentCaps = await capture.getCapabilities(output ? undefined : { includeRecording: false });
       if (!alive.current) return;
-      setCaps(currentCaps);
+      setCaps(current => !output && current ? { ...currentCaps, formats: current.formats } : currentCaps);
       if (!currentCaps.available) { message.error(text("error.unsupported")); return; }
       if (output && (output === "gif" ? !currentCaps.formats.gif : !currentCaps.formats.video.includes(output))) {
         message.error(text("error.encoderUnavailable"));
@@ -198,6 +216,7 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   const busy = pending || state !== "idle";
   const panel = <div style={{ padding: 20, border: "1px solid var(--color-border)", borderRadius: 12, background: "var(--color-bg-section)" }}>
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
+      <CapturePreferences settings={settings} t={t} disabled={busy} onShortcutChange={onShortcutChange} onRecordShortcutChange={onRecordShortcutChange} />
       <Space><span>{text("quality")}</span>
         <Select value={quality} disabled={busy} style={{ width: 120 }} onChange={setQuality}
           options={["lossless", "high", "medium", "low"].map((value) => ({ value, label: text(`quality.${value}`) }))} />

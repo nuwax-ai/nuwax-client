@@ -1,6 +1,9 @@
 /** Small inline line icons: no fonts, external resources, or network in the private window. */
 export function createCaptureIcon(name: string): SVGSVGElement {
   const paths: Record<string, string[]> = {
+    camera: ['M14 4h-4L8 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-4z', 'M16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0'],
+    video: ['M4 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z', 'm16 10 6-4v12l-6-4z'],
+    gif: ['M4 3h16v18H4z', 'M4 7h2M4 12h2M4 17h2M18 7h2M18 12h2M18 17h2'],
     select: ['m5 3 14 10-7 1-4 7z'],
     deleteAnnotation: ['M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7'],
     screen: ['M3 4h18v13H3z', 'M8 21h8M12 17v4'],
@@ -30,6 +33,12 @@ export function createCaptureIcon(name: string): SVGSVGElement {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', d);
     if (['record', 'stop', 'resume', 'mosaic'].includes(name)) path.setAttribute('fill', 'currentColor');
     svg.append(path);
+  }
+  if (name === 'gif') {
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', '12'); label.setAttribute('y', '14.2'); label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('font-family', 'system-ui,sans-serif'); label.setAttribute('font-size', '6'); label.setAttribute('font-weight', '700');
+    label.setAttribute('stroke', 'none'); label.setAttribute('fill', 'currentColor'); label.textContent = 'GIF'; svg.append(label);
   }
   return svg;
 }

@@ -46,6 +46,9 @@ import {
 } from "@shared/constants";
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/preferences';
+import { routeCaptureShortcut } from './features/capture/shortcutRouting';
+import { onCapturePreferencesChanged } from './features/capture/preferences';
 import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
@@ -463,12 +466,12 @@ function createWindow() {
   attachHostActivityWindow(mainWindow);
 
   if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
-    // 菜单动作只发宿主，即使按键焦点在业务 guest 也不向 guest 派发命令。
+    // 菜单点击走宿主预览；快捷键优先由聚焦的 IM 编辑器认领并回填草稿。
     // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
-    const shortcutOptions = { platform: process.platform, controlRecording: (action: "pause" | "stop") => runDesktopActivity("capture", action) };
-    bindCaptureMenuShortcuts(mainWindow.webContents, dispatchCaptureMenuAction, shortcutOptions);
+    const shortcutOptions = { platform: process.platform, getScreenshotShortcut: () => captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), getRecordShortcut: () => recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), controlRecording: (action: "pause" | "stop") => runDesktopActivity("capture", action) };
+    bindCaptureMenuShortcuts(mainWindow.webContents, action => { void dispatchCaptureMenuAction(action, "shortcut"); }, shortcutOptions);
     mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
-      bindCaptureMenuShortcuts(guest, dispatchCaptureMenuAction, shortcutOptions);
+      bindCaptureMenuShortcuts(guest, action => { void dispatchCaptureMenuAction(action, "shortcut", guest); }, shortcutOptions);
     });
   }
 
@@ -476,11 +479,15 @@ function createWindow() {
   createMenu();
 }
 
-function dispatchCaptureMenuAction(action: CaptureMenuAction) {
+async function dispatchCaptureMenuAction(action: CaptureMenuAction, trigger: "menu" | "shortcut" = "menu", focused = webContents.getFocusedWebContents()) {
   if (!isDesktopFeatureRegistered("capture") || !mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.show();
-  mainWindow.focus();
-  mainWindow.webContents.send(HOST_CAPTURE_MENU_IPC, action);
+  const originWindow = mainWindow;
+  if (trigger === 'shortcut' && focused && focused.hostWebContents === originWindow.webContents &&
+    await routeCaptureShortcut(focused, action)) return;
+  if (mainWindow !== originWindow || originWindow.isDestroyed()) return;
+  originWindow.show();
+  originWindow.focus();
+  originWindow.webContents.send(HOST_CAPTURE_MENU_IPC, action);
 }
 
 function createMenu() {
@@ -548,7 +555,7 @@ function createMenu() {
         void openLogDirectory();
       },
       capture: dispatchCaptureMenuAction,
-    }, { newTaskAvailable: isMainNewTaskAvailable(), captureAvailable: isDesktopFeatureRegistered("capture") });
+    }, { newTaskAvailable: isMainNewTaskAvailable(), captureAvailable: isDesktopFeatureRegistered("capture"), captureShortcut: captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), recordShortcut: recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)) });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   } else {
     // Windows/Linux: 去掉菜单栏，功能由界面（自绘顶行菜单栏）和系统托盘提供
@@ -895,6 +902,7 @@ app.whenReady().then(async () => {
   // 主进程只订阅一次；guest 上报和壳 IPC 均经 setMainLang 更新原生菜单。
   if (process.platform === "darwin") {
     onMainLangChanged(createMenu);
+    onCapturePreferencesChanged(createMenu);
     onMainNewTaskAvailabilityChanged(createMenu);
   }
 

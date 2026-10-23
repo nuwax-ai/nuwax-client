@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { CAPTURE_IPC } from "@shared/features/capture/contract";
+import { CAPTURE_IPC, CAPTURE_SHORTCUT_ACK_IPC, CAPTURE_SHORTCUT_REQUEST_IPC } from "@shared/features/capture/contract";
 import { createCaptureBridge } from "./capture";
 
 function fakeIpc(invoke: (channel: string, ...args: unknown[]) => Promise<unknown>) {
@@ -88,4 +88,22 @@ describe("正常路径", () => {
     ipc.emit(CAPTURE_IPC.STATE_CHANGED, "idle");
     expect(seen).toEqual(["selecting"]);
   });
+});
+
+
+it('an IM shortcut starts only after focus and a current trusted claim are accepted', async () => {
+  let focused = false; let granted = true;
+  const ipc = fakeIpc(async (channel, raw) => channel === CAPTURE_SHORTCUT_ACK_IPC && (raw as { handled: boolean }).handled && granted);
+  const run = vi.fn();
+  const off = createCaptureBridge(ipc as never).onShortcut!({ canHandle: () => focused, run });
+  ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'first', action: 'screenshot' });
+  await Promise.resolve(); await Promise.resolve(); expect(run).not.toHaveBeenCalled();
+  focused = true; granted = false;
+  ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'expired', action: 'mp4' });
+  await Promise.resolve(); await Promise.resolve(); expect(run).not.toHaveBeenCalled();
+  granted = true;
+  ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'accepted', action: 'mp4' });
+  await Promise.resolve(); await Promise.resolve(); expect(run).toHaveBeenCalledOnce(); expect(run).toHaveBeenCalledWith('mp4');
+  off(); ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'removed', action: 'screenshot' });
+  await Promise.resolve(); expect(run).toHaveBeenCalledOnce();
 });

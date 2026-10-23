@@ -11,8 +11,11 @@
 import type { IpcRenderer } from "electron";
 import {
   CAPTURE_IPC,
+  HOST_CAPTURE_IPC,
+  CAPTURE_INTERACTIVE_IPC, CAPTURE_SHORTCUT_REQUEST_IPC, CAPTURE_SHORTCUT_ACK_IPC,
   type CaptureChannels,
   type CaptureBridge,
+  type HostCaptureBridge,
   type CaptureCapabilities,
   type CaptureResult,
   type CaptureCopyResult,
@@ -51,11 +54,29 @@ export async function captureCapabilityProbe(
   return await authorize(name) === true;
 }
 
-export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CAPTURE_IPC): CaptureBridge {
+export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CAPTURE_IPC): Omit<HostCaptureBridge, 'save'> {
   return {
-    async getCapabilities() {
+    async interactive(options) {
+      try { return await ipc.invoke(CAPTURE_INTERACTIVE_IPC, options) as CaptureResult; }
+      catch (error) { return toFailure(error); }
+    },
+    onShortcut(listener) {
+      let subscribed = true;
+      const handler = async (_event: unknown, request: { id?: unknown; action?: unknown }) => {
+        if (!subscribed || !request || typeof request.id !== 'string' || !['screenshot', 'mp4', 'gif'].includes(String(request.action))) return;
+        try {
+          const handled = listener.canHandle() === true;
+          const granted = await ipc.invoke(CAPTURE_SHORTCUT_ACK_IPC, { id: request.id, handled });
+          if (granted === true && subscribed) listener.run(request.action as 'screenshot' | 'mp4' | 'gif');
+        } catch { /* A reloaded, detached or untrusted document cannot claim a shortcut. */ }
+      };
+      ipc.on(CAPTURE_SHORTCUT_REQUEST_IPC, handler);
+      return () => { subscribed = false; ipc.removeListener(CAPTURE_SHORTCUT_REQUEST_IPC, handler); };
+    },
+    async getCapabilities(options) {
       try {
-        return (await ipc.invoke(channels.GET_CAPABILITIES)) as CaptureCapabilities;
+        return (await (channels === HOST_CAPTURE_IPC && options
+          ? ipc.invoke(channels.GET_CAPABILITIES, options) : ipc.invoke(channels.GET_CAPABILITIES))) as CaptureCapabilities;
       } catch {
         return unavailableCapabilities(process.platform);
       }

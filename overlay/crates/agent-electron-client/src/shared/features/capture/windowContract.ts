@@ -1,3 +1,4 @@
+import type { CaptureMenuAction } from './contract';
 /** Internal native-window contract. Nothing here exposes general IPC or file access. */
 export const CAPTURE_WINDOW_CHANNELS = {
   init: 'capture-window:init',
@@ -35,7 +36,7 @@ export interface RecordingControls {
   dispose(): void;
 }
 export interface CaptureWindowLabels {
-  screenshot: string; screen: string; window: string; region: string; rectangle: string; ellipse: string;
+  screenshot: string; recordMode: string; gifMode: string; screen: string; window: string; region: string; rectangle: string; ellipse: string;
   arrow: string; pen: string; text: string; mosaic: string; undo: string; redo: string;
   cancel: string; confirm: string; record: string; pause: string; resume: string; stop: string;
   countdown: string; recording: string; paused: string; encoding: string; remaining: string;
@@ -45,7 +46,7 @@ export interface CaptureWindowLabels {
   entireSource: string;
 }
 export const DEFAULT_CAPTURE_WINDOW_LABELS: CaptureWindowLabels = {
-  screenshot: '截图', screen: '整屏', window: '窗口', region: '区域', rectangle: '矩形', ellipse: '椭圆',
+  screenshot: '截图', recordMode: '录屏', gifMode: 'GIF', screen: '整屏', window: '窗口', region: '区域', rectangle: '矩形', ellipse: '椭圆',
   arrow: '箭头', pen: '画笔', text: '文字', mosaic: '马赛克', undo: '撤销', redo: '重做',
   cancel: '取消', confirm: '确认', record: '开始录制', pause: '暂停', resume: '继续', stop: '停止',
   countdown: '即将录制', recording: '正在录制', paused: '已暂停', encoding: '正在处理',
@@ -66,6 +67,8 @@ export interface CaptureWindowImage {
 }
 export type CaptureWindowConfiguration = {
   kind: 'selection'; mode: 'still' | 'record'; labels: CaptureWindowLabels;
+  action?: CaptureMenuAction;
+  actions?: CaptureMenuAction[];
   image: CaptureWindowImage; sources: CaptureWindowSource[]; workArea: CaptureRect;
   /** Visible top-level windows in frozen-frame pixels, topmost first; absent where desktop geometry is unknown. */
   regions?: CaptureRect[];
@@ -78,7 +81,7 @@ export type CaptureWindowConfiguration = {
 export interface CaptureWindowBridge {
   init(): Promise<CaptureWindowConfiguration | null>;
   source(id: string): Promise<CaptureWindowImage | null>;
-  finish(payload: { crop: CaptureRect; png?: string }): Promise<boolean>;
+  finish(payload: { crop: CaptureRect; png?: string; action?: CaptureMenuAction }): Promise<boolean>;
   action(action: 'cancel' | RecordingAction): void;
   onState(callback: (state: RecordingControlState) => void): () => void;
 }

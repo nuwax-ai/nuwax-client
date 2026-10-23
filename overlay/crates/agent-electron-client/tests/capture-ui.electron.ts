@@ -102,6 +102,10 @@ app.whenReady().then(async () => {
     const directory = path.resolve(process.env.NUWAX_CAPTURE_UI_SCREENSHOTS);
     mkdirSync(directory, { recursive: true });
     writeFileSync(path.join(directory, `${name}.png`), (await selector.webContents.capturePage()).toPNG());
+    if (name === 'interactive-modes') {
+      const dock = await script(selector, `(()=>{const r=document.querySelector('.selectionDock').getBoundingClientRect();return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)}})()`);
+      writeFileSync(path.join(directory, 'mode-picker.png'), (await selector.webContents.capturePage(dock)).toPNG());
+    }
   };
 
   let pending = windows.captureStill(new AbortController().signal);
@@ -292,6 +296,27 @@ app.whenReady().then(async () => {
   await tool(narrow, 'select');
   await key(narrow, 'Escape');
   assert.equal(await pending, null); assert.equal(BrowserWindow.getAllWindows().length, 0);
+
+  for (const display of displays) display.bounds.width = display.size.width = display.workArea.width = 960;
+  windows.setActions('screenshot', ['screenshot', 'mp4', 'gif']);
+  const changed = windows.captureStill(new AbortController().signal).catch(error => error);
+  const interactive = (await prepared())[0];
+  await drag(interactive, [120, 120], [400, 300]);
+  const selectedDimensions = await script(interactive, `document.querySelector('.dimensions').textContent`);
+  await tool(interactive, 'mode-mp4');
+  assert.equal(await visible(interactive, '.toolbar.tools'), false, '录屏模式隐藏标注工具');
+  assert.equal(await script(interactive, `document.querySelector('[data-action=confirm]').textContent`), '开始录制');
+  await tool(interactive, 'mode-screenshot');
+  assert.equal(await visible(interactive, '.toolbar.tools'), true);
+  assert.equal(await script(interactive, `document.querySelector('.dimensions').textContent`), selectedDimensions, '切换模式保留选区');
+  await checkDock(interactive); await saveScreenshot(interactive, 'interactive-modes');
+  await tool(interactive, 'mode-gif');
+  await tool(interactive, 'confirm');
+  const chosen = await changed;
+  assert.equal(chosen.action, 'gif');
+  assert.equal(`${chosen.selected.crop.width} × ${chosen.selected.crop.height} px`, selectedDimensions);
+  windows.setActions('screenshot', []);
+  console.log('PASS interactive screenshot/MP4/GIF mode tabs preserve crop');
 
   // 只创建隔离的控制条/区域边框，不开启媒体流或真实录屏。
   const recordingControls = windows.createRecordingControls({

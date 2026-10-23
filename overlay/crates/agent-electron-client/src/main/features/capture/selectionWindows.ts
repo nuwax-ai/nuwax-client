@@ -9,6 +9,8 @@ import {
 } from '@shared/features/capture/windowContract';
 import { buildCaptureWindowHtml } from '../../../renderer/features/capture/windowHtml';
 import type { StillCapture, StillEngine } from './captureService';
+import type { CaptureMenuAction } from '@shared/features/capture/contract';
+import { CaptureModeSwitch } from './modeSwitch';
 import { isValidCaptureCrop, isTrustedCaptureFrame } from './windowSecurity';
 import { recordingBorderBounds, recordingControlBounds } from './windowGeometry';
 import { usesCapturePortal } from './linuxEnvironment';
@@ -22,6 +24,7 @@ export interface CaptureWindows extends StillEngine {
   selectPrepared(mode: 'record', image: CaptureWindowImage, signal: AbortSignal): Promise<CaptureSelection | null>;
   /** Applied to windows opened for the next capture; active windows keep their initial language. */
   setLabels(labels: Partial<CaptureWindowLabels>): void;
+  setActions(action: CaptureMenuAction, actions: CaptureMenuAction[]): void;
   createRecordingControls(selection: CaptureSelection, onAction: (action: RecordingAction, error?: Error) => void): RecordingControls;
   dispose(): void;
 }
@@ -70,6 +73,8 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   let disposed = false;
   let pending: ((result: null) => void) | null = null;
   let sourceCatalog: CaptureWindowSource[] = [];
+  let action: CaptureMenuAction = 'screenshot';
+  let actions: CaptureMenuAction[] = [];
   const trusted = (event: IpcMainEvent | IpcMainInvokeEvent): ManagedWindow | undefined => {
     const owned = windows.get(event.sender.id);
     if (!owned || !isTrustedCaptureFrame(event, owned.window.webContents, owned.url)) return undefined;
@@ -183,17 +188,26 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   ipcMain.handle(CH.finish, (event, payload: unknown) => {
     const owned = trusted(event);
     if (!owned || owned.config.kind !== 'selection' || owned.signal?.aborted || !payload || typeof payload !== 'object') return false;
-    const raw = payload as { crop?: unknown; png?: unknown };
+    const raw = payload as { crop?: unknown; png?: unknown; action?: unknown };
     const image = owned.chosen ?? owned.config.image;
     if (!isValidCaptureCrop(raw.crop, image.selection.sourceSize)) return false;
     const selection = { ...image.selection, crop: raw.crop as CaptureRect };
-    if (owned.config.mode === 'record') { owned.finish?.(selection); return true; }
+    const initialAction = owned.config.action ?? (owned.config.mode === 'record' ? 'mp4' : 'screenshot');
+    const chosenAction = raw.action ?? initialAction;
+    if (chosenAction !== initialAction && !owned.config.actions?.includes(chosenAction as CaptureMenuAction)) return false;
+    if (chosenAction !== 'screenshot') {
+      if (chosenAction === initialAction) owned.finish?.(selection);
+      else owned.fail?.(new CaptureModeSwitch(chosenAction as CaptureMenuAction, selection));
+      return true;
+    }
     if (typeof raw.png !== 'string' || !raw.png.startsWith('data:image/png;base64,') || raw.png.length > 400 * 1024 * 1024) return false;
     const result = nativeImage.createFromDataURL(raw.png);
     if (result.isEmpty()) return false;
     const size = result.getSize();
     if (size.width !== selection.crop.width || size.height !== selection.crop.height) return false;
-    owned.finish?.({ image: result, hdrToneMapped: selection.hdrToneMapped });
+    const still = { image: result, hdrToneMapped: selection.hdrToneMapped };
+    if (chosenAction === initialAction) owned.finish?.(still);
+    else owned.fail?.(new CaptureModeSwitch('screenshot', still));
     return true;
   });
   const actionHandler = (event: IpcMainEvent, action: unknown) => {
@@ -215,18 +229,28 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     const displays = screen.getAllDisplays();
     const preferredDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id;
     // Freeze every display before any overlay exists, so the overlays cannot enter the screenshot.
-    const frozen = await Promise.all(displays.map(async (display) => {
-      const requested = { width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) };
-      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: requested });
-      const source = sources.find((entry) => entry.display_id === String(display.id));
+    const requests = new Map<string, ReturnType<typeof desktopCapturer.getSources>>();
+    const sizeFor = (display: Electron.Display) => ({ width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) });
+    for (const display of displays) {
+      const requested = sizeFor(display); const key = `${requested.width}x${requested.height}`;
+      if (!requests.has(key)) requests.set(key, desktopCapturer.getSources({ types: ['screen'], thumbnailSize: requested }));
+    }
+    // Reuse equal-resolution requests without resampling mixed-DPI or native capture pixels.
+    // All snapshots and window thumbnails finish before any selector can enter a captured frame.
+    const [sourceGroups, allSources] = await Promise.all([
+      Promise.all([...requests].map(async ([key, request]) => [key, await request] as const)),
+      desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false }),
+    ]);
+    const sourcesBySize = new Map(sourceGroups);
+    const frozen = displays.map((display) => {
+      const requested = sizeFor(display);
+      const source = sourcesBySize.get(`${requested.width}x${requested.height}`)?.find(entry => entry.display_id === String(display.id));
       if (!source || source.thumbnail.isEmpty()) throw new Error('screen capture returned no matching display');
-      const size = source.thumbnail.getSize();
-      return { display, source, size };
-    }));
+      return { display, source, size: source.thumbnail.getSize() };
+    });
     // Read the stacking order right after the freeze, before any overlay exists to appear in it.
     let desktopWindows: NativeWindowInfo[] | null = null;
     try { desktopWindows = listWindows(); } catch (error) { (options.log ?? console).error('[Capture] window detection failed', error); }
-    const allSources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false });
     sourceCatalog = allSources.filter((source) => !source.thumbnail.isEmpty()).map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), kind: 'window' }));
     if (signal.aborted || disposed) return null;
     return new Promise((resolve, reject) => {
@@ -252,7 +276,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
           };
           const regions = desktopWindows
             ? { regions: projectWindowsToDisplay(desktopWindows, { bounds: display.bounds, physicalBounds: physicalDisplayBounds(display, platform) }, size) } : {};
-          const owned = create({ kind: 'selection', mode, labels, image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
+          const owned = create({ kind: 'selection', mode, labels, ...(actions.length ? { action, actions: [...actions] } : {}), image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
             ...regions, ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
           owned.signal = signal; owned.finish = finish; owned.fail = (error) => finish(null, error);
           owned.sourceIds = new Set([source.id, ...sourceCatalog.map((entry) => entry.id)]);
@@ -280,7 +304,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       try {
         // The compositor positions this ordinary window. Its local viewport is not a display.
         const viewport = { x: 0, y: 0, width: 1040, height: 740 };
-        owned = create({ kind: 'selection', mode, labels, image, sources: [], workArea: viewport, presentation: 'preview',
+        owned = create({ kind: 'selection', mode, labels, ...(actions.length ? { action, actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation: 'preview',
           ...recordingHint(mode) }, viewport);
         owned.signal = signal; owned.finish = finish; owned.fail = error => finish(null, error);
         owned.sourceIds = new Set([image.selection.sourceId]);
@@ -290,6 +314,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   }
 
   return {
+    setActions(next, allowed) { action = next; actions = [...allowed]; },
     setLabels(next) { labels = { ...DEFAULT_CAPTURE_WINDOW_LABELS, ...next }; },
     captureStill: signal => sourceStrategy.acquireStill<StillCapture>({
       signal,

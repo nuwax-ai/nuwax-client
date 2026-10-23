@@ -113,7 +113,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
     dispose() { for (const controller of active) controller.abort(); },
     stop() { stopAction?.(); },
     pauseOrResume() { pauseAction?.(); },
-    async record(options, parentSignal, onState) {
+    async record(options, parentSignal, onState, preselected) {
       if (!deps.ffmpeg || (options.output === "gif" ? !formats.gif : !formats.video.includes(options.output))) {
         throw new CaptureRecordingError("encoder-unavailable", `${options.output} encoder is unavailable`);
       }
@@ -227,7 +227,10 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         };
         const acquired = await adapter.source.acquireRecording({
           signal, fps: options.fps ?? 30, framePipeline: adapter.framePipeline,
-          windows: deps.windows, ready: ready.promise, preview: preview.promise,
+          windows: preselected ? {
+            select: async () => preselected,
+            selectPrepared: async (_mode, image) => ({ ...image.selection, crop: preselected.crop }),
+          } : deps.windows, ready: ready.promise, preview: preview.promise,
           async open(config) {
             acquisitionTimer = setTimeout(() => fail(new Error('Desktop capture acquisition timed out')), adapter.source.acquisitionTimeoutMs);
             engineWindow = await openRecordingWindow(dir, config, signal, callbacks, deps.preloadPath);

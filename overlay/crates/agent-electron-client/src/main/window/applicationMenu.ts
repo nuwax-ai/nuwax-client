@@ -2,6 +2,7 @@ import type { MenuItemConstructorOptions, WebContents } from "electron";
 import { I18N_KEYS } from "@shared/constants";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
+import { captureShortcut, recordShortcut, DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/preferences';
 import type { EditAction } from "../ipc/windowHandlers";
 
 export interface ApplicationMenuActions {
@@ -17,7 +18,7 @@ export interface ApplicationMenuActions {
   back: () => void;
   forward: () => void;
   openLogs: () => void;
-  capture?: (action: CaptureMenuAction) => void;
+  capture?: (action: CaptureMenuAction, trigger?: "menu" | "shortcut") => void;
 }
 
 type TranslateMenu = (key: string, ...values: string[]) => string;
@@ -27,7 +28,7 @@ export function buildMacApplicationMenu(
   t: TranslateMenu,
   appName: string,
   actions: ApplicationMenuActions,
-  options: { newTaskAvailable?: boolean; captureAvailable?: boolean } = {},
+  options: { newTaskAvailable?: boolean; captureAvailable?: boolean; captureShortcut?: string; recordShortcut?: string } = {},
 ): MenuItemConstructorOptions[] {
   const keys = I18N_KEYS.NativeMenu;
   const editItem = (
@@ -108,12 +109,12 @@ export function buildMacApplicationMenu(
       label: t("Claw.Capture.title"),
       visible: CAPTURE_APPLICATION_MENU_VISIBLE,
       submenu: [
-        { label: t("Claw.Capture.screenshot"), accelerator: "CmdOrCtrl+Alt+S", acceleratorWorksWhenHidden: true, click: () => actions.capture?.("screenshot") },
+        { label: t("Claw.Capture.screenshot"), accelerator: captureShortcut(options.captureShortcut), click: (_item: unknown, _window: unknown, event: { triggeredByAccelerator?: boolean }) => actions.capture?.("screenshot", event.triggeredByAccelerator ? "shortcut" : "menu") },
         { type: "separator" as const },
         ...(["mp4", "gif"] as const).map((output) => ({
           label: `${t("Claw.Capture.record")} · ${output.toUpperCase()}`,
-          ...(output === "mp4" ? { accelerator: "CmdOrCtrl+Alt+R", acceleratorWorksWhenHidden: true } : {}),
-          click: () => actions.capture?.(output),
+          ...(output === "mp4" ? { accelerator: recordShortcut(options.recordShortcut) } : {}),
+          click: (_item: unknown, _window: unknown, event: { triggeredByAccelerator?: boolean }) => actions.capture?.(output, event.triggeredByAccelerator ? "shortcut" : "menu"),
         })),
       ],
     }] : []),
@@ -128,12 +129,13 @@ export function buildMacApplicationMenu(
 export function bindCaptureMenuShortcuts(
   target: Pick<WebContents, "on" | "removeListener">,
   dispatch: (action: CaptureMenuAction) => void,
-  options: { platform?: NodeJS.Platform; controlRecording?: (action: "pause" | "stop") => boolean } = {},
+  options: { platform?: NodeJS.Platform; getScreenshotShortcut?: () => string; getRecordShortcut?: () => string; controlRecording?: (action: "pause" | "stop") => boolean } = {},
 ): () => void {
   const handler = (event: { preventDefault(): void }, input: Electron.Input) => {
-    if (input.type !== "keyDown" || input.isAutoRepeat || !input.control || !input.alt || input.meta || input.shift) return;
+    if (input.type !== "keyDown" || input.isAutoRepeat) return;
     const key = input.key.toLowerCase();
-    if ((options.platform ?? process.platform) === "linux") {
+    const platform = options.platform ?? process.platform;
+    if (platform === "linux" && input.control && input.alt && !input.meta && !input.shift) {
       // Linux 不保证窗口内容保护。录制 UI 隐藏后仍可用应用内按键控制；
       // 空闲时 P 不消费，R 继续原有开始 MP4 行为。
       const control = key === "r" ? "stop" : key === "p" ? "pause" : null;
@@ -142,10 +144,19 @@ export function bindCaptureMenuShortcuts(
         return;
       }
     }
-    const action = key === "s" ? "screenshot" : key === "r" ? "mp4" : null;
-    if (!action) return;
-    event.preventDefault();
-    dispatch(action);
+    const bindings = [
+      [captureShortcut(options.getScreenshotShortcut?.() ?? DEFAULT_CAPTURE_SHORTCUT), 'screenshot'],
+      [recordShortcut(options.getRecordShortcut?.() ?? DEFAULT_RECORD_SHORTCUT), 'mp4'],
+    ] as const;
+    for (const [shortcut, action] of bindings) {
+      const tokens = shortcut.split('+');
+      const expectedKey = tokens.pop()!.toLowerCase();
+      if (key !== expectedKey || !!input.control !== tokens.includes('CmdOrCtrl') || !!input.meta ||
+        !!input.alt !== tokens.includes('Alt') || !!input.shift !== tokens.includes('Shift')) continue;
+      event.preventDefault();
+      dispatch(action);
+      return;
+    }
   };
   target.on("before-input-event", handler);
   return () => target.removeListener("before-input-event", handler);

@@ -24,6 +24,8 @@ vi.mock("../services/hostActivity", () => ({
 }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
+import { onCapturePreferencesChanged } from '../features/capture/preferences';
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/preferences';
 
 beforeEach(() => {
   mocks.available = true;
@@ -36,6 +38,18 @@ beforeEach(() => {
 });
 
 describe("settings:set host activity refresh", () => {
+  it('capture accelerators reject reserved and duplicate keys and notify menus only after persistence', () => {
+    const notify = vi.fn(); const off = onCapturePreferencesChanged(notify);
+    const set = mocks.handlers.get('settings:set')!;
+    expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Shift+R')).toBe(false);
+    expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+C')).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled(); expect(notify).not.toHaveBeenCalled();
+    expect(set({}, CAPTURE_RECORD_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(true);
+    expect(mocks.run).toHaveBeenCalledWith(CAPTURE_RECORD_SHORTCUT_SETTING, '"CmdOrCtrl+Alt+G"');
+    expect(notify).toHaveBeenCalledOnce();
+    expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(notify.mock.invocationCallOrder[0]);
+    off();
+  });
   it("休眠设置先持久化再刷新，保留原成功返回", () => {
     expect(mocks.handlers.get("settings:set")!({}, "nuwax.dormancy", { enabled: false })).toBe(true);
     expect(mocks.run).toHaveBeenCalledWith("nuwax.dormancy", '{"enabled":false}');

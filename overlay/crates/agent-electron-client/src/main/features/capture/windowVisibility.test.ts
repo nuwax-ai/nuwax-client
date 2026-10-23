@@ -8,6 +8,16 @@ function window(overrides: Record<string, unknown> = {}) {
 const log = { warn: vi.fn() };
 
 describe('capture client window visibility', () => {
+  it('reads the hide-window preference on each capture and never restores a window it kept visible', async () => {
+    let enabled = false;
+    const main = window();
+    const visibility = createCaptureWindowVisibility({ getWindow: () => main as never, shouldHide: () => enabled, log, settleMs: 0 });
+    await visibility.hide(new AbortController().signal); visibility.restore();
+    expect(main.hide).not.toHaveBeenCalled(); expect(main.show).not.toHaveBeenCalled();
+    enabled = true;
+    await visibility.hide(new AbortController().signal); visibility.restore();
+    expect(main.hide).toHaveBeenCalledOnce(); expect(main.show).toHaveBeenCalledOnce();
+  });
   it('hides visible client and child windows before settling, restoring their focus state', async () => {
     const child = window({ isFocused: () => false });
     const main = window({ getChildWindows: () => [child] });

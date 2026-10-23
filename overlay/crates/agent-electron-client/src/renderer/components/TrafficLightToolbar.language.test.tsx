@@ -179,8 +179,8 @@ describe("Win/Linux toolbar language", () => {
       canGoBack={false} canGoForward={false} onToggleMenu={vi.fn()} onBack={vi.fn()}
       onForward={vi.fn()} onReload={vi.fn()} onOpenAbout={vi.fn()} captureMenuVisible captureAvailable onCapture={onCapture} />);
     expect(markup).toContain("截图与录屏");
-    expect(markup).toContain("Ctrl+Alt+S");
-    expect(markup).toContain("Ctrl+Alt+R");
+    expect(markup).toContain("Ctrl+Shift+A");
+    expect(markup).toContain("Ctrl+Shift+R");
     expect(markup).toContain("开始录制 · MP4");
     expect(markup).not.toContain("WEBM");
     expect(markup).toContain("开始录制 · GIF");

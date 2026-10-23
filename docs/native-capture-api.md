@@ -153,3 +153,13 @@ macOS 使用系统菜单，Windows/Linux 使用客户端自绘应用菜单。应
 该壳入口使用独立的 host IPC 与同一捕获服务，不扩大业务页信任范围。IM 接入仍由 IM 团队负责，现有 IM 按钮不能作为本次原生实现的验收入口。
 
 本地编码资源准备：`npm run prepare:capture`。资源锁、LGPL / GPL 构建检查、SHA256 与真实编码探针同时生效，缺失编码器时不展示对应可用格式。完整安装包的第三方声明门禁与本模块资源校验分别记录，模块检查通过不代表整个安装包已通过。
+
+## 可选交互式入口与 IM 快捷键
+
+`capture.interactive({ action: 'screenshot' | 'mp4' | 'gif', compression?, maxDurationMs? })` 返回同样的 CaptureResult，允许用户在选择浮层切换截图/MP4/GIF，初始 action 决定默认页签，切换保留选区。业务方必须按实际 MIME 回填附件。旧的 screenshot/record 不改变返回类型语义。
+
+`capture.onShortcut({ canHandle, run })` 注册 IM 快捷键接管：canHandle 必须同步判断当前 IM 编辑器是否聚焦；run(action) 仅在主进程授予认领后调用。无焦点或超时由宿主预览接管；不得为常驻页面无条件返回 true。注销使用返回的清理函数。
+
+macOS 默认 Command+Shift+A 截图、Command+Shift+R 录屏；Windows/Linux 默认 Ctrl+Shift+A、Ctrl+Shift+R。两项均为应用内快捷键，可在设置修改，应用菜单同步显示。窗口隐藏配置默认关闭。
+
+IM 结果只进入待发送区；采集/读块期间离开原会话时，不回填其他会话，可在 release 前 copy 到剪贴板。宿主来源校验、结果所有权和会话清理仍执行。

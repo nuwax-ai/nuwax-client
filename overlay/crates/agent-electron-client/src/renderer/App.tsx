@@ -87,6 +87,7 @@ import NuwaxHostWebview, {
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
 import { CuaControls } from "./features/computer-use";
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/preferences';
 import { CaptureLauncher } from "./features/capture";
 import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";
@@ -637,6 +638,8 @@ function App() {
   // 系统配置浮层（替代原 mainViewMode=config 整页切换，沉浸式下不打断 webview）
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [captureAvailable, setCaptureAvailable] = useState(false);
+  const [captureShortcut, setCaptureShortcut] = useState(DEFAULT_CAPTURE_SHORTCUT);
+  const [recordShortcut, setRecordShortcut] = useState(DEFAULT_RECORD_SHORTCUT);
   const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
   const captureAfterSettingsClose = useRef<(() => void) | null>(null);
   const captureActionHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
@@ -1962,6 +1965,8 @@ function App() {
               onModifyWorkspace={handleMenuModifyWorkspace}
               onOpenWorkspace={handleMenuOpenWorkspace}
               captureAvailable={APP_NAME_IDENTIFIER === "nuwax" && captureAvailable}
+              captureShortcut={captureShortcut}
+              recordShortcut={recordShortcut}
               onCapture={handleCaptureMenu}
               statusEntry={
                 // 单一语义：仅已登录后的确定终态故障显示红点。未登录、启动中、
@@ -2315,6 +2320,8 @@ function App() {
                 settings={window.electronAPI?.settings}
                 panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
                 onActionReady={handleCaptureActionReady}
+                onShortcutChange={setCaptureShortcut}
+                onRecordShortcutChange={setRecordShortcut}
                 onCaptureStart={() => {
                   if (!settingsModalOpen) return Promise.resolve();
                   return new Promise<void>((resolve) => {
