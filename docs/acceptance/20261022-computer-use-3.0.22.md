@@ -80,7 +80,7 @@ Windows 首轮模型声称 CUA 未加载；实际 ACP 配置、relay 进程和�
 
 - Mac：`Nuwax-3.0.22-Computer-Use-acceptance-r4-mac-arm64.zip`，704205874 bytes，SHA256 `66e53176b6106bf6e7a8232299085fb94e621cc4f15853e402200f939a336616`；公司 Developer ID 签名，未公证。
 - Windows：`Nuwax-3.0.22-Computer-Use-acceptance-r4-win-x64.exe`，950255569 bytes，SHA256 `d712be18e2f57e96128554876662bd339ad69cc70841be525478272e6cf151ef`；本地 unsigned NSIS 验收包。MSI 构建完成但未安装验收。
-- 关键截图在 `mac-dbg-evidence/mac-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result,textedit-result}.*` 和 `win-dbg-evidence/win-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result,update-installer}.*`。均为指定真机真实页面，Windows initial 截图选择电脑前的旧状态不作为验收图。
+- 关键截图在 `mac-dbg-evidence/mac-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result,textedit-result}.*` 和 `win-dbg-evidence/win-r4-{about,settings-default-off,settings-enabled,contained-in-client,contained-preview,agent-result}.*`。均为指定真机真实页面，Windows initial 截图选择电脑前的旧状态不作为验收图。Windows 安装器 GDI 截图为黑屏，保留原始文件但不作为视觉验收凭据；其安装阶段由 UIA 页面状态、日志与 WMI 启动记录确认。
 - 尚未完成物理权限卡片拖放、多屏/DPI 与长时间稳定性；不声称全应用兼容、Windows 正式签名或全平台发布就绪。未创建 release/tag，未改线上更新指针。
 
 ## 整批质量自查

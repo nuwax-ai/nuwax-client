@@ -141,6 +141,7 @@
     "Update handoff uses simulated updater.currentVersion only; actual apps remain 3.0.22",
     "Windows 240s update monitor ended before relaunch; new --updated process observed separately",
     "Physical permission dragging, multi-display/DPI and long-duration stability unvalidated",
-    "nuwax-openui and ask-question MCP failures independent of CUA remain"
+    "nuwax-openui and ask-question MCP failures independent of CUA remain",
+    "Windows installer screenshot capture returned black pixels; not visual acceptance evidence"
   ]
 }
