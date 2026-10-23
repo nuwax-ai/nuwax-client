@@ -1,0 +1,35 @@
+name: Restore bundled resource downloads
+description: Resource recipe keys independent of the application release version
+inputs:
+  arch:
+    description: Target architecture
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Cache bundled Node.js
+      uses: actions/cache@v4
+      with:
+        path: nuwa-electron-shell/crates/agent-electron-client/resources/node
+        key: bundled-node-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-node.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
+    - name: Cache bundled Git (Windows only)
+      if: runner.os == 'Windows'
+      uses: actions/cache@v4
+      with:
+        path: nuwa-electron-shell/crates/agent-electron-client/resources/git
+        key: bundled-git-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-git.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
+    - name: Cache uv
+      uses: actions/cache@v4
+      with:
+        path: nuwa-electron-shell/crates/agent-electron-client/resources/uv
+        key: bundled-uv-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-uv.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
+    - name: Cache nuwaxcode
+      uses: actions/cache@v4
+      with:
+        path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
+        key: bundled-nuwaxcode-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
+    - name: Cache ripgrep
+      uses: actions/cache@v4
+      with:
+        path: nuwa-electron-shell/crates/agent-electron-client/resources/ripgrep
+        key: bundled-ripgrep-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-ripgrep.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}

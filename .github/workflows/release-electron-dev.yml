@@ -83,10 +83,58 @@ jobs:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
+  build-frontend:
+    name: Build shared pinned Beta frontend
+    needs: validate-tag
+    if: always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_name: nuwax-beta-frontend-${{ github.run_id }}-${{ github.run_attempt }}
+      manifest_sha256: ${{ steps.seal.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Init pinned frontend and build dependencies
+        env:
+          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
+          YICHAMAO_GIT_USERNAME: ${{ secrets.YICHAMAO_GIT_USERNAME || 'oauth2' }}
+        run: |
+          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
+            git config --global http.https://git.yichamao.com/.extraheader \
+              "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
+          fi
+          git submodule update --init nuwax
+          git -C nuwax submodule update --init --recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+          package_json_file: nuwax/package.json
+      # Run alongside all source gates. This job adds no serial build stage
+      # after verification, and each native runner consumes the same bytes.
+      - name: Build pinned nuwax frontend dist once
+        run: ./scripts/prepare-nuwax-dist.sh
+      - name: Seal frontend source and content identity
+        id: seal
+        run: node scripts/client/frontend-artifact.mjs create "$RUNNER_TEMP/nuwax-frontend-artifact" >> "$GITHUB_OUTPUT"
+      - name: Upload shared frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuwax-beta-frontend-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nuwax-frontend-artifact
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
+
   prepare:
     name: Prepare release
-    needs: [validate-tag, verify-source]
-    if: always() && needs.verify-source.result == 'success'
+    needs: [validate-tag, verify-source, build-frontend]
+    if: always() && needs.verify-source.result == 'success' && needs.build-frontend.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -95,6 +143,8 @@ jobs:
       windows_archive: ${{ steps.version.outputs.windows_archive }}
       qa_build: ${{ steps.version.outputs.qa_build }}
       native_version: ${{ steps.version.outputs.native_version }}
+      frontend_artifact: ${{ needs.build-frontend.outputs.artifact_name }}
+      frontend_manifest_sha256: ${{ needs.build-frontend.outputs.manifest_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -246,34 +296,22 @@ jobs:
       # 显式 submodule init（不依赖 checkout action 内部递归 sync）：
       # nuwa-electron-shell submodule → 基座仓 nuwax-ai/nuwa-electron-shell 的 main 分支（公开，
       #   github.token 注入凭据）；nuwax → 壳根前端 pin（公开可匿名拉取，gitlink 须在
-      #   声明远端上可获取；基座已不含内嵌 nuwax——前端 dist 打包来源=壳根 nuwax/dist）
+      #   声明远端上可获取；前端 dist 来自本次 workflow 的共享源码构建产物）
       - name: Init submodules (nuwa-electron-shell + nuwax)
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
-          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
-          YICHAMAO_GIT_USERNAME: ${{ secrets.YICHAMAO_GIT_USERNAME || 'oauth2' }}
         run: |
           # submodule 认证统一走 gh CLI 凭据助手（跨平台一致；Windows Git 的
           # GCM 会劫持/覆盖 URL 内嵌凭据，insteadOf 亦不生效——均实测失败）
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          # 前端嵌套子模块在私有 GitLab（git.yichamao.com）：凭据经 http.extraHeader 按域注入
-          # （actions/checkout 同款机制；不改写 URL/credential——upgrade:micro-apps 的
-          # origin/.gitmodules 一致性预检依赖原始 remote URL，insteadOf/credential helper 均实测翻车）
-          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
-            git config --global http.https://git.yichamao.com/.extraheader \
-              "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
-          fi
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
-          # 前端嵌套子模块（micro-apps 构建期升级依赖）
-          git -C nuwax submodule update --init --recursive
           git submodule status
           # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
           test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
           test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
-          test -d nuwax/submodules/nuwax-repo-web || { echo "::error::nuwax nested submodule nuwax-repo-web not checked out"; exit 1; }
 
       # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
       - name: Sync overlay into base worktree
@@ -370,10 +408,17 @@ jobs:
           version: 9.15.5
           package_json_file: nuwa-electron-shell/package.json
 
-      # 与正式版相同：从冻结客户端 SHA 的 gitlink 构建前端，五个平台来源一致。
-      - name: Build pinned nuwax frontend dist
+      - name: Download shared pinned frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.frontend_artifact }}
+          path: ${{ runner.temp }}/nuwax-frontend-artifact
+
+      - name: Admit shared frontend source, stamp and SHA256
         shell: bash
-        run: ./scripts/prepare-nuwax-dist.sh
+        env:
+          NUWAX_FRONTEND_MANIFEST_SHA256: ${{ needs.prepare.outputs.frontend_manifest_sha256 }}
+        run: node scripts/client/frontend-artifact.mjs consume "$RUNNER_TEMP/nuwax-frontend-artifact"
 
       # Python 3.12+ 移除了 distutils，node-gyp（better-sqlite3 等 native 模块）依赖它；安装 setuptools 以提供 distutils
       - name: Install setuptools for node-gyp (Python 3.12+)
@@ -412,38 +457,10 @@ jobs:
       - name: Install commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs
 
-      # 缓存内置 Node.js（所有平台）、Git（仅 Windows）、uv（所有平台）和 nuwaxcode（所有平台）
-      - name: Cache bundled Node.js
-        uses: actions/cache@v4
+      - name: Restore bundled resource caches
+        uses: ./.github/actions/bundled-resource-cache
         with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/node
-          key: bundled-node-24-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/package.json') }}
-
-      - name: Cache bundled Git (Windows only)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/git
-          key: bundled-git-2.47.1-windows-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/package.json') }}
-
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/uv
-          key: bundled-uv-v2-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-uv.js') }}
-
-      - name: Cache nuwaxcode
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
-          # 版本前缀隔离旧缓存；prepare 脚本内容变化也会令缓存失效
-          key: bundled-nuwaxcode-1.17.11-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
-
-      - name: Cache ripgrep
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/ripgrep
-          key: bundled-ripgrep-v1-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-ripgrep.js') }}
+          arch: ${{ matrix.arch }}
 
       - name: Prepare bundled resources (uv, node, git, nuwaxcode, ripgrep)
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -474,7 +491,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config nasm
+          sudo apt-get install -y build-essential pkg-config nasm clang libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
 
       - name: Setup macOS capture compiler
         if: runner.os == 'macOS'
@@ -497,6 +514,12 @@ jobs:
             make
             diffutils
             curl
+
+      - name: Restore unsigned native build caches
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.capture-msys2.outputs.msys2-location }}
 
       # ---- macOS：导入证书并配置公证（可选） ----
       - name: Import Apple certificate (macOS)
@@ -561,21 +584,12 @@ jobs:
       # 源码锁版 + nuwax 补丁 → cargo build → mac .app / win exe / linux 裸二进制 → mac 预签
       # Developer ID（进 extraResources 前签好；TCC 授权跨版本稳定=同 Team+同 bundle id，
       # 见 docs/20260917-computer-use-integration-v2.md 附录 D 与权限矩阵文档）
-      - name: Setup Rust toolchain (Computer Use helper)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Build Computer Use helper (cua-driver)
         shell: bash
         env:
           OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            # 对齐上游官方 CI 构建清单：x11 2.21 FFI crate 链 libX11/libXi/libXtst/libXext；
-            # wayland 栈纯 Rust backend 不需要 libwayland-dev；pipewire/libei 为
-            # portal-capture/portal-input feature 设施，默认 feature 不启用不装
-            sudo apt-get update -qq && sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
-          fi
           case "${{ runner.os }}/${{ matrix.arch }}" in
             macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
             macOS/x64)   TRIPLE=x86_64-apple-darwin ;;

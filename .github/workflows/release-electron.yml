@@ -261,36 +261,10 @@ jobs:
       - name: Install commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs
 
-      - name: Cache bundled Node.js
-        uses: actions/cache@v4
+      - name: Restore bundled resource caches
+        uses: ./.github/actions/bundled-resource-cache
         with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/node
-          key: bundled-node-24-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/package.json') }}
-
-      - name: Cache bundled Git (Windows only)
-        if: matrix.platform == 'windows-latest'
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/git
-          key: bundled-git-2.47.1-windows-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/package.json') }}
-
-      - name: Cache uv
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/uv
-          key: bundled-uv-v2-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-uv.js') }}
-
-      - name: Cache nuwaxcode
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
-          key: bundled-nuwaxcode-1.17.11-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js') }}
-
-      - name: Cache ripgrep
-        uses: actions/cache@v4
-        with:
-          path: nuwa-electron-shell/crates/agent-electron-client/resources/ripgrep
-          key: bundled-ripgrep-v1-${{ matrix.platform }}-${{ matrix.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-ripgrep.js') }}
+          arch: ${{ matrix.arch }}
 
       - name: Prepare bundled resources (uv, node, git, nuwaxcode, ripgrep)
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -321,7 +295,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config nasm
+          sudo apt-get install -y build-essential pkg-config nasm clang libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
 
       - name: Setup macOS capture compiler
         if: runner.os == 'macOS'
@@ -344,6 +318,12 @@ jobs:
             make
             diffutils
             curl
+
+      - name: Restore unsigned native build caches
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.capture-msys2.outputs.msys2-location }}
 
       # ---- macOS：导入证书并配置公证（可选） ----
       - name: Import Apple certificate (macOS)
@@ -406,19 +386,12 @@ jobs:
 
       # ---- Computer Use helper（cua-driver 源码自建）：五平台全矩阵 ----
       # 与 release-electron-dev.yml 同款步骤（锁版+补丁+cargo+组装+预签 Developer ID）
-      - name: Setup Rust toolchain (Computer Use helper)
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Build Computer Use helper (cua-driver)
         shell: bash
         env:
           OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            # 对齐上游官方 CI 构建清单（同 release-electron-dev.yml 注释）
-            sudo apt-get update -qq && sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
-          fi
           case "${{ runner.os }}/${{ matrix.arch }}" in
             macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
             macOS/x64)   TRIPLE=x86_64-apple-darwin ;;

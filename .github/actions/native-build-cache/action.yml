@@ -1,0 +1,43 @@
+name: Restore unsigned native build resources
+description: Exact recipe/toolchain keys shared by release builds and the default-branch warmer
+inputs:
+  arch:
+    description: Native target architecture
+    required: true
+  msys2-location:
+    description: Explicit MSYS2 installation on Windows
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    # Keep the actual compiler version aligned with the locked CUA workspace.
+    - name: Setup Rust toolchain (Computer Use helper)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.97.1
+    - name: Resolve native build cache identities
+      id: identity
+      shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
+        MSYS2_LOCATION: ${{ inputs.msys2-location }}
+      run: node scripts/client/native-build-cache.mjs keys >> "$GITHUB_OUTPUT"
+    - name: Cache unsigned Computer Use helper
+      uses: actions/cache@v4
+      with:
+        path: .cache/client-toolchain/cua-helper
+        key: ${{ steps.identity.outputs.helper }}
+    - name: Cache admitted unsigned capture resources
+      uses: actions/cache@v4
+      with:
+        # Never include release-capture-signed or complete app bundles. Admission
+        # still verifies archives, binaries, configuration and notices on a hit.
+        path: |
+          resources/capture
+          .cache/client-toolchain/capture-koffi
+          third-party/licenses/ffmpeg.txt
+          third-party/licenses/libvpx.txt
+          third-party/licenses/openh264.txt
+          third-party/licenses/koffi.txt
+        key: ${{ steps.identity.outputs.capture }}
