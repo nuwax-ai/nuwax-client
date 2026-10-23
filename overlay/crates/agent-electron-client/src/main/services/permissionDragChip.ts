@@ -30,7 +30,7 @@ export function permissionDragChipHtml(labels: DragChipLabels): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
 <style>
-:root{color-scheme:light dark;--text:#303237;--muted:#777c84;--surface:#fffffffa;--tile:#f5f6f7;--line:#00000012;--accent:#438c76}
+:root{color-scheme:light;--text:#303237;--muted:#777c84;--surface:#fffffffa;--tile:#f5f6f7;--line:#00000012;--accent:#438c76}
 *{box-sizing:border-box}body{margin:0;height:100vh;display:flex;align-items:center;padding:10px;background:transparent;color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
 #card{position:relative;width:100%;display:flex;flex-direction:column;gap:16px;padding:16px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 4px 12px #00000018}
 #header{display:flex;align-items:flex-start;gap:10px;padding-right:20px}
@@ -45,7 +45,6 @@ export function permissionDragChipHtml(labels: DragChipLabels): string {
 #close{position:absolute;right:8px;top:8px;width:24px;height:24px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-size:15px;cursor:pointer}
 #close:hover{background:#00000010;color:var(--text)}
 #close:focus-visible{outline:2px solid var(--accent)}
-@media(prefers-color-scheme:dark){:root{--text:#eeeef0;--muted:#a4a6af;--surface:#292a30fa;--tile:#ffffff0a;--line:#ffffff16}}
 </style></head><body>
 <div id="card">
   <div id="header">
@@ -228,7 +227,9 @@ export function createPermissionDragChip(options: {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       // Non-activating so System Settings keeps focus while the chip floats above it.
       window = new BrowserWindow({
-        parent: nextOwner,
+        // macOS child windows inherit their parent's normal native level even
+        // when Electron reports always-on-top. Keep lifecycle ownership in
+        // bindOwner so this non-activating palette can stay above Settings.
         width: WIDTH,
         height: HEIGHT,
         x: Math.round(area.x + area.width - WIDTH - 20),

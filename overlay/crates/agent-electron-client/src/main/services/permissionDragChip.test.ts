@@ -109,7 +109,10 @@ describe("permission chip ownership", () => {
     const chip = createPermissionDragChip({ t: key => key, getWindow: () => owner as any });
     expect(chip.show(identity)).toBe(true);
     const window = mocks.windows[0];
-    expect(window.options).toMatchObject({ parent: owner, focusable: false });
+    // A native macOS child inherits the owner's normal window level, so even
+    // setAlwaysOnTop(true) leaves it behind the frontmost System Settings.
+    expect(window.options).toMatchObject({ focusable: false });
+    expect(window.options).not.toHaveProperty("parent");
     window.loadResolve();
     await Promise.resolve();
     expect(window.visible).toBe(true);
@@ -124,6 +127,9 @@ describe("permission chip ownership", () => {
     expect(window.visible).toBe(true);
     owner.emit("close");
     expect(window.visible).toBe(false);
+    owner.destroyed = true;
+    owner.emit("closed");
+    expect(window.destroyed).toBe(true);
     chip();
     expect(owner.listeners.size).toBe(0);
   });
