@@ -1,4 +1,4 @@
-import type { CuaRuntime, CuaTaskHistory } from "@shared/features/computer-use/contract";
+import type { CuaRuntime, CuaTaskHistory, CuaTaskRuntime } from "@shared/features/computer-use/contract";
 
 const terminal = new Set(["completed", "stopped", "failed"]);
 const limit = 100;
@@ -10,7 +10,9 @@ export function createCuaTaskHistory(read: () => unknown, write: (rows: CuaTaskH
     if (typeof row.taskId !== "string" || row.taskId.length > 100 || !terminal.has(row.phase) ||
         !Number.isFinite(row.startedAt) || !Number.isFinite(row.endedAt) || !Number.isFinite(row.stepCount)) return null;
     return { taskId: row.taskId, phase: row.phase, label: typeof row.label === "string" ? row.label.slice(0, 200) : "",
-      startedAt: row.startedAt, endedAt: row.endedAt, stepCount: Math.max(0, Math.floor(row.stepCount)) };
+      startedAt: row.startedAt, endedAt: row.endedAt, stepCount: Math.max(0, Math.floor(row.stepCount)),
+      ...(["window", "desktop"].includes(row.scopeKind ?? "") ? { scopeKind: row.scopeKind } : {}),
+      ...(["background", "foreground"].includes(row.mode ?? "") ? { mode: row.mode } : {}) };
   };
   let saved: CuaTaskHistory[] = [];
   try { const raw = read(); if (Array.isArray(raw)) saved = raw.slice(0, limit).map(project).filter((row): row is CuaTaskHistory => !!row).slice(0, limit); } catch { /* Missing summaries cannot block startup. */ }
@@ -25,7 +27,8 @@ export function createCuaTaskHistory(read: () => unknown, write: (rows: CuaTaskH
         if (!task.taskId || !terminal.has(task.phase) || task.controlPending || seen.has(task.taskId)) continue;
         const row = project({ taskId: task.taskId, phase: task.phase,
           label: task.scope?.kind === "window" ? task.scope.label : "", startedAt: task.startedAt ?? task.updatedAt,
-          endedAt: task.updatedAt, stepCount: task.stepCount });
+          endedAt: task.updatedAt, stepCount: task.stepCount, scopeKind: task.scope?.kind,
+          mode: state.multiwindow ? (task as CuaTaskRuntime).mode : undefined });
         if (!row) continue;
         seen.add(row.taskId); saved = [row, ...saved.filter(old => old.taskId !== row.taskId)].slice(0, limit); changed = true;
       }

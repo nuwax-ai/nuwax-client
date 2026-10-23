@@ -4,16 +4,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const base = path.resolve(__dirname, '../../nuwa-electron-shell/crates/agent-electron-client');
+const source = path.resolve(__dirname, '../../overlay/crates/agent-electron-client');
 const out = path.resolve(process.argv[2] || '.cache/cua-ui-fixture');
 fs.mkdirSync(out, { recursive: true });
 const esbuild = require(path.join(base, 'node_modules/esbuild'));
 (async () => {
-  await esbuild.build({ entryPoints: [path.join(base, 'src/preload/features/computer-use/controlPreload.ts')], outfile: path.join(out, 'preload.cjs'), bundle: true, platform: 'node', external: ['electron'] });
+  await esbuild.build({ entryPoints: [path.join(source, 'src/preload/features/computer-use/controlPreload.ts')], outfile: path.join(out, 'preload.cjs'), bundle: true, platform: 'node', external: ['electron'] });
   const runner = `
 const {app,BrowserWindow,ipcMain,nativeTheme}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {createCuaControlWindow}=require(${JSON.stringify(path.join(base, 'src/main/features/computer-use/controlWindow.ts'))});
-const labels=require(${JSON.stringify(path.join(base, 'src/shared/locales/zh-CN.json'))});
+const {createCuaControlWindow}=require(${JSON.stringify(path.join(source, 'src/main/features/computer-use/controlWindow.ts'))});
+const labels=require(${JSON.stringify(path.join(source, 'src/shared/locales/zh-CN.json'))});
 const out=__dirname,wait=ms=>new Promise(r=>setTimeout(r,ms));
 app.setName('Computer Use UI Regression');app.setPath('userData',path.join(out,'isolated-user-data'));
 app.on('window-all-closed',()=>{});let dispose;
@@ -25,28 +26,24 @@ app.whenReady().then(async()=>{
  let state={...task('A','running'),multiwindow:true,tasks:[task('A','running'),task('B','paused'),task('C','completed')]};
  let notify,preference=null;const actions=[];let captures=0;
  dispose=createCuaControlWindow({getMainWindow:()=>main,getRuntime:()=>state,subscribe:fn=>{notify=fn;return()=>{notify=null}},authenticated:()=>true,t:key=>labels[key]||key,preloadPath:path.join(out,'preload.cjs'),
- readPreference:()=>preference,writePreference:value=>{preference=value},action:async action=>{actions.push({action});return {success:true}},
+ readPreference:()=>preference,writePreference:value=>{preference=value},
  previewIdentity:id=>({taskId:id,bindingId:id,epoch:1}),capturePreview:async id=>{captures++;return {taskId:id,status:'unavailable'}},
- listWindows:async()=>[{pid:100,windowId:1,label:'验收编辑器 A'},{pid:100,windowId:2,label:'验收编辑器 B'}],
  taskAction:async(id,action)=>{actions.push({id,action});return {success:true}}});
  const view=()=>main.contentView.children[0],wc=()=>view().webContents;
  const until=async test=>{for(let n=0;n<100;n++){if(await test())return;await wait(30)}throw Error('UI condition timeout')};
  await until(()=>wc()&&!wc().isLoading()&&wc().getURL().startsWith('data:'));await wait(120);
  const evalUi=js=>wc().executeJavaScript(js);
  dispose.showTask('A');await wait(100);
- const initial=view().getBounds();assert.equal(initial.width,300);assert.equal(initial.height,220);assert.equal(initial.y,48);
- assert.equal(initial.x,Math.max(0,main.getContentBounds().width-316));
+ const initial=view().getBounds();assert.equal(initial.width,248);assert.equal(initial.height,160);assert.equal(initial.y,72);
+ assert.equal(initial.x,Math.max(0,main.getContentBounds().width-272));
  assert.deepEqual((await evalUi('window.cuaControls.getRuntime()')).tasks.map(t=>t.taskId),['A','B']);
  assert.equal(dispose.showTask('C').success,false);
- assert.equal(await evalUi('document.querySelector("#takeover").disabled'),false);
+ assert.equal(await evalUi('document.querySelector("#viewport").disabled'),false);
  assert.equal(await evalUi('document.querySelector("#stop").disabled'),false);
  fs.writeFileSync(path.join(out,'preview-top-right.png'),(await wc().capturePage()).toPNG());
- await evalUi('document.querySelector("#taskMenu").click()');await wait(70);
- await evalUi('document.querySelector("article .reorder button:last-child").click()');await wait(70);
+ await evalUi('document.querySelector("#stack button").click()');await wait(100);
  assert.deepEqual((await evalUi('window.cuaControls.getRuntime()')).tasks.map(t=>t.taskId),['B','A']);
- await evalUi('document.querySelector("article .pick").click()');await wait(60);
  assert.equal((await evalUi('window.cuaControls.getPresentation()')).taskId,'B');
- await evalUi('document.querySelector("#takeover").click()');await wait(40);
  await evalUi('document.querySelector("#stop").click()');await wait(40);
  assert.deepEqual(actions,[{id:'B',action:'takeover'},{id:'B',action:'stop'}]);
  const foreign=new BrowserWindow({show:false,webPreferences:{preload:path.join(out,'preload.cjs'),sandbox:true,contextIsolation:true,nodeIntegration:false}});
@@ -71,11 +68,11 @@ app.whenReady().then(async()=>{
  main.restore();main.show();await until(()=>!main.isMinimized()&&main.isVisible()&&view().getVisible());
  state={...state,revision:3,tasks:state.tasks.map(t=>({...t,phase:'completed'}))};notify(state);await wait(60);assert.equal(main.contentView.children.length,0);
  dispose();dispose=null;main.destroy();
- const result={passed:true,platform:process.platform,uiOnlyFixture:true,checks:['300x220 top-right','live-only task list','switch and reorder','takeover/stop target identity','untrusted sender rejected','bounded move and persistence','close keeps tasks running and stops capture','owner hide/minimize/restore','terminal tasks remove surface']};
+ const result={passed:true,platform:process.platform,uiOnlyFixture:true,checks:['240x152 thumbnail with 8px stack offsets','live-only task list','switch and reorder','takeover/stop target identity','untrusted sender rejected','bounded move and persistence','close keeps tasks running and stops capture','owner hide/minimize/restore','terminal tasks remove surface']};
  fs.writeFileSync(path.join(out,'result.json'),JSON.stringify(result,null,2));console.log('PASS: '+JSON.stringify(result));app.exit(0);
 }).catch(error=>{console.error(error);dispose?.();app.exit(1)});
 `;
-  await esbuild.build({ stdin: { contents: runner, resolveDir: base }, outfile: path.join(out, 'main.cjs'), bundle: true, platform: 'node', external: ['electron'], tsconfig: path.join(base, 'tsconfig.main.json') });
+  await esbuild.build({ stdin: { contents: runner, resolveDir: base }, outfile: path.join(out, 'main.cjs'), bundle: true, platform: 'node', external: ['electron'], tsconfig: path.join(base, 'tsconfig.main.json'), alias: { '@shared': path.join(source, 'src/shared') } });
   if (process.argv.includes('--build-only')) { console.log('Built remote UI fixture: '+out); return; }
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
   const result=spawnSync(require(path.join(base,'node_modules/electron')),[path.join(out,'main.cjs')],{env,encoding:'utf8',timeout:60000,killSignal:'SIGKILL'});

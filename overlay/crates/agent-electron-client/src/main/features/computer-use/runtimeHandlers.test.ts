@@ -147,4 +147,13 @@ describe("Computer Use trusted controls", () => {
     mocks.listener!({ phase: "idle" });
     expect(mocks.activities.at(-1)?.actions.map(action => action.id)).toEqual(["center"]);
   });
+  it("prompts target setup once inside the client, leaving bound tasks in the floating preview", () => {
+    register(); mocks.send.mockClear();
+    const state = { multiwindow: true, tasks: [{ taskId: "new", phase: "paused", scope: { kind: "window", pid: 0, windowId: 0 } }] };
+    mocks.listener!(state); mocks.listener!(state);
+    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(1);
+    mocks.listener!({ ...state, tasks: [{ ...state.tasks[0], taskId: "bound", scope: { kind: "window", pid: 5, windowId: 6 } }] });
+    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(1);
+  });
+
 });

@@ -43,4 +43,9 @@ describe("tray task center", () => {
     render(); const cleanup = h.effects[1](); cleanup(); resolve([{ taskId: "late" }]); await Promise.resolve();
     expect(h.states[1]).toEqual([]);
   });
+  it("shows mode and window scope when present without requiring them on old history", () => {
+    h.states = [true, [{ taskId: "ended", phase: "completed", label: "Editor", endedAt: 100, stepCount: 2, scopeKind: "window", mode: "background" }], "history"];
+    const html = render(); expect(html).toContain("Claw.Cua.multiwindow.background"); expect(html).toContain("Claw.Cua.scope.window");
+  });
+
 });

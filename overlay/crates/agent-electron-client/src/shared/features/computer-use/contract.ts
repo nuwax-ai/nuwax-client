@@ -96,6 +96,8 @@ export interface ComputerUseStatus {
 /** User-visible local task summaries; deliberately not a replay or a native authorization. */
 export interface CuaTaskHistory {
   taskId: string; label: string; phase: CuaPhase; startedAt: number; endedAt: number; stepCount: number;
+  scopeKind?: CuaScope["kind"];
+  mode?: CuaExecutionMode;
 }
 
 export interface ComputerUseAPI {

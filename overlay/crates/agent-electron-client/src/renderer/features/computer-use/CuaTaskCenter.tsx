@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Button, Empty, Modal, Space, Tabs, Tag, message } from "antd";
 import type { ComputerUseAPI, CuaRuntime, CuaTaskHistory } from "@shared/features/computer-use/contract";
-import { CuaTaskPanel } from "./CuaTaskPanel";
+import { CuaTaskPanel, CuaTaskSummary } from "./CuaTaskPanel";
 
 type Props = { api?: ComputerUseAPI; runtime: CuaRuntime | null; accept: (state: CuaRuntime) => void; t: (key: string, ...args: any[]) => string };
 /** Opened by the native tray, rendered inside the client so its lifecycle stays with the owner. */
@@ -34,6 +34,8 @@ export function CuaTaskCenter({ api, runtime, accept, t }: Props) {
         runtime?.multiwindow && active.length ? <CuaTaskPanel api={api} runtime={{ ...runtime, tasks: active }} accept={accept} t={t} />
           : runtime && ["running", "paused"].includes(runtime.phase) ? <Space wrap>
             <span>{runtime.scope?.kind === "window" ? runtime.scope.label : t("Claw.Cua.scope.desktop")}</span>
+            <Tag>{t("Claw.Cua.phase." + runtime.phase)}</Tag>
+            <CuaTaskSummary task={runtime} t={t} />
             <Button onClick={() => void api.showTaskPreview(runtime.taskId!)}>{t("Claw.Cua.preview.expand")}</Button>
             <Button onClick={() => void control(() => api.takeOver())}>{t("Claw.Cua.preview.takeover")}</Button>
             <Button danger onClick={() => void control(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
@@ -45,6 +47,7 @@ export function CuaTaskCenter({ api, runtime, accept, t }: Props) {
         }).catch(() => message.error(t("Claw.Cua.reason.generic")))}>{t("Claw.Cua.clear")}</Button>}
         <div style={{ maxHeight: 400, overflowY: "auto" }}>{history.map(row => <article key={row.taskId} style={{ padding: "12px 0", borderBottom: "1px solid #8882" }}>
           <Space wrap><strong>{row.label || t("Claw.Cua.scope.desktop")}</strong><Tag>{t("Claw.Cua.phase." + row.phase)}</Tag></Space>
+          <Space wrap>{row.scopeKind && <Tag>{t("Claw.Cua.scope." + row.scopeKind)}</Tag>}{row.mode && <Tag>{t("Claw.Cua.multiwindow." + row.mode)}</Tag>}</Space>
           <div style={{ fontSize: 12, opacity: .65, marginTop: 4 }}>{new Date(row.endedAt).toLocaleString()} · {t("Claw.Cua.steps", { count: row.stepCount })}</div>
         </article>)}</div>
         {!history.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("Claw.Cua.center.emptyHistory")} />}

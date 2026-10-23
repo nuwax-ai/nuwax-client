@@ -45,12 +45,12 @@ class MainWindow extends EventEmitter {
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
 function setup(multiwindow = true) {
   let main = new MainWindow();
-  let runtime = { taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", phase: "paused" }] } as CuaRuntime;
+  let runtime = { taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 } }] } as CuaRuntime;
   let listener: (s: CuaRuntime) => void = () => {};
   const action = vi.fn();
   const dispose = createCuaControlWindow({
     getMainWindow: () => main as unknown as BrowserWindow, getRuntime: () => runtime,
-    subscribe: fn => { listener = fn; return vi.fn(); }, authenticated: () => true, t: key => key, action,
+    subscribe: fn => { listener = fn; return vi.fn(); }, authenticated: () => true, t: key => key, taskAction: action,
   });
   return { dispose, action, get main() { return main; }, replaceMain(next: MainWindow) { main = next; },
     setRuntime(value: CuaRuntime) { runtime = value; listener(runtime); },
@@ -64,13 +64,14 @@ describe("Computer Use control surface follows the main client window", () => {
   it("uses the existing renderer controls for ordinary mode and creates no extra surface", async () => {
     const s = setup(false); await flush(); expect(mocks.views).toHaveLength(0); s.dispose();
   });
-  it("keeps compact/expanded views within the client, including after resize", async () => {
+  it("keeps small previews within the client, including after resize", async () => {
     const s = setup(); await flush(); const v = mocks.views[0];
-    expect(s.main.children).toEqual([v]); expect(v.visible).toBe(true); expect(v.bounds.height).toBe(42);
-    s.dispose.showTask("task"); expect(v.bounds.height).toBe(220);
+    expect(s.main.children).toEqual([v]); expect(v.visible).toBe(true); expect(v.bounds).toEqual({ x: 696, y: 72, width: 240, height: 152 });
+    s.dispose.showTask("task"); expect(v.bounds.height).toBe(152);
     s.main.width = 300; s.main.height = 180; s.main.emit("resize");
     expect(v.bounds.x).toBeGreaterThanOrEqual(0); expect(v.bounds.y).toBeGreaterThanOrEqual(0);
     expect(v.bounds.x + v.bounds.width).toBeLessThanOrEqual(300); expect(v.bounds.y + v.bounds.height).toBeLessThanOrEqual(180);
+    expect(v.webContents.send).toHaveBeenCalledWith("cua:control:presentation", { taskId: "task", position: v.bounds });
     s.dispose();
   });
   it("hides preview work with the main window and shows it again without stopping the task", async () => {
@@ -111,13 +112,13 @@ describe("Computer Use control surface follows the main client window", () => {
   });
   it("starts small at the top-right, clamps dragging and remembers position without controlling tasks", async () => {
     const s = setup(); await flush(); s.dispose.showTask("task"); const v = mocks.views[0];
-    expect(v.bounds).toEqual({ x: 636, y: 72, width: 300, height: 220 });
+    expect(v.bounds).toEqual({ x: 696, y: 72, width: 240, height: 152 });
     const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
     const move = mocks.handlers.get("cua:control:move")!;
     expect(move(event, { x: Infinity, y: 0 })).toBeNull();
     expect(move({ ...event, senderFrame: {} }, { x: 2, y: 2 })).toBeNull();
-    move(event, { x: -200, y: 10000 }); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(404);
-    s.update(); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(404);
+    move(event, { x: -200, y: 10000 }); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(472);
+    s.update(); expect(v.bounds.x).toBe(0); expect(v.bounds.y).toBe(472);
     expect(s.action).not.toHaveBeenCalled(); s.dispose();
   });
   it("closing hides capture until explicitly reopened while runtime updates keep the task alive", async () => {
@@ -130,16 +131,28 @@ describe("Computer Use control surface follows the main client window", () => {
   it("only exposes live tasks and accepts a complete permutation without changing execution", async () => {
     const s = setup(); await flush(); const v = mocks.views[0];
     s.setRuntime({ taskId: "a", revision: 5, phase: "running", multiwindow: true,
-      tasks: [{ taskId: "a", phase: "running" }, { taskId: "b", phase: "paused" }, { taskId: "ended", phase: "completed" }] } as CuaRuntime);
+      tasks: [{ taskId: "a", phase: "running", scope: { kind: "window", pid: 1, windowId: 2 } }, { taskId: "b", phase: "paused", scope: { kind: "window", pid: 3, windowId: 4 } }, { taskId: "unbound", phase: "paused" }, { taskId: "ended", phase: "completed" }] } as CuaRuntime);
     const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
     const get = mocks.handlers.get("cua:control:getRuntime")!, reorder = mocks.handlers.get("cua:control:reorder")!;
     expect(get(event).tasks.map((t: any) => t.taskId)).toEqual(["a", "b"]);
+    expect(v.bounds.width).toBe(248); expect(v.bounds.height).toBe(160);
+    expect(s.dispose.showTask("unbound").success).toBe(false);
     expect(reorder(event, ["b", "b"])).toBeNull(); expect(reorder(event, ["ended", "a"])).toBeNull();
     expect(reorder(event, ["b", "a"])).toEqual(["b", "a"]);
     expect(get(event).tasks.map((t: any) => t.taskId)).toEqual(["b", "a"]);
     expect(s.dispose.showTask("ended").success).toBe(false); expect(s.action).not.toHaveBeenCalled();
     s.setRuntime({ taskId: "ended", revision: 6, phase: "completed", multiwindow: true, tasks: [{ taskId: "ended", phase: "completed" }] } as CuaRuntime);
     expect(v.webContents.isDestroyed()).toBe(true); s.dispose();
+  });
+
+  it("limits private controls to pause, resume, stop and exact takeover", async () => {
+    const s = setup(); await flush(); const wc = mocks.views[0].webContents;
+    const event = { sender: wc, senderFrame: wc.mainFrame };
+    const act = mocks.handlers.get("cua:control:taskAction")!;
+    await act(event, "task", "bind"); await act({ ...event, senderFrame: {} }, "task", "stop");
+    expect(s.action).not.toHaveBeenCalled();
+    await act(event, "task", "takeover"); expect(s.action).toHaveBeenCalledWith("task", "takeover");
+    expect(mocks.handlers.has("cua:control:listWindows")).toBe(false); s.dispose();
   });
 
 });

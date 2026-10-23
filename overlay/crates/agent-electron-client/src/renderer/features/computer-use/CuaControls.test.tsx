@@ -52,7 +52,7 @@ describe("Computer Use controls", () => {
   });
   it("keeps emergency stop enabled during another pending operation", () => {
     harness.states[3] = true;
-    expect(render()).toContain("Claw.Cua.shortcutUnavailable");
+    expect(render()).not.toContain("Claw.Cua.shortcutUnavailable");
     expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop").disabled).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause").disabled).toBe(true);
   });
@@ -66,12 +66,13 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "completed", resultObserved: false };
     expect(render()).toBe("");
   });
-  it("explains a resumable no-progress pause and labels refused steps", () => {
+  it("keeps action details and pause reasons in the tray center", () => {
     harness.states[0] = { ...harness.states[0], phase: "paused", reason: "noProgress",
       steps: [{ sequence: 1, tool: "browser_click", startedAt: 0, outcome: "refused" }] };
     const html = render();
-    expect(html).toContain("Claw.Cua.reason.noProgress");
-    expect(html).toContain("Claw.Cua.outcome.refused");
+    expect(html).not.toContain("Claw.Cua.reason.noProgress");
+    expect(html).not.toContain("Claw.Cua.outcome.refused");
+    expect(html).not.toContain("Claw.Cua.preview.collapse");
   });
   it("keeps the control bar hidden without a task", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
@@ -100,7 +101,7 @@ describe("Computer Use controls", () => {
   it("explains that desktop takeover pauses automation and leaves window switching to the user", () => {
     harness.states[0] = { ...harness.states[0], phase: "paused", reason: "userTakingControl" };
     const html = render();
-    expect(html).toContain("Claw.Cua.preview.legacyTakeover");
+    expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.takeover").title).toBe("Claw.Cua.preview.legacyTakeover");
     expect(html).not.toContain("Claw.Cua.reason.userTakingControl");
   });
   it("constrains a dragged card against its actual size and a smaller host", () => {

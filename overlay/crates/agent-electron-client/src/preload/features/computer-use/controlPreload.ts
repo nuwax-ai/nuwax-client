@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld("cuaControls", {
   move: (position: { x: number; y: number }) => ipcRenderer.invoke("cua:control:move", position),
   reorder: (ids: string[]) => ipcRenderer.invoke("cua:control:reorder", ids),
   getPresentation: () => ipcRenderer.invoke("cua:control:getPresentation"),
-  setPresentation: (id: string | null, expanded: boolean) => ipcRenderer.invoke("cua:control:setPresentation", id, expanded),
+  setPresentation: (id: string | null) => ipcRenderer.invoke("cua:control:setPresentation", id),
   onPresentation: (listener: (value: any) => void) => {
     const callback = (_event: unknown, value: unknown) => listener(value);
     ipcRenderer.on("cua:control:presentation", callback);
@@ -17,9 +17,7 @@ contextBridge.exposeInMainWorld("cuaControls", {
     return () => ipcRenderer.removeListener("cua:control:preview", callback);
   },
   getRuntime: () => ipcRenderer.invoke("cua:control:getRuntime"),
-  action: (action: string) => ipcRenderer.invoke("cua:control:action", action),
-  taskAction: (id: string, action: string, value?: unknown) => ipcRenderer.invoke("cua:control:taskAction", id, action, value),
-  listWindows: () => ipcRenderer.invoke("cua:control:listWindows"),
+  taskAction: (id: string, action: "pause" | "resume" | "stop" | "takeover") => ipcRenderer.invoke("cua:control:taskAction", id, action),
   onRuntime: (listener: (value: unknown) => void) => {
     const callback = (_event: unknown, value: unknown) => listener(value);
     ipcRenderer.on("cua:control:runtime", callback);

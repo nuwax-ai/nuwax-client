@@ -1,5 +1,11 @@
+import type { CuaScope } from "./contract";
+
 /** Initial placement is inset from the conversation area's right edge and below its toolbar. */
 export const CUA_CONTROL_INITIAL_POSITION = { right: 24, top: 72 } as const;
+
+/** Unbound tasks belong in the task center, not the window preview stack. */
+export const canPreviewCuaTask = (task: { phase: string; scope?: CuaScope }) =>
+  ["running", "paused"].includes(task.phase) && task.scope?.kind === "window" && task.scope.pid > 0 && task.scope.windowId > 0;
 
 export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "toolTimeout", "stepLimit", "timeLimit",
   "repeatedAction", "connectionClosed", "daemonNotReady", "permissionsRequired", "policyNotActive", "helperStillRunning",

@@ -1,7 +1,16 @@
 import React, { useState } from "react";
 import { Button, Select, Space, Tag, message } from "antd";
 import type { ComputerUseAPI, CuaControlResult, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
-import { CUA_REASON_KEYS } from "@shared/features/computer-use/presentation";
+import { CUA_REASON_KEYS, actionKind, canPreviewCuaTask } from "@shared/features/computer-use/presentation";
+
+export function CuaTaskSummary({ task, t }: { task: CuaRuntime; t: (key: string, ...args: any[]) => string }) {
+  const latest = task.steps?.at(-1);
+  return <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0" }}>
+    <span>{t("Claw.Cua.steps", { count: task.stepCount ?? 0 })}</span>
+    {latest && <span> · {t("Claw.Cua.latestAction")}: {t("Claw.Cua.action." + actionKind(latest.tool))} · {t("Claw.Cua.outcome." + latest.outcome)}</span>}
+    {task.reason && <p style={{ margin: "4px 0" }}>{t("Claw.Cua.reason." + (CUA_REASON_KEYS.includes(task.reason) ? task.reason : "generic"))}</p>}
+  </div>;
+}
 
 export function CuaTaskPanel({ api, runtime, t, accept }: {
   api: ComputerUseAPI; runtime: CuaRuntime; t: (key: string, ...args: any[]) => string;
@@ -42,6 +51,7 @@ export function CuaTaskPanel({ api, runtime, t, accept }: {
           {task.queued && <span>{t("Claw.Cua.reason.taskQueued")}</span>}
           {task.controlPending && <span>{t("Claw.Cua.stopping")}</span>}
         </Space>
+        <CuaTaskSummary task={task} t={t} />
         <div style={{ margin: "8px 0" }}>
           <Select aria-label={t("Claw.Cua.scope.choose")} style={{ width: 320, maxWidth: "100%" }}
             value={selected} placeholder={t("Claw.Cua.scope.choose")} options={options}
@@ -53,7 +63,7 @@ export function CuaTaskPanel({ api, runtime, t, accept }: {
             }} />
         </div>
         <Space wrap>
-          <Button size="small" onClick={() => void api.showTaskPreview(task.taskId)}>{t("Claw.Cua.preview.expand")}</Button>
+          <Button size="small" disabled={!canPreviewCuaTask(task)} onClick={() => void api.showTaskPreview(task.taskId)}>{t("Claw.Cua.preview.expand")}</Button>
           {!terminal && <Button size="small" disabled={!selected || task.controlPending || busy === task.taskId}
             onClick={() => void run(task.taskId, () => api.takeOverTask(task.taskId))}>{t("Claw.Cua.preview.takeover")}</Button>}
           {task.phase === "running" && <Button size="small" onClick={() => void run(task.taskId, () => api.pauseTask(task.taskId))}>{t("Claw.Cua.pause")}</Button>}
@@ -65,7 +75,6 @@ export function CuaTaskPanel({ api, runtime, t, accept }: {
             {t(task.mode === "background" ? "Claw.Cua.multiwindow.useForeground" : "Claw.Cua.multiwindow.useBackground")}
           </Button>}
         </Space>
-        {task.reason && <p style={{ fontSize: 12, margin: "6px 0" }}>{t("Claw.Cua.reason." + (CUA_REASON_KEYS.includes(task.reason) ? task.reason : "generic"))}</p>}
       </article>;
     })}
     {!runtime.tasks?.length && <p>{t("Claw.Cua.multiwindow.empty")}</p>}

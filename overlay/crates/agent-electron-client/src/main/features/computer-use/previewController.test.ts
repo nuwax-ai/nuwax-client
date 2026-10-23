@@ -39,7 +39,7 @@ describe("display-only preview scheduling", () => {
     expect(publish.mock.calls.some(([value]) => value.frame)).toBe(false);
     controller.dispose();
   });
-  it("stops capture when collapsed and does not exceed two frames per second on runtime updates", async () => {
+  it("stops capture when hidden and does not exceed two frames per second on runtime updates", async () => {
     vi.useFakeTimers();
     const capture = vi.fn(async () => ({ taskId: "A", status: "unavailable" as const }));
     const controller = createCuaPreviewController({ identity: id => ({ taskId: id, bindingId: id, epoch: 1 }), capture, publish: vi.fn() });
@@ -54,4 +54,24 @@ describe("display-only preview scheduling", () => {
     expect(capture).toHaveBeenCalledTimes(3);
     controller.dispose();
   });
+  it("shares two captures per second across front and stacked windows without parallel capture", async () => {
+    vi.useFakeTimers();
+    const capture = vi.fn(async (id: string) => ({ taskId: id, status: "unavailable" as const }));
+    const controller = createCuaPreviewController({ identity: id => ({ taskId: id, bindingId: id, epoch: 1 }),
+      alternateTargets: () => ["B", "C"], capture, publish: vi.fn() });
+    controller.select("A"); await vi.advanceTimersByTimeAsync(2000);
+    expect(capture.mock.calls.map(([id]) => id)).toEqual(["A", "B", "A", "C", "A"]);
+    controller.dispose(); await vi.advanceTimersByTimeAsync(1000); expect(capture).toHaveBeenCalledTimes(5);
+  });
+  it("drops a stacked window frame if that window is rebound during capture", async () => {
+    vi.useFakeTimers(); let backEpoch = 1; let finish!: (frame: any) => void;
+    const publish = vi.fn(), capture = vi.fn((id: string) => id === "A"
+      ? Promise.resolve({ taskId: id, status: "unavailable" as const }) : new Promise<any>(resolve => { finish = resolve; }));
+    const controller = createCuaPreviewController({ identity: id => ({ taskId: id, bindingId: id, epoch: id === "B" ? backEpoch : 1 }),
+      alternateTargets: () => ["B"], capture, publish });
+    controller.select("A"); await vi.advanceTimersByTimeAsync(500); backEpoch++;
+    finish({ taskId: "B", status: "ready", frame: { jpeg: "stale" } }); await vi.advanceTimersByTimeAsync(0);
+    expect(publish.mock.calls.some(([update]) => update.frame)).toBe(false); controller.dispose();
+  });
+
 });

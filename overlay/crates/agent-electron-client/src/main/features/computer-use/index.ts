@@ -15,6 +15,7 @@ import { createCuaControlWindow } from "./controlWindow";
 import { createCuaTaskHistory } from "./taskHistory";
 import { CuaEngineSessions, cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaScope } from "@shared/features/computer-use/contract";
+import { canPreviewCuaTask } from "@shared/features/computer-use/presentation";
 
 export const CUA_STOP_SHORTCUT = "CommandOrControl+Shift+F12";
 
@@ -125,25 +126,15 @@ export const computerUseFeature: DesktopFeature = {
       getMainWindow: () => ctx.windows.getMain(),
       getRuntime: cua.getCuaRuntime, subscribe: cua.onCuaRuntime,
       authenticated: () => ctx.session.isAuthenticated(), t: ctx.translate ?? ((key: string) => key),
-      action: async (action) => {
-        if (action === "pause") return cua.pauseCuaTask();
-        if (action === "resume") return cua.resumeCuaTask();
-        if (action === "stop") return cua.stopCuaTask();
-        if (action === "recover") return cua.recoverCua();
-        return { success: cua.clearCuaHistory() };
-      },
       readPreference: () => ctx.settings.read("computerUsePresentation"),
       writePreference: value => { ctx.settings.write("computerUsePresentation", value); },
       previewIdentity: cua.getCuaPreviewIdentity,
       capturePreview: cua.captureCuaTaskPreview,
-      listWindows: cua.listCuaWindows,
-      taskAction: async (id, action, value) => {
-        if (action === "bind") return cua.bindWindowTask(id, value);
+      taskAction: async (id, action) => {
         if (action === "pause") return cua.pauseWindowTask(id);
         if (action === "resume") return cua.resumeWindowTask(id);
         if (action === "stop") return cua.stopWindowTask(id);
-        if (action === "takeover") return cua.takeOverWindowTask(id);
-        return cua.setWindowTaskMode(id, value);
+        return cua.takeOverWindowTask(id);
       },
     });
     const showPreview = (id: string) => {
@@ -159,15 +150,31 @@ export const computerUseFeature: DesktopFeature = {
 
     // 状态推送宿主窗口 + 托盘急停项（经通用进行中操作端口）。
     const stop = () => { void cua.stopCuaTask().catch(() => undefined); };
+    const promptedTargets = new Set<string>();
     const publish = (state: ReturnType<typeof cua.getCuaRuntime>) => {
       history.record(state);
       const window = ctx.windows.getMain();
-      if (window && !window.isDestroyed()) window.webContents.send("cua:runtime", state);
+      if (window && !window.isDestroyed()) {
+        window.webContents.send("cua:runtime", state);
+        const waiting = (state.tasks ?? []).filter(task => ["running", "paused"].includes(task.phase) &&
+          (!task.scope || task.scope.kind === "window" && !task.scope.windowId));
+        if (waiting.some(task => !promptedTargets.has(task.taskId))) {
+          // Open inside the existing client without showing/focusing a hidden
+          // owner. Detailed target setup no longer lives in the floating card.
+          window.webContents.send("cua:openCenter");
+          for (const task of waiting) promptedTargets.add(task.taskId);
+        }
+      }
+      const current = new Set((state.tasks ?? []).map(task => task.taskId));
+      for (const id of promptedTargets) if (!current.has(id)) promptedTargets.delete(id);
       const active = state.tasks ? state.tasks.some(task => ["running", "paused"].includes(task.phase))
         : ["running", "paused"].includes(state.phase);
       const actions = [{ id: "center", labelKey: "Claw.Cua.center.open", run: openCenter }];
       if (active) {
-        actions.push({ id: "preview", labelKey: "Claw.Cua.preview.expand", run: () => { showPreview(state.taskId ?? ""); } });
+        actions.push({ id: "preview", labelKey: "Claw.Cua.preview.expand", run: () => {
+          const id = state.multiwindow ? state.tasks?.find(canPreviewCuaTask)?.taskId : state.taskId;
+          if (id) showPreview(id); else openCenter();
+        } });
         actions.push({ id: "stop", labelKey: "Claw.Cua.multiwindow.stopAll", run: stop });
       }
       ctx.activities.set({ actions });

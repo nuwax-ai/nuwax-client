@@ -8,7 +8,7 @@ describe("local Computer Use history", () => {
     const write = vi.fn(), history = createCuaTaskHistory(() => [], write);
     history.record(state("a", "running")); expect(write).not.toHaveBeenCalled();
     history.record(state("a")); history.record(state("a")); expect(write).toHaveBeenCalledOnce();
-    const row = history.list()[0]; expect(Object.keys(row).sort()).toEqual(["taskId", "phase", "label", "startedAt", "endedAt", "stepCount"].sort());
+    const row = history.list()[0]; expect(Object.keys(row).sort()).toEqual(["taskId", "phase", "label", "startedAt", "endedAt", "stepCount", "scopeKind"].sort());
     expect(JSON.stringify(row)).not.toMatch(/private text|capability|pid|windowId/);
     const restored = createCuaTaskHistory(() => history.list(), vi.fn()); expect(restored.list()).toEqual(history.list());
   });
@@ -23,4 +23,13 @@ describe("local Computer Use history", () => {
     const copy = history.list(); copy[0].label = "changed"; expect(history.list()[0].label).toBe("Test window");
     expect(() => history.clear()).not.toThrow();
   });
+  it("reads legacy summaries and adds only validated scope and mode for new tasks", () => {
+    const old = { taskId: "old", phase: "completed", label: "Old", startedAt: 1, endedAt: 2, stepCount: 1 };
+    const restored = createCuaTaskHistory(() => [old, { ...old, taskId: "bad", mode: "private", scopeKind: "all" }], vi.fn());
+    expect(restored.list()).toEqual([old, { ...old, taskId: "bad" }]);
+    restored.record({ ...state("new"), multiwindow: true, tasks: [{ ...state("new"), mode: "background" }] } as any);
+    expect(restored.list()[0]).toMatchObject({ scopeKind: "window", mode: "background" });
+    expect(JSON.stringify(restored.list())).not.toMatch(/private|capability|windowId|pid/);
+  });
+
 });
