@@ -282,6 +282,8 @@ jobs:
             dist_cmd: dist:linux:arm64
 
     runs-on: ${{ matrix.platform }}
+    env:
+      NUWAX_RESOURCE_JOB_NAME: Build Electron (${{ matrix.platform }} ${{ matrix.arch }})
 
     steps:
       - name: Configure macOS compatibility target
@@ -306,6 +308,7 @@ jobs:
           # GCM 会劫持/覆盖 URL 内嵌凭据，insteadOf 亦不生效——均实测失败）
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
+          git config --global core.autocrlf false
           git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
           git submodule status
@@ -468,8 +471,15 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           GH_TOKEN: ${{ github.token }}
           NUWAX_APP_IDENTIFIER: nuwax
-        run: npm run prepare:all
+        shell: bash
+        run: node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:all
         timeout-minutes: 15
+
+      - name: Publish reusable bundled download archives
+        uses: ./.github/actions/bundled-resource-cache
+        with:
+          arch: ${{ matrix.arch }}
+          operation: save
 
       - name: Setup Windows terminal compatibility compiler
         if: runner.os == 'Windows'
@@ -577,7 +587,7 @@ jobs:
           # source bytes. The helper never touches the verified source cache.
           NUWAX_CAPTURE_MAC_SIGNING: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' || 'false' }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
+        run: node scripts/client/build-resource-artifacts.mjs measure capture -- node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
         timeout-minutes: 30
 
       # ---- Computer Use helper（cua-driver 源码自建）：五平台全矩阵 ----
@@ -599,7 +609,14 @@ jobs:
             *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
           esac
           export TARGET_TRIPLE="$TRIPLE"
-          bash scripts/computer-use/build-helper.sh
+          node scripts/client/build-resource-artifacts.mjs measure helper -- bash scripts/computer-use/build-helper.sh
+
+      - name: Publish reusable unsigned native resources
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.capture-msys2.outputs.msys2-location }}
+          operation: save
 
       # extraResources 注入（目录随构建产出）
       - name: Inject computer-use extraResources

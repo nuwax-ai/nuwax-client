@@ -1,0 +1,55 @@
+name: Trusted cross-release build resources
+description: Restore or publish exact-key unsigned resources with verified producer provenance
+inputs:
+  operation:
+    required: true
+    description: restore or save
+  kind:
+    required: true
+    description: helper, capture or bundled
+  key:
+    required: true
+    description: Exact source, recipe, platform and toolchain identity
+  arch:
+    required: true
+    description: Native target architecture
+runs:
+  using: composite
+  steps:
+    - name: Verify resource provenance and hashes
+      id: resource
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RESOURCE_OPERATION: ${{ inputs.operation }}
+        RESOURCE_KIND: ${{ inputs.kind }}
+        RESOURCE_KEY: ${{ inputs.key }}
+        TARGET_ARCH: ${{ inputs.arch }}
+      run: node scripts/client/build-resource-artifacts.mjs "$RESOURCE_OPERATION" "$RESOURCE_KIND" "$RESOURCE_KEY"
+    - name: Publish immutable unsigned build resource
+      if: inputs.operation == 'save' && steps.resource.outputs.ready == 'true'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.resource.outputs.name }}
+        path: ${{ steps.resource.outputs.path }}
+        if-no-files-found: error
+        retention-days: 30
+        # Hash-addressed blobs include precompressed source/download archives;
+        # don't spend Intel runner time recompressing them a second time.
+        compression-level: 0
+    - name: Remove this upload's temporary copies
+      if: always() && inputs.operation == 'save' && steps.resource.outputs.ready == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        RESOURCE_UPLOAD_DIR: ${{ steps.resource.outputs.path }}
+      run: |
+        node --input-type=module <<'NODE'
+        import fs from 'node:fs';
+        import path from 'node:path';
+        const directory = path.resolve(process.env.RESOURCE_UPLOAD_DIR);
+        if (path.dirname(directory) !== path.resolve(process.env.RUNNER_TEMP) || !path.basename(directory).startsWith('nuwax-resource-upload-')) throw new Error('Unexpected upload cleanup path');
+        fs.rmSync(directory, { recursive: true, force: true });
+        NODE

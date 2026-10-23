@@ -1,35 +1,32 @@
-name: Restore bundled resource downloads
-description: Resource recipe keys independent of the application release version
+name: Share bundled resource downloads
+description: Immutable download archives reusable across release refs with verified producer provenance
 inputs:
   arch:
     description: Target architecture
     required: true
+  operation:
+    description: restore before preparation, save after successful preparation
+    required: false
+    default: restore
 runs:
   using: composite
   steps:
-    - name: Cache bundled Node.js
-      uses: actions/cache@v4
+    - name: Resolve bundled download recipe
+      id: identity
+      continue-on-error: true
+      shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
+      run: node scripts/client/build-resource-artifacts.mjs bundled-key
+    - name: Share fixed download archives
+      if: steps.identity.outputs.key != ''
+      uses: ./.github/actions/build-resource-artifact
       with:
-        path: nuwa-electron-shell/crates/agent-electron-client/resources/node
-        key: bundled-node-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-node.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
-    - name: Cache bundled Git (Windows only)
-      if: runner.os == 'Windows'
-      uses: actions/cache@v4
-      with:
-        path: nuwa-electron-shell/crates/agent-electron-client/resources/git
-        key: bundled-git-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-git.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
-    - name: Cache uv
-      uses: actions/cache@v4
-      with:
-        path: nuwa-electron-shell/crates/agent-electron-client/resources/uv
-        key: bundled-uv-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-uv.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
-    - name: Cache nuwaxcode
-      uses: actions/cache@v4
-      with:
-        path: nuwa-electron-shell/crates/agent-electron-client/resources/nuwaxcode
-        key: bundled-nuwaxcode-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwaxcode.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
-    - name: Cache ripgrep
-      uses: actions/cache@v4
-      with:
-        path: nuwa-electron-shell/crates/agent-electron-client/resources/ripgrep
-        key: bundled-ripgrep-v3-${{ runner.os }}-${{ inputs.arch }}-${{ hashFiles('nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-ripgrep.js', 'nuwa-electron-shell/crates/agent-electron-client/scripts/utils/project-paths.js') }}
+        operation: ${{ inputs.operation }}
+        kind: bundled
+        key: ${{ steps.identity.outputs.key }}
+        arch: ${{ inputs.arch }}
+    - name: Report unavailable cache identity
+      if: steps.identity.outcome != 'success'
+      shell: bash
+      run: echo 'Bundled download cache identity unavailable; original downloads remain enabled.' >> "$GITHUB_STEP_SUMMARY"

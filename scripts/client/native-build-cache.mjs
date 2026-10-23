@@ -1,6 +1,6 @@
 /** Cache identities contain build inputs only; product versions and signatures
- * are deliberately excluded. GitHub cache visibility is handled by the trusted
- * default-branch warmer, never by broad restore-key fallbacks. */
+ * are deliberately excluded. Cross-ref transport is handled by the trusted
+ * artifact producer contract, never by broad restore-key fallbacks. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -9,10 +9,12 @@ import * as core from './core.mjs';
 
 const HELPER_RECIPE = [
   'scripts/computer-use/build-helper.sh', 'scripts/client/native-build-cache.mjs', 'scripts/client/core.mjs',
+  'scripts/client/build-resource-artifacts.mjs',
   'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch',
 ];
 const CAPTURE_RECIPE = [
   'scripts/client/native-build-cache.mjs', 'scripts/client/core.mjs',
+  'scripts/client/build-resource-artifacts.mjs',
   'scripts/client/capture-resources.mjs', 'scripts/client/capture-window-resources.mjs',
   'scripts/client/third-party-notices.mjs', 'scripts/prepare-release-capture.mjs',
   'third-party/capture-sources.json', 'third-party/capture-window-sources.json', 'third-party/manifest.json',

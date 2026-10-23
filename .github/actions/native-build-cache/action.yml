@@ -1,6 +1,10 @@
 name: Restore unsigned native build resources
-description: Exact recipe/toolchain keys shared by release builds and the default-branch warmer
+description: Exact recipe/toolchain resources shared by trusted release and maintenance jobs
 inputs:
+  operation:
+    description: restore before preparation, save after successful preparation
+    required: false
+    default: restore
   arch:
     description: Native target architecture
     required: true
@@ -13,31 +17,35 @@ runs:
   steps:
     # Keep the actual compiler version aligned with the locked CUA workspace.
     - name: Setup Rust toolchain (Computer Use helper)
+      if: inputs.operation == 'restore'
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: 1.97.1
     - name: Resolve native build cache identities
       id: identity
+      continue-on-error: true
       shell: bash
       env:
         TARGET_ARCH: ${{ inputs.arch }}
         MSYS2_LOCATION: ${{ inputs.msys2-location }}
       run: node scripts/client/native-build-cache.mjs keys >> "$GITHUB_OUTPUT"
-    - name: Cache unsigned Computer Use helper
-      uses: actions/cache@v4
+    - name: Share unsigned Computer Use helper
+      if: steps.identity.outputs.helper != ''
+      uses: ./.github/actions/build-resource-artifact
       with:
-        path: .cache/client-toolchain/cua-helper
+        operation: ${{ inputs.operation }}
+        kind: helper
+        arch: ${{ inputs.arch }}
         key: ${{ steps.identity.outputs.helper }}
-    - name: Cache admitted unsigned capture resources
-      uses: actions/cache@v4
+    - name: Share admitted unsigned capture resources
+      if: steps.identity.outputs.capture != ''
+      uses: ./.github/actions/build-resource-artifact
       with:
-        # Never include release-capture-signed or complete app bundles. Admission
-        # still verifies archives, binaries, configuration and notices on a hit.
-        path: |
-          resources/capture
-          .cache/client-toolchain/capture-koffi
-          third-party/licenses/ffmpeg.txt
-          third-party/licenses/libvpx.txt
-          third-party/licenses/openh264.txt
-          third-party/licenses/koffi.txt
+        operation: ${{ inputs.operation }}
+        kind: capture
+        arch: ${{ inputs.arch }}
         key: ${{ steps.identity.outputs.capture }}
+    - name: Report unavailable cache identity
+      if: steps.identity.outcome != 'success'
+      shell: bash
+      run: echo 'Native resource cache identity unavailable; original cold preparation remains enabled.' >> "$GITHUB_STEP_SUMMARY"

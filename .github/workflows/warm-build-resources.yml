@@ -1,12 +1,12 @@
 name: Warm trusted build resource caches
 
-# Tag-local caches cannot be read by the next tag. These entries are written
-# only on the default branch, which GitHub permits release tags to restore.
-# This workflow builds resources only; it has no release/signing credentials.
+# Release tags cannot read one another's actions/cache entries. This workflow
+# produces provenance-checked cross-run artifacts on a real maintenance push,
+# even while main does not contain this workflow. It has no signing credentials.
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, fix/stable-3.0.22]
     paths:
       - nuwa-electron-shell
       - scripts/computer-use/build-helper.sh
@@ -18,6 +18,7 @@ on:
       - .github/workflows/warm-build-resources.yml
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -26,9 +27,11 @@ concurrency:
 
 jobs:
   resources:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.repository == 'nuwax-ai/nuwax-client' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/stable-3.0.22')
     name: Warm resources (${{ matrix.platform }} ${{ matrix.arch }})
     runs-on: ${{ matrix.platform }}
+    env:
+      NUWAX_RESOURCE_JOB_NAME: Warm resources (${{ matrix.platform }} ${{ matrix.arch }})
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -52,6 +55,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh auth setup-git
+          git config --global core.autocrlf false
           git submodule update --init nuwa-electron-shell
           node scripts/sync-overlay.js
       - name: Configure macOS compatibility target
@@ -89,11 +93,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NUWAX_APP_IDENTIFIER: nuwax
         run: |
-          npm run prepare:node
-          npm run prepare:git
-          npm run prepare:uv
-          npm run prepare:nuwaxcode
-          npm run prepare:ripgrep
+          node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:node
+          node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:git
+          node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:uv
+          node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:nuwaxcode
+          node "$GITHUB_WORKSPACE/scripts/client/build-resource-artifacts.mjs" measure bundled -- npm run prepare:ripgrep
+      - name: Publish reusable bundled download archives
+        uses: ./.github/actions/bundled-resource-cache
+        with:
+          arch: ${{ matrix.arch }}
+          operation: save
       - name: Setup Linux native compilers
         if: runner.os == 'Linux'
         run: |
@@ -130,7 +139,7 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           MSYS2_LOCATION: ${{ steps.capture-msys2.outputs.msys2-location }}
           NUWAX_CAPTURE_MAC_SIGNING: 'false'
-        run: node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
+        run: node scripts/client/build-resource-artifacts.mjs measure capture -- node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
       - name: Prepare unsigned Computer Use helper
         shell: bash
         env:
@@ -146,4 +155,10 @@ jobs:
             *) exit 1 ;;
           esac
           export TARGET_TRIPLE
-          bash scripts/computer-use/build-helper.sh
+          node scripts/client/build-resource-artifacts.mjs measure helper -- bash scripts/computer-use/build-helper.sh
+      - name: Publish reusable unsigned native resources
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.capture-msys2.outputs.msys2-location }}
+          operation: save

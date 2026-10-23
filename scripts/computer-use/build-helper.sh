@@ -96,16 +96,10 @@ if [[ "$TARGET_TRIPLE" == *-windows-msvc ]] && [ -n "${VCToolsInstallDir:-}" ] &
   [ ! -f "$MSVC_BIN/link.exe" ] || export PATH="$MSVC_BIN:$PATH"
 fi
 
-# cua 仓 rust-toolchain.toml 钉 1.97.1：cargo 会切到该工具链，target 必须装进它——
-# target add 须在仓内目录执行（让 rustup 解析钉住工具链；在仓外执行会装到默认 stable 上，
-# CI 实证 mac x64 交叉腿两连挂 E0463）。瞬时下载失败重试一次。
-(
-  cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
-  rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
-)
-
 # Cache only the compiler output. Source/patch checks above still execute on a
 # hit, and the app bundle, icon, plist and signing identity are applied afresh.
+COMPILE_STARTED=$SECONDS
+CACHE_RESULT=disabled
 CACHE_ENABLED=false
 if [ -z "${NUWAX_CUA_SOURCE_DIR:-}" ] && [ "${NUWAX_CUA_NO_CACHE:-0}" != 1 ]; then
   CACHE_ENABLED=true
@@ -113,9 +107,15 @@ fi
 CACHED_BIN="$WORK_DIR/unsigned-helper"
 if [ "$CACHE_ENABLED" = true ] && node "$REPO_ROOT/scripts/client/native-build-cache.mjs" restore-helper "$SRC_DIR" "$TARGET_TRIPLE" "$CACHED_BIN"; then
   BIN="$CACHED_BIN"
+  CACHE_RESULT=hit
 else
+  [ "$CACHE_ENABLED" != true ] || CACHE_RESULT=miss
   (
     cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
+    # Only a cold compiler build needs the target standard library. The locked
+    # workspace resolves 1.97.1; a cache hit still identifies that exact compiler
+    # and verifies source + patch, but need not download/reinstall target files.
+    rustup target add "$TARGET_TRIPLE" || { sleep 5; rustup target add "$TARGET_TRIPLE"; }
     echo "[cua-helper] cargo build --locked --release -p cua-driver --features portal-input ($TARGET_TRIPLE) ..."
     # portal-input=libei 输入通道（GNOME/KDE Wayland；不开则 GNOME Wayland 输入
     # "no input backend" 无兜底）——上游官方 Linux 发行同款开启；纯 Rust 栈（reis）
@@ -127,8 +127,15 @@ else
   BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
   [ "$PLATFORM" = "win" ] && BIN="${BIN}.exe"
   if [ "$CACHE_ENABLED" = true ]; then
-    node "$REPO_ROOT/scripts/client/native-build-cache.mjs" save-helper "$SRC_DIR" "$TARGET_TRIPLE" "$BIN"
+    if ! node "$REPO_ROOT/scripts/client/native-build-cache.mjs" save-helper "$SRC_DIR" "$TARGET_TRIPLE" "$BIN"; then
+      echo '::warning::Optional unsigned helper cache save failed; packaging the freshly compiled binary'
+    fi
   fi
+fi
+echo "[cua-helper] compiler cache: $CACHE_RESULT; restore/build elapsed: $((SECONDS - COMPILE_STARTED))s"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  printf '\n- Helper compiler cache: **%s**, restore/build **%ss**; source/patch checked; bundle and signature applied afresh.\n' \
+    "$CACHE_RESULT" "$((SECONDS - COMPILE_STARTED))" >> "$GITHUB_STEP_SUMMARY"
 fi
 [ -f "$BIN" ] || { echo "::error::built binary not found: $BIN"; exit 1; }
 BIN_MD5="$(md5 -q "$BIN" 2>/dev/null || md5sum "$BIN" | cut -d' ' -f1)"
