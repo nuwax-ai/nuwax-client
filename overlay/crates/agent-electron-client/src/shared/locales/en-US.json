@@ -1395,5 +1395,9 @@
   "Claw.Settings.computerUse.cancelPreparation": "Cancel setup",
   "Claw.Settings.computerUse.continueEnable": "Continue setup and enable",
   "Claw.PermissionGuide.helperDisabled": "Computer Use is not enabled. Its own permissions are needed when you enable it.",
-  "Claw.Cua.preview.legacyTakeover": "Automation is paused. Switch to the target window to take control."
+  "Claw.Cua.preview.legacyTakeover": "Automation is paused. Switch to the target window to take control.",
+  "Claw.Settings.computerUse.taskModel": "Task model",
+  "Claw.Settings.computerUse.taskModelDescription": "Uses the Agent and model selected in the conversation. No separate setup is needed; the model must support images.",
+  "Claw.Settings.computerUse.lockBehavior": "Computer operations pause when the screen locks. Resume manually after unlocking.",
+  "Claw.Settings.computerUse.advancedDiagnostics": "Independent image API diagnostics (advanced, optional)"
 }

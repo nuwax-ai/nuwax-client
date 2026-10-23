@@ -1395,5 +1395,9 @@
   "Claw.Settings.computerUse.cancelPreparation": "取消啟用",
   "Claw.Settings.computerUse.continueEnable": "繼續授權並啟用",
   "Claw.PermissionGuide.helperDisabled": "電腦操作尚未啟用。開啟後再完成專屬授權。",
-  "Claw.Cua.preview.legacyTakeover": "自動操作已暫停，可切換到目標視窗親自操作。"
+  "Claw.Cua.preview.legacyTakeover": "自動操作已暫停，可切換到目標視窗親自操作。",
+  "Claw.Settings.computerUse.taskModel": "任務模型",
+  "Claw.Settings.computerUse.taskModelDescription": "使用目前對話的 Agent 和模型，無需另外設定。所選模型需要支援圖片理解。",
+  "Claw.Settings.computerUse.lockBehavior": "鎖定螢幕時電腦操作會暫停，解鎖後可手動繼續。",
+  "Claw.Settings.computerUse.advancedDiagnostics": "獨立圖片介面診斷（進階，選用）"
 }

@@ -302,6 +302,13 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
         <CuaSettingsRows api={api} t={t} Row={Row} />
       )}
       <Row
+        label={t("Claw.Settings.computerUse.taskModel")}
+        desc={t("Claw.Settings.computerUse.taskModelDescription")}
+      />
+      <p style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>{t("Claw.Settings.computerUse.lockBehavior")}</p>
+      <details>
+      <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--color-text-secondary)", padding: "10px 0" }}>{t("Claw.Settings.computerUse.advancedDiagnostics")}</summary>
+      <Row
         label={t("Claw.Settings.computerUse.vlmModel")}
         desc={t("Claw.Settings.computerUse.vlmModelDesc")}
         control={
@@ -378,6 +385,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           </Button>
         }
       />
+      </details>
     </>
   );
 }
