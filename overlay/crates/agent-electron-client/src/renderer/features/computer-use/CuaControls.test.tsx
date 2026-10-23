@@ -43,6 +43,13 @@ describe("Computer Use controls", () => {
     expect(recover.disabled).toBe(false); await recover.onClick();
     expect(api.recover).toHaveBeenCalledOnce();
   });
+  it("keeps a single settings row and leaves the live task list in the tray center", () => {
+    harness.states = [{ ...harness.states[0], multiwindow: true, tasks: [] }, false, [], false, null];
+    const html = renderRows();
+    expect(html.split("Claw.Cua.multiwindow.title")).toHaveLength(2);
+    expect(html).not.toContain("Claw.Cua.scope.refresh");
+    expect(html).not.toContain("Claw.Cua.multiwindow.stopAll");
+  });
   it("keeps emergency stop enabled during another pending operation", () => {
     harness.states[3] = true;
     expect(render()).toContain("Claw.Cua.shortcutUnavailable");
