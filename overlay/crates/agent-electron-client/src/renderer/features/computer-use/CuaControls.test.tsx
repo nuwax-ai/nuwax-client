@@ -18,7 +18,7 @@ vi.mock("antd", async () => {
   };
 });
 vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
-import { CuaControls, CuaSettingsRows } from "./CuaControls";
+import { CuaControls, CuaSettingsRows, clampCuaControlPosition } from "./CuaControls";
 const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
@@ -54,7 +54,7 @@ describe("Computer Use controls", () => {
     harness.states[3] = true;
     expect(render()).toContain("Claw.Cua.shortcutUnavailable");
     expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop").disabled).toBeUndefined();
-    expect(harness.buttons.find((b) => b.children === "Claw.Cua.pause").disabled).toBe(true);
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause").disabled).toBe(true);
   });
   it("shows stopping until input has actually stopped", () => {
     harness.states[0] = { ...harness.states[0], phase: "paused", controlPending: true, reason: "userPaused" };
@@ -76,6 +76,36 @@ describe("Computer Use controls", () => {
   it("keeps the control bar hidden without a task", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
     expect(render()).toBe("");
+  });
+  it("keeps takeover, stop and close reachable in the compact card", async () => {
+    Object.assign(api, { takeOver: vi.fn(async () => ({ success: true })) });
+    const html = render();
+    expect(html).toContain('data-phase="running"');
+    const takeover = harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.takeover");
+    await takeover.onClick();
+    expect((api as any).takeOver).toHaveBeenCalledOnce();
+    await harness.buttons.find(b => b.children === "Claw.Cua.stop").onClick();
+    expect(api.stop).toHaveBeenCalledOnce();
+    harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close").onClick();
+    expect(harness.states[1]).toBe("id");
+    // Closing only dismisses the presentation, not the running task.
+    expect(api.stop).toHaveBeenCalledOnce();
+  });
+  it("shows resume while paused and keeps user context", async () => {
+    harness.states[0] = { ...harness.states[0], phase: "paused", scope: { kind: "window", label: "My editor" } };
+    const html = render(); expect(html).toContain("My editor");
+    await harness.buttons.find(b => b["aria-label"] === "Claw.Cua.resume").onClick();
+    expect(api.resume).toHaveBeenCalledOnce();
+  });
+  it("explains that desktop takeover pauses automation and leaves window switching to the user", () => {
+    harness.states[0] = { ...harness.states[0], phase: "paused", reason: "userTakingControl" };
+    const html = render();
+    expect(html).toContain("Claw.Cua.preview.legacyTakeover");
+    expect(html).not.toContain("Claw.Cua.reason.userTakingControl");
+  });
+  it("constrains a dragged card against its actual size and a smaller host", () => {
+    expect(clampCuaControlPosition({ x: 900, y: 700 }, { width: 288, height: 180 }, { width: 600, height: 400 })).toEqual({ x: 304, y: 212 });
+    expect(clampCuaControlPosition({ x: -400, y: -100 }, { width: 288, height: 180 }, { width: 320, height: 200 })).toEqual({ x: 8, y: 12 });
   });
   it("offers scope and diagnostics as settings rows, locked while a task runs", () => {
     harness.states = [{ ...harness.states[0], phase: "idle", taskId: null }, false, [], false, null];

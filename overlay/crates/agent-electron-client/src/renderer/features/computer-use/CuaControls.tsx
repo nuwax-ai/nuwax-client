@@ -5,6 +5,7 @@ import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-
 
 import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
+import styles from "./CuaControls.module.css";
 const REASONS = new Set(CUA_REASON_KEYS);
 type T = (key: string, ...args: any[]) => string;
 const reasonText = (t: T, reason: string) => t(`Claw.Cua.reason.${REASONS.has(reason) ? reason : "generic"}`);
@@ -48,63 +49,109 @@ export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
   return <><CuaTaskCenter api={api} runtime={runtime} accept={accept} t={t} />
     <CuaControlBar api={api} runtime={runtime} accept={accept} t={t} /></>;
 }
+type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "stop" | "close";
+function ControlIcon({ name }: { name: ControlIconName }) {
+  const paths: Record<ControlIconName, React.ReactNode> = {
+    desktop: <><rect x="3" y="3" width="18" height="13" rx="3" /><path d="M8 21h8M12 16v5" /></>,
+    window: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></>,
+    pause: <><path d="M8 5v14M16 5v14" /></>,
+    resume: <path d="m8 5 11 7-11 7Z" />,
+    takeover: <><path d="m5 3 14 9-7 1-3 7Z" /><path d="m13 13 5 7" /></>,
+    stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+    close: <path d="m6 6 12 12M18 6 6 18" />,
+  };
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+/** Keep the entire card inside the host content area after dragging or resizing. */
+export function clampCuaControlPosition(point: { x: number; y: number }, size: { width: number; height: number }, viewport: { width: number; height: number }) {
+  const inset = 8;
+  const maxX = Math.max(inset, viewport.width - size.width - inset);
+  const maxY = Math.max(inset, viewport.height - size.height - inset);
+  return { x: Math.max(inset, Math.min(point.x, maxX)), y: Math.max(Math.min(48, maxY), Math.min(point.y, maxY)) };
+}
+
 function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runtime: CuaRuntime | null; accept: (state: CuaRuntime) => void; t: T }) {
   const { token } = theme.useToken();
   const [closed, setClosed] = useState<string | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const drag = React.useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const panel = React.useRef<HTMLElement | null>(null);
+  const drag = React.useRef<{ x: number; y: number; left: number; top: number; width: number; height: number } | null>(null);
   const { busy, run } = useCuaAction(t, accept);
   useEffect(() => {
     const show = () => setClosed(null);
     window.electronAPI?.on("cua:showPreview", show);
     return () => window.electronAPI?.off("cua:showPreview", show);
   }, []);
-  if (!api?.getRuntime || !runtime || !["running", "paused"].includes(runtime.phase) || closed === runtime.taskId) return null;
-  // Multiwindow tasks use the contained host view; avoid a duplicate control bar.
-  if (runtime.multiwindow) return null;
+  useEffect(() => {
+    const constrain = () => {
+      if (!panel.current) return;
+      const size = panel.current.getBoundingClientRect();
+      setPosition(current => current ? clampCuaControlPosition(current, size, { width: window.innerWidth, height: window.innerHeight }) : null);
+    };
+    window.addEventListener("resize", constrain);
+    return () => window.removeEventListener("resize", constrain);
+  }, [runtime?.phase, runtime?.reason, runtime?.needsObservation]);
+  if (!api?.getRuntime || !runtime || !["running", "paused"].includes(runtime.phase) || closed === runtime.taskId || runtime.multiwindow) return null;
 
-  const reason = runtime.reason ? reasonText(t, runtime.reason) : null;
+  const paused = runtime.phase === "paused";
   const currentStep = runtime.steps.at(-1);
-  return <aside aria-label={t("Claw.Cua.title")} aria-live="polite" style={{
-    position: "fixed", top: position?.y ?? 48, right: position ? undefined : 16, left: position?.x, zIndex: 9999,
-    width: 300, maxWidth: "calc(100% - 32px)", padding: "8px 10px", borderRadius: 12,
-    background: token.colorBgElevated, color: token.colorText,
-    boxShadow: "0 4px 24px #0003", border: "1px solid #8884",
-  }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "grab", touchAction: "none" }}
-      onPointerDown={event => { if ((event.target as HTMLElement).closest("button")) return;
-        const box = event.currentTarget.parentElement!.getBoundingClientRect(); drag.current = { x: event.clientX, y: event.clientY, left: box.left, top: box.top }; event.currentTarget.setPointerCapture(event.pointerId); }}
-      onPointerMove={event => { if (!drag.current) return; const d = drag.current;
-        setPosition({ x: Math.max(0, Math.min(d.left + event.clientX - d.x, window.innerWidth - 316)), y: Math.max(0, Math.min(d.top + event.clientY - d.y, window.innerHeight - 180)) }); }}
+  const target = runtime.scope?.kind === "window" ? runtime.scope.label || t("Claw.Cua.scope.choose") : t("Claw.Cua.scope.desktop");
+  const controlLocked = busy || runtime.controlPending;
+  const status = t(runtime.controlPending ? "Claw.Cua.stopping" : `Claw.Cua.phase.${runtime.phase}`);
+  const reason = runtime.reason && runtime.reason !== "userPaused" && !runtime.controlPending
+    ? runtime.reason === "userTakingControl" ? t("Claw.Cua.preview.legacyTakeover") : reasonText(t, runtime.reason) : null;
+  const shortcut = t(runtime.shortcutAvailable ? "Claw.Cua.shortcut" : "Claw.Cua.shortcutUnavailable");
+  const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
+  return <aside ref={panel} className={styles.card} data-phase={runtime.controlPending ? "pending" : runtime.phase}
+    aria-label={t("Claw.Cua.title")} style={{
+      top: position?.y ?? 48, right: position ? undefined : 16, left: position?.x,
+      "--cua-bg": token.colorBgElevated, "--cua-text": token.colorText, "--cua-muted": token.colorTextSecondary,
+      "--cua-line": token.colorBorderSecondary, "--cua-accent": token.colorPrimary,
+    } as React.CSSProperties}>
+    <header className={styles.header}
+      onPointerDown={event => {
+        if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+        const box = panel.current!.getBoundingClientRect();
+        drag.current = { x: event.clientX, y: event.clientY, left: box.left, top: box.top, width: box.width, height: box.height };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        if (!drag.current) return;
+        const d = drag.current;
+        setPosition(clampCuaControlPosition({ x: d.left + event.clientX - d.x, y: d.top + event.clientY - d.y }, d,
+          { width: window.innerWidth, height: window.innerHeight }));
+      }}
       onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
-      <strong>{t("Claw.Cua.title")}</strong><Button type="text" size="small" aria-label={t("Claw.Cua.preview.close")} onClick={() => setClosed(runtime.taskId)}>×</Button>
+      <span className={styles.brandIcon}><ControlIcon name="desktop" /></span>
+      <strong className={styles.heading}>{t("Claw.Cua.title")}</strong>
+      <span className={styles.status} role="status"><i />{status}</span>
+      <Button type="text" className={styles.close} aria-label={t("Claw.Cua.preview.close")} title={t("Claw.Cua.preview.close")}
+        icon={<ControlIcon name="close" />} onClick={() => setClosed(runtime.taskId)} />
+    </header>
+    <div className={styles.body}>
+      <div className={styles.targetRow}>
+        <span className={styles.targetIcon}><ControlIcon name={runtime.scope?.kind === "window" ? "window" : "desktop"} /></span>
+        <span className={styles.target} title={target}>{target}</span>
+        {!!runtime.stepCount && <span className={styles.steps}>{t("Claw.Cua.steps", { count: runtime.stepCount })}</span>}
+      </div>
+      {currentStep && <div className={styles.activity} title={t("Claw.Cua.latestAction")}>
+        <span>{t(`Claw.Cua.action.${actionKind(currentStep.tool)}`)}</span><span className={styles.outcome} data-outcome={currentStep.outcome}>{t(`Claw.Cua.outcome.${currentStep.outcome}`)}</span>
+      </div>}
+      {reason && <p className={styles.reason}>{reason}</p>}
+      {runtime.phase === "running" && runtime.needsObservation && <p className={styles.reason}>{t("Claw.Cua.observeFirst")}</p>}
     </div>
-    <Space wrap>
-      <Tag color={runtime.phase === "running" ? "processing" : runtime.phase === "failed" ? "error" : "default"}>
-        {t(runtime.controlPending ? "Claw.Cua.stopping" : `Claw.Cua.phase.${runtime.phase}`)}
-      </Tag>
-      <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.takeOver())}>{t("Claw.Cua.preview.takeover")}</Button>
-      {!!runtime.stepCount && <span>{t("Claw.Cua.steps", { count: runtime.stepCount })}</span>}
-      {runtime.phase === "running" && <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.pause())}>{t("Claw.Cua.pause")}</Button>}
-      {runtime.phase === "paused" && <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.resume())}>{t("Claw.Cua.resume")}</Button>}
-      {["running", "paused", "failed"].includes(runtime.phase) && <Button danger size="small" onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>}
-      {["failed", "stopped"].includes(runtime.phase) && <Button size="small" disabled={busy || runtime.controlPending} onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>}
-      {runtime.phase === "completed" && <Button size="small" onClick={() => void run(async () => {
-        const result = await api.clearHistory(); accept(await api.getRuntime()); return result;
-      })}>{t("Claw.Cua.dismiss")}</Button>}
-    </Space>
-    {runtime.reason === "userTakingControl" && <div style={{ fontSize: 12, marginTop: 6 }}>{t("Claw.Cua.preview.legacyTakeover")}</div>}
-    <div style={{ marginTop: 6 }}>{runtime.scope?.kind === "window"
-      ? `${t("Claw.Cua.scope.window")}: ${runtime.scope.label || t("Claw.Cua.scope.choose")}` : t("Claw.Cua.scope.desktop")}</div>
-    {currentStep && <div style={{ marginTop: 6 }}>
-      {t("Claw.Cua.latestAction")}: {t(`Claw.Cua.action.${actionKind(currentStep.tool)}`)} · {t(`Claw.Cua.outcome.${currentStep.outcome}`)}
-    </div>}
-    {reason && !runtime.controlPending && <div style={{ marginTop: 6 }}>{reason}</div>}
-    {runtime.phase === "running" && runtime.needsObservation && <div>{t("Claw.Cua.observeFirst")}</div>}
-    {runtime.phase === "completed" && <div>{t(runtime.resultObserved ? "Claw.Cua.reviewResult" : "Claw.Cua.unobservedResult")}</div>}
-    {runtime.phase === "running" && <div style={{ fontSize: 12, marginTop: 4 }}>
-      {t(runtime.shortcutAvailable ? "Claw.Cua.shortcut" : "Claw.Cua.shortcutUnavailable")}
-    </div>}
+    <div className={styles.actions}>
+      <Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
+        aria-label={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")} title={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")}
+        onClick={() => void run(() => paused ? api.resume() : api.pause())} />
+      <Button type="primary" className={styles.takeover} disabled={controlLocked} icon={<ControlIcon name="takeover" />}
+        aria-label={t("Claw.Cua.preview.takeover")} onClick={() => void run(() => api.takeOver())}>{t("Claw.Cua.preview.takeoverShort")}</Button>
+      <Button danger className={styles.stop} icon={<ControlIcon name="stop" />} onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
+    </div>
+    <div className={styles.hint} title={runtime.controlPending ? status : paused ? t("Claw.Cua.reason.userPaused") : shortcut}>
+      {runtime.controlPending ? <span>{status}</span> : paused ? <span>{t("Claw.Cua.resume")}</span> : runtime.shortcutAvailable ? <><span>{t("Claw.Cua.preview.stop")}</span><kbd>{mac ? "⌘ ⇧ F12" : "Ctrl ⇧ F12"}</kbd></> : <span>{shortcut}</span>}
+    </div>
   </aside>;
 }
 
