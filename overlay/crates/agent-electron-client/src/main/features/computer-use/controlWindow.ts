@@ -4,6 +4,7 @@ import path from "node:path";
 import { createCuaPreviewController, type PreviewIdentity } from "./previewController";
 import { taskPreviewWindowHtml } from "./taskPreviewWindow";
 import type { CuaPreviewUpdate, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
+import { CUA_CONTROL_INITIAL_POSITION } from "@shared/features/computer-use/presentation";
 
 type Action = "pause" | "resume" | "stop" | "dismiss" | "recover";
 /** One contained preview surface. The ordinary control bar lives in the host renderer. */
@@ -59,8 +60,9 @@ export function createCuaControlWindow(options: {
     const width = Math.max(1, Math.min(preferredWidth, area.width - 32));
     const height = Math.max(1, Math.min(expanded ? preferredHeight : 42, area.height - 64));
     const maxX = Math.max(0, area.width - width - 16), maxY = Math.max(0, area.height - height - 16);
-    view!.setBounds({ x: Math.max(0, Math.min(position?.x ?? maxX, maxX)),
-      y: Math.max(Math.min(40, maxY), Math.min(position?.y ?? 48, maxY)), width, height });
+    const initialX = area.width - width - CUA_CONTROL_INITIAL_POSITION.right;
+    view!.setBounds({ x: Math.max(0, Math.min(position?.x ?? initialX, maxX)),
+      y: Math.max(Math.min(40, maxY), Math.min(position?.y ?? CUA_CONTROL_INITIAL_POSITION.top, maxY)), width, height });
     const show = visible();
     view!.setVisible(show);
     preview.select(show && expanded && options.authenticated() ? selected : null);

@@ -1,3 +1,6 @@
+/** Initial placement is inset from the conversation area's right edge and below its toolbar. */
+export const CUA_CONTROL_INITIAL_POSITION = { right: 24, top: 72 } as const;
+
 export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "toolTimeout", "stepLimit", "timeLimit",
   "repeatedAction", "connectionClosed", "daemonNotReady", "permissionsRequired", "policyNotActive", "helperStillRunning",
   "idleTimeout", "helperNotInstalled", "sessionEnded", "userStopped", "disabled", "cannotResume", "observationRequired", "gatewayFailed", "scopeBusy", "scopeViolation", "targetClosed", "scopeSaveFailed", "helperIdentityUnverified",

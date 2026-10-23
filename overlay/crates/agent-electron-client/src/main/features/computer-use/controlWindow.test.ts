@@ -111,7 +111,7 @@ describe("Computer Use control surface follows the main client window", () => {
   });
   it("starts small at the top-right, clamps dragging and remembers position without controlling tasks", async () => {
     const s = setup(); await flush(); s.dispose.showTask("task"); const v = mocks.views[0];
-    expect(v.bounds).toEqual({ x: 644, y: 48, width: 300, height: 220 });
+    expect(v.bounds).toEqual({ x: 636, y: 72, width: 300, height: 220 });
     const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
     const move = mocks.handlers.get("cua:control:move")!;
     expect(move(event, { x: Infinity, y: 0 })).toBeNull();

@@ -3,7 +3,7 @@ import { Button, Select, Space, Tag, message, theme } from "antd";
 import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
 import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
 
-import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
+import { CUA_CONTROL_INITIAL_POSITION, CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
 import styles from "./CuaControls.module.css";
 const REASONS = new Set(CUA_REASON_KEYS);
@@ -105,7 +105,7 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
   const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
   return <aside ref={panel} className={styles.card} data-phase={runtime.controlPending ? "pending" : runtime.phase}
     aria-label={t("Claw.Cua.title")} style={{
-      top: position?.y ?? 48, right: position ? undefined : 16, left: position?.x,
+      top: position?.y ?? CUA_CONTROL_INITIAL_POSITION.top, right: position ? undefined : CUA_CONTROL_INITIAL_POSITION.right, left: position?.x,
       "--cua-bg": token.colorBgElevated, "--cua-text": token.colorText, "--cua-muted": token.colorTextSecondary,
       "--cua-line": token.colorBorderSecondary, "--cua-accent": token.colorPrimary,
     } as React.CSSProperties}>
