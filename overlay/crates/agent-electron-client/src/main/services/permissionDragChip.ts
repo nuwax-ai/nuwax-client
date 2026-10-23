@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, screen } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import log from "electron-log";
@@ -81,6 +81,16 @@ async function appIcon(appPath: string): Promise<Electron.NativeImage | null> {
   const cached = iconCache.get(appPath);
   if (cached && !cached.isEmpty()) return cached;
   try {
+    // Both permission subjects use the shipped product icon. macOS can return
+    // a non-empty generic bundle icon from getFileIcon even after installation.
+    if (app.isPackaged) {
+      const shipped = nativeImage.createFromPath(path.join(app.getAppPath(), "public", "icon.png"));
+      if (!shipped.isEmpty()) {
+        const icon = shipped.resize({ width: 32, height: 32 });
+        iconCache.set(appPath, icon);
+        return icon;
+      }
+    }
     const icon = await app.getFileIcon(appPath, { size: "normal" });
     if (icon && !icon.isEmpty()) {
       iconCache.set(appPath, icon);

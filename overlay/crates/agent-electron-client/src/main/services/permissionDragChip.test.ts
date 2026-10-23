@@ -2,13 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   windows: [] as any[], handlers: new Map<string, (...args: any[]) => unknown>(),
   quit: undefined as (() => void) | undefined,
+  shippedEmpty: false,
+  packaged: true,
+  fileIcon: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => "generic-icon" })),
+  resize: vi.fn(() => ({ isEmpty: () => false, toDataURL: () => "product-icon" })),
+  imageFromPath: vi.fn(),
 }));
 vi.mock("electron", () => ({
   app: {
-    getFileIcon: async () => ({ isEmpty: () => false, toDataURL: () => "icon" }),
+    get isPackaged() { return mocks.packaged; },
+    getAppPath: () => "/Applications/Nuwax.app/Contents/Resources/app.asar",
+    getFileIcon: mocks.fileIcon,
     on: (_name: string, listener: () => void) => { mocks.quit = listener; },
     removeListener: vi.fn(),
   },
+  nativeImage: { createFromPath: (file: string) => {
+    mocks.imageFromPath(file);
+    return { isEmpty: () => mocks.shippedEmpty, resize: mocks.resize };
+  } },
   ipcMain: {
     handle: (name: string, fn: (...args: any[]) => unknown) => mocks.handlers.set(name, fn),
     removeHandler: (name: string) => mocks.handlers.delete(name),
@@ -18,7 +29,7 @@ vi.mock("electron", () => ({
     destroyed = false;
     visible = false;
     listeners = new Map<string, () => void>();
-    webContents = { mainFrame: { url: "" }, send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn() };
+    webContents = { mainFrame: { url: "" }, send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn(), startDrag: vi.fn() };
     loadResolve!: () => void;
     constructor(public options: unknown) { mocks.windows.push(this); }
     isDestroyed() { return this.destroyed; }
@@ -76,7 +87,11 @@ function ownerWindow() {
   };
 }
 describe("permission chip ownership", () => {
-  beforeEach(() => { mocks.windows.length = 0; mocks.handlers.clear(); mocks.quit = undefined; });
+  beforeEach(() => {
+    mocks.windows.length = 0; mocks.handlers.clear(); mocks.quit = undefined;
+    mocks.shippedEmpty = false; mocks.packaged = true;
+    mocks.fileIcon.mockClear(); mocks.resize.mockClear(); mocks.imageFromPath.mockClear();
+  });
   const identity = { key: "file_access" as const, appName: "Nuwax", appPath: "/Applications/Nuwax.app" };
   it("follows hide, minimize, restore and close without activating its owner", async () => {
     const owner = ownerWindow();
@@ -134,6 +149,29 @@ describe("permission chip ownership", () => {
     const chip = createPermissionDragChip({ t: key => key, getWindow: () => null });
     expect(chip.show(identity)).toBe(false);
     expect(mocks.windows).toHaveLength(0);
+    chip();
+  });
+  it.each([
+    { name: "packaged product", appPath: "/Applications/Nuwax-icon-test.app", packaged: true, empty: false, icon: "product-icon" },
+    { name: "missing shipped image", appPath: "/Applications/Missing-icon.app", packaged: true, empty: true, icon: "generic-icon" },
+    { name: "development Electron identity", appPath: "/Development/Electron.app", packaged: false, empty: false, icon: "generic-icon" },
+  ])("uses the correct 32px native drag image for $name", async ({ appPath, packaged, empty, icon }) => {
+    mocks.packaged = packaged; mocks.shippedEmpty = empty;
+    const owner = ownerWindow();
+    const chip = createPermissionDragChip({ t: key => key, getWindow: () => owner as any });
+    chip.show({ ...identity, appPath });
+    const window = mocks.windows[0];
+    window.loadResolve();
+    await Promise.resolve();
+    const result = await mocks.handlers.get("permissions:onboarding:dragChip:start")!({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
+    expect(result).toBe(true);
+    expect(window.webContents.startDrag).toHaveBeenCalledWith({ file: appPath, icon: expect.anything() });
+    expect(window.webContents.startDrag.mock.calls[0][0].icon.toDataURL()).toBe(icon);
+    if (icon === "product-icon") {
+      expect(mocks.imageFromPath).toHaveBeenCalledWith("/Applications/Nuwax.app/Contents/Resources/app.asar/public/icon.png");
+      expect(mocks.resize).toHaveBeenCalledWith({ width: 32, height: 32 });
+      expect(mocks.fileIcon).not.toHaveBeenCalled();
+    } else expect(mocks.fileIcon).toHaveBeenCalledWith(appPath, { size: "normal" });
     chip();
   });
 });
