@@ -125,6 +125,7 @@ function senderEvent(origin: string) {
 function fakeWin(destroyed = false) {
   return {
     isDestroyed: vi.fn(() => destroyed),
+    isResizable: vi.fn(() => true),
     setMinimumSize: vi.fn(),
   };
 }
@@ -187,6 +188,12 @@ describe("主窗口最小尺寸（browser-window-created 补设）", () => {
       applyMainWindowMinSize(destroyed as never),
     ).not.toThrow();
     expect(destroyed.setMinimumSize).not.toHaveBeenCalled();
+  });
+  it("权限引导等固定大小的工具窗口不继承业务窗口的尺寸下限", async () => {
+    const fixed = fakeWin(); fixed.isResizable.mockReturnValue(false);
+    getCreatedListener()("event" as never, fixed);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(fixed.setMinimumSize).not.toHaveBeenCalled();
   });
 
   it("常量与定义口径一致（1200×720，>768 移动端断点）", () => {
