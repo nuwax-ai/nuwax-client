@@ -27,6 +27,12 @@ import styles from "../../styles/components/SessionsPage.module.css";
  */
 const NEW_SESSION_ENTRY_VISIBLE = false;
 
+/**
+ * 「打开会话」入口可见性开关：
+ * 客户端会话列表项中的「打开」按钮因目标页面状态与上下文展示问题予以隐藏，保留停止会话等管理能力。
+ */
+const OPEN_SESSION_ENTRY_VISIBLE = false;
+
 interface SessionsPageProps {
   /** 在浏览器模式中打开指定目标 */
   onOpenInBrowser?: (target: BrowserTarget) => void;
@@ -208,13 +214,15 @@ function SessionsPage({ onOpenInBrowser }: SessionsPageProps) {
                     </div>
                   </div>
                   <div className={styles.sessionActions}>
-                    <Button
-                      size="small"
-                      icon={<PlayCircleOutlined />}
-                      onClick={() => handleOpenSession(session.projectId || "")}
-                    >
-                      {t("Claw.Sessions.open")}
-                    </Button>
+                    {OPEN_SESSION_ENTRY_VISIBLE && (
+                      <Button
+                        size="small"
+                        icon={<PlayCircleOutlined />}
+                        onClick={() => handleOpenSession(session.projectId || "")}
+                      >
+                        {t("Claw.Sessions.open")}
+                      </Button>
+                    )}
                     <Button
                       size="small"
                       danger

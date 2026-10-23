@@ -32,10 +32,28 @@ export class AutoLaunchManager {
   async initializeDefault(): Promise<void> {
     if (!app.isPackaged) return;
     try {
-      if (typeof readSetting(PREFERENCE_KEY) === "boolean") return;
+      const savedPreference = readSetting(PREFERENCE_KEY);
+      if (typeof savedPreference === "boolean") {
+        // macOS 迁移修正：如果系统自启动已开启，但之前被错误写入了 openAsHidden: true，重写为 openAsHidden: false
+        if (process.platform === "darwin" && savedPreference) {
+          const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
+          if (settings.openAtLogin && (settings as any).openAsHidden) {
+            log.info("[AutoLaunchManager] Migrating macOS login item to openAsHidden: false");
+            await this.setEnabled(true);
+          }
+        }
+        return;
+      }
       // 已有自启动项只记下初始化结果，不重复修改系统设置。
       if (await this.readSystemEnabled()) {
         writeSetting(PREFERENCE_KEY, true);
+        if (process.platform === "darwin") {
+          const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
+          if ((settings as any).openAsHidden) {
+            log.info("[AutoLaunchManager] Migrating macOS login item to openAsHidden: false");
+            await this.setEnabled(true);
+          }
+        }
         return;
       }
       await this.setEnabled(true);
@@ -90,7 +108,7 @@ export class AutoLaunchManager {
       } else {
         app.setLoginItemSettings({
           openAtLogin: enabled,
-          openAsHidden: true,
+          openAsHidden: false,
           args: this.loginItemArgs,
           ...(process.platform === "win32" ? { enabled } : {}),
         });

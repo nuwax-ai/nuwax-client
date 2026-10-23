@@ -73,6 +73,7 @@ describe("开机自启动默认值与用户选择", () => {
     expect(app.setLoginItemSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         openAtLogin: true,
+        openAsHidden: false,
         enabled: true,
         args: ["--hidden"],
       }),
@@ -173,6 +174,25 @@ describe("开机自启动默认值与用户选择", () => {
     expect(state.preference).toBe(true);
     expect(await manager.setEnabled(false)).toBe(true);
     expect(state.preference).toBe(false);
+  });
+
+  it("macOS 检测到历史遗留 openAsHidden 为 true 时自动迁移为 false", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    state.preference = true;
+    state.registered = true;
+    vi.mocked(app.getLoginItemSettings).mockReturnValue({
+      openAtLogin: true,
+      openAsHidden: true,
+    } as any);
+    const manager = new AutoLaunchManager();
+    await manager.initializeDefault();
+    expect(app.setLoginItemSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openAtLogin: true,
+        openAsHidden: false,
+        args: ["--hidden"],
+      }),
+    );
   });
 
   it("Linux AppImage 注册持久包路径，开启/关闭都保存选择", async () => {
