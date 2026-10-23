@@ -1690,6 +1690,12 @@
     "noAdditionalCuaCodeDrift": true,
     "supersededPresentation": "User requested main-window-contained controls; external badge registration and independent control window replaced, source preserved",
     "upstreamVersion": "0.38.0",
-    "upstreamCommit": "85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19"
+    "upstreamCommit": "85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19",
+    "finalRecheck20261023": {
+      "artifact": "/Users/apple/Documents/Codex/2026-10-22/computer-use-consolidation-01a162b4/final-worktree-audit-20261023.json",
+      "worktreeHeadsUnchanged": true,
+      "snapshotSourceFilesChecked": 138,
+      "additionalCuaCodeDrift": false
+    }
   }
 }

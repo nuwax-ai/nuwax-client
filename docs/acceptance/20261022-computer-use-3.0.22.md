@@ -6,6 +6,8 @@
 
 盘点 53 个来源 worktree，逐文件核对已提交历史和未提交实现，另建整合 worktree。来源代码、暂存区和用户 WIP 未覆盖。两条已结束 Claude 会话 `b373cfa2-a92a-4b2a-91cd-6b85633bb222`、`e7157a29-0021-42e7-b9eb-535d9fe3c8e1` 的实现保全于快照 `286916f31664dd8d68c89cb4584c4c964af59f7b`、分支 `chore/cua-source-snapshot-20261022` 和仓外 bundle。原监控定时已删除。
 
+10 月 23 日收尾复查 53 个工作区 HEAD 均未再变；138 个相关来源文件与保全快照逐字节核对，仅有已知历史文档变化，无新增 CUA 代码遗漏。证据 `final-worktree-audit-20261023.json`。
+
 逐来源处置见 [清单](20261022-computer-use-3.0.22-sources.json)。最终 r4 审计再次核对来源字节，CUA 源码无后续遗漏；只有多窗口历史验收文档新增，原样保留，不冒充当前验收。`6d0082c7` 已是集成基线祖先；原发布工作区后来新增的 `a092b5b6` 只隐藏 SessionsPage 按钮，在本次范围外，仍保留原处。
 
 | 来源 | 内容及本候选落点 | 结论 |
@@ -62,9 +64,11 @@
 | 操作判定 | 3 步，0 拒绝/不确定/越权；后台 value_readback | 3 步，0 拒绝/不确定/越权；写入当下 effect=unverifiable，后续真实观察确认 2 行预期变化，不能只据写入返回判断成功 |
 | 提示归属 | 真 hide/close-to-tray/show/minimize/restore 均同步，只有主窗口内视图 | 同样全部通过；只有 1 个 BrowserWindow，子视图在主窗口边界内 |
 | 接管/停止 | 实际预览按钮，前台切到验收 TextEdit；userTakingControl → userStopped | 实际预览按钮，交互桌面 GetForegroundWindow=60293810，与验收 Notepad 相同；userTakingControl → userStopped |
-| 活动任务退出 | helper SIGSTOP，暂停任务仍存在时正常退出：主进程 2.262s、helper 1.617s、全部 26 个相关进程 7.057s 内结束；重启旧 socket 安全恢复 | 存在 paused 任务 (userTakingControl) 与 2 个 helper 进程时退出更新：旧主进程 29.774s、helper 20.324s~21.153s、全部 28 个关联进程 29.774s 内全部退出，无残留进程；update-r4-result.json |
-| 更新交接 | loopback 源真实下载、签名校验、Squirrel 替换与重启；旧主进程/helper/12 个相关进程全部结束，最终 ASAR 一致；随后普通退出 0.329s | loopback 源真实下载安装，NSIS 静默交接与重启；全部 28 个旧进程退出，新进程 PID 25668 成功以 --updated 启动，ASAR SHA256 (a3b9babb...) 与构建产物完全一致 |
-| 默认 OFF 收尾 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；最终显式关闭，原 Beta 订阅已恢复 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；设置页 UI 明确显示“● 已关闭”，截图 win-r4-settings-default-off.png，单次计划任务 Nuwax-CUA-Acceptance-20261022 已注销 |
+| 活动任务退出 | helper SIGSTOP，暂停任务仍存在时正常退出：主进程 2.262s、helper 1.617s、全部 26 个相关进程 7.057s 内结束；重启旧 socket 安全恢复 | 存在 paused 任务 (userTakingControl) 与 2 个 helper 进程时退出更新：从监测启动计（含下载/交接），旧主进程及全部 28 个相关进程 29.774s 内退出、helper 20.324s~21.153s，无残留；这不是纯退出耗时。补做关闭状态正常 app.quit：监测后 3.962s 主进程退出、4.100s 全部 10 个相关进程结束（含派发延迟） |
+| 更新交接 | loopback 源真实下载、签名校验、Squirrel 替换与重启；旧主进程/helper/12 个相关进程全部结束，最终 ASAR 一致；随后普通退出 0.329s | loopback 源真实下载安装，NSIS 自动交接与重启（过程中显示正在安装页面）；全部 28 个旧进程退出，4 分钟监测超时后，另行 WMI 观察到新进程 PID 25668 在 session 2 以 --updated 启动；原监测记录 newMainPid=null 保留，后续启动另有补充证据。安装完成后，ASAR SHA256 (a3b9babb...) 与构建产物完全一致 |
+| 默认 OFF 收尾 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；最终显式关闭，原 Beta 订阅已恢复 | 移除开关真实重启：enabled/running/mcpInjected=false，helper=0，子视图=0；设置页 UI 明确显示“● 已关闭”，截图 win-r4-settings-default-off.png，原 Beta 订阅及缺失的多窗口/scope 偏好已恢复，最终显式关闭；两个单次验收派发任务均已注销 |
+
+10 月 23 日收尾再次真实移除 Windows 开关、重启最终安装包：缺少开关且 enabled/running/mcpInjected=false，helper=0、子视图=0。原订阅 beta 已恢复，账户/模型设置未改；最终持久化 false 并正常退出。此时商业登录门禁拒绝重新启用 CUA，未绕过登录；启用状态与活动任务证据来自前一晚真实会话。证据为 `final-default-off-{preflight,proof}-r4.json`、`final-preferences-r4.json`、`normal-quit-r4.json`。
 
 Windows 首轮模型声称 CUA 未加载；实际 ACP 配置、relay 进程和工具发现均存在。让模型实际调用 `mcp__cua__get_window_state` 后正常触发选窗并完成任务，没有改模型配置或绕过工具。相关 nuwax-openui/ask-question 的连接失败仍是独立问题，不将其隐藏，也不阻断本次 CUA 三步验收。
 
