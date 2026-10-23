@@ -1005,7 +1005,7 @@
   "Claw.Settings.systemAuthorization.label": "客户端授权",
   "Claw.Settings.systemAuthorization.desc": "屏幕录制（截图与录屏）、全磁盘访问等客户端权限，统一在「授权」页查看和开启",
   "Claw.Settings.systemAuthorization.open": "前往授权",
-  "Claw.Settings.computerUse.title": "Computer Use",
+  "Claw.Settings.computerUse.title": "Computer Use Preview",
   "Claw.Settings.computerUse.enable": "Computer Use",
   "Claw.Settings.computerUse.desc": "允许 Agent 在本机查看屏幕并代你操作鼠标键盘（独立助手应用，授权仅影响它自身）",
   "Claw.Settings.computerUse.consentTitle": "开启 Computer Use",

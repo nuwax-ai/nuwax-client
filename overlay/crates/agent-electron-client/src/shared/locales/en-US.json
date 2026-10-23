@@ -1005,7 +1005,7 @@
   "Claw.Settings.systemAuthorization.label": "Client permissions",
   "Claw.Settings.systemAuthorization.desc": "Screen Recording (screenshots and recordings), Full Disk Access and other client permissions are checked and granted on the Authorization page",
   "Claw.Settings.systemAuthorization.open": "Open Authorization",
-  "Claw.Settings.computerUse.title": "Computer Use",
+  "Claw.Settings.computerUse.title": "Computer Use Preview",
   "Claw.Settings.computerUse.enable": "Computer Use",
   "Claw.Settings.computerUse.desc": "Allow the agent to view the screen and control mouse & keyboard (separate helper app; grants apply to it only)",
   "Claw.Settings.computerUse.consentTitle": "Enable Computer Use",
