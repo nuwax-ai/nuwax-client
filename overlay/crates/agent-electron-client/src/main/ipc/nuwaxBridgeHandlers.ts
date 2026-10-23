@@ -164,10 +164,11 @@ export const NUWAX_MAIN_WINDOW_MIN_HEIGHT = 720;
  * 弹窗、session 独立窗口均一并抬升——Electron 40 已移除 getLastWebPreferences，
  * 事件期读不到 webPreferences 无法按窗口分类，且弹窗承载同一前端同受 768 断点
  * 约束；session 窗基座 600×400 下限被有意覆盖，同屏一致性优先）。
+ * 固定大小的权限卡片、控制条等工具窗口不承载前端，不套用此下限。
  */
 export function applyMainWindowMinSize(win: BrowserWindow): void {
   try {
-    if (win.isDestroyed()) return;
+    if (win.isDestroyed() || !win.isResizable()) return;
     win.setMinimumSize(
       NUWAX_MAIN_WINDOW_MIN_WIDTH,
       NUWAX_MAIN_WINDOW_MIN_HEIGHT,

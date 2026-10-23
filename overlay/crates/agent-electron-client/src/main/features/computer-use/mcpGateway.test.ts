@@ -352,6 +352,8 @@ describe("CUA session-granted transport", () => {
     expect((await reconnect.request("tools/call", params)).result.structuredContent.code).toBe("taskStopped");
   });
   it("reclaims transport children and connections across repeated completion/reconnect cycles", async () => {
+    // Thirty reconnects start sixty real Node children. Give process startup its
+    // own stress-test budget; individual tool deadlines remain tested above.
     const f = await fixture(3000, () => "owner");
     for (let i = 0; i < 30; i++) {
       const peer = await f.client();
@@ -361,5 +363,5 @@ describe("CUA session-granted transport", () => {
     }
     await f.gateway.close(); expect(f.gateway.ready).toBe(false);
     expect(f.controller.snapshot().phase).toBe("completed");
-  });
+  }, 60000);
 });

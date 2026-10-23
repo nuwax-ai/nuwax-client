@@ -21,7 +21,7 @@ function buildMacNotificationPermission(root, platform = process.platform) {
       execFileSync('/usr/bin/xcrun', ['--sdk', 'macosx', 'clang++', '-isysroot', sdk, '-arch', arch, '-mmacosx-version-min=12.0',
         '-std=c++17', '-fobjc-arc', '-fblocks', '-DNAPI_VERSION=8', '-O2',
         '-bundle', '-undefined', 'dynamic_lookup', '-I', headers,
-        '-framework', 'Foundation', '-framework', 'UserNotifications', source, '-o', slice], { stdio: 'inherit' });
+        '-framework', 'Foundation', '-framework', 'UserNotifications', '-framework', 'AppKit', '-framework', 'CoreGraphics', source, '-o', slice], { stdio: 'inherit' });
       return slice;
     });
     const universal = path.join(temp, 'universal.node');

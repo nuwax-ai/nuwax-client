@@ -9,6 +9,7 @@ import {
 } from "./fullDiskAccess";
 import { checkMacNotificationPermission } from "./system/macNotificationPermission";
 import { openMacPrivacySettings } from "./system/macPermissions";
+import { APP_DISPLAY_NAME } from "@shared/constants";
 import {
   PermissionRestartTracker,
   isDragAddPermissionKey,
@@ -61,7 +62,7 @@ export function openPermissionGuide(
 function appIdentity() {
   const exe = app.getPath("exe");
   return {
-    appName: path.basename(exe),
+    appName: app.isPackaged ? APP_DISPLAY_NAME : path.basename(exe),
     appPath: exe.match(/^.*?\.app(?=\/|$)/)?.[0] ?? exe,
   };
 }

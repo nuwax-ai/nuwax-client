@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   fileIcon: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => "generic-icon" })),
   resize: vi.fn(() => ({ isEmpty: () => false, toDataURL: () => "product-icon" })),
   imageFromPath: vi.fn(),
+  settingsBounds: { x: 100, y: 80, width: 900, height: 680 } as { x: number; y: number; width: number; height: number } | null,
+}));
+vi.mock("./system/macSystemSettingsWindow", async (original) => ({
+  ...await original<typeof import("./system/macSystemSettingsWindow")>(),
+  readSystemSettingsWindow: () => mocks.settingsBounds,
 }));
 vi.mock("electron", () => ({
   app: {
@@ -24,15 +29,19 @@ vi.mock("electron", () => ({
     handle: (name: string, fn: (...args: any[]) => unknown) => mocks.handlers.set(name, fn),
     removeHandler: (name: string) => mocks.handlers.delete(name),
   },
-  screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }), getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } }) },
+  screen: { getCursorScreenPoint: () => ({ x: 0, y: 0 }), getDisplayNearestPoint: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } }), getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } }) },
   BrowserWindow: class {
     destroyed = false;
     visible = false;
+    bounds = { x: 0, y: 0, width: 384, height: 188 };
     listeners = new Map<string, () => void>();
     webContents = { mainFrame: { url: "" }, send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn(), startDrag: vi.fn() };
     loadResolve!: () => void;
     constructor(public options: unknown) { mocks.windows.push(this); }
     isDestroyed() { return this.destroyed; }
+    isVisible() { return this.visible; }
+    getBounds() { return this.bounds; }
+    setPosition(x: number, y: number) { this.bounds.x = x; this.bounds.y = y; }
     destroy() { this.destroyed = true; this.visible = false; }
     hide() { this.visible = false; }
     showInactive() { this.visible = true; }
@@ -70,6 +79,7 @@ describe("permission drag chip window html", () => {
     expect(html).toContain("api.drag()");
     expect(html).toContain("api.close()");
     expect(html).toContain("dragChipManual");
+    expect(html).toContain('id="name"');
   });
 });
 
@@ -90,6 +100,7 @@ describe("permission chip ownership", () => {
   beforeEach(() => {
     mocks.windows.length = 0; mocks.handlers.clear(); mocks.quit = undefined;
     mocks.shippedEmpty = false; mocks.packaged = true;
+    mocks.settingsBounds = { x: 100, y: 80, width: 900, height: 680 };
     mocks.fileIcon.mockClear(); mocks.resize.mockClear(); mocks.imageFromPath.mockClear();
   });
   const identity = { key: "file_access" as const, appName: "Nuwax", appPath: "/Applications/Nuwax.app" };
@@ -150,6 +161,30 @@ describe("permission chip ownership", () => {
     expect(chip.show(identity)).toBe(false);
     expect(mocks.windows).toHaveLength(0);
     chip();
+  });
+  it("tracks System Settings movement and visibility, and stops following when closed", async () => {
+    vi.useFakeTimers();
+    const owner = ownerWindow();
+    const chip = createPermissionDragChip({ t: key => key, getWindow: () => owner as any });
+    try {
+      chip.show(identity);
+      const window = mocks.windows[0];
+      window.loadResolve(); await Promise.resolve();
+      expect(window.getBounds()).toMatchObject({ x: 600, y: 556 });
+      mocks.settingsBounds = { x: 200, y: 100, width: 900, height: 680 };
+      await vi.advanceTimersByTimeAsync(500);
+      expect(window.getBounds()).toMatchObject({ x: 700, y: 576 });
+      mocks.settingsBounds = null;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(window.visible).toBe(false);
+      mocks.settingsBounds = { x: 100, y: 80, width: 900, height: 680 };
+      await vi.advanceTimersByTimeAsync(500);
+      expect(window.visible).toBe(true);
+      chip.hide();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(window.visible).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { chip(); vi.useRealTimers(); }
   });
   it.each([
     { name: "packaged product", appPath: "/Applications/Nuwax-icon-test.app", packaged: true, empty: false, icon: "product-icon" },

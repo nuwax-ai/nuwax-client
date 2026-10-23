@@ -1,6 +1,8 @@
 // 在 Electron 主进程中查询当前应用的通知授权；只读，不申请授权或替换 delegate。
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
+#import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include <node_api.h>
 
 struct Query {
@@ -78,10 +80,41 @@ static napi_value ReadSettings(napi_env env, napi_callback_info info) {
   return promise;
 }
 
+// Only inspect the public geometry of System Settings. This never requests
+// Accessibility, Screen Recording, Automation, or another app's window titles.
+static napi_value SystemSettingsWindow(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_get_null(env, &result);
+  @autoreleasepool {
+    NSArray<NSRunningApplication *> *apps = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.systempreferences"];
+    if (apps.count == 0) return result;
+    pid_t pid = apps.firstObject.processIdentifier;
+    NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
+    for (NSDictionary *window in windows) {
+      if ([window[(id)kCGWindowOwnerPID] intValue] != pid || [window[(id)kCGWindowLayer] intValue] != 0 || [window[(id)kCGWindowAlpha] doubleValue] <= 0) continue;
+      CGRect bounds;
+      if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(id)kCGWindowBounds], &bounds) || bounds.size.width < 300 || bounds.size.height < 300) continue;
+      napi_create_object(env, &result);
+      const char *keys[] = {"x", "y", "width", "height"};
+      const double values[] = {bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height};
+      for (int i = 0; i < 4; ++i) {
+        napi_value number;
+        napi_create_double(env, values[i], &number);
+        napi_set_named_property(env, result, keys[i], number);
+      }
+      break;
+    }
+  }
+  return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
   napi_value readSettings;
   napi_create_function(env, "readSettings", NAPI_AUTO_LENGTH, ReadSettings, nullptr, &readSettings);
   napi_set_named_property(env, exports, "readSettings", readSettings);
+  napi_value systemSettingsWindow;
+  napi_create_function(env, "systemSettingsWindow", NAPI_AUTO_LENGTH, SystemSettingsWindow, nullptr, &systemSettingsWindow);
+  napi_set_named_property(env, exports, "systemSettingsWindow", systemSettingsWindow);
   return exports;
 }
 

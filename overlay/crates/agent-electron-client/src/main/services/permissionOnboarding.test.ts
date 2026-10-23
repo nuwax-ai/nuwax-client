@@ -12,10 +12,13 @@ const mock = vi.hoisted(() => ({
   relaunch: vi.fn(),
   quit: vi.fn(),
   showItemInFolder: vi.fn(),
+  packaged: false,
+  exePath: "/Applications/Electron.app/Contents/MacOS/Electron",
 }));
 vi.mock("electron", () => ({
   app: {
-    getPath: () => "/Applications/Electron.app/Contents/MacOS/Electron",
+    getPath: () => mock.exePath,
+    get isPackaged() { return mock.packaged; },
     relaunch: mock.relaunch,
     quit: mock.quit,
     on: vi.fn(),
@@ -28,6 +31,7 @@ vi.mock("electron", () => ({
   },
 }));
 vi.mock("electron-log", () => ({ default: { warn: vi.fn() } }));
+vi.mock("@shared/constants", () => ({ APP_DISPLAY_NAME: "女娲Nuwax" }));
 vi.mock("../db", () => ({ readSetting: mock.read, writeSetting: mock.write }));
 vi.mock("./fullDiskAccess", () => ({
   probeFullDiskAccess: mock.fda,
@@ -44,6 +48,8 @@ let service: typeof import("./permissionOnboarding");
 beforeEach(async () => {
   vi.resetAllMocks();
   vi.resetModules();
+  mock.packaged = false;
+  mock.exePath = "/Applications/Electron.app/Contents/MacOS/Electron";
   Object.defineProperty(process, "platform", {
     value: "darwin",
     configurable: true,
@@ -245,6 +251,13 @@ describe("permission onboarding snapshot", () => {
       appPath: "/Applications/Nuwax Computer Use.app",
     });
     withPath();
+  });
+  it("uses the packaged product display name without changing the dragged bundle", () => {
+    mock.packaged = true;
+    mock.exePath = "/Applications/Nuwax.app/Contents/MacOS/Nuwax";
+    expect(service.getPermissionDragIdentity("file_access")).toEqual({
+      key: "file_access", appName: "女娲Nuwax", appPath: "/Applications/Nuwax.app",
+    });
   });
   it("rejects drag chip requests without a resolvable identity", async () => {
     expect(await service.showPermissionDragChip("screen_recording")).toBe(false);
