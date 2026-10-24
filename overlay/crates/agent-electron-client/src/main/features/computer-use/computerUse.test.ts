@@ -250,6 +250,8 @@ const installCuaHelper = (...args: Parameters<CuaModule["installCuaHelper"]>) =>
   cuaModule.installCuaHelper(...args);
 const setCuaEnabled = (...args: Parameters<CuaModule["setCuaEnabled"]>) =>
   cuaModule.setCuaEnabled(...args);
+const setCuaAgentCursorEnabled = (...args: Parameters<CuaModule["setCuaAgentCursorEnabled"]>) =>
+  cuaModule.setCuaAgentCursorEnabled(...args);
 const syncCuaMcpConfig = (...args: Parameters<CuaModule["syncCuaMcpConfig"]>) =>
   cuaModule.syncCuaMcpConfig(...args);
 
@@ -457,6 +459,17 @@ describe("cua 开关与启动收敛", () => {
     expect(mocks.spawnCalls).toEqual([]);
     expect(mocks.execCalls).toEqual([]);
     expect((await getCuaStatus()).enabled).toBe(false);
+  });
+
+  it("agent cursor defaults on and can be turned off", async () => {
+    expect((await getCuaStatus()).agentCursor).toBe(true);
+    const off = await setCuaAgentCursorEnabled(false);
+    expect(off.success).toBe(true);
+    expect(off.status.agentCursor).toBe(false);
+    expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseAgentCursor).toBe(false);
+    expect((await getCuaStatus()).agentCursor).toBe(false);
+    const on = await setCuaAgentCursorEnabled(true);
+    expect(on.status.agentCursor).toBe(true);
   });
 
   it("setCuaEnabled(false)→持久化关闭+移除条目+协议停机", async () => {

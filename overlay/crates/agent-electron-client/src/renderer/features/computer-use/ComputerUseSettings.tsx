@@ -255,6 +255,22 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           />
         }
       />
+      <Row
+        label={t("Claw.Settings.computerUse.agentCursor")}
+        desc={t("Claw.Settings.computerUse.agentCursorDesc")}
+        control={
+          <Switch
+            checked={cuaStatus?.agentCursor !== false}
+            disabled={!api?.setAgentCursor}
+            onChange={(checked) => {
+              void api?.setAgentCursor?.(checked).then((r) => {
+                if (r?.status) setCuaStatus(r.status);
+                else if (r?.success === false) message.error(cuaErrorText(t, r.error));
+              }).catch(() => message.error(t("Claw.Settings.computerUse.errors.generic")));
+            }}
+          />
+        }
+      />
       {!cuaStatus?.installed && cuaStatus?.installable && (
         <Row
           label={t("Claw.Settings.computerUse.install")}

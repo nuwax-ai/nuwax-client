@@ -113,6 +113,8 @@ export const computerUseFeature: DesktopFeature = {
       if (enabled === true && !ctx.session.isAuthenticated()) return { success: false, error: "untrusted sender" };
       return cua.setCuaEnabled(enabled === true);
     }, { success: false, error: "untrusted sender" });
+    ctx.hostIpc.handle("cua:setAgentCursor", async (event: IpcMainInvokeEvent, enabled: boolean) =>
+      cua.setCuaAgentCursorEnabled(enabled === true), { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:requestPermissions", () => cua.requestCuaPermissions(), null);
     ctx.hostIpc.handle("cua:installHelper", () => cua.installCuaHelper(), { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:getVlmConfig", () => cua.getVlmConfig(), null);

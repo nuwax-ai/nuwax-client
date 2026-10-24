@@ -86,6 +86,8 @@ export interface ComputerUseStatus {
   consentPending?: boolean;
   /** `cua` MCP 条目已写入 mcp_local_config（功能闭环就绪标志）。 */
   mcpInjected?: boolean;
+  /** 模拟光标 overlay；缺省开。与 Background 投递独立。 */
+  agentCursor?: boolean;
   socketPath?: string;
   helperPath?: string | null;
   accessibility?: boolean | null;
@@ -129,6 +131,11 @@ export interface ComputerUseAPI {
   setEnabled: (
     enabled: boolean,
   ) => Promise<{
+    success: boolean;
+    error?: string;
+    status?: ComputerUseStatus;
+  }>;
+  setAgentCursor: (enabled: boolean) => Promise<{
     success: boolean;
     error?: string;
     status?: ComputerUseStatus;

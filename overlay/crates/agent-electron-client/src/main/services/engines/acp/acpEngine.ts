@@ -1,4 +1,5 @@
 import { createDesktopAgentSessions, type AgentTurn } from "../../../features";
+import { applyCuaCapabilityNotice } from "../../../features/computer-use/cuaSessionNotice";
 /**
  * AcpEngine — ACP protocol handler for claude-code & nuwaxcode.
  *
@@ -217,6 +218,8 @@ interface AcpSession extends SessionWorkspaceRef {
   acpCurrentModeId?: AcpMode;
   /** 上次与 ACP Agent 对齐的 model（仅运行时跟踪，不做持久化） */
   acpCurrentModelId?: string | null;
+  /** 已消费的同会话 CU 开关短指令代次。 */
+  cuaNoticeRevision?: number;
 }
 
 // Session counter removed — ACP protocol UUID is used as canonical session.id
@@ -1491,6 +1494,11 @@ export class AcpEngine extends EventEmitter {
     }
 
     if (promptContent.length === 0) throw new Error("Empty prompt");
+    const cuaNotice = applyCuaCapabilityNotice(promptContent, session.cuaNoticeRevision ?? 0);
+    session.cuaNoticeRevision = cuaNotice.revision;
+    if (cuaNotice.parts !== promptContent) {
+      promptContent.splice(0, promptContent.length, ...cuaNotice.parts);
+    }
 
     let agentTurn: AgentTurn = { active: false, turns: new Map() };
     let cuaFailed = false;

@@ -1008,6 +1008,8 @@
   "Claw.Settings.computerUse.title": "Computer Use Preview",
   "Claw.Settings.computerUse.enable": "Computer Use",
   "Claw.Settings.computerUse.desc": "允许 Agent 在本机查看屏幕并代你操作鼠标键盘（独立助手应用，授权仅影响它自身）",
+  "Claw.Settings.computerUse.agentCursor": "Agent 光标",
+  "Claw.Settings.computerUse.agentCursorDesc": "桌面任务默认显示模拟光标轨迹，方便你看到 Agent 点到哪里。关闭后不再自动打开；不影响 Background 投递（不会移动你的真实指针）。",
   "Claw.Settings.computerUse.consentTitle": "开启 Computer Use",
   "Claw.Settings.computerUse.consentDescription": "本次授权允许 Agent 查看屏幕并操作本机应用和浏览器，包括输入、剪贴板、启动或关闭应用及录制。开启后不会逐次询问；你可以随时关闭。macOS 还会要求为「Nuwax Computer Use」授予辅助功能和屏幕录制权限。版本更新和 FFmpeg 安装工具不会提供给 Agent。",
   "Claw.Settings.computerUse.consentAccept": "同意并开启",
