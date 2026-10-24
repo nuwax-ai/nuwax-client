@@ -26,12 +26,12 @@ export function taskCuaCall(scope: CuaScope, mode: CuaExecutionMode, tool: strin
 }
 
 export const CUA_TASK_GUIDANCE = [
-  "[Nuwax window task] The host binds this session to one user-selected application window.",
+  "[Nuwax window task] The host binds this session to one host-validated application window chosen by this agent.",
   "Operate only that window. Every write needs a fresh get_window_state observation.",
   "Prefer the exact snapshot_id together with element_index from the latest observation. Use element_token only if that complete token was explicitly returned; never construct one. A bare index is invalid. Never guess snapshot IDs; a new observation invalidates old references.",
   "In background mode prefer click on an exact element and set_value for editable controls. Generic keyboard, pixel and drag input require the user's explicit foreground switch.",
   "Background delivery is enforced by both the host and helper. Never request foreground delivery, global input, clipboard access, browser tools or another window.",
-  "If the target is missing, ask the user to select it in the Computer Use task panel.",
-  "If background input is unavailable, stop and ask the user to switch this task to foreground in the panel. You cannot authorize that switch.",
+  "If the target is missing, call list_windows, then get_window_state with the chosen pid and window_id. The host validates and binds that window. Never guess IDs or switch another live task target.",
+  "If background input is unavailable, stop and explain that the user must take over this step. Never request a hidden mode control or authorize foreground input yourself.",
   "Never replay an uncertain action. After the user resumes, observe and check its result first.",
 ].join("\n");

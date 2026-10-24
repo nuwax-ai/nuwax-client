@@ -131,7 +131,7 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
         onClick={() => void run(() => paused ? api.resume() : api.pause())}>{t(paused ? "Claw.Cua.preview.resume" : "Claw.Cua.preview.pause")}</Button>}
       <Button danger className={styles.stop} icon={<ControlIcon name="stop" />} onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
       {runtime.reason === "confirmationRequired" && api.confirmSensitive && <Button size="small"
-        onClick={() => void run(async () => { await api.confirmSensitive!(true); return api.resume(); })}>{t("Claw.Cua.confirmAllow")}</Button>}
+        onClick={() => void run(async () => { const allowed = await api.confirmSensitive!(true); return allowed.success ? api.resume() : { success: false, error: "operationCancelled" }; })}>{t("Claw.Cua.confirmAllow")}</Button>}
       {api.setEnabled && <Button size="small" onClick={() => void run(() => api.setEnabled!(false))}>{t("Claw.Settings.computerUse.enableOff")}</Button>}
     </div>
   </aside>;

@@ -47,6 +47,11 @@ export function CuaTaskPanel({ api, runtime, t, accept }: {
           {!terminal && <Button size="small" disabled={task.controlPending || busy === task.taskId}
             onClick={() => void run(task.taskId, () => api.takeOverTask(task.taskId))}>{t("Claw.Cua.preview.takeover")}</Button>}
           {task.phase === "running" && <Button size="small" onClick={() => void run(task.taskId, () => api.pauseTask(task.taskId))}>{t("Claw.Cua.pause")}</Button>}
+          {task.reason === "confirmationRequired" && api.confirmSensitive && <Button size="small"
+            disabled={task.controlPending || busy === task.taskId} onClick={() => void run(task.taskId, async () => {
+              const allowed = await api.confirmSensitive(true, task.taskId);
+              return allowed.success ? api.resumeTask(task.taskId) : { success: false, error: "operationCancelled", runtime };
+            })}>{t("Claw.Cua.confirmAllow")}</Button>}
           {task.phase === "paused" && <Button size="small" disabled={task.controlPending || busy === task.taskId}
             onClick={() => void run(task.taskId, () => api.resumeTask(task.taskId))}>{t("Claw.Cua.resume")}</Button>}
           {!terminal && <Button size="small" danger onClick={() => void run(task.taskId, () => api.stopTask(task.taskId))}>{t("Claw.Cua.stop")}</Button>}

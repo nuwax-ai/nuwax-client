@@ -88,9 +88,9 @@ describe("permission guide contract", () => {
       expect(pack["Claw.PermissionGuide.helperDisabled"]).toContain("Nuwax Computer Use");
       expect(pack["Claw.Settings.computerUse.nextGrant"]).toContain("Nuwax Computer Use");
     }
-    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/not uploaded|are not uploaded/i);
+    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/sent to your selected model service/i);
     expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/turn it off/i);
-    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/不上传/);
+    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/发送给你选择的模型服务/);
     expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/随时关闭/);
   });
 

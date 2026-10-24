@@ -99,3 +99,18 @@ describe("small native window preview", () => {
     expect(html).not.toContain('<img src="unsafe">');
   });
 });
+
+it("selects a draining task for retry-stop without native takeover", async () => {
+  const p = await page();
+  p.update([task("A"), { ...task("B"), phase: "stopped", controlPending: true }]);
+  await p.nodes.get("stack")!.children[0].onclick!();
+  expect(p.api.setPresentation).toHaveBeenCalledWith("B");
+  expect(p.api.taskAction).not.toHaveBeenCalled();
+});
+
+it("confirms only the selected task through the private preview channel", async () => {
+  const p = await page(); p.update([{ ...task("A"), phase: "paused", reason: "confirmationRequired" }]);
+  expect(p.nodes.get("confirm")!.hidden).toBe(false);
+  await p.nodes.get("confirm")!.onclick!();
+  expect(p.api.taskAction).toHaveBeenCalledWith("A", "confirm");
+});

@@ -23,14 +23,15 @@ import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_WINDOW_TASK_TOOLS, taskCuaCall } from "./taskPolicy";
 import { CUA_DISABLED_NOTICE, CUA_ENABLED_NOTICE, publishCuaCapabilityNotice } from "./cuaSessionNotice";
-import { callIdentity, isDeniedCuaApp, isSensitiveCuaCall, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
-import { CuaElementIndex, haystackForTarget, prepareCuaTargetedCall, resolveAndGuardCuaCall } from "./cuaTargeting";
-import { cleanupStaleScreenshots, cuaScreenshotHome, isSensitiveObservation, listLocalScreenshotNames, redactObservationContent } from "./cuaPrivacy";
+import { callIdentity, CuaConfirmationGate, isDeniedCuaApp, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
+import { cleanupStaleScreenshots, cuaScreenshotHome, listLocalScreenshotNames, sanitizeCuaObservation } from "./cuaPrivacy";
 import { discoverInstalledApps, type InstalledApp } from "./cuaApps";
 import type { CuaWindowFrame } from "./windowBadges";
 import type { CuaExecutionMode } from "@shared/features/computer-use/contract";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
 import { computerUseHost } from "./ports";
+import { readCuaPreferences, writeCuaPreferences } from "./preferences";
 import { cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/features/computer-use/contract";
 import { CuaBrowserBindings, cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
@@ -108,29 +109,21 @@ let pendingControls = 0;
 let preparingRuntime = false;
 let cuaScope: CuaScope = { kind: "desktop" };
 let scopeInitialized = false;
-const windowApps = new Map<number, string>();
+const confirmationGate = new CuaConfirmationGate();
 const cuaElements = new CuaElementIndex();
-let sensitiveAllowUntil = 0;
-let sensitiveAllowTool = "";
 
-function consumeSensitiveAllow(tool: string): boolean {
-  if (Date.now() > sensitiveAllowUntil) return false;
-  if (sensitiveAllowTool !== "*" && sensitiveAllowTool !== tool) return false;
-  sensitiveAllowUntil = 0;
-  return true;
-}
-
-export function allowCuaSensitiveOnce(tool = "*"): void {
-  sensitiveAllowTool = tool || "*";
-  sensitiveAllowUntil = Date.now() + 60_000;
+export function allowCuaSensitiveOnce(taskId?: string): boolean {
+  const task = taskId ? windowTasks.byId(taskId) : undefined;
+  if (taskId && !task) return false;
+  return confirmationGate.allow(task?.owner);
 }
 function initializeScopePreference() {
   if (scopeInitialized) return;
   scopeInitialized = true;
-  const saved = computerUseHost().readSetting(STEP1_KEY) as { computerUseScopeKind?: string } | null;
-  multiwindow = !IS_LINUX && (saved as { computerUseMultiwindow?: boolean } | null)?.computerUseMultiwindow === true;
+  const saved = readStep1() as { computerUseScopeKind?: string } | null;
+  multiwindow = !IS_LINUX && (saved?.computerUseScopeKind === "window" || (saved as { computerUseMultiwindow?: boolean } | null)?.computerUseMultiwindow === true);
   // Native IDs are not durable. A previous window scope must never widen on restart.
-  if (saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
+  if (!multiwindow && saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
 }
 export const getCuaRuntime = (): CuaRuntime => ({ ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
   ...(!multiwindow ? { scope: structuredClone(cuaScope) } : {}), revision: runtimeRevision,
@@ -150,8 +143,35 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
     cuaGateway = new CuaMcpGateway({
       controller: multiwindow ? windowTasks : cuaTasks,
       tasks: multiwindow ? windowTasks : undefined,
-      allowedTools: CUA_ALLOWED_TOOLS,
-      visibleTools: () => multiwindow ? CUA_WINDOW_TASK_TOOLS : visibleCuaTools(cuaScope, CUA_ALLOWED_TOOLS),
+      discoverWindows: listAllowedNativeCuaWindows,
+      prepareTarget: async (owner, tool, raw) => {
+        if (!["get_window_state", "get_accessibility_tree", "get_desktop_state"].includes(tool)) return;
+        if (!multiwindow) {
+          if (cuaScope.kind !== "window" || cuaScope.windowId > 0) return;
+          const args = raw as { pid?: unknown; window_id?: unknown } | null;
+          const target = (await listCuaWindows()).find(window => window.pid === args?.pid && window.windowId === args?.window_id);
+          if (!target) throw new Error("targetClosed");
+          // Linux has no multiwindow native protocol. Rebuild the narrow helper
+          // policy after validation, preserving the existing agent connection.
+          const gateway = cuaGateway;
+          gateway?.pauseTransports();
+          cuaScope = { kind: "window", ...target };
+          await ensureCuaOnBoot();
+          if (runtimeSuspended) throw new Error("daemonNotReady");
+          await gateway?.resumeTransports();
+          return;
+        }
+        const task = windowTasks.ensure(owner);
+        if (task.target) return;
+        const args = raw as { pid?: unknown; window_id?: unknown } | null;
+        if (!Number.isSafeInteger(args?.pid) || !Number.isSafeInteger(args?.window_id)) throw new Error("targetRequired");
+        const bound = await bindWindowTask(task.id, { pid: args!.pid, windowId: args!.window_id });
+        if (!bound.success) throw new Error(bound.error ?? "targetClosed");
+        const resumed = await resumeWindowTask(task.id);
+        if (!resumed.success) throw new Error(resumed.error ?? "cannotResume");
+      },
+      allowedTools: CUA_ALLOWED_TOOLS.filter(tool => !tool.startsWith("set_agent_cursor_")),
+      visibleTools: () => multiwindow ? [...CUA_WINDOW_TASK_TOOLS, "list_windows"] : visibleCuaTools(cuaScope, CUA_ALLOWED_TOOLS),
       scope: (owner) => multiwindow ? windowTasks.scopeFor(owner ?? "") : cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
       transformCall: (tool, args, owner) => {
@@ -170,31 +190,38 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       } : undefined,
       onResult: (tool, args, outcome, structured, owner) => {
         cuaBindings.record(cuaScope, tool, args, outcome, structured);
+        if (owner && outcome === "ok") confirmationGate.observe(owner, tool, args, structured);
         cuaElements.remember(owner ?? "", tool, outcome, structured);
       },
       agentCursor: () => readAgentCursorEnabled(),
-      requireConfirmation: (tool, args, owner) => {
-        if (readCuaAuthMode(readStep1().computerUseAuthMode) !== "ask") return false;
-        const prepared = prepareCuaTargetedCall(tool, args, cuaElements.latest(owner ?? ""));
-        const hay = haystackForTarget(prepared.args, prepared.element);
-        const sensitive = isSensitiveCuaCall(tool, args) || isSensitiveCuaCall(tool, hay);
-        return sensitive && !consumeSensitiveAllow(tool);
-      },
-      rejectTarget: (_tool, args) => {
+      requireConfirmation: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
+        && confirmationGate.requires(owner, tool, args, false),
+      confirmDispatch: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) !== "ask"
+        || !confirmationGate.requires(owner, tool, args),
+      rejectTarget: async (tool, raw) => {
+        const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
+        const args = (raw ?? {}) as Record<string, unknown>;
         const id = callIdentity(args);
-        const remembered = id.pid ? windowApps.get(id.pid) : undefined;
-        return isDeniedCuaApp([id.app, id.title, remembered], readCuaBlacklist(readStep1().computerUseBlacklist))
-          ? "blacklisted" : null;
+        const bound = cuaBindings.nativeTarget(args);
+        const pid = id.pid ?? bound?.pid, windowId = args.window_id ?? bound?.window_id;
+        // Model labels never establish native identity. Resolve the final scoped target live.
+        const windows = await readLiveCuaWindows();
+        const matching = windows.filter(window => (!pid || window.pid === pid) && (!windowId || window.window_id === windowId));
+        if (tool === "get_desktop_state") return windows.some(window =>
+          isDeniedCuaApp([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
+        if (pid || windowId) return !matching.length ? "targetClosed" : matching.some(window =>
+          isDeniedCuaApp([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
+        if (["check_permissions", "health_report", "get_config", "start_session", "end_session"].includes(tool)) return null;
+        if (tool === "launch_app") return isDeniedCuaApp(Object.values(args).filter(value => typeof value === "string") as string[], blacklist)
+          ? "blacklisted" : "scopeViolation";
+        // With only built-in protection, permit untargeted canvas input only
+        // while no protected window is present. User blacklists remain fail-closed.
+        if (!blacklist.length && !windows.some(window => isDeniedCuaApp([window.app_name, window.title]))) return null;
+        return "scopeViolation";
       },
       sanitizeResult: (tool, result) => {
-        if (!["get_window_state", "get_desktop_state", "get_accessibility_tree", "get_browser_state"].includes(tool)) return;
-        const sensitive = isSensitiveObservation(result.structuredContent) || isSensitiveObservation(result.content);
-        if (!sensitive) return;
-        if (result.content) result.content = redactObservationContent(result.content);
-        if (result.structuredContent && typeof result.structuredContent === "object") {
-          const structured = result.structuredContent as Record<string, unknown>;
-          delete structured.screenshot; delete structured.image; delete structured.png;
-        }
+        if (["get_window_state", "get_desktop_state", "get_accessibility_tree", "get_browser_state"].includes(tool))
+          sanitizeCuaObservation(result);
       },
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
@@ -213,6 +240,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
     (file) => ({ command: computerUseHost().resolveNodeBinary()!, args: ["-e", CUA_STDIO_RELAY],
       env: { NUWAX_CUA_GATEWAY: socketPath, NUWAX_CUA_GATEWAY_TOKEN: selected.tokenFile, NUWAX_CUA_SESSION_FILE: file } }),
     (owner, cancelled) => {
+      confirmationGate.retire(owner); cuaElements.forget(owner);
       if (multiwindow) {
         const task = windowTasks.stateForOwner(owner);
         if (task) void finishWindowTask(task.taskId, cancelled).catch(() => undefined);
@@ -220,14 +248,13 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       }
       if (cuaTasks.owns(owner)) {
         if (cancelled || cuaTasks.hasPending(owner) || cuaTasks.snapshot().phase === "paused") void suspendCua("sessionEnded").catch(() => undefined);
-        else { cuaTasks.complete(owner); void cuaGateway?.releaseOwner(owner).catch(() => undefined); }
+        else { cuaTasks.complete(owner); sweepCuaScreenshots(); void cuaGateway?.releaseOwner(owner).catch(() => undefined); }
       }
       cuaTasks.retire(owner);
     });
   return socketPath;
 }
 
-const STEP1_KEY = "step1_config";
 const HELPER_TEAM_ID = "89GQ2RJVW7";
 // Opaque trajectory replay would bypass per-action observation and step budgets.
 const CUA_DENIED_TOOLS = ["check_for_update", "install_ffmpeg", "replay_trajectory"];
@@ -542,7 +569,7 @@ function prepareCuaPolicy(): { path: string; sha256: string } {
   const filename = "nuwax-capabilities.yaml";
   const target = path.join(dir, filename);
   const contents = Buffer.from(multiwindow
-    ? cuaPolicy({ kind: "desktop" }, [...CUA_WINDOW_TASK_TOOLS, "list_windows", "bring_to_front"], CUA_DENIED_TOOLS)
+    ? cuaPolicy({ kind: "desktop" }, [...CUA_WINDOW_TASK_TOOLS, "list_windows", "bring_to_front", "set_agent_cursor_enabled"], CUA_DENIED_TOOLS)
     : cuaPolicy(cuaScope, CUA_ALLOWED_TOOLS, CUA_DENIED_TOOLS));
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (!fs.existsSync(target) || !fs.readFileSync(target).equals(contents)) {
@@ -669,8 +696,8 @@ async function launchDaemon(helperRoot: string): Promise<string> {
  * 停 daemon：协议优先（`stop --socket`，官方 stop 子命令），失败兜底按端点匹配强杀。
  * 导出供退出清理链消费（commercialAuth.stopExtras 与 will-quit 钩子双触发，幂等）。
  */
-export async function stopDaemon(): Promise<void> {
-  cancelCuaPermissionRequest();
+export async function stopDaemon(preservePermissionLinger = false): Promise<void> {
+  if (!preservePermissionLinger) cancelCuaPermissionRequest();
   const helperPath = findHelperApp();
   const literal = (value: string) => value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
   const executable = helperPath ? literal(helperExecutable(helperPath))
@@ -719,40 +746,24 @@ export async function stopDaemon(): Promise<void> {
   }
 }
 
-function readEnabled(): boolean {
-  const step1 = computerUseHost().readSetting(STEP1_KEY) as {
-    computerUseEnabled?: boolean;
-  } | null;
-  return step1?.computerUseEnabled === true;
-}
+function readEnabled(): boolean { return readCuaPreferences().computerUseEnabled === true; }
 
-function persistEnabled(enabled: boolean) {
-  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
-  computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseEnabled: enabled });
+function persistEnabled(enabled: boolean, reason = "userPreference") {
+  if (!writeCuaPreferences({ computerUseEnabled: enabled })) throw new Error("databaseNotReady");
+  log.info("[Cua] enabled preference persisted", { enabled, reason });
 }
-
-function consentPending(): boolean {
-  const step1 = computerUseHost().readSetting(STEP1_KEY) as { computerUseConsentPending?: boolean } | null;
-  return step1?.computerUseConsentPending === true;
-}
-
+function consentPending(): boolean { return readCuaPreferences().computerUseConsentPending === true; }
 function persistConsentPending(pending: boolean): void {
-  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
-  computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
+  if (!writeCuaPreferences({ computerUseConsentPending: pending })) throw new Error("databaseNotReady");
 }
-
-function readStep1(): Record<string, unknown> {
-  return (computerUseHost().readSetting(STEP1_KEY) as Record<string, unknown> | null) ?? {};
-}
-
-function patchStep1(patch: Record<string, unknown>): boolean {
-  return computerUseHost().writeSetting(STEP1_KEY, { ...readStep1(), ...patch });
-}
+function readStep1(): Record<string, unknown> { return readCuaPreferences(); }
+function patchStep1(patch: Record<string, unknown>): boolean { return writeCuaPreferences(patch); }
 
 export async function setCuaAuthMode(mode: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
   if (!patchStep1({ computerUseAuthMode: readCuaAuthMode(mode) })) {
     return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
   }
+  confirmationGate.clear();
   return { success: true, status: await getCuaStatus() };
 }
 
@@ -767,19 +778,23 @@ export async function listCuaInstalledApps(): Promise<InstalledApp[]> {
   return discoverInstalledApps();
 }
 
+function sweepCuaScreenshots(): void {
+  try { cleanupStaleScreenshots(cuaScreenshotHome(cuaDataHome())); }
+  catch { log.warn("[Cua] screenshot retention sweep failed"); }
+}
+
 export function listCuaScreenshotFiles(): string[] {
   return listLocalScreenshotNames(cuaScreenshotHome(cuaDataHome()));
 }
 
 /** 缺省开：未写入或显式 true 都开模拟光标。不改变 Background 投递。 */
 function readAgentCursorEnabled(): boolean {
-  const step1 = computerUseHost().readSetting(STEP1_KEY) as { computerUseAgentCursor?: boolean } | null;
+  const step1 = readStep1() as { computerUseAgentCursor?: boolean };
   return step1?.computerUseAgentCursor !== false;
 }
 
 function persistAgentCursorEnabled(enabled: boolean): boolean {
-  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
-  return computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseAgentCursor: enabled });
+  return patchStep1({ computerUseAgentCursor: enabled });
 }
 
 export async function setCuaAgentCursorEnabled(enabled: boolean): Promise<{
@@ -923,18 +938,19 @@ function startCuaMonitor(): void {
 }
 
 /** Cleanup still runs when config removal fails; report an unconfirmed stop first. */
-async function removeMcpAndStopDaemon(): Promise<void> {
+async function removeMcpAndStopDaemon(preservePermissionLinger = false): Promise<void> {
   const config = await syncCuaMcpConfig(false).then(
     () => ({ ok: true as const }),
     error => ({ ok: false as const, error }),
   );
-  await stopDaemon();
+  await stopDaemon(preservePermissionLinger);
   if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
   confirmWindowTasksStopped();
   if (!config.ok) throw config.error;
 }
 
-async function disableCua(): Promise<void> {
+async function disableCua(preserveEnabled = false, preservePermissionLinger = false): Promise<void> {
+  confirmationGate.clear(); cuaElements.forget();
   windowTasks.setAvailable(false); windowTasks.stop("disabled");
   cuaTasks.setAvailable(false);
   cuaTasks.stop("disabled");
@@ -943,9 +959,14 @@ async function disableCua(): Promise<void> {
   cuaGateway = null;
   await gateway?.close();
   stopCuaMonitor();
-  persistEnabled(false);
-  persistConsentPending(false);
-  await removeMcpAndStopDaemon();
+  let persistenceError: unknown;
+  try {
+    if (!preserveEnabled) persistEnabled(false);
+    persistConsentPending(false);
+  } catch (error) { persistenceError = error; }
+  // Revocation must finish even when the settings database cannot be written.
+  await removeMcpAndStopDaemon(preservePermissionLinger);
+  if (persistenceError) throw persistenceError;
 }
 
 export async function setCuaEnabled(enabled: boolean): Promise<{
@@ -961,13 +982,14 @@ export async function setCuaEnabled(enabled: boolean): Promise<{
 async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
   success: boolean; error?: string; status: CuaStatus;
 }> {
+  const previouslyEnabled = readEnabled();
   if (!enabled) {
     try {
       await disableCua();
       lastPermissionHint = { accessibility: null, screenRecording: null };
       lastCuaError = null;
       publishCuaCapabilityNotice(CUA_DISABLED_NOTICE);
-      cleanupStaleScreenshots(cuaScreenshotHome(cuaDataHome()));
+      sweepCuaScreenshots();
       return { success: true, status: await getCuaStatus() };
     } catch (e) {
       lastCuaError = "disableFailed";
@@ -980,7 +1002,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     persistConsentPending(true);
     // 任何旧条目先撤销；直到安装、系统授权和 daemon 双重探测全部通过才持久启用。
-    persistEnabled(false);
+    if (!previouslyEnabled) persistEnabled(false);
     await syncCuaMcpConfig(false);
     const installed = await installCuaHelper();
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
@@ -1009,7 +1031,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     await syncCuaMcpConfig(true);
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
-    persistEnabled(true);
+    persistEnabled(true, "enableConfirmed");
     runtimeSuspended = false;
     cuaTasks.setAvailable(true);
     cuaTasks.reset();
@@ -1022,7 +1044,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     const reason = e instanceof Error ? e.message : String(e);
     lastCuaError = reason;
     log.warn("[Cua] enable rejected", reason);
-    await disableCua().catch((cleanupError) =>
+    await disableCua(previouslyEnabled, reason === "timeout").catch((cleanupError) =>
       log.warn("[Cua] enable cleanup failed", cleanupError),
     );
     if (reason === "permissionsRequired" || reason === "timeout") persistConsentPending(true);
@@ -1045,6 +1067,7 @@ export async function ensureCuaOnBoot(signal?: AbortSignal): Promise<void> {
 }
 
 async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
+  sweepCuaScreenshots();
   if (!readEnabled()) {
     if (isMcpInjected()) await syncCuaMcpConfig(false);
     return;
@@ -1331,7 +1354,7 @@ export async function resumeCuaTask(): Promise<CuaControlResult> {
 export async function stopCuaTask(): Promise<CuaControlResult> {
   try {
     await suspendCua("userStopped");
-    cleanupStaleScreenshots(cuaScreenshotHome(cuaDataHome()));
+    sweepCuaScreenshots();
     return { success: true, runtime: getCuaRuntime() };
   } catch {
     cuaTasks.fail("helperStillRunning");
@@ -1357,17 +1380,21 @@ export async function recoverCua(): Promise<CuaControlResult> {
 
 export function clearCuaHistory(): boolean { return multiwindow ? windowTasks.clearHistory() : cuaTasks.clearHistory(); }
 
-export async function listCuaWindows(): Promise<CuaWindow[]> {
+async function readLiveCuaWindows(): Promise<Array<{ pid: number; window_id: number; app_name?: string; title?: string }>> {
   const reply = await requestDaemon("call", "list_windows", {});
   const items = (reply?.result?.structuredContent as { windows?: unknown } | undefined)?.windows;
   if (!reply?.ok || !Array.isArray(items)) throw new Error("daemonNotReady");
-  return items.filter((item) => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isSafeInteger(item.window_id) && item.window_id > 0)
-    .slice(0, 250).map((item) => {
-      const app = String(item.app_name ?? "").slice(0, 80);
-      if (app) windowApps.set(item.pid, app);
-      return { pid: item.pid, windowId: item.window_id,
-        label: `${app} — ${String(item.title ?? "").slice(0, 160)}` };
-    });
+  return items.filter(item => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isSafeInteger(item.window_id) && item.window_id > 0).slice(0, 250);
+}
+export async function listCuaWindows(): Promise<CuaWindow[]> {
+  return (await listAllowedNativeCuaWindows()).map(window => ({ pid: window.pid, windowId: window.window_id,
+    label: `${String(window.app_name ?? "").slice(0, 80)} — ${String(window.title ?? "").slice(0, 160)}` }));
+}
+async function listAllowedNativeCuaWindows() {
+  const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
+  // MCP advertises the helper's WindowInfo output schema. Keep its native rows
+  // intact (bounds, app_name, visibility, nullable stacking); project only for UI.
+  return (await readLiveCuaWindows()).filter(window => !isDeniedCuaApp([window.app_name, window.title], blacklist));
 }
 
 export async function setCuaScope(requested: unknown): Promise<CuaControlResult> {
@@ -1386,8 +1413,7 @@ export async function setCuaScope(requested: unknown): Promise<CuaControlResult>
     await stopping;
     if (nextEpoch !== cuaDisableEpoch) return { success: false, error: "sessionEnded", runtime: getCuaRuntime() };
     const nextScope: CuaScope = target ? { kind: "window", ...target } : { kind: "desktop" };
-    const host = computerUseHost();
-    if (!host.writeSetting(STEP1_KEY, { ...(host.readSetting(STEP1_KEY) as Record<string, unknown> ?? {}), computerUseScopeKind: nextScope.kind }))
+    if (!patchStep1({ computerUseScopeKind: nextScope.kind }))
       return { success: false, error: "scopeSaveFailed", runtime: getCuaRuntime() };
     scopeInitialized = true;
     cuaScope = nextScope;
@@ -1485,6 +1511,7 @@ async function finishWindowTask(id: string, cancelled: boolean) {
     const drained = await drainWindowTask(id); windowTasks.pending(id, !drained);
   }
   windowTasks.retire(task.owner);
+  sweepCuaScreenshots();
 }
 export async function bindWindowTask(id: string, target: unknown): Promise<CuaControlResult> {
   const task = windowTasks.byId(id);
@@ -1539,8 +1566,7 @@ export async function setMultiwindowEnabled(enabled: boolean): Promise<CuaContro
     const epoch = cuaDisableEpoch;
     await stopping;
     if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
-    const host = computerUseHost();
-    if (!host.writeSetting(STEP1_KEY, { ...(host.readSetting(STEP1_KEY) as Record<string, unknown> ?? {}), computerUseMultiwindow: enabled }))
+    if (!patchStep1({ computerUseMultiwindow: enabled }))
       return taskResult(false, "scopeSaveFailed");
     multiwindow = enabled; multiwindowCapable = false;
     await ensureCuaOnBoot();

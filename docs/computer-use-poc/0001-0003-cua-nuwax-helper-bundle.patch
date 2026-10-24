@@ -858,7 +858,7 @@ index 00000000..2bdc3dc5
 +        };
 +    }
 +    let Some(raw) = raw else {
-+        if ["check_permissions", "health_report", "list_windows"].contains(&tool) {
++        if ["check_permissions", "health_report", "list_windows", "set_agent_cursor_enabled"].contains(&tool) {
 +            return Ok(None);
 +        }
 +        return Err(refusal("task_context_required"));
@@ -1862,3 +1862,104 @@ index 453b0b71..fb295e5d 100644
 +    let (pixels, width, height) = crate::wgc::screenshot_window_via_wgc(window_id)?;
 +    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)
 +}
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
+index 8505c3d1..457db14d 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
+@@ -562,6 +562,11 @@ fn retain_elements(
+                 .and_then(Value::as_u64)
+                 .is_some_and(|i| keep.contains(&i))
+         });
++        // Delta reads publish only added/changed rows; metadata describes that array.
++        let returned = elements.len();
++        if obj.contains_key("returned_element_count") {
++            obj.insert("returned_element_count".into(), json!(returned));
++        }
+     }
+ }
+
+@@ -1283,6 +1288,56 @@ mod tests {
+             .unwrap()
+     }
+
++    #[test]
++    fn structured_diffs_keep_returned_count_valid() {
++        let window = 17101;
++        let rows = json!([
++            {"element_index": 1, "role": "AXTextField", "depth": 1},
++            {"element_index": 2, "role": "AXButton", "depth": 1}
++        ]);
++        let (mut c1, mut s1) = payload("s00001701", OLD);
++        s1["elements"] = rows.clone();
++        s1["returned_element_count"] = json!(2);
++        s1["total_element_count"] = json!(4);
++        apply(
++            &opts(json!({"tree_format": "elements"})),
++            &ctx(window),
++            &mut c1,
++            &mut s1,
++        );
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s1).is_ok());
++
++        let (mut c2, mut s2) = payload("s00001702", OLD);
++        s2["elements"] = rows.clone();
++        s2["returned_element_count"] = json!(2);
++        s2["total_element_count"] = json!(4);
++        apply(
++            &opts(json!({"tree_format": "elements", "since": "s00001701"})),
++            &ctx(window),
++            &mut c2,
++            &mut s2,
++        );
++        assert_eq!(s2["since_status"], "no_change");
++        assert_eq!(s2["returned_element_count"], 0);
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s2).is_ok());
++
++        let edited = OLD.replace("\"a\"", "\"ab\"");
++        let (mut c3, mut s3) = payload("s00001703", &edited);
++        s3["elements"] = rows;
++        s3["returned_element_count"] = json!(2);
++        s3["total_element_count"] = json!(4);
++        apply(
++            &opts(json!({"tree_format": "both", "since": "s00001702"})),
++            &ctx(window),
++            &mut c3,
++            &mut s3,
++        );
++        assert_eq!(s3["since_status"], "diff");
++        assert_eq!(s3["returned_element_count"], 1);
++        assert_eq!(s3["total_element_count"], 4);
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s3).is_ok());
++    }
++
+     #[test]
+     fn default_read_is_markdown_only_without_noise() {
+         let (mut content, mut s) = payload("s000000a1", OLD);
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+index 7dcbcb6a..ed2381fd 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+@@ -759,12 +759,17 @@ fn send_click_synthesized_mods_impl(
+                 foreground_target.expect("foreground target captured before input"),
+                 actual.0 as usize as u64,
+             ) {
+-                bail!(
+-                    "foreground_unavailable: exact target HWND {:?} or a verified same-process \
+-                     post-action window was not foreground after the click \
+-                     (actual foreground HWND {:?})",
+-                    target.0,
+-                    actual.0
++                // The complete click was already inserted into the system queue.
++                // Opening a tray menu, launching another app or closing this
++                // window can legitimately replace the foreground HWND. Calling
++                // this a refusal would invite callers to replay the same input.
++                // Pre-dispatch activation/identity guards above still fail closed;
++                // click tools acknowledge delivery with effect:"unverifiable" and
++                // require a fresh observation to establish the resulting UI state.
++                tracing::debug!(
++                    target = ?target.0,
++                    foreground = ?actual.0,
++                    "Foreground changed after dispatched click; observe before further input"
+                 );
+             }
+         }
