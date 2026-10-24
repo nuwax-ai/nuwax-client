@@ -56,7 +56,8 @@ import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createAutoLaunchManager } from "./window/autoLaunchManager";
 import { createServiceManager } from "./window/serviceManager";
 import { createTrayServiceActions } from "./window/trayServiceActions";
-import { initAutoUpdater, showUpdateDialogFlow } from "./services/autoUpdater";
+import { initAutoUpdater } from "./services/commercialAutoUpdater";
+import { showUpdateDialogFlow } from "./services/autoUpdater";
 import {
   attachHostActivityWindow,
   initHostActivity,
