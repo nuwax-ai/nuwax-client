@@ -22,6 +22,7 @@ import { app } from "electron";
 import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_WINDOW_TASK_TOOLS, taskCuaCall } from "./taskPolicy";
+import { CUA_DISABLED_NOTICE, CUA_ENABLED_NOTICE, publishCuaCapabilityNotice } from "./cuaSessionNotice";
 import type { CuaWindowFrame } from "./windowBadges";
 import type { CuaExecutionMode } from "@shared/features/computer-use/contract";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
@@ -146,6 +147,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         return { ...call, args: { ...(call.args as Record<string, unknown>), _nuwax_task: context } };
       } : undefined,
       onResult: (tool, args, outcome, structured) => cuaBindings.record(cuaScope, tool, args, outcome, structured),
+      agentCursor: () => readAgentCursorEnabled(),
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
       }),
@@ -691,6 +693,28 @@ function persistConsentPending(pending: boolean): void {
   computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
 }
 
+/** 缺省开：未写入或显式 true 都开模拟光标。不改变 Background 投递。 */
+function readAgentCursorEnabled(): boolean {
+  const step1 = computerUseHost().readSetting(STEP1_KEY) as { computerUseAgentCursor?: boolean } | null;
+  return step1?.computerUseAgentCursor !== false;
+}
+
+function persistAgentCursorEnabled(enabled: boolean): boolean {
+  const step1 = (computerUseHost().readSetting(STEP1_KEY) ?? {}) as Record<string, unknown>;
+  return computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseAgentCursor: enabled });
+}
+
+export async function setCuaAgentCursorEnabled(enabled: boolean): Promise<{
+  success: boolean;
+  error?: string;
+  status: CuaStatus;
+}> {
+  if (!persistAgentCursorEnabled(enabled === true)) {
+    return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
+  }
+  return { success: true, status: await getCuaStatus() };
+}
+
 // ========== MCP 条目注入（宿主代管 mcp_local_config + MCP Proxy 同步；照 guiMcpLocalConfig 先例） ==========
 
 function isMcpInjected(): boolean {
@@ -765,6 +789,7 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     enabled: readEnabled(),
     consentPending: consentPending(),
     mcpInjected: isMcpInjected(),
+    agentCursor: readAgentCursorEnabled(),
     socketPath: endpoint().socketPath,
     helperPath,
     ...permissions,
@@ -853,6 +878,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
       await disableCua();
       lastPermissionHint = { accessibility: null, screenRecording: null };
       lastCuaError = null;
+      publishCuaCapabilityNotice(CUA_DISABLED_NOTICE);
       return { success: true, status: await getCuaStatus() };
     } catch (e) {
       lastCuaError = "disableFailed";
@@ -901,6 +927,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     persistConsentPending(false);
     lastCuaError = null;
     startCuaMonitor();
+    publishCuaCapabilityNotice(CUA_ENABLED_NOTICE);
     return { success: true, status: await getCuaStatus() };
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
@@ -1472,6 +1499,8 @@ export interface CuaStatus {
   screenRecording: boolean | null;
   /** 最近一次启用或运行时检查失败原因；禁用/重试成功后清除。 */
   error: string | null;
+  /** 模拟光标 overlay；缺省开。与 Background 投递独立。 */
+  agentCursor: boolean;
 }
 
 export interface CuaPermissionsResult {

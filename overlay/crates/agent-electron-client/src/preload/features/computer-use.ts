@@ -31,6 +31,7 @@ export function createComputerUseBridge(
     setScope: (scope: Parameters<ComputerUseAPI["setScope"]>[0]) => ipc.invoke("cua:setScope", scope),
     getStatus: () => ipc.invoke("cua:getStatus"),
     setEnabled: (enabled: boolean) => ipc.invoke("cua:setEnabled", enabled),
+    setAgentCursor: (enabled: boolean) => ipc.invoke("cua:setAgentCursor", enabled),
     requestPermissions: () => ipc.invoke("cua:requestPermissions"),
     installHelper: () => ipc.invoke("cua:installHelper"),
     getVlmConfig: () => ipc.invoke("cua:getVlmConfig"),

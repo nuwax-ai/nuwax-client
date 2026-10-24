@@ -3,7 +3,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
 import { classifyReply, type CuaOutcome } from "./cuaOutcome";
-import { CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
+import { CUA_AGENT_CURSOR_ENABLE, CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
 import type { CuaScope } from "@shared/features/computer-use/contract";
 import type { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_TASK_GUIDANCE } from "./taskPolicy";
@@ -30,6 +30,8 @@ type Pending = { method?: string; permit?: CuaPermit; call?: { tool: string; arg
 type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
   grant?: unknown; owner?: string;
   initialization?: Rpc; initialized: boolean;
+  /** 本条 helper 租约是否已按偏好处理过 agent cursor（开或明确跳过）。 */
+  cursorArmed?: boolean;
   warming?: { id: string; finish: (error?: Error) => void };
   pending: Map<string, Pending>; reservations: Set<string>; lifetime: AbortController; close: () => void };
 const keyOf = (id: unknown) => `${typeof id}:${String(id)}`;
@@ -59,6 +61,8 @@ export class CuaMcpGateway {
     transformCall?: (tool: string, args: unknown, owner?: string) => { tool: string; args: unknown };
     /** Scope the model-facing guidance is written for; desktop when omitted. */
     scope?: (owner?: string) => CuaScope;
+    /** 活跃桌面任务是否默认开模拟光标；缺省 true。不改变 Background 投递。 */
+    agentCursor?: () => boolean;
     /** Sees every finished call (after the controller), e.g. to record browser bindings. */
     onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown, owner?: string) => void;
     tasks?: CuaTaskRegistry;
@@ -285,10 +289,25 @@ export class CuaMcpGateway {
     });
   }
 
+  /** Host-issued overlay enablement; not a model step and not gated on observation. */
+  private armAgentCursor(connection: Connection) {
+    if (connection.cursorArmed) return;
+    connection.cursorArmed = true;
+    if (this.options.agentCursor && !this.options.agentCursor()) return;
+    const child = connection.child;
+    if (!child) return;
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: CUA_AGENT_CURSOR_ENABLE.name, arguments: CUA_AGENT_CURSOR_ENABLE.arguments },
+    })}\n`);
+  }
+
   /** Drop the helper lease (cursor/recording/session resources) at prompt completion. */
   async releaseOwner(owner: string) {
     await Promise.all([...this.clients].filter((connection) => connection.owner === owner).map(async (connection) => {
       const child = connection.child; connection.child = null; connection.owner = this.options.tasks ? owner : undefined;
+      connection.cursorArmed = false;
       stopDriver(child);
       if (!this.holding) {
         try { await this.warmDriver(connection); } catch { connection.close(); }
@@ -392,6 +411,7 @@ export class CuaMcpGateway {
         return;
       }
       permit = decision.permit;
+      this.armAgentCursor(connection);
       message = { ...message, params: { ...message.params, name: call.tool, arguments: call.args } };
       line = JSON.stringify(message);
     }
