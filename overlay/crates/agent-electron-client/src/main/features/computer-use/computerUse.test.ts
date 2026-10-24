@@ -252,6 +252,10 @@ const setCuaEnabled = (...args: Parameters<CuaModule["setCuaEnabled"]>) =>
   cuaModule.setCuaEnabled(...args);
 const setCuaAgentCursorEnabled = (...args: Parameters<CuaModule["setCuaAgentCursorEnabled"]>) =>
   cuaModule.setCuaAgentCursorEnabled(...args);
+const setCuaAuthMode = (...args: Parameters<CuaModule["setCuaAuthMode"]>) =>
+  cuaModule.setCuaAuthMode(...args);
+const setCuaBlacklist = (...args: Parameters<CuaModule["setCuaBlacklist"]>) =>
+  cuaModule.setCuaBlacklist(...args);
 const syncCuaMcpConfig = (...args: Parameters<CuaModule["syncCuaMcpConfig"]>) =>
   cuaModule.syncCuaMcpConfig(...args);
 
@@ -459,6 +463,16 @@ describe("cua 开关与启动收敛", () => {
     expect(mocks.spawnCalls).toEqual([]);
     expect(mocks.execCalls).toEqual([]);
     expect((await getCuaStatus()).enabled).toBe(false);
+  });
+
+  it("persists ask-mode authorization and a software blacklist", async () => {
+    expect((await getCuaStatus()).authMode).toBe("unrestricted");
+    expect((await getCuaStatus()).blacklist).toEqual([]);
+    expect((await getCuaStatus()).screenshotHome).toContain("computer-use");
+    const auth = await setCuaAuthMode("ask");
+    expect(auth.status.authMode).toBe("ask");
+    const blocked = await setCuaBlacklist(["1Password", ""]);
+    expect(blocked.status.blacklist).toEqual(["1Password"]);
   });
 
   it("agent cursor defaults on and can be turned off", async () => {

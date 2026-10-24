@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Button, Select, Space, Tag, message, theme } from "antd";
-import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
-import type { CuaCheck, CuaRuntime, CuaWindow } from "@shared/features/computer-use/contract";
+import { Button, message, theme } from "antd";
+import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
 
 import { CUA_CONTROL_INITIAL_POSITION, CUA_REASON_KEYS } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
@@ -123,93 +122,27 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
       <Button type="text" className={styles.heading} disabled={controlLocked} title={handoffLabel}
         aria-label={t("Claw.Cua.preview.takeover")} onClick={() => void run(() => api.takeOver())}>{target}</Button>
       <span className={styles.status} role="status"><i />{status}</span>
-      <Button type="text" className={styles.close} aria-label={t("Claw.Cua.preview.close")} title={t("Claw.Cua.preview.close")}
-        icon={<ControlIcon name="close" />} onClick={() => setClosed(runtime.taskId)} />
     </header>
     <div className={styles.actions}>
       <Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
         aria-label={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")} title={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")}
         onClick={() => void run(() => paused ? api.resume() : api.pause())}>{t(paused ? "Claw.Cua.preview.resume" : "Claw.Cua.preview.pause")}</Button>
       <Button danger className={styles.stop} icon={<ControlIcon name="stop" />} onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
+      {runtime.reason === "confirmationRequired" && api.confirmSensitive && <Button size="small"
+        onClick={() => void run(async () => { await api.confirmSensitive!(true); return api.resume(); })}>{t("Claw.Cua.confirmAllow")}</Button>}
+      {api.setEnabled && <Button size="small" onClick={() => void run(() => api.setEnabled!(false))}>{t("Claw.Settings.computerUse.enableOff")}</Button>}
     </div>
   </aside>;
 }
 
 type Row = (props: { label: React.ReactNode; desc?: React.ReactNode; control?: React.ReactNode }) => React.ReactElement;
 
-/**
- * Settings rows for the operating scope and diagnostics. Window mode is the only way to let the
- * agent use a browser the user is logged into, so scope selection must stay reachable here.
- */
+/** Settings extras: recovery only. Scope, diagnostics and window pickers stay out of the ordinary UI. */
 export function CuaSettingsRows({ api, t, Row }: { api?: ComputerUseAPI; t: T; Row: Row }) {
   const [runtime, accept] = useCuaRuntime(api);
   const { busy, run } = useCuaAction(t, accept);
-  const [windows, setWindows] = useState<CuaWindow[]>([]);
-  const [loadingWindows, setLoadingWindows] = useState(false);
-  const [checks, setChecks] = useState<CuaCheck[] | null>(null);
-  if (!api?.getRuntime || !runtime) return null;
-
-  const taskActive = ["running", "paused"].includes(runtime.phase);
-  const scope = runtime.scope;
-  const selected = scope?.kind === "window" ? `${scope.pid}:${scope.windowId}` : "desktop";
-  const options = [
-    { value: "desktop", label: t("Claw.Cua.scope.desktop") },
-    // A restored window preference has no live target until the user picks one again.
-    ...(scope?.kind === "window" && !windows.some((item) => `${item.pid}:${item.windowId}` === selected)
-      ? [{ value: selected, label: scope.label || t("Claw.Cua.scope.choose") }] : []),
-    ...windows.map((item) => ({ value: `${item.pid}:${item.windowId}`, label: item.label })),
-  ];
-  // Not through `run`: its busy flag disables the select, which would close the list being opened.
-  const loadWindows = async () => {
-    setLoadingWindows(true);
-    try {
-      const result = await api.listWindows();
-      if (result?.windows) setWindows(result.windows);
-      else if (result?.success === false) message.error(reasonText(t, result.error ?? "generic"));
-    } catch { message.error(t("Claw.Cua.reason.generic")); }
-    finally { setLoadingWindows(false); }
-  };
-  const choose = (value: string) => {
-    if (value === "desktop") { void run(() => api.setScope({ kind: "desktop" })); return; }
-    const target = windows.find((item) => `${item.pid}:${item.windowId}` === value);
-    if (target) void run(() => api.setScope({ kind: "window", pid: target.pid, windowId: target.windowId }));
-  };
-  const selfTest = async () => {
-    const result = await run(() => api.selfTest());
-    if (result?.checks) setChecks(result.checks);
-  };
-  return <>
-    {api.setMultiwindowEnabled && <Row label={t("Claw.Cua.multiwindow.title")}
-      desc={<>{t("Claw.Cua.multiwindow.description")} {t("Claw.Cua.multiwindow.manageFromTray")}</>}
-      control={<Space wrap size={6} style={{ justifyContent: "flex-end" }}><Button size="small" loading={busy} onClick={() => void run(() => api.setMultiwindowEnabled(!runtime.multiwindow))}>
-        {t(runtime.multiwindow ? "Claw.Cua.multiwindow.disable" : "Claw.Cua.multiwindow.enable")}
-      </Button>{runtime.recoverable && <Button size="small" disabled={busy || !!runtime.controlPending}
-        onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>}</Space>} />}
-    {!runtime.multiwindow && <Row
-      label={t("Claw.Settings.computerUse.scope")}
-      desc={t("Claw.Cua.scope.explanation")}
-      control={<Select aria-label={t("Claw.Settings.computerUse.scope")} style={{ width: 240 }}
-        size="small" popupMatchSelectWidth={false} value={selected} options={options} loading={loadingWindows}
-        disabled={busy || runtime.controlPending || taskActive}
-        onDropdownVisibleChange={(open) => { if (open) void loadWindows(); }}
-        onChange={choose} />}
-    />}
-    <Row
-      label={t("Claw.Settings.computerUse.diagnostics")}
-      desc={<>
-        {t("Claw.Cua.privacy")}
-        {checks && <span role="status" style={{ display: "block", marginTop: 4 }}>
-          {checks.map((check) => `${t(`Claw.Cua.check.${check.name}`)}：${t(`Claw.Cua.check.${check.status}`)}${check.reason
-            ? `（${check.name === "model" ? t("Claw.Cua.modelCheck") : reasonText(t, check.reason)}）` : ""}`).join("；")}
-        </span>}
-      </>}
-      control={<Space wrap size={6} style={{ maxWidth: 240, justifyContent: "flex-end" }}>
-        <Button size="small" loading={busy} onClick={() => void selfTest()}>{t("Claw.Cua.selfTest")}</Button>
-        <Button size="small" onClick={() => void run(() => api.exportDiagnostics())}>{t("Claw.Cua.export")}</Button>
-        <Button size="small" disabled={taskActive} onClick={() => void run(async () => {
-          const result = await api.clearHistory(); accept(await api.getRuntime()); return result;
-        })}>{t("Claw.Cua.clear")}</Button>
-      </Space>}
-    />
-  </>;
+  if (!api?.getRuntime || !runtime?.recoverable) return null;
+  return <Row label={t("Claw.Cua.recover")} desc={t("Claw.Cua.recoverHint")}
+    control={<Button size="small" loading={busy} disabled={!!runtime.controlPending}
+      onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>} />;
 }

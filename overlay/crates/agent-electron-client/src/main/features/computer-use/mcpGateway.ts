@@ -9,7 +9,7 @@ import type { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_TASK_GUIDANCE } from "./taskPolicy";
 
 /** Errors `transformCall` may throw that are reported to the model as-is. */
-const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope"]);
+const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope", "blacklisted", "confirmationRequired"]);
 
 /** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
 export const CUA_STDIO_RELAY = `
@@ -65,6 +65,12 @@ export class CuaMcpGateway {
     agentCursor?: () => boolean;
     /** Sees every finished call (after the controller), e.g. to record browser bindings. */
     onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown, owner?: string) => void;
+    /** 询问式授权：敏感写动作需用户点一次允许。 */
+    requireConfirmation?: (tool: string, args: unknown) => boolean;
+    /** 黑名单命中则拒绝该窗口/应用。 */
+    rejectTarget?: (tool: string, args: unknown) => string | null;
+    /** 观察结果含密码框/锁屏时打码或跳过送模。 */
+    sanitizeResult?: (tool: string, result: NonNullable<Rpc["result"]>) => void;
     tasks?: CuaTaskRegistry;
     beforeCall?: (owner: string, call: { tool: string; args: unknown }) => Promise<{ tool: string; args: unknown }>;
   }) {}
@@ -242,6 +248,10 @@ export class CuaMcpGateway {
             if (pending.call) {
               if (this.options.tasks) this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured, pending.permit.owner);
               else this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured);
+              if (outcome === "ok" && message.result) {
+                this.options.sanitizeResult?.(pending.call.tool, message.result);
+                line = JSON.stringify(message);
+              }
             }
             if (outcome === "refused" && message.result) {
               message.result.content = [...(message.result.content ?? []), { type: "text", text: CUA_REFUSED_HINT }];
@@ -386,6 +396,13 @@ export class CuaMcpGateway {
         }
       }
       call = { tool, args: message.params?.arguments ?? {} };
+      const blocked = this.options.rejectTarget?.(tool, call.args);
+      if (blocked) { this.refuse(connection, owner, id, blocked); return; }
+      if (this.options.requireConfirmation?.(tool, call.args)) {
+        this.fail("confirmationRequired", owner);
+        this.refuse(connection, owner, id, "confirmationRequired");
+        return;
+      }
       try { if (this.options.transformCall) call = this.options.transformCall(tool, call.args, owner); }
       catch (error) {
         const reason = error instanceof Error && (CALL_REJECTIONS.has(error.message) ||

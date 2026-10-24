@@ -23,6 +23,9 @@ import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_WINDOW_TASK_TOOLS, taskCuaCall } from "./taskPolicy";
 import { CUA_DISABLED_NOTICE, CUA_ENABLED_NOTICE, publishCuaCapabilityNotice } from "./cuaSessionNotice";
+import { callIdentity, isSensitiveCuaCall, matchesCuaBlacklist, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { cleanupStaleScreenshots, cuaScreenshotHome, isSensitiveObservation, listLocalScreenshotNames, redactObservationContent } from "./cuaPrivacy";
+import { discoverInstalledApps, type InstalledApp } from "./cuaApps";
 import type { CuaWindowFrame } from "./windowBadges";
 import type { CuaExecutionMode } from "@shared/features/computer-use/contract";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
@@ -104,6 +107,21 @@ let pendingControls = 0;
 let preparingRuntime = false;
 let cuaScope: CuaScope = { kind: "desktop" };
 let scopeInitialized = false;
+const windowApps = new Map<number, string>();
+let sensitiveAllowUntil = 0;
+let sensitiveAllowTool = "";
+
+function consumeSensitiveAllow(tool: string): boolean {
+  if (Date.now() > sensitiveAllowUntil) return false;
+  if (sensitiveAllowTool !== "*" && sensitiveAllowTool !== tool) return false;
+  sensitiveAllowUntil = 0;
+  return true;
+}
+
+export function allowCuaSensitiveOnce(tool = "*"): void {
+  sensitiveAllowTool = tool || "*";
+  sensitiveAllowUntil = Date.now() + 60_000;
+}
 function initializeScopePreference() {
   if (scopeInitialized) return;
   scopeInitialized = true;
@@ -148,6 +166,24 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       } : undefined,
       onResult: (tool, args, outcome, structured) => cuaBindings.record(cuaScope, tool, args, outcome, structured),
       agentCursor: () => readAgentCursorEnabled(),
+      requireConfirmation: (tool, args) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
+        && isSensitiveCuaCall(tool, args) && !consumeSensitiveAllow(tool),
+      rejectTarget: (_tool, args) => {
+        const id = callIdentity(args);
+        const remembered = id.pid ? windowApps.get(id.pid) : undefined;
+        return matchesCuaBlacklist([id.app, id.title, remembered], readCuaBlacklist(readStep1().computerUseBlacklist))
+          ? "blacklisted" : null;
+      },
+      sanitizeResult: (tool, result) => {
+        if (!["get_window_state", "get_desktop_state", "get_accessibility_tree", "get_browser_state"].includes(tool)) return;
+        const sensitive = isSensitiveObservation(result.structuredContent) || isSensitiveObservation(result.content);
+        if (!sensitive) return;
+        if (result.content) result.content = redactObservationContent(result.content);
+        if (result.structuredContent && typeof result.structuredContent === "object") {
+          const structured = result.structuredContent as Record<string, unknown>;
+          delete structured.screenshot; delete structured.image; delete structured.png;
+        }
+      },
       launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
       }),
@@ -693,6 +729,36 @@ function persistConsentPending(pending: boolean): void {
   computerUseHost().writeSetting(STEP1_KEY, { ...step1, computerUseConsentPending: pending });
 }
 
+function readStep1(): Record<string, unknown> {
+  return (computerUseHost().readSetting(STEP1_KEY) as Record<string, unknown> | null) ?? {};
+}
+
+function patchStep1(patch: Record<string, unknown>): boolean {
+  return computerUseHost().writeSetting(STEP1_KEY, { ...readStep1(), ...patch });
+}
+
+export async function setCuaAuthMode(mode: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
+  if (!patchStep1({ computerUseAuthMode: readCuaAuthMode(mode) })) {
+    return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
+  }
+  return { success: true, status: await getCuaStatus() };
+}
+
+export async function setCuaBlacklist(list: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
+  if (!patchStep1({ computerUseBlacklist: readCuaBlacklist(list) })) {
+    return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
+  }
+  return { success: true, status: await getCuaStatus() };
+}
+
+export async function listCuaInstalledApps(): Promise<InstalledApp[]> {
+  return discoverInstalledApps();
+}
+
+export function listCuaScreenshotFiles(): string[] {
+  return listLocalScreenshotNames(cuaScreenshotHome(cuaDataHome()));
+}
+
 /** 缺省开：未写入或显式 true 都开模拟光标。不改变 Background 投递。 */
 function readAgentCursorEnabled(): boolean {
   const step1 = computerUseHost().readSetting(STEP1_KEY) as { computerUseAgentCursor?: boolean } | null;
@@ -790,6 +856,9 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     consentPending: consentPending(),
     mcpInjected: isMcpInjected(),
     agentCursor: readAgentCursorEnabled(),
+    authMode: readCuaAuthMode(readStep1().computerUseAuthMode),
+    blacklist: readCuaBlacklist(readStep1().computerUseBlacklist),
+    screenshotHome: cuaScreenshotHome(cuaDataHome()),
     socketPath: endpoint().socketPath,
     helperPath,
     ...permissions,
@@ -879,6 +948,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
       lastPermissionHint = { accessibility: null, screenRecording: null };
       lastCuaError = null;
       publishCuaCapabilityNotice(CUA_DISABLED_NOTICE);
+      cleanupStaleScreenshots(cuaScreenshotHome(cuaDataHome()));
       return { success: true, status: await getCuaStatus() };
     } catch (e) {
       lastCuaError = "disableFailed";
@@ -1238,6 +1308,7 @@ export async function resumeCuaTask(): Promise<CuaControlResult> {
 export async function stopCuaTask(): Promise<CuaControlResult> {
   try {
     await suspendCua("userStopped");
+    cleanupStaleScreenshots(cuaScreenshotHome(cuaDataHome()));
     return { success: true, runtime: getCuaRuntime() };
   } catch {
     cuaTasks.fail("helperStillRunning");
@@ -1268,8 +1339,12 @@ export async function listCuaWindows(): Promise<CuaWindow[]> {
   const items = (reply?.result?.structuredContent as { windows?: unknown } | undefined)?.windows;
   if (!reply?.ok || !Array.isArray(items)) throw new Error("daemonNotReady");
   return items.filter((item) => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isSafeInteger(item.window_id) && item.window_id > 0)
-    .slice(0, 250).map((item) => ({ pid: item.pid, windowId: item.window_id,
-      label: `${String(item.app_name ?? "").slice(0, 80)} — ${String(item.title ?? "").slice(0, 160)}` }));
+    .slice(0, 250).map((item) => {
+      const app = String(item.app_name ?? "").slice(0, 80);
+      if (app) windowApps.set(item.pid, app);
+      return { pid: item.pid, windowId: item.window_id,
+        label: `${app} — ${String(item.title ?? "").slice(0, 160)}` };
+    });
 }
 
 export async function setCuaScope(requested: unknown): Promise<CuaControlResult> {
@@ -1463,6 +1538,8 @@ export async function getCuaDiagnostics() {
     status: { supported: status.supported, installed: status.installed, enabled: status.enabled,
       running: status.running, accessibility: status.accessibility, screenRecording: status.screenRecording,
       gateway: cuaGateway?.ready === true },
+    screenshotHome: status.screenshotHome,
+    screenshots: listLocalScreenshotNames(cuaScreenshotHome(cuaDataHome())),
   };
 }
 
@@ -1501,6 +1578,9 @@ export interface CuaStatus {
   error: string | null;
   /** 模拟光标 overlay；缺省开。与 Background 投递独立。 */
   agentCursor: boolean;
+  authMode: CuaAuthMode;
+  blacklist: string[];
+  screenshotHome: string;
 }
 
 export interface CuaPermissionsResult {

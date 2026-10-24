@@ -20,7 +20,7 @@ const runtime = { revision: 1, multiwindow: true, tasks: [
 ] };
 const render = () => { h.cursor = 0; return renderToStaticMarkup(<CuaTaskCenter api={api as any} runtime={runtime as any} accept={vi.fn()} t={key => key} />); };
 beforeEach(() => {
-  h.states = [false, [], "active"]; h.cursor = 0; h.effects = []; h.buttons = []; vi.clearAllMocks();
+  h.states = [false]; h.cursor = 0; h.effects = []; h.buttons = []; vi.clearAllMocks();
   vi.stubGlobal("window", { electronAPI: { on: vi.fn(), off: vi.fn() } });
   api.getTaskHistory.mockResolvedValue([]); api.clearTaskHistory.mockResolvedValue({ success: true });
 });
@@ -32,20 +32,13 @@ describe("tray task center", () => {
     expect(render()).toContain("live windows"); expect(h.panel.mock.calls[0][0].runtime.tasks.map((task: any) => task.taskId)).toEqual(["active", "paused"]);
     off(); expect(window.electronAPI.off).toHaveBeenCalledWith("cua:openCenter", show);
   });
-  it("renders persisted summaries without resume or takeover and clears only those summaries", async () => {
-    h.states = [true, [{ taskId: "ended", phase: "completed", label: "Old app", endedAt: 100, stepCount: 2 }], "history"];
-    const html = render(); expect(html).toContain("Old app"); expect(html).not.toContain("live windows"); expect(h.panel).not.toHaveBeenCalled();
-    await h.buttons.find(button => button.children === "Claw.Cua.clear").onClick();
-    expect(api.clearTaskHistory).toHaveBeenCalledOnce(); expect(api.stop).not.toHaveBeenCalled(); expect(h.states[1]).toEqual([]);
-  });
-  it("ignores a pending history read after the center closes", async () => {
-    h.states[0] = true; let resolve!: (rows: any[]) => void; api.getTaskHistory.mockReturnValue(new Promise(done => { resolve = done; }));
-    render(); const cleanup = h.effects[1](); cleanup(); resolve([{ taskId: "late" }]); await Promise.resolve();
-    expect(h.states[1]).toEqual([]);
-  });
-  it("shows mode and window scope when present without requiring them on old history", () => {
-    h.states = [true, [{ taskId: "ended", phase: "completed", label: "Editor", endedAt: 100, stepCount: 2, scopeKind: "window", mode: "background" }], "history"];
-    const html = render(); expect(html).toContain("Claw.Cua.multiwindow.background"); expect(html).toContain("Claw.Cua.scope.window");
+  it("does not expose history, export or window-scope chrome", () => {
+    h.states = [true];
+    const html = render();
+    expect(html).toContain("live windows");
+    expect(html).not.toContain("Claw.Cua.center.history");
+    expect(html).not.toContain("Claw.Cua.clear");
+    expect(html).not.toContain("Claw.Cua.scope.window");
   });
 
 });
