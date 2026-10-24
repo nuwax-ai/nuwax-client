@@ -145,6 +145,15 @@ describe("Computer Use control surface follows the main client window", () => {
     expect(v.webContents.isDestroyed()).toBe(true); s.dispose();
   });
 
+  it("keeps a draining emergency-stop task on the preview surface", async () => {
+    const s = setup(); await flush(); const v = mocks.views[0];
+    s.setRuntime({ taskId: "task", revision: 2, phase: "stopped", multiwindow: true, controlPending: true,
+      tasks: [{ taskId: "task", phase: "stopped", controlPending: true, scope: { kind: "window", pid: 1, windowId: 2 } }] } as CuaRuntime);
+    expect(v.visible).toBe(true); expect(v.webContents.isDestroyed()).toBe(false);
+    s.setRuntime({ taskId: "task", revision: 3, phase: "stopped", multiwindow: true,
+      tasks: [{ taskId: "task", phase: "stopped", scope: { kind: "window", pid: 1, windowId: 2 } }] } as CuaRuntime);
+    expect(v.webContents.isDestroyed()).toBe(true); s.dispose();
+  });
   it("limits private controls to pause, resume, stop and exact takeover", async () => {
     const s = setup(); await flush(); const wc = mocks.views[0].webContents;
     const event = { sender: wc, senderFrame: wc.mainFrame };

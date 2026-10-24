@@ -146,6 +146,8 @@ describe("Computer Use trusted controls", () => {
     expect(mocks.stop).toHaveBeenCalledOnce();
     mocks.listener!({ phase: "idle" });
     expect(mocks.activities.at(-1)?.actions.map(action => action.id)).toEqual(["center"]);
+    mocks.listener!({ phase: "stopped", controlPending: true, reason: "userStopped" });
+    expect(mocks.activities.at(-1)?.actions.map(action => action.id)).toEqual(["center", "preview", "stop"]);
   });
   it("prompts target setup once inside the client, leaving bound tasks in the floating preview", () => {
     register(); mocks.send.mockClear();

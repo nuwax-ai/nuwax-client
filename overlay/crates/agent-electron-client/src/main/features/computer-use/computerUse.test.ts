@@ -574,6 +574,23 @@ describe("cua 开关与启动收敛", () => {
     expect(readMcpServers().cua).toBeUndefined();
   });
 
+  it("enabled but daemon down does not report stale granted helper permissions", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true;
+    mocks.autoReady = true;
+    const enabled = await setCuaEnabled(true);
+    expect(enabled).toMatchObject({ success: true, status: { accessibility: true, screenRecording: true, running: true } });
+    mocks.daemonReady = false;
+    const down = await getCuaStatus();
+    expect(down).toMatchObject({
+      enabled: true,
+      running: false,
+      accessibility: null,
+      screenRecording: null,
+      error: "daemonNotReady",
+    });
+  });
+
   it("直接捕获未就绪时拒绝启用，并保留一次确认待办供设置页重挂载恢复", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true;
@@ -800,7 +817,7 @@ describe("permission request ownership", () => {
     expect(cleanup?.args[2]).toContain("^" + stableHelperPath().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     expect((await getCuaStatus()).accessibility).toBeNull();
   });
-  it("bounds a silent host to twenty seconds and discards late result files", async () => {
+  it("soft-timeout keeps watching a late helper result instead of discarding it", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     mocks.deferPermissionHost = true;
     vi.useFakeTimers();
@@ -812,9 +829,32 @@ describe("permission request ownership", () => {
       expect(await request).toMatchObject({ success: false, error: "timeout" });
       fs.writeFileSync(resultFile, JSON.stringify({ structuredContent: { accessibility: true, screen_recording: true } }));
       await vi.advanceTimersByTimeAsync(1000);
+      expect((await getCuaStatus()).accessibility).toBe(true);
+      expect((await getCuaStatus()).screenRecording).toBe(true);
+    } finally {
+      cuaModule.cancelCuaPermissionRequest();
+      vi.useRealTimers();
+    }
+  });
+
+  it("user cancel after timeout still discards a late linger result", async () => {
+    makeHelperApp(path.dirname(stableHelperPath()));
+    mocks.deferPermissionHost = true;
+    vi.useFakeTimers();
+    try {
+      const request = cuaModule.requestCuaPermissions();
+      const host = mocks.spawnCalls.find(c => c.args.includes("__permissions-host-request"))!;
+      const resultFile = host.args[host.args.indexOf("--result-file") + 1];
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await request).toMatchObject({ success: false, error: "timeout" });
+      expect(cuaModule.cancelCuaPermissionRequest()).toBe(true);
+      fs.writeFileSync(resultFile, JSON.stringify({ structuredContent: { accessibility: true, screen_recording: true } }));
+      await vi.advanceTimersByTimeAsync(1000);
       expect((await getCuaStatus()).accessibility).toBeNull();
-      fs.rmSync(resultFile);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      cuaModule.cancelCuaPermissionRequest();
+      vi.useRealTimers();
+    }
   });
   it("disable cancels an in-flight enable without waiting for the permission timeout", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));

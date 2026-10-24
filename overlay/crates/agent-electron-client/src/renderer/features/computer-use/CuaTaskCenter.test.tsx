@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], panel: vi.fn() }));
+const h = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], panel: vi.fn(), error: vi.fn() }));
 vi.mock("react", async original => ({ ...(await original<typeof import("react")>()),
   useState: () => { const n = h.cursor++; return [h.states[n], (value: any) => { h.states[n] = value; }]; },
   useEffect: (effect: any) => { h.effects.push(effect); },
@@ -10,9 +10,12 @@ vi.mock("antd", () => ({
   Modal: ({ children }: any) => <section>{children}</section>, Space: ({ children }: any) => <div>{children}</div>,
   Tag: ({ children }: any) => <span>{children}</span>, Empty: Object.assign(({ description }: any) => <div>{description}</div>, { PRESENTED_IMAGE_SIMPLE: "" }),
   Tabs: ({ activeKey, items }: any) => <div>{items.find((item: any) => item.key === activeKey).children}</div>,
-  Button: (props: any) => { h.buttons.push(props); return <button>{props.children}</button>; }, message: { error: vi.fn() },
+  Button: (props: any) => { h.buttons.push(props); return <button>{props.children}</button>; }, message: { error: h.error },
 }));
-vi.mock("./CuaTaskPanel", () => ({ CuaTaskPanel: (props: any) => { h.panel(props); return <div>live windows</div>; } }));
+vi.mock("./CuaTaskPanel", () => ({
+  CuaTaskPanel: (props: any) => { h.panel(props); return <div>live windows</div>; },
+  CuaTaskSummary: () => <div>summary</div>,
+}));
 import { CuaTaskCenter } from "./CuaTaskCenter";
 const api = { getTaskHistory: vi.fn(), clearTaskHistory: vi.fn(), stop: vi.fn() };
 const runtime = { revision: 1, multiwindow: true, tasks: [
@@ -31,6 +34,14 @@ describe("tray task center", () => {
     const [name, show] = vi.mocked(window.electronAPI.on).mock.calls[0]; expect(name).toBe("cua:openCenter"); show();
     expect(render()).toContain("live windows"); expect(h.panel.mock.calls[0][0].runtime.tasks.map((task: any) => task.taskId)).toEqual(["active", "paused"]);
     off(); expect(window.electronAPI.off).toHaveBeenCalledWith("cua:openCenter", show);
+  });
+  it("maps single-task control failures to a human reason instead of generic", async () => {
+    const desktop = { revision: 1, phase: "running", taskId: "solo" };
+    h.states = [true];
+    api.stop.mockResolvedValue({ success: false, error: "loginRequired", runtime: desktop });
+    renderToStaticMarkup(<CuaTaskCenter api={api as any} runtime={desktop as any} accept={vi.fn()} t={key => key} />);
+    await h.buttons.find((button: any) => button.children === "Claw.Cua.stop").onClick();
+    expect(h.error).toHaveBeenCalledWith("Claw.Cua.reason.loginRequired");
   });
   it("does not expose history, export or window-scope chrome", () => {
     h.states = [true];

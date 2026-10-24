@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { Button, Space, Tag, message } from "antd";
 import type { ComputerUseAPI, CuaControlResult, CuaRuntime } from "@shared/features/computer-use/contract";
-import { CUA_REASON_KEYS, actionKind } from "@shared/features/computer-use/presentation";
+import { actionKind, cuaReasonKey } from "@shared/features/computer-use/presentation";
 
 export function CuaTaskSummary({ task, t }: { task: CuaRuntime; t: (key: string, ...args: any[]) => string }) {
   const latest = task.steps?.at(-1);
   return <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0" }}>
     <span>{t("Claw.Cua.steps", { count: task.stepCount ?? 0 })}</span>
     {latest && <span> · {t("Claw.Cua.latestAction")}: {t("Claw.Cua.action." + actionKind(latest.tool))} · {t("Claw.Cua.outcome." + latest.outcome)}</span>}
-    {task.reason && <p style={{ margin: "4px 0" }}>{t("Claw.Cua.reason." + (CUA_REASON_KEYS.includes(task.reason) ? task.reason : "generic"))}</p>}
+    {task.reason && <p style={{ margin: "4px 0" }}>{t("Claw.Cua.reason." + cuaReasonKey(task.reason))}</p>}
   </div>;
 }
 
@@ -22,7 +22,7 @@ export function CuaTaskPanel({ api, runtime, t, accept }: {
     try {
       const result = await action();
       if (result.runtime) accept(result.runtime);
-      if (!result.success) message.error(t("Claw.Cua.reason." + (CUA_REASON_KEYS.includes(result.error ?? "") ? result.error : "generic")));
+      if (!result.success) message.error(t("Claw.Cua.reason." + cuaReasonKey(result.error)));
     } catch { message.error(t("Claw.Cua.reason.generic")); }
     finally { setBusy(null); }
   };

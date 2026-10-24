@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Button, Empty, Modal, Space, Tag, message } from "antd";
 import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
+import { cuaReasonKey } from "@shared/features/computer-use/presentation";
 import { CuaTaskPanel, CuaTaskSummary } from "./CuaTaskPanel";
 
 type Props = { api?: ComputerUseAPI; runtime: CuaRuntime | null; accept: (state: CuaRuntime) => void; t: (key: string, ...args: any[]) => string };
@@ -15,7 +16,7 @@ export function CuaTaskCenter({ api, runtime, accept, t }: Props) {
   if (!api || !open) return null;
   const control = async (action: () => ReturnType<ComputerUseAPI["stop"]>) => {
     try { const result = await action(); if (result.runtime) accept(result.runtime);
-      if (!result.success) message.error(t("Claw.Cua.reason.generic")); }
+      if (!result.success) message.error(t("Claw.Cua.reason." + cuaReasonKey(result.error))); }
     catch { message.error(t("Claw.Cua.reason.generic")); }
   };
   const active = (runtime?.tasks ?? []).filter(task => ["running", "paused"].includes(task.phase));
