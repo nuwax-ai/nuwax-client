@@ -64,6 +64,36 @@ describe("permission guide contract", () => {
       expect((locale as Record<string, string>)["Claw.Cua.reason.permissionsRequired"]).toContain("Nuwax Computer Use");
     }
   });
+  it("ships a short Computer Use consent that names Nuwax Computer Use", () => {
+    const keys = [
+      "Claw.Settings.computerUse.consentTitle",
+      "Claw.Settings.computerUse.consentDescription",
+      "Claw.Settings.computerUse.consentAccept",
+      "Claw.Settings.computerUse.consentCancel",
+      "Claw.Settings.computerUse.setupSection",
+      "Claw.Settings.computerUse.behaviorSection",
+      "Claw.Settings.computerUse.nextGrant",
+      "Claw.PermissionGuide.helperDisabled",
+    ] as const;
+    for (const locale of [en, cn, tw, hk]) {
+      const pack = locale as Record<string, string>;
+      for (const key of keys) {
+        expect(pack[key], key).toBeTruthy();
+      }
+      expect(pack["Claw.Settings.computerUse.consentTitle"]).toContain("Nuwax Computer Use");
+      const body = pack["Claw.Settings.computerUse.consentDescription"];
+      expect(body).toContain("Nuwax Computer Use");
+      expect(body).toContain("Nuwax.app");
+      expect(body.length).toBeLessThan(420);
+      expect(pack["Claw.PermissionGuide.helperDisabled"]).toContain("Nuwax Computer Use");
+      expect(pack["Claw.Settings.computerUse.nextGrant"]).toContain("Nuwax Computer Use");
+    }
+    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/not uploaded|are not uploaded/i);
+    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/turn it off/i);
+    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/不上传/);
+    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/随时关闭/);
+  });
+
   it("ships Computer Use helper-target copy in all four locales", () => {
     const keys = [
       "Claw.Settings.computerUse.permTargetHint",

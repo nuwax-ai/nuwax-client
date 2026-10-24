@@ -6,7 +6,13 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Modal, Select, Space, Switch, message } from "antd";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
 import { CuaSettingsRows } from "./CuaControls";
-import { cuaErrorKind, cuaNeedsPermissionRecovery } from "./permissionUx";
+import {
+  cuaErrorKind,
+  cuaNeedsPermissionRecovery,
+  cuaNextAction,
+  cuaNextActionKey,
+  cuaStatusLabelKey,
+} from "./permissionUx";
 import { watchCuaVisibleSnapshot } from "./visibleSnapshot";
 import styles from "./ComputerUseSettings.module.css";
 
@@ -125,7 +131,12 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
       const accepted = await new Promise<boolean>((resolve) => {
         Modal.confirm({
           title: t("Claw.Settings.computerUse.consentTitle"),
-          content: t("Claw.Settings.computerUse.consentDescription"),
+          // 短同意书：授权对象 + 能力 + 截图本机 + 可关；询问式/黑名单仍在下方偏好。
+          content: (
+            <div className={styles.consentBody}>
+              {t("Claw.Settings.computerUse.consentDescription")}
+            </div>
+          ),
           okText: t("Claw.Settings.computerUse.consentAccept"),
           cancelText: t("Claw.Settings.computerUse.consentCancel"),
           onOk: () => resolve(true),
@@ -255,37 +266,124 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
     }
   };
 
+  // 启用、待授权、系统授权收在同一簇；偏好与隐私不再和开关平铺抢注意力。
+  const pending = !!(cuaEnablePendingPermission || cuaStatus?.consentPending);
+  const showCancel = pending || cuaApplying || cuaPermChecking;
+  const nextAction = cuaStatus
+    ? cuaNextAction(cuaStatus, { pending, isMac: isMacPlatform })
+    : null;
+
   return (
     <>
+      <section className={styles.cluster} data-cluster="setup">
+        <h3 className={styles.clusterTitle}>{t("Claw.Settings.computerUse.setupSection")}</h3>
       <Row
         label={t("Claw.Settings.computerUse.enable")}
         desc={
           <span>
             {t("Claw.Settings.computerUse.desc")}
             {cuaStatus && (
-              <span style={{ marginLeft: 8, whiteSpace: "nowrap" }}>
-                {cuaStatus.consentPending || cuaStatus.error === "permissionsRequired"
-                  ? `● ${t("Claw.Settings.computerUse.stateAwaitingPermission")}`
-                  : !cuaStatus.enabled
-                  ? `● ${t("Claw.Settings.computerUse.stateOff")}`
-                  : cuaStatus.installed
-                    ? cuaStatus.running
-                      ? `● ${t("Claw.Settings.computerUse.stateRunning")}`
-                      : `● ${t("Claw.Settings.computerUse.stateIdle")}`
-                    : `● ${t("Claw.Settings.computerUse.stateNotInstalled")}`}
+              <span className={styles.statusLine}>
+                {`● ${t(cuaStatusLabelKey(cuaStatus))}`}
               </span>
+            )}
+            {nextAction && nextAction !== "off" && (
+              <span className={styles.nextAction}>{t(cuaNextActionKey(nextAction))}</span>
+            )}
+            {showCancel && (
+              <span className={styles.nextAction}>{t("Claw.Settings.computerUse.pendingDescription")}</span>
             )}
           </span>
         }
         control={
-          <Switch
-            checked={!!cuaStatus?.enabled}
-            onChange={handleCuaChange}
-            loading={cuaApplying}
-            disabled={!cuaStatus?.installed && !cuaStatus?.installable}
-          />
+          <span className={styles.enableActions}>
+            <Switch
+              checked={!!cuaStatus?.enabled}
+              onChange={handleCuaChange}
+              loading={cuaApplying}
+              disabled={!cuaStatus?.installed && !cuaStatus?.installable}
+            />
+            {showCancel && (
+              <Button size="small" onClick={() => void handleCuaChange(false)}>
+                {t("Claw.Settings.computerUse.cancelPreparation")}
+              </Button>
+            )}
+          </span>
         }
       />
+      {!cuaStatus?.installed && cuaStatus?.installable && (
+        <Row
+          label={t("Claw.Settings.computerUse.install")}
+          desc={t("Claw.Settings.computerUse.installDesc")}
+          control={
+            <Button
+              size="small"
+              loading={cuaInstalling}
+              onClick={handleCuaInstall}
+            >
+              {t("Claw.Settings.computerUse.installBtn")}
+            </Button>
+          }
+        />
+      )}
+      {isMacPlatform && (
+        <Row
+          label={t("Claw.Settings.computerUse.permissions")}
+          desc={
+            <span>
+              {t("Claw.Settings.computerUse.permAx")}
+              <PermDot ok={cuaStatus?.accessibility} />
+              {" · "}
+              {t("Claw.Settings.computerUse.permSr")}
+              <PermDot ok={cuaStatus?.screenRecording} />
+              <span className={styles.permHint}>{t("Claw.Settings.computerUse.permTargetHint")}</span>
+              {cuaStatus?.error === "timeout" && (
+                <span className={styles.permHint}>{t("Claw.Settings.computerUse.permWatching")}</span>
+              )}
+              {cuaStatus && cuaNeedsPermissionRecovery(cuaStatus) && (
+                <span className={`${styles.permHint} ${styles.permMissing}`}>
+                  {t(cuaStatus.enabled && !cuaStatus.running
+                    ? "Claw.Settings.computerUse.helperDown"
+                    : "Claw.Settings.computerUse.errors." + cuaErrorKind(cuaStatus.error ?? "permissionsRequired"))}
+                </span>
+              )}
+            </span>
+          }
+          control={
+            <span className={styles.permActions}>
+              <Button
+                size="small"
+                loading={cuaPermChecking}
+                disabled={!cuaStatus?.installed}
+                onClick={handleCuaRequestPermissions}
+              >
+                {t(cuaEnablePendingPermission || cuaStatus?.consentPending ? "Claw.Settings.computerUse.continueEnable" : "Claw.Settings.computerUse.requestPerm")}
+              </Button>
+              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.accessibility !== true && (
+                <Button size="small" onClick={() => void openHelperPane("helper_accessibility")}>
+                  {t("Claw.Settings.computerUse.openAxPane")}
+                </Button>
+              )}
+              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.screenRecording !== true && (
+                <Button size="small" onClick={() => void openHelperPane("helper_screen_recording")}>
+                  {t("Claw.Settings.computerUse.openSrPane")}
+                </Button>
+              )}
+              {!!cuaStatus && ["installRecovery", "installRollback", "helperSignatureFailed", "bundledNotFound", "helperNotInstalled"].includes(cuaErrorKind(cuaStatus.error)) && (
+                <Button size="small" loading={cuaInstalling} onClick={() => void handleCuaInstall()}>
+                  {t("Claw.Settings.computerUse.retryHelper")}
+                </Button>
+              )}
+            </span>
+          }
+        />
+      )}
+      {cuaStatus?.enabled && (
+        <CuaSettingsRows api={api} t={t} Row={Row} />
+      )}
+      </section>
+      <section className={styles.cluster} data-cluster="behavior">
+        <h3 className={styles.clusterTitle}>{t("Claw.Settings.computerUse.behaviorSection")}</h3>
       <Row
         label={t("Claw.Settings.computerUse.agentCursor")}
         desc={t("Claw.Settings.computerUse.agentCursorDesc")}
@@ -345,94 +443,19 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           />
         }
       />
+      </section>
+      <section className={styles.cluster} data-cluster="privacy">
       <Row
         label={t("Claw.Settings.computerUse.privacy")}
         desc={<>
           {t("Claw.Settings.computerUse.privacyDesc", { path: cuaStatus?.screenshotHome || "~/.nuwax/computer-use" })}
-          {!!screenshots.length && <span style={{ display: "block", marginTop: 4 }}>{t("Claw.Settings.computerUse.privacyFiles", { count: screenshots.length })}</span>}
-          <span style={{ display: "block", marginTop: 4 }}>{t("Claw.Settings.computerUse.containerBoundary")}</span>
+          {!!screenshots.length && <span className={styles.permHint}>{t("Claw.Settings.computerUse.privacyFiles", { count: screenshots.length })}</span>}
+          <span className={styles.permHint}>{t("Claw.Settings.computerUse.taskModelDescription")}</span>
+          <span className={styles.permHint}>{t("Claw.Settings.computerUse.lockBehavior")}</span>
+          <span className={styles.permHint}>{t("Claw.Settings.computerUse.containerBoundary")}</span>
         </>}
       />
-      {!cuaStatus?.installed && cuaStatus?.installable && (
-        <Row
-          label={t("Claw.Settings.computerUse.install")}
-          desc={t("Claw.Settings.computerUse.installDesc")}
-          control={
-            <Button
-              size="small"
-              loading={cuaInstalling}
-              onClick={handleCuaInstall}
-            >
-              {t("Claw.Settings.computerUse.installBtn")}
-            </Button>
-          }
-        />
-      )}
-      {(cuaEnablePendingPermission || cuaStatus?.consentPending || cuaApplying || cuaPermChecking) && <Row
-        label={t("Claw.Settings.computerUse.pendingTitle")}
-        desc={t("Claw.Settings.computerUse.pendingDescription")}
-        control={<Button size="small" onClick={() => void handleCuaChange(false)}>{t("Claw.Settings.computerUse.cancelPreparation")}</Button>}
-      />}
-      {isMacPlatform && (
-        <Row
-          label={t("Claw.Settings.computerUse.permissions")}
-          desc={
-            <span>
-              {t("Claw.Settings.computerUse.permAx")}
-              <PermDot ok={cuaStatus?.accessibility} />
-              {" · "}
-              {t("Claw.Settings.computerUse.permSr")}
-              <PermDot ok={cuaStatus?.screenRecording} />
-              <span className={styles.permHint}>{t("Claw.Settings.computerUse.permTargetHint")}</span>
-              {cuaStatus?.error === "timeout" && (
-                <span className={styles.permHint}>{t("Claw.Settings.computerUse.permWatching")}</span>
-              )}
-              {cuaStatus && cuaNeedsPermissionRecovery(cuaStatus) && (
-                <span className={`${styles.permHint} ${styles.permMissing}`}>
-                  {t(cuaStatus.enabled && !cuaStatus.running
-                    ? "Claw.Settings.computerUse.helperDown"
-                    : "Claw.Settings.computerUse.errors." + cuaErrorKind(cuaStatus.error ?? "permissionsRequired"))}
-                </span>
-              )}
-            </span>
-          }
-          control={
-            <span className={styles.permActions}>
-              <Button
-                size="small"
-                loading={cuaPermChecking}
-                disabled={!cuaStatus?.installed}
-                onClick={handleCuaRequestPermissions}
-              >
-                {t(cuaEnablePendingPermission || cuaStatus?.consentPending ? "Claw.Settings.computerUse.continueEnable" : "Claw.Settings.computerUse.requestPerm")}
-              </Button>
-              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.accessibility !== true && (
-                <Button size="small" onClick={() => void openHelperPane("helper_accessibility")}>
-                  {t("Claw.Settings.computerUse.openAxPane")}
-                </Button>
-              )}
-              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.screenRecording !== true && (
-                <Button size="small" onClick={() => void openHelperPane("helper_screen_recording")}>
-                  {t("Claw.Settings.computerUse.openSrPane")}
-                </Button>
-              )}
-              {!!cuaStatus && ["installRecovery", "installRollback", "helperSignatureFailed", "bundledNotFound", "helperNotInstalled"].includes(cuaErrorKind(cuaStatus.error)) && (
-                <Button size="small" loading={cuaInstalling} onClick={() => void handleCuaInstall()}>
-                  {t("Claw.Settings.computerUse.retryHelper")}
-                </Button>
-              )}
-            </span>
-          }
-        />
-      )}
-      {cuaStatus?.enabled && (
-        <CuaSettingsRows api={api} t={t} Row={Row} />
-      )}
-      <Row
-        label={t("Claw.Settings.computerUse.taskModel")}
-        desc={t("Claw.Settings.computerUse.taskModelDescription")}
-      />
-      <p className={styles.lockBehavior}>{t("Claw.Settings.computerUse.lockBehavior")}</p>
+      </section>
       <details className={styles.advancedDiagnostics}>
       <summary className={styles.advancedSummary}>{t("Claw.Settings.computerUse.advancedDiagnostics")}</summary>
       <Row
