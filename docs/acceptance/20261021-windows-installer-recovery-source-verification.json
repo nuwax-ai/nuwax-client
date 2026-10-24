@@ -1,8 +1,8 @@
 {
-  "recordedAt": "2026-10-21T05:20:30.219246+00:00",
+  "recordedAt": "2026-10-21T06:20:49.953777+00:00",
   "initialBase": "470a537318c7311844d9b3163a3ae00b2a28a6ba",
-  "integrationBase": "a34ec02a7f2eeacb638987d59dd14019bb437b7f",
-  "branch": "fix/windows-installer-recovery-scope",
+  "integrationBase": "60dbaeaa693f9aa0002e46e440c3d5dacabce9a0",
+  "branch": "docs/windows-installer-recovery-evidence",
   "host": "win11",
   "operatingSystem": "Windows 11 build 26100; Windows PowerShell 5.1",
   "scope": "Installer source and isolated native NSIS synthetic-payload acceptance",
@@ -127,32 +127,40 @@
           }
         ],
         "fixtureRetained": false,
-        "fixturePath": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-installer-recovery-test-43e2f16deef54befa55986945c1b944c",
+        "fixturePath": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-installer-recovery-test-fcef624ebb7f4e31bd067e9e7c243f6f",
         "installerExecuted": false,
         "registryTouched": false
       },
-      "logSha256": "3afe193f62e57e6fc4727a2d78b826669968e3ad9be8c9bdb08502434f2b15b7"
+      "logSha256": "32a574a58b04d0ec45b26bceca8250d1480e49fa782fa7fa03e235ea03be0246"
     },
     {
       "suite": "test-installer-registration",
-      "caseCount": 3,
+      "caseCount": 11,
       "result": {
         "passed": true,
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-registration-fixture-33cf509cab5642f1941ad841cb758c76",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-registration-fixture-76a7ef44d1dc4369b8cd8109ae977e6d",
         "cases": [
           "typed-registration-snapshot",
           "failed-extraction-entry-restored",
-          "changed-snapshot-rejected"
+          "changed-snapshot-rejected",
+          "inspect-without-marker-is-read-only",
+          "inspect-verified-pending-scope-without-mutation",
+          "inspect-rejects-foreign-key",
+          "inspect-rejects-foreign-path",
+          "inspect-rejects-foreign-user",
+          "inspect-rejects-missing-user",
+          "inspect-allows-deleted-values-with-matching-survivors",
+          "pending-recovery-rejects-reappeared-registration"
         ],
         "productionRegistryTouched": false
       },
-      "logSha256": "b07fd2ddbbef46ed905bbe29cdf7ae89d123c929aaa15f19ea4ce805de9fd096"
+      "logSha256": "74591b47a6c59be4dbfcd20e3c8ee4f651f9579060edfb0b3d2746f4c822aeb8"
     },
     {
       "suite": "test-installer-backup-retention",
       "caseCount": 17,
       "result": {
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-backup-retention-test-9e6a81f849644febb673293f76d2565e",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-backup-retention-test-1569bb85b2af45ba90dae4b3d20fdbec",
         "realUserDataTouched": false,
         "cases": [
           {
@@ -227,7 +235,7 @@
         "fixtureRetained": true,
         "passed": true
       },
-      "logSha256": "c7444f1568e0d39f04af0fce79dd6cb17fbe8591055851c0b3631d5d760e03b7"
+      "logSha256": "344d722f86fac9c71b4d9560259d9ffe1f23423fbf23ebeb32e4a50bd38981a8"
     },
     {
       "suite": "test-uninstall-data",
@@ -309,7 +317,7 @@
       "logSha256": "fe185303b53374f9fdfe87fa6cef5c327fe9fbf8e792e9cf045d58b37510014c"
     },
     {
-      "suite": "native9-CurrentUser",
+      "suite": "native12-CurrentUser",
       "caseCount": 12,
       "result": {
         "passed": true,
@@ -363,17 +371,18 @@
             "passed": true
           }
         ],
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-maintenance-fixture-8606b829b1384a28a272b8d4bb21982a",
-        "productIdentity": "NuwaxRecoveryQAed66a4b2",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-maintenance-fixture-55d91b71bc4541208480cb8f71ce750c",
+        "productIdentity": "NuwaxRecoveryQAea53b55c",
         "scope": "CurrentUser",
         "signed": false,
         "syntheticPayload": true,
         "productionInstallationTouched": false
       },
-      "logSha256": "d0ca5d72f39ea996a4a8e3bb7ec6976323bbb132940b9422eaf8c2d46820c501"
+      "logSha256": "2f64776d2c34dd692166be4e696c5c7953915c4454765af9c43c3a1c86b3cdae",
+      "package": "12"
     },
     {
-      "suite": "native9-AllUsers",
+      "suite": "native12-AllUsers",
       "caseCount": 12,
       "result": {
         "passed": true,
@@ -427,14 +436,15 @@
             "passed": true
           }
         ],
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-maintenance-fixture-48321430bc874e9dbacb2516312ad03f",
-        "productIdentity": "NuwaxRecoveryQAed66a4b2",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-maintenance-fixture-997cc4e4a5de4624a3087e0fdf4e2c99",
+        "productIdentity": "NuwaxRecoveryQAea53b55c",
         "scope": "AllUsers",
         "signed": false,
         "syntheticPayload": true,
         "productionInstallationTouched": false
       },
-      "logSha256": "b9f3a3d7edd80354c55210243974b9956c21ef3261534e3d2a0400efea592c80"
+      "logSha256": "2f64776d2c34dd692166be4e696c5c7953915c4454765af9c43c3a1c86b3cdae",
+      "package": "12"
     },
     {
       "suite": "native-nsis-removal",
@@ -556,7 +566,7 @@
       "reportSha256": "2d96008aba89adc5743ef459720253f34c343496334dc7210597631f6547c184"
     },
     {
-      "suite": "native9-scope-isolation",
+      "suite": "native12-scope-isolation",
       "caseCount": 9,
       "result": {
         "passed": true,
@@ -598,56 +608,158 @@
             "passed": true
           }
         ],
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-scope-fixture-51b43b7be906487791c1c78de5f6f5d1",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-scope-fixture-5583d5b671d84dd8811da81cf41d1d70",
         "signed": false,
         "productionInstallationTouched": false,
         "syntheticPayload": true
       },
-      "logSha256": "b77d2065d4a20e2f065101c4df2fbf0098f65c04ec4fa681a03d0a14dcb3e917"
+      "logSha256": "2f64776d2c34dd692166be4e696c5c7953915c4454765af9c43c3a1c86b3cdae",
+      "package": "12"
     },
     {
-      "suite": "native9-old-tag-installer-source-upgrade",
+      "suite": "native16-old-tag-installer-source-upgrade",
       "caseCount": 2,
       "result": {
         "passed": true,
         "cases": [
           {
             "dataPreserved": true,
-            "installDir": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-dd9aacc11225435b8757c5f6cb025b7d\\3.0.16-qa.recovery.1\\NuwaxRecoveryQAdba69158",
+            "installDir": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-2cf0fc04a94141c486293f03f64f4962\\3.0.16-qa.recovery.1\\NuwaxRecoveryQAdba69158",
             "version": "3.0.16-qa.recovery.1",
             "installerSha256": "0c8330d75dbb844470b89321b6cb527905e6af6f384c7ac208132ddd306c2bc1",
             "passed": true
           },
           {
             "dataPreserved": true,
-            "installDir": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-dd9aacc11225435b8757c5f6cb025b7d\\3.0.19-qa.recovery.1\\NuwaxRecoveryQAdba69158",
+            "installDir": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-2cf0fc04a94141c486293f03f64f4962\\3.0.19-qa.recovery.1\\NuwaxRecoveryQAdba69158",
             "version": "3.0.19-qa.recovery.1",
             "installerSha256": "ce734c1fa378b4d375dd30177a6848dc5f0dc76344ac6435ab12410cd4e2a340",
             "passed": true
           }
         ],
-        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-dd9aacc11225435b8757c5f6cb025b7d",
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-legacy-upgrade-fixture-2cf0fc04a94141c486293f03f64f4962",
         "signed": false,
         "productionInstallationTouched": false,
         "syntheticPayload": true,
         "scope": "CurrentUser"
       },
-      "logSha256": "e992ac0e8a31451c3e53432e3fc8ce39d8b60be31fdba390abca0943959aa976"
+      "logSha256": "9ca8dbdd789b90c35bf3c3e34b87f054de1dfbccd1a2b348c482f3b73e147b09",
+      "package": "16"
+    },
+    {
+      "suite": "native13-pending-CurrentUser",
+      "caseCount": 10,
+      "result": {
+        "passed": true,
+        "cases": [
+          "unregistered-without-marker-update-metadata-repair",
+          "unregistered-corrupt-manifest-preserved-even-with-repair",
+          "explicit-wrong-scope-preserves-pending-state",
+          "unregistered-full-install-restores-original-scope-and-workspace",
+          "unregistered-retry-updated",
+          "unregistered-retry-REPAIR",
+          "unregistered-retry-partial-payload",
+          "unregistered-retry-private-registration-remains",
+          "unregistered-retry-uninstall-registration-remains",
+          "unregistered-repair-then-uninstall-preserves-workspace"
+        ],
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-0236eed3d63b49f5849cd0411a9ae56c",
+        "productionInstallationTouched": false,
+        "syntheticPayload": true,
+        "scope": "CurrentUser"
+      },
+      "logSha256": "4084319874fa37fc2a24f86f727f41cc6ebbb9f2720ab1d34e4216c154ba1b08",
+      "package": "13"
+    },
+    {
+      "suite": "native13-pending-AllUsers",
+      "caseCount": 10,
+      "result": {
+        "passed": true,
+        "cases": [
+          "unregistered-without-marker-update-metadata-repair",
+          "unregistered-corrupt-manifest-preserved-even-with-repair",
+          "explicit-wrong-scope-preserves-pending-state",
+          "unregistered-full-install-restores-original-scope-and-workspace",
+          "unregistered-retry-updated",
+          "unregistered-retry-REPAIR",
+          "unregistered-retry-partial-payload",
+          "unregistered-retry-private-registration-remains",
+          "unregistered-retry-uninstall-registration-remains",
+          "unregistered-repair-then-uninstall-preserves-workspace"
+        ],
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-22526c6488e149f7ae592261e62eeeca",
+        "productionInstallationTouched": false,
+        "syntheticPayload": true,
+        "scope": "AllUsers"
+      },
+      "logSha256": "4084319874fa37fc2a24f86f727f41cc6ebbb9f2720ab1d34e4216c154ba1b08",
+      "package": "13"
+    },
+    {
+      "suite": "native15-orphan-hint-CurrentUser",
+      "caseCount": 1,
+      "result": {
+        "passed": true,
+        "cases": [
+          "orphan-hint-without-recovery-is-cleared"
+        ],
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-8f40e9124c8e43fda1e901dcaba5fd98",
+        "productionInstallationTouched": false,
+        "syntheticPayload": true,
+        "scope": "CurrentUser"
+      },
+      "logSha256": "635ecb485cf83a32e75ae3366566e3c663b4e8d9bbd3deb5a7990fcd622e3e24",
+      "package": "15"
+    },
+    {
+      "suite": "native15-orphan-hint-AllUsers",
+      "caseCount": 1,
+      "result": {
+        "passed": true,
+        "cases": [
+          "orphan-hint-without-recovery-is-cleared"
+        ],
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-45e6b14267da434899b2e9b569f8daee",
+        "productionInstallationTouched": false,
+        "syntheticPayload": true,
+        "scope": "AllUsers"
+      },
+      "logSha256": "635ecb485cf83a32e75ae3366566e3c663b4e8d9bbd3deb5a7990fcd622e3e24",
+      "package": "15"
+    },
+    {
+      "suite": "native14-known-issue-explicit-directory-workaround",
+      "caseCount": 1,
+      "result": {
+        "repairExitCode": 0,
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-c638bf9921394e52b525151d00fb89ed",
+        "completePayloadVerified": true,
+        "syntheticPayload": true,
+        "passed": true,
+        "workspaceRecovered": true,
+        "productionInstallationTouched": false,
+        "markerCleared": true,
+        "uninstallExitCode": 0,
+        "originalDirectoryArgumentRequired": true
+      },
+      "package": "14",
+      "logSha256": "ef26625a336200ffa8885b9ead0c3e8510f7fe4865db6b110307e95ef0795b01"
     }
   ],
-  "caseCount": 104,
+  "caseCount": 135,
   "sourceSha256": {
-    "overlay/crates/agent-electron-client/build/windows-install-path.nsh": "8298fe4d882123532c7b9e30abbd29aebda2c11f38abca918abf0af54badd833",
+    "overlay/crates/agent-electron-client/build/windows-install-path.nsh": "d113d7b499990fcfc0911f2e8fdee3cd5fbe9076287bdf250e56f31a101e7518",
     "overlay/crates/agent-electron-client/build/uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
     "overlay/crates/agent-electron-client/build/uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
     "overlay/crates/agent-electron-client/build/repair-shortcuts.ps1": "5a339c3913778fa37143c68e1099f062f1e0bc91b5da6afd2c42132c01590e38",
     "overlay/crates/agent-electron-client/build/windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375",
     "overlay/crates/agent-electron-client/build/shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
-    "overlay/crates/agent-electron-client/build/windows-maintenance.nsh": "aa9c464d3c3e5d3df99af4f20322fd60780ff4d86b8175157b81386b32194ae7",
+    "overlay/crates/agent-electron-client/build/windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
     "overlay/crates/agent-electron-client/build/installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
-    "overlay/crates/agent-electron-client/build/normalize-old-install.ps1": "10fc3b3f7a4a940c9e98748befef3385f6f681df46cf09a88bc958dc1c74f945",
+    "overlay/crates/agent-electron-client/build/normalize-old-install.ps1": "ab9628e53b56aa353bafe57f78628e67f76c88718e920dc350b3572bc1da7cec",
     "overlay/crates/agent-electron-client/build/windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
-    "overlay/crates/agent-electron-client/build/installer.nsh": "67c08c103f297efa1db03d33305a8e240b503a22869ce547f37861d4859e99b7"
+    "overlay/crates/agent-electron-client/build/installer.nsh": "0025572318bdda35d1c99d769e6378bc9d7d22282f60fabd659590e4984b75a4"
   },
   "scriptGate": {
     "fullSuite": {
@@ -684,7 +796,7 @@
         "failed": 0
       }
     },
-    "followupCi": "Final alias protection commit CI pending; earlier successful CI runs are attributed to their exact sources above",
+    "followupCi": "1ad54053 source CI completed successfully; Beta.3 source gates also passed. Five-platform packaging/real acceptance are separate.",
     "scopedNodeAfterFollowup": {
       "passed": 23,
       "skipped": 3,
@@ -706,6 +818,25 @@
       "runId": 39546940276,
       "allThreeJobsPassed": true,
       "includesFinalAliasGuard": false
+    },
+    "orphanSourceCi": {
+      "source": "1ad54053d8ec2c3189780ac9ecfd81b0ad60344d",
+      "runId": 39552590912,
+      "allThreeJobsPassed": true
+    },
+    "releaseCandidateCi": {
+      "source": "60dbaeaa693f9aa0002e46e440c3d5dacabce9a0",
+      "runId": 39553265923,
+      "allThreeSourceGatesPassed": true,
+      "packagingAndProductionAcceptanceSeparate": true
+    },
+    "latestFocusedLocal": {
+      "command": "node --test scripts/installer-archive-policy.test.mjs",
+      "passed": 19,
+      "skipped": 3,
+      "skipReason": "Local isolated worktree lacks installed electron-builder link",
+      "checkPinPassed": true,
+      "diffCheckPassed": true
     }
   },
   "review": {
@@ -748,7 +879,7 @@
   },
   "testSourceSha256": {
     "scripts/test-installer-legacy-upgrade.ps1": "a9fdde73d191eb6868a0e4e43717624dfe2f2f38cb82c4a862244c35f6c664fe",
-    "scripts/test-installer-registration.ps1": "63e13e47498550312f648d5d32c12c14172143bf6687c38242f7d105ef47e7ae",
+    "scripts/test-installer-registration.ps1": "482aef6c341c9545131ee3c1b26c40a424530ce5098187706181a23da4f9efca",
     "scripts/test-installer-recovery.ps1": "3c353101e638c4fec3c17f715de0952e323628d56d5581ffd665d413c406b99d",
     "scripts/test-installer-maintenance.ps1": "fd099c0918b867a4a3895dcb45df52bbc47b7404ee61d6767006953ee92af44d",
     "scripts/test-installer-backup-retention.ps1": "69e2d4a5f6401a30180d0869e1a42320168a4f7627716cafc7d9b1b4895d0056",
@@ -756,7 +887,8 @@
     "scripts/test-shortcut-repair.ps1": "c3a8a1c6c00519c6caea22e93c17e3ac8d9f7161ae20741056fc48e774e435fd",
     "scripts/acceptance/windows-installer-recovery.cjs": "230a90fdea1359accd033ac859746985b6e7e6e2623ecccf793d2516d667eb9f",
     "scripts/acceptance/windows-uninstall-fixture.py": "602a243060801db0100c3a281ab4c624e4ff0c53000de2c4a322d68e7d723db0",
-    "scripts/test-installer-scope-isolation.ps1": "558ac37d997945d2c753377db5d5633fa12a836e076704f8ea44642a3bb90968"
+    "scripts/test-installer-scope-isolation.ps1": "558ac37d997945d2c753377db5d5633fa12a836e076704f8ea44642a3bb90968",
+    "scripts/test-installer-pending-recovery.ps1": "acd0a56c597e432ed990a555fc0b26b0a8bf4f9bd901518e7fd0bb52bf6ecbc5"
   },
   "nativeInteractiveUi": {
     "result": {
@@ -764,7 +896,7 @@
       "explicitDeleteDataPassed": true,
       "syntheticPayload": true,
       "passed": true,
-      "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-ui-fixture-749d2067ec8247e998390596f43933f7",
+      "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-ui-fixture-8ad070889d2344c6be2b0cdb0d80a411",
       "signed": false,
       "maintenance": {
         "protectOldBackupDefault": false,
@@ -774,8 +906,9 @@
       "unknownWorkspacePreserved": true,
       "productionInstallationTouched": false
     },
-    "logSha256": "b77d2065d4a20e2f065101c4df2fbf0098f65c04ec4fa681a03d0a14dcb3e917",
-    "limits": "Actual native UI controls with synthetic identity/payload; signed commercial payload and UAC acceptance remain separate"
+    "logSha256": "635ecb485cf83a32e75ae3366566e3c663b4e8d9bbd3deb5a7990fcd622e3e24",
+    "package": "15",
+    "limits": "Synthetic identity/payload on an existing interactive desktop; no signed production payload or interactive UAC acceptance"
   },
   "nativePackages": {
     "8b": {
@@ -855,17 +988,163 @@
       "signed": false,
       "nativeWindows": true,
       "syntheticPayload": true
+    },
+    "12": {
+      "kind": "Synthetic Nuwax installer recovery QA",
+      "guid": "ea53b55c-db8d-47ab-99a1-4567d286af1b",
+      "identity": "NuwaxRecoveryQAea53b55c",
+      "name": "nuwax-recovery-qa-ea53b55c",
+      "version": "3.0.20-qa.recovery.1",
+      "installerSha256": "f9d37a27a55dd0b5de353bb05903e434b5bf3fa0582384aaafd6ebaa1f61221c",
+      "executableSha256": "07c0abcbdda92adb3f3cb472753073c44ad63ba36ee35fb543822bb8a125ba92",
+      "source": {
+        "installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
+        "installer.nsh": "e4ff6bbb8e8a3234228aced82e035759838b5a7fd8b2b9a253eba888c35181d4",
+        "normalize-old-install.ps1": "dacde8dec64be56765c4aa83bdef529c81a19b3f014667bb7d2845fe8faf7e64",
+        "qa-include.nsh": "18e2590fc0f589573d4c6ac819cc35524d7bee691f543d53e8b28387d85802f8",
+        "repair-shortcuts.ps1": "7db25edd5666ad587e3152d9b7ac1991c3ee0dd36ae112e76c3cfdca894e546a",
+        "shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
+        "uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
+        "uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
+        "windows-install-path.nsh": "3928b24c9d4cc1d7554d1eb2b39c18d0cba02bf9b4d45eb06d7c5dc174223bdc",
+        "windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
+        "windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
+        "windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375"
+      },
+      "signed": false,
+      "nativeWindows": true,
+      "syntheticPayload": true
+    },
+    "13": {
+      "kind": "Synthetic Nuwax installer recovery QA",
+      "guid": "2ba04a5a-7c0e-471b-9d73-822eb9f90730",
+      "identity": "NuwaxRecoveryQA2ba04a5a",
+      "name": "nuwax-recovery-qa-2ba04a5a",
+      "version": "3.0.20-qa.recovery.1",
+      "installerSha256": "d7b4c50b23c70b738cfeb98e0884fdf59e0dc3ff0df48a9dec1372a11fe47f8b",
+      "executableSha256": "07c0abcbdda92adb3f3cb472753073c44ad63ba36ee35fb543822bb8a125ba92",
+      "source": {
+        "installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
+        "installer.nsh": "d2d15e0e8c27e126d508a3d1b1648f44fb1720c3fc2061341346601ac2bac701",
+        "normalize-old-install.ps1": "e55c1ad50d8881e89e8229c67723bc25f698fcb9c32f4411d7e3c79dec6fcfdd",
+        "qa-include.nsh": "963b1fde34a546fb5c598bc9e698cd64653f24dbb6531dcb9761be158b5b79de",
+        "repair-shortcuts.ps1": "54a62ba7d85a9158bdabe552172dec562da2ea15725eb450c56c5d1fb9823cc0",
+        "shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
+        "uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
+        "uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
+        "windows-install-path.nsh": "3928b24c9d4cc1d7554d1eb2b39c18d0cba02bf9b4d45eb06d7c5dc174223bdc",
+        "windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
+        "windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
+        "windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375"
+      },
+      "signed": false,
+      "nativeWindows": true,
+      "syntheticPayload": true
+    },
+    "14": {
+      "kind": "Synthetic Nuwax installer recovery QA",
+      "guid": "61903d64-f786-4e82-8d6e-74813587479a",
+      "identity": "NuwaxRecoveryQA61903d64",
+      "name": "nuwax-recovery-qa-61903d64",
+      "version": "3.0.20-qa.recovery.1",
+      "installerSha256": "cbf98101656c678895be78b1b5cb46dae5476b66770bee0afb31d0b4e94b66a4",
+      "executableSha256": "07c0abcbdda92adb3f3cb472753073c44ad63ba36ee35fb543822bb8a125ba92",
+      "source": {
+        "installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
+        "installer.nsh": "0025572318bdda35d1c99d769e6378bc9d7d22282f60fabd659590e4984b75a4",
+        "normalize-old-install.ps1": "f2e92e78dec573a0995e99aea8cd9e9a22bfd69da59563863f29bbc4c2821fb8",
+        "qa-include.nsh": "da1e6cd276ac1c0a2d75d3554378f42308ceb34313ccfc08bdf34811237b58f5",
+        "repair-shortcuts.ps1": "9c8670b24222565ec3e8e5a2e8b670480d48ce414562c49667c0eb3181f10280",
+        "shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
+        "uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
+        "uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
+        "windows-install-path.nsh": "d113d7b499990fcfc0911f2e8fdee3cd5fbe9076287bdf250e56f31a101e7518",
+        "windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
+        "windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
+        "windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375"
+      },
+      "signed": false,
+      "nativeWindows": true,
+      "syntheticPayload": true
+    },
+    "15": {
+      "kind": "Synthetic Nuwax installer recovery QA",
+      "guid": "75bbff0c-81db-45c2-b645-3d561424dc45",
+      "identity": "NuwaxRecoveryQA75bbff0c",
+      "name": "nuwax-recovery-qa-75bbff0c",
+      "version": "3.0.20-qa.recovery.1",
+      "installerSha256": "12d1345832d12e1f8f516978f7175f88042ada714d1d879ec87bb35c118c06d7",
+      "executableSha256": "07c0abcbdda92adb3f3cb472753073c44ad63ba36ee35fb543822bb8a125ba92",
+      "source": {
+        "installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
+        "installer.nsh": "0025572318bdda35d1c99d769e6378bc9d7d22282f60fabd659590e4984b75a4",
+        "normalize-old-install.ps1": "aa2cb66a44724f635a1e6c302000e3d76b734e8a9e609ea0d97feeb24c38bd90",
+        "qa-include.nsh": "12b1ae20e471a1e2caf07b4c616a157e2b7afe5f9bf3ef764c88713c8987b910",
+        "repair-shortcuts.ps1": "6b15b0c87e26aa0dfa65a39390305942e50efb0457f6f5662844aa5ce3f81acd",
+        "shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
+        "uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
+        "uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
+        "windows-install-path.nsh": "d113d7b499990fcfc0911f2e8fdee3cd5fbe9076287bdf250e56f31a101e7518",
+        "windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
+        "windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
+        "windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375"
+      },
+      "signed": false,
+      "nativeWindows": true,
+      "syntheticPayload": true
+    },
+    "16": {
+      "kind": "Synthetic Nuwax installer recovery QA",
+      "guid": "dba69158-144c-40e7-a9b5-9695dab770ae",
+      "identity": "NuwaxRecoveryQAdba69158",
+      "name": "nuwax-recovery-qa-dba69158",
+      "version": "3.0.20-qa.recovery.1",
+      "installerSha256": "995e883c42238a186aeb9ebcf160bb802cf745c7d5208774348222d4a04b8e38",
+      "executableSha256": "07c0abcbdda92adb3f3cb472753073c44ad63ba36ee35fb543822bb8a125ba92",
+      "source": {
+        "installer-backup-retention.ps1": "e6355719e7e9d78d3fd21cb752e7740b049018b7d49999d42e24fec4c17b83b3",
+        "installer.nsh": "0025572318bdda35d1c99d769e6378bc9d7d22282f60fabd659590e4984b75a4",
+        "normalize-old-install.ps1": "e8f0c0cc0b9a58994ffbe23660021b07fb0e8b36655cd262be35db2c20f40c27",
+        "qa-include.nsh": "9e5b1e358a224b58850615fa46ba79c44b9d9cb7178be88a47ca08694b65d3a8",
+        "repair-shortcuts.ps1": "59dd1d014dfb6761aecf6837e19d06a6c35ac8aad48c89a0f3ffa0704030516a",
+        "shortcut-repair.nsh": "6ff15c783f6f8b34663eed0da4d7fa8958f4d5eac77da76600b5e73c16ee6503",
+        "uninstall-data.ps1": "1e104ea29ecd4882a1efe78602ea57a1004188f03e73181b9ae457f57615a733",
+        "uninstall-options.nsh": "31e4e0a1d9578a648702a2ac19f87998ebf2f3b11c055120de60bd4508834000",
+        "windows-install-path.nsh": "d113d7b499990fcfc0911f2e8fdee3cd5fbe9076287bdf250e56f31a101e7518",
+        "windows-maintenance.nsh": "898124062785fdaabc1e81d94981010a5e2b3be57a0b9314803ab5a465a02577",
+        "windows-old-uninstaller.nsh": "77d9454772422eb813f660daef995c896fa50278b967531b1dbd1cd73717deaa",
+        "windows-per-user-install.nsh": "7937cb79db74a0d23dd868c02dc65c61c30ba68333a0b3bfe2acd6641ced6375"
+      },
+      "signed": false,
+      "nativeWindows": true,
+      "syntheticPayload": true
     }
   },
   "reusedCoverage": [
     {
       "suites": [
-        "test-installer-recovery",
-        "test-installer-registration",
-        "test-installer-backup-retention",
-        "test-uninstall-data"
+        "test-uninstall-data",
+        "test-shortcut-repair",
+        "native-nsis-removal"
       ],
-      "reason": "Recovery/registration/retention/data helper sources and their tested behavior are unchanged by the final shortcut hook fix. All affected shortcut, native maintenance, native removal and old-tag compatibility suites were rerun."
+      "reason": "Data/shortcut helpers and exact payload-removal hooks are unchanged. New Inspect/required-registration branches do not execute in the reused removal cases; the final exact production hooks were separately compiled and exercised by packages 14-16."
+    },
+    {
+      "suites": [
+        "test-installer-recovery",
+        "test-installer-backup-retention"
+      ],
+      "reason": "Rerun after adding Inspect/SID snapshots. Later changes are guarded by RecordedScope/RequireRegistrationSnapshot or affect orphan-hint resolution; these suites exercise the unchanged registered transaction and retention actions. Changed snapshot behavior is covered by the final 11-case registration suite."
+    },
+    {
+      "suites": [
+        "native12-CurrentUser",
+        "native12-AllUsers",
+        "native12-scope-isolation",
+        "native13-pending-CurrentUser",
+        "native13-pending-AllUsers"
+      ],
+      "reason": "Packages 12/13 precede the final partial-value/orphan-missing-directory refinement. They cover unchanged regular maintenance/scope behavior and complete surviving registration keys. Final partial-value inspection, orphan-hint handling and missing-directory behavior are recorded separately, including the remaining failure. These are reused results, not exact-final-package full-matrix acceptance."
     }
   ],
   "firstImplementation": {
@@ -914,7 +1193,24 @@
       "privateQaRoot": true
     },
     "userDataBackupPendingUntilTestWindow": true,
-    "backupPreparationIncident": "Initial TEMP backup directory disappeared during read-only inventory generation; original installation was untouched. Retried in private persistent ProgramData QA root and verified all copied program hashes."
+    "backupPreparationIncident": "Initial TEMP backup directory disappeared during read-only inventory generation; original installation was untouched. Retried in private persistent ProgramData QA root and verified all copied program hashes.",
+    "historicalPackagesPrepared": [
+      {
+        "version": "3.0.16",
+        "sha256": "681dd9b37a309ca751955a3d6b4536bbbf6f739ab542850b2ad251c2d1e05b83",
+        "signatureStatus": "Valid",
+        "publisher": "成都第二空间智能科技有限公司",
+        "productionInstallationChanged": false
+      },
+      {
+        "version": "3.0.19",
+        "sha256": "a25c9e900c92fc341d1e6e8cd43349cb7420f02ba2a7eeb73113f77d6fc98566",
+        "signatureStatus": "Valid",
+        "publisher": "成都第二空间智能科技有限公司",
+        "productionInstallationChanged": false
+      }
+    ],
+    "nextStep": "Wait for the release-owned Windows Beta artifact, verify provenance/hash, sign an isolated acceptance copy, and run real-package acceptance. Existing installation remains untouched."
   },
   "aliasRegression": {
     "beforePackage": "8b",
@@ -959,5 +1255,95 @@
     "failureFixtureCleanupLogSha256": "1f7b42d6bdbc9b94553c93a4ba6939b83552001129f8ebed1b3b024e5932289b",
     "ownFailedFixtureRegistrationCleaned": true,
     "productionInstallationTouched": false
+  },
+  "productionSource": "1ad54053d8ec2c3189780ac9ecfd81b0ad60344d",
+  "overallResult": "Partial acceptance with a documented safe-stop issue; signed production package acceptance remains pending",
+  "packagesMatchingCurrentProductionHooks": [
+    "14",
+    "15",
+    "16"
+  ],
+  "unregisteredRecoveryRegression": {
+    "beforePackage": "9",
+    "expectedFailure": {
+      "backupRetained": true,
+      "productionInstallationTouched": false,
+      "installerExitCode": 0,
+      "markerCount": 1,
+      "guid": "dba69158-144c-40e7-a9b5-9695dab770ae",
+      "syntheticPayload": true,
+      "workspaceRestored": false,
+      "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-regloss-fixture-104208ea57ed4aa59d73e30061f3e6d0",
+      "expectedIssueReproduced": true
+    },
+    "beforeLogSha256": "8cc6d51c8f3044b71ddd639dd4418d1b20ce6ccf48e3cfd5b6fe20a00ebf65b2",
+    "afterPackages": [
+      "13",
+      "14"
+    ],
+    "failedFixtureCleanup": {
+      "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-regloss-fixture-104208ea57ed4aa59d73e30061f3e6d0",
+      "workspaceRetained": true,
+      "ownRegistrationRemoved": true,
+      "productionInstallationTouched": false,
+      "passed": true
+    },
+    "cleanupLogSha256": "bfa7841148acd9bcc892a7d89cecaa7f7ab8b78b6dc5713122fa57a2b92909e6"
+  },
+  "knownIssues": [
+    {
+      "id": "missing-directory-private-hint-without-D",
+      "package": "14",
+      "scope": "CurrentUser",
+      "result": {
+        "scope": "CurrentUser",
+        "error": "Pending recovery failed: missing-directory-private-remains",
+        "cases": [
+          "unregistered-without-marker-update-metadata-repair",
+          "unregistered-corrupt-manifest-preserved-even-with-repair",
+          "explicit-wrong-scope-preserves-pending-state",
+          "unregistered-full-install-restores-original-scope-and-workspace",
+          "unregistered-retry-updated",
+          "unregistered-retry-REPAIR",
+          "unregistered-retry-partial-payload",
+          "unregistered-retry-private-registration-remains",
+          "unregistered-retry-uninstall-registration-remains"
+        ],
+        "passed": false
+      },
+      "failureLogSha256": "5ab3189c7ee605f24035342af6d1d48ee85b20b3d970907dc10e0bb0fe2c6e50",
+      "behavior": "Installer safely stops with exit 2 when the original installation directory was removed, only its private registration remains, and /D is omitted. Existing recovery is retained.",
+      "workaround": "Use the original account/scope and explicit original directory: /S /currentuser /D=original-directory. Do not use /REPAIR merely to bypass this valid pending transaction.",
+      "workaroundVerified": {
+        "repairExitCode": 0,
+        "fixtureRoot": "C:\\Users\\Louis\\AppData\\Local\\Temp\\nuwax-pending-fixture-c638bf9921394e52b525151d00fb89ed",
+        "completePayloadVerified": true,
+        "syntheticPayload": true,
+        "passed": true,
+        "workspaceRecovered": true,
+        "productionInstallationTouched": false,
+        "markerCleared": true,
+        "uninstallExitCode": 0,
+        "originalDirectoryArgumentRequired": true
+      },
+      "sameBoundaryAllUsersWithoutD": "Not executed after the CurrentUser failure; not counted as passed",
+      "releaseDisposition": "User requested Beta first; recorded in Beta.3 known issues. Frozen source/tag remain unchanged."
+    }
+  ],
+  "failedCaseCount": 1,
+  "unexecutedCaseCount": 3,
+  "unexecutedCases": [
+    "CurrentUser missing-directory-uninstall-remains without /D",
+    "AllUsers missing-directory-private-remains without /D",
+    "AllUsers missing-directory-uninstall-remains without /D"
+  ],
+  "betaVerification": {
+    "version": "3.0.20-beta.3",
+    "fixedSource": "60dbaeaa693f9aa0002e46e440c3d5dacabce9a0",
+    "ownerThread": "01a15c9e-790c-7c03-bc28-e1ca4db575b5",
+    "runId": 39553265923,
+    "userPriority": "Produce Beta for verification without waiting for the remaining native matrix",
+    "productionPackageAccepted": false,
+    "tagMustRemainImmutable": true
   }
 }
