@@ -4,12 +4,14 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Modal, Select, Space, Switch, message } from "antd";
-import type { PermissionKey } from "@shared/types/permissionOnboarding";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
-import { watchVisibleSnapshot } from "../../services/permissionPolling";
 import { CuaSettingsRows } from "./CuaControls";
 import { cuaErrorKind, cuaNeedsPermissionRecovery } from "./permissionUx";
+import { watchCuaVisibleSnapshot } from "./visibleSnapshot";
 import styles from "./ComputerUseSettings.module.css";
+
+/** helper 隐私面板 key；不引用 onboarding 类型以免踩 R1。 */
+type HelperPrivacyPane = "helper_accessibility" | "helper_screen_recording";
 
 type T = (key: string, ...args: any[]) => string;
 type Row = (props: { label: React.ReactNode; desc?: React.ReactNode; control?: React.ReactNode }) => React.ReactElement;
@@ -219,8 +221,8 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
   useEffect(() => {
     void loadCuaStatus();
     if (!api) return;
-    // 与授权页同一套可见轮询：系统设置勾完不必重启或再点一次才变绿。
-    const stop = watchVisibleSnapshot({
+    // 特性内可见轮询（与授权页同节奏）：系统设置勾完不必重启或再点一次才变绿。
+    const stop = watchCuaVisibleSnapshot({
       read: () => api.getStatus(),
       update: (status) => {
         setCuaStatus(status);
@@ -243,7 +245,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
     };
   }, [loadCuaStatus, api]);
 
-  const openHelperPane = async (key: Extract<PermissionKey, "helper_accessibility" | "helper_screen_recording">) => {
+  const openHelperPane = async (key: HelperPrivacyPane) => {
     // helper_* 只开对应隐私面板，不会像主程序 SR 那样先 getSources 登记 Nuwax.app。
     try {
       const ok = await window.electronAPI?.permissionOnboarding?.openSettings(key);

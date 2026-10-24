@@ -1,28 +1,9 @@
 import { describe, expect, it } from "vitest";
-import en from "../../../shared/locales/en-US.json";
-import cn from "../../../shared/locales/zh-CN.json";
-import tw from "../../../shared/locales/zh-TW.json";
-import hk from "../../../shared/locales/zh-HK.json";
 import {
   cuaErrorKind,
   cuaNeedsPermissionRecovery,
   neutralizeStaleGrantedPermissions,
 } from "./permissionUx";
-
-const CUA_COPY_KEYS = [
-  "Claw.Settings.computerUse.permTargetHint",
-  "Claw.Settings.computerUse.permWatching",
-  "Claw.Settings.computerUse.openAxPane",
-  "Claw.Settings.computerUse.openSrPane",
-  "Claw.Settings.computerUse.retryHelper",
-  "Claw.Settings.computerUse.helperDown",
-  "Claw.Settings.computerUse.errors.timeout",
-  "Claw.Settings.computerUse.errors.installRecovery",
-  "Claw.Settings.computerUse.errors.installRollback",
-  "Claw.Settings.computerUse.errors.helperSignatureFailed",
-  "Claw.PermissionGuide.separateIdentity",
-  "Claw.PermissionGuide.helperPending",
-] as const;
 
 describe("cuaErrorKind", () => {
   it("keeps known codes and maps install/signature prefixes", () => {
@@ -73,21 +54,5 @@ describe("neutralizeStaleGrantedPermissions", () => {
       true,
       false,
     )).toEqual({ accessibility: false, screenRecording: null });
-  });
-});
-
-describe("CU P0 copy", () => {
-  it("ships the helper-target strings in all four locales", () => {
-    const helperKeys = CUA_COPY_KEYS.filter((key) =>
-      /TargetHint|Watching|helperDown|timeout|permissionsRequired|separateIdentity|helperPending/.test(key),
-    );
-    for (const locale of [en, cn, tw, hk]) {
-      for (const key of CUA_COPY_KEYS) {
-        expect((locale as Record<string, string>)[key], key).toBeTruthy();
-      }
-      for (const key of helperKeys) {
-        expect((locale as Record<string, string>)[key]).toContain("Nuwax Computer Use");
-      }
-    }
   });
 });

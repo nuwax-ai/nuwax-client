@@ -49,5 +49,6 @@
 
 ## 偏离记录
 
-- 未新增 CU IPC：打开系统面板复用已有 `permissionOnboarding.openSettings(helper_*)`，避免主程序 SR 的 `getSources` 误登记 Nuwax.app。
+- 未新增 CU IPC：打开系统面板走 `window.electronAPI.permissionOnboarding.openSettings(helper_*)`（不 import onboarding 类型），避免主程序 SR 的 `getSources` 误登记 Nuwax.app。
 - 20s 仍是启用流程软上限（开关不空转 90s）；迟到结果靠 linger + 设置页 1.5s 轮询变绿。
+- R1：CU 设置页不引用 `permissionPolling` / `permissionOnboarding` / locale JSON。可见轮询落在特性内 `visibleSnapshot.ts`；locale 断言放在 `shared/types/permissionOnboarding.test.ts`。

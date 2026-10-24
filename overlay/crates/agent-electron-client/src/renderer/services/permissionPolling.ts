@@ -13,7 +13,7 @@ type VisibleSnapshotWatch<T> = {
 
 /**
  * 页面可见时 1.5s 轮询 + focus/visibility 立即复查；隐藏或卸载丢弃迟到写入。
- * 授权清单与 CU 设置页共用，避免「系统设置勾完要重启/再点一次才变绿」。
+ * 授权清单使用。CU 设置页因 R1 不能引用本文件，自有一份同节奏实现。
  */
 export function watchVisibleSnapshot<T>(options: VisibleSnapshotWatch<T>): () => void {
   let stopped = false;
