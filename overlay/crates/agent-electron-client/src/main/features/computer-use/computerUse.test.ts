@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   endpointProofValid: true,
   permissionGateAttempts: 0,
   gatewayOptions: undefined as any,
-  windowItems: undefined as Array<{ pid: number; window_id: number; app_name: string; title: string }> | undefined,
+  windowItems: undefined as Array<{ pid: number; window_id: number; app_name: string; title: string; [key: string]: unknown }> | undefined,
   nativeForeground: false,
   previewGate: undefined as Promise<void> | undefined,
   nativeRequests: [] as Array<{ name?: string; args?: any }>,
@@ -776,6 +776,23 @@ describe("cua 开关与启动收敛", () => {
 });
 
 describe("live blacklist enforcement", () => {
+  it("preserves the native discovery output contract while filtering denied windows", async () => {
+    await setCuaEnabled(false);
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    const native = { pid: 25, window_id: 50, app_name: "Fixture", title: "Document",
+      bounds: { x: 10, y: 20, width: 600, height: 400 }, is_on_screen: true, z_index: null,
+      layer: 0, current_space_id: 1, on_current_space: true, space_ids: [1] };
+    mocks.windowItems = [native,
+      { ...native, pid: 26, window_id: 51, app_name: "Denied" },
+      { ...native, pid: 27, window_id: 52, app_name: "SecurityAgent" }];
+    await cuaModule.setCuaBlacklist(["Denied"]);
+    // list_windows advertises the helper's strict WindowInfo output schema.
+    // UI labels may be projected, but model discovery must retain the native row.
+    expect(await mocks.gatewayOptions.discoverWindows()).toEqual([native]);
+    expect(await cuaModule.listCuaWindows()).toEqual([{ pid: 25, windowId: 50, label: "Fixture — Document" }]);
+  });
   it("checks trusted live PID metadata and refuses unresolved global/browser input", async () => {
     await setCuaEnabled(false);
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
