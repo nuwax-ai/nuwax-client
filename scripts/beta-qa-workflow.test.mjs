@@ -76,6 +76,17 @@ function resolveIdentity(t, env = {}) {
   return { ...result, values, directory };
 }
 
+test('QA package matrix runs after successful preparation when the optional tag job is skipped', () => {
+  const block = workflow.slice(workflow.indexOf('\n  build-electron:'), workflow.indexOf('\n  publish-beta:'));
+  const expression = /^    if: \$\{\{ (.+) \}\}$/m.exec(block)?.[1];
+  assert.ok(expression, 'package job needs an explicit status guard; the manual tag gate is skipped');
+  assert.match(expression, /!cancelled\(\)/);
+  const run = (result, cancelled) => Function('needs', 'cancelled', `return (${expression});`)({ prepare: { result } }, () => cancelled);
+  assert.equal(run('success', false), true);
+  assert.equal(run('success', true), false);
+  assert.equal(run('failure', false), false);
+});
+
 test('manual QA builds use separate full QA identities and select only allowed Windows archive policies', (t) => {
   for (const archive of ['7z', 'zip-qa']) {
     const result = resolveIdentity(t, { WINDOWS_ARCHIVE_INPUT: archive });

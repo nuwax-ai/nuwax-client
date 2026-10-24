@@ -1890,3 +1890,49 @@ index 7dcbcb6a..ed2381fd 100644
                  );
              }
          }
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
+index 8505c3d1..4b6f4521 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/window_state_view.rs
+@@ -1283,6 +1283,41 @@ mod tests {
+             .unwrap()
+     }
+ 
++    #[test]
++    fn structured_diffs_keep_returned_count_valid() {
++        let window = 17101;
++        let rows = json!([
++            {"element_index": 1, "role": "AXTextField", "depth": 1},
++            {"element_index": 2, "role": "AXButton", "depth": 1}
++        ]);
++        let (mut c1, mut s1) = payload("s00001701", OLD);
++        s1["elements"] = rows.clone();
++        s1["returned_element_count"] = json!(2);
++        s1["total_element_count"] = json!(4);
++        apply(&opts(json!({"tree_format": "elements"})), &ctx(window), &mut c1, &mut s1);
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s1).is_ok());
++
++        let (mut c2, mut s2) = payload("s00001702", OLD);
++        s2["elements"] = rows.clone();
++        s2["returned_element_count"] = json!(2);
++        s2["total_element_count"] = json!(4);
++        apply(&opts(json!({"tree_format": "elements", "since": "s00001701"})), &ctx(window), &mut c2, &mut s2);
++        assert_eq!(s2["since_status"], "no_change");
++        assert_eq!(s2["returned_element_count"], 0);
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s2).is_ok());
++
++        let edited = OLD.replace("\"a\"", "\"ab\"");
++        let (mut c3, mut s3) = payload("s00001703", &edited);
++        s3["elements"] = rows;
++        s3["returned_element_count"] = json!(2);
++        s3["total_element_count"] = json!(4);
++        apply(&opts(json!({"tree_format": "both", "since": "s00001702"})), &ctx(window), &mut c3, &mut s3);
++        assert_eq!(s3["since_status"], "diff");
++        assert_eq!(s3["returned_element_count"], 1);
++        assert_eq!(s3["total_element_count"], 4);
++        assert!(cua_driver_contract::validate_success_output("get_window_state", s3).is_ok());
++    }
++
+     #[test]
+     fn default_read_is_markdown_only_without_noise() {
+         let (mut content, mut s) = payload("s000000a1", OLD);
