@@ -97,6 +97,20 @@ describe("multi-window MCP transport", () => {
     expect(f.results).toHaveBeenCalledTimes(1);
     expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
   });
+  it("keeps the next desktop call waiting when the user paused while the model was thinking", async () => {
+    const f = await fixture();
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    f.controller.pause("userPaused"); f.gateway.pauseTransports();
+    const pending = peer.request("tools/call", { name: "click" });
+    let answered = false; void pending.then(() => { answered = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    await f.gateway.resumeTransports(); (f.controller as CuaTaskController).resume();
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
+  });
   it.each([false, true])("cancels a human confirmation when the task is stopped (multiwindow=%s)", async multiwindow => {
     const registry = multiwindow ? new CuaTaskRegistry() : undefined;
     registry?.setAvailable(true);
