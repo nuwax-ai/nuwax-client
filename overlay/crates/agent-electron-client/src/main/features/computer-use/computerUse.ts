@@ -143,9 +143,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
     cuaGateway = new CuaMcpGateway({
       controller: multiwindow ? windowTasks : cuaTasks,
       tasks: multiwindow ? windowTasks : undefined,
-      discoverWindows: async () => (await listCuaWindows()).map(window => ({
-        pid: window.pid, window_id: window.windowId, title: window.label,
-      })),
+      discoverWindows: listAllowedNativeCuaWindows,
       prepareTarget: async (owner, tool, raw) => {
         if (!["get_window_state", "get_accessibility_tree", "get_desktop_state"].includes(tool)) return;
         if (!multiwindow) {
@@ -1386,10 +1384,14 @@ async function readLiveCuaWindows(): Promise<Array<{ pid: number; window_id: num
   return items.filter(item => Number.isSafeInteger(item.pid) && item.pid > 0 && Number.isSafeInteger(item.window_id) && item.window_id > 0).slice(0, 250);
 }
 export async function listCuaWindows(): Promise<CuaWindow[]> {
+  return (await listAllowedNativeCuaWindows()).map(window => ({ pid: window.pid, windowId: window.window_id,
+    label: `${String(window.app_name ?? "").slice(0, 80)} — ${String(window.title ?? "").slice(0, 160)}` }));
+}
+async function listAllowedNativeCuaWindows() {
   const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
-  return (await readLiveCuaWindows()).filter(window => !isDeniedCuaApp([window.app_name, window.title], blacklist))
-    .map(window => ({ pid: window.pid, windowId: window.window_id,
-      label: `${String(window.app_name ?? "").slice(0, 80)} — ${String(window.title ?? "").slice(0, 160)}` }));
+  // MCP advertises the helper's WindowInfo output schema. Keep its native rows
+  // intact (bounds, app_name, visibility, nullable stacking); project only for UI.
+  return (await readLiveCuaWindows()).filter(window => !isDeniedCuaApp([window.app_name, window.title], blacklist));
 }
 
 export async function setCuaScope(requested: unknown): Promise<CuaControlResult> {

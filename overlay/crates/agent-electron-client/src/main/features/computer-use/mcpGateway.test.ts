@@ -432,15 +432,19 @@ describe("host cursor requests", () => {
   });
   it("allows discovery and validated binding before waiting for a task target", async () => {
     const tasks = new CuaTaskRegistry(); tasks.setAvailable(true);
+    const nativeWindow = { pid: 10, window_id: 100, app_name: "Fixture", title: "Document",
+      bounds: { x: 10, y: 20, width: 600, height: 400 }, is_on_screen: true, z_index: null };
     const prepareTarget = vi.fn(async (owner, _tool, args: any) => {
       const task = tasks.ensure(owner);
       tasks.bind(task.id, { pid: args.pid, windowId: args.window_id, label: "fixture" }); tasks.resumeTask(task.id);
     });
     const f = await fixture(3000, () => "A", undefined, tasks, {
-      allowedTools: ["list_windows", "get_window_state"], discoverWindows: async () => [{ pid: 10, window_id: 100 }], prepareTarget,
+      allowedTools: ["list_windows", "get_window_state"], discoverWindows: async () => [nativeWindow], prepareTarget,
     });
     const peer = await f.client("test-token", true, "A");
-    expect((await peer.request("tools/call", { name: "list_windows" })).result.structuredContent.windows).toHaveLength(1);
+    const discovery = (await peer.request("tools/call", { name: "list_windows" })).result;
+    expect(discovery.structuredContent.windows).toEqual([nativeWindow]);
+    expect(JSON.parse(discovery.content[0].text).windows).toEqual([nativeWindow]);
     expect(prepareTarget).not.toHaveBeenCalled();
     const result = await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
     expect(result.result.isError).toBe(false);
