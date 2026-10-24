@@ -33,7 +33,7 @@ export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "too
   "idleTimeout", "helperNotInstalled", "sessionEnded", "userStopped", "disabled", "cannotResume", "observationRequired", "gatewayFailed", "scopeBusy", "scopeViolation", "targetClosed", "scopeSaveFailed", "helperIdentityUnverified",
   "noProgress", "uncertainResult", "violationLimit",
   "targetRequired", "taskUnavailable", "windowBusy", "taskQueued", "handoffPending", "foregroundRequired", "userTakingControl", "taskSelectionRequired", "helperUpgradeRequired", "taskCapacity", "targetActivationFailed",
-  "blacklisted", "confirmationRequired", "operationFailed", "loginRequired", "operationCancelled"];
+  "blacklisted", "sensitiveTarget", "confirmationRequired", "operationFailed", "loginRequired", "operationCancelled"];
 
 /** Session failures the slim overlay may show; operational pauses stay in the tray. */
 export const CUA_OVERLAY_NOTICE_REASONS = [

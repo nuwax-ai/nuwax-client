@@ -23,7 +23,8 @@ import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_WINDOW_TASK_TOOLS, taskCuaCall } from "./taskPolicy";
 import { CUA_DISABLED_NOTICE, CUA_ENABLED_NOTICE, publishCuaCapabilityNotice } from "./cuaSessionNotice";
-import { callIdentity, isSensitiveCuaCall, matchesCuaBlacklist, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { callIdentity, isDeniedCuaApp, isSensitiveCuaCall, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { CuaElementIndex, haystackForTarget, prepareCuaTargetedCall, resolveAndGuardCuaCall } from "./cuaTargeting";
 import { cleanupStaleScreenshots, cuaScreenshotHome, isSensitiveObservation, listLocalScreenshotNames, redactObservationContent } from "./cuaPrivacy";
 import { discoverInstalledApps, type InstalledApp } from "./cuaApps";
 import type { CuaWindowFrame } from "./windowBadges";
@@ -108,6 +109,7 @@ let preparingRuntime = false;
 let cuaScope: CuaScope = { kind: "desktop" };
 let scopeInitialized = false;
 const windowApps = new Map<number, string>();
+const cuaElements = new CuaElementIndex();
 let sensitiveAllowUntil = 0;
 let sensitiveAllowTool = "";
 
@@ -153,10 +155,12 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       scope: (owner) => multiwindow ? windowTasks.scopeFor(owner ?? "") : cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
       transformCall: (tool, args, owner) => {
-        if (!multiwindow) return scopeCuaCall(cuaScope, tool, args, cuaBindings);
+        // 先把坐标收成最新观察的 element_index，再拦敏感控件，最后才套窗口 scope。
+        const guarded = resolveAndGuardCuaCall(tool, args, cuaElements.latest(owner ?? ""));
+        if (!multiwindow) return scopeCuaCall(cuaScope, guarded.tool, guarded.args, cuaBindings);
         const task = windowTasks.ensure(owner!);
         if (!task.target) throw new Error("targetRequired");
-        return taskCuaCall(windowTasks.scopeFor(owner!), task.mode, tool, args);
+        return taskCuaCall(windowTasks.scopeFor(owner!), task.mode, guarded.tool, guarded.args);
       },
       beforeCall: multiwindow ? async (owner, call) => {
         const context = windowTasks.nativeContext(owner);
@@ -164,14 +168,22 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         if (!reply?.ok) throw new Error("targetClosed");
         return { ...call, args: { ...(call.args as Record<string, unknown>), _nuwax_task: context } };
       } : undefined,
-      onResult: (tool, args, outcome, structured) => cuaBindings.record(cuaScope, tool, args, outcome, structured),
+      onResult: (tool, args, outcome, structured, owner) => {
+        cuaBindings.record(cuaScope, tool, args, outcome, structured);
+        cuaElements.remember(owner ?? "", tool, outcome, structured);
+      },
       agentCursor: () => readAgentCursorEnabled(),
-      requireConfirmation: (tool, args) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
-        && isSensitiveCuaCall(tool, args) && !consumeSensitiveAllow(tool),
+      requireConfirmation: (tool, args, owner) => {
+        if (readCuaAuthMode(readStep1().computerUseAuthMode) !== "ask") return false;
+        const prepared = prepareCuaTargetedCall(tool, args, cuaElements.latest(owner ?? ""));
+        const hay = haystackForTarget(prepared.args, prepared.element);
+        const sensitive = isSensitiveCuaCall(tool, args) || isSensitiveCuaCall(tool, hay);
+        return sensitive && !consumeSensitiveAllow(tool);
+      },
       rejectTarget: (_tool, args) => {
         const id = callIdentity(args);
         const remembered = id.pid ? windowApps.get(id.pid) : undefined;
-        return matchesCuaBlacklist([id.app, id.title, remembered], readCuaBlacklist(readStep1().computerUseBlacklist))
+        return isDeniedCuaApp([id.app, id.title, remembered], readCuaBlacklist(readStep1().computerUseBlacklist))
           ? "blacklisted" : null;
       },
       sanitizeResult: (tool, result) => {

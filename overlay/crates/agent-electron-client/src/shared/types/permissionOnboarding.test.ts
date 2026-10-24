@@ -53,6 +53,8 @@ describe("permission guide contract", () => {
       "Claw.Cua.reason.permissionsRequired",
       "Claw.Cua.reason.uncertainResult",
       "Claw.Cua.reason.helperStillRunning",
+      "Claw.Cua.reason.sensitiveTarget",
+      "Claw.Cua.reason.blacklisted",
     ] as const;
     for (const locale of [en, cn, tw, hk]) {
       for (const key of keys) {

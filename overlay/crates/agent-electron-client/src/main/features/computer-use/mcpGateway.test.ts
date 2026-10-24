@@ -9,6 +9,7 @@ import { CuaMcpGateway } from "./mcpGateway";
 import { CuaTaskController } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { taskCuaCall } from "./taskPolicy";
+import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -17,7 +18,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  const m=JSON.parse(line);if(m.id===undefined)return;
  const a=m.params?.arguments??{};
  if(a.hang)return;
- const structuredContent=a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:a.snapshot?{snapshot_id:a.snapshot}:undefined;
+ const structuredContent=a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
@@ -276,8 +277,34 @@ describe("CUA MCP gateway over real local sockets", () => {
     expect(click.result.structuredContent.refusal.code).toBe("browser_binding_stale");
     expect(f.controller.snapshot().phase).toBe("running");
     expect(f.failure).not.toHaveBeenCalled();
-    expect(f.results).toHaveBeenCalledWith("browser_click", expect.objectContaining({ ref: "p1:1" }), "refused", expect.anything());
+    expect(f.results).toHaveBeenCalledWith("browser_click", expect.objectContaining({ ref: "p1:1" }), "refused", expect.anything(), expect.any(String));
   });
+  it("rewrites covering coordinates to element_index and refuses a password field", async () => {
+    const index = new CuaElementIndex();
+    const f = await fixture(3000, undefined, (tool, args) => {
+      const prepared = resolveAndGuardCuaCall(tool, args, index.latest(""));
+      return prepared;
+    });
+    f.results.mockImplementation((tool: string, _args: unknown, outcome: string, structured: unknown) => {
+      index.remember("", tool, outcome, structured);
+    });
+    const a = await f.client();
+    await a.request("tools/call", { name: "get_desktop_state", arguments: {
+      snapshot: "s00000001",
+      elements: [
+        { element_index: 4, role: "AXButton", label: "Save", frame: { x: 10, y: 10, w: 40, h: 16 } },
+        { element_index: 9, role: "AXSecureTextField", label: "Password", frame: { x: 80, y: 80, w: 120, h: 24 } },
+      ],
+    } });
+    const rewritten = await a.request("tools/call", { name: "click", arguments: { x: 12, y: 12 } });
+    expect(rewritten.result.isError).toBe(false);
+    expect(f.results.mock.calls.some((call) => call[0] === "click" && (call[1] as { element_index?: number }).element_index === 4
+      && (call[1] as { x?: number }).x === undefined)).toBe(true);
+    const denied = await a.request("tools/call", { name: "click", arguments: { x: 90, y: 90 } });
+    expect(denied.result.structuredContent.code).toBe("sensitiveTarget");
+    expect(denied.result.content[0].text).toContain("password field");
+  });
+
   it("adds model guidance to initialize and tool descriptions exactly once", async () => {
     const f = await fixture();
     const a = await f.client("test-token", false);
@@ -286,9 +313,10 @@ describe("CUA MCP gateway over real local sockets", () => {
     expect(init.result.instructions).toContain("element_index");
     expect(init.result.instructions).toContain("scopeViolation");
     expect(init.result.instructions).toContain("blacklist");
+    expect(init.result.instructions).toContain("sensitiveTarget");
     expect(init.result.instructions).toContain("confirmationRequired");
     expect(init.result.instructions).toContain("not allowed in this mode");
-    const clickNote = "[Nuwax] Prefer element_index from the latest observation. Pixel x/y is last resort. Keep Background delivery; do not pass foreground:true. For web page content prefer browser_click.";
+    const clickNote = "[Nuwax] Prefer element_index from the latest observation. Pixel x/y is last resort; the host rewrites a covering hit to element_index. Keep Background delivery; do not pass foreground:true. For web page content prefer browser_click.";
     for (let i = 0; i < 2; i++) {
       const [click] = (await a.request("tools/list")).result.tools;
       expect(click.description).toBe(clickNote);
