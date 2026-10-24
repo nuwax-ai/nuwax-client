@@ -1,8 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { CUA_REASON_KEYS } from "@shared/features/computer-use/presentation";
+import { CUA_OVERLAY_NOTICE_REASONS, CUA_REASON_KEYS } from "@shared/features/computer-use/presentation";
 
 const previewClientSource = String.raw`
 const labels = __CUA_LABELS__, api = window.cuaControls;
+const notices = new Set(__CUA_NOTICES__);
+const livePhase = task => ['running', 'paused'].includes(task.phase)
+  || (!!task.controlPending && ['stopped', 'failed'].includes(task.phase))
+  || (task.phase === 'failed' && task.reason === 'helperStillRunning');
 let runtime = null, selected = null, revision = -1, lastFrame = 0;
 const frames = new Map();
 const icons = { pause: '<path d="M7 5v10M13 5v10"/>', resume: '<path d="m7 4 9 6-9 6Z"/>', stop: '<rect x="5" y="5" width="10" height="10" rx="1.5"/>' };
@@ -57,8 +61,9 @@ function present(p) {
 async function run(id, action) {
   try {
     const result = await api.taskAction(id, action);
-    el('error').textContent = result?.success === false ? labels['reason.' + result.error] || labels['reason.generic'] : '';
-    draw(await api.getRuntime(), true);
+    const next = await api.getRuntime();
+    draw(next, true);
+    el('error').textContent = result?.success === false ? labels['reason.' + result.error] || labels['reason.generic'] : el('error').textContent;
   } catch { el('error').textContent = labels['reason.generic']; }
 }
 async function activate(id) {
@@ -75,7 +80,7 @@ async function activate(id) {
 }
 function drawStack() {
   const stack = el('stack'); stack.replaceChildren();
-  const live = (runtime?.tasks || []).filter(task => ['running', 'paused'].includes(task.phase));
+  const live = (runtime?.tasks || []).filter(livePhase);
   const others = live.filter(task => task.taskId !== selected).slice(0, 3);
   document.body.style.setProperty('--stack-space', others.length * 8 + 'px');
   document.body.classList.toggle('stacked', others.length > 0);
@@ -97,7 +102,7 @@ function drawStack() {
 function draw(state, force = false) {
   if (!state || !force && state.revision <= revision) return;
   runtime = state; revision = state.revision;
-  const tasks = (state.tasks || []).filter(task => ['running', 'paused'].includes(task.phase));
+  const tasks = (state.tasks || []).filter(livePhase);
   for (const [id, cached] of frames) {
     const task = tasks.find(task => task.taskId === id);
     if (!task || task.controlPending || task.bindingId !== cached.bindingId || task.epoch !== cached.epoch || task.reason === 'screenLocked') {
@@ -122,10 +127,15 @@ function draw(state, force = false) {
   el('pause').hidden = terminal || current.phase !== 'running';
   el('resume').hidden = terminal || current.phase !== 'paused';
   el('pause').disabled = locked; el('resume').disabled = locked;
-  // Stop remains usable while a pause or handoff is pending.
+  // Stop remains usable while a pause, handoff, or emergency-stop drain is pending.
   el('stop').disabled = terminal;
   if (terminal || current.controlPending) {
     clearFrame(); el('status').textContent = labels[terminal ? 'preview.ended' : 'preview.handoff'];
+    el('error').textContent = '';
+  } else if (current.reason && notices.has(current.reason)) {
+    el('error').textContent = labels['reason.' + current.reason] || labels['reason.generic'];
+  } else {
+    el('error').textContent = '';
   }
   drawStack();
 }
@@ -136,7 +146,7 @@ api.onPreview(update => {
     const old = frames.get(id); if (old) URL.revokeObjectURL(old.url);
     frames.delete(id); if (id === selected) clearFrame(); drawStack();
   };
-  if (!task || task.controlPending || !['running', 'paused'].includes(task.phase)) { remove(); return; }
+  if (!task || task.controlPending || !livePhase(task)) { remove(); return; }
   if (update.status !== 'ready' || !update.frame) {
     remove();
     if (id === selected) el('status').textContent = labels['preview.' + update.status] || labels['preview.unavailable'];
@@ -180,11 +190,12 @@ window.addEventListener('unload', () => { clearFrame(); for (const frame of fram
 `;
 
 export function taskPreviewWindowHtml(t: (key: string) => string) {
-  const keys = ['title', 'scope.choose', 'reason.generic', 'phase.running', 'phase.paused',
+  const keys = ['title', 'scope.choose', 'reason.generic', 'phase.running', 'phase.paused', 'phase.stopped', 'phase.failed',
     'preview.close', 'preview.pause', 'preview.resume', 'preview.stop', 'preview.takeover',
     'preview.loading', 'preview.unavailable', 'preview.minimized', 'preview.permissionsRequired', 'preview.helperUpgradeRequired',
     'preview.delayed', 'preview.ended', 'preview.handoff', ...CUA_REASON_KEYS.map(key => 'reason.' + key)];
   const labels = JSON.stringify(Object.fromEntries(keys.map(key => [key, t('Claw.Cua.' + key)]))).replace(/</g, '\\u003c');
+  const notices = JSON.stringify([...CUA_OVERLAY_NOTICE_REASONS]).replace(/</g, '\\u003c');
   const nonce = randomBytes(16).toString('hex');
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>
 :root{color-scheme:light dark;--text:#25252d;--muted:#868692;--glass:#fffffff7;--line:#e8e8ed;--hover:#25252d08;--accent:#6558f5;--danger:#cf4b55;--danger-bg:#e05a6317;--stack-space:0px}
@@ -199,10 +210,10 @@ header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--g
 #viewport{touch-action:none;position:absolute;inset:0;display:grid;place-items:center;padding:0;border:0;overflow:hidden;border-radius:8px;background:var(--hover)}
 #viewport:not(:disabled):hover{outline:1px solid var(--accent);outline-offset:-1px}#image{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;pointer-events:none;border-radius:6px}
 #status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;color:var(--muted);font-size:11px;line-height:1.6;background:var(--glass)}#status:empty{display:none}
-#toolbar{position:absolute;z-index:2;bottom:9px;opacity:0;pointer-events:none;transition:opacity .12s ease;left:10px;right:10px;display:flex;align-items:center;gap:8px;height:30px}#toolbar button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:30px;padding:0 8px;border:0;border-radius:8px;background:var(--glass);backdrop-filter:blur(12px);box-shadow:0 1px 6px #17172b12;font-size:11px;white-space:nowrap}#toolbar #stop{color:var(--danger);background:var(--danger-bg)}
+#toolbar{position:absolute;z-index:2;bottom:9px;opacity:1;pointer-events:auto;left:10px;right:10px;display:flex;align-items:center;gap:8px;height:30px}#toolbar button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:30px;padding:0 8px;border:0;border-radius:8px;background:var(--glass);backdrop-filter:blur(12px);box-shadow:0 1px 6px #17172b12;font-size:11px;white-space:nowrap}#toolbar #stop{color:var(--danger);background:var(--danger-bg)}
 #stack{position:absolute;inset:0;pointer-events:none}#stack button{position:absolute;inset:calc(4px + var(--offset)) calc(4px + var(--offset)) calc(4px + var(--remaining)) calc(4px + var(--remaining));padding:0;border:1px solid var(--line);border-left:3px solid var(--task-color);box-shadow:0 4px 12px #17172b15;border-radius:13px;background:var(--glass);overflow:hidden;pointer-events:auto}#stack img{width:100%;height:100%;object-fit:contain;opacity:.9}#stack span{position:absolute;right:2px;bottom:2px;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
 #error{position:absolute;z-index:8;bottom:47px;left:9px;right:9px;max-height:72px;overflow:auto;margin:0;padding:7px 9px;font-size:11px;line-height:1.5;color:var(--danger);background:var(--glass);border:1px solid var(--danger-bg);border-radius:8px}#error:empty{display:none}
-.shell:hover header,.shell:hover #toolbar,.shell:focus-within header,.shell:focus-within #toolbar{opacity:1;pointer-events:auto}
+.shell:hover header,.shell:focus-within header{opacity:1;pointer-events:auto}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 @media(prefers-color-scheme:dark){:root{--text:#eeeef2;--muted:#a0a0ad;--glass:#25252cf7;--line:#ffffff15;--hover:#ffffff0a;--accent:#8175ff;--danger:#f08c94;--danger-bg:#e05a6324}}
   </style></head><body><div id="stack"></div><main class="shell">
@@ -210,6 +221,6 @@ header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--g
   <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="stop"></button></div>
   <header><span id="dragHandle" aria-hidden="true">⠿</span><span id="dot"></span><button id="title"></button><span id="phase"></span><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
   <p id="error" role="alert"></p></main><script nonce="${nonce}">
-${previewClientSource.replace('__CUA_LABELS__', labels)}
+${previewClientSource.replace('__CUA_LABELS__', labels).replace('__CUA_NOTICES__', notices)}
   </script></body></html>`;
 }

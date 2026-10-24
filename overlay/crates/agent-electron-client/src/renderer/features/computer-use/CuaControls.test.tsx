@@ -75,6 +75,28 @@ describe("Computer Use controls", () => {
     expect(html).not.toContain("Claw.Cua.outcome.refused");
     expect(html).not.toContain("Claw.Cua.preview.collapse");
   });
+  it("shows a compact actionable failure on the slim card", () => {
+    harness.states[0] = { ...harness.states[0], phase: "paused", reason: "permissionsRequired" };
+    expect(render()).toContain("Claw.Cua.reason.permissionsRequired");
+    harness.cursor = 0; harness.buttons = [];
+    harness.states[0] = { ...harness.states[0], reason: "uncertainResult" };
+    expect(render()).toContain("Claw.Cua.reason.uncertainResult");
+  });
+  it("keeps the slim card up while emergency stop is still draining", () => {
+    harness.states[0] = { ...harness.states[0], phase: "stopped", controlPending: true, reason: "userStopped" };
+    const html = render();
+    expect(html).toContain("Claw.Cua.stopping");
+    expect(html).toContain("Claw.Cua.stop");
+    expect(html).not.toContain("Claw.Cua.reason.userStopped");
+    expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop")?.disabled).toBeUndefined();
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause")).toBeUndefined();
+  });
+  it("leaves stop on screen when the helper did not confirm it stopped", () => {
+    harness.states[0] = { ...harness.states[0], phase: "failed", reason: "helperStillRunning" };
+    const html = render();
+    expect(html).toContain("Claw.Cua.reason.helperStillRunning");
+    expect(html).toContain("Claw.Cua.stop");
+  });
   it("keeps the control bar hidden without a task", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
     expect(render()).toBe("");

@@ -45,6 +45,23 @@ describe("permission guide contract", () => {
       "granted",
     );
   });
+  it("ships Computer Use session-failure copy in all four locales", () => {
+    const keys = [
+      "Claw.Cua.reason.operationFailed",
+      "Claw.Cua.reason.loginRequired",
+      "Claw.Cua.reason.operationCancelled",
+      "Claw.Cua.reason.permissionsRequired",
+      "Claw.Cua.reason.uncertainResult",
+      "Claw.Cua.reason.helperStillRunning",
+    ] as const;
+    for (const locale of [en, cn, tw, hk]) {
+      for (const key of keys) {
+        expect((locale as Record<string, string>)[key], key).toBeTruthy();
+      }
+      expect((locale as Record<string, string>)["Claw.Cua.reason.operationFailed"]).toContain("Nuwax Computer Use");
+      expect((locale as Record<string, string>)["Claw.Cua.reason.permissionsRequired"]).toContain("Nuwax Computer Use");
+    }
+  });
   it("ships Computer Use helper-target copy in all four locales", () => {
     const keys = [
       "Claw.Settings.computerUse.permTargetHint",

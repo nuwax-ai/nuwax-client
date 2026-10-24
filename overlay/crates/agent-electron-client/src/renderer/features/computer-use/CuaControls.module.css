@@ -23,9 +23,12 @@
 .status i { width: 5px; height: 5px; border-radius: 50%; background: #27a879; }
 .card[data-phase="paused"] .status i { background: #d89b3c; }
 .card[data-phase="pending"] .status i { background: #90909b; }
+.card[data-phase="stopped"] .status i, .card[data-phase="failed"] .status i { background: #cf4b55; }
+.notice { margin: 0; padding: 0 10px 8px; color: var(--cua-muted, #868692); font-size: 11px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .close:global(.ant-btn) { width: 23px; min-width: 23px; height: 24px; padding: 0; color: var(--cua-muted, #868692); border-radius: 6px; }
 .close svg { width: 13px; height: 13px; }
-.actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--cua-line, #e8e8ed); margin: 0 11px; padding: 9px 0 11px; }
+/* Stop stays visible; hiding the bar behind hover made emergency stop undiscoverable. */
+.actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--cua-line, #e8e8ed); margin: 0 11px; padding: 9px 0 11px; }
 .actions :global(.ant-btn) { flex: 1; height: 30px; padding-inline: 8px; column-gap: 5px; font-size: 12px; border-radius: 8px; box-shadow: none; }
 .pause:global(.ant-btn) { color: var(--cua-text, #25252d); background: color-mix(in srgb, var(--cua-text, #25252d) 4%, transparent); }
 .stop:global(.ant-btn) { border-color: transparent; color: #cf4b55; background: color-mix(in srgb, #e05a63 9%, transparent); }
@@ -33,5 +36,4 @@
 
 .card :global(.ant-btn):focus-visible { outline: 2px solid var(--cua-accent, #6558f5); outline-offset: 2px; }
 
-.card:hover .actions, .card:focus-within .actions { opacity: 1; pointer-events: auto; }
 @media (prefers-reduced-motion: reduce) { .actions { transition: none; } }

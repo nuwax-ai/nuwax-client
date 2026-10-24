@@ -75,6 +75,14 @@ describe("small native window preview", () => {
     p.update([{ ...task("A"), phase: "paused" }]);
     expect(p.nodes.get("pause")!.hidden).toBe(true); expect(p.nodes.get("resume")!.hidden).toBe(false);
   });
+  it("keeps stop on a draining task and shows a compact permission failure", async () => {
+    const p = await page();
+    p.update([{ ...task("A"), phase: "stopped", controlPending: true, reason: "userStopped" }]);
+    expect(p.nodes.get("stop")!.disabled).toBe(false);
+    expect(p.nodes.get("phase")!.textContent).toBe("Claw.Cua.preview.handoff");
+    p.update([{ ...task("A"), phase: "paused", reason: "permissionsRequired" }]);
+    expect(p.nodes.get("error")!.textContent).toBe("Claw.Cua.reason.permissionsRequired");
+  });
   it("draws real back-window frames and clears cached pixels on revoke or rebind", async () => {
     const p = await page(); p.preview(frame("B"));
     expect(p.nodes.get("stack")!.children[0].children[0].src).toBe("blob:1");
