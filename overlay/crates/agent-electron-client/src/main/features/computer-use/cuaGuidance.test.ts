@@ -21,7 +21,7 @@ describe("cuaGuidance", () => {
     expect(text).toContain("scopeViolation");
     expect(text).toContain("element_index");
     expect(cuaToolDescription(windowScope, "click", undefined)).toContain("element_index");
-    expect(cuaRejectionText("scopeViolation")).toContain("Pixel coordinates");
+    expect(cuaRejectionText("scopeViolation")).toContain("pixel coordinates");
   });
 
   it("merges instructions once and exposes the host cursor enable payload", () => {

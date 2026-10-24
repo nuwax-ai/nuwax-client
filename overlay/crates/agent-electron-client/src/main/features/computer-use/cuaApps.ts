@@ -61,7 +61,7 @@ export async function discoverInstalledApps(
           if (entry.isDirectory()) walk(path.join(dir, entry.name), depth + 1);
           else if (/\.(lnk|exe)$/i.test(entry.name)) {
             const label = entry.name.replace(/\.(lnk|exe)$/i, "");
-            apps.push({ id: label, label });
+            apps.push({ id: normalizeAppId(label), label });
           }
         }
       } catch { /* 跳过不可读目录 */ }

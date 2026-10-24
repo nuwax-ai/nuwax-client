@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { discoverInstalledApps } from "./cuaApps";
 
@@ -13,11 +14,14 @@ describe("discoverInstalledApps", () => {
   });
 
   it("walks Windows Start Menu shortcuts", async () => {
-    const tree: Record<string, string[]> = {
-      "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs": ["Slack.lnk"],
-    };
+    // 与 discoverInstalledApps 同一套 path.join，Linux CI 上分隔符才能对上 Slack.lnk。
+    const startMenu = path.join(
+      process.env.ProgramData ?? "C:\\ProgramData",
+      "Microsoft", "Windows", "Start Menu", "Programs",
+    );
+    const tree: Record<string, string[]> = { [startMenu]: ["Slack.lnk"] };
     const io = {
-      existsSync: (dir: string) => dir in tree || /Programs$/.test(dir),
+      existsSync: (dir: string) => dir === startMenu,
       readdirSync: (dir: string) => (tree[dir] ?? []).map((name) => ({
         name, isDirectory: () => false, isFile: () => true,
       })),

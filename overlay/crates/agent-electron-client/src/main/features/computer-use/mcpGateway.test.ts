@@ -282,11 +282,16 @@ describe("CUA MCP gateway over real local sockets", () => {
     const f = await fixture();
     const a = await f.client("test-token", false);
     const init = await a.request("initialize", {});
-    expect(init.result.instructions).toContain("Look before you act");
+    expect(init.result.instructions).toContain("Observe first");
+    expect(init.result.instructions).toContain("element_index");
+    expect(init.result.instructions).toContain("scopeViolation");
+    expect(init.result.instructions).toContain("blacklist");
+    expect(init.result.instructions).toContain("confirmationRequired");
     expect(init.result.instructions).toContain("not allowed in this mode");
+    const clickNote = "[Nuwax] Prefer element_index from the latest observation. Pixel x/y is last resort. Keep Background delivery; do not pass foreground:true. For web page content prefer browser_click.";
     for (let i = 0; i < 2; i++) {
       const [click] = (await a.request("tools/list")).result.tools;
-      expect(click.description).toBe("[Nuwax] For web page content prefer browser_click.");
+      expect(click.description).toBe(clickNote);
     }
   });
   it("ends the task after repeated violations but not for a closed target", async () => {
