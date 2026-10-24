@@ -371,10 +371,21 @@ export class CuaMcpGateway {
     if (id !== undefined && (id === null || !["string", "number"].includes(typeof id))) { connection.close(); return; }
     if (id !== undefined && (connection.pending.has(keyOf(id)) || connection.reservations.has(keyOf(id)))) { connection.close(); return; }
     if (connection.pending.size + connection.reservations.size >= 32) { connection.close(); return; }
-    if (connection.warming) { this.reject(connection.socket, id, "operationInProgress", message.method); return; }
     if (this.holding || !connection.child) {
+      const owner = this.options.authorize ? this.options.authorize(connection.grant) : connection.id;
+      const state = this.options.controller.snapshot();
+      if (!this.options.tasks && this.holding && connection.initialized && message.method === "tools/call"
+        && id !== undefined && owner && this.options.controller.owns(owner) && state.phase === "paused"
+        && !CUA_FINAL_REASONS.includes(state.reason ?? "") && typeof message.params?.name === "string"
+        && this.options.allowedTools.includes(message.params.name)) {
+        // Pausing while the model thinks must also retain its next tool call.
+        // Do not retain arguments or execute this stale call after human resume.
+        const pending: Pending = { method: "tools/call", timer: undefined as unknown as ReturnType<typeof setTimeout> };
+        this.holdReply(connection, keyOf(id), pending, owner); return;
+      }
       this.reject(connection.socket, id, this.options.controller.snapshot().reason ?? "paused", message.method); return;
     }
+    if (connection.warming) { this.reject(connection.socket, id, "operationInProgress", message.method); return; }
     if (message.method === "initialize") connection.initialization = structuredClone(message);
     if (message.method === "tools/call") {
       if (id === undefined) return;

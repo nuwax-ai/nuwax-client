@@ -312,9 +312,11 @@ describe("CUA MCP gateway over real local sockets", () => {
     await a.request("initialize", {});
     await a.request("tools/call", { name: "get_desktop_state" });
     f.controller.pause(); f.gateway.pauseTransports();
-    expect((await a.request("tools/call", { name: "click" })).result.isError).toBe(true);
+    const paused = a.request("tools/call", { name: "click" });
+    expect((await a.request("ping")).error.message).toContain("userPaused");
     await f.gateway.resumeTransports();
     expect(f.controller.resume()).toBe(true);
+    expect((await paused).result.structuredContent.code).toBe("operationPaused");
     expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
     await a.request("tools/call", { name: "get_desktop_state" });
     expect((await a.request("tools/call", { name: "click" })).result.isError).toBe(false);
