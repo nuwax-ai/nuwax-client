@@ -81,6 +81,45 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("keeps a desktop operation pending across manual pause without replaying the cancelled input", async () => {
+    const f = await fixture();
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    const pending = peer.request("tools/call", { name: "click", arguments: { hang: true } });
+    await vi.waitFor(() => expect(f.controller.snapshot().steps.at(-1)?.tool).toBe("click"));
+    let answered = false; void pending.then(() => { answered = true; });
+    f.controller.pause("userPaused"); f.gateway.cancelPending("userPaused"); f.gateway.pauseTransports();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    await f.gateway.resumeTransports();
+    expect((f.controller as CuaTaskController).resume()).toBe(true);
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
+  });
+  it.each([false, true])("cancels a human confirmation when the task is stopped (multiwindow=%s)", async multiwindow => {
+    const registry = multiwindow ? new CuaTaskRegistry() : undefined;
+    registry?.setAvailable(true);
+    const task = registry?.ensure("A");
+    if (task) { registry!.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry!.resumeTask(task.id); }
+    let f: Awaited<ReturnType<typeof fixture>>;
+    f = await fixture(3000, () => "A", undefined, registry, {
+      requireConfirmation: tool => tool === "click",
+      onFailure: reason => {
+        if (task) { registry!.pauseTask(task.id, reason); f.gateway.holdOwner("A", reason); }
+        else { f.controller.pause(reason); f.gateway.cancelPending(reason); f.gateway.pauseTransports(); }
+      },
+    });
+    const peer = await f.client("test-token", true, "A");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    const pending = peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } });
+    await vi.waitFor(() => expect(f.controller.snapshot().phase).toBe("paused"));
+    if (task) { registry!.stopTask(task.id); f.gateway.holdOwner("A", "userStopped"); }
+    else { f.controller.stop(); f.gateway.cancelPending("userStopped"); }
+    expect((await pending).result.structuredContent.code).toBe("taskStopped");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.isError).toBe(true);
+  });
   it.each([false, true])("keeps a confirmation request alive until resume and then requires a new observation (multiwindow=%s)", async (multiwindow) => {
     const registry = multiwindow ? new CuaTaskRegistry() : undefined;
     registry?.setAvailable(true);
