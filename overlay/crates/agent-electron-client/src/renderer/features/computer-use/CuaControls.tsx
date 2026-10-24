@@ -2,12 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Button, message, theme } from "antd";
 import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
 
-import { CUA_CONTROL_INITIAL_POSITION, CUA_REASON_KEYS } from "@shared/features/computer-use/presentation";
+import { CUA_CONTROL_INITIAL_POSITION, canShowCuaOverlay, cuaOverlayNotice, cuaReasonKey } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
 import styles from "./CuaControls.module.css";
-const REASONS = new Set(CUA_REASON_KEYS);
 type T = (key: string, ...args: any[]) => string;
-const reasonText = (t: T, reason: string) => t(`Claw.Cua.reason.${REASONS.has(reason) ? reason : "generic"}`);
+const reasonText = (t: T, reason?: string | null) => t(`Claw.Cua.reason.${cuaReasonKey(reason)}`);
 
 /** Live runtime with stale snapshots dropped; shared by the control bar and the settings rows. */
 function useCuaRuntime(api?: ComputerUseAPI) {
@@ -34,7 +33,7 @@ function useCuaAction(t: T, accept: (state: CuaRuntime) => void) {
     try {
       const result = await action() as any;
       if (result?.runtime) accept(result.runtime);
-      if (result?.success === false && !result.cancelled) message.error(reasonText(t, result.error));
+      if (result?.success === false && !result.cancelled) message.error(reasonText(t, result.error as string | undefined));
       return result;
     } catch { message.error(t("Claw.Cua.reason.generic")); }
     finally { setBusy(false); }
@@ -91,12 +90,14 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
     window.addEventListener("resize", constrain);
     return () => window.removeEventListener("resize", constrain);
   }, [runtime?.phase, runtime?.reason, runtime?.needsObservation]);
-  if (!api?.getRuntime || !runtime || !["running", "paused"].includes(runtime.phase) || closed === runtime.taskId || runtime.multiwindow) return null;
+  if (!api?.getRuntime || !runtime || closed === runtime.taskId || !canShowCuaOverlay(runtime)) return null;
 
   const paused = runtime.phase === "paused";
   const target = runtime.scope?.kind === "window" ? runtime.scope.label || t("Claw.Cua.scope.choose") : t("Claw.Cua.scope.desktop");
   const controlLocked = busy || runtime.controlPending;
   const status = t(runtime.controlPending ? "Claw.Cua.stopping" : `Claw.Cua.phase.${runtime.phase}`);
+  // Operational pauses (noProgress / userPaused) stay in the tray; only actionable failures land here.
+  const notice = !runtime.controlPending ? cuaOverlayNotice(runtime.reason) : null;
   const handoffLabel = t("Claw.Cua.preview.legacyTakeover");
   return <aside ref={panel} className={styles.card} data-phase={runtime.controlPending ? "pending" : runtime.phase}
     aria-label={t("Claw.Cua.title")} style={{
@@ -123,10 +124,11 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
         aria-label={t("Claw.Cua.preview.takeover")} onClick={() => void run(() => api.takeOver())}>{target}</Button>
       <span className={styles.status} role="status"><i />{status}</span>
     </header>
+    {notice && <p className={styles.notice} role="status">{reasonText(t, notice)}</p>}
     <div className={styles.actions}>
-      <Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
+      {["running", "paused"].includes(runtime.phase) && <Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
         aria-label={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")} title={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")}
-        onClick={() => void run(() => paused ? api.resume() : api.pause())}>{t(paused ? "Claw.Cua.preview.resume" : "Claw.Cua.preview.pause")}</Button>
+        onClick={() => void run(() => paused ? api.resume() : api.pause())}>{t(paused ? "Claw.Cua.preview.resume" : "Claw.Cua.preview.pause")}</Button>}
       <Button danger className={styles.stop} icon={<ControlIcon name="stop" />} onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
       {runtime.reason === "confirmationRequired" && api.confirmSensitive && <Button size="small"
         onClick={() => void run(async () => { await api.confirmSensitive!(true); return api.resume(); })}>{t("Claw.Cua.confirmAllow")}</Button>}

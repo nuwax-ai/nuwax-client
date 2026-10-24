@@ -15,7 +15,7 @@ import { createCuaControlWindow } from "./controlWindow";
 import { createCuaTaskHistory } from "./taskHistory";
 import { CuaEngineSessions, cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaScope } from "@shared/features/computer-use/contract";
-import { canPreviewCuaTask } from "@shared/features/computer-use/presentation";
+import { canPreviewCuaTask, isCuaLivePhase } from "@shared/features/computer-use/presentation";
 
 export const CUA_STOP_SHORTCUT = "CommandOrControl+Shift+F12";
 
@@ -177,8 +177,8 @@ export const computerUseFeature: DesktopFeature = {
       }
       const current = new Set((state.tasks ?? []).map(task => task.taskId));
       for (const id of promptedTargets) if (!current.has(id)) promptedTargets.delete(id);
-      const active = state.tasks ? state.tasks.some(task => ["running", "paused"].includes(task.phase))
-        : ["running", "paused"].includes(state.phase);
+      const active = state.tasks ? state.tasks.some(task => isCuaLivePhase(task.phase, task))
+        : isCuaLivePhase(state.phase, state);
       const actions = [{ id: "center", labelKey: "Claw.Cua.center.open", run: openCenter }];
       if (active) {
         actions.push({ id: "preview", labelKey: "Claw.Cua.preview.expand", run: () => {
