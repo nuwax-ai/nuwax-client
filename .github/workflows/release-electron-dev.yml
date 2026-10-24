@@ -260,6 +260,7 @@ jobs:
   build-electron:
     name: Build Electron (${{ matrix.platform }} ${{ matrix.arch }})
     needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -762,7 +763,8 @@ jobs:
             [ -n "$APP_PATH" ] || { echo '::error::macOS app missing'; exit 1; }
             NOTIFICATION_MODULE="$APP_PATH/Contents/Resources/app.asar.unpacked/dist/main/mac-notification-permission.node"
             [ -f "$NOTIFICATION_MODULE" ] || { echo '::error::macOS notification module missing from unpacked app'; exit 1; }
-            lipo "$NOTIFICATION_MODULE" -verify_arch arm64 x86_64
+            lipo "$NOTIFICATION_MODULE" -verify_arch arm64
+            lipo "$NOTIFICATION_MODULE" -verify_arch x86_64
             codesign --verify --strict "$NOTIFICATION_MODULE"
             codesign --verify --deep --strict "$APP_PATH"
             spctl --assess --type execute --verbose "$APP_PATH"

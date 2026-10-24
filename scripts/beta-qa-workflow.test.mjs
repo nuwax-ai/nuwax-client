@@ -295,7 +295,7 @@ function runRecordStep(t, { qa, osName = 'Windows', missingCertificate = false, 
   mkdirSync(bin);
   writeFileSync(calls, '');
   for (const command of ['node', 'codesign', 'spctl', 'lipo']) {
-    const lipoArguments = command === 'lipo' ? '[ "$#" = 4 ] && [[ "$1" == *.node ]] && [ "$2" = -verify_arch ] && [ "$3" = arm64 ] && [ "$4" = x86_64 ] || exit 64\n' : '';
+    const lipoArguments = command === 'lipo' ? '[ "$#" = 3 ] && [[ "$1" == *.node ]] && [ "$2" = -verify_arch ] && [[ "$3" == arm64 || "$3" == x86_64 ]] || exit 64\n' : '';
     writeFileSync(path.join(bin, command), '#!/bin/bash\nprintf "%s\\t" "$(basename "$0")" "$@" >> "$QA_CALLS"\nprintf "\\n" >> "$QA_CALLS"\n' + lipoArguments + '[ "$(basename "$0")" != "$QA_FAILED_TOOL" ]\n', { mode: 0o755 });
   }
   const version = qa === 'true' ? '3.0.9-qa.20261008.1' : '3.0.9';
@@ -340,17 +340,18 @@ test('artifact-only QA retains the full macOS secret and signature gates before 
   for (const qa of ['true', 'false']) {
     const passed = runRecordStep(t, { qa, osName: 'macOS' });
     assert.equal(passed.status, 0, passed.stderr);
-    assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'codesign', 'codesign', 'spctl', 'node', 'node']);
-    assert.deepEqual(passed.calls[0].slice(2, 5), ['-verify_arch', 'arm64', 'x86_64']);
-    assert.match(passed.calls[1][3], /app\.asar\.unpacked\/dist\/main\/mac-notification-permission\.node$/);
-    assert.deepEqual(passed.calls[4].slice(1, 3), ['scripts/prepare-release-system-name.mjs', '--verify-app']);
-    assert.equal(passed.calls[5][2], qa === 'true' ? 'record-qa' : 'record');
+    assert.deepEqual(passed.calls.map((call) => call[0]), ['lipo', 'lipo', 'codesign', 'codesign', 'spctl', 'node', 'node']);
+    assert.deepEqual(passed.calls[0].slice(2, 4), ['-verify_arch', 'arm64']);
+    assert.deepEqual(passed.calls[1].slice(2, 4), ['-verify_arch', 'x86_64']);
+    assert.match(passed.calls[2][3], /app\.asar\.unpacked\/dist\/main\/mac-notification-permission\.node$/);
+    assert.deepEqual(passed.calls[5].slice(1, 3), ['scripts/prepare-release-system-name.mjs', '--verify-app']);
+    assert.equal(passed.calls[6][2], qa === 'true' ? 'record-qa' : 'record');
     const missing = runRecordStep(t, { qa, osName: 'macOS', missingCertificate: true });
     assert.notEqual(missing.status, 0);
     assert.deepEqual(missing.calls, []);
     const failed = runRecordStep(t, { qa, osName: 'macOS', failedTool: 'codesign' });
     assert.notEqual(failed.status, 0);
-    assert.deepEqual(failed.calls.map((call) => call[0]), ['lipo', 'codesign']);
+    assert.deepEqual(failed.calls.map((call) => call[0]), ['lipo', 'lipo', 'codesign']);
     const missingModule = runRecordStep(t, { qa, osName: 'macOS', missingNotificationModule: true });
     assert.notEqual(missingModule.status, 0);
     assert.deepEqual(missingModule.calls, []);
@@ -372,8 +373,8 @@ test('macOS notification architecture gate executes real lipo and rejects a miss
   });
   const universal = path.join(directory, 'notification.node');
   execFileSync('xcrun', ['lipo', '-create', ...slices, '-output', universal]);
-  const command = script('Record platform source and verify macOS signature').split('\n').find(line => /^\s*lipo /.test(line));
-  assert.ok(command, 'Missing production architecture gate');
+  const command = script('Record platform source and verify macOS signature').split('\n').filter(line => /^\s*lipo /.test(line)).join('\n');
+  assert.ok(command, 'Missing production architecture gates');
   const verify = (file) => spawnSync('bash', ['-e', '-u', '-c', command], {
     env: { ...process.env, NOTIFICATION_MODULE: file }, encoding: 'utf8',
   });
