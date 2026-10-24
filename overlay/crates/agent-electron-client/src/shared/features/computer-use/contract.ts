@@ -88,6 +88,9 @@ export interface ComputerUseStatus {
   mcpInjected?: boolean;
   /** 模拟光标 overlay；缺省开。与 Background 投递独立。 */
   agentCursor?: boolean;
+  authMode?: "ask" | "unrestricted";
+  blacklist?: string[];
+  screenshotHome?: string;
   socketPath?: string;
   helperPath?: string | null;
   accessibility?: boolean | null;
@@ -140,6 +143,19 @@ export interface ComputerUseAPI {
     error?: string;
     status?: ComputerUseStatus;
   }>;
+  setAuthMode: (mode: "ask" | "unrestricted") => Promise<{
+    success: boolean;
+    error?: string;
+    status?: ComputerUseStatus;
+  }>;
+  setBlacklist: (apps: string[]) => Promise<{
+    success: boolean;
+    error?: string;
+    status?: ComputerUseStatus;
+  }>;
+  listInstalledApps: () => Promise<{ id: string; label: string }[]>;
+  listScreenshots: () => Promise<string[]>;
+  confirmSensitive: (allow: boolean) => Promise<{ success: boolean }>;
   requestPermissions: () => Promise<{
     success: boolean;
     error?: string;

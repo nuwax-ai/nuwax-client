@@ -313,3 +313,5 @@ export function isDesktopFeatureRequestSource(details: FeatureRequestSource): bo
 /** Host integration stays behind the feature registry public entry. */
 export { notifyCapturePreferencesChanged, onCapturePreferencesChanged } from "./capture/preferences";
 export { routeCaptureShortcut } from "./capture/shortcutRouting";
+/** ACP 引擎只经公开入口消费同会话 CU 开关短指令，不得直达特性内部文件。 */
+export { applyCuaCapabilityNotice } from "./computer-use/cuaSessionNotice";

@@ -35,20 +35,21 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], multiwindow: true, tasks: [] };
     expect(render()).toBe("");
   });
-  it("keeps explicit recovery in settings after a multiwindow emergency stop", async () => {
-    harness.states = [{ ...harness.states[0], phase: "stopped", multiwindow: true, recoverable: true, tasks: [] }, false, [], false, null, [], null];
+  it("keeps explicit recovery in settings after an emergency stop", async () => {
+    harness.states = [{ ...harness.states[0], phase: "stopped", recoverable: true, tasks: [] }, false];
     api.recover.mockResolvedValue({ success: true });
-    expect(renderRows()).toContain("Claw.Cua.multiwindow.title");
+    expect(renderRows()).toContain("Claw.Cua.recover");
     const recover = harness.buttons.find((button) => button.children === "Claw.Cua.recover");
     expect(recover.disabled).toBe(false); await recover.onClick();
     expect(api.recover).toHaveBeenCalledOnce();
   });
-  it("keeps a single settings row and leaves the live task list in the tray center", () => {
+  it("hides scope, diagnostics and window pickers from ordinary settings", () => {
     harness.states = [{ ...harness.states[0], multiwindow: true, tasks: [] }, false, [], false, null];
     const html = renderRows();
-    expect(html.split("Claw.Cua.multiwindow.title")).toHaveLength(2);
+    expect(html).not.toContain("Claw.Settings.computerUse.scope");
     expect(html).not.toContain("Claw.Cua.scope.refresh");
-    expect(html).not.toContain("Claw.Cua.multiwindow.stopAll");
+    expect(html).not.toContain("Claw.Cua.multiwindow.title");
+    expect(html).not.toContain("Claw.Settings.computerUse.diagnostics");
   });
   it("keeps emergency stop enabled during another pending operation", () => {
     harness.states[3] = true;
@@ -78,8 +79,8 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
     expect(render()).toBe("");
   });
-  it("keeps takeover, stop and close reachable in the compact card", async () => {
-    Object.assign(api, { takeOver: vi.fn(async () => ({ success: true })) });
+  it("keeps takeover, stop and Computer Use off on the compact card", async () => {
+    Object.assign(api, { takeOver: vi.fn(async () => ({ success: true })), setEnabled: vi.fn(async () => ({ success: true })) });
     const html = render();
     expect(html).toContain('data-phase="running"');
     const takeover = harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.takeover");
@@ -87,10 +88,8 @@ describe("Computer Use controls", () => {
     expect((api as any).takeOver).toHaveBeenCalledOnce();
     await harness.buttons.find(b => b.children === "Claw.Cua.stop").onClick();
     expect(api.stop).toHaveBeenCalledOnce();
-    harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close").onClick();
-    expect(harness.states[1]).toBe("id");
-    // Closing only dismisses the presentation, not the running task.
-    expect(api.stop).toHaveBeenCalledOnce();
+    expect(html).toContain("Claw.Settings.computerUse.enableOff");
+    expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close")).toBeUndefined();
   });
   it("shows resume while paused and keeps user context", async () => {
     harness.states[0] = { ...harness.states[0], phase: "paused", scope: { kind: "window", label: "My editor" } };
@@ -108,17 +107,12 @@ describe("Computer Use controls", () => {
     expect(clampCuaControlPosition({ x: 900, y: 700 }, { width: 288, height: 180 }, { width: 600, height: 400 })).toEqual({ x: 304, y: 212 });
     expect(clampCuaControlPosition({ x: -400, y: -100 }, { width: 288, height: 180 }, { width: 320, height: 200 })).toEqual({ x: 8, y: 12 });
   });
-  it("offers scope and diagnostics as settings rows, locked while a task runs", () => {
-    harness.states = [{ ...harness.states[0], phase: "idle", taskId: null }, false, [], false, null];
+  it("shows recovery only after a failed helper, never a scope picker", () => {
+    harness.states = [{ ...harness.states[0], phase: "stopped", recoverable: true, taskId: null }, false];
     const html = renderRows();
-    expect(html).toContain("Claw.Settings.computerUse.scope");
-    expect(html).toContain("Claw.Cua.scope.explanation");
-    expect(html).toContain("Claw.Settings.computerUse.diagnostics");
-    expect(html).not.toContain("Claw.Cua.modelExplanation");
-    harness.cursor = 0; harness.buttons = [];
-    harness.states[0] = { ...harness.states[0], phase: "running", taskId: "id" };
-    renderRows();
-    expect(harness.buttons.find((b) => b.children === "Claw.Cua.clear").disabled).toBe(true);
+    expect(html).toContain("Claw.Cua.recover");
+    expect(html).not.toContain("Claw.Settings.computerUse.scope");
+    expect(html).not.toContain("Claw.Cua.clear");
   });
   it("ignores stale snapshots and removes subscriptions on unmount", async () => {
     let resolve!: (value: unknown) => void;

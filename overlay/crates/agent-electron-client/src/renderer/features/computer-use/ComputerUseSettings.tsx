@@ -3,7 +3,7 @@
  * 翻译函数、行组件与桥对象由调用方注入；不 import 客户端 i18n/样式/状态。
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Input, Modal, Space, Switch, message } from "antd";
+import { Button, Input, Modal, Select, Space, Switch, message } from "antd";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
 import { CuaSettingsRows } from "./CuaControls";
 import styles from "./ComputerUseSettings.module.css";
@@ -55,6 +55,8 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
     hasApiKey?: boolean;
   } | null>(null);
   const [cuaVlmTesting, setCuaVlmTesting] = useState(false);
+  const [installedApps, setInstalledApps] = useState<{ id: string; label: string }[]>([]);
+  const [screenshots, setScreenshots] = useState<string[]>([]);
 
   // 视觉模型配置：行内即点即存（与端口/域名同范式）
   const commitVlm = async (patch: {
@@ -109,6 +111,8 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
       const s = await api.getStatus();
       setCuaStatus(s);
       setCuaEnablePendingPermission(s.consentPending === true);
+      void api.listInstalledApps?.().then(setInstalledApps).catch(() => undefined);
+      void api.listScreenshots?.().then(setScreenshots).catch(() => undefined);
     } catch (error) {
       console.error("Failed to load computer use status:", error);
     }
@@ -270,6 +274,57 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
             }}
           />
         }
+      />
+      <Row
+        label={t("Claw.Settings.computerUse.authMode")}
+        desc={t("Claw.Settings.computerUse.authModeDesc")}
+        control={
+          <Select
+            size="small"
+            style={{ width: 200 }}
+            value={cuaStatus?.authMode === "ask" ? "ask" : "unrestricted"}
+            options={[
+              { value: "unrestricted", label: t("Claw.Settings.computerUse.authUnrestricted") },
+              { value: "ask", label: t("Claw.Settings.computerUse.authAsk") },
+            ]}
+            disabled={!api?.setAuthMode}
+            onChange={(mode) => {
+              void api?.setAuthMode?.(mode).then((r) => {
+                if (r?.status) setCuaStatus(r.status);
+                else if (r?.success === false) message.error(cuaErrorText(t, r.error));
+              }).catch(() => message.error(t("Claw.Settings.computerUse.errors.generic")));
+            }}
+          />
+        }
+      />
+      <Row
+        label={t("Claw.Settings.computerUse.blacklist")}
+        desc={t("Claw.Settings.computerUse.blacklistDesc")}
+        control={
+          <Select
+            mode="tags"
+            size="small"
+            style={{ minWidth: 240, maxWidth: 360 }}
+            value={cuaStatus?.blacklist ?? []}
+            options={installedApps.map((app) => ({ value: app.label, label: app.label }))}
+            placeholder={t("Claw.Settings.computerUse.blacklistPlaceholder")}
+            disabled={!api?.setBlacklist}
+            onChange={(apps) => {
+              void api?.setBlacklist?.(apps).then((r) => {
+                if (r?.status) setCuaStatus(r.status);
+                else if (r?.success === false) message.error(cuaErrorText(t, r.error));
+              }).catch(() => message.error(t("Claw.Settings.computerUse.errors.generic")));
+            }}
+          />
+        }
+      />
+      <Row
+        label={t("Claw.Settings.computerUse.privacy")}
+        desc={<>
+          {t("Claw.Settings.computerUse.privacyDesc", { path: cuaStatus?.screenshotHome || "~/.nuwax/computer-use" })}
+          {!!screenshots.length && <span style={{ display: "block", marginTop: 4 }}>{t("Claw.Settings.computerUse.privacyFiles", { count: screenshots.length })}</span>}
+          <span style={{ display: "block", marginTop: 4 }}>{t("Claw.Settings.computerUse.containerBoundary")}</span>
+        </>}
       />
       {!cuaStatus?.installed && cuaStatus?.installable && (
         <Row

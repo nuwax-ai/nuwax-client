@@ -13,6 +13,7 @@ const COMMON = [
   "4. After every write burst, observe again and verify the result before the next action. Never assume a click landed.",
   "5. Agent cursor: the host enables a simulated overlay cursor for an active desktop task so the user can see where you aim. The overlay is independent of Background delivery — do not pass foreground:true or move the user's real mouse. Call set_agent_cursor_enabled only to toggle the overlay; the user can also disable it in settings.",
   "6. You choose the operating window. Do not ask the user to pick desktop vs window. Skip any app or window the host marks as blacklisted; a blacklist skip is not a targeting miss.",
+  "7. If the host replies confirmationRequired, stop and wait. The user must allow that sensitive action once; do not retry it unchanged until they do. Unrestricted mode still honors the blacklist.",
   "- Web pages: prefer get_browser_state with browser_* tools, using refs from the latest snapshot. On macOS, when the trusted input route is refused, pass input_route=\"dom_event\".",
   "- The browser's own UI (permission prompts, native file pickers, extensions) is native UI: use window tools for it.",
   "- A refused or scopeViolation reply did nothing. Observe again and choose a different action; do not resend the same coordinates.",
@@ -66,7 +67,9 @@ const REJECTIONS: Record<string, string> = {
   scopeViolation: "Window-only mode allows the selected window and, if it is a browser, its bound tabs. Keyboard shortcuts, pixel coordinates, the clipboard and other apps are unavailable. Repeated violations end the task.",
   profileAttachRequiresWindowScope: "Attaching to the user's own browser profile is not allowed in desktop mode. Ask the user to select that browser window in Computer Use (window mode).",
   toolNotAllowed: "This tool is not available. Repeated violations end the task.",
-  targetClosed: "The selected window is gone. Ask the user to select a window again.",
+  targetClosed: "The selected window is gone. Observe again and pick another live window.",
+  blacklisted: "That application is on the user's Computer Use blacklist. Skip it and continue with a different app. This is not a targeting miss.",
+  confirmationRequired: "This action needs an explicit user confirmation (ask mode). Do not retry until the user allows it once.",
   noProgress: "The same action was repeated and nothing observed changed, so the task is paused for the user. After resuming, observe and try a different approach.",
 };
 

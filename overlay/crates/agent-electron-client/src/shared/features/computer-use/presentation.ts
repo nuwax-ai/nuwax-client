@@ -11,7 +11,8 @@ export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "too
   "repeatedAction", "connectionClosed", "daemonNotReady", "permissionsRequired", "policyNotActive", "helperStillRunning",
   "idleTimeout", "helperNotInstalled", "sessionEnded", "userStopped", "disabled", "cannotResume", "observationRequired", "gatewayFailed", "scopeBusy", "scopeViolation", "targetClosed", "scopeSaveFailed", "helperIdentityUnverified",
   "noProgress", "uncertainResult", "violationLimit",
-  "targetRequired", "taskUnavailable", "windowBusy", "taskQueued", "handoffPending", "foregroundRequired", "userTakingControl", "taskSelectionRequired", "helperUpgradeRequired", "taskCapacity", "targetActivationFailed"];
+  "targetRequired", "taskUnavailable", "windowBusy", "taskQueued", "handoffPending", "foregroundRequired", "userTakingControl", "taskSelectionRequired", "helperUpgradeRequired", "taskCapacity", "targetActivationFailed",
+  "blacklisted", "confirmationRequired"];
 
 export function actionKind(tool: string): string {
   if (tool.startsWith("get_") || tool.startsWith("list_") || ["zoom", "verify_state", "health_report", "check_permissions"].includes(tool)) return "observe";

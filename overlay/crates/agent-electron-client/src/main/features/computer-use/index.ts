@@ -115,6 +115,14 @@ export const computerUseFeature: DesktopFeature = {
     }, { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:setAgentCursor", async (event: IpcMainInvokeEvent, enabled: boolean) =>
       cua.setCuaAgentCursorEnabled(enabled === true), { success: false, error: "untrusted sender" });
+    ctx.hostIpc.handle("cua:setAuthMode", (event: IpcMainInvokeEvent, mode: unknown) => cua.setCuaAuthMode(mode), { success: false, error: "untrusted sender" });
+    ctx.hostIpc.handle("cua:setBlacklist", (event: IpcMainInvokeEvent, list: unknown) => cua.setCuaBlacklist(list), { success: false, error: "untrusted sender" });
+    ctx.hostIpc.handle("cua:listInstalledApps", () => cua.listCuaInstalledApps(), []);
+    ctx.hostIpc.handle("cua:listScreenshots", () => cua.listCuaScreenshotFiles(), []);
+    ctx.hostIpc.handle("cua:confirmSensitive", (event: IpcMainInvokeEvent, allow: unknown) => {
+      if (allow === true) cua.allowCuaSensitiveOnce();
+      return { success: true };
+    }, { success: false });
     ctx.hostIpc.handle("cua:requestPermissions", () => cua.requestCuaPermissions(), null);
     ctx.hostIpc.handle("cua:installHelper", () => cua.installCuaHelper(), { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:getVlmConfig", () => cua.getVlmConfig(), null);

@@ -14,11 +14,14 @@ describe("task details belong in the tray center", () => {
     expect(html).toContain("Claw.Cua.steps"); expect(html).toContain("Claw.Cua.outcome.refused");
     expect(html).toContain("Claw.Cua.reason.noProgress"); expect(html).not.toMatch(/private input|set_value/);
   });
-  it("keeps target selection and mode in the center and disables preview before a target is bound", () => {
+  it("keeps pause, stop and takeover without a window picker", () => {
     const html = renderToStaticMarkup(<CuaTaskPanel api={{} as any} t={t} accept={vi.fn()}
       runtime={{ tasks: [{ taskId: "A", phase: "paused", mode: "background", stepCount: 0 }] } as any} />);
-    expect(html).toContain("Claw.Cua.multiwindow.background");
-    expect(html).toContain('<button disabled="">Claw.Cua.preview.expand</button>');
-    expect(html).toContain("Claw.Cua.multiwindow.useForeground");
+    expect(html).toContain("Claw.Cua.preview.takeover");
+    expect(html).toContain("Claw.Cua.resume");
+    expect(html).toContain("Claw.Cua.stop");
+    expect(html).not.toContain("Claw.Cua.scope.choose");
+    expect(html).not.toContain("Claw.Cua.preview.expand");
+    expect(html).not.toContain("Claw.Cua.multiwindow.useForeground");
   });
 });

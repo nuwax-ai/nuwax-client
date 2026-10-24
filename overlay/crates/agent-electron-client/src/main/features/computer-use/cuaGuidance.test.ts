@@ -12,6 +12,7 @@ describe("cuaGuidance", () => {
     expect(text).toContain("last resort");
     expect(text).toContain("Agent cursor");
     expect(text).toContain("blacklisted");
+    expect(text).toContain("confirmationRequired");
     expect(text).not.toContain("ask the user to select that browser window in Computer Use (window mode)");
   });
 
@@ -20,7 +21,7 @@ describe("cuaGuidance", () => {
     expect(text).toContain("scopeViolation");
     expect(text).toContain("element_index");
     expect(cuaToolDescription(windowScope, "click", undefined)).toContain("element_index");
-    expect(cuaRejectionText("scopeViolation")).toContain("Pixel coordinates");
+    expect(cuaRejectionText("scopeViolation")).toContain("pixel coordinates");
   });
 
   it("merges instructions once and exposes the host cursor enable payload", () => {

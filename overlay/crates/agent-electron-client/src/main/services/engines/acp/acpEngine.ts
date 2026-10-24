@@ -1,5 +1,4 @@
-import { createDesktopAgentSessions, type AgentTurn } from "../../../features";
-import { applyCuaCapabilityNotice } from "../../../features/computer-use/cuaSessionNotice";
+import { applyCuaCapabilityNotice, createDesktopAgentSessions, type AgentTurn } from "../../../features";
 /**
  * AcpEngine — ACP protocol handler for claude-code & nuwaxcode.
  *
