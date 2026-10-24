@@ -167,7 +167,7 @@ export class CuaConfirmationGate {
     walk(sc);
     this.observations.set(owner, { snapshot: sc.snapshot_id, target: hash([args.pid, args.window_id, args.target_id, args.tab_id]), elements });
   }
-  requires(owner: string, tool: string, raw: unknown): boolean {
+  requires(owner: string, tool: string, raw: unknown, consume = true): boolean {
     if (!isSensitiveCuaCall(tool, raw)) return false;
     const args = object(raw), observation = this.observations.get(owner);
     const ref = args.element_index ?? args.ref;
@@ -181,7 +181,8 @@ export class CuaConfirmationGate {
     const key = hash([tool, action, evidence?.digest]);
     const pending = this.pending.get(owner);
     if (pending?.allowed && pending.key === key && pending.until > this.now()) {
-      this.pending.delete(owner); return false;
+      if (consume) this.pending.delete(owner);
+      return false;
     }
     this.pending.set(owner, { key, until: this.now() + 60_000, allowed: false });
     return true;

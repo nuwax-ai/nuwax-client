@@ -195,7 +195,9 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       },
       agentCursor: () => readAgentCursorEnabled(),
       requireConfirmation: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
-        && confirmationGate.requires(owner, tool, args),
+        && confirmationGate.requires(owner, tool, args, false),
+      confirmDispatch: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) !== "ask"
+        || !confirmationGate.requires(owner, tool, args),
       rejectTarget: async (tool, raw) => {
         const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
         const args = (raw ?? {}) as Record<string, unknown>;
@@ -761,6 +763,7 @@ export async function setCuaAuthMode(mode: unknown): Promise<{ success: boolean;
   if (!patchStep1({ computerUseAuthMode: readCuaAuthMode(mode) })) {
     return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
   }
+  confirmationGate.clear();
   return { success: true, status: await getCuaStatus() };
 }
 

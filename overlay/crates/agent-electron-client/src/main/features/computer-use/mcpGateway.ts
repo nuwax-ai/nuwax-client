@@ -1,7 +1,7 @@
 import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
+import { CuaTaskController, CUA_FINAL_REASONS, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
 import { classifyReply, type CuaOutcome } from "./cuaOutcome";
 import { CUA_AGENT_CURSOR_ENABLE, CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
 import type { CuaScope } from "@shared/features/computer-use/contract";
@@ -67,6 +67,8 @@ export class CuaMcpGateway {
     onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown, owner?: string) => void;
     /** 询问式授权：敏感写动作需用户点一次允许。 */
     requireConfirmation?: (tool: string, args: unknown, owner: string) => boolean;
+    /** Spend a one-shot approval only after observation and live native guards admit dispatch. */
+    confirmDispatch?: (tool: string, args: unknown, owner: string) => boolean;
     /** 黑名单命中则拒绝该窗口/应用。 */
     rejectTarget?: (tool: string, args: unknown, owner: string) => string | null | Promise<string | null>;
     prepareTarget?: (owner: string, tool: string, args: unknown) => Promise<void>;
@@ -438,8 +440,10 @@ export class CuaMcpGateway {
       }
       if (blocked) { this.refuse(connection, owner, id, blocked); return; }
       if (this.options.requireConfirmation?.(call.tool, call.args, owner)) {
-        this.fail("confirmationRequired", owner);
-        this.refuse(connection, owner, id, "confirmationRequired"); return;
+        if (!this.options.controller.owns(owner)) {
+          this.refuse(connection, owner, id, "observationRequired"); return;
+        }
+        this.deferConfirmation(connection, id, owner); return;
       }
       const decision = this.options.controller.begin(owner, call.tool, call.args);
       if (decision.error) {
@@ -505,17 +509,56 @@ export class CuaMcpGateway {
         }
       }
     }
+    if (permit && call && this.options.confirmDispatch?.(call.tool, call.args, permit.owner) === false) {
+      const entry = connection.pending.get(keyOf(id));
+      if (entry) { clearTimeout(entry.timer); entry.release?.(); entry.release = undefined; }
+      connection.pending.delete(keyOf(id));
+      this.options.controller.finish(permit, "refused");
+      this.deferConfirmation(connection, id, permit.owner); return;
+    }
     if (!connection.child.stdin.write(`${line}\n`)) connection.socket.pause();
   }
 
+  private deferConfirmation(connection: Connection, id: Rpc["id"], owner: string) {
+    if (id === undefined) return;
+    // Pause/revoke first; registering the held reply afterwards keeps desktop
+    // pause cleanup from completing the ACP call before the human can answer.
+    this.fail("confirmationRequired", owner);
+    const pending: Pending = { method: "tools/call", timer: undefined as unknown as ReturnType<typeof setTimeout> };
+    this.holdReply(connection, keyOf(id), pending, owner);
+  }
+
+  private waitOwnerReady(connection: Connection, owner: string): Promise<void> {
+    if (this.options.tasks) return this.options.tasks.waitReady(owner, connection.lifetime.signal);
+    const controller = this.options.controller;
+    return new Promise((resolve, reject) => {
+      let off = () => {};
+      const finish = (error?: Error) => {
+        clearTimeout(timer); off(); connection.lifetime.signal.removeEventListener("abort", aborted);
+        if (error) reject(error); else resolve();
+      };
+      const aborted = () => finish(new Error("operationCancelled"));
+      const check = () => {
+        const state = controller.snapshot();
+        if (!controller.owns(owner) || ["completed", "stopped", "failed"].includes(state.phase)
+          || CUA_FINAL_REASONS.includes(state.reason ?? "")) finish(new Error("taskStopped"));
+        else if (state.phase === "running" && !this.holding) finish();
+      };
+      const timer = setTimeout(() => finish(new Error("timeLimit")), 15 * 60_000);
+      timer.unref(); off = controller.subscribe(check);
+      connection.lifetime.signal.addEventListener("abort", aborted, { once: true });
+      if (connection.lifetime.signal.aborted) aborted(); else check();
+    });
+  }
+
   /** Pause the tool's response as well as its actuator, so the ACP turn survives human handoff. */
-  private holdReply(connection: Connection, key: string, pending: Pending) {
-    if (!this.options.tasks || !pending.permit || pending.held) return;
+  private holdReply(connection: Connection, key: string, pending: Pending, owner = pending.permit?.owner) {
+    if (!owner || pending.held) return;
     clearTimeout(pending.timer);
     pending.held = true; pending.aborted = true; pending.call = undefined;
     connection.pending.set(key, pending);
     const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
-    void this.options.tasks.waitReady(pending.permit.owner, connection.lifetime.signal).then(() => {
+    void this.waitOwnerReady(connection, owner).then(() => {
       if (connection.pending.get(key) !== pending || !pending.held) return;
       connection.pending.delete(key);
       this.reject(connection.socket, id, "operationPaused");
@@ -552,7 +595,15 @@ export class CuaMcpGateway {
   cancelPending(reason: string) {
     for (const c of this.clients) for (const [key, pending] of c.pending) {
       if (!pending.permit) continue;
+      const state = this.options.tasks?.stateForOwner(pending.permit.owner) ?? this.options.controller.snapshot();
+      // Keep the ACP call open during a resumable desktop handoff. The helper
+      // transport is still killed below; resuming returns only operationPaused.
+      if (["userPaused", "operationCancelled"].includes(reason) && state.phase === "paused"
+        && !CUA_FINAL_REASONS.includes(state.reason ?? "")) {
+        this.holdReply(c, key, pending); continue;
+      }
       clearTimeout(pending.timer);
+      pending.held = false;
       c.pending.delete(key);
       const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
       this.reject(c.socket, id, reason);
