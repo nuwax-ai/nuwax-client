@@ -39,7 +39,7 @@ export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "too
 export const CUA_OVERLAY_NOTICE_REASONS = [
   "permissionsRequired", "daemonNotReady", "helperNotInstalled", "helperStillRunning",
   "helperIdentityUnverified", "gatewayFailed", "connectionClosed", "toolTimeout",
-  "toolFailed", "uncertainResult", "policyNotActive",
+  "toolFailed", "uncertainResult", "policyNotActive", "confirmationRequired",
 ] as const;
 
 export function cuaReasonKey(reason?: string | null): string {

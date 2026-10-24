@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const screenshotDirectory = (name: string) => !name.startsWith(".") && !name.endsWith(".app") && !name.includes(".backup-") && !["node_modules", "bin", "lib"].includes(name);
+
 const IMAGE = /\.(png|jpe?g|webp|gif|bmp)$/i;
-const SENSITIVE = /AXSecureTextField|securetextfield|lock.?screen|loginwindow|password.?field/i;
+const SENSITIVE = /AXSecureTextField|securetextfield|lock.?screen|loginwindow|password.?field|["\s]is_?password["\s]*:\s*true|UIA_IsPasswordPropertyId/i;
 
 export function cuaScreenshotHome(dataHome: string): string {
   return dataHome;
@@ -36,7 +38,7 @@ export function listLocalScreenshotNames(home: string, io: Pick<typeof fs, "exis
     if (depth > 3 || names.length >= 80) return;
     for (const entry of io.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory() && !entry.name.startsWith(".")) walk(full, depth + 1);
+      if (entry.isDirectory() && screenshotDirectory(entry.name)) walk(full, depth + 1);
       else if (entry.isFile() && IMAGE.test(entry.name)) names.push(path.relative(home, full));
       if (names.length >= 80) return;
     }
@@ -58,7 +60,7 @@ export function cleanupStaleScreenshots(
     if (depth > 3) return;
     for (const entry of io.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory() && !entry.name.startsWith(".")) walk(full, depth + 1);
+      if (entry.isDirectory() && screenshotDirectory(entry.name)) walk(full, depth + 1);
       else if (entry.isFile() && IMAGE.test(entry.name)) {
         const age = now - io.statSync(full).mtimeMs;
         if (age >= maxAgeMs) {
@@ -70,4 +72,21 @@ export function cleanupStaleScreenshots(
   };
   walk(home, 0);
   return removed;
+}
+
+
+/** Withhold the whole sensitive observation, including text/structured image variants. */
+export function sanitizeCuaObservation(result: { content?: Array<{ type: string; text?: string; [key: string]: unknown }>; structuredContent?: unknown }): void {
+  if (!isSensitiveObservation(result.structuredContent) && !isSensitiveObservation(result.content)) return;
+  result.content = [{ type: "text", text: "Computer Use: sensitive observation withheld. Observe a different window." }];
+  result.structuredContent = { status: "refused", sensitive: true, refusal: { code: "sensitiveObservation" } };
+}
+
+/** Runs for the feature lifetime, including idle/disabled time; files can age after a task ends. */
+export function startScreenshotRetention(home: string, sweep: () => void = () => { cleanupStaleScreenshots(home); }): () => void {
+  const run = () => { try { sweep(); } catch { /* A transient filesystem error must not prevent revocation. */ } };
+  run();
+  const timer = setInterval(run, 60 * 60 * 1000);
+  timer.unref();
+  return () => clearInterval(timer);
 }

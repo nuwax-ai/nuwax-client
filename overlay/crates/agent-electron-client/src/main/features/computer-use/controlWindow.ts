@@ -18,7 +18,7 @@ export function createCuaControlWindow(options: {
   writePreference?: (value: unknown) => void;
   previewIdentity?: (id: string) => PreviewIdentity | null;
   capturePreview?: (id: string) => Promise<CuaPreviewUpdate>;
-  taskAction?: (id: string, action: "pause" | "resume" | "stop" | "takeover") => Promise<unknown>;
+  taskAction?: (id: string, action: "pause" | "resume" | "stop" | "takeover" | "confirm") => Promise<unknown>;
 }) {
   let view: WebContentsView | null = null, owner: BrowserWindow | null = null;
   let dismissed = false;
@@ -100,9 +100,9 @@ export function createCuaControlWindow(options: {
     order = [...ids]; send("cua:control:runtime", runtime()); return order;
   });
   ipcMain.handle("cua:control:taskAction", async (event, id: unknown, action: unknown) => {
-    if (!trusted(event) || typeof id !== "string" || !["pause", "resume", "stop", "takeover"].includes(String(action))) return { success: false };
+    if (!trusted(event) || typeof id !== "string" || !["pause", "resume", "stop", "takeover", "confirm"].includes(String(action))) return { success: false };
     if (!["pause", "stop"].includes(String(action)) && !options.authenticated()) return { success: false };
-    try { return await options.taskAction?.(id, action as "pause" | "resume" | "stop" | "takeover") ?? { success: false }; }
+    try { return await options.taskAction?.(id, action as "pause" | "resume" | "stop" | "takeover" | "confirm") ?? { success: false }; }
     catch { return { success: false }; }
   });
   // Native close-to-tray events can precede the isVisible/isMinimized change.

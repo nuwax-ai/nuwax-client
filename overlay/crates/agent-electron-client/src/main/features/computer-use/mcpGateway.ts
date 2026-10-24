@@ -66,9 +66,11 @@ export class CuaMcpGateway {
     /** Sees every finished call (after the controller), e.g. to record browser bindings. */
     onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown, owner?: string) => void;
     /** 询问式授权：敏感写动作需用户点一次允许。 */
-    requireConfirmation?: (tool: string, args: unknown) => boolean;
+    requireConfirmation?: (tool: string, args: unknown, owner: string) => boolean;
     /** 黑名单命中则拒绝该窗口/应用。 */
-    rejectTarget?: (tool: string, args: unknown) => string | null;
+    rejectTarget?: (tool: string, args: unknown, owner: string) => string | null | Promise<string | null>;
+    prepareTarget?: (owner: string, tool: string, args: unknown) => Promise<void>;
+    discoverWindows?: () => Promise<unknown[]>;
     /** 观察结果含密码框/锁屏时打码或跳过送模。 */
     sanitizeResult?: (tool: string, result: NonNullable<Rpc["result"]>) => void;
     tasks?: CuaTaskRegistry;
@@ -167,6 +169,7 @@ export class CuaMcpGateway {
     const { socket } = connection;
     const child = this.options.launch();
     connection.child = child;
+    connection.cursorArmed = false;
     const failed = () => { if (connection.child === child) connection.close(); };
     child.on("error", failed);
     child.on("exit", failed);
@@ -224,6 +227,7 @@ export class CuaMcpGateway {
             line = JSON.stringify(message);
           }
           if (pending.permit) {
+            if (pending.call && message.result) this.options.sanitizeResult?.(pending.call.tool, message.result);
             const outcome = classifyReply(pending.permit.tool, message);
             const structured = message.result?.structuredContent;
             if (!this.options.controller.finish(pending.permit, outcome, structured)) {
@@ -237,7 +241,7 @@ export class CuaMcpGateway {
             if (this.options.tasks && pending.call?.tool === "get_window_state" && outcome === "ok" && message.result) {
               const mode = this.options.tasks.stateForOwner(pending.permit.owner)?.mode ?? "background";
               const modeText = mode === "background"
-                ? "Nuwax execution mode: background. Use set_value for text and exact elements for click/scroll. Generic keyboard, pixel and drag input are not authorized; ask the user to switch if semantic input is unavailable."
+                ? "Nuwax execution mode: background. Use set_value for text and exact elements for click/scroll. Generic keyboard, pixel and drag input are not authorized; ask the user to take over if semantic input is unavailable."
                 : "Nuwax execution mode: foreground. Foreground input is explicitly authorized for this bound window only.";
               const snapshotText = typeof snapshotId === "string" && /^s[0-9a-f]{8}$/i.test(snapshotId)
                 ? ` Current window observation snapshot_id="${snapshotId}". For an indexed element, copy this snapshot_id together with its element_index from this observation. Never invent a snapshot id or reuse one after observing again.` : "";
@@ -246,12 +250,9 @@ export class CuaMcpGateway {
               line = JSON.stringify(message);
             }
             if (pending.call) {
-              if (this.options.tasks) this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured, pending.permit.owner);
-              else this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured);
-              if (outcome === "ok" && message.result) {
-                this.options.sanitizeResult?.(pending.call.tool, message.result);
-                line = JSON.stringify(message);
-              }
+              const safeStructured = message.result?.structuredContent;
+              this.options.onResult?.(pending.call.tool, pending.call.args, outcome, safeStructured, pending.permit.owner);
+              if (outcome === "ok" && message.result) line = JSON.stringify(message);
             }
             if (outcome === "refused" && message.result) {
               message.result.content = [...(message.result.content ?? []), { type: "text", text: CUA_REFUSED_HINT }];
@@ -303,11 +304,12 @@ export class CuaMcpGateway {
   private armAgentCursor(connection: Connection) {
     if (connection.cursorArmed) return;
     connection.cursorArmed = true;
-    if (this.options.agentCursor && !this.options.agentCursor()) return;
+    if (!this.options.agentCursor?.()) return;
     const child = connection.child;
     if (!child) return;
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
+      id: `host-cursor-${randomUUID()}`,
       method: "tools/call",
       params: { name: CUA_AGENT_CURSOR_ENABLE.name, arguments: CUA_AGENT_CURSOR_ENABLE.arguments },
     })}\n`);
@@ -384,6 +386,20 @@ export class CuaMcpGateway {
       if (typeof tool !== "string" || !this.options.allowedTools.includes(tool)) {
         this.refuse(connection, owner, id, "toolNotAllowed"); return;
       }
+      if (tool === "list_windows" && this.options.discoverWindows) {
+        try {
+          const windows = await this.options.discoverWindows();
+          if (this.options.authorize && this.options.authorize(connection.grant) !== owner) {
+            this.reject(connection.socket, id, "sessionRequired"); return;
+          }
+          connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result: {
+            content: [{ type: "text", text: JSON.stringify({ windows }) }], structuredContent: { windows },
+          } }) + "\n");
+        } catch { this.refuse(connection, owner, id, "targetClosed"); }
+        return;
+      }
+      try { await this.options.prepareTarget?.(owner, tool, message.params?.arguments ?? {}); }
+      catch (error) { this.refuse(connection, owner, id, error instanceof Error ? error.message : "targetClosed"); return; }
       if (this.options.tasks) {
         connection.reservations.add(keyOf(id));
         try { await this.options.tasks.waitReady(owner, connection.lifetime.signal); }
@@ -396,13 +412,6 @@ export class CuaMcpGateway {
         }
       }
       call = { tool, args: message.params?.arguments ?? {} };
-      const blocked = this.options.rejectTarget?.(tool, call.args);
-      if (blocked) { this.refuse(connection, owner, id, blocked); return; }
-      if (this.options.requireConfirmation?.(tool, call.args)) {
-        this.fail("confirmationRequired", owner);
-        this.refuse(connection, owner, id, "confirmationRequired");
-        return;
-      }
       try { if (this.options.transformCall) call = this.options.transformCall(tool, call.args, owner); }
       catch (error) {
         const reason = error instanceof Error && (CALL_REJECTIONS.has(error.message) ||
@@ -420,6 +429,17 @@ export class CuaMcpGateway {
         }
         this.refuse(connection, owner, id, reason);
         return;
+      }
+      let blocked: string | null | undefined;
+      try { blocked = await this.options.rejectTarget?.(call.tool, call.args, owner); }
+      catch { blocked = "targetClosed"; }
+      if (this.options.authorize && this.options.authorize(connection.grant) !== owner) {
+        this.reject(connection.socket, id, "sessionRequired"); return;
+      }
+      if (blocked) { this.refuse(connection, owner, id, blocked); return; }
+      if (this.options.requireConfirmation?.(call.tool, call.args, owner)) {
+        this.fail("confirmationRequired", owner);
+        this.refuse(connection, owner, id, "confirmationRequired"); return;
       }
       const decision = this.options.controller.begin(owner, call.tool, call.args);
       if (decision.error) {
@@ -460,6 +480,17 @@ export class CuaMcpGateway {
             entry.release(); entry.release = undefined; clearTimeout(timer);
             if (!entry.held) connection.pending.delete(keyOf(id));
             return;
+          }
+          const blocked = await this.options.rejectTarget?.(prepared.tool, prepared.args, permit.owner);
+          if (blocked || this.options.authorize && this.options.authorize(connection.grant) !== permit.owner) {
+            clearTimeout(timer); entry.release?.(); entry.release = undefined;
+            connection.pending.delete(keyOf(id));
+            this.options.controller.finish(permit, "refused");
+            this.refuse(connection, permit.owner, id, blocked ?? "sessionRequired"); return;
+          }
+          if (!this.options.tasks.valid(permit)) {
+            entry.release?.(); entry.release = undefined; clearTimeout(timer);
+            if (!entry.held) connection.pending.delete(keyOf(id)); return;
           }
           message = { ...message, params: { ...message.params, name: prepared.tool, arguments: prepared.args } };
           line = JSON.stringify(message);

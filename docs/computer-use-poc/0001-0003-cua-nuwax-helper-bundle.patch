@@ -858,7 +858,7 @@ index 00000000..2bdc3dc5
 +        };
 +    }
 +    let Some(raw) = raw else {
-+        if ["check_permissions", "health_report", "list_windows"].contains(&tool) {
++        if ["check_permissions", "health_report", "list_windows", "set_agent_cursor_enabled"].contains(&tool) {
 +            return Ok(None);
 +        }
 +        return Err(refusal("task_context_required"));
