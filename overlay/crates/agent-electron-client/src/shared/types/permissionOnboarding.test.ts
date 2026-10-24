@@ -45,6 +45,33 @@ describe("permission guide contract", () => {
       "granted",
     );
   });
+  it("ships Computer Use helper-target copy in all four locales", () => {
+    const keys = [
+      "Claw.Settings.computerUse.permTargetHint",
+      "Claw.Settings.computerUse.permWatching",
+      "Claw.Settings.computerUse.openAxPane",
+      "Claw.Settings.computerUse.openSrPane",
+      "Claw.Settings.computerUse.retryHelper",
+      "Claw.Settings.computerUse.helperDown",
+      "Claw.Settings.computerUse.errors.timeout",
+      "Claw.Settings.computerUse.errors.installRecovery",
+      "Claw.Settings.computerUse.errors.installRollback",
+      "Claw.Settings.computerUse.errors.helperSignatureFailed",
+      "Claw.PermissionGuide.separateIdentity",
+      "Claw.PermissionGuide.helperPending",
+    ] as const;
+    const helperNamed = keys.filter((key) =>
+      /TargetHint|Watching|helperDown|timeout|separateIdentity|helperPending/.test(key),
+    );
+    for (const locale of [en, cn, tw, hk]) {
+      for (const key of keys) {
+        expect((locale as Record<string, string>)[key], key).toBeTruthy();
+      }
+      for (const key of helperNamed) {
+        expect((locale as Record<string, string>)[key]).toContain("Nuwax Computer Use");
+      }
+    }
+  });
   it("ships all four localizations with matching interpolation slots", () => {
     const keys = Object.keys(en).filter((key) =>
       key.startsWith("Claw.PermissionGuide."),

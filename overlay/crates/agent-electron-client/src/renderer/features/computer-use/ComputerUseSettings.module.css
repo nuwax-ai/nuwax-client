@@ -1,3 +1,19 @@
+.permHint {
+  display: block;
+  margin-top: 4px;
+}
+
+.permMissing {
+  color: #d48806;
+}
+
+.permActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 /* Match the settings rows without adding padding around the rows inside details. */
 .lockBehavior {
   margin: 0;

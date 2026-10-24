@@ -1,16 +1,21 @@
 import type { PermissionSnapshot } from "@shared/types/permissionOnboarding";
 
-/** One request at a time, with no late writes after hide/unmount. Blur is not hide. */
-export function watchPermissionSnapshot(options: {
-  read(): Promise<PermissionSnapshot | null>;
-  update(snapshot: PermissionSnapshot): void;
+type VisibleSnapshotWatch<T> = {
+  read(): Promise<T | null>;
+  update(snapshot: T): void;
   error(): void;
   document: Pick<
     Document,
     "hidden" | "addEventListener" | "removeEventListener"
   >;
   window: Pick<Window, "addEventListener" | "removeEventListener">;
-}): () => void {
+};
+
+/**
+ * 页面可见时 1.5s 轮询 + focus/visibility 立即复查；隐藏或卸载丢弃迟到写入。
+ * 授权清单使用。CU 设置页因 R1 不能引用本文件，自有一份同节奏实现。
+ */
+export function watchVisibleSnapshot<T>(options: VisibleSnapshotWatch<T>): () => void {
   let stopped = false;
   let generation = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,4 +71,11 @@ export function watchPermissionSnapshot(options: {
     options.window.removeEventListener("focus", onFocus);
     options.document.removeEventListener("visibilitychange", onVisibility);
   };
+}
+
+/** 授权页沿用原名，避免只改泛型就动所有调用点。 */
+export function watchPermissionSnapshot(
+  options: VisibleSnapshotWatch<PermissionSnapshot>,
+): () => void {
+  return watchVisibleSnapshot(options);
 }

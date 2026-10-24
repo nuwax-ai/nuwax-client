@@ -823,10 +823,17 @@ export function getCuaHelperAppPath(): string | null { return findHelperApp(); }
 export async function getCuaStatus(): Promise<CuaStatus> {
   const helperPath = findHelperApp();
   let running = await isDaemonAlive();
-  const permissions = running && IS_MAC
-    ? await probeDaemonPermissions()
-    : lastPermissionHint;
-  if (running && IS_MAC) lastPermissionHint = permissions;
+  // daemon 活着才是 helper TCC 的活证据；启用但掉线时不能把上次 granted 画成绿点。
+  let permissions = lastPermissionHint;
+  if (running && IS_MAC) {
+    permissions = await probeDaemonPermissions();
+    lastPermissionHint = permissions;
+  } else if (IS_MAC && readEnabled()) {
+    permissions = {
+      accessibility: lastPermissionHint.accessibility === true ? null : lastPermissionHint.accessibility,
+      screenRecording: lastPermissionHint.screenRecording === true ? null : lastPermissionHint.screenRecording,
+    };
+  }
   let policyValid = true;
   if (running && readEnabled()) {
     try { policyValid = await verifyDaemonAuthorization(prepareCuaPolicy().sha256); }
@@ -1224,7 +1231,11 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
 /** Revoke synchronously before waiting for any lifecycle queue or OS operation. */
 export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaDisableEpoch++;
-  const permissionCleanup = permissionAttempt?.promise;
+  // Capture both promises before cancel so quit still awaits owned-host pkill.
+  const permissionCleanup = Promise.all([
+    permissionAttempt?.promise ?? Promise.resolve(),
+    permissionLinger?.promise ?? Promise.resolve(),
+  ]);
   cancelCuaPermissionRequest();
   pendingControls++;
   runtimeSuspended = true;
@@ -1235,8 +1246,8 @@ export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   // Standalone permission IPC is outside the lifecycle queue. Cancellation
-  // interrupts its 20-second poll; await only its bounded owned-host cleanup,
-  // alongside resource cleanup so an enable request cannot form a queue cycle.
+  // interrupts the 20s poll and any post-timeout linger; await only owned-host
+  // cleanup so an enable request cannot form a queue cycle.
   return Promise.allSettled([serializeCua(suspendCuaRuntimeResources), permissionCleanup]).then(results => {
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
@@ -1596,39 +1607,137 @@ let lastPermissionHint: {
   screenRecording: boolean | null;
 } = { accessibility: null, screenRecording: null };
 
-type PermissionAttempt = {
+/** 启用流程最多卡 20s；超时后继续看结果文件，避免慢勾系统设置必须再点一次。 */
+const PERMISSION_HOST_WAIT_MS = 20_000;
+const PERMISSION_HOST_LINGER_MS = 90_000;
+
+type PermissionHostLease = {
   epoch: number;
   helperPath: string;
   resultFile: string;
+};
+
+type PermissionAttempt = PermissionHostLease & {
   controller: AbortController;
   error: "operationCancelled" | "timeout" | "permissionHostFailed";
   promise: Promise<CuaPermissionsResult>;
 };
 let permissionAttempt: PermissionAttempt | undefined;
 
-/** Cancels only the currently owned request; never kills a daemon or another app. */
-export function cancelCuaPermissionRequest(): boolean {
-  const attempt = permissionAttempt;
-  if (!attempt) return false;
-  lastPermissionHint = { accessibility: null, screenRecording: null };
-  // Revoke the host's private result-file lease before OS process cleanup.
-  try { fs.rmSync(attempt.resultFile, { force: true }); } catch { /* Cleanup retries below. */ }
-  attempt.controller.abort();
+type PermissionLinger = PermissionHostLease & {
+  controller: AbortController;
+  promise: Promise<void>;
+};
+let permissionLinger: PermissionLinger | undefined;
+
+function emptyPermissionHint(): { accessibility: boolean | null; screenRecording: boolean | null } {
+  return { accessibility: null, screenRecording: null };
+}
+
+/** 读宿主私有结果文件；文件空或仍在写时返回 null，不把半截 JSON 当授权。 */
+function readPermissionHostFile(resultFile: string): {
+  hint: { accessibility: boolean | null; screenRecording: boolean | null };
+  sc: {
+    accessibility?: boolean; screen_recording?: boolean;
+    screen_recording_capturable?: boolean; direct_capture_verification_error?: unknown;
+    direct_capture_verification?: { bundle_id?: string };
+    source?: { attribution?: string; bundle_id?: string };
+  };
+} | null {
+  try {
+    const raw = fs.readFileSync(resultFile, "utf-8");
+    if (!raw.trim()) return null;
+    const sc = JSON.parse(raw).structuredContent ?? {};
+    return {
+      sc,
+      hint: {
+        accessibility: typeof sc.accessibility === "boolean" ? sc.accessibility : null,
+        screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function cancelPermissionLinger(): boolean {
+  const linger = permissionLinger;
+  if (!linger) return false;
+  linger.controller.abort();
   return true;
 }
 
-async function removePermissionHost(attempt: PermissionAttempt): Promise<void> {
+/** Cancels the in-flight request and any post-timeout linger; never kills a daemon. */
+export function cancelCuaPermissionRequest(): boolean {
+  const attempt = permissionAttempt;
+  const linger = permissionLinger;
+  if (!attempt && !linger) return false;
+  lastPermissionHint = emptyPermissionHint();
+  // Revoke the host's private result-file lease before OS process cleanup.
+  if (attempt) {
+    try { fs.rmSync(attempt.resultFile, { force: true }); } catch { /* Cleanup retries below. */ }
+    attempt.controller.abort();
+  }
+  cancelPermissionLinger();
+  return true;
+}
+
+async function removePermissionHost(lease: Pick<PermissionHostLease, "helperPath" | "resultFile">): Promise<void> {
   // LaunchServices' `open` process is not the helper host. Match the exact helper
   // executable, subcommand and unguessable result file rather than a process name.
   const literal = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const command = `^${literal(helperExecutable(attempt.helperPath))} __permissions-host-request --result-file ${literal(attempt.resultFile)}( |$)`;
+  const command = `^${literal(helperExecutable(lease.helperPath))} __permissions-host-request --result-file ${literal(lease.resultFile)}( |$)`;
   await pexec("pkill", ["-KILL", "-f", command], { timeout: 1500 }).catch(() => undefined);
+}
+
+async function cleanupPermissionHost(lease: Pick<PermissionHostLease, "helperPath" | "resultFile">): Promise<void> {
+  try { fs.rmSync(lease.resultFile, { force: true }); }
+  catch { log.warn("[Cua] permission host result cleanup failed"); }
+  await removePermissionHost(lease);
+}
+
+/** 软超时后继续读同一结果文件，把迟到授权写进 hint 供设置页轮询变绿。 */
+function startPermissionLinger(lease: PermissionHostLease): void {
+  cancelPermissionLinger();
+  const linger: PermissionLinger = {
+    epoch: lease.epoch, helperPath: lease.helperPath, resultFile: lease.resultFile,
+    controller: new AbortController(), promise: undefined!,
+  };
+  permissionLinger = linger;
+  linger.promise = (async () => {
+    const deadline = Date.now() + PERMISSION_HOST_LINGER_MS;
+    while (!linger.controller.signal.aborted && linger.epoch === cuaDisableEpoch && Date.now() < deadline) {
+      const parsed = readPermissionHostFile(linger.resultFile);
+      if (linger.controller.signal.aborted || linger.epoch !== cuaDisableEpoch) break;
+      if (parsed) lastPermissionHint = parsed.hint;
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    }
+  })().finally(async () => {
+    await cleanupPermissionHost(linger);
+    if (permissionLinger === linger) permissionLinger = undefined;
+  });
+}
+
+function finishPermissionAttempt(attempt: PermissionAttempt, result: CuaPermissionsResult): CuaPermissionsResult {
+  if (attempt.epoch !== cuaDisableEpoch) {
+    return { success: false, error: attempt.error, ...emptyPermissionHint() };
+  }
+  // 超时把当前 hint 带回 UI；硬取消/退出仍清空，避免把已撤销宿主当授权。
+  if (attempt.controller.signal.aborted && attempt.error === "timeout") {
+    return { success: false, error: "timeout", ...lastPermissionHint };
+  }
+  if (attempt.controller.signal.aborted) {
+    return { success: false, error: attempt.error, ...emptyPermissionHint() };
+  }
+  return result;
 }
 
 /** Only an explicit enable action enters this single-flight, cancellable request. */
 export function requestCuaPermissions(): Promise<CuaPermissionsResult> {
   if (permissionAttempt && !permissionAttempt.controller.signal.aborted && permissionAttempt.epoch === cuaDisableEpoch)
     return permissionAttempt.promise;
+  // 新一轮检查替换超时续看，避免双宿主；hint 由本次探测重写。
+  cancelPermissionLinger();
   const helperPath = findHelperApp();
   if (!IS_MAC || !helperPath) return Promise.resolve({
     success: false, error: IS_MAC ? "helperNotInstalled" : "unsupportedPlatform",
@@ -1641,15 +1750,12 @@ export function requestCuaPermissions(): Promise<CuaPermissionsResult> {
     promise: undefined!,
   };
   permissionAttempt = attempt;
-  attempt.promise = runPermissionRequest(attempt).then(result =>
-    attempt.controller.signal.aborted || attempt.epoch !== cuaDisableEpoch
-      ? { success: false, error: attempt.error, accessibility: null, screenRecording: null }
-      : result);
+  attempt.promise = runPermissionRequest(attempt).then((result) => finishPermissionAttempt(attempt, result));
   return attempt.promise;
 }
 
 async function runPermissionRequest(attempt: PermissionAttempt): Promise<CuaPermissionsResult> {
-  const empty = { accessibility: null, screenRecording: null };
+  const empty = emptyPermissionHint();
   const current = () => permissionAttempt === attempt && !attempt.controller.signal.aborted && attempt.epoch === cuaDisableEpoch;
   let timer: NodeJS.Timeout | undefined;
   const aborted = new Promise<never>((_, reject) => {
@@ -1660,7 +1766,7 @@ async function runPermissionRequest(attempt: PermissionAttempt): Promise<CuaPerm
   try {
     fs.writeFileSync(attempt.resultFile, "", { mode: 0o600, flag: "wx" });
     lastPermissionHint = empty;
-    timer = setTimeout(() => { attempt.error = "timeout"; attempt.controller.abort(); }, 20_000);
+    timer = setTimeout(() => { attempt.error = "timeout"; attempt.controller.abort(); }, PERMISSION_HOST_WAIT_MS);
     const child = spawn("open", [
       "-n", "-g", "--env", `CUA_DRIVER_DATA_HOME=${cuaDataHome()}`,
       "--env", "CUA_DRIVER_RS_TELEMETRY_ENABLED=false",
@@ -1676,41 +1782,28 @@ async function runPermissionRequest(attempt: PermissionAttempt): Promise<CuaPerm
     while (current()) {
       await Promise.race([new Promise<void>(resolve => setTimeout(resolve, 500)), aborted]);
       if (!current()) break;
-      let sc: {
-        accessibility?: boolean; screen_recording?: boolean;
-        screen_recording_capturable?: boolean; direct_capture_verification_error?: unknown;
-        direct_capture_verification?: { bundle_id?: string };
-        source?: { attribution?: string; bundle_id?: string };
-      };
-      try {
-        const raw = fs.readFileSync(attempt.resultFile, "utf-8");
-        if (!raw.trim()) continue;
-        sc = JSON.parse(raw).structuredContent ?? {};
-      } catch { continue; } // The host may still be writing.
-      if (!current()) break;
-      const hint = {
-        accessibility: typeof sc.accessibility === "boolean" ? sc.accessibility : null,
-        screenRecording: typeof sc.screen_recording === "boolean" ? sc.screen_recording : null,
-      };
-      lastPermissionHint = hint;
+      const parsed = readPermissionHostFile(attempt.resultFile);
+      if (!parsed) continue;
+      lastPermissionHint = parsed.hint;
+      const sc = parsed.sc;
       if (sc.accessibility && sc.screen_recording &&
           (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== HELPER_BUNDLE_ID))
-        return { success: false, error: "helperIdentityUnverified", ...hint };
+        return { success: false, error: "helperIdentityUnverified", ...parsed.hint };
       if (!sc.accessibility || !sc.screen_recording || sc.screen_recording_capturable !== true ||
           sc.direct_capture_verification_error != null || sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID)
-        return { success: false, error: "permissionsRequired", ...hint };
-      return { success: true, ...hint };
+        return { success: false, error: "permissionsRequired", ...parsed.hint };
+      return { success: true, ...parsed.hint };
     }
-    return { success: false, error: "operationCancelled", ...empty };
+    return { success: false, error: attempt.error, ...empty };
   } catch {
     return { success: false, error: attempt.controller.signal.aborted ? attempt.error : "permissionHostFailed", ...empty };
   } finally {
     if (timer) clearTimeout(timer);
-    // This is a separate, narrowly owned host; stale permission UI must not
-    // outlive cancellation, timeout, app shutdown or a completed request.
-    try { fs.rmSync(attempt.resultFile, { force: true }); }
-    catch { log.warn("[Cua] permission host result cleanup failed"); }
-    await removePermissionHost(attempt);
+    const lingerTimeout = attempt.error === "timeout"
+      && attempt.epoch === cuaDisableEpoch
+      && fs.existsSync(attempt.resultFile);
+    if (lingerTimeout) startPermissionLinger(attempt);
+    else await cleanupPermissionHost(attempt);
     if (permissionAttempt === attempt) permissionAttempt = undefined;
   }
 }
