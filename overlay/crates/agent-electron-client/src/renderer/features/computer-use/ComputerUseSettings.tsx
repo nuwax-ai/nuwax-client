@@ -4,8 +4,11 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input, Modal, Select, Space, Switch, message } from "antd";
+import type { PermissionKey } from "@shared/types/permissionOnboarding";
 import type { ComputerUseAPI, ComputerUseStatus } from "@shared/features/computer-use/contract";
+import { watchVisibleSnapshot } from "../../services/permissionPolling";
 import { CuaSettingsRows } from "./CuaControls";
+import { cuaErrorKind, cuaNeedsPermissionRecovery } from "./permissionUx";
 import styles from "./ComputerUseSettings.module.css";
 
 type T = (key: string, ...args: any[]) => string;
@@ -20,12 +23,7 @@ function PermDot(props: { ok: boolean | null | undefined }) {
 }
 
 function cuaErrorText(t: T, error?: string): string {
-  const known = new Set([
-    "permissionsRequired", "permissionHostFailed", "timeout", "daemonNotReady",
-    "bundledNotFound", "helperNotInstalled", "helperStillRunning", "databaseNotReady",
-    "disableFailed", "policyNotActive", "helperIdentityUnverified",
-  ]);
-  return t("Claw.Settings.computerUse.errors." + (error && known.has(error) ? error : "generic"));
+  return t("Claw.Settings.computerUse.errors." + cuaErrorKind(error));
 }
 
 /** Image endpoint test errors; HTTP status codes are shown as-is, since they are what users can look up. */
@@ -219,14 +217,41 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
   };
 
   useEffect(() => {
-    loadCuaStatus();
-    const refresh = () => {
-      void api?.getStatus().then(setCuaStatus).catch(() => undefined);
+    void loadCuaStatus();
+    if (!api) return;
+    // 与授权页同一套可见轮询：系统设置勾完不必重启或再点一次才变绿。
+    const stop = watchVisibleSnapshot({
+      read: () => api.getStatus(),
+      update: (status) => {
+        setCuaStatus(status);
+        setCuaEnablePendingPermission(status.consentPending === true);
+      },
+      error: () => undefined,
+      document,
+      window,
+    });
+    const onRuntime = () => {
+      void api.getStatus().then((status) => {
+        setCuaStatus(status);
+        setCuaEnablePendingPermission(status.consentPending === true);
+      }).catch(() => undefined);
     };
-    window.electronAPI?.on("cua:runtime", refresh);
-    window.addEventListener("focus", refresh);
-    return () => { window.electronAPI?.off("cua:runtime", refresh); window.removeEventListener("focus", refresh); };
+    window.electronAPI?.on("cua:runtime", onRuntime);
+    return () => {
+      stop();
+      window.electronAPI?.off("cua:runtime", onRuntime);
+    };
   }, [loadCuaStatus, api]);
+
+  const openHelperPane = async (key: Extract<PermissionKey, "helper_accessibility" | "helper_screen_recording">) => {
+    // helper_* 只开对应隐私面板，不会像主程序 SR 那样先 getSources 登记 Nuwax.app。
+    try {
+      const ok = await window.electronAPI?.permissionOnboarding?.openSettings(key);
+      if (!ok) message.info(t("Claw.Settings.computerUse.permTargetHint"));
+    } catch {
+      message.error(t("Claw.Toast.Error.openSettingsFailed"));
+    }
+  };
 
   return (
     <>
@@ -356,17 +381,45 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
               {" · "}
               {t("Claw.Settings.computerUse.permSr")}
               <PermDot ok={cuaStatus?.screenRecording} />
+              <span className={styles.permHint}>{t("Claw.Settings.computerUse.permTargetHint")}</span>
+              {cuaStatus?.error === "timeout" && (
+                <span className={styles.permHint}>{t("Claw.Settings.computerUse.permWatching")}</span>
+              )}
+              {cuaStatus && cuaNeedsPermissionRecovery(cuaStatus) && (
+                <span className={`${styles.permHint} ${styles.permMissing}`}>
+                  {t(cuaStatus.enabled && !cuaStatus.running
+                    ? "Claw.Settings.computerUse.helperDown"
+                    : "Claw.Settings.computerUse.errors." + cuaErrorKind(cuaStatus.error ?? "permissionsRequired"))}
+                </span>
+              )}
             </span>
           }
           control={
-            <Button
-              size="small"
-              loading={cuaPermChecking}
-              disabled={!cuaStatus?.installed}
-              onClick={handleCuaRequestPermissions}
-            >
-              {t(cuaEnablePendingPermission || cuaStatus?.consentPending ? "Claw.Settings.computerUse.continueEnable" : "Claw.Settings.computerUse.requestPerm")}
-            </Button>
+            <span className={styles.permActions}>
+              <Button
+                size="small"
+                loading={cuaPermChecking}
+                disabled={!cuaStatus?.installed}
+                onClick={handleCuaRequestPermissions}
+              >
+                {t(cuaEnablePendingPermission || cuaStatus?.consentPending ? "Claw.Settings.computerUse.continueEnable" : "Claw.Settings.computerUse.requestPerm")}
+              </Button>
+              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.accessibility !== true && (
+                <Button size="small" onClick={() => void openHelperPane("helper_accessibility")}>
+                  {t("Claw.Settings.computerUse.openAxPane")}
+                </Button>
+              )}
+              {(cuaStatus?.enabled || cuaStatus?.consentPending || cuaEnablePendingPermission) && cuaStatus?.screenRecording !== true && (
+                <Button size="small" onClick={() => void openHelperPane("helper_screen_recording")}>
+                  {t("Claw.Settings.computerUse.openSrPane")}
+                </Button>
+              )}
+              {!!cuaStatus && ["installRecovery", "installRollback", "helperSignatureFailed", "bundledNotFound", "helperNotInstalled"].includes(cuaErrorKind(cuaStatus.error)) && (
+                <Button size="small" loading={cuaInstalling} onClick={() => void handleCuaInstall()}>
+                  {t("Claw.Settings.computerUse.retryHelper")}
+                </Button>
+              )}
+            </span>
           }
         />
       )}
