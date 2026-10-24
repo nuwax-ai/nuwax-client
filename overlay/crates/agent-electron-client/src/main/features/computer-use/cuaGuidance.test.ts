@@ -12,7 +12,9 @@ describe("cuaGuidance", () => {
     expect(text).toContain("last resort");
     expect(text).toContain("Agent cursor");
     expect(text).toContain("blacklisted");
+    expect(text).toContain("sensitiveTarget");
     expect(text).toContain("confirmationRequired");
+    expect(cuaRejectionText("sensitiveTarget")).toContain("password field");
     expect(text).not.toContain("ask the user to select that browser window in Computer Use (window mode)");
   });
 
