@@ -774,6 +774,24 @@ describe("cua 开关与启动收敛", () => {
   });
 });
 
+describe("live blacklist enforcement", () => {
+  it("checks trusted live PID metadata and refuses unresolved global/browser input", async () => {
+    await setCuaEnabled(false);
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    await setCuaEnabled(true);
+    await cuaModule.setCuaBlacklist(["Fixture"]);
+    const check = mocks.gatewayOptions.rejectTarget;
+    expect(await check("click", { pid: 25, window_id: 50, app_name: "Safe" })).toBe("blacklisted");
+    expect(await check("get_window_state", { pid: 25, window_id: 50 })).toBe("blacklisted");
+    expect(await check("get_desktop_state", {})).toBe("blacklisted");
+    expect(await check("get_desktop_state", { pid: 999 })).toBe("blacklisted");
+    expect(await check("click", { pid: 999, window_id: 999 })).toBe("targetClosed");
+    expect(await check("browser_click", { target_id: "unbound", tab_id: "t", ref: "e1" })).toBe("scopeViolation");
+    expect(await cuaModule.listCuaWindows()).toEqual([]);
+  });
+});
+
 describe("upgrade preference ownership", () => {
   it("preserves an enabled preference when re-enabling fails during helper recovery", async () => {
     mocks.settings.set("step1_config", { computerUseEnabled: true });
@@ -781,6 +799,16 @@ describe("upgrade preference ownership", () => {
     expect(result.success).toBe(false);
     expect(result.status.enabled).toBe(true);
     expect(result.status.mcpInjected).toBe(false);
+  });
+
+  it("revokes execution even when persisting explicit disable fails", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    mocks.settingFailure = true;
+    const result = await setCuaEnabled(false);
+    expect(result.success).toBe(false);
+    expect(result.status).toMatchObject({ running: false, mcpInjected: false });
   });
 
   it("a stale general-settings snapshot cannot erase or resurrect the CU preference", async () => {
@@ -857,6 +885,28 @@ describe("permission request ownership", () => {
       cuaModule.cancelCuaPermissionRequest();
       vi.useRealTimers();
     }
+  });
+
+  it("enable timeout rollback keeps late permission results until explicit disable", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.deferPermissionHost = true;
+    vi.useFakeTimers();
+    try {
+      const enabling = setCuaEnabled(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      const host = mocks.spawnCalls.find(c => c.args.includes("__permissions-host-request"))!;
+      expect(host).toBeDefined();
+      const file = host.args[host.args.indexOf("--result-file") + 1];
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await enabling).toMatchObject({ success: false, error: "timeout" });
+      expect(fs.existsSync(file)).toBe(true);
+      fs.writeFileSync(file, JSON.stringify({ structuredContent: { accessibility: true, screen_recording: true } }));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await getCuaStatus()).toMatchObject({ accessibility: true, screenRecording: true, enabled: false });
+      await setCuaEnabled(false);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fs.existsSync(file)).toBe(false);
+    } finally { cuaModule.cancelCuaPermissionRequest(); vi.useRealTimers(); }
   });
 
   it("user cancel after timeout still discards a late linger result", async () => {
@@ -1131,17 +1181,20 @@ describe("cua window selection lifecycle", () => {
     expect(cuaModule.getCuaRuntime().scope?.kind).toBe("window");
     mocks.settingFailure = false; await setCuaEnabled(false);
   });
-  it("restores a window preference without reusing old native IDs or broadening to desktop", async () => {
+  it("migrates old window selection to host-validated agent binding without broadening native input", async () => {
     Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
     vi.resetModules(); cuaModule = await loadCua();
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true; mocks.autoReady = true;
     mocks.settings.set("step1_config", { computerUseEnabled: true, computerUseScopeKind: "window" });
     await ensureCuaOnBoot();
-    expect(cuaModule.getCuaRuntime().scope).toEqual({ kind: "window", pid: 0, windowId: 0, label: "" });
-    const policy = JSON.parse(fs.readFileSync(mocks.policyPath, "utf8"));
-    expect(policy.allow.tools).not.toContain("click");
-    expect(policy.allow.rules[0].constraints.pid.allowed).toEqual([0]);
+    expect(cuaModule.getCuaRuntime().multiwindow).toBe(true);
+    await expect(mocks.gatewayOptions.prepareTarget("A", "get_window_state", { pid: 25, window_id: 999 })).rejects.toThrow("targetClosed");
+    await mocks.gatewayOptions.prepareTarget("A", "get_window_state", { pid: 25, window_id: 50 });
+    const task = mocks.gatewayOptions.tasks.stateForOwner("A");
+    expect(task.scope).toEqual({ kind: "window", pid: 25, windowId: 50, label: "Fixture — Document" });
+    expect(task.phase).toBe("running");
+    expect((await getCuaStatus()).enabled).toBe(true);
     await setCuaEnabled(false);
   });
 });
@@ -1233,5 +1286,23 @@ describe("multiwindow native handoff lifecycle", () => {
     const release = await registry.acquire(next.owner); release();
     expect(cuaModule.getCuaRuntime().recoverable).toBe(false);
     await cuaModule.suspendCua();
+  });
+});
+
+describe("Linux legacy target migration", () => {
+  it("binds a fresh native target before replacing the zero-ID helper policy", async () => {
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    vi.resetModules(); cuaModule = await loadCua();
+    const bundled = path.join(process.resourcesPath as string, "computer-use", "NuwaxComputerUse");
+    fs.mkdirSync(path.dirname(bundled), { recursive: true }); fs.writeFileSync(bundled, "synthetic-linux-helper");
+    mocks.autoReady = true;
+    mocks.settings.set("step1_config", { computerUseEnabled: true, computerUseScopeKind: "window" });
+    await ensureCuaOnBoot();
+    expect((await getCuaStatus()).enabled).toBe(true);
+    await mocks.gatewayOptions.prepareTarget("A", "get_window_state", { pid: 25, window_id: 50 });
+    expect(cuaModule.getCuaRuntime().scope).toMatchObject({ kind: "window", windowId: 50 });
+    const policy = JSON.parse(fs.readFileSync(mocks.policyPath, "utf8"));
+    expect(policy.allow.rules[0].constraints.window_id.allowed).toEqual([50]);
+    await setCuaEnabled(false);
   });
 });

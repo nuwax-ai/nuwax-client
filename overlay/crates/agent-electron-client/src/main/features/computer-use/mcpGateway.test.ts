@@ -13,16 +13,18 @@ import { taskCuaCall } from "./taskPolicy";
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const fakeDriver = `
+let cursorEnables=0;
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id===undefined)return;
+ if(m.params?.name==='set_agent_cursor_enabled')cursorEnables++;
  const a=m.params?.arguments??{};
  if(a.hang)return;
- const structuredContent=a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:a.snapshot?{snapshot_id:a.snapshot}:undefined;
+ const structuredContent=a.cursorReport?{cursorEnables}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:a.snapshot?{snapshot_id:a.snapshot}:undefined;
  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
 async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string | null,
-  transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown }, tasks?: CuaTaskRegistry) {
+  transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown }, tasks?: CuaTaskRegistry, extra: Partial<ConstructorParameters<typeof CuaMcpGateway>[0]> = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cg-"));
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cg-${randomUUID()}` : path.join(root, "s");
@@ -40,6 +42,7 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
       const task = tasks.ensure(owner!);
       return taskCuaCall(tasks.scopeFor(owner!), task.mode, tool, args);
     } } : {}),
+    ...extra,
     launch: () => spawn(process.execPath, ["-e", fakeDriver], { stdio: ["pipe", "pipe", "pipe"] }),
   });
   await gateway.listen(socketPath, "test-token");
@@ -276,7 +279,7 @@ describe("CUA MCP gateway over real local sockets", () => {
     expect(click.result.structuredContent.refusal.code).toBe("browser_binding_stale");
     expect(f.controller.snapshot().phase).toBe("running");
     expect(f.failure).not.toHaveBeenCalled();
-    expect(f.results).toHaveBeenCalledWith("browser_click", expect.objectContaining({ ref: "p1:1" }), "refused", expect.anything());
+    expect(f.results).toHaveBeenCalledWith("browser_click", expect.objectContaining({ ref: "p1:1" }), "refused", expect.anything(), expect.any(String));
   });
   it("adds model guidance to initialize and tool descriptions exactly once", async () => {
     const f = await fixture();
@@ -369,4 +372,61 @@ describe("CUA session-granted transport", () => {
     await f.gateway.close(); expect(f.gateway.ready).toBe(false);
     expect(f.controller.snapshot().phase).toBe("completed");
   }, 60000);
+});
+
+describe("host cursor requests", () => {
+  it("uses an identified request, consumes its reply, and re-arms each replacement lease", async () => {
+    const f = await fixture(3000, undefined, undefined, undefined, { agentCursor: () => true });
+    const peer = await f.client();
+    const observe = () => peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100, cursorReport: true } });
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    const controller = f.controller as CuaTaskController;
+    controller.pause(); f.gateway.pauseTransports();
+    await f.gateway.resumeTransports(); controller.resume();
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    expect(f.results).toHaveBeenCalledTimes(3);
+  });
+  it("respects an explicitly disabled cursor", async () => {
+    const f = await fixture(3000, undefined, undefined, undefined, { agentCursor: () => false });
+    const peer = await f.client();
+    const reply = await peer.request("tools/call", { name: "get_window_state", arguments: { cursorReport: true } });
+    expect(reply.result.structuredContent.cursorEnables).toBe(0);
+  });
+  it("checks the final transformed identity rather than untrusted model labels", async () => {
+    const rejectTarget = vi.fn((tool, args: any) => args.pid === 99 ? "blacklisted" : null);
+    const f = await fixture(3000, undefined, (tool, args) => ({ tool, args: { ...args as object, pid: 99, window_id: 100 } }), undefined, { rejectTarget });
+    const peer = await f.client();
+    const reply = await peer.request("tools/call", { name: "get_window_state", arguments: { app_name: "Safe" } });
+    expect(reply.result.structuredContent.code).toBe("blacklisted");
+    expect(rejectTarget).toHaveBeenCalledWith("get_window_state", expect.objectContaining({ pid: 99 }), expect.any(String));
+    expect(f.results).not.toHaveBeenCalled();
+  });
+  it("allows discovery and validated binding before waiting for a task target", async () => {
+    const tasks = new CuaTaskRegistry(); tasks.setAvailable(true);
+    const prepareTarget = vi.fn(async (owner, _tool, args: any) => {
+      const task = tasks.ensure(owner);
+      tasks.bind(task.id, { pid: args.pid, windowId: args.window_id, label: "fixture" }); tasks.resumeTask(task.id);
+    });
+    const f = await fixture(3000, () => "A", undefined, tasks, {
+      allowedTools: ["list_windows", "get_window_state"], discoverWindows: async () => [{ pid: 10, window_id: 100 }], prepareTarget,
+    });
+    const peer = await f.client("test-token", true, "A");
+    expect((await peer.request("tools/call", { name: "list_windows" })).result.structuredContent.windows).toHaveLength(1);
+    expect(prepareTarget).not.toHaveBeenCalled();
+    const result = await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    expect(result.result.isError).toBe(false);
+    expect(tasks.stateForOwner("A")?.phase).toBe("running");
+  });
+});
+
+it("rechecks blacklist policy after a queued native binding before forwarding input", async () => {
+  const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+  const task = registry.ensure("A"); registry.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry.resumeTask(task.id);
+  const rejectTarget = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("blacklisted").mockResolvedValue(null);
+  const f = await fixture(3000, () => "A", undefined, registry, { rejectTarget });
+  const peer = await f.client("test-token", true, "A");
+  expect((await peer.request("tools/call", { name: "get_window_state" })).result.structuredContent.code).toBe("blacklisted");
+  expect(f.results).not.toHaveBeenCalled();
+  expect((await peer.request("tools/call", { name: "get_window_state" })).result.isError).toBe(false);
 });
