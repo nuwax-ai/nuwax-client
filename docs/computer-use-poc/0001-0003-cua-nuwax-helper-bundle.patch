@@ -1862,3 +1862,31 @@ index 453b0b71..fb295e5d 100644
 +    let (pixels, width, height) = crate::wgc::screenshot_window_via_wgc(window_id)?;
 +    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)
 +}
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+index 7dcbcb6a..ed2381fd 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+@@ -759,12 +759,17 @@ fn send_click_synthesized_mods_impl(
+                 foreground_target.expect("foreground target captured before input"),
+                 actual.0 as usize as u64,
+             ) {
+-                bail!(
+-                    "foreground_unavailable: exact target HWND {:?} or a verified same-process \
+-                     post-action window was not foreground after the click \
+-                     (actual foreground HWND {:?})",
+-                    target.0,
+-                    actual.0
++                // The complete click was already inserted into the system queue.
++                // Opening a tray menu, launching another app or closing this
++                // window can legitimately replace the foreground HWND. Calling
++                // this a refusal would invite callers to replay the same input.
++                // Pre-dispatch activation/identity guards above still fail closed;
++                // click tools acknowledge delivery with effect:"unverifiable" and
++                // require a fresh observation to establish the resulting UI state.
++                tracing::debug!(
++                    target = ?target.0,
++                    foreground = ?actual.0,
++                    "Foreground changed after dispatched click; observe before further input"
+                 );
+             }
+         }
