@@ -41,6 +41,7 @@ describe("Computer Use overlay liveness and notices", () => {
   it("maps unknown IPC codes to generic and keeps operational pauses off the slim card", () => {
     expect(cuaReasonKey("loginRequired")).toBe("loginRequired");
     expect(cuaReasonKey("operationFailed")).toBe("operationFailed");
+    expect(cuaReasonKey("sensitiveTarget")).toBe("sensitiveTarget");
     expect(cuaReasonKey("notARealCode")).toBe("generic");
     expect(cuaOverlayNotice("permissionsRequired")).toBe("permissionsRequired");
     expect(cuaOverlayNotice("uncertainResult")).toBe("uncertainResult");

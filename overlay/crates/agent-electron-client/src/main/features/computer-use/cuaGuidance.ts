@@ -9,18 +9,19 @@ const COMMON = [
   "Follow this recipe in order:",
   "1. Observe first. Call get_window_state (app window; request a screenshot) before any click, type, scroll or set_value. Use get_desktop_state for the whole screen, get_browser_state for a web page. Never act on a stale snapshot.",
   `2. Prefer element_index (or element_token) from that latest observation. Each observation allows up to ${N} writes on what it showed; then observe again.`,
-  "3. Pixel coordinates (x/y) are a last resort, only on canvas-like surfaces with no element. In window mode the host rejects coordinates, keyboard, clipboard and other apps as scopeViolation — that is not a miss. Pick an element_index from a fresh observation; the host supplies pid/window_id.",
+  "3. Pixel coordinates (x/y) are a last resort, only on canvas-like surfaces with no element. When the latest observation has an element covering that point, the host rewrites the click to that element_index. In window mode leftover coordinates, keyboard, clipboard and other apps are scopeViolation — that is not a miss. Pick an element_index from a fresh observation; the host supplies pid/window_id.",
   "4. After every write burst, observe again and verify the result before the next action. Never assume a click landed.",
   "5. Agent cursor: the host enables a simulated overlay cursor for an active desktop task so the user can see where you aim. The overlay is independent of Background delivery — do not pass foreground:true or move the user's real mouse. The host manages cursor controls; the user can disable the overlay in settings. Do not call host-only cursor tools.",
   "6. You choose the operating window. Do not ask the user to pick desktop vs window. Skip any app or window the host marks as blacklisted; a blacklist skip is not a targeting miss.",
-  "7. If the host replies confirmationRequired, stop and wait. The user must allow that sensitive action once; do not retry it unchanged until they do. Unrestricted mode still honors the blacklist.",
+  "7. If the host replies sensitiveTarget, that control is a password field, payment field, or privilege-granting system dialog. Do not retry it. Ask the user to complete it themselves.",
+  "8. If the host replies confirmationRequired, stop and wait. The user must allow that sensitive action once; do not retry it unchanged until they do. Unrestricted mode still honors the blacklist and sensitiveTarget denials.",
   "- Web pages: prefer get_browser_state with browser_* tools, using refs from the latest snapshot. On macOS, when the trusted input route is refused, pass input_route=\"dom_event\".",
   "- The browser's own UI (permission prompts, native file pickers, extensions) is native UI: use window tools for it.",
   "- A refused or scopeViolation reply did nothing. Observe again and choose a different action; do not resend the same coordinates.",
   "- An uncertain result pauses the task for the user. After resuming, observe first and check whether the previous action already took effect. Never redo an uncertain action through a different tool.",
 ];
 const DESKTOP = [
-  "- Desktop mode may use pixel coordinates only when the latest observation has no matching element (canvas/game surface). Always verify with a screenshot afterwards.",
+  "- Desktop mode may use pixel coordinates only when the latest observation has no matching element (canvas/game surface). The host prefers element_index and rewrites a covering hit. Always verify with a screenshot afterwards.",
   "- Attaching to the user's own browser profile is not allowed in this mode. Bind a specific browser window yourself via observation; do not ask the user to flip a scope control.",
 ];
 const WINDOW = [
@@ -42,7 +43,7 @@ const TOOL_NOTES: Record<string, (scope: CuaScope) => string | null> = {
   get_desktop_state: () => `Whole-screen observation. Refreshes your allowance of ${N} writes on native windows (not web page refs). Prefer get_window_state when targeting one app.`,
   click: (scope) => scope.kind === "window"
     ? "Use element_index from the latest observation. Pixel coordinates and foreground:true are rejected. Keep Background delivery."
-    : "Prefer element_index from the latest observation. Pixel x/y is last resort. Keep Background delivery; do not pass foreground:true. For web page content prefer browser_click.",
+    : "Prefer element_index from the latest observation. Pixel x/y is last resort; the host rewrites a covering hit to element_index. Keep Background delivery; do not pass foreground:true. For web page content prefer browser_click.",
   type_text: () => "For web page content prefer browser_type.",
   set_value: () => "Use element_index from the latest observation. Do not target by pixel coordinates.",
   scroll: () => "Use element_index from the latest observation when a scrollable element exists.",
@@ -69,6 +70,7 @@ const REJECTIONS: Record<string, string> = {
   toolNotAllowed: "This tool is not available. Repeated violations end the task.",
   targetClosed: "The selected window is gone. Observe again and pick another live window.",
   blacklisted: "That application is on the user's Computer Use blacklist. Skip it and continue with a different app. This is not a targeting miss.",
+  sensitiveTarget: "That control is a password field, payment field, or a system dialog that grants privileges. Do not click or type into it. Ask the user to finish it themselves. This is not a targeting miss.",
   confirmationRequired: "This action needs an explicit user confirmation (ask mode). Do not retry until the user allows it once.",
   noProgress: "The same action was repeated and nothing observed changed, so the task is paused for the user. After resuming, observe and try a different approach.",
 };

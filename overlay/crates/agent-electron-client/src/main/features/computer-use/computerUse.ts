@@ -23,7 +23,8 @@ import { CuaTaskController, CUA_FINAL_REASONS } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_WINDOW_TASK_TOOLS, taskCuaCall } from "./taskPolicy";
 import { CUA_DISABLED_NOTICE, CUA_ENABLED_NOTICE, publishCuaCapabilityNotice } from "./cuaSessionNotice";
-import { callIdentity, CuaConfirmationGate, matchesCuaBlacklist, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { callIdentity, CuaConfirmationGate, isDeniedCuaApp, readCuaAuthMode, readCuaBlacklist, type CuaAuthMode } from "./cuaSafety";
+import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
 import { cleanupStaleScreenshots, cuaScreenshotHome, listLocalScreenshotNames, sanitizeCuaObservation } from "./cuaPrivacy";
 import { discoverInstalledApps, type InstalledApp } from "./cuaApps";
 import type { CuaWindowFrame } from "./windowBadges";
@@ -109,6 +110,7 @@ let preparingRuntime = false;
 let cuaScope: CuaScope = { kind: "desktop" };
 let scopeInitialized = false;
 const confirmationGate = new CuaConfirmationGate();
+const cuaElements = new CuaElementIndex();
 
 export function allowCuaSensitiveOnce(taskId?: string): boolean {
   const task = taskId ? windowTasks.byId(taskId) : undefined;
@@ -175,10 +177,12 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       scope: (owner) => multiwindow ? windowTasks.scopeFor(owner ?? "") : cuaScope,
       authorize: (grant) => cuaSessionAuthority.authorize(grant),
       transformCall: (tool, args, owner) => {
-        if (!multiwindow) return scopeCuaCall(cuaScope, tool, args, cuaBindings);
+        // 先把坐标收成最新观察的 element_index，再拦敏感控件，最后才套窗口 scope。
+        const guarded = resolveAndGuardCuaCall(tool, args, cuaElements.latest(owner ?? ""));
+        if (!multiwindow) return scopeCuaCall(cuaScope, guarded.tool, guarded.args, cuaBindings);
         const task = windowTasks.ensure(owner!);
         if (!task.target) throw new Error("targetRequired");
-        return taskCuaCall(windowTasks.scopeFor(owner!), task.mode, tool, args);
+        return taskCuaCall(windowTasks.scopeFor(owner!), task.mode, guarded.tool, guarded.args);
       },
       beforeCall: multiwindow ? async (owner, call) => {
         const context = windowTasks.nativeContext(owner);
@@ -189,13 +193,13 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       onResult: (tool, args, outcome, structured, owner) => {
         cuaBindings.record(cuaScope, tool, args, outcome, structured);
         if (owner && outcome === "ok") confirmationGate.observe(owner, tool, args, structured);
+        cuaElements.remember(owner ?? "", tool, outcome, structured);
       },
       agentCursor: () => readAgentCursorEnabled(),
       requireConfirmation: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
         && confirmationGate.requires(owner, tool, args),
       rejectTarget: async (tool, raw) => {
         const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
-        if (!blacklist.length) return null;
         const args = (raw ?? {}) as Record<string, unknown>;
         const id = callIdentity(args);
         const bound = cuaBindings.nativeTarget(args);
@@ -204,13 +208,15 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         const windows = await readLiveCuaWindows();
         const matching = windows.filter(window => (!pid || window.pid === pid) && (!windowId || window.window_id === windowId));
         if (tool === "get_desktop_state") return windows.some(window =>
-          matchesCuaBlacklist([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
+          isDeniedCuaApp([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
         if (pid || windowId) return !matching.length ? "targetClosed" : matching.some(window =>
-          matchesCuaBlacklist([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
+          isDeniedCuaApp([window.app_name, window.title], blacklist)) ? "blacklisted" : null;
         if (["check_permissions", "health_report", "get_config", "start_session", "end_session"].includes(tool)) return null;
-        if (tool === "launch_app") return matchesCuaBlacklist(Object.values(args).filter(value => typeof value === "string") as string[], blacklist)
+        if (tool === "launch_app") return isDeniedCuaApp(Object.values(args).filter(value => typeof value === "string") as string[], blacklist)
           ? "blacklisted" : "scopeViolation";
-        // Global/coordinate/browser input without a verified native target cannot bypass a blacklist.
+        // With only built-in protection, permit untargeted canvas input only
+        // while no protected window is present. User blacklists remain fail-closed.
+        if (!blacklist.length && !windows.some(window => isDeniedCuaApp([window.app_name, window.title]))) return null;
         return "scopeViolation";
       },
       sanitizeResult: (tool, result) => {
@@ -234,7 +240,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
     (file) => ({ command: computerUseHost().resolveNodeBinary()!, args: ["-e", CUA_STDIO_RELAY],
       env: { NUWAX_CUA_GATEWAY: socketPath, NUWAX_CUA_GATEWAY_TOKEN: selected.tokenFile, NUWAX_CUA_SESSION_FILE: file } }),
     (owner, cancelled) => {
-      confirmationGate.retire(owner);
+      confirmationGate.retire(owner); cuaElements.forget(owner);
       if (multiwindow) {
         const task = windowTasks.stateForOwner(owner);
         if (task) void finishWindowTask(task.taskId, cancelled).catch(() => undefined);
@@ -943,7 +949,7 @@ async function removeMcpAndStopDaemon(preservePermissionLinger = false): Promise
 }
 
 async function disableCua(preserveEnabled = false, preservePermissionLinger = false): Promise<void> {
-  confirmationGate.clear();
+  confirmationGate.clear(); cuaElements.forget();
   windowTasks.setAvailable(false); windowTasks.stop("disabled");
   cuaTasks.setAvailable(false);
   cuaTasks.stop("disabled");
@@ -1381,7 +1387,7 @@ async function readLiveCuaWindows(): Promise<Array<{ pid: number; window_id: num
 }
 export async function listCuaWindows(): Promise<CuaWindow[]> {
   const blacklist = readCuaBlacklist(readStep1().computerUseBlacklist);
-  return (await readLiveCuaWindows()).filter(window => !matchesCuaBlacklist([window.app_name, window.title], blacklist))
+  return (await readLiveCuaWindows()).filter(window => !isDeniedCuaApp([window.app_name, window.title], blacklist))
     .map(window => ({ pid: window.pid, windowId: window.window_id,
       label: `${String(window.app_name ?? "").slice(0, 80)} — ${String(window.title ?? "").slice(0, 160)}` }));
 }

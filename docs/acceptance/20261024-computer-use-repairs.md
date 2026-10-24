@@ -1,6 +1,6 @@
 # Computer Use 3.0.23 修复与真机验收交接
 
-- 修复基线：`2621c375`（v3.0.23-beta.2）。
+- 修复基线：`2621c375`（v3.0.23-beta.2）；发 tag 前已合入发布线新增的 P2 #64（`7fe6dc38`）和 P3 #65（`1f947181`）。
 - 修复分支：`codex/cua-3023-repairs`；目标 Beta：`v3.0.23-beta.3`。
 - 范围：CU23-01～12，以及升级开启偏好丢失；不修改基座、前端源码或产物 pin。
 - 本文的自动化通过不代表真实安装包或设备验收通过。
@@ -40,13 +40,15 @@
 ## 自动化与构建
 
 - 社区全量：138 文件通过、1 文件跳过；1682 项通过、18 项既有跳过。命令 `npm run base:test`，仅在独立工作区执行，随后重新同步商业 overlay。
-- 商业全量：278 文件通过、1 文件跳过；3425 项通过、18 项既有跳过。最终使用 `node scripts/in-base.js --no-env -- npm --prefix crates/agent-electron-client run test:run -- --maxWorkers=4 --minWorkers=1`。
+- 商业全量：280 文件通过、1 文件跳过；3443 项通过、18 项既有跳过。最终使用 `node scripts/in-base.js --no-env -- npm --prefix crates/agent-electron-client run test:run -- --maxWorkers=4 --minWorkers=1`。
 - 初次默认并发复跑曾出现 3 项时间敏感失败：CU socket 短超时、IM 重连计时、大文件 ZIP 超时；限制并发后同一套测试全部通过，未修改这三项的断言或放宽其超时。
 - feature-boundaries/legacy/cache 相关脚本 16 项通过；helper 构建脚本的 Windows 路径与 MSVC linker 顺序检查通过。
 - feature-boundaries、overlay 同步一致性、check:pin、git diff --check 通过；基座脏文件均为商业 overlay 同步产物。
 - 主进程 esbuild 与 renderer 生产构建通过；renderer 仍有既有 chunk-size 提示。
 - 全量 tsc 存在历史错误。对固定 beta.2 同输入基线作 path + TS 编号 + 消息去重对比：基线 124 类，候选 107 类，新增 0。不能据此写“全仓 tsc 已通过”。
 - helper 上游锁定 `85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19`，完整商业补丁 `git apply --check` 通过；本地未重跑完整 Rust/MSVC helper 编译，由新 Beta CI 固定源码构建。
+
+P2 的元素编号优先和敏感控件硬拒、P3 的分组设置与短同意书均保留；短同意书已纠正“不上传”的错误承诺。内置 SecurityAgent/loginwindow 禁止名单与用户黑名单共用真实目标核验。
 
 ## 三问质量自查
 

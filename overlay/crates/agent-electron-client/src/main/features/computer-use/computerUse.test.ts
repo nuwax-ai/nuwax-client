@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   endpointProofValid: true,
   permissionGateAttempts: 0,
   gatewayOptions: undefined as any,
+  windowItems: undefined as Array<{ pid: number; window_id: number; app_name: string; title: string }> | undefined,
   nativeForeground: false,
   previewGate: undefined as Promise<void> | undefined,
   nativeRequests: [] as Array<{ name?: string; args?: any }>,
@@ -171,7 +172,7 @@ vi.mock("node:net", async (importOriginal) => {
             } else if (request.method === "call" && mocks.rejectImplicitHostSession && (!request.session_id || request.session_id !== hostSession)) {
               reply = { ok: true, result: { isError: true, content: [{ type: "text", text: "this session has ended; call start_session explicitly to reuse its label" }], structuredContent: { code: "session_ended" } } };
             } else if (request.method === "call" && request.name === "list_windows") {
-              reply = { ok: true, result: { structuredContent: { windows: [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
+              reply = { ok: true, result: { structuredContent: { windows: mocks.windowItems ?? [{ pid: 25, window_id: 50, app_name: "Fixture", title: "Document" }] } } };
             } else if (request.method === "call") {
               reply = mocks.permissionGateAttempts-- > 0
                 ? { ok: false, error: "permissions_pending" }
@@ -334,7 +335,7 @@ beforeEach(() => {
   mocks.callerAttribution = false;
   mocks.endpointProofValid = true;
   mocks.permissionGateAttempts = 0;
-  mocks.gatewayOptions = undefined; mocks.nativeForeground = false; mocks.windowProbeGate = undefined;
+  mocks.gatewayOptions = undefined; mocks.windowItems = undefined; mocks.nativeForeground = false; mocks.windowProbeGate = undefined;
   mocks.windowProbeStarted.mockClear();
   mocks.beforeRawSocketError = undefined;
   mocks.rejectImplicitHostSession = false; mocks.hostRequests.length = 0; mocks.closedHostSessions.length = 0;
@@ -788,6 +789,10 @@ describe("live blacklist enforcement", () => {
     expect(await check("get_desktop_state", { pid: 999 })).toBe("blacklisted");
     expect(await check("click", { pid: 999, window_id: 999 })).toBe("targetClosed");
     expect(await check("browser_click", { target_id: "unbound", tab_id: "t", ref: "e1" })).toBe("scopeViolation");
+    expect(await cuaModule.listCuaWindows()).toEqual([]);
+    await cuaModule.setCuaBlacklist([]);
+    mocks.windowItems = [{ pid: 25, window_id: 50, app_name: "SecurityAgent", title: "Allow" }];
+    expect(await check("click", { pid: 25, window_id: 50 })).toBe("blacklisted");
     expect(await cuaModule.listCuaWindows()).toEqual([]);
   });
 });

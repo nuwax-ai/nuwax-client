@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   cuaErrorKind,
   cuaNeedsPermissionRecovery,
+  cuaNextAction,
+  cuaNextActionKey,
+  cuaStatusLabelKey,
   neutralizeStaleGrantedPermissions,
 } from "./permissionUx";
 
@@ -37,6 +40,38 @@ describe("cuaNeedsPermissionRecovery", () => {
     expect(cuaNeedsPermissionRecovery({ ...ready, accessibility: false })).toBe(true);
     expect(cuaNeedsPermissionRecovery({ ...ready, error: "daemonNotReady" })).toBe(true);
     expect(cuaNeedsPermissionRecovery({ ...ready, enabled: false, consentPending: true, accessibility: null })).toBe(true);
+  });
+});
+
+describe("cuaNextAction", () => {
+  const installed = {
+    installed: true,
+    installable: true,
+    enabled: false,
+    consentPending: false,
+    error: null as string | null,
+    accessibility: false as boolean | null,
+    screenRecording: false as boolean | null,
+  };
+
+  it("points at install, consent, grant, then ready without changing permission rules", () => {
+    expect(cuaNextAction({ ...installed, installed: false })).toBe("install");
+    expect(cuaNextAction({ ...installed, installed: false, installable: false })).toBe("off");
+    expect(cuaNextAction(installed)).toBe("enable");
+    expect(cuaNextAction({ ...installed, consentPending: true })).toBe("grant");
+    expect(cuaNextAction(installed, { pending: true })).toBe("grant");
+    expect(cuaNextAction({ ...installed, enabled: true, accessibility: true, screenRecording: true })).toBe("ready");
+    expect(cuaNextAction({
+      ...installed,
+      enabled: true,
+      accessibility: true,
+      screenRecording: true,
+    }, { isMac: false })).toBe("ready");
+    expect(cuaNextAction({ ...installed, enabled: true, accessibility: true, screenRecording: false })).toBe("grant");
+    expect(cuaNextActionKey("grant")).toBe("Claw.Settings.computerUse.nextGrant");
+    expect(cuaStatusLabelKey({ ...installed, consentPending: true, running: false })).toBe(
+      "Claw.Settings.computerUse.stateAwaitingPermission",
+    );
   });
 });
 

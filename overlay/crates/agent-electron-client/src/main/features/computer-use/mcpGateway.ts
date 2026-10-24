@@ -9,7 +9,7 @@ import type { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_TASK_GUIDANCE } from "./taskPolicy";
 
 /** Errors `transformCall` may throw that are reported to the model as-is. */
-const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope", "blacklisted", "confirmationRequired"]);
+const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope", "blacklisted", "confirmationRequired", "sensitiveTarget"]);
 
 /** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
 export const CUA_STDIO_RELAY = `
