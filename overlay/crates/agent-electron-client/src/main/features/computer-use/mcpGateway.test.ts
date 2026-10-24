@@ -81,6 +81,37 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it.each([false, true])("keeps a confirmation request alive until resume and then requires a new observation (multiwindow=%s)", async (multiwindow) => {
+    const registry = multiwindow ? new CuaTaskRegistry() : undefined;
+    registry?.setAvailable(true);
+    const task = registry?.ensure("A");
+    if (task) { registry!.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry!.resumeTask(task.id); }
+    let allowed = false;
+    let f: Awaited<ReturnType<typeof fixture>>;
+    f = await fixture(3000, () => "A", undefined, registry, {
+      requireConfirmation: tool => tool === "click" && !allowed,
+      onFailure: reason => {
+        if (task) { registry!.pauseTask(task.id, reason); f.gateway.holdOwner("A", reason); }
+        else { f.controller.pause(reason); f.gateway.cancelPending(reason); f.gateway.pauseTransports(); }
+      },
+    });
+    const peer = await f.client("test-token", true, "A");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    const pending = peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } });
+    let answered = false; void pending.then(() => { answered = true; });
+    await vi.waitFor(() => expect(f.controller.snapshot().phase).toBe("paused"));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    expect(f.results).toHaveBeenCalledTimes(1);
+    allowed = true;
+    await f.gateway.resumeTransports();
+    if (task) registry!.resumeTask(task.id); else (f.controller as CuaTaskController).resume();
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect((await peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } })).result.structuredContent.code).toBe("observationRequired");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    expect((await peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } })).result.isError).toBe(false);
+    expect(f.results).toHaveBeenCalledTimes(3);
+  });
   function tasks() {
     const tasks = new CuaTaskRegistry(); tasks.setAvailable(true);
     const a = tasks.ensure("A"), b = tasks.ensure("B");

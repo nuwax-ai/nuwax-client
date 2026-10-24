@@ -776,6 +776,28 @@ describe("cua 开关与启动收敛", () => {
 });
 
 describe("live blacklist enforcement", () => {
+  it("does not consume a sensitive approval before the gateway actually dispatches input", async () => {
+    await setCuaEnabled(false);
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    await cuaModule.setCuaAuthMode("ask");
+    const args = { pid: 25, window_id: 50, snapshot_id: "s00000001", element_index: 7 };
+    mocks.gatewayOptions.onResult("get_window_state", args, "ok", {
+      snapshot_id: args.snapshot_id, elements: [{ element_index: 7, name: "删除测试项", role: "button" }],
+    }, "A");
+    expect(mocks.gatewayOptions.requireConfirmation("click", args, "A")).toBe(true);
+    expect(cuaModule.allowCuaSensitiveOnce()).toBe(true);
+    // A resumed task still needs a fresh observation; admission may reject this
+    // call without dispatching it. That check must not spend the user's approval.
+    expect(mocks.gatewayOptions.requireConfirmation("click", args, "A")).toBe(false);
+    expect(mocks.gatewayOptions.requireConfirmation("click", args, "A")).toBe(false);
+    expect(mocks.gatewayOptions.confirmDispatch("click", args, "A")).toBe(true);
+    expect(mocks.gatewayOptions.requireConfirmation("click", args, "A")).toBe(true);
+    expect(cuaModule.allowCuaSensitiveOnce()).toBe(true);
+    await cuaModule.setCuaAuthMode("unrestricted");
+    expect(cuaModule.allowCuaSensitiveOnce()).toBe(false);
+  });
   it("preserves the native discovery output contract while filtering denied windows", async () => {
     await setCuaEnabled(false);
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
