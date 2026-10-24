@@ -1,0 +1,135 @@
+# Build validation only. Beta/Stable release workflows never call this file.
+name: Package validation
+run-name: Package validation / ${{ inputs.validation_series }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: Existing Beta/Stable tag whose app version is reused; no new version is created
+        required: true
+        type: string
+      validation_series:
+        description: Fixed issue identity across commits/reruns, e.g. pr-66; maximum four starts
+        required: true
+        type: string
+      platforms:
+        description: Unsigned build validation targets
+        required: true
+        type: choice
+        default: both
+        options: [both, mac-arm64, windows-x64]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: package-validation-${{ inputs.validation_series }}
+  cancel-in-progress: false
+
+env:
+  VALIDATION_BASELINE_TAG: ${{ inputs.baseline_tag }}
+  VALIDATION_SERIES: ${{ inputs.validation_series }}
+  VALIDATION_PLATFORMS: ${{ inputs.platforms }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      build_id: ${{ steps.identity.outputs.build_id }}
+      matrix: ${{ steps.identity.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: identity
+        name: Check existing baseline and four-start limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-validation.mjs prepare
+
+  package:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # A rerun of only this job also consumes a start and must be checked before
+      # downloading dependencies or compiling resources.
+      - name: Recheck stop condition before build setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-validation.mjs prepare
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - name: Configure read-only source access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
+          YICHAMAO_GIT_USERNAME: ${{ secrets.YICHAMAO_GIT_USERNAME || 'oauth2' }}
+        run: |
+          gh auth setup-git
+          git config --global core.autocrlf false
+          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
+            git config --global http.https://git.yichamao.com/.extraheader "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
+          fi
+      - name: Setup Rust compiler
+        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Windows C++ compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Setup terminal compatibility compiler
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
+      - name: Setup Windows capture compiler
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-nasm perl make diffutils curl
+      - name: Setup macOS capture compiler
+        if: runner.os == 'macOS'
+        run: |
+          command -v nasm >/dev/null || brew install nasm
+          command -v pkg-config >/dev/null || brew install pkgconf
+      - name: Build unsigned packages without publishing
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: node scripts/package-validation.mjs build
+      - name: Upload validation packages and context only
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-validation-${{ needs.prepare.outputs.build_id }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

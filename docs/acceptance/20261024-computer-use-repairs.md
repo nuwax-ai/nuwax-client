@@ -1,5 +1,7 @@
 # Computer Use 3.0.23 修复与真机验收交接
 
+> 2026-10-25 用户要求停止反复出包：QA.5 已取消，不再启动本轮验证；PR #66 保持 Draft、未合并。源码修复/自动化与下列驱动冒烟证据保留，最终产品 Agent 实包验收仍未完成。新的独立验证流程见 `docs/package-validation.md`；停止记录见 `docs/acceptance/20261025-stopped-package-validation.md`。
+
 - 修复基线：`2621c375`（v3.0.23-beta.2）；发 tag 前已合入发布线新增的 P2 #64（`7fe6dc38`）和 P3 #65（`1f947181`）。
 - 修复分支：`codex/cua-3023-repairs`；目标 Beta：`v3.0.23-beta.3`。
 - 范围：CU23-01～12，以及升级开启偏好丢失；不修改基座、前端源码或产物 pin。
@@ -56,13 +58,22 @@ P2 的元素编号优先和敏感控件硬拒、P3 的分组设置与短同意�
 - 分层：renderer → preload/受限 IPC → 特性主进程；保持现有公开入口。特性边界守卫通过；宿主光标控制没有变成模型可用的额外输入权限。
 - 可维护：观察与确认只保留必要哈希/标记；预览选择和原生接管分开；旧配置和权限失败均有明确回归。质量检查发现的排队后黑名单和 helper 资源误清理风险已当场修正。
 
-## 尚需真机验收（全部待验）
+## Beta.3 实包升级验收更新（2026-10-24）
 
-按既有约定逐台验收 mac-dbg、Windows EXE；测试必须使用本次新 tag 的真实安装包，截图、日志、包版本和来源相互关联。Linux 如需声明实包窗口兼容，单列支持环境验收。
+Beta.3 `325550813dc14cd38c3b4bed298421571624e29a` 的五平台构建、商业/社区等源码门禁和发布同步均成功：[构建 40084568220](https://github.com/nuwax-ai/nuwax-client/actions/runs/40084568220)。用户在家，将设备调整为家庭 M4 真机与 WIN-UTM；公司 mac-dbg / win-dbg 待回公司补验。
+
+- M4（macOS 27.0.1 arm64）：通过应用内公开 Beta 通道由 3.0.22 自动升级到 3.0.23-beta.3。旧 ON 迁入独立记录后仍 ON，系统权限保留、助手/MCP 恢复、设置页已就绪；正常退出后普通重开再次保持 ON / 已就绪。安装 ASAR 与官方 ZIP 内 ASAR 一致。
+- WIN-UTM（Windows 11 ARM64 虚拟机，x64 客户端）：官方 EXE 静默覆盖原 all-users 目录，退出码 0，ASAR 与 EXE 载荷一致；旧 ON 和 multiwindow true 均迁移保留。用户 Session 2 普通启动及真实托盘退出重开后均 ON / 已就绪。升级前助手已停止，偏好本来就是 ON；升级后恢复运行。该结果不覆盖 Windows x64 真机与向导交互。
+- M4 的 S3 差分多段下载 HTTP 400 后自动回退完整 ZIP 并成功升级；Range 支持单列待跟进，不能记为差分下载通过。
+- 证据保存在 `/Users/apple/Documents/Codex/2026-10-24/beta3-upgrade-acceptance/README.md`，含 M4 20 张、Windows 20 张原图、安装回执、包/ASAR 哈希、偏好布尔字段、正常退出审计及相关日志。M4 原图 44 完整显示重开后的 CU 开关、就绪状态与两项系统授权。证据一致性 58 项通过；该数量不代表真实模型任务数量。临时 Windows QA 助手已清理，两台产品都保留 ON。
+
+## 尚需真机验收
+
+HW-01 的上述两条 ON→ON 路径已通过，其余安装路径及 HW-02～10 继续待验。公司 Windows 按用户口径只验 EXE；Linux 如需声明实包窗口兼容，单列支持环境验收。
 
 | 编号 | 项目 | 必须留下的证据 |
 | --- | --- | --- |
-| HW-01 | macOS 自动升级、手动覆盖；Windows EXE 覆盖，分别 ON→ON / OFF→OFF，升级后再普通重启 | 升级前后开关原图、相关布尔字段、包版本/ASAR、偏好迁移/写入日志。不导出整份设置或凭据 |
+| HW-01 | 部分通过：M4 自动升级与 WIN-UTM EXE 覆盖的 ON→ON、普通重启已通过。待补公司两机、Mac 手动覆盖、OFF→OFF、Windows x64 真机与向导交互 | 升级前后开关原图、相关布尔字段、包版本/ASAR、偏好迁移/写入日志。不导出整份设置或凭据 |
 | HW-02 | 原 ON 时 helper 未就绪/权限暂不可用；修复权限或重装 helper 后恢复；明确 OFF 不被复活 | 偏好、运行、MCP、权限四类状态分开记录；失败时无实际输入 |
 | HW-03 | 首次安装默认 OFF；macOS 授权对象为 Nuwax Computer Use；20s 内及 20～90s 迟到授权；关闭/退出取消 | 系统权限图、客户端状态刷新时序、无遗留权限宿主 |
 | HW-04 | 旧 desktop/window/multiwindow 配置，真实模型首次/续聊自动选择正确窗口，同 PID 多窗 | 工具调用/真实原生窗口对应，不要求已删除的选窗 UI，不出现 targetRequired 永久等待 |
@@ -78,3 +89,26 @@ Windows 范围按用户口径只含 EXE，不加入 MSI。历史 macOS 升级退
 ## 发布边界
 
 用户已授权打下一 Beta tag。新 tag 应固定本轮已测试提交，触发标准五平台 Beta 构建；不修改 beta.1/beta.2，不推进正式版更新指针。修复经 Draft PR 送回 release/v3.0.23，合并与真机验收状态单独跟踪。
+
+## Beta.3 后续修复（2026-10-25，验收进行中）
+
+用户确认服务器不支持差分更新，商业更新入口改为初始化后固定完整包下载；不建设差分服务端。Windows 只验 EXE。当前使用家中 M4 真机与 WIN-UTM ARM64 虚拟机，不把虚拟机结果当作 Windows x64 真机结果。“Cursor/Claude”以产品已配置 Agent 的 Computer Use 实际生效为准。
+
+- Mac 完整下载策略：10eb3542 失败先行，8a7c065e 修复；复用基座的同一 updater singleton 和安装清理链。
+- Windows 原生误报：Beta.3 helper 实际打开独立弹窗、关闭测试窗口后返回 foreground_unavailable。修复只改变完整 SendInput 投递后的结果解释，输入前的 HWND、身份、权限和部分失败校验保留。QA.1 新 helper 在 WIN-UTM 标准权限实际复跑通过：后台 popupClicks=1；前台打开后=2；关闭 closeClicks=1、closed=true；均返回已投递且效果待观察，没有盲目重放。
+- 增量观察：5dec0b20 失败先行，4e4b2f3f 修复实际返回行数。WIN-UTM 新 helper 的 diff 返回 1 行/计数 1，no_change 返回 0 行/计数 0，严格输出契约通过。
+- 真实产品任务暴露窗口发现契约问题：QA.1 的 M4 Nuwaxcode / GLM-5.3-openai 只读任务因宿主丢失 app_name/bounds/is_on_screen/z_index 被严格 MCP 客户端拒绝。9977b3af 失败先行，6240f860 修复：仅过滤禁止窗口，完整保留原生记录；UI 标签单独投影。该失败任务不算模型回归通过。
+- 复查确认流程发现 MCP 提前结束与一次允许提前消费；7818b399、56bdf8bb 保留失败回归，c0c80ec0 修复。人工等待期间保持模型工具调用；恢复仅返回 operationPaused，要求新观察，不重放旧动作。停止取消等待，一次许可在最终准入投递时才消费，授权模式变化清除旧许可。
+- QA workflow_dispatch 矩阵 skipped 和 lipo 多架构调用问题均有失败证据及修复回归。首个总状态 success 但没有包的 run 40101088463 不算打包成功。
+
+中间候选 `3.0.23-qa.20261025.4` 冻结源码 `c0c80ec03716aca8994e493cb8ecc69a9d5a3731`：[构建 40112758400](https://github.com/nuwax-ai/nuwax-client/actions/runs/40112758400)。其全部源码门禁通过后，发现两次桌面工具调用之间暂停仍提前回复；1fd320dd 保留失败回归、9397b781 修复，恢复时同样不执行旧请求。停止 QA.4 中间包构建，最终待验改为 `3.0.23-qa.20261025.5`、源码 `9397b781a378396690bf8de3fad1a7462976cc82`：[构建 40114087225](https://github.com/nuwax-ai/nuwax-client/actions/runs/40114087225)。无新公开 tag、无公开更新指针变化。
+
+当前自动化：QA.4 确认/暂停定向 102 项通过、本地商业 3452 通过/18 跳过，CI 商业 3436 通过/5 跳过、社区 1666 通过/5 跳过、前端 4041 通过/6 跳过。QA.5 补齐相邻暂停分支后，本地商业全量 3453 通过/18 跳过，CI 商业 3437 通过/5 跳过、社区 1666 通过/5 跳过、前端 4041 通过/6 跳过；pin、模块边界、diff 检查通过，实包仍待。平台差异数字分开保留。Rust core 1082 通过/1 ignored，Windows 平台纯逻辑 93 通过；后者在 Mac 上执行，不替代上述 Windows 原生行为证据。
+
+三问复查：偏好事实源在 `preferences.ts:10/22`，确认状态在 `cuaSafety.ts:151/170/196`；宿主组合在 `computerUse.ts:146/201`、传输等待与取消在 `mcpGateway.ts:533/542/606`，界面经受限 IPC 调用。原生回执与结构化数量修正随固定上游补丁维护。全批次按 REVIEW.md 五遍清单自查，未以 writer 自批替代 PR 评审。当前最终实包尚未验完，不判可合并。
+
+已安装 QA.1：M4 ON→ON、WIN-UTM EXE 的 ON/multiwindow→保留均已观察，包/EXE 载荷/安装 ASAR 一致。两台现已通过真实 UI 关闭 CU，准备 QA.1→QA.5 的 OFF→OFF 验收；M4 暂关 Beta 通道以测试仅限本机、拒绝 Range 的完整包源，结束恢复原来的 ON/Beta。仍待最终升级、真实 Agent 原生写入/保存/独立回读、确认/暂停/停止及普通重开，未通过前不合并 PR #66。
+
+截图、原始 JSON、独立原生窗口计数和日志留在 `/Users/apple/Documents/Codex/2026-10-24/beta3-followup/README.md`。Windows 原生修复证据 51～62；原包失败证据 04～12。含私人界面的原图仅本地保存，不上传 PR。
+
+补充原生驱动文字冒烟（不是产品模型 E2E）：M4 和 WIN-UTM 的独立标准权限 helper 均在 B 原生编辑框后台写入中英文唯一标记，新观察后保存一次，独立 oracle 的 field/committed 一致、saveCount=1、A 仍空、deleteCount=0。Mac 证据 93～98、Windows 78～83。M4 原夹具在此前一次写入前退出，驱动拒绝输入，重新枚举确认目标已不存在后才重启新夹具；没有把该次拒绝算作写入通过，也没有认定退出原因。最终模型任务需重新冻结原生窗口基线和计数。

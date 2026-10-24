@@ -7,14 +7,12 @@
 # Electron 桌面客户端 — 预发布版本构建
 # 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
 # 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
-# workflow_dispatch / qa/X.Y.Z-qa.YYYYMMDD.N 只输出 7 天 Actions artifacts；
-# manifest 的 qa-v完整版本是独立构建标识，不创建 tag/Release，不改更新指针。
+# 构建验证使用独立的 package-validation.yml，不从发布入口发起。
 #
 # 触发方式（手动，无 nuwaxcode 自动联动）：
 #   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
 #   2. 准备 release-notes/v{x.y.z}-beta.1.md
 #   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
-#   隔离 QA：workflow_dispatch(version=X.Y.Z-qa.YYYYMMDD.N) 或推送冻结 HEAD 到对应 qa/ 分支。
 #   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
 #
 # 支持平台：
@@ -40,23 +38,6 @@ on:
   push:
     tags:
       - "v*-beta.*"
-    branches:
-      - "codex/beta-qa/**"
-      - "qa/**"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "QA version X.Y.Z-qa.YYYYMMDD.N (for example 3.0.9-qa.20261008.1); no release tag is created"
-        required: true
-        type: string
-      windows_archive:
-        description: "Windows QA installer extraction policy"
-        required: true
-        type: choice
-        default: zip-qa
-        options:
-          - 7z
-          - zip-qa
 
 permissions:
   actions: read

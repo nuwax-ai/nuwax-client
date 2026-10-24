@@ -33,6 +33,7 @@
 - `npm run sub:update` 拉源码、构建、提交并默认推送产物仓、提交双 pin；`--push` 才推外层当前分支。`--no-commit` 全链不提交推送，不得配 `--push`。所有推送不强推，保留无关 WIP。
 - 非敏感配置集中在 `client.config.mjs`；缓存按输入与 ABI/平台/架构校验，自有源码资源缓存不覆盖开发者 `sources/`。`--refresh-resources` 显式刷新资源，开发保留 Vite 缓存。
 - `npm run release -- --version X.Y.Z[-beta.N] --dry-run` 先预检；新 tag 统一 v，通道由完整版本推导（--channel 仅校验），--tag 续跑历史发布。stable 默认停在签名阶段，安装包验收后 --stage sync 公开；SimplySign 手机认证保留人工操作。stable CI 消费 nuwax-dist pin，beta CI 从源码 pin 构建；产物仓不得重写仍被引用的提交历史。
+- 正式打包仅 Beta / Stable。构建验证走独立 `package-validation.yml`，应用版本沿用已存在的 Beta/Stable 基线，产物用 SHA/run id 区分；不占用新版本，不创建 tag/Release，不改更新指针。同一问题跨 commit、run、rerun 最多启动 4 次，达到上限停止并报告；不得换版本或系列绕过。停止后保留证据，须用户明确重新启动验收，不能自行继续出包。
 
 ## 商业版登录与服务边界
 
