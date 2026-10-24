@@ -180,6 +180,17 @@ async function stage(kind, key) {
   return `${files.length} files, ${bytes} bytes; producer run ${source.runId}, job ${source.jobId}`;
 }
 
+function invalidateRestoredState(kind, key, reason) {
+  const filename = stateFile(kind, key);
+  let previous = { hit: false };
+  try { previous = core.readJson(filename); } catch {}
+  if (!previous || typeof previous !== 'object' || Array.isArray(previous)) previous = { hit: false };
+  core.atomicJson(filename, { hit: false, invalidated: true, reason,
+    ...(previous.producerRun ? { previousProducerRun: previous.producerRun } : {}),
+    ...(previous.artifact ? { previousArtifact: previous.artifact } : {}) });
+  return previous.hit ? `restored artifact ${previous.artifact ?? 'unknown'} marked stale: ${reason}` : `no prior hit state: ${reason}`;
+}
+
 async function download(artifact, temporary) {
   if (!/^sha256:[a-f0-9]{64}$/.test(artifact.digest || '') || artifact.size_in_bytes > maxBytes) throw new Error('Artifact digest or size is unavailable');
   const response = await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/actions/artifacts/${artifact.id}/zip`, {
@@ -365,12 +376,23 @@ else if (command === 'measure' && key === '--' && args.length) {
     if (command === 'restore') {
       const result = await restore(kind, key);
       report(kind, result.hit ? 'HIT (artifact verified)' : 'MISS', started, result.detail);
+    } else if (command === 'invalidate') {
+      const reason = args[0] || 'unspecified';
+      if (!/^[a-zA-Z0-9._-]{1,80}$/.test(reason)) throw new Error('Invalid cache invalidation reason');
+      const detail = invalidateRestoredState(kind, key, reason);
+      output({ invalidated: true });
+      report(kind, 'invalidated', started, detail);
     } else if (command === 'save') report(kind, 'cache staging', started, await stage(kind, key));
     else throw new Error('Unknown resource operation');
   } catch (error) {
     // Caching is optional. Never convert a network/permission/validation miss
     // into a failed release, or skip the original resource preparation.
-    output({ hit: false, ready: false });
-    report(kind || 'unknown', 'MISS / cache unavailable', started, error.message);
+    if (command === 'invalidate') {
+      console.error(`[build-resource] ${kind || 'unknown'}: cache invalidation failed: ${error.message}`);
+      process.exitCode = 1;
+    } else {
+      output({ hit: false, ready: false });
+      report(kind || 'unknown', 'MISS / cache unavailable', started, error.message);
+    }
   }
 }

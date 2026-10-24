@@ -82,11 +82,17 @@ function rustTools(cwd) {
   return { rustc: probe('rustc', ['-vV'], { cwd }), cargo: probe('cargo', ['-vV'], { cwd }) };
 }
 
-export function nativeCacheKeys(root) {
+export function nativeHelperResourceKey(root) {
   const helper = core.fingerprint({ schema: 1, recipe: recipe(root, HELPER_RECIPE), tools: nativeTools('helper'), rust: rustTools(root), sourceOverride: process.env.CUA_COMMIT || null });
+  const suffix = process.platform + '-' + (process.env.TARGET_ARCH || process.arch);
+  return `native-helper-v1-${suffix}-${helper}`;
+}
+
+export function nativeCacheKeys(root) {
+  const helper = nativeHelperResourceKey(root);
   const capture = core.fingerprint({ schema: 1, recipe: recipe(root, CAPTURE_RECIPE), tools: nativeTools('capture') });
   const suffix = process.platform + '-' + (process.env.TARGET_ARCH || process.arch);
-  return { helper: `native-helper-v1-${suffix}-${helper}`, capture: `native-capture-v1-${suffix}-${capture}` };
+  return { helper, capture: `native-capture-v1-${suffix}-${capture}` };
 }
 
 function helperEntry(root, source, target) {
@@ -102,16 +108,42 @@ function helperEntry(root, source, target) {
 
 export function restoreHelper(root, source, target, destination) {
   const entry = helperEntry(root, source, target);
+  const miss = reason => {
+    console.warn('[native-cache] helper unsigned binary cache miss: ' + reason);
+    return false;
+  };
+  let record;
   try {
-    const record = core.readJson(entry.record);
-    if (record.schema !== 1 || record.key !== entry.key || record.sourceSha !== entry.sourceSha || !/^[a-f0-9]{64}$/.test(record.sha256 ?? '')
-      || !fs.lstatSync(entry.binary).isFile() || core.fileHash(entry.binary) !== record.sha256) return false;
+    record = core.readJson(entry.record);
+  } catch (error) {
+    return miss(error.code === 'ENOENT' ? 'record_missing' : 'record_unreadable');
+  }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return miss('record_invalid');
+  if (record.schema !== 1) return miss('record_schema_mismatch');
+  if (record.key !== entry.key) return miss('record_key_mismatch');
+  if (record.sourceSha !== entry.sourceSha) return miss('source_revision_mismatch');
+  if (!/^[a-f0-9]{64}$/.test(record.sha256 ?? '')) return miss('record_hash_invalid');
+  let binaryStat;
+  try {
+    binaryStat = fs.lstatSync(entry.binary);
+  } catch (error) {
+    return miss(error.code === 'ENOENT' ? 'binary_missing' : 'binary_unreadable');
+  }
+  if (!binaryStat.isFile()) return miss('binary_not_regular_file');
+  try {
+    if (core.fileHash(entry.binary) !== record.sha256) return miss('binary_hash_mismatch');
+  } catch {
+    return miss('binary_hash_unreadable');
+  }
+  try {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(entry.binary, destination);
     fs.chmodSync(destination, 0o755);
     console.log('[native-cache] helper unsigned binary hit: ' + entry.key);
     return true;
-  } catch { return false; }
+  } catch {
+    return miss('restore_copy_failed');
+  }
 }
 
 export function saveHelper(root, source, target, binary) {
@@ -133,9 +165,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     if (command === 'keys' && process.argv.length === 3) {
       for (const [name, key] of Object.entries(nativeCacheKeys(root))) console.log(name + '=' + key);
+    } else if (command === 'helper-resource-key' && process.argv.length === 3) {
+      console.log(nativeHelperResourceKey(root));
     } else if (['restore-helper', 'save-helper'].includes(command) && process.argv.length === 6) {
       if (command === 'save-helper') saveHelper(root, source, target, binary);
       else if (!restoreHelper(root, source, target, binary)) process.exitCode = 2;
-    } else throw new Error('usage: native-build-cache.mjs keys | restore-helper|save-helper SOURCE TARGET BINARY');
+    } else throw new Error('usage: native-build-cache.mjs keys | helper-resource-key | restore-helper|save-helper SOURCE TARGET BINARY');
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

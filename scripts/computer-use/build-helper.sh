@@ -110,6 +110,18 @@ if [ "$CACHE_ENABLED" = true ] && node "$REPO_ROOT/scripts/client/native-build-c
   CACHE_RESULT=hit
 else
   [ "$CACHE_ENABLED" != true ] || CACHE_RESULT=miss
+  if [ "$CACHE_ENABLED" = true ]; then
+    # The transport artifact can verify successfully while its compiler-cache
+    # record is stale or unusable. Clear that transport hit so the freshly
+    # compiled binary is staged by the following cache-save step.
+    if RESOURCE_KEY="$(node "$REPO_ROOT/scripts/client/native-build-cache.mjs" helper-resource-key)"; then
+      if ! node "$REPO_ROOT/scripts/client/build-resource-artifacts.mjs" invalidate helper "$RESOURCE_KEY" inner-cache-miss; then
+        echo '::warning::Could not invalidate the rejected helper artifact; the fresh compiler cache may not be re-published'
+      fi
+    else
+      echo '::warning::Could not identify the helper artifact key; the fresh compiler cache may not be re-published'
+    fi
+  fi
   (
     cd "$SRC_DIR/libs/cua-driver/rust" || exit 1
     # Only a cold compiler build needs the target standard library. The locked
