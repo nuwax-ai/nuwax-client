@@ -774,6 +774,28 @@ describe("cua 开关与启动收敛", () => {
   });
 });
 
+describe("upgrade preference ownership", () => {
+  it("preserves an enabled preference when re-enabling fails during helper recovery", async () => {
+    mocks.settings.set("step1_config", { computerUseEnabled: true });
+    const result = await setCuaEnabled(true);
+    expect(result.success).toBe(false);
+    expect(result.status.enabled).toBe(true);
+    expect(result.status.mcpInjected).toBe(false);
+  });
+
+  it("a stale general-settings snapshot cannot erase or resurrect the CU preference", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    mocks.settings.set("step1_config", { workspaceDir: "/changed", computerUseEnabled: false });
+    expect((await getCuaStatus()).enabled).toBe(true);
+    await setCuaEnabled(false);
+    mocks.settings.set("step1_config", { computerUseEnabled: true });
+    expect((await getCuaStatus()).enabled).toBe(false);
+  });
+
+});
+
 describe("permission request ownership", () => {
   it("quit waits for standalone permission host cleanup after cancelling its polling", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
