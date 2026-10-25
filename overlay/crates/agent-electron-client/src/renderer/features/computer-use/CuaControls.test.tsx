@@ -13,8 +13,8 @@ vi.mock("react", async (original) => ({
 vi.mock("antd", async () => {
   const { default: R } = await import("react");
   const Container = ({ children }: any) => <span>{children}</span>;
-  return { Select: Container, Space: Container, Tag: Container, Alert: ({ message }: any) => <div>{message}</div>, message: { error: harness.error }, theme: { useToken: () => ({ token: {} }) },
-    Button: (props: any) => { harness.buttons.push(props); return <button disabled={props.disabled}>{props.children}</button>; },
+  return { Select: Container, Space: Container, Tag: Container, Tooltip: ({ title, children }: any) => <span title={title}>{children}</span>, Alert: ({ message }: any) => <div>{message}</div>, message: { error: harness.error }, theme: { useToken: () => ({ token: {} }) },
+    Button: (props: any) => { harness.buttons.push(props); return <button disabled={props.disabled} aria-label={props["aria-label"]}>{props.icon}{props.children}</button>; },
   };
 });
 vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
@@ -54,7 +54,7 @@ describe("Computer Use controls", () => {
   it("keeps emergency stop enabled during another pending operation", () => {
     harness.states[3] = true;
     expect(render()).not.toContain("Claw.Cua.shortcutUnavailable");
-    expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop").disabled).toBeUndefined();
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop").disabled).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause").disabled).toBe(true);
   });
   it("shows stopping until input has actually stopped", () => {
@@ -88,7 +88,7 @@ describe("Computer Use controls", () => {
     expect(html).toContain("Claw.Cua.stopping");
     expect(html).toContain("Claw.Cua.stop");
     expect(html).not.toContain("Claw.Cua.reason.userStopped");
-    expect(harness.buttons.find((b) => b.children === "Claw.Cua.stop")?.disabled).toBeUndefined();
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop")?.disabled).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause")).toBeUndefined();
   });
   it("leaves stop on screen when the helper did not confirm it stopped", () => {
@@ -108,8 +108,11 @@ describe("Computer Use controls", () => {
     const takeover = harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.takeover");
     await takeover.onClick();
     expect((api as any).takeOver).toHaveBeenCalledOnce();
-    await harness.buttons.find(b => b.children === "Claw.Cua.stop").onClick();
+    await harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop").onClick();
     expect(api.stop).toHaveBeenCalledOnce();
+    const off = harness.buttons.find(b => b["aria-label"] === "Claw.Settings.computerUse.enableOff");
+    expect(off.children).toBeUndefined(); expect(off.icon).toBeDefined();
+    expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop").children).toBeUndefined();
     expect(html).toContain("Claw.Settings.computerUse.enableOff");
     expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close")).toBeUndefined();
   });
