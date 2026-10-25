@@ -29,7 +29,8 @@
 .close svg { width: 13px; height: 13px; }
 /* Stop stays visible; hiding the bar behind hover made emergency stop undiscoverable. */
 .actions { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--cua-line, #e8e8ed); margin: 0 11px; padding: 9px 0 11px; }
-.actions :global(.ant-btn) { flex: 1; height: 30px; padding-inline: 8px; column-gap: 5px; font-size: 12px; border-radius: 8px; box-shadow: none; }
+.actionSlot { display: flex; flex: 1 1 0; min-width: 0; }
+.actions :global(.ant-btn) { flex: 1 1 0; min-width: 0; width: 100%; height: 30px; padding-inline: 0; font-size: 12px; border-radius: 8px; box-shadow: none; }
 .pause:global(.ant-btn) { color: var(--cua-text, #25252d); background: color-mix(in srgb, var(--cua-text, #25252d) 4%, transparent); }
 .stop:global(.ant-btn) { border-color: transparent; color: #cf4b55; background: color-mix(in srgb, #e05a63 9%, transparent); }
 .stop:global(.ant-btn):not(:disabled):hover { color: #bc3642; border-color: transparent; background: color-mix(in srgb, #e05a63 16%, transparent); }
