@@ -25,6 +25,7 @@ import type {
   LocalFilesSearchOptions,
   LocalFileSaveOptions,
   LocalFileSaved,
+  LocalFileChange,
 } from "@shared/features/local-files/contract";
 import type { DesktopFeature, FeatureContext } from "../_kit/types";
 import {
@@ -42,6 +43,7 @@ import {
   exportWorkspaceAtomic,
   type FileOperation,
 } from "./operations";
+import { applyFileChanges } from "./mutations";
 
 type Owner = {
   event: IpcMainInvokeEvent;
@@ -69,7 +71,7 @@ type RequestSource = Pick<
 >;
 type RuntimeDeps = {
   dialog: Pick<typeof dialog, "showOpenDialog" | "showSaveDialog">;
-  shell: Pick<typeof shell, "openPath" | "showItemInFolder">;
+  shell: Pick<typeof shell, "openPath" | "showItemInFolder" | "trashItem">;
   fetch: typeof fetch;
   session?: Session;
 };
@@ -142,6 +144,7 @@ export class LocalFilesRuntime {
   private readonly off: Array<() => void> = [];
   private epoch = 0;
   private disposed = false;
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly ctx: FeatureContext,
@@ -668,6 +671,7 @@ export class LocalFilesRuntime {
         return {
           apiVersion: LOCAL_FILES_API_VERSION,
           available: !!identity && !this.disposed,
+          writable: !!identity && !this.disposed,
           ...(identity ? { sandboxId: identity.sandboxId } : {}),
         };
       },
@@ -772,6 +776,23 @@ export class LocalFilesRuntime {
         const { context, info } = await this.file(event, target);
         this.check(context);
         this.deps.shell.showItemInFolder(info.path);
+      }
+    );
+    handle(
+      LOCAL_FILES_IPC.UPDATE_FILES,
+      async (event, id: string, changes: LocalFileChange[]) => {
+        const context = this.context(event, id);
+        const operation = this.operation(context);
+        const work = this.mutationQueue.then(() => applyFileChanges(
+          context.root, changes, operation, file => this.deps.shell.trashItem(file)
+        ));
+        this.mutationQueue = work.catch(() => undefined);
+        this.pendingIO.add(work);
+        try { await work; }
+        finally {
+          this.pendingIO.delete(work);
+          this.operations.delete(operation.id);
+        }
       }
     );
     handle(
@@ -914,8 +935,6 @@ export const localFilesFeature: DesktopFeature = {
   id: "local-files",
   products: ["nuwax"],
   enabledByDefault: true,
-  // 本机文件直访尚未提测，本次上线强制关闭，避免历史设置重新启用。
-  lockedOff: "3.0.22 preserves the existing local-file release boundary",
   bridge: { namespaces: ["localFiles"] },
   requests: { authorize: authorizeLocalFilesRequest, isSource: isLocalFilesRequestSource },
   schemes: [

@@ -173,7 +173,7 @@ describe("startDesktopFeatures", () => {
       if (!expected) {
         expect(ipcMain.handle.mock.calls.map((call) => call[0])).toEqual(["features:registered"]);
         const bridge = createLocalFilesBridge({ invoke: vi.fn().mockRejectedValue(new Error("No handler registered")) });
-        expect(await bridge.getCapabilities()).toEqual({ apiVersion: 1, available: false });
+        expect(await bridge.getCapabilities()).toEqual({ apiVersion: 2, available: false });
       }
     } finally {
       register.mockRestore();

@@ -11,7 +11,7 @@ export const HOST_CAPABILITY_METHODS = {
   auth: ['getContext', 'syncSession', 'beginLogin', 'clear', 'configureServerHost'],
   native: ['saveImage', 'saveFile', 'openWindow', 'openClientSettings'],
   localFiles: ['pickDirectory', 'getCapabilities', 'resolveContext', 'releaseContext', 'listFiles', 'searchFiles',
-    'stat', 'preparePreview', 'releasePreview', 'openPath', 'revealInFolder', 'saveFile', 'exportWorkspace', 'cancel'],
+    'stat', 'preparePreview', 'releasePreview', 'openPath', 'revealInFolder', 'updateFiles', 'saveFile', 'exportWorkspace', 'cancel'],
   updater: ['getState', 'check', 'download', 'install'],
   events: ['onHostCommand'],
   theme: ['syncTheme'],

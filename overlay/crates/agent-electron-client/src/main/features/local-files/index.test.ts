@@ -137,7 +137,7 @@ function harness() {
         filePath: undefined,
       })),
     },
-    shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn() },
+    shell: { openPath: vi.fn(async () => ""), showItemInFolder: vi.fn(), trashItem: vi.fn(async (_file: string) => {}) },
     fetch: vi.fn(
       async () =>
         new Response(
@@ -201,6 +201,40 @@ function harness() {
 }
 
 describe("local files IPC/context ownership", () => {
+  it("writes through owned IPC and refuses foreign contexts", async () => {
+    const h = harness();
+    const context = await h.resolve();
+    const changes = [{ name: "ipc.txt", operation: "create", contents: "native" }];
+    expect(await h.invoke(IPC.UPDATE_FILES, h.two.event, context.contextId, changes))
+      .toMatchObject({ success: false, code: "untrusted" });
+    expect(await h.invoke(IPC.UPDATE_FILES, h.one.event, context.contextId, changes))
+      .toMatchObject({ success: true });
+    expect(await readFile(path.join(root, "ipc.txt"), "utf8")).toBe("native");
+    expect(h.deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it("logout revokes writes queued behind an already dispatched native trash action", async () => {
+    const h = harness();
+    const context = await h.resolve();
+    await writeFile(path.join(root, "trash.txt"), "fixture");
+    let finish!: () => void;
+    let started!: () => void;
+    const dispatched = new Promise<void>(resolve => { started = resolve; });
+    h.deps.shell.trashItem.mockImplementationOnce(async () => {
+      started();
+      await new Promise<void>(resolve => { finish = resolve; });
+    });
+    const first = h.invoke(IPC.UPDATE_FILES, h.one.event, context.contextId, [{ name: "trash.txt", operation: "delete" }]);
+    await dispatched;
+    const queued = h.invoke(IPC.UPDATE_FILES, h.one.event, context.contextId, [{ name: "late.txt", operation: "create", contents: "no" }]);
+    h.lifecycle.emitSessionEnd("logout");
+    finish();
+    await first;
+    expect(await queued).toMatchObject({ success: false });
+    await expect(readFile(path.join(root, "late.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(h.deps.shell.trashItem).toHaveBeenCalledTimes(1);
+  });
+
   it("does not guide an old operation whose OS error arrives after logout", async () => {
     const h = harness();
     let reject!: (error: unknown) => void;
@@ -237,7 +271,7 @@ describe("local files IPC/context ownership", () => {
       trusted: false,
     } as unknown as IpcMainInvokeEvent;
     expect(await h.invoke(IPC.GET_CAPABILITIES, untrusted)).toEqual({
-      apiVersion: 1,
+      apiVersion: 2,
       available: false,
     });
     expect(

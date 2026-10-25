@@ -1,6 +1,7 @@
 /** Real Electron smoke with isolated profile and fixture metadata server; no login/account/package claim.
  * Uses an existing ffmpeg (or NUWAX_QA_FFMPEG) to generate a local H.264 test clip.
- * The save dialog is fixture-selected; the real feature, protocol, preload and IPC run unmodified.
+ * Save/open/trash OS adapters use fixtures; the real feature, protocol, preload and IPC run.
+ * --bundle-only <dir> prepares the same fixture for a Windows host without this checkout.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +9,12 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+
+const bundleIndex = process.argv.indexOf("--bundle-only");
+const bundleArgument = bundleIndex < 0 ? null : process.argv[bundleIndex + 1];
+if (bundleIndex >= 0 && (!bundleArgument || bundleArgument.startsWith("--")))
+  throw new Error("Usage: local-files-electron.mjs [--bundle-only <dir>]");
+const bundleDirectory = bundleArgument ? path.resolve(bundleArgument) : null;
 
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -77,13 +84,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import AdmZip from 'adm-zip';
-import {desktopFeatureSchemes, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
+import {prepareDesktopFeaturesBeforeReady, startDesktopFeatures, notifyFeatureSessionEnd, disposeDesktopFeatures} from ${importFrom(
   "main/features/index.ts"
 )};
 import {initBusinessRequestRouting} from ${importFrom(
   "main/services/businessRequestRouting.ts"
 )};
-import {LocalFilesRuntime} from ${importFrom(
+import {LocalFilesRuntime, localFilesFeature} from ${importFrom(
   "main/features/local-files/index.ts"
 )};
 import {redactLocalFileUrl} from ${importFrom(
@@ -94,7 +101,7 @@ const temp=process.env.NUWAX_LOCAL_FILES_FIXTURE;
 const reportPath=process.env.NUWAX_LOCAL_FILES_REPORT;
 app.setPath('userData',path.join(temp,'profile'));
 app.commandLine.appendSwitch('no-proxy-server');
-protocol.registerSchemesAsPrivileged(desktopFeatureSchemes('nuwax'));
+protocol.registerSchemesAsPrivileged(prepareDesktopFeaturesBeforeReady('nuwax',app.commandLine));
 if(process.env.NUWAX_LOCAL_FILES_DEBUG){const original=LocalFilesRuntime.prototype.authorize;LocalFilesRuntime.prototype.authorize=function(details){const result=original.call(this,details);if(result!==undefined)console.log('POLICY',JSON.stringify({url:redactLocalFileUrl(details.url),result,type:details.resourceType,webContentsId:details.webContentsId,frameUrl:redactLocalFileUrl(details.frame?.url??''),processId:details.frame?.processId,routingId:details.frame?.routingId,parentUrl:redactLocalFileUrl(details.frame?.parent?.url??''),referrer:redactLocalFileUrl(details.referrer??'')}));return result;};}
 const windows=[];const requests=[];const checks=[];const fixtureLimitations=[];
 let server, origin, fileOrigin, bridgeContext, fileServer;
@@ -142,7 +149,8 @@ try {
   const trusted=event=>!!event.senderFrame&&!event.senderFrame.parent&&windows.some(window=>window.webContents===event.sender)&&event.senderFrame.url.startsWith(origin+'/');
   initBusinessRequestRouting(()=>origin,()=>windows[0]?.webContents??null);
   startDesktopFeatures({product:'nuwax',ipcMain,isBusinessSender:trusted,isHostSender:()=>false,dataDir:path.join(temp,'features'),isEnabled:(_id,value)=>value,log:console,
-    workspace:{getIdentity:()=>({sandboxId:'fixture-device',businessOrigins:[origin]}),resolveRoot:()=>workspace,getFileServerPort:()=>fileServer.address().port,isCurrentDocument:trusted}});
+    workspace:{getIdentity:()=>({sandboxId:'fixture-device',businessOrigins:[origin]}),resolveRoot:()=>workspace,getFileServerPort:()=>fileServer.address().port,isCurrentDocument:trusted}},
+    [{...localFilesFeature,register:ctx=>new LocalFilesRuntime(ctx,{dialog,shell:{openPath:async()=>'',showItemInFolder:()=>{},trashItem:async file=>{await fs.rename(file,path.join(temp,'trashed-fixture'));}},fetch,session:session.defaultSession})}]);
   async function makeWindow(){const window=new BrowserWindow({show:false,webPreferences:{preload:path.join(temp,'preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});if(process.env.NUWAX_LOCAL_FILES_DEBUG)window.webContents.on('console-message',(_event,_level,message)=>console.log('RENDERER',redactLocalFileUrl(message)));windows.push(window);await window.loadURL(origin+'/');return window;}
   const owner=await makeWindow();const foreign=await makeWindow();
   const capability=await localCall(owner,'getCapabilities');assert.equal(capability.available,true);
@@ -153,6 +161,20 @@ try {
   const searched=await localCall(owner,'searchFiles',bridgeContext.contextId,{kw:'note'});assert.equal(searched.success,true);
   assert.ok(requests.filter(request=>request.customTargetDir).every(request=>!request.cookie&&!request.authorization));
   pass('main-process list/search fixture server without cloud credentials',{server:'fixture metadata (native endpoint shape)'});
+  const absolute=await localCall(owner,'stat',{contextId:bridgeContext.contextId,path:path.join(workspace,'note.txt')});assert.equal(absolute.success,true);
+  const escaped=await localCall(owner,'stat',{contextId:bridgeContext.contextId,path:'..'+path.sep+'outside.txt'});assert.equal(escaped.code,'permission-denied');
+  pass('host absolute paths resolve and relative traversal is refused');
+  assert.equal(capability.writable,true);
+  for(const change of [
+    {name:'native-created.txt',operation:'create',contents:'created'},
+    {name:'native-created.txt',operation:'modify',contents:'edited in Electron'},
+    {name:'native-renamed.txt',renameFrom:'native-created.txt',operation:'rename'},
+  ])assert.equal((await localCall(owner,'updateFiles',bridgeContext.contextId,[change])).success,true);
+  assert.equal(await fs.readFile(path.join(workspace,'native-renamed.txt'),'utf8'),'edited in Electron');
+  const foreignWrite=await localCall(foreign,'updateFiles',bridgeContext.contextId,[{name:'native-renamed.txt',operation:'delete'}]);assert.equal(foreignWrite.code,'untrusted');
+  assert.equal((await localCall(owner,'updateFiles',bridgeContext.contextId,[{name:'native-renamed.txt',operation:'delete'}])).success,true);
+  assert.equal(await fs.readFile(path.join(temp,'trashed-fixture'),'utf8'),'edited in Electron');
+  pass('native create/edit/rename/trash through real IPC preserves bytes and owner isolation',{trash:'fixture move; system recycle-bin UI requires installed-package acceptance'});
   const preview=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'note.txt'})).data;
   const full=await request(owner,preview.url);if(process.env.NUWAX_LOCAL_FILES_DEBUG)console.log('FETCH_RESULT',full);assert.equal(full.status,200);assert.equal(full.text,'0123456789');
   const head=await request(owner,preview.url,{method:'HEAD'});assert.equal(head.status,200);assert.equal(head.text,'');assert.equal(head.headers['content-length'],'10');
@@ -220,7 +242,7 @@ try {
   pass('full document reload revokes context and grant');
   assert.equal(requests.some(request=>request.path.startsWith('/api/computer/static/')),false);
   pass('successful local byte access makes no cloud static-file request');
-  const report={success:true,at:new Date().toISOString(),electron:process.versions.electron,platform:process.platform,arch:process.arch,checks,requestPaths:requests.map(request=>request.path),limitations:['Isolated real Electron runtime, fixture metadata server and stubbed save dialog; not a signed installer or real-account acceptance.','Windows real-device execution remains separate.',...fixtureLimitations]};
+  const report={success:true,at:new Date().toISOString(),electron:process.versions.electron,platform:process.platform,arch:process.arch,checks,requestPaths:requests.map(request=>request.path),limitations:['Isolated real Electron runtime, fixture metadata server and stubbed save/open/trash adapters; not a signed installer, real-account or system recycle-bin acceptance.','Windows real-device execution remains separate.',...fixtureLimitations]};
   await fs.mkdir(path.dirname(reportPath),{recursive:true});await fs.writeFile(reportPath,JSON.stringify(report,null,2)+'\n');
   console.log('LOCAL_FILES_ELECTRON_PASS '+reportPath);
 } catch(error) {
@@ -262,6 +284,12 @@ try {
     stdin: { contents: main, resolveDir: shell, loader: "ts" },
     outfile: path.join(temporary, "main.cjs"),
   });
+  if (bundleDirectory) {
+    await fs.mkdir(bundleDirectory, { recursive: true });
+    for (const file of ["main.cjs", "preload.cjs", "playback.mp4"])
+      await fs.copyFile(path.join(temporary, file), path.join(bundleDirectory, file));
+    console.log(`LOCAL_FILES_ELECTRON_BUNDLE ${bundleDirectory}`);
+  } else {
   const env = {
     ...process.env,
     NUWAX_LOCAL_FILES_FIXTURE: temporary,
@@ -285,6 +313,7 @@ try {
   clearTimeout(watchdog);
   process.exitCode = timedOut ? 1 : exit;
   if (timedOut) console.error("LOCAL_FILES_ELECTRON_TIMEOUT");
+  }
 } finally {
   await fs.rm(temporary, { recursive: true, force: true });
 }

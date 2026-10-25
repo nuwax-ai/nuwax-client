@@ -1,0 +1,91 @@
+{
+  "success": true,
+  "at": "2026-10-25T10:11:03.451Z",
+  "electron": "40.8.2",
+  "platform": "darwin",
+  "arch": "arm64",
+  "checks": [
+    {
+      "name": "real Electron + registry + preload + trusted context",
+      "electron": "40.8.2"
+    },
+    {
+      "name": "main-process list/search fixture server without cloud credentials",
+      "server": "fixture metadata (native endpoint shape)"
+    },
+    {
+      "name": "host absolute paths resolve and relative traversal is refused"
+    },
+    {
+      "name": "native create/edit/rename/trash through real IPC preserves bytes and owner isolation",
+      "trash": "fixture move; system recycle-bin UI requires installed-package acceptance"
+    },
+    {
+      "name": "GET / HEAD / single Range / 416 with exact bytes"
+    },
+    {
+      "name": "same-document history/query/hash preserves context and grant"
+    },
+    {
+      "name": "cross-window protocol and IPC blocked"
+    },
+    {
+      "name": "110MiB media served by a ten-byte Range without whole-file buffering"
+    },
+    {
+      "name": "real video element decodes H.264, plays and seeks through the local protocol",
+      "fixture": "ffmpeg-generated four-second H.264 MP4",
+      "duration": 4,
+      "playedTo": 0.352451,
+      "soughtTo": 2.752226,
+      "decodedPixel": [
+        254,
+        0,
+        0,
+        255
+      ]
+    },
+    {
+      "name": "real Electron export IPC exports a workspace above 100MiB with hidden/hardlink/symlink/empty entries",
+      "saveDialog": "fixture-selected destination; no human installer action",
+      "uncompressedLargeFile": 115343360,
+      "symlinkVerified": true,
+      "entryCount": 14
+    },
+    {
+      "name": "sandboxed local HTML loads relative CSS/JS and has no host bridge"
+    },
+    {
+      "name": "local HTML cannot call business/loopback endpoints"
+    },
+    {
+      "name": "production HTML sandbox blocks navigation to an opaque document"
+    },
+    {
+      "name": "explicit symlink file reads work while relative resources cannot escape the grant root"
+    },
+    {
+      "name": "release revokes the protocol grant"
+    },
+    {
+      "name": "auth boundary revokes protocol and IPC contexts"
+    },
+    {
+      "name": "full document reload revokes context and grant"
+    },
+    {
+      "name": "successful local byte access makes no cloud static-file request"
+    }
+  ],
+  "requestPaths": [
+    "/",
+    "/",
+    "/api/computer/get-file-list",
+    "/api/computer/search-files",
+    "/"
+  ],
+  "limitations": [
+    "Isolated real Electron runtime, fixture metadata server and stubbed save/open/trash adapters; not a signed installer, real-account or system recycle-bin acceptance.",
+    "Windows real-device execution remains separate."
+  ]
+}
