@@ -386,7 +386,9 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
 });
 
 describe("cua 开关与启动收敛", () => {
-  it("强杀遗留的自有 Unix socket 经确认无人监听后回收，下次启用成功", async () => {
+  // Filesystem socket ownership/inodes require a POSIX host. Native Windows
+  // named-pipe transport is exercised by mcpGateway.test.ts on this same runner.
+  it.skipIf(originalPlatform === "win32")("强杀遗留的自有 Unix socket 经确认无人监听后回收，下次启用成功", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const { socketPath } = await createEndpointSocket(true);
@@ -409,7 +411,7 @@ describe("cua 开关与启动收敛", () => {
     expect(mocks.spawnCalls.some(x => x.args.includes("serve"))).toBe(false);
   });
 
-  it("活跃 socket 即使不能通过身份握手也不删除或替换", async () => {
+  it.skipIf(originalPlatform === "win32")("活跃 socket 即使不能通过身份握手也不删除或替换", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const { socketPath, server } = await createEndpointSocket(false);
@@ -423,7 +425,7 @@ describe("cua 开关与启动收敛", () => {
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 
-  it("探测期间端点被换成文件时保留替换物并拒绝启动", async () => {
+  it.skipIf(originalPlatform === "win32")("探测期间端点被换成文件时保留替换物并拒绝启动", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const { socketPath } = await createEndpointSocket(true);
@@ -560,9 +562,12 @@ describe("cua 开关与启动收敛", () => {
     expect(result.status.accessibility).toBe(true);
     expect(result.status.screenRecording).toBe(true);
     expect(readMcpServers().cua).toBeTruthy();
-    expect(result.status.socketPath).toMatch(/\/c-[0-9a-f]{32}\/s$/);
-    expect(fs.statSync(path.dirname(result.status.socketPath)).mode & 0o077).toBe(0);
-    expect(fs.statSync(endpointTokenFile()).mode & 0o077).toBe(0);
+    expect(path.basename(result.status.socketPath)).toBe("s");
+    expect(path.basename(path.dirname(result.status.socketPath))).toMatch(/^c-[0-9a-f]{32}$/);
+    if (originalPlatform !== "win32") {
+      expect(fs.statSync(path.dirname(result.status.socketPath)).mode & 0o077).toBe(0);
+      expect(fs.statSync(endpointTokenFile()).mode & 0o077).toBe(0);
+    }
     const serve = mocks.spawnCalls.find((c) => c.args.includes("serve"));
     expect(serve!.args).toContain("--dangerously-bypass-approvals");
     expect(serve!.args).toContain("--no-permissions-gate");
@@ -907,7 +912,7 @@ describe("permission request ownership", () => {
     expect(await first).toMatchObject({ success: false, error: "operationCancelled" });
     expect(fs.existsSync(resultFile)).toBe(false);
     const cleanup = mocks.execCalls.find(c => c.cmd === "pkill" && c.args.some(a => a.includes("__permissions-host-request")));
-    expect(cleanup?.args).toEqual(["-KILL", "-f", expect.stringContaining(resultFile.replaceAll(".", "\\."))]);
+    expect(cleanup?.args).toEqual(["-KILL", "-f", expect.stringContaining(resultFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))]);
     expect(cleanup?.args[2]).toContain("^" + stableHelperPath().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     expect((await getCuaStatus()).accessibility).toBeNull();
   });
@@ -1150,7 +1155,8 @@ describe("Linux 语义回归（安装目标名必须与探测名同源）", () =
 
     const dest = path.join(mocks.userDataURL, "computer-use", "NuwaxComputerUse");
     expect(fs.existsSync(dest)).toBe(true);
-    expect((fs.statSync(dest).mode & 0o111) !== 0).toBe(true);
+    if (originalPlatform !== "win32")
+      expect((fs.statSync(dest).mode & 0o111) !== 0).toBe(true);
 
     const s = await mod.getCuaStatus();
     expect(s.supported).toBe(true);
