@@ -28,6 +28,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  desktop-platform:
+    name: desktop CUA and local files
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Init pinned base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git submodule update --init nuwa-electron-shell
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.5
+          package_json_file: nuwa-electron-shell/package.json
+      # Match commercial --no-env preparation, invoking pnpm directly so the
+      # Windows runner resolves its command shim without a nested Node spawn.
+      - name: Sync commercial overlay
+        run: node scripts/sync-overlay.js
+      - name: Prepare commercial dependencies
+        run: node scripts/client/commercial-dependencies.mjs
+      - name: Install agent-kit dependencies
+        run: pnpm -C nuwa-electron-shell/crates/agent-kit install --ignore-workspace --prefer-offline
+      - name: Build agent-kit
+        run: pnpm -C nuwa-electron-shell/crates/agent-kit run build
+      - name: Install desktop test dependencies
+        run: pnpm -C nuwa-electron-shell install --filter @nuwax-ai/nuwaclaw...
+      - name: Prepare MCP test resources
+        run: pnpm -C nuwa-electron-shell/crates/agent-electron-client run prepare:mcp-proxy
+      - name: Test native filesystem and CUA logic on the actual host platform
+        run: >-
+          pnpm -C nuwa-electron-shell/crates/agent-electron-client exec vitest run
+          src/main/features/local-files src/main/features/computer-use
+          src/main/services/commercialAutoUpdater.test.ts
+          src/preload/features/local-files.test.ts
+          src/renderer/features/computer-use/CuaControls.test.tsx
+
   terminal-compat:
     name: terminal compatibility protocol and WinPTY regression
     runs-on: ${{ matrix.os }}
