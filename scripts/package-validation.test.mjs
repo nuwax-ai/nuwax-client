@@ -13,18 +13,21 @@ function fixture(t) {
   git('init', '-q');
   git('update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},nuwa-electron-shell`);
   git('update-index', '--add', '--cacheinfo', `160000,${'2'.repeat(40)},nuwax`);
+  git('update-index', '--add', '--cacheinfo', `160000,${'3'.repeat(40)},nuwax-dist`);
   git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'frozen source');
   git('tag', 'v3.0.23-beta.3'); git('tag', 'v3.0.22');
   const env = { VALIDATION_SERIES: 'pr-66', VALIDATION_BASELINE_TAG: 'v3.0.23-beta.3',
     VALIDATION_PLATFORMS: 'both', GITHUB_REF: 'refs/heads/codex/cua-repairs', GITHUB_SHA: git('rev-parse', 'HEAD'),
     GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1' };
-  return { cwd, git, env, identity: validationIdentity(cwd, env) };
+  const prepared = { frontend: { sourceSha: '2'.repeat(40), distSha: '3'.repeat(40), stamp: '2222222' } };
+  return { cwd, git, env, prepared, identity: validationIdentity(cwd, env) };
 }
 const run = (id, attempts, series = 'pr-66', extra = {}) => ({ id, run_attempt: attempts, display_title: `Package validation / ${series}`, ...extra });
 
 test('uses only an existing Beta/Stable baseline without creating a version or changing git', t => {
   const f = fixture(t), before = f.git('show-ref', '--tags'), status = f.git('status', '--porcelain');
   assert.equal(f.identity.packageVersion, '3.0.23-beta.3');
+  assert.equal(f.identity.source.frontendDist, '3'.repeat(40));
   assert.equal(f.identity.buildId, `${f.env.GITHUB_SHA.slice(0, 12)}-123-1`);
   assert.equal(validationIdentity(f.cwd, { ...f.env, VALIDATION_BASELINE_TAG: 'v3.0.22' }).packageVersion, '3.0.22');
   assert.equal(f.git('show-ref', '--tags'), before);
@@ -68,9 +71,11 @@ test('Windows uses NSIS only, keeps baseline app version, stages no updater file
   const original = JSON.stringify({ version: '0.0.0', build: { win: { target: ['nsis', 'msi'] } } }); fs.writeFileSync(pkgFile, original);
   let built = false;
   const stage = await buildValidation(f.cwd, f.identity, { platform: 'win32', arch: 'x64', temp,
-    prepareFn: async () => ({ prepared: true }),
+    prepareFn: async (_cwd, options) => { assert.equal(options.frontend, 'dist'); return f.prepared; },
     packFn: async (_cwd, options) => {
       built = true; assert.equal(options.version, '3.0.23-beta.3');
+      assert.equal(options.frontend, 'dist');
+      assert.equal(await options.prepare(), f.prepared);
       assert.deepEqual(JSON.parse(fs.readFileSync(pkgFile)).build.win.target, ['nsis']);
       assert.equal(JSON.parse(fs.readFileSync(pkgFile)).build.buildVersion, '3.0.23');
       fs.mkdirSync(options.output, { recursive: true }); fs.writeFileSync(path.join(options.output, 'Nuwax.exe'), 'complete-exe');
@@ -82,6 +87,7 @@ test('Windows uses NSIS only, keeps baseline app version, stages no updater file
   const files = fs.readdirSync(stage); assert.equal(files.length, 2); assert.ok(files.some(file => file.endsWith('.exe')));
   const receipt = JSON.parse(fs.readFileSync(path.join(stage, 'validation-context.json')));
   assert.equal(receipt.baselineTag, 'v3.0.23-beta.3');
+  assert.deepEqual(receipt.frontend, { mode: 'dist', ...f.prepared.frontend });
   for (const key of ['signed', 'published', 'tagCreated', 'versionSequenceAdvanced', 'updatePointersChanged']) assert.equal(receipt[key], false);
   assert.match(receipt.acceptance, /Unsigned Windows EXE validation/);
   assert.equal(Object.keys(receipt.artifacts).length, 1);
@@ -93,12 +99,23 @@ test('a failed pack restores metadata, MSI and empty output are refused before a
   const pkgFile = path.join(f.cwd, 'nuwa-electron-shell/crates/agent-electron-client/package.json');
   fs.mkdirSync(path.dirname(pkgFile), { recursive: true }); fs.writeFileSync(pkgFile, '{"version":"0.0.0"}');
   await assert.rejects(buildValidation(f.cwd, f.identity, { platform: 'win32', arch: 'x64', temp,
-    prepareFn: async () => ({}), packFn: async () => { throw new Error('fixture build failed'); } }), /fixture build failed/);
+    prepareFn: async () => f.prepared, packFn: async () => { throw new Error('fixture build failed'); } }), /fixture build failed/);
   assert.equal(fs.readFileSync(pkgFile, 'utf8'), '{"version":"0.0.0"}');
   const output = path.join(temp, 'output'); fs.mkdirSync(output);
   await assert.rejects(stageValidation(f.cwd, output, path.join(temp, 'stage'), f.identity, 'win32'), /没有完整/);
   fs.writeFileSync(path.join(output, 'unexpected.msi'), 'do-not-ship');
   await assert.rejects(stageValidation(f.cwd, output, path.join(temp, 'stage'), f.identity, 'win32'), /MSI/);
+});
+
+test('refuses a prepared frontend that differs from the frozen source/artifact pair before packing', async t => {
+  const f = fixture(t); let packed = false;
+  for (const frontend of [undefined, { ...f.prepared.frontend, sourceSha: '4'.repeat(40) },
+    { ...f.prepared.frontend, distSha: '4'.repeat(40) }, { ...f.prepared.frontend, stamp: '4444444' },
+    { ...f.prepared.frontend, stamp: '' }]) {
+    await assert.rejects(buildValidation(f.cwd, f.identity, { platform: 'win32', arch: 'x64', temp: f.cwd,
+      prepareFn: async () => ({ frontend }), packFn: async () => { packed = true; } }), /冻结的前端双 pin/);
+  }
+  assert.equal(packed, false);
 });
 
 test('validation has explicit isolated launch, private Mac signing, and no publishing; release accepts Beta tags only', () => {
