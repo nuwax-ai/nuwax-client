@@ -1,5 +1,6 @@
 {
   "series": "pr-66-cua-3023-restart-20261025",
   "baselineTag": "v3.0.23-beta.3",
-  "platforms": "both"
+  "platforms": "both",
+  "request": "2-icon-controls-native-target-fix"
 }
