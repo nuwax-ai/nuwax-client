@@ -73,7 +73,7 @@ test('Windows uses NSIS only, keeps baseline app version, stages no updater file
       built = true; assert.equal(options.version, '3.0.23-beta.3');
       assert.deepEqual(JSON.parse(fs.readFileSync(pkgFile)).build.win.target, ['nsis']);
       assert.equal(JSON.parse(fs.readFileSync(pkgFile)).build.buildVersion, '3.0.23');
-      fs.mkdirSync(options.output); fs.writeFileSync(path.join(options.output, 'Nuwax.exe'), 'complete-exe');
+      fs.mkdirSync(options.output, { recursive: true }); fs.writeFileSync(path.join(options.output, 'Nuwax.exe'), 'complete-exe');
       fs.writeFileSync(path.join(options.output, 'latest.yml'), 'must-not-ship');
       fs.writeFileSync(path.join(options.output, 'Nuwax.exe.blockmap'), 'must-not-ship');
       fs.writeFileSync(path.join(options.output, 'release-provenance.json'), 'must-not-ship');
@@ -83,7 +83,7 @@ test('Windows uses NSIS only, keeps baseline app version, stages no updater file
   const receipt = JSON.parse(fs.readFileSync(path.join(stage, 'validation-context.json')));
   assert.equal(receipt.baselineTag, 'v3.0.23-beta.3');
   for (const key of ['signed', 'published', 'tagCreated', 'versionSequenceAdvanced', 'updatePointersChanged']) assert.equal(receipt[key], false);
-  assert.match(receipt.acceptance, /Unsigned build validation only/);
+  assert.match(receipt.acceptance, /Unsigned Windows EXE validation/);
   assert.equal(Object.keys(receipt.artifacts).length, 1);
   assert.equal(f.git('show-ref', '--tags').split('\n').length, 2);
 });
@@ -101,15 +101,44 @@ test('a failed pack restores metadata, MSI and empty output are refused before a
   await assert.rejects(stageValidation(f.cwd, output, path.join(temp, 'stage'), f.identity, 'win32'), /MSI/);
 });
 
-test('validation workflow is manual and read-only; release workflow accepts Beta tags only', () => {
+test('validation has explicit isolated launch, private Mac signing, and no publishing; release accepts Beta tags only', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/package-validation.yml', import.meta.url), 'utf8');
   const triggers = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\npermissions:'));
-  assert.match(triggers, /workflow_dispatch:/); assert.doesNotMatch(triggers, /push:|tags:|branches:|workflow_call:/);
+  assert.match(triggers, /workflow_dispatch:/); assert.match(triggers, /push:/);
+  assert.match(triggers, /\.github\/package-validation-request\.json/);
+  assert.doesNotMatch(triggers, /tags:|workflow_call:/);
   assert.match(workflow, /contents: read/); assert.match(workflow, /actions: read/);
   assert.match(workflow, /group: package-validation-/); assert.match(workflow, /cancel-in-progress: false/);
-  assert.doesNotMatch(workflow, /contents: write|secrets: inherit|GH_PAT|APPLE_|SimplySign|sync-electron-to-oss|gh release|git push|release-electron/);
+  assert.match(workflow, /APPLE_CERTIFICATE/);
+  assert.doesNotMatch(workflow, /contents: write|secrets: inherit|GH_PAT|SimplySign|sync-electron-to-oss|gh release|git push|release-electron/);
   assert.match(workflow, /Recheck stop condition before build setup/);
   const beta = fs.readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8');
   const betaTriggers = beta.slice(beta.indexOf('\non:'), beta.indexOf('\npermissions:'));
   assert.match(betaTriggers, /"v\*-beta\.\*"/); assert.doesNotMatch(betaTriggers, /workflow_dispatch:|branches:|qa\//);
+});
+
+test('history counts explicit push starts as well as dispatches', async t => {
+  const { identity } = fixture(t);
+  await checkValidationBudget(identity, { GITHUB_REPOSITORY: 'nuwax-ai/nuwax-client', GH_TOKEN: 'fixture' }, async url => {
+    assert.doesNotMatch(url, /event=workflow_dispatch/);
+    return { ok: true, json: async () => ({ workflow_runs: [run(123, 1)] }) };
+  });
+});
+
+test('explicit push request must match its series, baseline and platform selection', t => {
+  const f = fixture(t); fs.mkdirSync(path.join(f.cwd, '.github'));
+  const file = path.join(f.cwd, '.github/package-validation-request.json');
+  const request = { series: 'pr-66', baselineTag: 'v3.0.23-beta.3', platforms: 'both' };
+  fs.writeFileSync(file, JSON.stringify(request));
+  assert.equal(validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' }).series, 'pr-66');
+  fs.writeFileSync(file, JSON.stringify({ ...request, series: 'wrong-series' }));
+  assert.throws(() => validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' }), /请求与启动身份不符/);
+});
+
+test('Mac staging refuses unsigned artifacts and records private verified identity', async t => {
+  const f = fixture(t), output = path.join(f.cwd, 'output'); fs.mkdirSync(output);
+  fs.writeFileSync(path.join(output, 'Nuwax.zip'), 'private-archive');
+  await assert.rejects(stageValidation(f.cwd, output, path.join(f.cwd, 'unsigned'), f.identity, 'darwin'), /Developer ID/);
+  const receipt = await stageValidation(f.cwd, output, path.join(f.cwd, 'signed'), f.identity, 'darwin', { signed: true, notarized: true, team: 'TEAM123' });
+  assert.equal(receipt.signed, true); assert.equal(receipt.published, false); assert.equal(receipt.signing.notarized, true);
 });

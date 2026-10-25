@@ -115,6 +115,14 @@ test('state is beside the app, outside public asset uploads; both architectures 
   assert.equal(transientAppleError('The staple and validate action failed! Error 68. invalid ticket'), false);
 });
 
+test('private validation packaging preserves its isolated builder configuration', async t => {
+  const f = fixture(t);
+  await packageNotarizedApp({ client: '/client', app: f.options.app, arch: 'arm64', configFile: '/private-validation.json', builderCli: '/builder.js', tools: f.tools });
+  const packaged = f.calls.find(c => c.command === process.execPath);
+  assert.deepEqual(packaged.args.slice(-2), ['--config', '/private-validation.json']);
+  assert.ok(packaged.args.includes('never'));
+});
+
 test('distribution never accepts an app whose signature changes while generating archives', async t => {
   let packaged = false;
   const f = fixture(t, (command, args) => {
