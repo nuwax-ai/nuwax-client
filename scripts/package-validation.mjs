@@ -42,7 +42,8 @@ export function validationIdentity(cwd, env = process.env) {
   const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
   return { kind: 'package-validation', series, baselineTag: baseline.tag, baselineSha,
     packageVersion: baseline.version, nativeVersion: baseline.baseVersion, channel: baseline.channel,
-    source: { client: sha, shell: gitAt(cwd, 'rev-parse', 'HEAD:nuwa-electron-shell'), frontend: gitAt(cwd, 'rev-parse', 'HEAD:nuwax') },
+    source: { client: sha, shell: gitAt(cwd, 'rev-parse', 'HEAD:nuwa-electron-shell'), frontend: gitAt(cwd, 'rev-parse', 'HEAD:nuwax'),
+      frontendDist: gitAt(cwd, 'rev-parse', 'HEAD:nuwax-dist') },
     runId: env.GITHUB_RUN_ID, runAttempt: Number(env.GITHUB_RUN_ATTEMPT),
     buildId: `${sha.slice(0, 12)}-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`, matrix };
 }
@@ -117,7 +118,15 @@ export async function buildValidation(cwd, identity, { platform = process.platfo
   }
   prepareFn ??= (await import('./client/prepare.mjs')).prepare;
   packFn ??= platform === 'darwin' ? (await import('./package-validation-mac.mjs')).packSignedValidationMac : (await import('./client/pack.mjs')).pack;
-  const prepared = await prepareFn(cwd, { frontend: 'source' });
+  // Private joint acceptance must exercise the paired artifact bytes; rebuilding
+  // per platform would no longer validate the committed dist pin.
+  const prepared = await prepareFn(cwd, { frontend: 'dist' });
+  const frontend = prepared?.frontend;
+  if (frontend?.sourceSha !== identity.source.frontend || frontend?.distSha !== identity.source.frontendDist ||
+      !/^[a-f0-9]{7,40}$/.test(frontend?.stamp ?? '') || !identity.source.frontend.startsWith(frontend.stamp)) {
+    throw new Error('准备结果不匹配冻结的前端双 pin，停止构建');
+  }
+  const receiptIdentity = { ...identity, frontend: { mode: 'dist', sourceSha: frontend.sourceSha, distSha: frontend.distSha, stamp: frontend.stamp } };
   const packageFile = path.join(cwd, 'nuwa-electron-shell/crates/agent-electron-client/package.json');
   const original = fs.readFileSync(packageFile);
   const pkg = JSON.parse(original);
@@ -131,8 +140,8 @@ export async function buildValidation(cwd, identity, { platform = process.platfo
     // Only the disposable base checkout changes. Application version is the
     // selected existing release baseline; the run identity never becomes SemVer.
     fs.writeFileSync(packageFile, `${JSON.stringify(pkg, null, 2)}\n`);
-    const packed = await packFn(cwd, { frontend: 'source', platform, arch, version: identity.packageVersion, output, prepare: async () => prepared });
-    await stageValidation(cwd, output, stage, identity, platform, packed?.validationSigning);
+    const packed = await packFn(cwd, { frontend: 'dist', platform, arch, version: identity.packageVersion, output, prepare: async () => prepared });
+    await stageValidation(cwd, output, stage, receiptIdentity, platform, packed?.validationSigning);
     return stage;
   } finally { fs.writeFileSync(packageFile, original); }
 }
