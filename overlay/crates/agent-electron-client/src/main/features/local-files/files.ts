@@ -19,6 +19,8 @@ export function fileFailure(error: unknown): LocalFilesFailure {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   if (code === "ENOENT" || code === "ENOTDIR")
     return new LocalFilesFailure("not-found");
+  if (code === "EEXIST" || code === "ENOTEMPTY")
+    return new LocalFilesFailure("already-exists");
   if (code === "EACCES" || code === "EPERM")
     return new LocalFilesFailure("permission-denied");
   if ((error as Error)?.name === "AbortError")

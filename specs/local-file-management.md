@@ -7,7 +7,7 @@
 
 前端继续在 `features/client-shell/localFileService` 判定本机，`apiUpdateStaticFile` 统一分流，页面不复制宿主判断。前端 `hostBridge.ts` 是类型事实源，经脚本生成商业 overlay 快照。
 
-localFiles API v2 增加可选 `updateFiles(contextId, changes)` 和 `writable` 能力。变更项为现有文件操作的最小子集：name、operation(create/modify/rename/delete)、contents、isDir、renameFrom。主进程验证全部参数后，串行执行同一 runtime 的变更；每项文件保存原子提交，批次不承诺跨文件事务。旧本机只读桥不能因缺写能力而把写请求转到云端。
+localFiles API v2 增加可选 `updateFiles(contextId, changes)` 和 `writable` 能力。变更项为现有文件操作的最小子集：name、operation(create/modify/rename/delete)、contents、isDir、binary、renameFrom。主进程验证全部参数后，串行执行同一 runtime 的变更；每项文件保存原子提交，批次不承诺跨文件事务。旧本机只读桥不能因缺写能力而把写请求转到云端。前端业务服务把本机错误转换为明确失败返回码并提示，现有自动保存保留脏内容，不泄漏未处理拒绝。
 
 ## 文件语义
 

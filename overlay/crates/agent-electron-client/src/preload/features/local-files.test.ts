@@ -14,7 +14,7 @@ describe("本机文件 preload 契约", () => {
     await bridge.releasePreview("grant"); expect(invoke).toHaveBeenLastCalledWith(CH.RELEASE_PREVIEW, "grant");
     await bridge.releaseContext("ctx"); expect(invoke).toHaveBeenLastCalledWith(CH.RELEASE_CONTEXT, "ctx");
     invoke.mockRejectedValue(new Error("No handler"));
-    expect(await bridge.getCapabilities()).toEqual({ apiVersion: 1, available: false });
+    expect(await bridge.getCapabilities()).toEqual({ apiVersion: 2, available: false });
     await expect(bridge.releasePreview("grant")).resolves.toBeUndefined();
   });
 });

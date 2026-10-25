@@ -1,8 +1,8 @@
 # 本机文件直访桥
 
-当前上线状态（2026-10-14）：本机文件直访尚未提测，已在 `startDesktopFeatures` 中强制关闭。即使历史设置 `features.local-files.enabled=true` 也不会注册 IPC、协议 handler 或创建授权；能力探测返回 `available:false`，列表、搜索、预览、下载和工作区导出继续走原 API 路线，本机打开/定位入口不显示。源码与桥契约保留，完成验收后再移除该门控。启动前的惰性 scheme 声明不提供文件访问能力。
+候选状态（2026-10-25）：`codex/local-files-3023-readiness` 恢复本机文件能力，默认开启；`features.local-files.enabled=false` 在重启后关闭。仅商业版 Nuwax 生效，仍要求受信业务文档、登录及本机身份。当前发布线/已安装包是否包含本改动须按实际提交核对，不能将此候选说明当作已上线。安装包与真实账户验收尚未完成。
 
-Nuwax 客户端 `NuwaClawBridge.localFiles` 可选扩展，`apiVersion=1`。旧壳只有 pickDirectory，必须先探测 getCapabilities。桥只接受当前受信顶层文档、有效登录、本机注册身份及当前登录代次。
+Nuwax 客户端 `NuwaClawBridge.localFiles` 可选扩展，候选 `apiVersion=2`，增加 `writable` 与可选 `updateFiles`。API v1 继续提供原读能力；旧壳只有 pickDirectory，必须先探测 getCapabilities。桥只接受当前受信顶层文档、有效登录、本机注册身份及当前登录代次。
 
 ## 调用
 
@@ -25,13 +25,17 @@ if (preview.success) {
 await api.releaseContext(contextId);
 ```
 
-统一结果 `success:true,data` / `success:false,code,error?`。代码包括 untrusted/unavailable/not-local/invalid-argument/context-unresolved/expired/not-found/permission-denied/file-service-unavailable/canceled/failed。旧桥、非本机或目录无法确定才选择原API；已经确定本机的文件错误、取消、过期直接显示。
+文件面板通过 `apiUpdateStaticFile` 自动分流；直接调用宿主时先判断 `caps.apiVersion >= 2 && caps.writable && api.updateFiles`，然后如 `api.updateFiles(contextId, [{ name: 'docs/note.txt', operation: 'modify', contents: '新内容' }])`。`delete` 将条目交给系统回收站，不接收永久删除标志。
+
+统一结果 `success:true,data` / `success:false,code,error?`。代码包括 untrusted/unavailable/not-local/invalid-argument/context-unresolved/expired/not-found/already-exists/conflict/permission-denied/file-service-unavailable/canceled/failed。旧桥、非本机或目录无法确定才选择原 API；已经确定本机的文件错误、取消、过期直接显示。本机只读桥缺写能力时不转发云端写请求。
 
 ## 能力与数据
 
 - resolveContext 输入 cId、sandboxId，以及可选 workspacePath/projectId/serviceType/userId。userId 为业务会话用户 ID，不能传设备注册 ID。目录由主进程按 session.cwd、明确 workspacePath、唯一历史目录解析。
 - listFiles/searchFiles 从主进程读取配置端口的本机 file-server，使用同一 customTargetDir，保留原列表/搜索响应；不传平台 cookie/token。
 - stat/preparePreview/openPath/revealInFolder/saveFile 接受 `{contextId,path}`。相对 path 在工作区内；明确的本机绝对文件遵循“存在即读”。Windows 盘符/UNC 只在 Windows 宿主按本机语义解析。
+- updateFiles(contextId, changes) 接入现有文件面板的 create/modify/rename/delete。写路径限定真实工作区，不能操作工作区本身或经目录链接越界；文本保存用临时文件替换并保留权限，新建与重命名拒绝已有目标。删除使用系统回收站，失败直接反馈，保留现有界面确认。
+- 写批次在主进程串行执行，逐项原子保存，不承诺跨文件事务。每批最多 1,000 项、文本总量 16MiB；修改只支持普通文本文件，符号链接代码视图保持只读。上传、ZIP 导入和 Git 操作仍走既有接口。
 - preparePreview 返回 `{grantId,url,baseUrl,mime,bytes}`。`nuwax-local://<随机grant>/<相对资源路径>` 的自动子资源只能在其真实授权根内，不沿软链接逃出。
 - saveFile/exportWorkspace 可传 operationId，用 cancel(operationId) 中断。保存对话框取消返回 `success:true,data:{canceled:true}`。输出先写临时文件，完整成功后替换目标。
 - exportWorkspace 是完整文件系统工作区导出：含隐藏项、硬链文件、空目录，软链仅保存为链接条目，无100MiB上限；不打包本次输出或临时文件，不读取FIFO/设备/socket。
@@ -54,6 +58,7 @@ ZIP 在遍历前解析工作区与目标父目录的真实路径，保存目录�
 
 ## 验证入口
 
-- `node scripts/acceptance/local-files-electron.mjs`：跨平台真实 Electron runtime smoke，隔离 profile、本机 metadata fixture、H.264 播放/seek 和完整 ZIP。需要已安装的 ffmpeg（可用 `NUWAX_QA_FFMPEG` 指定路径）；Electron 可用 `NUWAX_QA_ELECTRON` 指定。保存对话框使用 fixture 路径，报告写 `.cache/acceptance/local-files-electron.json`。
+- `node scripts/acceptance/local-files-electron.mjs`：真实 Electron runtime smoke，隔离 profile、本机 metadata fixture、读写 IPC、H.264 播放/seek 和完整 ZIP。需要已安装的 ffmpeg（可用 `NUWAX_QA_FFMPEG` 指定路径）；Electron 可用 `NUWAX_QA_ELECTRON` 指定。保存、系统打开、回收站适配器均使用夹具，报告写 `.cache/acceptance/local-files-electron.json`，不代表系统回收站或实包验收。
+- Windows 无仓库检出时：开发机运行 `--bundle-only <dir>`，将目录及 `scripts/acceptance/local-files-electron-windows.ps1` 复制到 Windows，用 `-BundleDir <dir> -ElectronExe <electron.exe>` 执行；报告与日志位于其 WorkDir。
 - `npm run test:commercial` / 独立社区副本 `npm run base:test`；`npm run check:pin`、`npm run host-bridge:check`、feature boundaries。
 - 本工作分支的开发/打包使用 `--frontend source`。真实账户、签名安装包与 Windows 真机验收须分别记录。
