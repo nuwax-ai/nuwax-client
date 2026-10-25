@@ -151,3 +151,22 @@ test('Mac staging refuses unsigned artifacts and records private verified identi
   const receipt = await stageValidation(f.cwd, output, path.join(f.cwd, 'signed'), f.identity, 'darwin', { signed: true, notarized: true, team: 'TEAM123' });
   assert.equal(receipt.signed, true); assert.equal(receipt.published, false); assert.equal(receipt.signing.notarized, true);
 });
+
+test('one frozen matrix contains both existing Mac versions and only the target Windows EXE', async t => {
+  const f = fixture(t); f.git('tag', 'v3.0.23-beta.2');
+  const env = { ...f.env, VALIDATION_UPGRADE_FROM_TAG: 'v3.0.23-beta.2' };
+  const identity = validationIdentity(f.cwd, env);
+  assert.deepEqual(identity.matrix.map(item => [item.platform, item.baselineTag]),
+    [['darwin', 'v3.0.23-beta.3'], ['win32', 'v3.0.23-beta.3'], ['darwin', 'v3.0.23-beta.2']]);
+  const from = validationIdentity(f.cwd, { ...env, VALIDATION_PACKAGE_BASELINE_TAG: 'v3.0.23-beta.2' });
+  assert.equal(from.packageVersion, '3.0.23-beta.2');
+  assert.deepEqual(from.source, identity.source); assert.equal(from.buildId, identity.buildId);
+  await assert.rejects(buildValidation(f.cwd, from, { platform: 'win32', arch: 'x64', temp: f.cwd }), /未被本次验证选择/);
+  for (const invalid of [
+    { VALIDATION_UPGRADE_FROM_TAG: 'v3.0.23-beta.4' },
+    { VALIDATION_UPGRADE_FROM_TAG: 'v3.0.23-beta.3' },
+    { VALIDATION_UPGRADE_FROM_TAG: 'v3.0.22' },
+    { VALIDATION_PLATFORMS: 'windows-x64' },
+    { VALIDATION_PACKAGE_BASELINE_TAG: 'v3.0.22' },
+  ]) assert.throws(() => validationIdentity(f.cwd, { ...env, ...invalid }));
+});
