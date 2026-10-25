@@ -110,7 +110,7 @@ export function macAppPaths(client, arch) {
   return { app, output, stateFile: path.join(path.dirname(app), '.nuwax-notary.json') };
 }
 
-export async function packageNotarizedApp({ client, app, arch, builderCli, tools = core, wait = sleep }) {
+export async function packageNotarizedApp({ client, app, arch, builderCli, configFile, tools = core, wait = sleep }) {
   if (!['arm64', 'x64'].includes(arch)) throw new Error('[mac-notary] Unsupported architecture');
   // Resume and --prepackaged may only verify: writing here breaks the seal.
   verifyUpdaterApp(app);
@@ -119,7 +119,7 @@ export async function packageNotarizedApp({ client, app, arch, builderCli, tools
   const cli = builderCli || createRequire(import.meta.url).resolve('electron-builder/out/cli/cli.js', { paths: [client] });
   // macPackager's prepackaged branch skips doPack/sign and only generates targets.
   // The final ticket must survive; a second signing pass would invalidate it.
-  const result = await tools.run(process.execPath, [cli, '--prepackaged', app, '--mac', `--${arch}`, '--publish', 'never', '--config.mac.notarize=false'],
+  const result = await tools.run(process.execPath, [cli, '--prepackaged', app, '--mac', `--${arch}`, '--publish', 'never', '--config.mac.notarize=false', ...(configFile ? ['--config', configFile] : [])],
     { cwd: client, capture: false, allowFailure: true });
   if (result.status !== 0) throw new Error(`[mac-notary] Distribution packaging failed (${result.status})`);
   const final = await signature(app, tools);

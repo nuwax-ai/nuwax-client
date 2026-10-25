@@ -15,6 +15,10 @@ export function validationIdentity(cwd, env = process.env) {
   if (!/^[a-z][a-z0-9-]{2,62}$/.test(series)) throw new Error('validation_series 须为固定问题标识，如 pr-66；不能用换系列绕过停止条件');
   if (!/^refs\/heads\/(codex|validation)\/.+/.test(env.GITHUB_REF ?? '')) throw new Error('验证仅允许 codex/ 或 validation/ 分支，不能运行在正式发布分支或 tag');
   const baseline = parseReleaseTag(env.VALIDATION_BASELINE_TAG);
+  if (env.GITHUB_EVENT_NAME === 'push') {
+    const request = JSON.parse(fs.readFileSync(path.join(cwd, '.github/package-validation-request.json'), 'utf8'));
+    if (request.series !== series || request.baselineTag !== baseline.tag || request.platforms !== env.VALIDATION_PLATFORMS) throw new Error('显式验证请求与启动身份不符，停止构建');
+  }
   const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
   const sha = gitAt(cwd, 'rev-parse', 'HEAD');
   if (!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || sha !== env.GITHUB_SHA) throw new Error('验证源码不是冻结的 workflow SHA');
@@ -53,7 +57,7 @@ export async function checkValidationBudget(identity, env = process.env, fetcher
   if (new URL(api).protocol !== 'https:') throw new Error('Actions API 必须使用 HTTPS');
   const runs = [];
   for (let page = 1; page <= 20; page++) {
-    const response = await fetcher(`${api}/repos/${repository}/actions/workflows/${workflowFile}/runs?event=workflow_dispatch&per_page=100&page=${page}`, {
+    const response = await fetcher(`${api}/repos/${repository}/actions/workflows/${workflowFile}/runs?per_page=100&page=${page}`, {
       headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) throw new Error('无法读取验证历史，停止构建');
@@ -65,7 +69,7 @@ export async function checkValidationBudget(identity, env = process.env, fetcher
   throw new Error('验证历史超过读取上限，停止构建');
 }
 
-export async function stageValidation(cwd, output, stage, identity, platform) {
+export async function stageValidation(cwd, output, stage, identity, platform, signing = null) {
   if (!['darwin', 'win32'].includes(platform)) throw new Error('验证仅支持 Mac ARM64 / Windows x64 EXE');
   const entries = fs.readdirSync(output, { withFileTypes: true });
   if (platform === 'win32' && entries.some(entry => entry.isFile() && /\.msi$/i.test(entry.name))) throw new Error('Windows 验证不应生成 MSI');
@@ -83,8 +87,9 @@ export async function stageValidation(cwd, output, stage, identity, platform) {
     for await (const chunk of fs.createReadStream(target)) hash.update(chunk);
     artifacts[file] = hash.digest('hex');
   }
-  const receipt = { ...identity, platform, distribution: 'actions-artifacts-only', signed: false,
-    acceptance: 'Unsigned build validation only; use official Beta/Stable packages with required platform signing for upgrade and OS-permission acceptance',
+  if (platform === 'darwin' && (!signing?.signed || !signing?.notarized || !signing?.team)) throw new Error('Mac acceptance requires verified Developer ID and notarization');
+  const receipt = { ...identity, platform, distribution: 'actions-artifacts-only', signed: Boolean(signing?.signed), signing,
+    acceptance: platform === 'darwin' ? 'Private signed and notarized validation artifact; not an official release' : 'Unsigned Windows EXE validation; Beta Windows packages are also unsigned',
     published: false, tagCreated: false, versionSequenceAdvanced: false, updatePointersChanged: false, artifacts };
   fs.writeFileSync(path.join(stage, 'validation-context.json'), `${JSON.stringify(receipt, null, 2)}\n`);
   return receipt;
@@ -93,8 +98,12 @@ export async function stageValidation(cwd, output, stage, identity, platform) {
 export async function buildValidation(cwd, identity, { platform = process.platform, arch = process.arch, prepareFn, packFn, temp = process.env.RUNNER_TEMP } = {}) {
   if (!temp || !path.isAbsolute(temp)) throw new Error('验证输出须在独立 runner 临时目录');
   if (!identity.matrix.some(item => item.platform === platform && item.arch === arch)) throw new Error('当前平台/架构未被本次验证选择');
+  if (!prepareFn && platform === 'win32') {
+    const { configureWindowsCaptureToolchain } = await import('./prepare-release-capture.mjs');
+    await configureWindowsCaptureToolchain(cwd, { location: process.env.MSYS2_LOCATION, arch });
+  }
   prepareFn ??= (await import('./client/prepare.mjs')).prepare;
-  packFn ??= (await import('./client/pack.mjs')).pack;
+  packFn ??= platform === 'darwin' ? (await import('./package-validation-mac.mjs')).packSignedValidationMac : (await import('./client/pack.mjs')).pack;
   const prepared = await prepareFn(cwd, { frontend: 'source' });
   const packageFile = path.join(cwd, 'nuwa-electron-shell/crates/agent-electron-client/package.json');
   const original = fs.readFileSync(packageFile);
@@ -103,14 +112,14 @@ export async function buildValidation(cwd, identity, { platform = process.platfo
   pkg.build.buildVersion = identity.nativeVersion;
   pkg.build.mac.bundleShortVersion = identity.nativeVersion;
   if (platform === 'win32') { pkg.build.win ??= {}; pkg.build.win.target = ['nsis']; }
-  const output = path.join(temp, `package-validation-output-${identity.buildId}-${platform}`);
+  const output = platform === 'win32' ? path.join(temp, 'pv', `${identity.runId}-${identity.runAttempt}`) : path.join(temp, `package-validation-output-${identity.buildId}-${platform}`);
   const stage = path.join(temp, `package-validation-artifacts-${identity.buildId}-${platform}`);
   try {
     // Only the disposable base checkout changes. Application version is the
     // selected existing release baseline; the run identity never becomes SemVer.
     fs.writeFileSync(packageFile, `${JSON.stringify(pkg, null, 2)}\n`);
-    await packFn(cwd, { frontend: 'source', platform, arch, version: identity.packageVersion, output, prepare: async () => prepared });
-    await stageValidation(cwd, output, stage, identity, platform);
+    const packed = await packFn(cwd, { frontend: 'source', platform, arch, version: identity.packageVersion, output, prepare: async () => prepared });
+    await stageValidation(cwd, output, stage, identity, platform, packed?.validationSigning);
     return stage;
   } finally { fs.writeFileSync(packageFile, original); }
 }

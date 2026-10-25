@@ -1,8 +1,13 @@
 # Build validation only. Beta/Stable release workflows never call this file.
 name: Package validation
-run-name: Package validation / ${{ inputs.validation_series }}
+run-name: Package validation / ${{ inputs.validation_series || github.event.head_commit.message }}
 
 on:
+  # A new dispatch-only workflow cannot register until it reaches the default
+  # branch. An explicit request-file commit enables isolated branch acceptance.
+  push:
+    branches: ['codex/**', 'validation/**']
+    paths: ['.github/package-validation-request.json']
   workflow_dispatch:
     inputs:
       baseline_tag:
@@ -14,7 +19,7 @@ on:
         required: true
         type: string
       platforms:
-        description: Unsigned build validation targets
+        description: Private acceptance targets (signed Mac, Windows EXE only)
         required: true
         type: choice
         default: both
@@ -25,13 +30,13 @@ permissions:
   actions: read
 
 concurrency:
-  group: package-validation-${{ inputs.validation_series }}
+  group: package-validation-${{ inputs.validation_series || github.event.head_commit.message }}
   cancel-in-progress: false
 
 env:
-  VALIDATION_BASELINE_TAG: ${{ inputs.baseline_tag }}
-  VALIDATION_SERIES: ${{ inputs.validation_series }}
-  VALIDATION_PLATFORMS: ${{ inputs.platforms }}
+  VALIDATION_BASELINE_TAG: ${{ inputs.baseline_tag || 'v3.0.23-beta.3' }}
+  VALIDATION_SERIES: ${{ inputs.validation_series || github.event.head_commit.message }}
+  VALIDATION_PLATFORMS: ${{ inputs.platforms || 'both' }}
 
 jobs:
   prepare:
@@ -93,8 +98,8 @@ jobs:
           if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
             git config --global http.https://git.yichamao.com/.extraheader "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
           fi
-      - name: Setup Rust compiler
-        uses: dtolnay/rust-toolchain@stable
+      - name: Initialize pinned source checkouts
+        run: git submodule update --init --depth 1
       - name: Setup Windows C++ compiler
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -119,11 +124,48 @@ jobs:
         run: |
           command -v nasm >/dev/null || brew install nasm
           command -v pkg-config >/dev/null || brew install pkgconf
-      - name: Build unsigned packages without publishing
+      - name: Restore admitted unsigned native resource caches
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.msys2.outputs.msys2-location }}
+      - name: Import private Mac acceptance identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for value in APPLE_CERTIFICATE APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
+            [ -n "${!value}" ] || { echo "::error::Missing private acceptance identity: $value"; exit 1; }
+          done
+          CERTIFICATE_PATH="$RUNNER_TEMP/validation-certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/validation-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          security create-keychain -p actions "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p actions "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+          mkdir -p "$RUNNER_TEMP/validation-notary"
+          printf '%s' "$APPLE_API_KEY" | base64 --decode -o "$RUNNER_TEMP/validation-notary/AuthKey.p8"
+          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/validation-notary/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+      - name: Build private acceptance packages without publishing
         id: build
         env:
           GH_TOKEN: ${{ github.token }}
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NUWAX_RELEASE_CHANNEL: beta
         run: node scripts/package-validation.mjs build
       - name: Upload validation packages and context only
         uses: actions/upload-artifact@v4
@@ -133,3 +175,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Remove temporary Mac identity
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/validation-certificate.p12" "$RUNNER_TEMP/validation-notary/AuthKey.p8"
+          if [ -f "$RUNNER_TEMP/validation-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/validation-signing.keychain-db"
+          fi
