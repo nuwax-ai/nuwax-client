@@ -9,6 +9,8 @@
 
 localFiles API v2 增加可选 `updateFiles(contextId, changes)` 和 `writable` 能力。变更项为现有文件操作的最小子集：name、operation(create/modify/rename/delete)、contents、isDir、binary、renameFrom。主进程验证全部参数后，串行执行同一 runtime 的变更；每项文件保存原子提交，批次不承诺跨文件事务。旧本机只读桥不能因缺写能力而把写请求转到云端。前端业务服务把本机错误转换为明确失败返回码并提示，现有自动保存保留脏内容，不泄漏未处理拒绝。
 
+前端沿用列表的 localFile 来源，写入前校验 cId/contextId；释放上下文后保留有界的近期来源记录，迟到保存不能仅因当前无记录就转发云端。显式切换远端后的新文件不携带旧来源，继续使用原接口。
+
 ## 文件语义
 
 - 新建文件/目录必须不存在；不递归创建未显示的父目录。
