@@ -24,6 +24,10 @@ on:
         type: choice
         default: both
         options: [both, mac-arm64, windows-x64]
+      upgrade_from_tag:
+        description: Optional existing lower Beta/Stable tag for the same-source Mac upgrade pair
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -37,6 +41,7 @@ env:
   VALIDATION_BASELINE_TAG: ${{ inputs.baseline_tag || 'v3.0.23-beta.3' }}
   VALIDATION_SERIES: ${{ inputs.validation_series || github.event.head_commit.message }}
   VALIDATION_PLATFORMS: ${{ inputs.platforms || 'both' }}
+  VALIDATION_UPGRADE_FROM_TAG: ${{ inputs.upgrade_from_tag }}
 
 jobs:
   prepare:
@@ -63,6 +68,8 @@ jobs:
 
   package:
     needs: prepare
+    env:
+      VALIDATION_PACKAGE_BASELINE_TAG: ${{ matrix.baselineTag }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
@@ -170,7 +177,7 @@ jobs:
       - name: Upload validation packages and context only
         uses: actions/upload-artifact@v4
         with:
-          name: package-validation-${{ needs.prepare.outputs.build_id }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: package-validation-${{ needs.prepare.outputs.build_id }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.baselineTag }}
           path: ${{ steps.build.outputs.artifact_path }}
           if-no-files-found: error
           retention-days: 7

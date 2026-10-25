@@ -16,6 +16,14 @@ run 40158839353 的 Mac 签名公证包与 Windows EXE 均构建成功，安装�
 
 分支请求的基线/平台改为读取冻结的 request 文件，系列仍须与启动标题一致；仅准已存在的 Beta/Stable tag。后续用既有 Beta.2→Beta.3 验证完整更新，仍计入同一四次上限，不生成任何额外版本。
 
+### 原生 token 协议回归与第 3 次矩阵
+
+Windows Nuwaxcode 初始化崩溃（事件 1000、0xc0000005），切换已配置的 Anthropic 模型后 Claude 引擎初始化和 CU 列窗/观察成功；写入暴露宿主给原生 token 参数附加 `element_index`，而 Mac/Windows 当前工具 schema 均只接受 `element_token`。真实任务未通过，第 2 次构建主动取消并计入上限。
+
+原生 wire 适配收在 MCP gateway：依据本连接工具 schema，只对 token-only 工具在最终发送前转换内部 index/snapshot 为完整 token；保留宿主校验/确认/记录用的原参数和 native task context，冲突或缺失的身份拒绝，不重绑旧 token。失败优先 4 项失败；相关 CU 248 项通过，商业 3466 项通过/18 跳过。独立标准权限诊断已在 M4 和 Windows 实际驱动写入并回读不同的 DIAG 标记，未点击保存；这只是协议证据，不替代产品模型任务。
+
+第 3 次流程显式追加同一冻结源码的 Mac 既有 Beta.2 基线，和 Beta.3 Mac/Windows EXE 一起构成升级矩阵；artifact 名包含基线以隔离产物，Windows 不生成旧基线或 MSI。一次 workflow 启动仍统一计数，所有 rerun/cancel 继续计入四次。Mac 完整更新要求两个基线源码一致，不用旧缺陷包冒充修复后升级。
+
 - 用户约束：正式发布仅 Beta / Stable。测试不得推进版本序列，不得复用发布入口；同一问题最多尝试 4 次，达到上限停止，不能靠换版本或换 commit 继续重试。
 - 本轮处理：停止 QA.5，不再触发打包；恢复家庭设备的官方 Beta.3、原开关和通道，保留全部失败与通过证据；PR #66 继续 Draft，不合并。
 

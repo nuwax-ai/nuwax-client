@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseReleaseTag } from './release-version.mjs';
+import { parseReleaseTag, compareReleaseVersions } from './release-version.mjs';
 
 export const MAX_VALIDATION_STARTS = 4;
 const workflowFile = 'package-validation.yml';
@@ -19,15 +19,27 @@ export function validationIdentity(cwd, env = process.env) {
   const request = env.GITHUB_EVENT_NAME === 'push'
     ? JSON.parse(fs.readFileSync(path.join(cwd, '.github/package-validation-request.json'), 'utf8')) : null;
   if (request && request.series !== series) throw new Error('显式验证请求与启动身份不符，停止构建');
-  const baseline = parseReleaseTag(request ? request.baselineTag : env.VALIDATION_BASELINE_TAG);
-  const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
+  const target = parseReleaseTag(request ? request.baselineTag : env.VALIDATION_BASELINE_TAG);
   const sha = gitAt(cwd, 'rev-parse', 'HEAD');
   if (!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || sha !== env.GITHUB_SHA) throw new Error('验证源码不是冻结的 workflow SHA');
   if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '') || !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ATTEMPT ?? '')) throw new Error('缺少有效 run id / attempt');
   const platforms = { both: [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }, { runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
     'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }], 'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
-  const matrix = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
-  if (!matrix) throw new Error('未知验证平台');
+  const selectedPlatforms = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
+  if (!selectedPlatforms) throw new Error('未知验证平台');
+  const matrix = selectedPlatforms.map(item => ({ ...item, baselineTag: target.tag }));
+  gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${target.tag}^{commit}`);
+  const upgradeFrom = request ? request.upgradeFromTag : env.VALIDATION_UPGRADE_FROM_TAG;
+  if (upgradeFrom) {
+    const previous = parseReleaseTag(upgradeFrom);
+    if (!matrix.some(item => item.platform === 'darwin') || previous.channel !== target.channel ||
+        compareReleaseVersions(previous.version, target.version) >= 0) throw new Error('Mac 升级基线须为同通道已存在的较低版本');
+    gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${previous.tag}^{commit}`);
+    matrix.push({ runner: 'macos-latest', platform: 'darwin', arch: 'arm64', baselineTag: previous.tag });
+  }
+  const baseline = parseReleaseTag(env.VALIDATION_PACKAGE_BASELINE_TAG || target.tag);
+  if (!matrix.some(item => item.baselineTag === baseline.tag)) throw new Error('构建版本不在冻结验证矩阵中');
+  const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
   return { kind: 'package-validation', series, baselineTag: baseline.tag, baselineSha,
     packageVersion: baseline.version, nativeVersion: baseline.baseVersion, channel: baseline.channel,
     source: { client: sha, shell: gitAt(cwd, 'rev-parse', 'HEAD:nuwa-electron-shell'), frontend: gitAt(cwd, 'rev-parse', 'HEAD:nuwax') },
@@ -98,7 +110,7 @@ export async function stageValidation(cwd, output, stage, identity, platform, si
 
 export async function buildValidation(cwd, identity, { platform = process.platform, arch = process.arch, prepareFn, packFn, temp = process.env.RUNNER_TEMP } = {}) {
   if (!temp || !path.isAbsolute(temp)) throw new Error('验证输出须在独立 runner 临时目录');
-  if (!identity.matrix.some(item => item.platform === platform && item.arch === arch)) throw new Error('当前平台/架构未被本次验证选择');
+  if (!identity.matrix.some(item => item.platform === platform && item.arch === arch && item.baselineTag === identity.baselineTag)) throw new Error('当前平台/架构未被本次验证选择');
   if (!prepareFn && platform === 'win32') {
     const { configureWindowsCaptureToolchain } = await import('./prepare-release-capture.mjs');
     await configureWindowsCaptureToolchain(cwd, { location: process.env.MSYS2_LOCATION, arch });

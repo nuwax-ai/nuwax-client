@@ -32,9 +32,25 @@ type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNu
   initialization?: Rpc; initialized: boolean;
   /** 本条 helper 租约是否已按偏好处理过 agent cursor（开或明确跳过）。 */
   cursorArmed?: boolean;
+  tokenOnlyTools: Set<string>;
   warming?: { id: string; finish: (error?: Error) => void };
   pending: Map<string, Pending>; reservations: Set<string>; lifetime: AbortController; close: () => void };
 const keyOf = (id: unknown) => `${typeof id}:${String(id)}`;
+
+/** Host checks retain indexed evidence; modern native tools accept only its complete token. */
+function nativeElementArgs(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const args = raw as Record<string, unknown>;
+  if (args.element_index === undefined && args.snapshot_id === undefined) return raw;
+  const token = typeof args.element_token === "string" ? args.element_token.match(/^(s[0-9a-f]{8}):(\d+)$/i) : null;
+  const index = args.element_index ?? (token ? Number(token[2]) : undefined);
+  const snapshot = args.snapshot_id ?? token?.[1];
+  if (!Number.isSafeInteger(index) || Number(index) < 0 || typeof snapshot !== "string" || !/^s[0-9a-f]{8}$/i.test(snapshot) ||
+      (args.element_token !== undefined && (!token || token[1] !== snapshot || Number(token[2]) !== index))) throw new Error("scopeViolation");
+  const native: Record<string, unknown> = { ...args, element_token: `${snapshot}:${index}` };
+  delete native.element_index; delete native.snapshot_id;
+  return native;
+}
 
 function stopDriver(child: ChildProcessWithoutNullStreams | null) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -141,7 +157,7 @@ export class CuaMcpGateway {
 
   private connect(socket: net.Socket): Connection {
     const connection: Connection = { id: randomUUID(), socket, child: null, initialized: false,
-      pending: new Map(), reservations: new Set(), lifetime: new AbortController(), close: () => {} };
+      pending: new Map(), reservations: new Set(), tokenOnlyTools: new Set(), lifetime: new AbortController(), close: () => {} };
     let closed = false;
     connection.close = () => {
       if (closed) return;
@@ -219,6 +235,11 @@ export class CuaMcpGateway {
             }
           }
           if (pending.method === "tools/list" && message.result?.tools) {
+            for (const tool of message.result.tools) {
+              const schema = tool.inputSchema as { properties?: Record<string, unknown> } | undefined;
+              if (schema?.properties?.element_token && !schema.properties.element_index) connection.tokenOnlyTools.add(tool.name);
+              else connection.tokenOnlyTools.delete(tool.name);
+            }
             const currentOwner = this.options.authorize?.(connection.grant) ?? connection.owner;
             const visible = this.options.visibleTools?.(currentOwner) ?? this.options.allowedTools;
             const scope = this.scope(currentOwner);
@@ -526,6 +547,18 @@ export class CuaMcpGateway {
       connection.pending.delete(keyOf(id));
       this.options.controller.finish(permit, "refused");
       this.deferConfirmation(connection, id, permit.owner); return;
+    }
+    if (permit && call && connection.tokenOnlyTools.has(message.params?.name ?? "")) {
+      try {
+        message = { ...message, params: { ...message.params, arguments: nativeElementArgs(message.params?.arguments) } };
+        line = JSON.stringify(message);
+      } catch {
+        const entry = connection.pending.get(keyOf(id));
+        if (entry) { clearTimeout(entry.timer); entry.release?.(); entry.release = undefined; }
+        connection.pending.delete(keyOf(id));
+        this.options.controller.finish(permit, "refused");
+        this.refuse(connection, permit.owner, id, "scopeViolation"); return;
+      }
     }
     if (!connection.child.stdin.write(`${line}\n`)) connection.socket.pause();
   }
