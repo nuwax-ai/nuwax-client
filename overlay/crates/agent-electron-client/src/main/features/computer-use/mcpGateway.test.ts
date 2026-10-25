@@ -21,8 +21,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(m.params?.name==='set_agent_cursor_enabled')cursorEnables++;
  const a=m.params?.arguments??{};
  if(a.hang)return;
- const structuredContent=a.cursorReport?{cursorEnables}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
- process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
+ const structuredContent=a.wireReport?{wireArgs:a}:a.cursorReport?{cursorEnables}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click',inputSchema:{type:'object',properties:{element_token:{type:'string'}}}},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
 async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string | null,
@@ -82,6 +82,34 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("keeps host element metadata out of the native token-only protocol", async () => {
+    const f = await fixture(); const peer = await f.client();
+    await peer.request("tools/list");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    const input = { pid: 20, window_id: 40, element_index: 2, snapshot_id: "s00000001", element_token: "s00000001:2", wireReport: true };
+    const reply = await peer.request("tools/call", { name: "click", arguments: input });
+    expect(reply.result.structuredContent.wireArgs).toEqual({ pid: 20, window_id: 40, element_token: "s00000001:2", wireReport: true });
+    // Host bookkeeping and confirmation still see their original indexed evidence.
+    expect(f.results.mock.calls.at(-1)?.[1]).toEqual(input);
+    const indexed = await peer.request("tools/call", { name: "click", arguments: { pid: 20, window_id: 40, element_index: 3, snapshot_id: "s00000002", wireReport: true } });
+    expect(indexed.result.structuredContent.wireArgs.element_token).toBe("s00000002:3");
+    expect(indexed.result.structuredContent.wireArgs).not.toHaveProperty("element_index");
+  });
+  it.each([
+    { element_index: 2 },
+    { element_index: 2, element_token: "s00000001:3" },
+    { element_index: 2, snapshot_id: "s00000002", element_token: "s00000001:2" },
+  ])("refuses unproven or conflicting element identity before native dispatch: %j", async (element) => {
+    const f = await fixture(); const peer = await f.client();
+    await peer.request("tools/list");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    const before = f.results.mock.calls.length;
+    const reply = await peer.request("tools/call", { name: "click", arguments: { pid: 20, window_id: 40, ...element } });
+    expect(reply.result.structuredContent.code).toBe("scopeViolation");
+    expect(f.results).toHaveBeenCalledTimes(before);
+    expect(f.failure).not.toHaveBeenCalled();
+    expect(f.controller.snapshot().phase).toBe("running");
+  });
   it("keeps a desktop task usable after consistent mixed target input and refuses conflicting IDs before dispatch", async () => {
     const f = await fixture(3000, undefined, (tool, args) => scopeCuaCall({ kind: "desktop" }, tool, args), undefined,
       { allowedTools: ["get_window_state", "type_text"] });
