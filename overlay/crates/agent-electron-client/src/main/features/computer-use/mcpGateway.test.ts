@@ -10,6 +10,7 @@ import { CuaTaskController } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { taskCuaCall } from "./taskPolicy";
 import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
+import { scopeCuaCall } from "./windowScope";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -81,6 +82,23 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("keeps a desktop task usable after consistent mixed target input and refuses conflicting IDs before dispatch", async () => {
+    const f = await fixture(3000, undefined, (tool, args) => scopeCuaCall({ kind: "desktop" }, tool, args), undefined,
+      { allowedTools: ["get_window_state", "type_text"] });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    await peer.request("tools/call", { name: "type_text", arguments: { pid: 20, window_id: 40,
+      target: { kind: "window", pid: 20, window_id: 40 }, text: "marker", element_token: "s00000001:1" } });
+    expect(f.results.mock.calls.at(-1)?.[1]).toEqual({ pid: 20, window_id: 40, text: "marker", element_token: "s00000001:1" });
+    const before = f.results.mock.calls.length;
+    const conflict = await peer.request("tools/call", { name: "type_text", arguments: { pid: 21,
+      target: { kind: "window", pid: 20, window_id: 40 }, text: "must not type" } });
+    expect(conflict.result.structuredContent.code).toBe("scopeViolation");
+    expect(f.results).toHaveBeenCalledTimes(before);
+    expect(f.failure).not.toHaveBeenCalled();
+    expect((await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } })).result.isError).toBe(false);
+    expect(f.controller.snapshot().phase).toBe("running");
+  });
   it("keeps a desktop operation pending across manual pause without replaying the cancelled input", async () => {
     const f = await fixture();
     const peer = await f.client();

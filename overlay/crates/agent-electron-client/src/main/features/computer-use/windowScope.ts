@@ -8,6 +8,25 @@ const BROWSER_TOOLS = ["get_browser_state", "browser_prepare", ...BROWSER_ACTION
 const COMMON = ["check_permissions", "get_config", "health_report", "start_session", "end_session", "get_session", "get_session_state"];
 const ELEMENT_ARGS = new Set(["session", "pid", "window_id", "element_index", "snapshot_id", "value", "direction", "by", "amount"]);
 
+/** The native protocol accepts one target format. Collapse only provably identical window IDs. */
+function desktopTargetArgs(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const args = raw as Record<string, unknown>;
+  if (args.target === undefined || !["scope", "pid", "window_id"].some(key => args[key] !== undefined)) return raw;
+  const target = args.target as Record<string, unknown> | null;
+  if (!target || typeof target !== "object" || Array.isArray(target) || target.kind !== "window" ||
+      !Number.isSafeInteger(target.pid) || Number(target.pid) <= 0 ||
+      !Number.isSafeInteger(target.window_id) || Number(target.window_id) <= 0 ||
+      Object.keys(target).some(key => !["kind", "pid", "window_id"].includes(key)) ||
+      (args.pid !== undefined && args.pid !== target.pid) ||
+      (args.window_id !== undefined && args.window_id !== target.window_id) ||
+      (args.scope !== undefined && args.scope !== "window")) throw new Error("scopeViolation");
+  const normalized: Record<string, unknown> = { ...args, pid: target.pid, window_id: target.window_id };
+  delete normalized.target;
+  delete normalized.scope;
+  return normalized;
+}
+
 export function visibleCuaTools(scope: CuaScope, allowed: readonly string[]): readonly string[] {
   return scope.kind === "desktop" ? allowed
     : allowed.filter((tool) => [...COMMON, ...WINDOW_READS, ...WINDOW_ACTIONS, ...BROWSER_TOOLS, "get_desktop_state"].includes(tool));
@@ -46,7 +65,7 @@ export function scopeCuaCall(scope: CuaScope, tool: string, raw: unknown, bindin
     const strategy = (raw as { strategy?: { kind?: unknown } } | null)?.strategy;
     // Attaching to the user's own profile needs the user to point at that window first.
     if (tool === "browser_prepare" && strategy?.kind === "existing_profile") throw new Error("profileAttachRequiresWindowScope");
-    return { tool, args: raw };
+    return { tool, args: desktopTargetArgs(raw) };
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("scopeViolation");
   const args = { ...raw } as Record<string, unknown>;

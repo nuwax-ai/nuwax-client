@@ -125,12 +125,21 @@ test('history counts explicit push starts as well as dispatches', async t => {
   });
 });
 
-test('explicit push request must match its series, baseline and platform selection', t => {
+test('explicit push request matches its fixed series and selects only an existing baseline and admitted platform', t => {
   const f = fixture(t); fs.mkdirSync(path.join(f.cwd, '.github'));
   const file = path.join(f.cwd, '.github/package-validation-request.json');
   const request = { series: 'pr-66', baselineTag: 'v3.0.23-beta.3', platforms: 'both' };
   fs.writeFileSync(file, JSON.stringify(request));
   assert.equal(validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' }).series, 'pr-66');
+  f.git('tag', 'v3.0.23-beta.2');
+  fs.writeFileSync(file, JSON.stringify({ ...request, baselineTag: 'v3.0.23-beta.2', platforms: 'mac-arm64' }));
+  const lower = validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' });
+  assert.equal(lower.packageVersion, '3.0.23-beta.2');
+  assert.deepEqual(lower.matrix.map(item => item.platform), ['darwin']);
+  for (const invalid of [{ baselineTag: 'v3.0.23-beta.4' }, { platforms: 'linux' }]) {
+    fs.writeFileSync(file, JSON.stringify({ ...request, ...invalid }));
+    assert.throws(() => validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' }));
+  }
   fs.writeFileSync(file, JSON.stringify({ ...request, series: 'wrong-series' }));
   assert.throws(() => validationIdentity(f.cwd, { ...f.env, GITHUB_EVENT_NAME: 'push' }), /请求与启动身份不符/);
 });

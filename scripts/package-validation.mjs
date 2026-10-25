@@ -14,18 +14,19 @@ export function validationIdentity(cwd, env = process.env) {
   const series = env.VALIDATION_SERIES ?? '';
   if (!/^[a-z][a-z0-9-]{2,62}$/.test(series)) throw new Error('validation_series 须为固定问题标识，如 pr-66；不能用换系列绕过停止条件');
   if (!/^refs\/heads\/(codex|validation)\/.+/.test(env.GITHUB_REF ?? '')) throw new Error('验证仅允许 codex/ 或 validation/ 分支，不能运行在正式发布分支或 tag');
-  const baseline = parseReleaseTag(env.VALIDATION_BASELINE_TAG);
-  if (env.GITHUB_EVENT_NAME === 'push') {
-    const request = JSON.parse(fs.readFileSync(path.join(cwd, '.github/package-validation-request.json'), 'utf8'));
-    if (request.series !== series || request.baselineTag !== baseline.tag || request.platforms !== env.VALIDATION_PLATFORMS) throw new Error('显式验证请求与启动身份不符，停止构建');
-  }
+  // A branch launch reads the frozen request, so an existing lower-version
+  // baseline can exercise an upgrade without inventing a new release version.
+  const request = env.GITHUB_EVENT_NAME === 'push'
+    ? JSON.parse(fs.readFileSync(path.join(cwd, '.github/package-validation-request.json'), 'utf8')) : null;
+  if (request && request.series !== series) throw new Error('显式验证请求与启动身份不符，停止构建');
+  const baseline = parseReleaseTag(request ? request.baselineTag : env.VALIDATION_BASELINE_TAG);
   const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
   const sha = gitAt(cwd, 'rev-parse', 'HEAD');
   if (!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || sha !== env.GITHUB_SHA) throw new Error('验证源码不是冻结的 workflow SHA');
   if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '') || !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ATTEMPT ?? '')) throw new Error('缺少有效 run id / attempt');
   const platforms = { both: [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }, { runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
     'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }], 'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
-  const matrix = platforms[env.VALIDATION_PLATFORMS];
+  const matrix = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
   if (!matrix) throw new Error('未知验证平台');
   return { kind: 'package-validation', series, baselineTag: baseline.tag, baselineSha,
     packageVersion: baseline.version, nativeVersion: baseline.baseVersion, channel: baseline.channel,
