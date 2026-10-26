@@ -42,3 +42,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-s
 没有创建版本、tag、发布物、推送、合并或更新公开指针；不迁移 TEMP/缓存，不删除用户文件或恢复备份。
 
 清理核验：测试机临时计划任务和自建 fixture 目录已移除，所属运行进程为零；未改生产应用/注册表。标准临时诊断日志保留，不清理其他用户文件。
+
+## 随 3.0.22 集成前代码自查
+
+用户最新决定：停止独立完整包/VHD/UAC/自动更新专项验收，先完善代码，合入现有 `fix/stable-3.0.22` 后随该版本整体验收。此前未验项目继续如实保留，不作为本次代码集成的额外审批门槛；外部用户这次故障的具体根因仍未确认。本专项不切换或修改集成目标分支。
+
+按根 `REVIEW.md` 五遍自查，结论：**没有发现新的阻塞性代码缺陷；保留现有实现及已通过的针对性检查，供父任务集成。** 这是实现者自查，不是 PR 自批。
+
+| 检查遍 | 本轮核对及证据 |
+| --- | --- |
+| 逻辑与边界 | `installer.nsh` 的 `customCheckAppRunning` 在 `nuwaxFindAppProcess`、关闭进程、Prepare 前插入预检。vendor `installSection.nsh` 随后才调用旧版卸载；提升的 inner 在 `customInit` 明确设为 all-users 后调用同一检查。首装、升级、修复不依赖“已有旧路径才检查”的条件。预算使用 decimal 累加及 64 位最终值，同卷合并后加余量，不抵扣待删除文件；原生 1 字节、超 4 GiB、同/异卷夹具已覆盖。 |
+| 安全与身份 | helper 只读目标/卷信息，不创建安装目录或删除用户数据。缓存路径与固定 SDK `include/installer.nsh` 的 `SetShellVarContext current` + `$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}` 一致，完成后恢复 all-users shell context；临时卷来自实际进程 `$PLUGINSDIR`。未知架构/缺失元数据、查询失败、报告缺失或超时均不会放行。未新增特权、环境变量/命令行绕过入口或修改公开更新源。实际过肩 UAC 行为仍由整体验收验证。 |
+| 范围与契约 | 只补安装前预算及交互，不迁移 TEMP/缓存、不改卸载恢复数据规则、压缩格式或更新器协议。目录页按当前最终目录规整；重查后 Next 依据新结果启停，Leave 和执行前均再查；既有原生 GUI 证明 Back 返回及再次确认不能绕过。空间不足和路径/查询失败保持不同报告，未替换通用解压错误或确认本次用户根因。 |
+| 分层与维护 | 商业逻辑只在 overlay；预算/格式/卷查询位于独立 PS helper，NSIS 负责架构、范围和 UI 组合。函数在 customHeader 发出，避免 vendor 架构宏/范围变量尚未声明；BUILD_UNINSTALLER 不嵌入安装空间代码。helper 通过 NSIS `File` 从 BUILD_RESOURCES_DIR 内嵌，不依赖安装后程序或网络。 |
+| 测试与证据 | 保留 ef3cf7e1 的失败测试先行、87e02cd1 的实现与前述 39/9/4 结果；完整固定 SDK installer/uninstaller 编译已通过。此轮没有源码变化，不重复跑已绿测试，也未启动新 GUI/完整包验收。`git diff --check` 再次通过；原有未验项随 3.0.22 一起验收。 |
+
+停止独立验收时只进行了本地 UTM 状态和设备硬件只读查询，没有恢复/操作虚拟机、创建 VHD/账号/新任务或启动新验收进程，无本轮新增远端资源需清理。
