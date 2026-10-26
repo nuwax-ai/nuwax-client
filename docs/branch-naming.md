@@ -32,7 +32,7 @@
 ### 2.2 工作分支（feat / fix / refactor / chore / docs / codex）
 
 - 从目标主干或版本线切出，PR 回同一目标线；合并后按 §5 清理。
-- CI 按 `.github/workflows/ci.yml`：`main` 与 `release/**` 的 push、定向 PR 均运行完整门禁；普通工作分支 push 不重复运行。
+- CI 按 `.github/workflows/ci.yml`：`main` 与 `release/**` 的 push、定向 PR 均运行完整门禁；仅修改 `release-notes/*.md` 时跳过分支/PR 门禁，tag 发布仍完整验证；普通工作分支 push 不重复运行。
 
 ### 2.3 release/vX.Y（版本线）
 
