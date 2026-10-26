@@ -96,13 +96,13 @@ describe('macOS foreground capture shortcuts', () => {
     const original = runtime.register.mock.calls[0][1];
     const persist = vi.fn();
     runtime.register.mockReturnValue(false);
-    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist)).toBe(false);
+    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'darwin')).toBe(false);
     expect(persist).not.toHaveBeenCalled();
     expect(runtime.unregister).not.toHaveBeenCalled();
     runtime.register.mockReturnValue(true);
     const error = new Error('database write failed');
     persist.mockImplementation(() => { throw error; });
-    expect(() => saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist)).toThrow(error);
+    expect(() => saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'darwin')).toThrow(error);
     expect(runtime.unregister.mock.calls).toEqual([['CmdOrCtrl+Alt+G']]);
     original();
     expect(f.dispatch).toHaveBeenCalledWith('screenshot');
@@ -118,7 +118,7 @@ describe('macOS foreground capture shortcuts', () => {
       replacement();
       expect(f.dispatch).not.toHaveBeenCalled();
     });
-    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist)).toBe(true);
+    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'darwin')).toBe(true);
     expect(runtime.register).toHaveBeenCalledTimes(3);
     expect(persist).toHaveBeenCalledOnce();
     f.change('CmdOrCtrl+Alt+G');
