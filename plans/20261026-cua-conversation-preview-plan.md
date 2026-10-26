@@ -31,3 +31,7 @@
 ## 展示边界
 
 已识别普通会话 `/home/chat/:conversationId/:agentId`、应用会话 `/app/chat/:agentId/:conversationId`、App Pro 会话路径及带 `conversationId` 的智能体开发页，兼容 hash 路由。没有显式会话标识的开发页和未知路由默认隐藏；不会用应用/项目 ID 冒充会话 ID。未进行安装包、真实页面导航或 Mac/Windows 真机验收；本轮不出包、不发布。
+
+## 发布线独立复核（2026-10-26）
+
+上文为原分支记录。本轮在 `release/v3.0.23@1ce2df45` 重新移植与验证：回归先行 5 失败，修复后 68 项定向通过，商业全量 3,566、社区 1,682 项通过。原生 Electron webview 的 SPA/文档导航与监听清理已实测通过；安装包及 Mac/Windows 真机矩阵仍未完成。详细证据与前端整合见 `plans/20261026-valuable-branch-integration-plan.md`。
