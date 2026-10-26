@@ -60,3 +60,24 @@ it('a failed preference write keeps the saved toggle and menu shortcuts', async 
   expect(f.paint().toggle.checked).toBe(false);
   expect(hooks.error).toHaveBeenCalledWith('Claw.Capture.preferenceSaveFailed');
 });
+
+it.each([0, 1])('an unavailable shortcut %s shows the conflict message and preserves the saved menu key', async index => {
+  const f = mount('MacIntel'); await flush();
+  f.settings.set.mockRejectedValue(new Error("Error invoking remote method 'settings:set': Error: CAPTURE_SHORTCUT_UNAVAILABLE"));
+  const before = f.paint().inputs[index].value;
+  const onChange = index === 0 ? f.onShortcutChange : f.onRecordShortcutChange;
+  onChange.mockClear();
+  f.paint().inputs[index].onKeyDown({ key: 'g', code: 'KeyG', ctrlKey: false, metaKey: true, shiftKey: true, altKey: false, preventDefault: vi.fn() });
+  f.paint().saves[index].onClick(); await flush();
+  expect(hooks.error).toHaveBeenCalledOnce();
+  expect(hooks.error).toHaveBeenCalledWith('Claw.Capture.shortcutUnavailable');
+  expect(onChange).not.toHaveBeenCalled();
+  expect(f.paint().inputs[index].value).toBe('Command+Shift+G');
+  expect(f.paint().saves[index].disabled).toBe(false);
+  f.settings.set.mockResolvedValue(true);
+  f.paint().saves[index].onClick(); await flush();
+  expect(onChange).toHaveBeenCalledOnce();
+  expect(onChange).toHaveBeenCalledWith('CmdOrCtrl+Shift+G');
+  expect(before).not.toBe(f.paint().inputs[index].value);
+  expect(f.paint().saves[index].disabled).toBe(true);
+});

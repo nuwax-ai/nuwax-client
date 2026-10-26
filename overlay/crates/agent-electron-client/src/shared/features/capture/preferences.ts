@@ -1,6 +1,7 @@
 export const CAPTURE_HIDE_WINDOW_SETTING = 'capture.hideAppWindow';
 export const CAPTURE_SHORTCUT_SETTING = 'capture.screenshotShortcut';
 export const CAPTURE_RECORD_SHORTCUT_SETTING = 'capture.recordShortcut';
+export const CAPTURE_SHORTCUT_UNAVAILABLE_ERROR = 'CAPTURE_SHORTCUT_UNAVAILABLE';
 export const DEFAULT_RECORD_SHORTCUT = 'CmdOrCtrl+Shift+R';
 export const DEFAULT_CAPTURE_SHORTCUT = 'CmdOrCtrl+Shift+A';
 

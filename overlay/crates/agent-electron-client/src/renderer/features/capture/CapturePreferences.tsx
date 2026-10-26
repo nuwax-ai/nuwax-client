@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Input, Space, Switch, message } from 'antd';
-import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, captureShortcut, recordShortcut, displayCaptureShortcut, shortcutFromKeyboard } from '@shared/features/capture/preferences';
+import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, CAPTURE_SHORTCUT_UNAVAILABLE_ERROR, DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, captureShortcut, recordShortcut, displayCaptureShortcut, shortcutFromKeyboard } from '@shared/features/capture/preferences';
 
 interface Props {
   settings?: { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<unknown> };
@@ -43,7 +43,10 @@ export function CapturePreferences({ settings, t, disabled, onShortcutChange, on
       if (key === CAPTURE_HIDE_WINDOW_SETTING) setHideWindow(value === true);
       else if (key === CAPTURE_SHORTCUT_SETTING) { setShortcut(String(value)); setDraft(String(value)); onShortcutChange?.(String(value)); }
       else { setRecordKey(String(value)); setRecordDraft(String(value)); onRecordShortcutChange?.(String(value)); }
-    } catch { message.error(text('preferenceSaveFailed')); }
+    } catch (error) {
+      message.error(text(error instanceof Error && error.message.includes(CAPTURE_SHORTCUT_UNAVAILABLE_ERROR)
+        ? 'shortcutUnavailable' : 'preferenceSaveFailed'));
+    }
     finally { setSaving(false); }
   };
   const locked = disabled || !ready || saving || !settings;

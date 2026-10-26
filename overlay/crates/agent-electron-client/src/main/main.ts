@@ -48,7 +48,7 @@ import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/contract';
 import { routeCaptureShortcut } from './features';
-import { onCapturePreferencesChanged } from './features';
+import { onCapturePreferencesChanged, bindCaptureForegroundShortcuts } from './features';
 import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
@@ -476,6 +476,15 @@ function createWindow() {
     });
   }
 
+  // macOS 只在主窗口获得焦点时加入系统热键分发，失焦后释放。
+  if (process.platform === 'darwin' && isDesktopFeatureRegistered('capture')) {
+    bindCaptureForegroundShortcuts(mainWindow, () => [
+      [captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), 'screenshot'],
+      [recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), 'mp4'],
+    ], action => { void dispatchCaptureMenuAction(action, 'shortcut'); }, {
+      onUnavailable: shortcut => log.warn('[Capture] Foreground shortcut unavailable', shortcut),
+    });
+  }
   // Create application menu
   createMenu();
 }

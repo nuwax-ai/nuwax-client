@@ -336,6 +336,7 @@ export const I18N_KEYS = {
     SHORTCUT_RESET: "Claw.Capture.shortcutReset",
     SHORTCUT_HINT: "Claw.Capture.shortcutHint",
     SHORTCUT_INVALID: "Claw.Capture.shortcutInvalid",
+    SHORTCUT_UNAVAILABLE: "Claw.Capture.shortcutUnavailable",
     PREFERENCE_LOAD_FAILED: "Claw.Capture.preferenceLoadFailed",
     PREFERENCE_SAVE_FAILED: "Claw.Capture.preferenceSaveFailed",
 

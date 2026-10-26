@@ -189,5 +189,5 @@ export interface CaptureBridge {
 export {
   CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING,
   DEFAULT_RECORD_SHORTCUT, DEFAULT_CAPTURE_SHORTCUT, parseCaptureShortcut,
-  captureShortcut, recordShortcut, displayCaptureShortcut, shortcutFromKeyboard,
+  captureShortcut, recordShortcut, displayCaptureShortcut, shortcutFromKeyboard, CAPTURE_SHORTCUT_UNAVAILABLE_ERROR,
 } from "./preferences";

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   warn: vi.fn(),
   notifyCapture: vi.fn(),
+  shortcutAvailable: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -25,7 +26,7 @@ vi.mock("../services/hostActivity", () => ({
 }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
-vi.mock("../features", () => ({ notifyCapturePreferencesChanged: mocks.notifyCapture }));
+vi.mock("../features", () => ({ notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/contract';
 
 beforeEach(() => {
@@ -36,6 +37,7 @@ beforeEach(() => {
   mocks.refresh.mockReset();
   mocks.warn.mockClear();
   mocks.notifyCapture.mockReset();
+  mocks.shortcutAvailable.mockReset().mockImplementation((_shortcut, _action, persist) => { persist(); return true; });
   registerSettingsHandlers();
 });
 
@@ -58,10 +60,32 @@ describe("settings:set host activity refresh", () => {
     expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Shift+R')).toBe(false);
     expect(set({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+C')).toBe(false);
     expect(mocks.run).not.toHaveBeenCalled(); expect(notify).not.toHaveBeenCalled();
+    expect(mocks.shortcutAvailable).not.toHaveBeenCalled();
     expect(set({}, CAPTURE_RECORD_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(true);
     expect(mocks.run).toHaveBeenCalledWith(CAPTURE_RECORD_SHORTCUT_SETTING, '"CmdOrCtrl+Alt+G"');
     expect(notify).toHaveBeenCalledOnce();
     expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(notify.mock.invocationCallOrder[0]);
+  });
+
+  it.each([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING])('unavailable %s preserves persisted settings and menus', key => {
+    mocks.shortcutAvailable.mockReturnValue(false);
+    expect(() => mocks.handlers.get('settings:set')!({}, key, 'CmdOrCtrl+Alt+G'))
+      .toThrow('CAPTURE_SHORTCUT_UNAVAILABLE');
+    expect(mocks.shortcutAvailable).toHaveBeenCalledOnce();
+    expect(mocks.shortcutAvailable).toHaveBeenCalledWith('CmdOrCtrl+Alt+G', key === CAPTURE_SHORTCUT_SETTING ? 'screenshot' : 'mp4', expect.any(Function));
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.notifyCapture).not.toHaveBeenCalled();
+  });
+
+  it('checks the default when resetting and does not probe when the database is unavailable', () => {
+    mocks.shortcutAvailable.mockReturnValue(false);
+    expect(() => mocks.handlers.get('settings:set')!({}, CAPTURE_SHORTCUT_SETTING, null))
+      .toThrow('CAPTURE_SHORTCUT_UNAVAILABLE');
+    expect(mocks.shortcutAvailable).toHaveBeenCalledWith('CmdOrCtrl+Shift+A', 'screenshot', expect.any(Function));
+    mocks.shortcutAvailable.mockClear();
+    mocks.available = false;
+    expect(mocks.handlers.get('settings:set')!({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(false);
+    expect(mocks.shortcutAvailable).not.toHaveBeenCalled();
   });
   it("休眠设置先持久化再刷新，保留原成功返回", () => {
     expect(mocks.handlers.get("settings:set")!({}, "nuwax.dormancy", { enabled: false })).toBe(true);
