@@ -72,6 +72,8 @@ import { getNuwaxAccessTokenKey } from "@shared/utils/domain";
 import { TITLEBAR_EMPTY_GRACE_MS } from "@shared/utils/titlebarDragRegions";
 import SetupDependencies from "./components/setup/SetupDependencies";
 import { AppIconLoading } from "./components/AppIconLoading";
+import { PageLoadRecovery } from "./components/PageLoadRecovery";
+import { observeServiceReadiness, type ServiceGateActivity } from "./services/serviceReadiness";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
@@ -250,6 +252,9 @@ function App() {
     elapsedMs?: number;
   } | null>(null);
 
+  const [servicesActivity, setServicesActivity] = useState<ServiceGateActivity>("loading");
+  const servicesObserver = useRef<ReturnType<typeof observeServiceReadiness> | null>(null);
+
   // ============================================
   // 主题状态
   // ============================================
@@ -291,25 +296,11 @@ function App() {
     };
   }, []);
 
-  // 启动服务门禁：核心服务 ready 前停在启动 loading（不挂 webview，杜绝页面
-  // 首屏 API 抢跑的「服务连接失败」弹窗）。先读缓存（事件可能早于 renderer
-  // 挂载已发），再监听后续推送；失败屏的重试经 waitForReady 重跑门禁。
+  // Main-process readiness remains authoritative; cached reads cannot replace newer events.
   useEffect(() => {
-    void window.electronAPI?.services
-      ?.readyState()
-      .then((s) => {
-        if (s) setServicesGate(s as { ok: boolean; detail?: string[] });
-      })
-      .catch(() => {});
-    const onServicesReady = (payload: unknown) => {
-      if (payload && typeof payload === "object" && "ok" in payload) {
-        setServicesGate(payload as { ok: boolean; detail?: string[] });
-      }
-    };
-    window.electronAPI?.on("services:ready", onServicesReady as any);
-    return () => {
-      window.electronAPI?.off("services:ready", onServicesReady as any);
-    };
+    const observer = observeServiceReadiness(window.electronAPI, setServicesGate, setServicesActivity);
+    servicesObserver.current = observer;
+    return () => { observer.dispose(); servicesObserver.current = null; };
   }, []);
 
   // 二级页同窗承载（默认形态）：nuwax 经 native:openWindow 请求打开的站内页
@@ -369,6 +360,7 @@ function App() {
     const active = shellTheme?.active === true && !isDarkMode;
     const vars: Array<[string, string | undefined]> = [
       ["--color-primary", active ? shellTheme?.primary : undefined],
+      ["--nuwax-recovery-accent", active ? shellTheme?.primary : undefined],
       ["--color-bg-layout", active ? shellTheme?.bgContent : undefined],
       ["--color-bg-container", active ? shellTheme?.bgContent : undefined],
       ["--color-bg-elevated", active ? shellTheme?.bgContent : undefined],
@@ -1877,41 +1869,202 @@ function App() {
   // 失败态优先短路（错误提示立即出现，不受最少展示时长影响）；
   // 等待态同样并入最少展示时长。
   // ============================================
-  const servicesGateFailed = !!servicesGate && !servicesGate.ok;
+  // Shared local settings stay reachable even before the guest/service gate is ready.
+  const clientSettingsModal = (
+    <Modal
+      open={settingsModalOpen}
+      afterClose={() => { captureAfterSettingsClose.current?.(); captureAfterSettingsClose.current = null; }}
+      onCancel={() => setSettingsModalOpen(false)}
+      footer={null}
+      centered
+      width={1000}
+      closable={false}
+      styles={{
+        // 弹窗整体灰底：让页面内白色卡片在灰底上浮出
+        content: {
+          padding: "0",
+          borderRadius: "12px",
+          overflow: "hidden",
+          background: "var(--color-bg-layout)",
+        },
+        // 固定尺寸 1000×640：外壳不滚，左菜单/右内容在固定高度容器内各自滚动
+        body: {
+          height: 640,
+          boxSizing: "border-box",
+          overflow: "hidden",
+        },
+        // 遮罩：玻璃模糊（低不透明度，透出背景）
+        mask: {
+          background: "rgba(0, 0, 0, 0.3)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+        },
+      }}
+      destroyOnHidden
+    >
+      <div
+        className={styles.configPane}
+        style={{
+          display: "flex",
+          height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
+        }}
+      >
+        <div
+          className={
+            i18nLang.toLowerCase().startsWith("en")
+              ? "app-sider app-sider-en"
+              : "app-sider"
+          }
+        >
+          <div className="app-sider-caption">{APP_DISPLAY_NAME}</div>
+          <nav className="app-sider-nav">
+            {menuItems
+              .filter((item) => item.key !== "about")
+              .map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`app-sider-item${
+                    activeTab === item.key
+                      ? " app-sider-item-active"
+                      : ""
+                  }`}
+                  onClick={() => setActiveTab(item.key as TabKey)}
+                >
+                  <span className="app-sider-item-icon">
+                    {item.icon}
+                  </span>
+                  <span className="app-sider-item-label">
+                    {item.label}
+                  </span>
+                </button>
+              ))}
+          </nav>
+          {/* 关于钉底：弹性占位 + 分隔线，推到左栏底部 */}
+          <div className="app-sider-spacer" />
+          <div className="app-sider-divider" />
+          {menuItems
+            .filter((item) => item.key === "about")
+            .map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`app-sider-item${
+                  activeTab === item.key
+                    ? " app-sider-item-active"
+                    : ""
+                }`}
+                onClick={() => setActiveTab(item.key as TabKey)}
+              >
+                <span className="app-sider-item-icon">
+                  {item.icon}
+                </span>
+                <span className="app-sider-item-label">
+                  {item.label}
+                </span>
+              </button>
+            ))}
+        </div>
+        <div className="app-content">
+          <div className="app-content-titlebar">
+            <span className="app-content-title">
+              {menuItems.find((item) => item.key === activeTab)
+                ?.label ?? ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button
+              type="text"
+              size="small"
+              aria-label={t("Claw.Common.close")}
+              onClick={() => setSettingsModalOpen(false)}
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 13,
+                // 右移补偿：让 icon 视觉中心对齐标题行右内边距
+                marginInlineEnd: -4,
+                color: "var(--color-text-tertiary)",
+              }}
+            >
+              <CloseOutlined />
+            </Button>
+          </div>
+          <div className="app-content-body">
+            {activeTab === "client" && (
+              <ClientPage
+                onNavigate={(tab) => setActiveTab(tab as TabKey)}
+                isWebviewLoggedIn={isAuthLoggedIn}
+                services={services}
+                servicesLoading={servicesLoading}
+                startingServices={startingServices}
+                setStartingServices={setStartingServices}
+                onRefreshServices={pollServicesStatus}
+                authRefreshTrigger={authRefreshTrigger}
+                onAuthChange={handleAuthChange}
+                onLoginComplete={openBrowserHome}
+                onStartSession={openStartSession}
+                onGotoLogin={() => {
+                  setSettingsModalOpen(false);
+                  setMainViewMode("browser");
+                }}
+              />
+            )}
+            {activeTab === "sessions" && (
+              <SessionsPage onOpenInBrowser={openInBrowser} />
+            )}
+            <div
+              style={{
+                display: activeTab === "mcp" ? "contents" : "none",
+              }}
+            >
+              <MCPSettings isOpen={activeTab === "mcp"} />
+            </div>
+            {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
+            {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
+            {activeTab === "dependencies" && <DependenciesPage />}
+            {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => { setSettingsModalOpen(false); void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined); }} />}
+            {activeTab === "logs" && <LogViewer />}
+            {activeTab === "about" && <AboutPage webMeta={webMeta} />}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+
+  const servicesGateFailed = (!!servicesGate && !servicesGate.ok) || servicesActivity === "failed";
   if (servicesGateFailed || !servicesGate || !splashFloorMet) {
+    const pending = servicesActivity === "loading" || servicesActivity === "waiting";
+    const recoveryMode = servicesActivity === "waiting"
+      ? "waiting"
+      : pending || (!splashFloorMet && !servicesGateFailed) ? "loading" : "failed";
     return (
       <I18nContext.Provider value={i18nContextValue}>
         <ConfigProvider theme={currentTheme}>
-          {/* 等待态不出文案：加载语义由图标扫光动效表达，启动瞬间只见品牌图标。
-              失败态静止图标 + 标题/未就绪明细/重试按钮。 */}
-          <AppIconLoading animated={!servicesGateFailed}>
-            {servicesGateFailed ? (
-              <>
-                <div
-                  className="app-loading-text"
-                  style={{ fontSize: 16, fontWeight: 600 }}
-                >
-                  本地服务启动失败
-                </div>
-                <div
-                  className="app-loading-text"
-                  style={{ maxWidth: 420, textAlign: "center", marginTop: 8 }}
-                >
-                  未就绪：{(servicesGate.detail ?? []).join("、")}
-                </div>
-                <Button
-                  type="primary"
-                  style={{ marginTop: 16 }}
-                  onClick={() => {
-                    setServicesGate(null);
-                    void window.electronAPI?.services?.waitForReady();
-                  }}
-                >
-                  重试
-                </Button>
-              </>
-            ) : null}
-          </AppIconLoading>
+          <ThemeContext.Provider value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}>
+            <div className="app-container">
+              <TrafficLightToolbar
+                menuCollapsed={false} menuAvailable={false}
+                canGoBack={false} canGoForward={false}
+                onToggleMenu={() => {}} onBack={() => {}} onForward={() => {}}
+                onReload={() => servicesObserver.current?.retry()}
+                onOpenSettings={handleOpenSettings} onOpenSettingsMenu={handleOpenSettings}
+                onOpenAbout={handleOpenAbout}
+              />
+              <PageLoadRecovery
+                stage="services"
+                mode={recoveryMode}
+                lang={getCurrentLang()}
+                busy={servicesActivity === "loading"}
+                onReload={() => servicesObserver.current?.retry()}
+                onOpenSettings={handleOpenSettings}
+              />
+              {clientSettingsModal}
+            </div>
+          </ThemeContext.Provider>
         </ConfigProvider>
       </I18nContext.Provider>
     );
@@ -1930,9 +2083,8 @@ function App() {
             {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
             {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} />}
 
-            {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
-                加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
-            {loadingCovered && <AppIconLoading overlay />}
+            {/* 首载使用本地恢复卡片；失败/慢等待立即让位，工具栏始终可达。 */}
+            {loadingCovered && <PageLoadRecovery mode="loading" overlay lang={getCurrentLang()} />}
             {/* 顶部栏：Logo + 模式切换 + 浏览器刷新 + 用户状态 + 升级提示 */}
             {/* 顶栏撤除：沉浸式 webview 顶到窗口上沿。原顶栏的 Segmented 模式切换与账号登录态
                 移除；新版本更新入口迁入工具栏 updateEntry（Agent 运行状态不再展示）；
@@ -2124,6 +2276,7 @@ function App() {
                     onNavStateChange={handleNavStateChange}
                     onNavigationStart={handleGuestNavigationStart}
                     onGuestLoadStateChange={setGuestLoadPhase}
+                    onOpenSettings={handleOpenSettings}
                   />
                 </div>
               </div>
@@ -2131,168 +2284,7 @@ function App() {
               {/* 系统配置浮层：原 configPane 整页切换 → antd Modal，沉浸式下不打断 webview。
                   无顶栏标题（样式对齐参考设计）：页标题移到右栏顶部行、关闭钮随行右上角；
                   左栏为自绘导航（caption + 图标项，「关于」经分隔线钉底）。 */}
-              <Modal
-                open={settingsModalOpen}
-                afterClose={() => { captureAfterSettingsClose.current?.(); captureAfterSettingsClose.current = null; }}
-                onCancel={() => setSettingsModalOpen(false)}
-                footer={null}
-                centered
-                width={1000}
-                closable={false}
-                styles={{
-                  // 弹窗整体灰底：让页面内白色卡片在灰底上浮出
-                  content: {
-                    padding: "0",
-                    borderRadius: "12px",
-                    overflow: "hidden",
-                    background: "var(--color-bg-layout)",
-                  },
-                  // 固定尺寸 1000×640：外壳不滚，左菜单/右内容在固定高度容器内各自滚动
-                  body: {
-                    height: 640,
-                    boxSizing: "border-box",
-                    overflow: "hidden",
-                  },
-                  // 遮罩：玻璃模糊（低不透明度，透出背景）
-                  mask: {
-                    background: "rgba(0, 0, 0, 0.3)",
-                    backdropFilter: "blur(10px)",
-                    WebkitBackdropFilter: "blur(10px)",
-                  },
-                }}
-                destroyOnHidden
-              >
-                <div
-                  className={styles.configPane}
-                  style={{
-                    display: "flex",
-                    height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
-                  }}
-                >
-                  <div
-                    className={
-                      i18nLang.toLowerCase().startsWith("en")
-                        ? "app-sider app-sider-en"
-                        : "app-sider"
-                    }
-                  >
-                    <div className="app-sider-caption">{APP_DISPLAY_NAME}</div>
-                    <nav className="app-sider-nav">
-                      {menuItems
-                        .filter((item) => item.key !== "about")
-                        .map((item) => (
-                          <button
-                            key={item.key}
-                            type="button"
-                            className={`app-sider-item${
-                              activeTab === item.key
-                                ? " app-sider-item-active"
-                                : ""
-                            }`}
-                            onClick={() => setActiveTab(item.key as TabKey)}
-                          >
-                            <span className="app-sider-item-icon">
-                              {item.icon}
-                            </span>
-                            <span className="app-sider-item-label">
-                              {item.label}
-                            </span>
-                          </button>
-                        ))}
-                    </nav>
-                    {/* 关于钉底：弹性占位 + 分隔线，推到左栏底部 */}
-                    <div className="app-sider-spacer" />
-                    <div className="app-sider-divider" />
-                    {menuItems
-                      .filter((item) => item.key === "about")
-                      .map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          className={`app-sider-item${
-                            activeTab === item.key
-                              ? " app-sider-item-active"
-                              : ""
-                          }`}
-                          onClick={() => setActiveTab(item.key as TabKey)}
-                        >
-                          <span className="app-sider-item-icon">
-                            {item.icon}
-                          </span>
-                          <span className="app-sider-item-label">
-                            {item.label}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                  <div className="app-content">
-                    <div className="app-content-titlebar">
-                      <span className="app-content-title">
-                        {menuItems.find((item) => item.key === activeTab)
-                          ?.label ?? ""}
-                      </span>
-                      <span style={{ flex: 1 }} />
-                      <Button
-                        type="text"
-                        size="small"
-                        aria-label={t("Claw.Common.close")}
-                        onClick={() => setSettingsModalOpen(false)}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          padding: 0,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 13,
-                          // 右移补偿：让 icon 视觉中心对齐标题行右内边距
-                          marginInlineEnd: -4,
-                          color: "var(--color-text-tertiary)",
-                        }}
-                      >
-                        <CloseOutlined />
-                      </Button>
-                    </div>
-                    <div className="app-content-body">
-                      {activeTab === "client" && (
-                        <ClientPage
-                          onNavigate={(tab) => setActiveTab(tab as TabKey)}
-                          isWebviewLoggedIn={isAuthLoggedIn}
-                          services={services}
-                          servicesLoading={servicesLoading}
-                          startingServices={startingServices}
-                          setStartingServices={setStartingServices}
-                          onRefreshServices={pollServicesStatus}
-                          authRefreshTrigger={authRefreshTrigger}
-                          onAuthChange={handleAuthChange}
-                          onLoginComplete={openBrowserHome}
-                          onStartSession={openStartSession}
-                          onGotoLogin={() => {
-                            setSettingsModalOpen(false);
-                            setMainViewMode("browser");
-                          }}
-                        />
-                      )}
-                      {activeTab === "sessions" && (
-                        <SessionsPage onOpenInBrowser={openInBrowser} />
-                      )}
-                      <div
-                        style={{
-                          display: activeTab === "mcp" ? "contents" : "none",
-                        }}
-                      >
-                        <MCPSettings isOpen={activeTab === "mcp"} />
-                      </div>
-                      {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
-                      {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
-                      {activeTab === "dependencies" && <DependenciesPage />}
-                      {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => { setSettingsModalOpen(false); void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined); }} />}
-                      {activeTab === "logs" && <LogViewer />}
-                      {activeTab === "about" && <AboutPage webMeta={webMeta} />}
-                    </div>
-                  </div>
-                </div>
-              </Modal>
+              {clientSettingsModal}
               {/* 授权引导悬浮浮层：首次总览与权限受阻跳转的承接面（设置 → 授权 tab 为常驻管理入口） */}
               {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && (
                 <Modal

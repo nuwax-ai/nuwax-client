@@ -34,7 +34,7 @@ import {
 } from "../services/system/macPermissions";
 import { getBundledDistVersion } from "../services/frontendDistVersion";
 import { getTrayManager } from "../window/trayManager";
-import { getAutoLaunchManager } from "../window/autoLaunchManager";
+import { createAutoLaunchManager, getAutoLaunchManager } from "../window/autoLaunchManager";
 import { t } from "../services/i18n";
 import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, I18N_KEYS } from "@shared/constants";
 import { checkMacNotificationPermission } from "../services/system/macNotificationPermission";
@@ -100,10 +100,8 @@ export function registerAppHandlers(ctx: HandlerContext): void {
   // Autolaunch
   ipcMain.handle("autolaunch:get", async () => {
     try {
-      const mgr = getAutoLaunchManager();
-      if (mgr) return mgr.isEnabled();
-      const settings = app.getLoginItemSettings({ args: ["--hidden"] });
-      return settings.openAtLogin;
+      const mgr = getAutoLaunchManager() ?? createAutoLaunchManager();
+      return await mgr.isEnabled();
     } catch (error) {
       log.error("[IPC] autolaunch:get failed:", error);
       return false;
@@ -112,18 +110,9 @@ export function registerAppHandlers(ctx: HandlerContext): void {
 
   ipcMain.handle("autolaunch:set", async (_, enabled: boolean) => {
     try {
-      const mgr = getAutoLaunchManager();
-      let success = false;
-      if (mgr) {
-        success = await mgr.setEnabled(enabled);
-      } else {
-        app.setLoginItemSettings({
-          openAtLogin: enabled,
-          openAsHidden: true,
-          args: ["--hidden"],
-        });
-        success = true;
-      }
+      // 启动较早的 IPC 也复用管理器，避免备用路径重新写入隐藏 Dock 的旧策略。
+      const mgr = getAutoLaunchManager() ?? createAutoLaunchManager();
+      const success = await mgr.setEnabled(enabled);
       if (!success)
         return {
           success: false,

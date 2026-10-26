@@ -11,6 +11,7 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   screen,
   session,
   webContents,
@@ -54,6 +55,8 @@ import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./serv
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createAutoLaunchManager } from "./window/autoLaunchManager";
+import { createDockVisibility } from "./window/dockVisibility";
+import { createServiceReadinessGate } from "./services/serviceReadinessGate";
 import { createServiceManager } from "./window/serviceManager";
 import { createTrayServiceActions } from "./window/trayServiceActions";
 import { initAutoUpdater } from "./services/commercialAutoUpdater";
@@ -174,6 +177,7 @@ let trayManager: ReturnType<typeof createTrayManager> | null = null;
 let isQuitting = false; // 标志：是否正在真正退出应用
 let isInstallingUpdate = false; // 标志：是否正在执行 quitAndInstall 安装更新
 let pendingSecondInstanceFocus = false; // 标志：窗口未创建前收到 second-instance 事件
+const dockVisibility = createDockVisibility({ app, platform: process.platform, isQuitting: () => isQuitting, log });
 
 // 单实例保护：Windows 托盘常驻场景下再次启动时，复用当前实例而不是创建新实例
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -236,22 +240,8 @@ function getDockIconPath() {
  * 确保 macOS Dock 栏常驻显示应用图标，并保持激活策略为 regular。
  * 避免因系统自启动 (openAsHidden) 或无窗口状态导致应用图标在 Dock 栏消失。
  */
-function ensureDockVisible(): void {
-  if (process.platform !== "darwin") return;
-  try {
-    app.setActivationPolicy?.("regular");
-    if (app.dock) {
-      if (typeof app.dock.isVisible === "function") {
-        if (!app.dock.isVisible()) {
-          void app.dock.show();
-        }
-      } else {
-        void app.dock.show();
-      }
-    }
-  } catch (error) {
-    log.warn("[Dock] Failed to ensure dock visible:", error);
-  }
+function ensureDockVisible(reason = "app-lifecycle"): void {
+  dockVisibility.ensure(reason);
 }
 
 function setupDockIcon(): void {
@@ -448,6 +438,11 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  // 隐藏/最小化不代表退出；恢复 Dock 与显示主窗各自独立，不抢用户焦点。
+  for (const event of ["show", "hide", "minimize", "restore"] as const) {
+    mainWindow.on(event, () => ensureDockVisible(`window-${event}`));
+  }
 
   // 所有平台：点击关闭按钮时隐藏到托盘，而不是退出应用
   // 只有从托盘菜单点击"退出"时才真正退出
@@ -855,6 +850,10 @@ app.whenReady().then(async () => {
 
   // Set Dock icon on macOS and ensure regular activation policy
   setupDockIcon();
+  if (process.platform === "darwin") {
+    powerMonitor.on("resume", () => ensureDockVisible("resume"));
+    powerMonitor.on("unlock-screen", () => ensureDockVisible("unlock-screen"));
+  }
 
   migrateDataDir();
   initDatabase();
@@ -919,24 +918,20 @@ app.whenReady().then(async () => {
   createWindow();
   // 启动服务门禁：核心服务 ready 前壳层停在 loading（renderer 监听 services:ready）。
   {
-    let gateResult: unknown = null;
-    const sendGate = (r: unknown): void => {
-      mainWindow?.webContents.send("services:ready", r);
-    };
-    const runGate = (): void => {
-      void (async () => {
+    const gate = createServiceReadinessGate({
+      probe: async () => {
         const { runServicesGate } = await import("./services/servicesGate");
-        const r = await runServicesGate();
-        gateResult = r;
-        sendGate(r);
-      })();
-    };
-    ipcMain.handle("services:readyState", () => gateResult);
+        return runServicesGate();
+      },
+      publish: result => mainWindow?.webContents.send("services:ready", result),
+      warn: reason => log.warn("[ServicesGate] recovery", { reason }),
+    });
+    ipcMain.handle("services:readyState", () => gate.result());
     ipcMain.handle("services:waitForReady", () => {
-      runGate();
+      void gate.run();
       return null;
     });
-    runGate();
+    void gate.run();
   }
   // 诊断探针（NUWAX_AVOID_PROBE=1）：guest 的避让判定输入真值（桥/platform/菜单 paddingTop）
   if (process.env.NUWAX_AVOID_PROBE === "1") {

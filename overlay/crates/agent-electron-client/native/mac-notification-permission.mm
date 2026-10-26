@@ -51,15 +51,15 @@ static void ReleaseNotificationListener(const std::string &id) {
   listeners.erase(found);
 }
 
-static void EmitNotificationEvent(const std::string &id, const char *name, int32_t code = 0) {
+static void EmitNotificationEvent(const std::string &id, const char *name, int32_t code = 0, bool terminal = true) {
   std::lock_guard<std::mutex> lock(listenersMutex);
   auto found = listeners.find(id);
   if (found == listeners.end()) return;
   auto callback = found->second.callback;
-  listeners.erase(found);
+  if (terminal) listeners.erase(found);
   auto *event = new NotificationEvent{name, code};
   if (napi_call_threadsafe_function(callback, event, napi_tsfn_nonblocking) != napi_ok) delete event;
-  napi_release_threadsafe_function(callback, napi_tsfn_release);
+  if (terminal) napi_release_threadsafe_function(callback, napi_tsfn_release);
 }
 
 static bool OwnNotification(NSString *id) { return [id hasPrefix:@"nuwax.im."]; }
@@ -183,6 +183,9 @@ static napi_value ShowNotification(napi_env env, napi_callback_info info) {
         // again after completion so an old account's request cannot arrive late.
         if (closed) RemoveNotification(id);
         else if (error) EmitNotificationEvent(id, "failed", static_cast<int32_t>(error.code));
+        // Accepted by the OS, not proof that a banner or Notification Center row is visible.
+        // Keep the listener alive for the later click/dismiss callback.
+        else EmitNotificationEvent(id, "submitted", 0, false);
       }];
     } @catch (NSException *exception) {
       {

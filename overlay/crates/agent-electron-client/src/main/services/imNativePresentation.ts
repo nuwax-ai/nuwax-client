@@ -14,10 +14,12 @@ export interface IMNativeMessage {
   convId: string;
   title: string;
   body: string;
+  /** 进程内诊断序号，不得使用真实消息或会话 ID。 */
+  diagnosticTrace?: number;
 }
 
 export interface IMNativeNotification {
-  on(event: "click" | "close" | "failed", listener: (details?: unknown) => void): unknown;
+  on(event: "click" | "close" | "failed" | "submitted", listener: (details?: unknown) => void): unknown;
   removeAllListeners(): unknown;
   show(): void;
   close(): void;
@@ -163,6 +165,7 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
       || typeof message.convId !== "string" || !message.convId || message.convId.length > 256) return false;
     // 点击回调只留代次，避免把收到的完整消息内容留到通知关闭。
     const generation = message.sessionGeneration;
+    const trace = Number.isSafeInteger(message.diagnosticTrace) && message.diagnosticTrace! > 0 ? message.diagnosticTrace : undefined;
     try {
       if (!sessionCurrent(generation)) return false;
       const key = `${generation}:${message.msgId}`;
@@ -191,14 +194,22 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
         notifications.values().next().value?.(false);
       }
       notifications.set(notification, (close = true) => release(close));
+      notification.on("submitted", () => {
+        if (!notifications.has(notification)) return;
+        // addNotificationRequest 的成功回调只证明系统接受请求，不能证明已进入列表。
+        log.info("[IM] Native notification submitted", {trace, platform});
+      });
       notification.on("close", (details) => {
         const reason = details && typeof details === "object" ? (details as {reason?: unknown}).reason : undefined;
         // A timed-out Windows toast remains clickable in Action Center.
         if (platform === "win32" && reason === "timedOut") return;
         release();
       });
-      notification.on("failed", () => {
-        log.warn("[IM] Native notification failed");
+      notification.on("failed", details => {
+        const value = details && typeof details === "object" ? (details as {code?: unknown}).code : undefined;
+        const code = typeof value === "number" && Number.isInteger(value) && value >= -2147483648 && value <= 2147483647 ? value : undefined;
+        // 不输出 Electron 的自由文本错误或原生 NSError 内容，只保留数值 code。
+        log.warn("[IM] Native notification failed", {trace, platform, ...(code === undefined ? {} : {code})});
         release(true);
       });
       notification.on("click", () => {
@@ -222,11 +233,11 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
         return true;
       } catch {
         release(true);
-        log.warn("[IM] Failed to show native notification");
+        log.warn("[IM] Failed to show native notification", {trace, platform});
         return false;
       }
     } catch {
-      log.warn("[IM] Native notification unavailable");
+      log.warn("[IM] Native notification unavailable", {trace, platform});
       return false;
     }
   }

@@ -4,6 +4,7 @@ import WebSocket from "ws";
 import JSONBigInt from "json-bigint";
 import { readSetting, writeSetting } from "../db";
 import { currentBusinessOrigin } from "./commercialSessionScope";
+import { businessBridgeOrigins, httpOrigin } from "./auth/businessOrigins";
 import { currentTicket, ticketEpoch, mirrorNativeResponseTicket, mirrorGatewaySetCookies } from "./commercialTicketSession";
 import { nativeTicketHeaders } from "./nativeTicketCapability";
 import { getDeviceId } from "./system/deviceId";
@@ -14,6 +15,9 @@ import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
 const json = JSONBigInt({storeAsString: true, strict: true});
 const ENABLED_KEY = "nuwax.im.notifications.enabled";
+type NotificationDecision = "invalid-message" | "own-message" | "duplicate" | "notifications-disabled" |
+  "receiver-unavailable" | "business-foreground" | "queued" | "queue-limit" | "superseded" |
+  "cancelled" | "session-changed" | "dnd" | "conversation-lookup-failed" | "native-requested" | "native-skipped";
 let runtime: ReturnType<typeof createRuntime> | null = null;
 let quitting = false;
 const unreadListeners = new Set<(snapshot: IMUnreadSnapshot | null) => void>();
@@ -26,14 +30,34 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
   let disposed = false;
   let notifyEnabled = readSetting(ENABLED_KEY) !== false;
   const controllers = new Set<AbortController>();
-  const messages = new Map<string, {body: Record<string, any>; generation: number; current(): boolean; selfId: string}>();
+  const messages = new Map<string, {body: Record<string, any>; generation: number; current(): boolean; selfId: string; trace: number}>();
   const seen = new Set<string>();
   let presenting = 0;
-  const foreground = () => BrowserWindow.getAllWindows().some(win => !win.isDestroyed() && win.isFocused());
-  const canPresent = () => notifyEnabled && !disposed && receiver.canReceive() && !foreground();
+  let notificationSequence = 0;
+  // 辅助的 file:// 截图/CU 窗口有焦点，不代表用户正在查看业务消息。
+  // 二级业务页按当前桥准入重新判断，换域或 loopback 关闭后不保留旧身份。
+  const businessWindows = () => {
+    const main = getMainWindow();
+    const origins = businessBridgeOrigins();
+    return [...new Set([...BrowserWindow.getAllWindows(), ...(main ? [main] : [])])].filter(win => {
+      if (win.isDestroyed()) return false;
+      if (win === main) return true;
+      try {
+        if (win.webContents.isDestroyed()) return false;
+        const origin = httpOrigin(win.webContents.getURL());
+        return origin !== null && origins.includes(origin);
+      } catch { return false; }
+    });
+  };
+  const foreground = () => businessWindows().some(win => win.isFocused());
+  const presentationBlock = (): NotificationDecision | null => !notifyEnabled ? "notifications-disabled" :
+    disposed || !receiver.canReceive() ? "receiver-unavailable" : foreground() ? "business-foreground" : null;
+  const canPresent = () => presentationBlock() === null;
+  // trace 仅是进程内递增序号；不记录消息/会话 ID、正文、地址或凭据。
+  const decision = (trace: number, reason: NotificationDecision) => log.info("[IMReceiver] notification", {trace, reason});
   const native = createIMNativePresentation({
     getMainWindow,
-    getBusinessWindows: () => BrowserWindow.getAllWindows(),
+    getBusinessWindows: businessWindows,
     isSessionCurrent: generation => receiver.isGenerationCurrent(generation),
     isNotificationAllowed: canPresent,
   });
@@ -70,6 +94,7 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     return envelope.data;
   };
   const abortPresentations = () => {
+    for (const item of messages.values()) decision(item.trace, "cancelled");
     messages.clear();
     for (const controller of controllers) controller.abort();
     controllers.clear();
@@ -133,14 +158,24 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     },
     log: state => log.info("[IMReceiver] state", {state}),
     onMessage: (body, generation, current, selfId) => {
+      const trace = ++notificationSequence;
       const convId = body.convId === undefined ? "" : String(body.convId);
       const msgId = body.msgId === undefined ? "" : String(body.msgId);
-      if (!convId || !msgId || !selfId || String(body.senderId) === selfId || !canPresent() || seen.has(msgId)) return;
+      const reason = !convId || !msgId || !selfId ? "invalid-message" : String(body.senderId) === selfId ? "own-message" :
+        presentationBlock() ?? (seen.has(msgId) ? "duplicate" : null);
+      if (reason) { decision(trace, reason); return; }
       seen.add(msgId);
       while (seen.size > 2048) seen.delete(seen.values().next().value!);
       // 突发消息按会话保留最新提醒；角标仍由服务端全量数决定。
-      if (messages.size >= 50 && !messages.has(convId)) messages.delete(messages.keys().next().value!);
-      messages.set(convId, {body, generation, current, selfId});
+      if (messages.size >= 50 && !messages.has(convId)) {
+        const [oldestId, oldest] = messages.entries().next().value!;
+        decision(oldest.trace, "queue-limit");
+        messages.delete(oldestId);
+      }
+      const previous = messages.get(convId);
+      if (previous) decision(previous.trace, "superseded");
+      messages.set(convId, {body, generation, current, selfId, trace});
+      decision(trace, "queued");
       pumpMessages();
     },
   });
@@ -148,23 +183,28 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     if (presenting >= 2 || !messages.size || disposed) return;
     const [convId, item] = messages.entries().next().value!;
     messages.delete(convId);
-    if (!item.current() || !canPresent()) { pumpMessages(); return; }
+    const blocked = !item.current() ? "session-changed" : presentationBlock();
+    if (blocked) { decision(item.trace, blocked); pumpMessages(); return; }
     const snapshotSession = activeSession;
-    if (!snapshotSession) return;
+    if (!snapshotSession) { decision(item.trace, "session-changed"); return; }
     const controller = new AbortController();
     controllers.add(controller);
     presenting++;
     void request(snapshotSession, `/api/instant-message/conversations/${encodeURIComponent(convId)}`, controller.signal)
       .then(conv => {
-        if (!item.current() || !canPresent() || controller.signal.aborted) return;
+        const blocked = controller.signal.aborted ? "cancelled" : !item.current() ? "session-changed" : presentationBlock();
+        if (blocked) { decision(item.trace, blocked); return; }
         const mentioned = item.body.mentionAll === true ||
           (Array.isArray(item.body.mentionUserIds) && item.body.mentionUserIds.some((id: unknown) => String(id) === item.selfId));
-        if (conv.dnd === true && !mentioned) return;
+        if (conv.dnd === true && !mentioned) { decision(item.trace, "dnd"); return; }
         const group = [2, 4].includes(Number(conv.convType));
         const title = String(group ? conv.name || item.body.senderName || "IM" : item.body.senderName || conv.peerName || conv.name || "IM");
         const body = String(item.body.digest || "").replace(/<[^>]*>/g, "").replace(/[\r\n]+/g, " ").slice(0, 200);
-        native.showMessage({sessionGeneration: item.generation, msgId: String(item.body.msgId), convId, title, body});
-      }).catch(() => { /* 会话信息失败跳过这一条通知，未读更新独立继续。 */ })
+        const requested = native.showMessage({sessionGeneration: item.generation, msgId: String(item.body.msgId), convId, title, body, diagnosticTrace: item.trace});
+        decision(item.trace, requested ? "native-requested" : "native-skipped");
+      }).catch(() => {
+        decision(item.trace, controller.signal.aborted ? "cancelled" : !item.current() ? "session-changed" : "conversation-lookup-failed");
+      })
       .finally(() => { controllers.delete(controller); presenting--; pumpMessages(); });
     pumpMessages();
   }

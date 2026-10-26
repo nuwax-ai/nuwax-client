@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import type { NotificationConstructorOptions } from "electron";
 
-type NotificationEvent = "click" | "close" | "failed";
+type NotificationEvent = "click" | "close" | "failed" | "submitted";
 type NativeNotifications = {
   showNotification(id: string, title: string, body: string, silent: boolean, callback: (event: NotificationEvent, code: number) => void): void;
   releaseNotification(id: string): void;

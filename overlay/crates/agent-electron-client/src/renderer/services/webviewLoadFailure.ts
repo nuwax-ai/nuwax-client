@@ -16,13 +16,26 @@ export function diagnosticPageUrl(raw: unknown): string {
   }
 }
 
-export function mainDocumentFailure(event: {
-  isMainFrame?: boolean;
-  errorCode?: number;
-  validatedURL?: string;
-}): GuestLoadFailure | null {
+export function mainDocumentFailure(
+  event: {
+    isMainFrame?: boolean;
+    errorCode?: number;
+    validatedURL?: string;
+  },
+  activeDocumentUrl?: string,
+): GuestLoadFailure | null {
   // -3 is ERR_ABORTED, expected when another navigation supersedes this one.
   if (event.isMainFrame !== true || event.errorCode === -3) return null;
+  if (activeDocumentUrl && event.validatedURL) {
+    try {
+      const active = new URL(activeDocumentUrl);
+      const failed = new URL(event.validatedURL);
+      active.hash = failed.hash = "";
+      if (active.href !== failed.href) return null;
+    } catch {
+      /* An invalid/missing URL must not hide a real main-frame failure. */
+    }
+  }
   return {
     kind: "load",
     url: diagnosticPageUrl(event.validatedURL),
