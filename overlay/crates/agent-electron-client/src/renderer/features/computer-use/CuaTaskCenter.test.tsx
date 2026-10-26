@@ -1,13 +1,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], panel: vi.fn(), error: vi.fn() }));
+const h = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], modals: [] as any[], panel: vi.fn(), error: vi.fn() }));
 vi.mock("react", async original => ({ ...(await original<typeof import("react")>()),
   useState: () => { const n = h.cursor++; return [h.states[n], (value: any) => { h.states[n] = value; }]; },
   useEffect: (effect: any) => { h.effects.push(effect); },
 }));
 vi.mock("antd", () => ({
-  Modal: ({ children }: any) => <section>{children}</section>, Space: ({ children }: any) => <div>{children}</div>,
+  Modal: (props: any) => { h.modals.push(props); return <section>{props.children}</section>; }, Space: ({ children }: any) => <div>{children}</div>,
   Tag: ({ children }: any) => <span>{children}</span>, Empty: Object.assign(({ description }: any) => <div>{description}</div>, { PRESENTED_IMAGE_SIMPLE: "" }),
   Tabs: ({ activeKey, items }: any) => <div>{items.find((item: any) => item.key === activeKey).children}</div>,
   Button: (props: any) => { h.buttons.push(props); return <button>{props.children}</button>; }, message: { error: h.error },
@@ -23,17 +23,27 @@ const runtime = { revision: 1, multiwindow: true, tasks: [
 ] };
 const render = () => { h.cursor = 0; return renderToStaticMarkup(<CuaTaskCenter api={api as any} runtime={runtime as any} accept={vi.fn()} t={key => key} />); };
 beforeEach(() => {
-  h.states = [false]; h.cursor = 0; h.effects = []; h.buttons = []; vi.clearAllMocks();
+  h.states = [false]; h.cursor = 0; h.effects = []; h.buttons = []; h.modals = []; vi.clearAllMocks();
   vi.stubGlobal("window", { electronAPI: { on: vi.fn(), off: vi.fn() } });
   api.getTaskHistory.mockResolvedValue([]); api.clearTaskHistory.mockResolvedValue({ success: true });
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("tray task center", () => {
+  it("closing details only collapses the interface and runtime updates do not reopen it", () => {
+    expect(render()).toBe(""); h.effects[0]();
+    const [, show] = vi.mocked(window.electronAPI!.on).mock.calls[0];
+    show(); expect(render()).toContain("live windows");
+    h.modals.at(-1).onCancel();
+    expect(render()).toBe("");
+    expect(api.stop).not.toHaveBeenCalled();
+    expect(api.clearTaskHistory).not.toHaveBeenCalled();
+    show(); expect(render()).toContain("live windows");
+  });
   it("opens only on its tray event and keeps terminal entries out of the live controls", () => {
     expect(render()).toBe(""); const off = h.effects[0]();
-    const [name, show] = vi.mocked(window.electronAPI.on).mock.calls[0]; expect(name).toBe("cua:openCenter"); show();
+    const [name, show] = vi.mocked(window.electronAPI!.on).mock.calls[0]; expect(name).toBe("cua:openCenter"); show();
     expect(render()).toContain("live windows"); expect(h.panel.mock.calls[0][0].runtime.tasks.map((task: any) => task.taskId)).toEqual(["active", "paused"]);
-    off(); expect(window.electronAPI.off).toHaveBeenCalledWith("cua:openCenter", show);
+    off(); expect(window.electronAPI!.off).toHaveBeenCalledWith("cua:openCenter", show);
   });
   it("maps single-task control failures to a human reason instead of generic", async () => {
     const desktop = { revision: 1, phase: "running", taskId: "solo" };
