@@ -80,4 +80,20 @@ describe("CUA host session capabilities", () => {
     expect(fs.readdirSync(dead)).toEqual(["user.txt"]);
     expect(fs.existsSync(path.join(live, cap))).toBe(true);
   });
+  it("captures host-resolved conversation ownership separately from transport credentials", () => {
+    const f = fixture(); let conversation = "A";
+    const resolve = vi.fn(() => conversation);
+    const engine = new CuaEngineSessions(f.authority, resolve);
+    const a = f.prepare("native-session", engine);
+    engine.start("native-session");
+    const owner = f.authority.authorize(a.secret)!;
+    expect(resolve).toHaveBeenCalledWith("native-session");
+    expect(f.authority.conversationForOwner(owner)).toBe("A");
+    conversation = "B";
+    engine.start("native-session");
+    expect(f.authority.conversationForOwner(owner)).toBeNull();
+    expect(f.authority.conversationForOwner(f.authority.authorize(a.secret)!)).toBe("B");
+    engine.destroy();
+  });
+
 });

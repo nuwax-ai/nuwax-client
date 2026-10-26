@@ -41,6 +41,7 @@ vi.mock("./computerUse", () => ({
   onCuaWindowFrames: () => () => {}, setCuaPreviewSuspended: vi.fn(),
   getCuaPreviewIdentity: vi.fn(), captureCuaTaskPreview: vi.fn(), takeOverWindowTask: vi.fn(),
 }));
+vi.mock("./conversationContext", () => ({ observeCuaConversation: () => ({ get: () => null, dispose: vi.fn() }) }));
 vi.mock("./controlWindow", () => ({ createCuaControlWindow: () => () => {} }));
 import { computerUseFeature } from "./index";
 import { createTrustedIpc } from "../_kit/trustedIpc";

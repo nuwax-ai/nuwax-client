@@ -22,7 +22,7 @@ import { CuaControls, CuaSettingsRows, clampCuaControlPosition } from "./CuaCont
 const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
-  harness.states = [{ phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];
+  harness.states = [{ conversationId: "A", presentationConversationId: "A", phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];
   api.getRuntime.mockResolvedValue(harness.states[0]); api.stop.mockResolvedValue({ success: true });
   vi.stubGlobal("window", Object.assign(new EventTarget(), { electronAPI: { on: vi.fn(), off: vi.fn() } }));
 });
@@ -31,6 +31,13 @@ const render = () => renderToStaticMarkup(<CuaControls api={api as any} t={(key)
 const Row = ({ label, desc, control }: any) => <section><h4>{label}</h4><p>{desc}</p>{control}</section>;
 const renderRows = () => renderToStaticMarkup(<CuaSettingsRows api={api as any} t={(key) => key} Row={Row} />);
 describe("Computer Use controls", () => {
+  it("does not display another conversation's ordinary floating controls", () => {
+    harness.states[0] = { ...harness.states[0], presentationConversationId: "B" };
+    expect(render()).toBe("");
+    harness.cursor = 0;
+    harness.states[0] = { ...harness.states[0], presentationConversationId: "A" };
+    expect(render()).toContain("Claw.Cua.stop");
+  });
   it("leaves multiwindow floating controls to the host PiP instead of adding a second panel", () => {
     harness.states[0] = { ...harness.states[0], multiwindow: true, tasks: [] };
     expect(render()).toBe("");
