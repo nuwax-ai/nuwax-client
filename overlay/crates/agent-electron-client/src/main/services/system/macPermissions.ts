@@ -6,6 +6,7 @@
  */
 import { shell } from "electron";
 import log from "electron-log";
+import { requestMacNotificationPermission } from "./macNotificationPermission";
 
 /** macOS 隐私面板 → 系统设置 URL（模块私有：外部统一走 openMacPrivacySettings，避免绕过平台/错误处理） */
 const MAC_PRIVACY_PANE_URLS = {
@@ -34,6 +35,9 @@ export async function openMacPrivacySettings(
   pane: MacPrivacyPane,
 ): Promise<boolean> {
   if (process.platform !== "darwin") return false;
+  // macOS has no manual add-app control for notifications. Register the host
+  // from this explicit user action before navigating to its system settings.
+  if (pane === "notifications") await requestMacNotificationPermission();
   const url = MAC_PRIVACY_PANE_URLS[pane];
   try {
     await shell.openExternal(url);

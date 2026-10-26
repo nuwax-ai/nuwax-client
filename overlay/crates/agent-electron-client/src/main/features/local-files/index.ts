@@ -12,6 +12,7 @@ import type {
 import type { ReadStream } from "node:fs";
 import {
   LOCAL_FILES_API_VERSION,
+  LOCAL_FILES_ENABLED_BY_DEFAULT,
   LOCAL_FILES_IPC,
   LOCAL_FILES_SCHEME,
 } from "@shared/features/local-files/contract";
@@ -675,7 +676,7 @@ export class LocalFilesRuntime {
           ...(identity ? { sandboxId: identity.sandboxId } : {}),
         };
       },
-      { apiVersion: LOCAL_FILES_API_VERSION, available: false }
+      { apiVersion: LOCAL_FILES_API_VERSION, available: false, writable: false }
     );
     ipc.handle(
       LOCAL_FILES_IPC.PICK_DIRECTORY,
@@ -934,7 +935,7 @@ export function isLocalFilesRequestSource(details: RequestSource): boolean {
 export const localFilesFeature: DesktopFeature = {
   id: "local-files",
   products: ["nuwax"],
-  enabledByDefault: true,
+  enabledByDefault: LOCAL_FILES_ENABLED_BY_DEFAULT,
   bridge: { namespaces: ["localFiles"] },
   requests: { authorize: authorizeLocalFilesRequest, isSource: isLocalFilesRequestSource },
   schemes: [

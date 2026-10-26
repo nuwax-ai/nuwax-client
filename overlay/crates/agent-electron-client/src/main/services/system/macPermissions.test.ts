@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const { openExternal, openPath } = vi.hoisted(() => ({
+const { openExternal, openPath, requestPermission } = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openPath: vi.fn(),
+  requestPermission: vi.fn(),
 }));
 vi.mock("electron", () => ({ shell: { openExternal, openPath } }));
+vi.mock("./macNotificationPermission", () => ({ requestMacNotificationPermission: requestPermission }));
 vi.mock("electron-log", () => ({ default: { error: vi.fn() } }));
 import { isMacPrivacyPane, openMacPrivacySettings } from "./macPermissions";
 
@@ -16,6 +18,7 @@ beforeEach(() => {
   });
   openExternal.mockResolvedValue(undefined);
   openPath.mockResolvedValue("");
+  requestPermission.mockResolvedValue("granted");
 });
 afterEach(() => Object.defineProperty(process, "platform", platform));
 
@@ -47,10 +50,27 @@ describe("macOS notification settings entry", () => {
   });
   it("opens the Notifications settings pane", async () => {
     expect(await openMacPrivacySettings("notifications")).toBe(true);
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(requestPermission.mock.invocationCallOrder[0]).toBeLessThan(openExternal.mock.invocationCallOrder[0]);
     expect(openExternal).toHaveBeenCalledWith(
       "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
     );
     expect(openPath).not.toHaveBeenCalled();
+  });
+  it("waits for the explicit authorization request before opening settings", async () => {
+    let resolve!: (status: string) => void;
+    requestPermission.mockReturnValue(new Promise<string>(done => { resolve = done; }));
+    const result = openMacPrivacySettings("notifications");
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(openExternal).not.toHaveBeenCalled();
+    resolve("denied");
+    expect(await result).toBe(true);
+    expect(openExternal).toHaveBeenCalledOnce();
+  });
+  it.each(["denied", "unknown"])("still opens settings when authorization is %s", async (status) => {
+    requestPermission.mockResolvedValue(status);
+    expect(await openMacPrivacySettings("notifications")).toBe(true);
+    expect(openExternal).toHaveBeenCalledOnce();
   });
   it("falls back to System Settings when the deep link fails", async () => {
     openExternal.mockRejectedValue(new Error("Unavailable pane"));
@@ -76,6 +96,7 @@ describe("macOS notification settings entry", () => {
       expect(await openMacPrivacySettings("notifications")).toBe(false);
       expect(openExternal).not.toHaveBeenCalled();
       expect(openPath).not.toHaveBeenCalled();
+      expect(requestPermission).not.toHaveBeenCalled();
     },
   );
 });

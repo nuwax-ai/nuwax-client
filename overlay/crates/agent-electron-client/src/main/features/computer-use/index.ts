@@ -166,23 +166,13 @@ export const computerUseFeature: DesktopFeature = {
 
     // 状态推送宿主窗口 + 托盘急停项（经通用进行中操作端口）。
     const stop = () => { void cua.stopCuaTask().catch(() => undefined); };
-    const promptedTargets = new Set<string>();
     const publish = (state: ReturnType<typeof cua.getCuaRuntime>) => {
       history.record(state);
       const window = ctx.windows.getMain();
       if (window && !window.isDestroyed()) {
         window.webContents.send("cua:runtime", state);
-        const waiting = (state.tasks ?? []).filter(task => ["running", "paused"].includes(task.phase) &&
-          (!task.scope || task.scope.kind === "window" && !task.scope.windowId));
-        if (waiting.some(task => !promptedTargets.has(task.taskId))) {
-          // Open inside the existing client without showing/focusing a hidden
-          // owner. Detailed target setup no longer lives in the floating card.
-          window.webContents.send("cua:openCenter");
-          for (const task of waiting) promptedTargets.add(task.taskId);
-        }
       }
-      const current = new Set((state.tasks ?? []).map(task => task.taskId));
-      for (const id of promptedTargets) if (!current.has(id)) promptedTargets.delete(id);
+      // 待选窗口等运行状态留在操作列表；只有用户点入口才打开详情，避免遮挡会话。
       const active = state.tasks ? state.tasks.some(task => isCuaLivePhase(task.phase, task))
         : isCuaLivePhase(state.phase, state);
       const actions = [{ id: "center", labelKey: "Claw.Cua.center.open", run: openCenter }];
