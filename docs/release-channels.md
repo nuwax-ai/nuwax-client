@@ -35,6 +35,12 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-b
 | `sync-electron-to-oss.yml` | beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
 | `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
 
+仅修改 `release-notes/*.md` 的分支 push/PR 不触发 `ci.yml`，避免发布说明在 PR、合并、tag 三个入口重复占用 runner。改动包含源码、workflow、pin 或 `.channel.json` 时仍执行完整分支/PR 门禁；tag 发布调用 `ci.yml` 不受路径过滤影响，始终运行全部检查。
+
+门禁以 depth 1 检出固定的基座/前端 gitlink；商业纯净检查另取 `origin/main` 快照，基座兼容检查按需获取上一 pin。三者仍比较实际提交的文件树，不依赖下载完整历史；前端嵌套子模块保持原有检出方式。
+
+Actions 的 `Queued` 先检查组织的 [GitHub-hosted runner 用量](https://github.com/organizations/nuwax-ai/settings/actions/hosted-runners)：并发额度跨仓库共享，macOS 还有单独上限。2026-10-26 排查 Beta.5 时组织为 20/20、macOS 为 5/5，其中 `nuwax-ai/codex` 三条工作流占用 14 个槽位。应清理已经被新运行覆盖的重复门禁，并由对应仓库负责人协调长构建；增加 job 超时时间不会解决分配 runner 前的排队。保留当前 tag/SHA 继续执行，勿为排队另起版本或重打整套包。
+
 beta workflow 的手动与 `codex/beta-qa/**` 分支入口只产隔离 QA artifacts，不创建正式 tag/Release，不更新订阅入口。正式打包只用 tag push。非法 tag 在版本校验处失败，不进入测试门禁或五平台矩阵；有效 tag 只触发一套发布构建。
 
 CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` 会在副作用前报冲突；应使用 `--version 3.0.11-beta.6`。失败用 `gh run rerun <原 run id> --failed` 重试原 tag/SHA，或用 `npm run release -- --tag <原 tag>` 续跑；改源码后须发布下一个可用版本。
