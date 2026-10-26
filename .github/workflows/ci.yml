@@ -71,8 +71,11 @@ jobs:
           pnpm -C nuwa-electron-shell/crates/agent-electron-client exec vitest run
           src/main/features/local-files src/main/features/computer-use
           src/main/services/commercialAutoUpdater.test.ts
+          src/main/ipc/settingsHandlers.hostActivity.test.ts
           src/preload/features/local-files.test.ts
+          src/renderer/features/local-files/LocalFilesSettings.test.tsx
           src/renderer/features/computer-use/CuaControls.test.tsx
+          src/renderer/features/computer-use/CuaTaskCenter.test.tsx
 
   terminal-compat:
     name: terminal compatibility protocol and WinPTY regression

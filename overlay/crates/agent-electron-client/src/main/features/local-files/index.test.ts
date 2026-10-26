@@ -273,6 +273,7 @@ describe("local files IPC/context ownership", () => {
     expect(await h.invoke(IPC.GET_CAPABILITIES, untrusted)).toEqual({
       apiVersion: 2,
       available: false,
+      writable: false,
     });
     expect(
       await h.invoke(IPC.RESOLVE_CONTEXT, untrusted, {

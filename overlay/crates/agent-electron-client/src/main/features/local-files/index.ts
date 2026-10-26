@@ -676,7 +676,7 @@ export class LocalFilesRuntime {
           ...(identity ? { sandboxId: identity.sandboxId } : {}),
         };
       },
-      { apiVersion: LOCAL_FILES_API_VERSION, available: false }
+      { apiVersion: LOCAL_FILES_API_VERSION, available: false, writable: false }
     );
     ipc.handle(
       LOCAL_FILES_IPC.PICK_DIRECTORY,
