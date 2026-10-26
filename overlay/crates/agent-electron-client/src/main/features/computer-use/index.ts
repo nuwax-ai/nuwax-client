@@ -10,6 +10,8 @@ import type { IpcMainInvokeEvent } from "electron";
 import { writeFile } from "node:fs/promises";
 import type { DesktopFeature, FeatureContext, FeatureHandle } from "../_kit/types";
 import * as cua from "./computerUse";
+import { readCuaPreferences } from "./preferences";
+import { startScreenshotRetention } from "./cuaPrivacy";
 import { configureComputerUseHost } from "./ports";
 import { createCuaControlWindow } from "./controlWindow";
 import { createCuaTaskHistory } from "./taskHistory";
@@ -33,6 +35,9 @@ export const computerUseFeature: DesktopFeature = {
       hasLocalMcpServer: (id) => ctx.agent.hasLocalMcpServer(id),
       resolveNodeBinary: () => ctx.agent.resolveNodeBinary(),
     });
+
+    readCuaPreferences();
+    const stopScreenshotRetention = startScreenshotRetention(ctx.dataDir);
 
     const offPermissionSubject = ctx.permissions?.registerExternalSubject?.({
       enabled: async () => { const status = await cua.getCuaStatus(); return status.enabled || status.consentPending === true; },
@@ -119,9 +124,8 @@ export const computerUseFeature: DesktopFeature = {
     ctx.hostIpc.handle("cua:setBlacklist", (event: IpcMainInvokeEvent, list: unknown) => cua.setCuaBlacklist(list), { success: false, error: "untrusted sender" });
     ctx.hostIpc.handle("cua:listInstalledApps", () => cua.listCuaInstalledApps(), []);
     ctx.hostIpc.handle("cua:listScreenshots", () => cua.listCuaScreenshotFiles(), []);
-    ctx.hostIpc.handle("cua:confirmSensitive", (event: IpcMainInvokeEvent, allow: unknown) => {
-      if (allow === true) cua.allowCuaSensitiveOnce();
-      return { success: true };
+    ctx.hostIpc.handle("cua:confirmSensitive", (event: IpcMainInvokeEvent, allow: unknown, taskId?: string) => {
+      return { success: ctx.session.isAuthenticated() && allow === true && cua.allowCuaSensitiveOnce(taskId) };
     }, { success: false });
     ctx.hostIpc.handle("cua:requestPermissions", () => cua.requestCuaPermissions(), null);
     ctx.hostIpc.handle("cua:installHelper", () => cua.installCuaHelper(), { success: false, error: "untrusted sender" });
@@ -144,13 +148,15 @@ export const computerUseFeature: DesktopFeature = {
         if (action === "pause") return cua.pauseWindowTask(id);
         if (action === "resume") return cua.resumeWindowTask(id);
         if (action === "stop") return cua.stopWindowTask(id);
+        if (action === "confirm") return cua.allowCuaSensitiveOnce(id) ? cua.resumeWindowTask(id)
+          : { success: false, error: "operationCancelled" };
         return cua.takeOverWindowTask(id);
       },
     });
     const showPreview = (id: string) => {
       const state = cua.getCuaRuntime();
       if (state.multiwindow) return disposeControlWindow.showTask(id);
-      if (!ctx.session.isAuthenticated() || state.taskId !== id || !["running", "paused"].includes(state.phase)) return { success: false, error: "taskUnavailable" };
+      if (!ctx.session.isAuthenticated() || state.taskId !== id || !isCuaLivePhase(state.phase, state)) return { success: false, error: "taskUnavailable" };
       const main = ctx.windows.getMain();
       if (!main || main.isDestroyed()) return { success: false, error: "taskUnavailable" };
       if (main.isMinimized()) main.restore(); main.show(); main.focus(); main.webContents.send("cua:showPreview");
@@ -231,6 +237,7 @@ export const computerUseFeature: DesktopFeature = {
     const offParticipant = ctx.agent.registerSessionParticipant(() => new CuaEngineSessions(cuaSessionAuthority));
 
     return { dispose() {
+      stopScreenshotRetention();
       offPermissionSubject?.();
       offParticipant();
       offInvalidated(); offSessionEnd(); offStopping(); offStarting(); offQuit();

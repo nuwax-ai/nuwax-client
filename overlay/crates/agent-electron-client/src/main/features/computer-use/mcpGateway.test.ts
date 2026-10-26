@@ -10,20 +10,23 @@ import { CuaTaskController } from "./taskController";
 import { CuaTaskRegistry } from "./taskRegistry";
 import { taskCuaCall } from "./taskPolicy";
 import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
+import { scopeCuaCall } from "./windowScope";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const fakeDriver = `
+let cursorEnables=0;
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id===undefined)return;
+ if(m.params?.name==='set_agent_cursor_enabled')cursorEnables++;
  const a=m.params?.arguments??{};
  if(a.hang)return;
- const structuredContent=a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
- process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click'},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
+ const structuredContent=a.wireReport?{wireArgs:a}:a.cursorReport?{cursorEnables}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
+ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click',inputSchema:{type:'object',properties:{element_token:{type:'string'}}}},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
 async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string | null,
-  transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown }, tasks?: CuaTaskRegistry) {
+  transformCall?: (tool: string, args: unknown) => { tool: string; args: unknown }, tasks?: CuaTaskRegistry, extra: Partial<ConstructorParameters<typeof CuaMcpGateway>[0]> = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cg-"));
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cg-${randomUUID()}` : path.join(root, "s");
@@ -41,6 +44,7 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
       const task = tasks.ensure(owner!);
       return taskCuaCall(tasks.scopeFor(owner!), task.mode, tool, args);
     } } : {}),
+    ...extra,
     launch: () => spawn(process.execPath, ["-e", fakeDriver], { stdio: ["pipe", "pipe", "pipe"] }),
   });
   await gateway.listen(socketPath, "test-token");
@@ -78,6 +82,135 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("keeps host element metadata out of the native token-only protocol", async () => {
+    const f = await fixture(); const peer = await f.client();
+    await peer.request("tools/list");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    const input = { pid: 20, window_id: 40, element_index: 2, snapshot_id: "s00000001", element_token: "s00000001:2", wireReport: true };
+    const reply = await peer.request("tools/call", { name: "click", arguments: input });
+    expect(reply.result.structuredContent.wireArgs).toEqual({ pid: 20, window_id: 40, element_token: "s00000001:2", wireReport: true });
+    // Host bookkeeping and confirmation still see their original indexed evidence.
+    expect(f.results.mock.calls.at(-1)?.[1]).toEqual(input);
+    const indexed = await peer.request("tools/call", { name: "click", arguments: { pid: 20, window_id: 40, element_index: 3, snapshot_id: "s00000002", wireReport: true } });
+    expect(indexed.result.structuredContent.wireArgs.element_token).toBe("s00000002:3");
+    expect(indexed.result.structuredContent.wireArgs).not.toHaveProperty("element_index");
+  });
+  it.each([
+    { element_index: 2 },
+    { element_index: 2, element_token: "s00000001:3" },
+    { element_index: 2, snapshot_id: "s00000002", element_token: "s00000001:2" },
+  ])("refuses unproven or conflicting element identity before native dispatch: %j", async (element) => {
+    const f = await fixture(); const peer = await f.client();
+    await peer.request("tools/list");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    const before = f.results.mock.calls.length;
+    const reply = await peer.request("tools/call", { name: "click", arguments: { pid: 20, window_id: 40, ...element } });
+    expect(reply.result.structuredContent.code).toBe("scopeViolation");
+    expect(f.results).toHaveBeenCalledTimes(before);
+    expect(f.failure).not.toHaveBeenCalled();
+    expect(f.controller.snapshot().phase).toBe("running");
+  });
+  it("keeps a desktop task usable after consistent mixed target input and refuses conflicting IDs before dispatch", async () => {
+    const f = await fixture(3000, undefined, (tool, args) => scopeCuaCall({ kind: "desktop" }, tool, args), undefined,
+      { allowedTools: ["get_window_state", "type_text"] });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } });
+    await peer.request("tools/call", { name: "type_text", arguments: { pid: 20, window_id: 40,
+      target: { kind: "window", pid: 20, window_id: 40 }, text: "marker", element_token: "s00000001:1" } });
+    expect(f.results.mock.calls.at(-1)?.[1]).toEqual({ pid: 20, window_id: 40, text: "marker", element_token: "s00000001:1" });
+    const before = f.results.mock.calls.length;
+    const conflict = await peer.request("tools/call", { name: "type_text", arguments: { pid: 21,
+      target: { kind: "window", pid: 20, window_id: 40 }, text: "must not type" } });
+    expect(conflict.result.structuredContent.code).toBe("scopeViolation");
+    expect(f.results).toHaveBeenCalledTimes(before);
+    expect(f.failure).not.toHaveBeenCalled();
+    expect((await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 20, window_id: 40 } })).result.isError).toBe(false);
+    expect(f.controller.snapshot().phase).toBe("running");
+  });
+  it("keeps a desktop operation pending across manual pause without replaying the cancelled input", async () => {
+    const f = await fixture();
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    const pending = peer.request("tools/call", { name: "click", arguments: { hang: true } });
+    await vi.waitFor(() => expect(f.controller.snapshot().steps.at(-1)?.tool).toBe("click"));
+    let answered = false; void pending.then(() => { answered = true; });
+    f.controller.pause("userPaused"); f.gateway.cancelPending("userPaused"); f.gateway.pauseTransports();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    await f.gateway.resumeTransports();
+    expect((f.controller as CuaTaskController).resume()).toBe(true);
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
+  });
+  it("keeps the next desktop call waiting when the user paused while the model was thinking", async () => {
+    const f = await fixture();
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    f.controller.pause("userPaused"); f.gateway.pauseTransports();
+    const pending = peer.request("tools/call", { name: "click" });
+    let answered = false; void pending.then(() => { answered = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    await f.gateway.resumeTransports(); (f.controller as CuaTaskController).resume();
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
+  });
+  it.each([false, true])("cancels a human confirmation when the task is stopped (multiwindow=%s)", async multiwindow => {
+    const registry = multiwindow ? new CuaTaskRegistry() : undefined;
+    registry?.setAvailable(true);
+    const task = registry?.ensure("A");
+    if (task) { registry!.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry!.resumeTask(task.id); }
+    let f: Awaited<ReturnType<typeof fixture>>;
+    f = await fixture(3000, () => "A", undefined, registry, {
+      requireConfirmation: tool => tool === "click",
+      onFailure: reason => {
+        if (task) { registry!.pauseTask(task.id, reason); f.gateway.holdOwner("A", reason); }
+        else { f.controller.pause(reason); f.gateway.cancelPending(reason); f.gateway.pauseTransports(); }
+      },
+    });
+    const peer = await f.client("test-token", true, "A");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    const pending = peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } });
+    await vi.waitFor(() => expect(f.controller.snapshot().phase).toBe("paused"));
+    if (task) { registry!.stopTask(task.id); f.gateway.holdOwner("A", "userStopped"); }
+    else { f.controller.stop(); f.gateway.cancelPending("userStopped"); }
+    expect((await pending).result.structuredContent.code).toBe("taskStopped");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    expect((await peer.request("tools/call", { name: "click" })).result.isError).toBe(true);
+  });
+  it.each([false, true])("keeps a confirmation request alive until resume and then requires a new observation (multiwindow=%s)", async (multiwindow) => {
+    const registry = multiwindow ? new CuaTaskRegistry() : undefined;
+    registry?.setAvailable(true);
+    const task = registry?.ensure("A");
+    if (task) { registry!.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry!.resumeTask(task.id); }
+    let allowed = false;
+    let f: Awaited<ReturnType<typeof fixture>>;
+    f = await fixture(3000, () => "A", undefined, registry, {
+      requireConfirmation: tool => tool === "click" && !allowed,
+      onFailure: reason => {
+        if (task) { registry!.pauseTask(task.id, reason); f.gateway.holdOwner("A", reason); }
+        else { f.controller.pause(reason); f.gateway.cancelPending(reason); f.gateway.pauseTransports(); }
+      },
+    });
+    const peer = await f.client("test-token", true, "A");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    const pending = peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } });
+    let answered = false; void pending.then(() => { answered = true; });
+    await vi.waitFor(() => expect(f.controller.snapshot().phase).toBe("paused"));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    expect(f.results).toHaveBeenCalledTimes(1);
+    allowed = true;
+    await f.gateway.resumeTransports();
+    if (task) registry!.resumeTask(task.id); else (f.controller as CuaTaskController).resume();
+    expect((await pending).result.structuredContent.code).toBe("operationPaused");
+    expect((await peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } })).result.structuredContent.code).toBe("observationRequired");
+    await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    expect((await peer.request("tools/call", { name: "click", arguments: { pid: 10, window_id: 100, element_index: 0 } })).result.isError).toBe(false);
+    expect(f.results).toHaveBeenCalledTimes(3);
+  });
   function tasks() {
     const tasks = new CuaTaskRegistry(); tasks.setAvailable(true);
     const a = tasks.ensure("A"), b = tasks.ensure("B");
@@ -225,9 +358,11 @@ describe("CUA MCP gateway over real local sockets", () => {
     await a.request("initialize", {});
     await a.request("tools/call", { name: "get_desktop_state" });
     f.controller.pause(); f.gateway.pauseTransports();
-    expect((await a.request("tools/call", { name: "click" })).result.isError).toBe(true);
+    const paused = a.request("tools/call", { name: "click" });
+    expect((await a.request("ping")).error.message).toContain("userPaused");
     await f.gateway.resumeTransports();
     expect(f.controller.resume()).toBe(true);
+    expect((await paused).result.structuredContent.code).toBe("operationPaused");
     expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
     await a.request("tools/call", { name: "get_desktop_state" });
     expect((await a.request("tools/call", { name: "click" })).result.isError).toBe(false);
@@ -397,4 +532,65 @@ describe("CUA session-granted transport", () => {
     await f.gateway.close(); expect(f.gateway.ready).toBe(false);
     expect(f.controller.snapshot().phase).toBe("completed");
   }, 60000);
+});
+
+describe("host cursor requests", () => {
+  it("uses an identified request, consumes its reply, and re-arms each replacement lease", async () => {
+    const f = await fixture(3000, undefined, undefined, undefined, { agentCursor: () => true });
+    const peer = await f.client();
+    const observe = () => peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100, cursorReport: true } });
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    const controller = f.controller as CuaTaskController;
+    controller.pause(); f.gateway.pauseTransports();
+    await f.gateway.resumeTransports(); controller.resume();
+    expect((await observe()).result.structuredContent.cursorEnables).toBe(1);
+    expect(f.results).toHaveBeenCalledTimes(3);
+  });
+  it("respects an explicitly disabled cursor", async () => {
+    const f = await fixture(3000, undefined, undefined, undefined, { agentCursor: () => false });
+    const peer = await f.client();
+    const reply = await peer.request("tools/call", { name: "get_window_state", arguments: { cursorReport: true } });
+    expect(reply.result.structuredContent.cursorEnables).toBe(0);
+  });
+  it("checks the final transformed identity rather than untrusted model labels", async () => {
+    const rejectTarget = vi.fn((tool, args: any) => args.pid === 99 ? "blacklisted" : null);
+    const f = await fixture(3000, undefined, (tool, args) => ({ tool, args: { ...args as object, pid: 99, window_id: 100 } }), undefined, { rejectTarget });
+    const peer = await f.client();
+    const reply = await peer.request("tools/call", { name: "get_window_state", arguments: { app_name: "Safe" } });
+    expect(reply.result.structuredContent.code).toBe("blacklisted");
+    expect(rejectTarget).toHaveBeenCalledWith("get_window_state", expect.objectContaining({ pid: 99 }), expect.any(String));
+    expect(f.results).not.toHaveBeenCalled();
+  });
+  it("allows discovery and validated binding before waiting for a task target", async () => {
+    const tasks = new CuaTaskRegistry(); tasks.setAvailable(true);
+    const nativeWindow = { pid: 10, window_id: 100, app_name: "Fixture", title: "Document",
+      bounds: { x: 10, y: 20, width: 600, height: 400 }, is_on_screen: true, z_index: null };
+    const prepareTarget = vi.fn(async (owner, _tool, args: any) => {
+      const task = tasks.ensure(owner);
+      tasks.bind(task.id, { pid: args.pid, windowId: args.window_id, label: "fixture" }); tasks.resumeTask(task.id);
+    });
+    const f = await fixture(3000, () => "A", undefined, tasks, {
+      allowedTools: ["list_windows", "get_window_state"], discoverWindows: async () => [nativeWindow], prepareTarget,
+    });
+    const peer = await f.client("test-token", true, "A");
+    const discovery = (await peer.request("tools/call", { name: "list_windows" })).result;
+    expect(discovery.structuredContent.windows).toEqual([nativeWindow]);
+    expect(JSON.parse(discovery.content[0].text).windows).toEqual([nativeWindow]);
+    expect(prepareTarget).not.toHaveBeenCalled();
+    const result = await peer.request("tools/call", { name: "get_window_state", arguments: { pid: 10, window_id: 100 } });
+    expect(result.result.isError).toBe(false);
+    expect(tasks.stateForOwner("A")?.phase).toBe("running");
+  });
+});
+
+it("rechecks blacklist policy after a queued native binding before forwarding input", async () => {
+  const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+  const task = registry.ensure("A"); registry.bind(task.id, { pid: 10, windowId: 100, label: "fixture" }); registry.resumeTask(task.id);
+  const rejectTarget = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("blacklisted").mockResolvedValue(null);
+  const f = await fixture(3000, () => "A", undefined, registry, { rejectTarget });
+  const peer = await f.client("test-token", true, "A");
+  expect((await peer.request("tools/call", { name: "get_window_state" })).result.structuredContent.code).toBe("blacklisted");
+  expect(f.results).not.toHaveBeenCalled();
+  expect((await peer.request("tools/call", { name: "get_window_state" })).result.isError).toBe(false);
 });

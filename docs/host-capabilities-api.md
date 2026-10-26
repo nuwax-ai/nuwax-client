@@ -39,7 +39,7 @@ canUse(capability: string): Promise<boolean>
 | --- | --- | --- |
 | `capture` | `getCapabilities`、`screenshot`、`record`、`cancel`、`onStateChange`、`readChunk`、`release`、`copy` | 原生截图/标注/录屏、状态、结果读取与复制 |
 | `native` | `saveImage`、`saveFile`、`openWindow`、`openClientSettings` | 保存远端产物、打开窗口/客户端设置 |
-| `localFiles` | `pickDirectory`、`getCapabilities`、`resolveContext`、`releaseContext`、`listFiles`、`searchFiles`、`stat`、`preparePreview`、`releasePreview`、`openPath`、`revealInFolder`、`saveFile`、`exportWorkspace`、`cancel` | 当前客户端本地工作区访问、预览与保存/ZIP 导出；复用上下文授权，不代表任意文件访问 |
+| `localFiles` | `pickDirectory`、`getCapabilities`、`resolveContext`、`releaseContext`、`listFiles`、`searchFiles`、`stat`、`preparePreview`、`releasePreview`、`openPath`、`revealInFolder`、`updateFiles`、`saveFile`、`exportWorkspace`、`cancel` | 当前客户端本地工作区访问、预览、编辑/新增/回收站删除与保存/ZIP 导出；写能力须探测 v2/writable，复用上下文授权 |
 | `im` | `setNotificationEnabled`、`getUnreadSnapshot`、`onUnreadChanged` | 宿主通知偏好与未读快照；不含消息发送或上传 |
 | `updater` | `getState`、`check`、`download`、`install` | 更新状态与操作；不表示此刻有更新可安装 |
 | `auth` | `getContext`、`syncSession`、`beginLogin`、`clear`、`configureServerHost` | 主站现有 cookie 会话生命周期，不读取凭据 |
@@ -63,7 +63,7 @@ canUse(capability: string): Promise<boolean>
 
 `auth.getToken` 和 `auth.persistToken` 是已退休的兼容入口，canUse 永远为 false。`electronAPI`、壳专用 capture.save、原生菜单通道、窗口内部控制、任意文件读写和服务器消息发送不属于公开白名单。
 
-`localFiles` 同时检查特性启用、注册、`getCapabilities().available` 和当前文档代次。宿主的登录与本地服务身份未就绪时返回 false；true 仍不代表已取得某个工作区上下文。先按 [本地文件 API](local-file-access-api.md) 调用 resolveContext，其他操作继续校验 contextId、相对路径及权限。最新 release 源码新增的这组能力也尚未进入 beta.6。
+`localFiles` 同时检查特性启用、注册、`getCapabilities().available` 和当前文档代次。宿主的登录与本地服务身份未就绪时返回 false；true 仍不代表已取得某个工作区上下文。先按 [本地文件 API](local-file-access-api.md) 调用 resolveContext，其他操作继续校验 contextId、相对路径及权限。API v2 写能力当前在本机文件候选分支中，安装包状态以实际源码/产物 pin 和验收结果为准。
 
 ## 复制截图和录屏
 

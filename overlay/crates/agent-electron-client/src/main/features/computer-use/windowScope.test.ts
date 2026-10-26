@@ -79,6 +79,25 @@ describe("CUA window scope for a browser window", () => {
 });
 
 describe("CUA desktop scope", () => {
+  it("collapses identical native target formats before driver dispatch", () => {
+    const args = { pid: 20, window_id: 40, target: { kind: "window", pid: 20, window_id: 40 }, element_token: "s00000001:1", text: "marker" };
+    expect(scopeCuaCall(desktop, "type_text", args).args).toEqual({ pid: 20, window_id: 40, element_token: "s00000001:1", text: "marker" });
+    expect(args.target).toEqual({ kind: "window", pid: 20, window_id: 40 });
+    expect(scopeCuaCall(desktop, "click", { scope: "window", target: args.target, element_index: 1 }).args)
+      .toEqual({ pid: 20, window_id: 40, element_index: 1 });
+  });
+  it.each([
+    { pid: 21 }, { window_id: 41 }, { scope: "desktop" }, { pid: "20" },
+    { pid: 20, target: { kind: "desktop", display_id: "primary" } },
+    { pid: 20, target: { kind: "window", pid: 20, window_id: 40, app: "other" } },
+  ])("refuses ambiguous mixed native targets without choosing an identity: %j", (extra) => {
+    expect(() => scopeCuaCall(desktop, "type_text", { target: { kind: "window", pid: 20, window_id: 40 }, ...extra }))
+      .toThrow("scopeViolation");
+  });
+  it("preserves a single explicit target format", () => {
+    const args = { target: { kind: "window", pid: 20, window_id: 40 }, element_token: "s00000001:1", text: "marker" };
+    expect(scopeCuaCall(desktop, "type_text", args).args).toEqual(args);
+  });
   it("refuses attaching to the user's own browser profile but allows an isolated browser", () => {
     expect(() => scopeCuaCall(desktop, "browser_prepare", { pid: 7, window_id: 9, strategy: { kind: "existing_profile" } }))
       .toThrow("profileAttachRequiresWindowScope");

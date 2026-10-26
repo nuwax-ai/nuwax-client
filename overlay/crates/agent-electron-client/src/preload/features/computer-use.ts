@@ -36,7 +36,7 @@ export function createComputerUseBridge(
     setBlacklist: (apps) => ipc.invoke("cua:setBlacklist", apps),
     listInstalledApps: () => ipc.invoke("cua:listInstalledApps"),
     listScreenshots: () => ipc.invoke("cua:listScreenshots"),
-    confirmSensitive: (allow) => ipc.invoke("cua:confirmSensitive", allow),
+    confirmSensitive: (allow, taskId) => ipc.invoke("cua:confirmSensitive", allow, taskId),
     requestPermissions: () => ipc.invoke("cua:requestPermissions"),
     installHelper: () => ipc.invoke("cua:installHelper"),
     getVlmConfig: () => ipc.invoke("cua:getVlmConfig"),

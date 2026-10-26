@@ -7,11 +7,11 @@ const MARK = "[Nuwax]";
 const COMMON = [
   "Nuwax Computer Use operates this computer for the user.",
   "Follow this recipe in order:",
-  "1. Observe first. Call get_window_state (app window; request a screenshot) and/or get_accessibility_tree before any click, type, scroll or set_value. Use get_desktop_state for the whole screen, get_browser_state for a web page. Never act on a stale snapshot.",
+  "1. Observe first. Call get_window_state (app window; request a screenshot) before any click, type, scroll or set_value. Use get_desktop_state for the whole screen, get_browser_state for a web page. Never act on a stale snapshot.",
   `2. Prefer element_index (or element_token) from that latest observation. Each observation allows up to ${N} writes on what it showed; then observe again.`,
   "3. Pixel coordinates (x/y) are a last resort, only on canvas-like surfaces with no element. When the latest observation has an element covering that point, the host rewrites the click to that element_index. In window mode leftover coordinates, keyboard, clipboard and other apps are scopeViolation — that is not a miss. Pick an element_index from a fresh observation; the host supplies pid/window_id.",
   "4. After every write burst, observe again and verify the result before the next action. Never assume a click landed.",
-  "5. Agent cursor: the host enables a simulated overlay cursor for an active desktop task so the user can see where you aim. The overlay is independent of Background delivery — do not pass foreground:true or move the user's real mouse. Call set_agent_cursor_enabled only to toggle the overlay; the user can also disable it in settings.",
+  "5. Agent cursor: the host enables a simulated overlay cursor for an active desktop task so the user can see where you aim. The overlay is independent of Background delivery — do not pass foreground:true or move the user's real mouse. The host manages cursor controls; the user can disable the overlay in settings. Do not call host-only cursor tools.",
   "6. You choose the operating window. Do not ask the user to pick desktop vs window. Skip any app or window the host marks as blacklisted; a blacklist skip is not a targeting miss.",
   "7. If the host replies sensitiveTarget, that control is a password field, payment field, or privilege-granting system dialog. Do not retry it. Ask the user to complete it themselves.",
   "8. If the host replies confirmationRequired, stop and wait. The user must allow that sensitive action once; do not retry it unchanged until they do. Unrestricted mode still honors the blacklist and sensitiveTarget denials.",
@@ -26,7 +26,7 @@ const DESKTOP = [
 ];
 const WINDOW = [
   "- Only the currently bound window can be operated. The host injects pid/window_id; do not invent them.",
-  "- Window mode allows get_window_state/get_accessibility_tree and click/set_value/scroll with an element_index from a fresh observation. Pixel coordinates are rejected as scopeViolation.",
+  "- Window mode requires get_window_state to grant writes; get_accessibility_tree alone is supplemental. Use click/set_value/scroll with an element_index from a fresh observation. Pixel coordinates are rejected as scopeViolation.",
 ];
 
 export function cuaInstructions(scope: CuaScope): string {
@@ -37,7 +37,7 @@ const TOOL_NOTES: Record<string, (scope: CuaScope) => string | null> = {
   get_browser_state: () => "Preferred way to read a web page. Refs stay valid until the next snapshot or navigation.",
   browser_prepare: (scope) => scope.kind === "window"
     ? "Only strategy existing_profile on the selected window is allowed."
-    : "Attaching to the user's own browser profile is refused in this mode; ask the user to select the browser window in Computer Use.",
+    : "Attaching to the user's own browser profile is refused in this mode; select the native browser window with a fresh observation.",
   get_window_state: () => `Observe this window (screenshot + elements). Required before acting. Prefer element_index from this snapshot. Refreshes your allowance of ${N} actions.`,
   get_accessibility_tree: () => "Element tree for the current window. Use with get_window_state; act on element_index from this snapshot.",
   get_desktop_state: () => `Whole-screen observation. Refreshes your allowance of ${N} writes on native windows (not web page refs). Prefer get_window_state when targeting one app.`,

@@ -8,6 +8,25 @@ const BROWSER_TOOLS = ["get_browser_state", "browser_prepare", ...BROWSER_ACTION
 const COMMON = ["check_permissions", "get_config", "health_report", "start_session", "end_session", "get_session", "get_session_state"];
 const ELEMENT_ARGS = new Set(["session", "pid", "window_id", "element_index", "snapshot_id", "value", "direction", "by", "amount"]);
 
+/** The native protocol accepts one target format. Collapse only provably identical window IDs. */
+function desktopTargetArgs(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const args = raw as Record<string, unknown>;
+  if (args.target === undefined || !["scope", "pid", "window_id"].some(key => args[key] !== undefined)) return raw;
+  const target = args.target as Record<string, unknown> | null;
+  if (!target || typeof target !== "object" || Array.isArray(target) || target.kind !== "window" ||
+      !Number.isSafeInteger(target.pid) || Number(target.pid) <= 0 ||
+      !Number.isSafeInteger(target.window_id) || Number(target.window_id) <= 0 ||
+      Object.keys(target).some(key => !["kind", "pid", "window_id"].includes(key)) ||
+      (args.pid !== undefined && args.pid !== target.pid) ||
+      (args.window_id !== undefined && args.window_id !== target.window_id) ||
+      (args.scope !== undefined && args.scope !== "window")) throw new Error("scopeViolation");
+  const normalized: Record<string, unknown> = { ...args, pid: target.pid, window_id: target.window_id };
+  delete normalized.target;
+  delete normalized.scope;
+  return normalized;
+}
+
 export function visibleCuaTools(scope: CuaScope, allowed: readonly string[]): readonly string[] {
   return scope.kind === "desktop" ? allowed
     : allowed.filter((tool) => [...COMMON, ...WINDOW_READS, ...WINDOW_ACTIONS, ...BROWSER_TOOLS, "get_desktop_state"].includes(tool));
@@ -19,18 +38,25 @@ export function visibleCuaTools(scope: CuaScope, allowed: readonly string[]): re
  */
 export class CuaBrowserBindings {
   private tabs = new Set<string>();
+  private targets = new Map<string, { pid: number; window_id: number }>();
+  nativeTarget(args: Record<string, unknown>) { return this.targets.get(`${args.target_id}/${args.tab_id}`); }
   has(target: unknown, tab: unknown) { return typeof target === "string" && typeof tab === "string" && this.tabs.has(`${target}/${tab}`); }
   record(scope: CuaScope, tool: string, rawArgs: unknown, outcome: CuaOutcome, structured: unknown) {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     const sc = (structured ?? {}) as { target_id?: unknown; tabs?: unknown };
-    if (scope.kind !== "window" || tool !== "get_browser_state" || outcome !== "ok" || args.target_id !== undefined) return;
-    if (args.pid !== scope.pid || args.window_id !== scope.windowId || typeof sc.target_id !== "string" || !Array.isArray(sc.tabs)) return;
+    if (tool !== "get_browser_state" || outcome !== "ok" || args.target_id !== undefined) return;
+    if (typeof sc.target_id !== "string" || !Array.isArray(sc.tabs)) return;
+    if (scope.kind === "window" && (args.pid !== scope.pid || args.window_id !== scope.windowId)) return;
     for (const tab of sc.tabs) {
       const id = (tab as { tab_id?: unknown } | null)?.tab_id;
-      if (typeof id === "string") this.tabs.add(`${sc.target_id}/${id}`);
+      if (typeof id === "string") {
+        if (scope.kind === "window") this.tabs.add(`${sc.target_id}/${id}`);
+        if (Number.isSafeInteger(args.pid) && Number.isSafeInteger(args.window_id))
+          this.targets.set(`${sc.target_id}/${id}`, { pid: args.pid as number, window_id: args.window_id as number });
+      }
     }
   }
-  clear() { this.tabs.clear(); }
+  clear() { this.tabs.clear(); this.targets.clear(); }
 }
 
 /** Window mode intentionally excludes pixel/global input and browser/process escape hatches. */
@@ -39,7 +65,7 @@ export function scopeCuaCall(scope: CuaScope, tool: string, raw: unknown, bindin
     const strategy = (raw as { strategy?: { kind?: unknown } } | null)?.strategy;
     // Attaching to the user's own profile needs the user to point at that window first.
     if (tool === "browser_prepare" && strategy?.kind === "existing_profile") throw new Error("profileAttachRequiresWindowScope");
-    return { tool, args: raw };
+    return { tool, args: desktopTargetArgs(raw) };
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("scopeViolation");
   const args = { ...raw } as Record<string, unknown>;
@@ -79,7 +105,7 @@ export function cuaPolicy(scope: CuaScope, allowed: readonly string[], denied: r
   const browser = BROWSER_TOOLS.filter((tool) => allowed.includes(tool));
   return JSON.stringify({ allow: {
     // Only the trusted host uses discovery to change the target. Bound browser tabs are checked by the gateway.
-    tools: [...COMMON, "list_windows", ...browser.filter((tool) => tool !== "browser_prepare")],
+    tools: [...COMMON, "list_windows", "set_agent_cursor_enabled", ...browser.filter((tool) => tool !== "browser_prepare")],
     rules: [
       ...[...WINDOW_READS, ...WINDOW_ACTIONS].map((tool) => ({ tool, constraints: {
         ...native, ...(WINDOW_ACTIONS.includes(tool) ? { element_index: { min: 0, max: 100000 } } : {}),

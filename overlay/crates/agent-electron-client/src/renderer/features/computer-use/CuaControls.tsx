@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Button, message, theme } from "antd";
+import { Button, Tooltip, message, theme } from "antd";
 import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
 
 import { CUA_CONTROL_INITIAL_POSITION, canShowCuaOverlay, cuaOverlayNotice, cuaReasonKey } from "@shared/features/computer-use/presentation";
@@ -47,7 +47,7 @@ export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
   return <><CuaTaskCenter api={api} runtime={runtime} accept={accept} t={t} />
     <CuaControlBar api={api} runtime={runtime} accept={accept} t={t} /></>;
 }
-type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "stop" | "close";
+type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "stop" | "close" | "power" | "confirm";
 function ControlIcon({ name }: { name: ControlIconName }) {
   const paths: Record<ControlIconName, React.ReactNode> = {
     desktop: <><rect x="3" y="3" width="18" height="13" rx="3" /><path d="M8 21h8M12 16v5" /></>,
@@ -57,6 +57,8 @@ function ControlIcon({ name }: { name: ControlIconName }) {
     takeover: <><path d="m5 3 14 9-7 1-3 7Z" /><path d="m13 13 5 7" /></>,
     stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
+    power: <><path d="M12 3v9" /><path d="M6.3 5.7a8 8 0 1 0 11.4 0" /></>,
+    confirm: <path d="m5 12 4 4L19 6" />,
   };
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -126,13 +128,23 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
     </header>
     {notice && <p className={styles.notice} role="status">{reasonText(t, notice)}</p>}
     <div className={styles.actions}>
-      {["running", "paused"].includes(runtime.phase) && <Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
-        aria-label={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")} title={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")}
-        onClick={() => void run(() => paused ? api.resume() : api.pause())}>{t(paused ? "Claw.Cua.preview.resume" : "Claw.Cua.preview.pause")}</Button>}
-      <Button danger className={styles.stop} icon={<ControlIcon name="stop" />} onClick={() => void run(() => api.stop())}>{t("Claw.Cua.stop")}</Button>
-      {runtime.reason === "confirmationRequired" && api.confirmSensitive && <Button size="small"
-        onClick={() => void run(async () => { await api.confirmSensitive!(true); return api.resume(); })}>{t("Claw.Cua.confirmAllow")}</Button>}
-      {api.setEnabled && <Button size="small" onClick={() => void run(() => api.setEnabled!(false))}>{t("Claw.Settings.computerUse.enableOff")}</Button>}
+      {["running", "paused"].includes(runtime.phase) && <Tooltip title={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")} trigger={["hover", "focus"]} zIndex={10000}>
+        <span className={styles.actionSlot}><Button type="text" className={styles.pause} disabled={controlLocked} icon={<ControlIcon name={paused ? "resume" : "pause"} />}
+          aria-label={t(paused ? "Claw.Cua.resume" : "Claw.Cua.pause")}
+          onClick={() => void run(() => paused ? api.resume() : api.pause())} /></span>
+      </Tooltip>}
+      <Tooltip title={t("Claw.Cua.stop")} trigger={["hover", "focus"]} zIndex={10000}>
+        <span className={styles.actionSlot}><Button danger className={styles.stop} icon={<ControlIcon name="stop" />}
+          aria-label={t("Claw.Cua.stop")} onClick={() => void run(() => api.stop())} /></span>
+      </Tooltip>
+      {runtime.reason === "confirmationRequired" && api.confirmSensitive && <Tooltip title={t("Claw.Cua.confirmAllow")} trigger={["hover", "focus"]} zIndex={10000}>
+        <span className={styles.actionSlot}><Button size="small" icon={<ControlIcon name="confirm" />} aria-label={t("Claw.Cua.confirmAllow")}
+          onClick={() => void run(async () => { const allowed = await api.confirmSensitive!(true); return allowed.success ? api.resume() : { success: false, error: "operationCancelled" }; })} /></span>
+      </Tooltip>}
+      {api.setEnabled && <Tooltip title={t("Claw.Settings.computerUse.enableOff")} trigger={["hover", "focus"]} zIndex={10000}>
+        <span className={styles.actionSlot}><Button size="small" icon={<ControlIcon name="power" />} aria-label={t("Claw.Settings.computerUse.enableOff")}
+          onClick={() => void run(() => api.setEnabled!(false))} /></span>
+      </Tooltip>}
     </div>
   </aside>;
 }

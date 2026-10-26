@@ -237,6 +237,8 @@ export type LocalFilesErrorCode =
   | 'context-unresolved'
   | 'expired'
   | 'not-found'
+  | 'already-exists'
+  | 'conflict'
   | 'permission-denied'
   | 'file-service-unavailable'
   | 'canceled'
@@ -248,6 +250,7 @@ export interface LocalFilesCapabilities {
   apiVersion: number;
   available: boolean;
   sandboxId?: string;
+  writable?: boolean;
 }
 export interface LocalFilesContextInput {
   cId: string | number;
@@ -318,6 +321,14 @@ export interface LocalFileSaved {
   canceled: boolean;
   path?: string;
 }
+export interface LocalFileChange {
+  name: string;
+  operation: 'create' | 'modify' | 'rename' | 'delete';
+  contents?: string;
+  isDir?: boolean;
+  binary?: boolean;
+  renameFrom?: string;
+}
 export interface HostLocalFilesBridge {
   pickDirectory(): Promise<{ canceled: boolean; paths: string[] }>;
   getCapabilities(): Promise<LocalFilesCapabilities>;
@@ -340,6 +351,11 @@ export interface HostLocalFilesBridge {
   releasePreview(grantId: string): Promise<void>;
   openPath(target: LocalFileTarget): Promise<LocalFilesResult<void>>;
   revealInFolder(target: LocalFileTarget): Promise<LocalFilesResult<void>>;
+  /** API v2；旧本机只读桥不支持时，不能将写请求转到云端。 */
+  updateFiles?(
+    contextId: string,
+    changes: LocalFileChange[],
+  ): Promise<LocalFilesResult<void>>;
   saveFile(
     target: LocalFileTarget,
     options?: LocalFileSaveOptions,

@@ -155,7 +155,7 @@ export interface ComputerUseAPI {
   }>;
   listInstalledApps: () => Promise<{ id: string; label: string }[]>;
   listScreenshots: () => Promise<string[]>;
-  confirmSensitive: (allow: boolean) => Promise<{ success: boolean }>;
+  confirmSensitive: (allow: boolean, taskId?: string) => Promise<{ success: boolean }>;
   requestPermissions: () => Promise<{
     success: boolean;
     error?: string;

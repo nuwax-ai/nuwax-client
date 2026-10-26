@@ -25,6 +25,7 @@ export function createLocalFilesBridge(ipc: Pick<IpcRenderer, "invoke">): HostLo
     releasePreview: id => ipc.invoke(CH.RELEASE_PREVIEW, id).catch(() => undefined),
     openPath: target => ipc.invoke(CH.OPEN_PATH, target),
     revealInFolder: target => ipc.invoke(CH.REVEAL_IN_FOLDER, target),
+    updateFiles: (id, changes) => ipc.invoke(CH.UPDATE_FILES, id, changes),
     saveFile: (target, options) => ipc.invoke(CH.SAVE_FILE, target, options),
     exportWorkspace: (id, options) => ipc.invoke(CH.EXPORT_WORKSPACE, id, options),
     cancel: id => ipc.invoke(CH.CANCEL, id).catch(() => undefined),

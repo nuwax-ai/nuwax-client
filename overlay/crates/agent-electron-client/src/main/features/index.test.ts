@@ -156,27 +156,25 @@ describe("startDesktopFeatures", () => {
   });
 
   it.each([
-    [undefined, false],
-    [true, false],
+    [undefined, true],
+    [true, true],
     [false, false],
-  ])("3.0 本机文件直访保持关闭，历史设置 %s 不能改变注册结果 %s", async (override, expected) => {
-
+  ])("本机文件直访默认开启，设置覆盖 %s 时注册结果为 %s", async (override, expected) => {
     const localFiles = desktopFeatures.find((f) => f.id === "local-files")!;
     const register = vi.spyOn(localFiles, "register").mockReturnValue({ dispose: vi.fn() });
     const readEnabled = vi.fn((id: string, def: boolean) => (id === "local-files" ? override ?? def : def));
     const ipcMain = { handle: vi.fn(), removeHandler: vi.fn() };
     try {
       const out = startDesktopFeatures(options({ ipcMain, isEnabled: readEnabled }), [localFiles]);
-      expect(readEnabled).not.toHaveBeenCalled();
+      expect(readEnabled).toHaveBeenCalledWith("local-files", true);
       expect(out.ids).toEqual(expected ? ["local-files"] : []);
       expect(isDesktopFeatureRegistered("local-files")).toBe(expected);
       expect(register).toHaveBeenCalledTimes(expected ? 1 : 0);
       if (!expected) {
         expect(ipcMain.handle.mock.calls.map((call) => call[0])).toEqual(["features:registered"]);
         const bridge = createLocalFilesBridge({ invoke: vi.fn().mockRejectedValue(new Error("No handler registered")) });
-        expect(await bridge.getCapabilities()).toEqual({ apiVersion: 1, available: false });
+        expect(await bridge.getCapabilities()).toEqual({ apiVersion: 2, available: false });
       }
-
     } finally {
       register.mockRestore();
     }

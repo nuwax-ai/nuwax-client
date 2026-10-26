@@ -218,7 +218,8 @@ describe("filesystem paths and preview resources", () => {
     ).toBe(403);
     await writeFile(path.join(root, "workspace", "locked.txt"), "secret");
     await chmod(path.join(root, "workspace", "locked.txt"), 0);
-    if (process.getuid?.() !== 0)
+    // Windows chmod changes the read-only attribute, not read access via ACLs.
+    if (process.platform !== "win32" && process.getuid?.() !== 0)
       expect(
         (
           await resourceResponse(

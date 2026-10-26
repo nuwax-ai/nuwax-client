@@ -182,6 +182,7 @@ export class CuaTaskController {
     step.outcome = outcome === "ok" ? "ok" : outcome === "refused" ? "refused" : "error";
     step.durationMs = this.now() - step.startedAt;
     this.inFlight = null;
+    if ((structured as { sensitive?: boolean } | null)?.sensitive === true) this.forgetObservations();
     if (outcome === "uncertain") {
       this.state.stats.uncertain++;
       this.state.stats.pauses++;

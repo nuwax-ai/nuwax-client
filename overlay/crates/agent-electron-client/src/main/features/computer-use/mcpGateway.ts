@@ -1,7 +1,7 @@
 import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { CuaTaskController, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
+import { CuaTaskController, CUA_FINAL_REASONS, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
 import { classifyReply, type CuaOutcome } from "./cuaOutcome";
 import { CUA_AGENT_CURSOR_ENABLE, CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
 import type { CuaScope } from "@shared/features/computer-use/contract";
@@ -32,9 +32,25 @@ type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNu
   initialization?: Rpc; initialized: boolean;
   /** 本条 helper 租约是否已按偏好处理过 agent cursor（开或明确跳过）。 */
   cursorArmed?: boolean;
+  tokenOnlyTools: Set<string>;
   warming?: { id: string; finish: (error?: Error) => void };
   pending: Map<string, Pending>; reservations: Set<string>; lifetime: AbortController; close: () => void };
 const keyOf = (id: unknown) => `${typeof id}:${String(id)}`;
+
+/** Host checks retain indexed evidence; modern native tools accept only its complete token. */
+function nativeElementArgs(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const args = raw as Record<string, unknown>;
+  if (args.element_index === undefined && args.snapshot_id === undefined) return raw;
+  const token = typeof args.element_token === "string" ? args.element_token.match(/^(s[0-9a-f]{8}):(\d+)$/i) : null;
+  const index = args.element_index ?? (token ? Number(token[2]) : undefined);
+  const snapshot = args.snapshot_id ?? token?.[1];
+  if (!Number.isSafeInteger(index) || Number(index) < 0 || typeof snapshot !== "string" || !/^s[0-9a-f]{8}$/i.test(snapshot) ||
+      (args.element_token !== undefined && (!token || token[1] !== snapshot || Number(token[2]) !== index))) throw new Error("scopeViolation");
+  const native: Record<string, unknown> = { ...args, element_token: `${snapshot}:${index}` };
+  delete native.element_index; delete native.snapshot_id;
+  return native;
+}
 
 function stopDriver(child: ChildProcessWithoutNullStreams | null) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -66,9 +82,13 @@ export class CuaMcpGateway {
     /** Sees every finished call (after the controller), e.g. to record browser bindings. */
     onResult?: (tool: string, args: unknown, outcome: CuaOutcome, structured: unknown, owner?: string) => void;
     /** 询问式授权：敏感写动作需用户点一次允许。 */
-    requireConfirmation?: (tool: string, args: unknown, owner?: string) => boolean;
+    requireConfirmation?: (tool: string, args: unknown, owner: string) => boolean;
+    /** Spend a one-shot approval only after observation and live native guards admit dispatch. */
+    confirmDispatch?: (tool: string, args: unknown, owner: string) => boolean;
     /** 黑名单命中则拒绝该窗口/应用。 */
-    rejectTarget?: (tool: string, args: unknown, owner?: string) => string | null;
+    rejectTarget?: (tool: string, args: unknown, owner: string) => string | null | Promise<string | null>;
+    prepareTarget?: (owner: string, tool: string, args: unknown) => Promise<void>;
+    discoverWindows?: () => Promise<unknown[]>;
     /** 观察结果含密码框/锁屏时打码或跳过送模。 */
     sanitizeResult?: (tool: string, result: NonNullable<Rpc["result"]>) => void;
     tasks?: CuaTaskRegistry;
@@ -137,7 +157,7 @@ export class CuaMcpGateway {
 
   private connect(socket: net.Socket): Connection {
     const connection: Connection = { id: randomUUID(), socket, child: null, initialized: false,
-      pending: new Map(), reservations: new Set(), lifetime: new AbortController(), close: () => {} };
+      pending: new Map(), reservations: new Set(), tokenOnlyTools: new Set(), lifetime: new AbortController(), close: () => {} };
     let closed = false;
     connection.close = () => {
       if (closed) return;
@@ -167,6 +187,7 @@ export class CuaMcpGateway {
     const { socket } = connection;
     const child = this.options.launch();
     connection.child = child;
+    connection.cursorArmed = false;
     const failed = () => { if (connection.child === child) connection.close(); };
     child.on("error", failed);
     child.on("exit", failed);
@@ -214,6 +235,11 @@ export class CuaMcpGateway {
             }
           }
           if (pending.method === "tools/list" && message.result?.tools) {
+            for (const tool of message.result.tools) {
+              const schema = tool.inputSchema as { properties?: Record<string, unknown> } | undefined;
+              if (schema?.properties?.element_token && !schema.properties.element_index) connection.tokenOnlyTools.add(tool.name);
+              else connection.tokenOnlyTools.delete(tool.name);
+            }
             const currentOwner = this.options.authorize?.(connection.grant) ?? connection.owner;
             const visible = this.options.visibleTools?.(currentOwner) ?? this.options.allowedTools;
             const scope = this.scope(currentOwner);
@@ -224,6 +250,7 @@ export class CuaMcpGateway {
             line = JSON.stringify(message);
           }
           if (pending.permit) {
+            if (pending.call && message.result) this.options.sanitizeResult?.(pending.call.tool, message.result);
             const outcome = classifyReply(pending.permit.tool, message);
             const structured = message.result?.structuredContent;
             if (!this.options.controller.finish(pending.permit, outcome, structured)) {
@@ -237,7 +264,7 @@ export class CuaMcpGateway {
             if (this.options.tasks && pending.call?.tool === "get_window_state" && outcome === "ok" && message.result) {
               const mode = this.options.tasks.stateForOwner(pending.permit.owner)?.mode ?? "background";
               const modeText = mode === "background"
-                ? "Nuwax execution mode: background. Use set_value for text and exact elements for click/scroll. Generic keyboard, pixel and drag input are not authorized; ask the user to switch if semantic input is unavailable."
+                ? "Nuwax execution mode: background. Use set_value for text and exact elements for click/scroll. Generic keyboard, pixel and drag input are not authorized; ask the user to take over if semantic input is unavailable."
                 : "Nuwax execution mode: foreground. Foreground input is explicitly authorized for this bound window only.";
               const snapshotText = typeof snapshotId === "string" && /^s[0-9a-f]{8}$/i.test(snapshotId)
                 ? ` Current window observation snapshot_id="${snapshotId}". For an indexed element, copy this snapshot_id together with its element_index from this observation. Never invent a snapshot id or reuse one after observing again.` : "";
@@ -246,11 +273,9 @@ export class CuaMcpGateway {
               line = JSON.stringify(message);
             }
             if (pending.call) {
-              this.options.onResult?.(pending.call.tool, pending.call.args, outcome, structured, pending.permit.owner);
-              if (outcome === "ok" && message.result) {
-                this.options.sanitizeResult?.(pending.call.tool, message.result);
-                line = JSON.stringify(message);
-              }
+              const safeStructured = message.result?.structuredContent;
+              this.options.onResult?.(pending.call.tool, pending.call.args, outcome, safeStructured, pending.permit.owner);
+              if (outcome === "ok" && message.result) line = JSON.stringify(message);
             }
             if (outcome === "refused" && message.result) {
               message.result.content = [...(message.result.content ?? []), { type: "text", text: CUA_REFUSED_HINT }];
@@ -302,11 +327,12 @@ export class CuaMcpGateway {
   private armAgentCursor(connection: Connection) {
     if (connection.cursorArmed) return;
     connection.cursorArmed = true;
-    if (this.options.agentCursor && !this.options.agentCursor()) return;
+    if (!this.options.agentCursor?.()) return;
     const child = connection.child;
     if (!child) return;
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
+      id: `host-cursor-${randomUUID()}`,
       method: "tools/call",
       params: { name: CUA_AGENT_CURSOR_ENABLE.name, arguments: CUA_AGENT_CURSOR_ENABLE.arguments },
     })}\n`);
@@ -366,10 +392,21 @@ export class CuaMcpGateway {
     if (id !== undefined && (id === null || !["string", "number"].includes(typeof id))) { connection.close(); return; }
     if (id !== undefined && (connection.pending.has(keyOf(id)) || connection.reservations.has(keyOf(id)))) { connection.close(); return; }
     if (connection.pending.size + connection.reservations.size >= 32) { connection.close(); return; }
-    if (connection.warming) { this.reject(connection.socket, id, "operationInProgress", message.method); return; }
     if (this.holding || !connection.child) {
+      const owner = this.options.authorize ? this.options.authorize(connection.grant) : connection.id;
+      const state = this.options.controller.snapshot();
+      if (!this.options.tasks && this.holding && connection.initialized && message.method === "tools/call"
+        && id !== undefined && owner && this.options.controller.owns(owner) && state.phase === "paused"
+        && !CUA_FINAL_REASONS.includes(state.reason ?? "") && typeof message.params?.name === "string"
+        && this.options.allowedTools.includes(message.params.name)) {
+        // Pausing while the model thinks must also retain its next tool call.
+        // Do not retain arguments or execute this stale call after human resume.
+        const pending: Pending = { method: "tools/call", timer: undefined as unknown as ReturnType<typeof setTimeout> };
+        this.holdReply(connection, keyOf(id), pending, owner); return;
+      }
       this.reject(connection.socket, id, this.options.controller.snapshot().reason ?? "paused", message.method); return;
     }
+    if (connection.warming) { this.reject(connection.socket, id, "operationInProgress", message.method); return; }
     if (message.method === "initialize") connection.initialization = structuredClone(message);
     if (message.method === "tools/call") {
       if (id === undefined) return;
@@ -383,6 +420,20 @@ export class CuaMcpGateway {
       if (typeof tool !== "string" || !this.options.allowedTools.includes(tool)) {
         this.refuse(connection, owner, id, "toolNotAllowed"); return;
       }
+      if (tool === "list_windows" && this.options.discoverWindows) {
+        try {
+          const windows = await this.options.discoverWindows();
+          if (this.options.authorize && this.options.authorize(connection.grant) !== owner) {
+            this.reject(connection.socket, id, "sessionRequired"); return;
+          }
+          connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result: {
+            content: [{ type: "text", text: JSON.stringify({ windows }) }], structuredContent: { windows },
+          } }) + "\n");
+        } catch { this.refuse(connection, owner, id, "targetClosed"); }
+        return;
+      }
+      try { await this.options.prepareTarget?.(owner, tool, message.params?.arguments ?? {}); }
+      catch (error) { this.refuse(connection, owner, id, error instanceof Error ? error.message : "targetClosed"); return; }
       if (this.options.tasks) {
         connection.reservations.add(keyOf(id));
         try { await this.options.tasks.waitReady(owner, connection.lifetime.signal); }
@@ -395,13 +446,6 @@ export class CuaMcpGateway {
         }
       }
       call = { tool, args: message.params?.arguments ?? {} };
-      const blocked = this.options.rejectTarget?.(tool, call.args, owner);
-      if (blocked) { this.refuse(connection, owner, id, blocked); return; }
-      if (this.options.requireConfirmation?.(tool, call.args, owner)) {
-        this.fail("confirmationRequired", owner);
-        this.refuse(connection, owner, id, "confirmationRequired");
-        return;
-      }
       try { if (this.options.transformCall) call = this.options.transformCall(tool, call.args, owner); }
       catch (error) {
         const reason = error instanceof Error && (CALL_REJECTIONS.has(error.message) ||
@@ -419,6 +463,19 @@ export class CuaMcpGateway {
         }
         this.refuse(connection, owner, id, reason);
         return;
+      }
+      let blocked: string | null | undefined;
+      try { blocked = await this.options.rejectTarget?.(call.tool, call.args, owner); }
+      catch { blocked = "targetClosed"; }
+      if (this.options.authorize && this.options.authorize(connection.grant) !== owner) {
+        this.reject(connection.socket, id, "sessionRequired"); return;
+      }
+      if (blocked) { this.refuse(connection, owner, id, blocked); return; }
+      if (this.options.requireConfirmation?.(call.tool, call.args, owner)) {
+        if (!this.options.controller.owns(owner)) {
+          this.refuse(connection, owner, id, "observationRequired"); return;
+        }
+        this.deferConfirmation(connection, id, owner); return;
       }
       const decision = this.options.controller.begin(owner, call.tool, call.args);
       if (decision.error) {
@@ -460,6 +517,17 @@ export class CuaMcpGateway {
             if (!entry.held) connection.pending.delete(keyOf(id));
             return;
           }
+          const blocked = await this.options.rejectTarget?.(prepared.tool, prepared.args, permit.owner);
+          if (blocked || this.options.authorize && this.options.authorize(connection.grant) !== permit.owner) {
+            clearTimeout(timer); entry.release?.(); entry.release = undefined;
+            connection.pending.delete(keyOf(id));
+            this.options.controller.finish(permit, "refused");
+            this.refuse(connection, permit.owner, id, blocked ?? "sessionRequired"); return;
+          }
+          if (!this.options.tasks.valid(permit)) {
+            entry.release?.(); entry.release = undefined; clearTimeout(timer);
+            if (!entry.held) connection.pending.delete(keyOf(id)); return;
+          }
           message = { ...message, params: { ...message.params, name: prepared.tool, arguments: prepared.args } };
           line = JSON.stringify(message);
         } catch {
@@ -473,17 +541,68 @@ export class CuaMcpGateway {
         }
       }
     }
+    if (permit && call && this.options.confirmDispatch?.(call.tool, call.args, permit.owner) === false) {
+      const entry = connection.pending.get(keyOf(id));
+      if (entry) { clearTimeout(entry.timer); entry.release?.(); entry.release = undefined; }
+      connection.pending.delete(keyOf(id));
+      this.options.controller.finish(permit, "refused");
+      this.deferConfirmation(connection, id, permit.owner); return;
+    }
+    if (permit && call && connection.tokenOnlyTools.has(message.params?.name ?? "")) {
+      try {
+        message = { ...message, params: { ...message.params, arguments: nativeElementArgs(message.params?.arguments) } };
+        line = JSON.stringify(message);
+      } catch {
+        const entry = connection.pending.get(keyOf(id));
+        if (entry) { clearTimeout(entry.timer); entry.release?.(); entry.release = undefined; }
+        connection.pending.delete(keyOf(id));
+        this.options.controller.finish(permit, "refused");
+        this.refuse(connection, permit.owner, id, "scopeViolation"); return;
+      }
+    }
     if (!connection.child.stdin.write(`${line}\n`)) connection.socket.pause();
   }
 
+  private deferConfirmation(connection: Connection, id: Rpc["id"], owner: string) {
+    if (id === undefined) return;
+    // Pause/revoke first; registering the held reply afterwards keeps desktop
+    // pause cleanup from completing the ACP call before the human can answer.
+    this.fail("confirmationRequired", owner);
+    const pending: Pending = { method: "tools/call", timer: undefined as unknown as ReturnType<typeof setTimeout> };
+    this.holdReply(connection, keyOf(id), pending, owner);
+  }
+
+  private waitOwnerReady(connection: Connection, owner: string): Promise<void> {
+    if (this.options.tasks) return this.options.tasks.waitReady(owner, connection.lifetime.signal);
+    const controller = this.options.controller;
+    return new Promise((resolve, reject) => {
+      let off = () => {};
+      const finish = (error?: Error) => {
+        clearTimeout(timer); off(); connection.lifetime.signal.removeEventListener("abort", aborted);
+        if (error) reject(error); else resolve();
+      };
+      const aborted = () => finish(new Error("operationCancelled"));
+      const check = () => {
+        const state = controller.snapshot();
+        if (!controller.owns(owner) || ["completed", "stopped", "failed"].includes(state.phase)
+          || CUA_FINAL_REASONS.includes(state.reason ?? "")) finish(new Error("taskStopped"));
+        else if (state.phase === "running" && !this.holding) finish();
+      };
+      const timer = setTimeout(() => finish(new Error("timeLimit")), 15 * 60_000);
+      timer.unref(); off = controller.subscribe(check);
+      connection.lifetime.signal.addEventListener("abort", aborted, { once: true });
+      if (connection.lifetime.signal.aborted) aborted(); else check();
+    });
+  }
+
   /** Pause the tool's response as well as its actuator, so the ACP turn survives human handoff. */
-  private holdReply(connection: Connection, key: string, pending: Pending) {
-    if (!this.options.tasks || !pending.permit || pending.held) return;
+  private holdReply(connection: Connection, key: string, pending: Pending, owner = pending.permit?.owner) {
+    if (!owner || pending.held) return;
     clearTimeout(pending.timer);
     pending.held = true; pending.aborted = true; pending.call = undefined;
     connection.pending.set(key, pending);
     const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
-    void this.options.tasks.waitReady(pending.permit.owner, connection.lifetime.signal).then(() => {
+    void this.waitOwnerReady(connection, owner).then(() => {
       if (connection.pending.get(key) !== pending || !pending.held) return;
       connection.pending.delete(key);
       this.reject(connection.socket, id, "operationPaused");
@@ -520,7 +639,15 @@ export class CuaMcpGateway {
   cancelPending(reason: string) {
     for (const c of this.clients) for (const [key, pending] of c.pending) {
       if (!pending.permit) continue;
+      const state = this.options.tasks?.stateForOwner(pending.permit.owner) ?? this.options.controller.snapshot();
+      // Keep the ACP call open during a resumable desktop handoff. The helper
+      // transport is still killed below; resuming returns only operationPaused.
+      if (["userPaused", "operationCancelled"].includes(reason) && state.phase === "paused"
+        && !CUA_FINAL_REASONS.includes(state.reason ?? "")) {
+        this.holdReply(c, key, pending); continue;
+      }
       clearTimeout(pending.timer);
+      pending.held = false;
       c.pending.delete(key);
       const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
       this.reject(c.socket, id, reason);

@@ -1,18 +1,18 @@
 import { safeStorage } from "electron";
 import { deflateSync } from "node:zlib";
-import { computerUseHost } from "./ports";
+import { readCuaPreferences, writeCuaPreferences } from "./preferences";
 
 type Config = { baseUrl: string; model: string; apiKey: string };
-const KEY = "step1_config";
+
 const DEFAULT_URL = "https://open.bigmodel.cn/api/paas/v4";
 type Stored = Partial<Config> & { encryptedKey?: string };
-const settings = () => (computerUseHost().readSetting(KEY) ?? {}) as Record<string, unknown>;
+const settings = readCuaPreferences;
 const stored = (): Stored => (settings().computerUseVlm ?? {}) as Stored;
 function available() {
   return safeStorage.isEncryptionAvailable() &&
     !(process.platform === "linux" && safeStorage.getSelectedStorageBackend?.() === "basic_text");
 }
-function save(config: Stored) { return computerUseHost().writeSetting(KEY, { ...settings(), computerUseVlm: config }); }
+function save(config: Stored) { return writeCuaPreferences({ computerUseVlm: config }); }
 function migrate(): Stored {
   const cfg = stored();
   if (cfg.apiKey && available()) {

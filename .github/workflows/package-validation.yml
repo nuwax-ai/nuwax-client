@@ -1,0 +1,192 @@
+# Build validation only. Beta/Stable release workflows never call this file.
+name: Package validation
+run-name: Package validation / ${{ inputs.validation_series || github.event.head_commit.message }}
+
+on:
+  # A new dispatch-only workflow cannot register until it reaches the default
+  # branch. An explicit request-file commit enables isolated branch acceptance.
+  push:
+    branches: ['codex/**', 'validation/**']
+    paths: ['.github/package-validation-request.json']
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: Existing Beta/Stable tag whose app version is reused; no new version is created
+        required: true
+        type: string
+      validation_series:
+        description: Fixed issue identity across commits/reruns, e.g. pr-66; maximum four starts
+        required: true
+        type: string
+      platforms:
+        description: Private acceptance targets (signed Mac, Windows EXE only)
+        required: true
+        type: choice
+        default: both
+        options: [both, mac-arm64, windows-x64]
+      upgrade_from_tag:
+        description: Optional existing lower Beta/Stable tag for the same-source Mac upgrade pair
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: package-validation-${{ inputs.validation_series || github.event.head_commit.message }}
+  cancel-in-progress: false
+
+env:
+  VALIDATION_BASELINE_TAG: ${{ inputs.baseline_tag || 'v3.0.23-beta.3' }}
+  VALIDATION_SERIES: ${{ inputs.validation_series || github.event.head_commit.message }}
+  VALIDATION_PLATFORMS: ${{ inputs.platforms || 'both' }}
+  VALIDATION_UPGRADE_FROM_TAG: ${{ inputs.upgrade_from_tag }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      build_id: ${{ steps.identity.outputs.build_id }}
+      matrix: ${{ steps.identity.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: identity
+        name: Check existing baseline and four-start limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-validation.mjs prepare
+
+  package:
+    needs: prepare
+    env:
+      VALIDATION_PACKAGE_BASELINE_TAG: ${{ matrix.baselineTag }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # A rerun of only this job also consumes a start and must be checked before
+      # downloading dependencies or compiling resources.
+      - name: Recheck stop condition before build setup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/package-validation.mjs prepare
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+      - name: Configure read-only source access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          YICHAMAO_GIT_TOKEN: ${{ secrets.YICHAMAO_GIT_TOKEN }}
+          YICHAMAO_GIT_USERNAME: ${{ secrets.YICHAMAO_GIT_USERNAME || 'oauth2' }}
+        run: |
+          gh auth setup-git
+          git config --global core.autocrlf false
+          if [ -n "$YICHAMAO_GIT_TOKEN" ]; then
+            git config --global http.https://git.yichamao.com/.extraheader "Authorization: Basic $(printf '%s:%s' "$YICHAMAO_GIT_USERNAME" "$YICHAMAO_GIT_TOKEN" | base64 | tr -d '\r\n')"
+          fi
+      - name: Initialize pinned source checkouts
+        run: git submodule update --init --depth 1
+      - name: Setup Windows C++ compiler
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Setup terminal compatibility compiler
+        if: runner.os == 'Windows'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+          cache: false
+      - name: Setup Windows capture compiler
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-nasm perl make diffutils curl
+      - name: Setup macOS capture compiler
+        if: runner.os == 'macOS'
+        run: |
+          command -v nasm >/dev/null || brew install nasm
+          command -v pkg-config >/dev/null || brew install pkgconf
+      - name: Restore admitted unsigned native resource caches
+        uses: ./.github/actions/native-build-cache
+        with:
+          arch: ${{ matrix.arch }}
+          msys2-location: ${{ steps.msys2.outputs.msys2-location }}
+      - name: Import private Mac acceptance identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for value in APPLE_CERTIFICATE APPLE_API_KEY APPLE_API_KEY_ID APPLE_ISSUER_ID; do
+            [ -n "${!value}" ] || { echo "::error::Missing private acceptance identity: $value"; exit 1; }
+          done
+          CERTIFICATE_PATH="$RUNNER_TEMP/validation-certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/validation-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          security create-keychain -p actions "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p actions "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+          mkdir -p "$RUNNER_TEMP/validation-notary"
+          printf '%s' "$APPLE_API_KEY" | base64 --decode -o "$RUNNER_TEMP/validation-notary/AuthKey.p8"
+          echo "CSC_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/validation-notary/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+      - name: Build private acceptance packages without publishing
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NUWAX_RELEASE_CHANNEL: beta
+        run: node scripts/package-validation.mjs build
+      - name: Upload validation packages and context only
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-validation-${{ needs.prepare.outputs.build_id }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.baselineTag }}
+          path: ${{ steps.build.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Remove temporary Mac identity
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/validation-certificate.p12" "$RUNNER_TEMP/validation-notary/AuthKey.p8"
+          if [ -f "$RUNNER_TEMP/validation-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/validation-signing.keychain-db"
+          fi

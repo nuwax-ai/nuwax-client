@@ -19,6 +19,7 @@ for (const id of ['pause', 'resume', 'stop']) {
   el(id).title = labels['preview.' + id];
   el(id).setAttribute('aria-label', el(id).title);
 }
+el('confirm').textContent = labels['confirmAllow'];
 el('close').title = labels['preview.close'];
 el('close').setAttribute('aria-label', labels['preview.close']);
 el('close').onclick = () => api.close();
@@ -68,9 +69,10 @@ async function run(id, action) {
 }
 async function activate(id) {
   const task = runtime?.tasks?.find(task => task.taskId === id);
-  if (!task || task.controlPending || !task.scope?.windowId) return;
+  if (!task || !task.scope?.windowId) return;
   try {
     present(await api.setPresentation(id));
+    if (task.controlPending || !['running', 'paused'].includes(task.phase)) return;
     // Selecting a layer changes presentation order only. Native activation still
     // uses the host's revoke -> drain -> exact takeover path.
     const ids = (runtime.tasks || []).filter(task => ['running', 'paused'].includes(task.phase)).map(task => task.taskId);
@@ -127,6 +129,8 @@ function draw(state, force = false) {
   el('pause').hidden = terminal || current.phase !== 'running';
   el('resume').hidden = terminal || current.phase !== 'paused';
   el('pause').disabled = locked; el('resume').disabled = locked;
+  el('confirm').hidden = terminal || current.reason !== 'confirmationRequired';
+  el('confirm').disabled = locked;
   // Stop remains usable while a pause, handoff, or emergency-stop drain is pending.
   el('stop').disabled = terminal;
   if (terminal || current.controlPending) {
@@ -182,7 +186,7 @@ setInterval(() => {
 
 el('title').onclick = () => activate(selected);
 el('viewport').onclick = () => { if (Date.now() >= suppressClickUntil) void activate(selected); };
-for (const action of ['pause', 'resume', 'stop']) el(action).onclick = () => selected && run(selected, action);
+for (const action of ['pause', 'resume', 'stop', 'confirm']) el(action).onclick = () => selected && run(selected, action);
 api.onRuntime(draw); api.onPresentation(present);
 api.getRuntime().then(state => draw(state, true));
 api.getPresentation().then(present);
@@ -190,7 +194,7 @@ window.addEventListener('unload', () => { clearFrame(); for (const frame of fram
 `;
 
 export function taskPreviewWindowHtml(t: (key: string) => string) {
-  const keys = ['title', 'scope.choose', 'reason.generic', 'phase.running', 'phase.paused', 'phase.stopped', 'phase.failed',
+  const keys = ['title', 'confirmAllow', 'scope.choose', 'reason.generic', 'phase.running', 'phase.paused', 'phase.stopped', 'phase.failed',
     'preview.close', 'preview.pause', 'preview.resume', 'preview.stop', 'preview.takeover',
     'preview.loading', 'preview.unavailable', 'preview.minimized', 'preview.permissionsRequired', 'preview.helperUpgradeRequired',
     'preview.delayed', 'preview.ended', 'preview.handoff', ...CUA_REASON_KEYS.map(key => 'reason.' + key)];
@@ -218,7 +222,7 @@ header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--g
 @media(prefers-color-scheme:dark){:root{--text:#eeeef2;--muted:#a0a0ad;--glass:#25252cf7;--line:#ffffff15;--hover:#ffffff0a;--accent:#8175ff;--danger:#f08c94;--danger-bg:#e05a6324}}
   </style></head><body><div id="stack"></div><main class="shell">
   <button id="viewport"><img id="image" hidden alt=""><span id="status" role="status"></span></button>
-  <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="stop"></button></div>
+  <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="confirm" hidden></button><button id="stop"></button></div>
   <header><span id="dragHandle" aria-hidden="true">⠿</span><span id="dot"></span><button id="title"></button><span id="phase"></span><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
   <p id="error" role="alert"></p></main><script nonce="${nonce}">
 ${previewClientSource.replace('__CUA_LABELS__', labels).replace('__CUA_NOTICES__', notices)}
