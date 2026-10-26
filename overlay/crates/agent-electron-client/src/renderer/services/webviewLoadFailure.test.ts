@@ -8,11 +8,11 @@ import {
 describe("guest document failure", () => {
   it("ignores iframe failures and navigations aborted by a newer load", () => {
     expect(
-      mainDocumentFailure({ isMainFrame: false, errorCode: -105 })
+      mainDocumentFailure({ isMainFrame: false, errorCode: -105 }),
     ).toBeNull();
     expect(mainDocumentFailure({ errorCode: -105 })).toBeNull();
     expect(
-      mainDocumentFailure({ isMainFrame: true, errorCode: -3 })
+      mainDocumentFailure({ isMainFrame: true, errorCode: -3 }),
     ).toBeNull();
   });
   it("keeps main-document errors visible without account or ticket parameters", () => {
@@ -21,7 +21,7 @@ describe("guest document failure", () => {
         isMainFrame: true,
         errorCode: -102,
         validatedURL: "https://user:pass@test.example/Login?ticket=secret#key",
-      })
+      }),
     ).toEqual({
       kind: "load",
       code: -102,
@@ -34,5 +34,16 @@ describe("guest document failure", () => {
     expect(guestFailureCopy("en-US", "load").retry).toBe("Reload page");
     expect(guestFailureCopy("zh-cn", "crash").title).toBe("页面已中断");
     expect(guestFailureCopy("zh-TW", "resolve").retry).toBe("重新載入");
+  });
+  it("ignores a failed document superseded by a different main navigation", () => {
+    const event = {
+      isMainFrame: true,
+      errorCode: -105,
+      validatedURL: "https://test.example/old?view=1",
+    };
+    expect(mainDocumentFailure(event, "https://test.example/new")).toBeNull();
+    expect(
+      mainDocumentFailure(event, "https://test.example/old?view=1#section"),
+    ).toMatchObject({ kind: "load", code: -105 });
   });
 });

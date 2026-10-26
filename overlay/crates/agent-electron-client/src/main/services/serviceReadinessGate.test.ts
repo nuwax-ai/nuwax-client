@@ -24,7 +24,8 @@ describe("main-process readiness gate", () => {
     probe.resolve(ready);
     await first;
     expect(gate.result()).toEqual(ready);
-    expect(publish).toHaveBeenCalledExactlyOnceWith(ready);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith(ready);
   });
 
   it("invalidates the previous failure synchronously before a new probe", async () => {
@@ -61,6 +62,7 @@ describe("main-process readiness gate", () => {
     });
     await expect(gate.run()).resolves.toEqual(ready);
     expect(gate.result()).toEqual(ready);
-    expect(warn).toHaveBeenCalledExactlyOnceWith("delivery-failed");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("delivery-failed");
   });
 });
