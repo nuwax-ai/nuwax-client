@@ -6,6 +6,7 @@ import { DORMANCY_SETTING_KEY, refreshHostActivity } from '../services/hostActiv
 import { APP_NAME_IDENTIFIER } from '@shared/constants';
 import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/contract';
 import { notifyCapturePreferencesChanged } from '../features';
+import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {
@@ -19,6 +20,7 @@ export function registerSettingsHandlers(): void {
   });
 
   ipcMain.handle('settings:set', (_, key: string, value: unknown) => {
+    if (key === LOCAL_FILES_ENABLED_SETTING && value != null && typeof value !== 'boolean') return false;
     if ([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING].includes(key)) {
       const shortcut = value == null ? (key === CAPTURE_SHORTCUT_SETTING ? captureShortcut(null) : recordShortcut(null)) : parseCaptureShortcut(value);
       if (!shortcut) return false;
