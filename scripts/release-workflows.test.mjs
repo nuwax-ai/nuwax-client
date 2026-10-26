@@ -4,6 +4,20 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const workflow = (name) => readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
+test('stable and beta run native Windows installer space checks before building resources', () => {
+  for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
+    const text = workflow(name);
+    const step = text.split(/(?=^      - name: )/m).find(value => value.includes('-File .\\scripts\\test-installer-space.ps1'));
+    assert.ok(step, `${name} must run the shared native space helper fixtures`);
+    assert.match(step, /if: runner\.os == 'Windows'/);
+    assert.match(step, /shell: (?:powershell|pwsh)/);
+    assert.ok(step.includes('$env:SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'));
+    assert.match(step, /if \(\$LASTEXITCODE -ne 0\) \{ throw 'Windows installer disk space fixtures failed\.' \}/);
+    assert.ok(text.indexOf('-File .\\scripts\\test-installer-space.ps1') < text.indexOf('- name: Prepare bundled resources'));
+    assert.ok(text.indexOf('-File .\\scripts\\test-installer-space.ps1') < text.indexOf('- name: Build Electron app'));
+  }
+});
+
 test('public release routes are exclusive, validated before gates, and beta publication needs the matrix', () => {
   const stable = workflow('release-electron.yml'), beta = workflow('release-electron-dev.yml');
   assert.match(stable, /tags:\n\s+- "v\*"\n\s+- "!v\*-beta\.\*"/);
