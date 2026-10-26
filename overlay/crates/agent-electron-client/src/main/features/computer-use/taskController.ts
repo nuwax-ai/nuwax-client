@@ -39,6 +39,7 @@ export class CuaTaskController {
   constructor(private options: {
     now?: () => number; maxSteps?: number; maxTaskMs?: number;
     writesPerObservation?: number; maxStalled?: number; maxIdentical?: number; maxViolations?: number;
+    conversationForOwner?: (owner: string) => string | null;
   } = {}) {
     this.state = this.empty();
   }
@@ -67,6 +68,7 @@ export class CuaTaskController {
     this.owner = owner;
     this.epoch++;
     this.state = { ...this.empty(), taskId, startedAt: this.now(), phase: "running" };
+    if (this.options.conversationForOwner) this.state.conversationId = this.options.conversationForOwner(owner);
     this.forgetObservations();
     this.violations = 0;
     this.emit();

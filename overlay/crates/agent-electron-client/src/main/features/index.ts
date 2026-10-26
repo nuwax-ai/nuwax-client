@@ -159,6 +159,7 @@ export function startDesktopFeatures(
     windows: host.windows,
     activities: board.forFeature(feature.id),
     agent: {
+      resolveConversationId: (id) => host.agent.resolveConversationId?.(id) ?? null,
       setLocalMcpServer: (id, entry) => host.agent.setLocalMcpServer(id, entry),
       hasLocalMcpServer: (id) => host.agent.hasLocalMcpServer(id),
       resolveNodeBinary: () => host.agent.resolveNodeBinary(),

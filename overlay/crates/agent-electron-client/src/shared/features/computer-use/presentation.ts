@@ -1,4 +1,17 @@
-import type { CuaScope } from "./contract";
+import type { CuaRuntime, CuaScope } from "./contract";
+
+/** Only display metadata is projected; task execution and the global task center are untouched. */
+export function cuaRuntimeForConversation(state: CuaRuntime, conversationId: string | null): CuaRuntime {
+  const tasks = (state.tasks ?? []).filter(task => !!conversationId && task.conversationId === conversationId);
+  const focus = state.multiwindow
+    ? tasks.find(task => isCuaLivePhase(task.phase, task)) ?? tasks.at(-1)
+    : conversationId && state.conversationId === conversationId ? state : undefined;
+  const empty: CuaRuntime = { revision: state.revision, phase: "idle", taskId: null, startedAt: null,
+    updatedAt: state.updatedAt, steps: [], stepCount: 0, reason: null, needsObservation: true,
+    resultObserved: false, stats: { steps: 0, refused: 0, uncertain: 0, pauses: 0, resumes: 0, violations: 0 } };
+  return { ...(focus ?? empty), revision: state.revision, multiwindow: state.multiwindow,
+    ...(state.multiwindow ? { tasks } : {}), presentationConversationId: conversationId };
+}
 
 /** Initial placement is inset from the conversation area's right edge and below its toolbar. */
 export const CUA_CONTROL_INITIAL_POSITION = { right: 24, top: 72 } as const;

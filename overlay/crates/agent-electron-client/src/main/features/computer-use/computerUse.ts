@@ -48,8 +48,9 @@ const HELPER_EXEC_NAME = "Nuwax Computer Use";
 const HELPER_EXE_NAME = "NuwaxComputerUse.exe";
 const HELPER_BIN_NAME = "NuwaxComputerUse";
 const MCP_SERVER_ID = "cua";
-const cuaTasks = new CuaTaskController();
-const windowTasks = new CuaTaskRegistry();
+const conversationForOwner = (owner: string) => cuaSessionAuthority.conversationForOwner(owner);
+const cuaTasks = new CuaTaskController({ conversationForOwner });
+const windowTasks = new CuaTaskRegistry(4, conversationForOwner);
 let runtimeRevision = 0;
 cuaTasks.subscribe(() => { runtimeRevision++; });
 windowTasks.subscribe(() => { runtimeRevision++; });
@@ -126,6 +127,7 @@ function initializeScopePreference() {
   if (!multiwindow && saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
 }
 export const getCuaRuntime = (): CuaRuntime => ({ ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
+  presentationConversationId: computerUseHost().getConversationId?.() ?? null,
   ...(!multiwindow ? { scope: structuredClone(cuaScope) } : {}), revision: runtimeRevision,
   recoverable: runtimeSuspended && readEnabled(),
   shortcutAvailable, controlPending: pendingControls > 0 || (multiwindow && windowTasks.list().some((task) => task.controlPending)) });
@@ -135,6 +137,8 @@ export const onCuaRuntime = (listener: (state: CuaRuntime) => void) => {
   return () => { legacy(); tasks(); };
 };
 export function setCuaShortcutAvailable(value: boolean) { shortcutAvailable = value; cuaTasks.notify(); }
+/** Presentation changes get the same monotonic revision as task updates, including IPC replies. */
+export function notifyCuaPresentation() { cuaTasks.notify(); }
 
 async function ensureCuaGateway(helperRoot: string): Promise<string> {
   const selected = endpoint();

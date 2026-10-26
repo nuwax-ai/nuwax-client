@@ -41,6 +41,9 @@ export interface CuaStats {
 }
 
 export interface CuaRuntime {
+  /** Display metadata from the host session, never a model-supplied authorization. */
+  conversationId?: string | null;
+  presentationConversationId?: string | null;
   revision: number;
   phase: CuaPhase;
   taskId: string | null;

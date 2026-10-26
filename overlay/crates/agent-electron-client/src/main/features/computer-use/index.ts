@@ -15,6 +15,7 @@ import { startScreenshotRetention } from "./cuaPrivacy";
 import { configureComputerUseHost } from "./ports";
 import { createCuaControlWindow } from "./controlWindow";
 import { createCuaTaskHistory } from "./taskHistory";
+import { observeCuaConversation } from "./conversationContext";
 import { CuaEngineSessions, cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaScope } from "@shared/features/computer-use/contract";
 import { canPreviewCuaTask, isCuaLivePhase } from "@shared/features/computer-use/presentation";
@@ -27,7 +28,13 @@ export const computerUseFeature: DesktopFeature = {
   enabledByDefault: true,
   agentServers: ["cua"],
   register(ctx: FeatureContext): FeatureHandle {
+    const conversation = observeCuaConversation({
+      getMainWindow: () => ctx.windows.getMain(),
+      isCurrentDocument: contents => !!ctx.workspace?.isCurrentDocument({ sender: contents, senderFrame: contents.mainFrame }),
+      changed: () => cua.notifyCuaPresentation(),
+    });
     configureComputerUseHost({
+      getConversationId: () => conversation.get(),
       dataHome: ctx.dataDir,
       readSetting: (key) => ctx.settings.read(key),
       writeSetting: (key, value) => ctx.settings.write(key, value),
@@ -178,7 +185,9 @@ export const computerUseFeature: DesktopFeature = {
       const actions = [{ id: "center", labelKey: "Claw.Cua.center.open", run: openCenter }];
       if (active) {
         actions.push({ id: "preview", labelKey: "Claw.Cua.preview.expand", run: () => {
-          const id = state.multiwindow ? state.tasks?.find(canPreviewCuaTask)?.taskId : state.taskId;
+          const current = cua.getCuaRuntime(), conversationId = conversation.get();
+          const id = current.multiwindow ? current.tasks?.find(task => task.conversationId === conversationId && canPreviewCuaTask(task))?.taskId
+            : conversationId && current.conversationId === conversationId ? current.taskId : null;
           if (id) showPreview(id); else openCenter();
         } });
         actions.push({ id: "stop", labelKey: "Claw.Cua.multiwindow.stopAll", run: stop });
@@ -224,9 +233,11 @@ export const computerUseFeature: DesktopFeature = {
     const offStarting = ctx.lifecycle.onServicesStarting((signal) => cua.ensureCuaOnBoot(signal));
     const offQuit = ctx.lifecycle.onQuit(() => cua.suspendCua("appQuit"));
 
-    const offParticipant = ctx.agent.registerSessionParticipant(() => new CuaEngineSessions(cuaSessionAuthority));
+    const offParticipant = ctx.agent.registerSessionParticipant(() => new CuaEngineSessions(cuaSessionAuthority,
+      id => ctx.agent.resolveConversationId?.(id) ?? null));
 
     return { dispose() {
+      conversation.dispose();
       stopScreenshotRetention();
       offPermissionSubject?.();
       offParticipant();
