@@ -18,7 +18,6 @@
 
 !include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-path.nsh"
-!include "${BUILD_RESOURCES_DIR}\windows-install-space.nsh"
 
 !macro preInit
   !ifndef BUILD_UNINSTALLER
@@ -47,9 +46,6 @@
 !macroend
 
 !macro customHeader
-  !ifndef BUILD_UNINSTALLER
-    !insertmacro nuwaxInstallSpaceFunctions
-  !endif
   !include "${BUILD_RESOURCES_DIR}\windows-maintenance.nsh"
   !include "${BUILD_RESOURCES_DIR}\windows-per-user-install.nsh"
   Name "女娲Nuwax"
@@ -350,7 +346,6 @@ Var nuwaxRequireRecoverySnapshot
     !insertmacro nuwaxRequireSafeInstallTarget
     !insertmacro nuwaxConfirmMaintenanceTarget
     !insertmacro windowsRequireRegisteredPath
-    !insertmacro nuwaxRequireInstallSpace
   !endif
   ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
     !insertmacro nuwaxFindAppProcess $R0
@@ -466,16 +461,13 @@ Var nuwaxRequireRecoverySnapshot
   !ifdef allowToChangeInstallationDirectory
     !undef MUI_PAGE_CUSTOMFUNCTION_PRE
     !define MUI_PAGE_CUSTOMFUNCTION_PRE nuwaxInstFilesPre
-  !endif
-  Function nuwaxInstFilesPre
-    !ifdef allowToChangeInstallationDirectory
+    Function nuwaxInstFilesPre
       ${ifNot} ${isUpdated}
       ${andif} $nuwaxMaintenanceAction == ""
         Call instFilesPre
       ${endif}
-    !endif
-  FunctionEnd
-  !insertmacro nuwaxInstallSpacePage
+    FunctionEnd
+  !endif
 !macroend
 
 ; 只有成功安装后才进入完成页。升级直接以原桌面用户打开新版并跳过此页；

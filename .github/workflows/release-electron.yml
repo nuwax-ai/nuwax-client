@@ -264,13 +264,6 @@ jobs:
       - name: Install commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs
 
-      - name: Exercise Windows installer disk space with isolated fixtures
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-installer-space.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows installer disk space fixtures failed.' }
-
       - name: Restore bundled resource caches
         uses: ./.github/actions/bundled-resource-cache
         with:
