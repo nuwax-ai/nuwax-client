@@ -126,6 +126,15 @@ function scalar(value: unknown): string {
     throw new LocalFilesFailure("invalid-argument");
   return requireString(String(value));
 }
+// 旧 PC Web 会透传 DTO 中的 null/空串；可选值在 IPC 边界统一为缺省，必填身份不放宽。
+function optionalScalar(value: unknown): string | undefined {
+  return value === null || value === undefined || value === ""
+    ? undefined : scalar(value);
+}
+function optionalString(value: unknown): string | undefined {
+  return value === null || value === undefined || value === ""
+    ? undefined : requireString(value);
+}
 function failure(error: unknown): LocalFilesResult<never> {
   return { success: false, code: fileFailure(error).code };
 }
@@ -393,15 +402,22 @@ export class LocalFilesRuntime {
     if (!input || input.sandboxId !== identity.sandboxId)
       throw new LocalFilesFailure("not-local");
     const cId = scalar(input.cId);
+    const normalizedInput = {
+      ...input,
+      cId,
+      projectId: optionalScalar(input.projectId),
+      userId: optionalScalar(input.userId),
+      workspacePath: optionalString(input.workspacePath),
+      serviceType: optionalString(input.serviceType),
+    };
     const epoch = this.epoch;
     const signature = identityKey(identity);
     const rootInput = await services.resolveRoot({
       cId,
-      workspacePath: input.workspacePath,
-      projectId:
-        input.projectId === undefined ? undefined : scalar(input.projectId),
-      serviceType: input.serviceType,
-      userId: input.userId === undefined ? undefined : scalar(input.userId),
+      workspacePath: normalizedInput.workspacePath,
+      projectId: normalizedInput.projectId,
+      serviceType: normalizedInput.serviceType,
+      userId: normalizedInput.userId,
     });
     if (!rootInput || !path.isAbsolute(rootInput))
       throw new LocalFilesFailure("context-unresolved");
@@ -422,7 +438,7 @@ export class LocalFilesRuntime {
       cId,
       sandboxId: identity.sandboxId,
       root,
-      input,
+      input: normalizedInput,
       owner,
       epoch,
       identity: signature,
