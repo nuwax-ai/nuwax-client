@@ -13,7 +13,7 @@ vi.mock("electron", async () => {
   }
   return { app: { on: vi.fn(), removeListener: vi.fn() }, nativeImage: {}, Notification };
 });
-vi.mock("electron-log", () => ({ default: { warn: vi.fn() } }));
+vi.mock("electron-log", () => ({ default: { warn: vi.fn(), info: vi.fn() } }));
 vi.mock("../i18n", () => ({ t: () => "unread" }));
 vi.mock("../../window/trayManager", () => ({ setTrayUnreadCount: vi.fn() }));
 
@@ -23,9 +23,70 @@ beforeEach(() => {
   mocks.loadNative.mockReturnValue({ showNotification: mocks.show, releaseNotification: mocks.release, closeNotification: mocks.close });
 });
 
-function callback() { return mocks.show.mock.calls[0][4] as (event: "click" | "close" | "failed", code: number) => void; }
+function callback() { return mocks.show.mock.calls[0][4] as (event: "click" | "close" | "failed" | "submitted", code: number) => void; }
 
 describe("modern macOS notification backend", () => {
+  it.each(["click", "close", "failed"] as const)("keeps %s reachable through the production presenter after submission", async terminal => {
+    const { createIMNativePresentation } = await import("../imNativePresentation");
+    const window = { isDestroyed: () => false, isFocused: () => false, isMinimized: () => false, show: vi.fn(), focus: vi.fn() };
+    const presentation = createIMNativePresentation({
+      platform: "darwin", getMainWindow: () => window as any, isSessionCurrent: () => true,
+      setDockBadge: vi.fn(), setTrayBadgeCount: vi.fn(),
+    });
+    presentation.showMessage({ sessionGeneration: 1, msgId: "m", convId: "c", title: "Team", body: "Hello", diagnosticTrace: 1 });
+    callback()("submitted", 0);
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.close).not.toHaveBeenCalled();
+    callback()(terminal, 12);
+    expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.close).toHaveBeenCalledTimes(terminal === "close" ? 0 : 1);
+    expect(window.focus).toHaveBeenCalledTimes(terminal === "click" ? 1 : 0);
+    presentation.dispose();
+  });
+
+  it("ignores queued submission and terminal callbacks after account cleanup", async () => {
+    const { createIMNativePresentation } = await import("../imNativePresentation");
+    const window = { isDestroyed: () => false, isFocused: () => false, isMinimized: () => false, show: vi.fn(), focus: vi.fn() };
+    let current = true;
+    const presentation = createIMNativePresentation({
+      platform: "darwin", getMainWindow: () => window as any, isSessionCurrent: () => current,
+      setDockBadge: vi.fn(), setTrayBadgeCount: vi.fn(),
+    });
+    const message = { sessionGeneration: 1, msgId: "m", convId: "c", title: "Team", body: "Hello" };
+    presentation.showMessage(message);
+    const oldCallback = callback();
+    current = false;
+    presentation.clear();
+    oldCallback("submitted", 0);
+    oldCallback("click", 0);
+    oldCallback("failed", 12);
+    expect(window.focus).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.close).toHaveBeenCalledOnce();
+    expect(presentation.showMessage({ ...message, msgId: "late" })).toBe(false);
+    expect(mocks.show).toHaveBeenCalledOnce();
+    presentation.dispose();
+  });
+
+  it("relays submission acknowledgement without losing the later click or removing OS history", async () => {
+    const { MacNativeNotification } = await import("./macNativeNotification");
+    const notification = new MacNativeNotification({ title: "Team" });
+    const submitted = vi.fn();
+    const click = vi.fn();
+    notification.on("submitted", submitted).on("click", click);
+    notification.show();
+    callback()("submitted", 0);
+    expect(submitted).toHaveBeenCalledOnce();
+    expect(click).not.toHaveBeenCalled();
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(mocks.close).not.toHaveBeenCalled();
+    callback()("click", 0);
+    expect(click).toHaveBeenCalledOnce();
+    notification.removeAllListeners();
+    callback()("submitted", 0);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
   it.each(["darwin", "win32", "linux"] as const)("uses the correct production backend on %s", async platform => {
     const { createIMNativePresentation } = await import("../imNativePresentation");
     const window = { isDestroyed: () => false, isFocused: () => false, isMinimized: () => false, show: vi.fn(), focus: vi.fn(), setOverlayIcon: vi.fn(), on: vi.fn(), removeListener: vi.fn() };

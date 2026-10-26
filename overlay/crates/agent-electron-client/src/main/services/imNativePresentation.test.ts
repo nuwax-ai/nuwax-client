@@ -4,9 +4,9 @@ import type { BrowserWindow, NativeImage, NotificationConstructorOptions } from 
 import { describe, expect, it, vi } from "vitest";
 import { createIMBadgePng, createIMNativePresentation, formatIMBadgeCount, type IMNativeMessage, type IMNativeNotification, type IMNativePresentationOptions } from "./imNativePresentation";
 
-const mocks = vi.hoisted(() => ({ appOn: vi.fn(), appRemoveListener: vi.fn() }));
+const mocks = vi.hoisted(() => ({ appOn: vi.fn(), appRemoveListener: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 vi.mock("electron", () => ({ app: { on: mocks.appOn, removeListener: mocks.appRemoveListener }, nativeImage: {}, Notification: {} }));
-vi.mock("electron-log", () => ({ default: { warn: vi.fn() } }));
+vi.mock("electron-log", () => ({ default: { warn: mocks.warn, info: mocks.info } }));
 vi.mock("./i18n", () => ({ t: (_key: string, count: string) => `${count} unread messages` }));
 vi.mock("../window/trayManager", () => ({ setTrayUnreadCount: vi.fn() }));
 
@@ -191,6 +191,31 @@ describe("IM native unread badge", () => {
 });
 
 describe("IM native notifications", () => {
+  it("records OS submission separately without removing history or click listeners", () => {
+    const fixture = setup();
+    mocks.info.mockClear();
+    fixture.presentation.showMessage({ ...message(), diagnosticTrace: 8 });
+    fixture.created[0].emit("submitted");
+    expect(mocks.info).toHaveBeenCalledWith("[IM] Native notification submitted", { trace: 8, platform: "darwin" });
+    expect(fixture.created[0].close).not.toHaveBeenCalled();
+    expect(fixture.created[0].listenerCount("click")).toBe(1);
+    fixture.created[0].emit("click");
+    expect(fixture.main.focus).toHaveBeenCalledOnce();
+    fixture.presentation.dispose();
+  });
+
+  it.each([1, -1, "ticket=secret", NaN, Infinity, 1.5, { body: "secret" }])("only logs native numeric error codes (%s)", code => {
+    const fixture = setup();
+    mocks.warn.mockClear();
+    fixture.presentation.showMessage({ ...message(), diagnosticTrace: 3 });
+    fixture.created[0].emit("failed", { code, message: "private message", ticket: "secret" });
+    expect(mocks.warn).toHaveBeenCalledWith("[IM] Native notification failed", {
+      trace: 3, platform: "darwin", ...([1, -1].includes(code as number) ? { code } : {}),
+    });
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(/secret|private/);
+    fixture.presentation.dispose();
+  });
+
   it("suppresses notifications when any business window is focused without clearing badges", () => {
     const fixture = setup();
     fixture.presentation.setUnreadCount(8);

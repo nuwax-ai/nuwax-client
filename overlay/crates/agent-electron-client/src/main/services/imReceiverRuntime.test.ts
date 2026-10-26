@@ -195,6 +195,7 @@ afterEach(async () => {
 
 async function start(backend: Awaited<ReturnType<typeof localBackend>>) {
   mocks.origin = backend.origin;
+  mocks.settings.set("step1_config", { serverHost: backend.origin });
   const business = guest(() => `${backend.origin}/home`);
   const external = guest(() => "https://preview.example/page");
   const main = mainWindow();
@@ -212,6 +213,66 @@ async function settled(): Promise<void> {
 }
 
 describe("IM receiver local HTTP/WebSocket integration", () => {
+  it.each([
+    ["capture", "file:///app/capture.html", false],
+    ["Computer Use", "file:///app/computer-use.html", false],
+    ["external", "https://preview.example/page", false],
+    ["embedded credentials", "credentials", false],
+    ["destroyed business", "business", true],
+  ])("does not suppress background IM while a %s helper window is focused", async (_name, target, destroyed) => {
+    const backend = await localBackend();
+    const { main } = await start(backend);
+    const secondary = {
+      isDestroyed: () => destroyed,
+      isFocused: () => true,
+      webContents: guest(() => target === "business" ? `${backend.origin}/home` : target === "credentials"
+        ? `${backend.origin.replace("://", "://user:password@")}/home` : String(target)),
+    } as unknown as BrowserWindow;
+    mocks.windows.push(secondary);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+    expect(mocks.nativeOptions!.getBusinessWindows!()).toEqual([main.window]);
+    expect(mocks.nativeOptions!.isNotificationAllowed!()).toBe(true);
+  });
+
+  it.each(["business", "loopback"])("suppresses IM for a focused trusted %s secondary window", async target => {
+    const backend = await localBackend();
+    await start(backend);
+    const loopback = "http://127.0.0.1:17879";
+    mocks.settings.set("nuwax.loopback", { enabled: true, origin: loopback });
+    const secondary = {
+      isDestroyed: () => false, isFocused: vi.fn(() => true),
+      webContents: guest(() => `${target === "business" ? backend.origin : loopback}/home`),
+    };
+    mocks.windows.push(secondary as unknown as BrowserWindow);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage();
+    await settled();
+    expect(mocks.native.showMessage).not.toHaveBeenCalled();
+    expect(mocks.nativeOptions!.getBusinessWindows!()).toContain(secondary);
+    secondary.isFocused.mockReturnValue(false);
+    backend.sendMessage("9223372036854775801");
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+  });
+
+  it("rechecks current origin admission instead of retaining a previous business or disabled loopback window", async () => {
+    const backend = await localBackend();
+    const { main } = await start(backend);
+    const secondary = {
+      isDestroyed: () => false, isFocused: () => true,
+      webContents: guest(() => `${backend.origin}/home`),
+    } as unknown as BrowserWindow;
+    mocks.windows.push(secondary);
+    expect(mocks.nativeOptions!.getBusinessWindows!()).toContain(secondary);
+    mocks.settings.set("step1_config", { serverHost: "https://replacement.example" });
+    mocks.settings.set("nuwax.loopback", { enabled: false, origin: backend.origin });
+    expect(mocks.nativeOptions!.getBusinessWindows!()).toEqual([main.window]);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+  });
+
   it("does not start IM transports, notifications or lifecycle listeners for the community product", async () => {
     vi.stubEnv("NUWAX_APP_IDENTIFIER", "nuwaclaw");
     const backend = await localBackend();
@@ -223,6 +284,32 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     expect(mocks.nativeOptions).toBeNull();
     expect(mocks.appEvents?.listenerCount("browser-window-focus")).toBe(0);
     expect(mocks.powerEvents?.listenerCount("lock-screen")).toBe(0);
+  });
+
+  it("records only diagnostic sequence and allowed decision reasons for skipped and failed messages", async () => {
+    const backend = await localBackend();
+    const { main, api } = await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    main.isFocused.mockReturnValue(true);
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", { trace: 1, reason: "business-foreground" }));
+    main.isFocused.mockReturnValue(false);
+    backend.state.conversation.dnd = true;
+    backend.sendMessage("9223372036854775801");
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", { trace: 2, reason: "dnd" }));
+    backend.state.conversationHandler = response => reply(response, { secret: "sensitive response" }, "sensitive code", 503);
+    backend.sendMessage("9223372036854775802");
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", { trace: 3, reason: "conversation-lookup-failed" }));
+    backend.sendMessage("9223372036854775803", "", SELF_ID);
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", { trace: 4, reason: "own-message" }));
+    api.setIMNotificationEnabled(false);
+    backend.sendMessage("9223372036854775804");
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", { trace: 5, reason: "notifications-disabled" }));
+    expect(mocks.native.showMessage).not.toHaveBeenCalled();
+    const logged = JSON.stringify([mocks.info.mock.calls, mocks.warn.mock.calls]);
+    for (const secret of [CONV_ID, MSG_ID, SELF_ID, "Alice", "Hello", "sensitive", "synthetic-im-ticket", backend.origin]) {
+      expect(logged).not.toContain(secret);
+    }
   });
 
   it("registers a separate device, authenticates im-v1 with Cookie, and pushes long-ID events into unread HTTP and badges", async () => {
