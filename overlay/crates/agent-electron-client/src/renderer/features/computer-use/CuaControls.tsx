@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Button, Tooltip, message, theme } from "antd";
 import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
 
-import { CUA_CONTROL_INITIAL_POSITION, canShowCuaOverlay, cuaOverlayNotice, cuaReasonKey } from "@shared/features/computer-use/presentation";
+import { CUA_CONTROL_INITIAL_POSITION, canShowCuaOverlay, cuaRuntimeForConversation, cuaOverlayNotice, cuaReasonKey } from "@shared/features/computer-use/presentation";
 import { CuaTaskCenter } from "./CuaTaskCenter";
 import styles from "./CuaControls.module.css";
 type T = (key: string, ...args: any[]) => string;
@@ -45,7 +45,7 @@ function useCuaAction(t: T, accept: (state: CuaRuntime) => void) {
 export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
   const [runtime, accept] = useCuaRuntime(api);
   return <><CuaTaskCenter api={api} runtime={runtime} accept={accept} t={t} />
-    <CuaControlBar api={api} runtime={runtime} accept={accept} t={t} /></>;
+    <CuaControlBar api={api} runtime={runtime ? cuaRuntimeForConversation(runtime, runtime.presentationConversationId ?? null) : null} accept={accept} t={t} /></>;
 }
 type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "stop" | "close" | "power" | "confirm";
 function ControlIcon({ name }: { name: ControlIconName }) {

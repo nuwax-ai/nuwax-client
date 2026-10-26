@@ -45,7 +45,7 @@ class MainWindow extends EventEmitter {
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
 function setup(multiwindow = true) {
   let main = new MainWindow();
-  let runtime = { taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 } }] } as CuaRuntime;
+  let runtime = { presentationConversationId: "A", taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 }, conversationId: "A" }] } as CuaRuntime;
   let listener: (s: CuaRuntime) => void = () => {};
   const action = vi.fn();
   const dispose = createCuaControlWindow({
@@ -53,7 +53,8 @@ function setup(multiwindow = true) {
     subscribe: fn => { listener = fn; return vi.fn(); }, authenticated: () => true, t: key => key, taskAction: action,
   });
   return { dispose, action, get main() { return main; }, replaceMain(next: MainWindow) { main = next; },
-    setRuntime(value: CuaRuntime) { runtime = value; listener(runtime); },
+    setConversation(id: string | null) { runtime = { ...runtime, presentationConversationId: id, revision: runtime.revision + 1 }; listener(runtime); },
+    setRuntime(value: CuaRuntime) { runtime = { presentationConversationId: runtime.presentationConversationId, ...value, tasks: value.tasks?.map(task => ({ conversationId: "A", ...task })) }; listener(runtime); },
     update() { runtime = { ...runtime, revision: runtime.revision + 1 }; listener(runtime); } };
 }
 beforeEach(() => {
@@ -162,6 +163,49 @@ describe("Computer Use control surface follows the main client window", () => {
     expect(s.action).not.toHaveBeenCalled();
     await act(event, "task", "takeover"); expect(s.action).toHaveBeenCalledWith("task", "takeover");
     expect(mocks.handlers.has("cua:control:listWindows")).toBe(false); s.dispose();
+  });
+
+
+  it("shows only the current conversation's stack and switching never controls execution", async () => {
+    const s = setup(); await flush(); let v = mocks.views.at(-1);
+    const task = (taskId: string, conversationId: string) => ({ taskId, conversationId, phase: "running", scope: { kind: "window", pid: 1, windowId: 2 } });
+    s.setRuntime({ revision: 3, multiwindow: true, tasks: [task("a1", "A"), task("a2", "A"), task("b1", "B"), task("unknown", "")] } as CuaRuntime);
+    const get = mocks.handlers.get("cua:control:getRuntime")!;
+    const event = () => ({ sender: v.webContents, senderFrame: v.webContents.mainFrame });
+    expect(get(event()).tasks.map((task: any) => task.taskId)).toEqual(["a1", "a2"]);
+    expect(v.bounds.width).toBe(248);
+    expect(mocks.handlers.get("cua:control:reorder")!(event(), ["a2", "a1"])).toEqual(["a2", "a1"]);
+    mocks.handlers.get("cua:control:setPresentation")!(event(), "a2");
+    s.setConversation("unused"); expect(v.webContents.isDestroyed()).toBe(true);
+    expect(mocks.select).toHaveBeenLastCalledWith(null);
+    expect(get(event())).toBeNull();
+    expect(s.dispose.showTask("a1").success).toBe(false);
+    s.setConversation("B"); await flush(); v = mocks.views.at(-1); expect(v.visible).toBe(true);
+    expect(get(event()).tasks.map((task: any) => task.taskId)).toEqual(["b1"]);
+    expect(v.bounds.width).toBe(240);
+    s.setConversation("A"); await flush(); v = mocks.views.at(-1); expect(v.visible).toBe(true);
+    expect(get(event()).tasks.map((task: any) => task.taskId)).toEqual(["a2", "a1"]);
+    expect(mocks.handlers.get("cua:control:getPresentation")!(event()).taskId).toBe("a2");
+    expect(s.action).not.toHaveBeenCalled(); s.dispose();
+  });
+  it("remembers dismissal and selection per conversation and rejects late cross-conversation controls", async () => {
+    const s = setup(); await flush(); let v = mocks.views.at(-1);
+    s.setRuntime({ revision: 3, multiwindow: true, tasks: [
+      { taskId: "a", conversationId: "A", phase: "running", scope: { kind: "window", pid: 1, windowId: 2 } },
+      { taskId: "b", conversationId: "B", phase: "running", scope: { kind: "window", pid: 3, windowId: 4 } },
+    ] } as CuaRuntime);
+    const event = () => ({ sender: v.webContents, senderFrame: v.webContents.mainFrame });
+    const stale = event();
+    mocks.handlers.get("cua:control:close")!(event());
+    s.setConversation("B"); await flush(); v = mocks.views.at(-1); expect(v.visible).toBe(true);
+    expect(mocks.handlers.get("cua:control:close")!(stale)).toBe(false);
+    expect(mocks.handlers.get("cua:control:setPresentation")!(event(), "a")).toBeNull();
+    expect(mocks.handlers.get("cua:control:reorder")!(event(), ["a", "b"])).toBeNull();
+    expect((await mocks.handlers.get("cua:control:taskAction")!(event(), "a", "stop")).success).toBe(false);
+    s.setConversation("A"); await flush(); v = mocks.views.at(-1); s.update(); expect(v.visible).toBe(false);
+    s.dispose.showTask("a"); expect(v.visible).toBe(true);
+    s.setConversation(null); expect(v.webContents.isDestroyed()).toBe(true);
+    expect(s.action).not.toHaveBeenCalled(); s.dispose();
   });
 
 });

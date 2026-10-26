@@ -21,7 +21,7 @@ export class CuaTaskRegistry {
   private waiters: Array<{ task: Task; resolve: (release: () => void) => void; reject: (error: Error) => void }> = [];
   private deadlineHandler?: (id: string, reason: string) => void;
 
-  constructor(private maxActive = 4) {}
+  constructor(private maxActive = 4, private conversationForOwner?: (owner: string) => string | null) {}
   onDeadline(handler: (id: string, reason: string) => void) { this.deadlineHandler = handler; }
   /** Keep the ACP tool call alive while the human chooses a target or holds control. */
   waitReady(owner: string, signal: AbortSignal): Promise<void> {
@@ -86,7 +86,7 @@ export class CuaTaskRegistry {
       if (!old) throw new Error("taskCapacity");
       this.tasks.delete(old.id);
     }
-    const controller = new CuaTaskController({ writesPerObservation: 1 });
+    const controller = new CuaTaskController({ writesPerObservation: 1, conversationForOwner: this.conversationForOwner });
     controller.setAvailable(this.enabled);
     const task: Task = { id: randomUUID(), bindingId: randomUUID(), owner, controller, epoch: 1, mode: "background",
       color: COLORS[this.tasks.size % COLORS.length], queued: false, pending: false };

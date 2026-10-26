@@ -9,6 +9,7 @@
 import type { FeatureMcpServerEntry } from "../_kit/types";
 
 export interface ComputerUseHostPorts {
+  getConversationId?(): string | null;
   /** 特性持久目录（`~/.nuwax/computer-use`）：驱动自有落盘的统一宿主目录。 */
   dataHome: string;
   readSetting(key: string): unknown;

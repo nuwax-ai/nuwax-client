@@ -13,6 +13,13 @@ function setup(max = 4) {
 }
 
 describe("window task ownership and scheduling", () => {
+  it("keeps host-resolved conversation metadata on each task after its grant is retired", () => {
+    const owners = new Map([["grant-a", "A"], ["grant-b", "B"]]);
+    const registry = new CuaTaskRegistry(4, owner => owners.get(owner) ?? null);
+    registry.ensure("grant-a"); registry.ensure("grant-b"); registry.ensure("unknown");
+    owners.clear();
+    expect(registry.list().map(task => task.conversationId)).toEqual(["A", "B", null]);
+  });
   it("keeps scope, observations, budgets and cancellation independent for two sessions", () => {
     const { registry, a, b } = setup();
     const observed = registry.begin(a.owner, "get_window_state", { pid: 10, window_id: 100 });

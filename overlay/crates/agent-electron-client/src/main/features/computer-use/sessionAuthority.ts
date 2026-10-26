@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 
 type McpServer = { name: string; command?: string; args?: string[]; env?: Array<{ name: string; value: string }> };
-type Grant = { secret: string; file: string; owner: string; active: boolean; turn: number };
+type Grant = { secret: string; file: string; owner: string; active: boolean; turn: number; conversationId?: string | null };
 type Entry = { command: string; args: string[]; env: Record<string, string> };
 
 /** Host-issued credentials bind an ACP session to its own transport, even in a shared engine. */
@@ -40,10 +40,14 @@ export class CuaSessionAuthority {
     const grant = typeof secret === "string" ? this.grants.get(secret) : undefined;
     return grant?.active ? grant.owner : null;
   }
-  start(grant?: Grant): number {
+  conversationForOwner(owner: string): string | null {
+    for (const grant of this.grants.values()) if (grant.owner === owner) return grant.conversationId ?? null;
+    return null;
+  }
+  start(grant?: Grant, conversationId: string | null = null): number {
     if (!grant || !this.grants.has(grant.secret)) return 0;
     if (grant.active) this.finish(grant, grant.turn, true);
-    grant.owner = randomUUID(); grant.active = true;
+    grant.owner = randomUUID(); grant.active = true; grant.conversationId = conversationId;
     return ++grant.turn;
   }
   finish(grant: Grant | undefined, turn: number, cancelled: boolean) {
@@ -66,7 +70,7 @@ export const cuaSessionAuthority = new CuaSessionAuthority();
 export class CuaEngineSessions {
   private sessions = new Map<string, Grant>();
   private pending = new Set<Grant>();
-  constructor(private authority = cuaSessionAuthority) {}
+  constructor(private authority = cuaSessionAuthority, private resolveConversationId: (id: string) => string | null = () => null) {}
   async setup<T>(servers: McpServer[], work: () => Promise<T>, sessionId: (result: T) => string): Promise<T> {
     const prepared = this.prepare(servers);
     try { const result = await work(); prepared.bind(sessionId(result)); return result; }
@@ -83,7 +87,13 @@ export class CuaEngineSessions {
       cancel: () => { if (grant) this.pending.delete(grant); this.authority.remove(grant); },
     };
   }
-  start(sessionId: string) { return this.authority.start(this.sessions.get(sessionId)); }
+  start(sessionId: string) {
+    const grant = this.sessions.get(sessionId);
+    if (!grant) return 0;
+    let conversationId: string | null = null;
+    try { conversationId = this.resolveConversationId(sessionId); } catch { /* Unknown display ownership stays hidden. */ }
+    return this.authority.start(grant, conversationId);
+  }
   finish(sessionId: string, turn: number, cancelled = false) { this.authority.finish(this.sessions.get(sessionId), turn, cancelled); }
   cancel(sessionId: string) { const grant = this.sessions.get(sessionId); this.authority.finish(grant, grant?.turn ?? 0, true); }
   remove(sessionId: string) { this.authority.remove(this.sessions.get(sessionId)); this.sessions.delete(sessionId); }

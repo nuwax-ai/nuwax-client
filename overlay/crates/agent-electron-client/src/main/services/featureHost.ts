@@ -9,6 +9,7 @@ import { getDb } from "../db";
 import { getNodeBinPathWithFallback } from "./system/binaryLocator";
 import type { FeatureMcpServerEntry } from "../features";
 import type { McpServerEntry } from "./packages/mcp";
+import { agentService } from "./engines/unifiedAgent";
 
 const MCP_LOCAL_CONFIG_KEY = "mcp_local_config";
 
@@ -37,6 +38,13 @@ function readMcpLocalConfig(): McpLocalConfig {
 
 export function createFeatureAgentHost() {
   return {
+    resolveConversationId(sessionId: string): string | null {
+      const sessions = agentService.listAllSessionsDetailed().filter(session => session.id === sessionId);
+      // Native IDs may collide across engines. Never guess from the latest active task.
+      const ids = new Set(sessions.map(session => session.projectId?.trim()).filter(Boolean));
+      return sessions.length > 0 && sessions.every(session => !!session.projectId?.trim()) && ids.size === 1
+        ? [...ids][0]! : null;
+    },
     /** 登记（entry）或移除（null）本地 MCP 条目并同步 MCP Proxy。 */
     async setLocalMcpServer(id: string, entry: FeatureMcpServerEntry | null): Promise<void> {
       const db = getDb();

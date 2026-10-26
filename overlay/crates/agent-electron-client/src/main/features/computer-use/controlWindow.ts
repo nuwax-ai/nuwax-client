@@ -4,7 +4,7 @@ import path from "node:path";
 import { createCuaPreviewController, type PreviewIdentity } from "./previewController";
 import { taskPreviewWindowHtml } from "./taskPreviewWindow";
 import type { CuaPreviewUpdate, CuaRuntime } from "@shared/features/computer-use/contract";
-import { CUA_CONTROL_INITIAL_POSITION, canPreviewCuaTask } from "@shared/features/computer-use/presentation";
+import { CUA_CONTROL_INITIAL_POSITION, canPreviewCuaTask, cuaRuntimeForConversation } from "@shared/features/computer-use/presentation";
 
 /** One contained preview surface. The ordinary control bar lives in the host renderer. */
 export function createCuaControlWindow(options: {
@@ -21,19 +21,29 @@ export function createCuaControlWindow(options: {
   taskAction?: (id: string, action: "pause" | "resume" | "stop" | "takeover" | "confirm") => Promise<unknown>;
 }) {
   let view: WebContentsView | null = null, owner: BrowserWindow | null = null;
-  let dismissed = false;
-  let order: string[] = [];
-  let url = "", disposed = false, loaded = false, hiddenByOwner = false, selected: string | null = null;
+  type Presentation = { dismissed: boolean; order: string[]; selected: string | null };
+  const presentations = new Map<string, Presentation>();
+  const empty: Presentation = { dismissed: false, order: [], selected: null };
+  const conversationId = () => options.getRuntime().presentationConversationId ?? null;
+  const state = () => {
+    const id = conversationId();
+    if (!id) return empty;
+    if (!presentations.has(id)) presentations.set(id, { dismissed: false, order: [], selected: null });
+    return presentations.get(id)!;
+  };
+  let url = "", disposed = false, loaded = false, hiddenByOwner = false;
+  let displayedConversationId: string | null = null;
   const saved = options.readPreference?.() as { position?: { x: number; y: number } } | null;
   const preferredWidth = 240, preferredHeight = 152;
   let position = saved?.position && [saved.position.x, saved.position.y].every(Number.isFinite) ? saved.position : null;
-  const liveTasks = () => (options.getRuntime().tasks ?? []).filter(canPreviewCuaTask);
+  const scopedRuntime = () => cuaRuntimeForConversation(options.getRuntime(), conversationId());
+  const liveTasks = () => (scopedRuntime().tasks ?? []).filter(canPreviewCuaTask);
   const runtime = () => {
-    const state = options.getRuntime();
+    const snapshot = scopedRuntime();
     const tasks = liveTasks();
-    return { ...state, tasks: tasks.sort((a, b) => order.indexOf(a.taskId) - order.indexOf(b.taskId)) };
+    return { ...snapshot, tasks: tasks.sort((a, b) => state().order.indexOf(a.taskId) - state().order.indexOf(b.taskId)) };
   };
-  const presentation = () => ({ taskId: selected, position: view?.getBounds() ?? position });
+  const presentation = () => ({ taskId: state().selected, position: view?.getBounds() ?? position });
   const save = () => options.writePreference?.({ position });
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const savePosition = () => {
@@ -43,7 +53,7 @@ export function createCuaControlWindow(options: {
   };
   const alive = () => !!view && !view.webContents.isDestroyed();
   const visible = () => alive() && loaded && !hiddenByOwner && !!owner && !owner.isDestroyed() && owner.isVisible() && !owner.isMinimized()
-    && !dismissed && options.getRuntime().multiwindow === true && liveTasks().length > 0;
+    && !state().dismissed && options.authenticated() && options.getRuntime().multiwindow === true && liveTasks().length > 0;
   const send = (channel: string, value: unknown) => { if (alive()) view!.webContents.send(channel, value); };
   const preview = createCuaPreviewController({
     identity: id => options.authenticated() ? options.previewIdentity?.(id) ?? null : null,
@@ -64,11 +74,12 @@ export function createCuaControlWindow(options: {
     send("cua:control:presentation", presentation());
     const show = visible();
     view!.setVisible(show);
-    preview.select(show && options.authenticated() ? selected : null);
+    preview.select(show && options.authenticated() ? state().selected : null);
     preview.sync();
   };
   const setPresentation = (id: string | null) => {
-    if (id && liveTasks().some(task => task.taskId === id)) selected = id;
+    if (id && !liveTasks().some(task => task.taskId === id)) return null;
+    if (id) state().selected = id;
     save();
     sync(); return presentation();
   };
@@ -82,7 +93,7 @@ export function createCuaControlWindow(options: {
   ipcMain.handle("cua:control:getRuntime", event => trusted(event) ? runtime() : null);
   ipcMain.handle("cua:control:close", event => {
     if (!trusted(event)) return false;
-    dismissed = true; sync(); return true;
+    state().dismissed = true; sync(); return true;
   });
   ipcMain.handle("cua:control:move", (event, value: unknown) => {
     const point = value as { x?: unknown; y?: unknown } | null;
@@ -97,10 +108,10 @@ export function createCuaControlWindow(options: {
     if (!trusted(event) || !Array.isArray(ids) || ids.length > 32 || ids.some(id => typeof id !== "string")) return null;
     const live = liveTasks().map(task => task.taskId);
     if (ids.length !== live.length || new Set(ids).size !== live.length || ids.some(id => !live.includes(id))) return null;
-    order = [...ids]; send("cua:control:runtime", runtime()); return order;
+    state().order = [...ids]; send("cua:control:runtime", runtime()); return state().order;
   });
   ipcMain.handle("cua:control:taskAction", async (event, id: unknown, action: unknown) => {
-    if (!trusted(event) || typeof id !== "string" || !["pause", "resume", "stop", "takeover", "confirm"].includes(String(action))) return { success: false };
+    if (!trusted(event) || typeof id !== "string" || !liveTasks().some(task => task.taskId === id) || !["pause", "resume", "stop", "takeover", "confirm"].includes(String(action))) return { success: false };
     if (!["pause", "stop"].includes(String(action)) && !options.authenticated()) return { success: false };
     try { return await options.taskAction?.(id, action as "pause" | "resume" | "stop" | "takeover" | "confirm") ?? { success: false }; }
     catch { return { success: false }; }
@@ -126,13 +137,22 @@ export function createCuaControlWindow(options: {
     const old = view; view = null; owner = null;
     if (old && !old.webContents.isDestroyed()) old.webContents.close();
   };
-  const update = (state: CuaRuntime) => {
+  const update = (snapshot: CuaRuntime) => {
     if (disposed) return;
+    const nextConversationId = conversationId();
+    if (nextConversationId !== displayedConversationId) {
+      // Retire the old document before showing a new session: no stale pixels or queued controls.
+      destroySurface(); displayedConversationId = nextConversationId;
+    }
     // Single-window/desktop controls are already rendered inside App.tsx.
     const live = liveTasks();
-    if (!state.multiwindow || !live.length) { dismissed = false; destroySurface(); return; }
-    order = [...order.filter(id => live.some(task => task.taskId === id)), ...live.map(task => task.taskId).filter(id => !order.includes(id))];
-    if (!live.some(task => task.taskId === selected)) selected = order[0] ?? null;
+    if (!snapshot.multiwindow || !(snapshot.tasks ?? []).some(canPreviewCuaTask)) { destroySurface(); return; }
+    if (!live.length) { send("cua:control:runtime", runtime()); sync(); return; }
+    const current = state();
+    current.order = [...current.order.filter(id => live.some(task => task.taskId === id)), ...live.map(task => task.taskId).filter(id => !current.order.includes(id))];
+    if (!live.some(task => task.taskId === current.selected)) current.selected = current.order[0] ?? null;
+    const conversations = new Set((snapshot.tasks ?? []).map(task => task.conversationId));
+    for (const id of presentations.keys()) if (!conversations.has(id)) presentations.delete(id);
     const main = options.getMainWindow();
     if (!main || main.isDestroyed()) { destroySurface(); return; }
     if (owner !== main || !alive()) {
@@ -172,14 +192,14 @@ export function createCuaControlWindow(options: {
     for (const channel of ["getPresentation", "setPresentation", "getRuntime", "taskAction", "move", "close", "reorder"]) ipcMain.removeHandler("cua:control:" + channel);
   };
   return Object.assign(dispose, { showTask(id?: string) {
-    id ??= selected ?? liveTasks()[0]?.taskId;
+    id ??= state().selected ?? liveTasks()[0]?.taskId;
     if (!id || !options.authenticated() || !liveTasks().some(task => task.taskId === id)) return { success: false, error: "taskUnavailable" };
     const main = options.getMainWindow();
     if (main && !main.isDestroyed()) {
       if (main.isMinimized()) main.restore();
       if (!main.isVisible()) main.show();
     }
-    dismissed = false; update(options.getRuntime()); setPresentation(id); return { success: true };
+    state().dismissed = false; update(options.getRuntime()); setPresentation(id); return { success: true };
   } });
 }
 
