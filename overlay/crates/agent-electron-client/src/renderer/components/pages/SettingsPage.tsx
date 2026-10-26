@@ -32,6 +32,7 @@ import {
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
+import { LocalFilesSettings } from "../../features/local-files";
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -495,6 +496,8 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
               />
             }
           />
+
+          <LocalFilesSettings t={t} Row={SettingsRow} />
 
           {/* 休眠控制：不可见时暂停 webview 后台轮询，恢复可见立即补拉 */}
           <SettingsRow

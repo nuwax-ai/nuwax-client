@@ -1,5 +1,7 @@
 export const LOCAL_FILES_SCHEME = 'nuwax-local';
 export const LOCAL_FILES_API_VERSION = 2;
+export const LOCAL_FILES_ENABLED_SETTING = 'features.local-files.enabled';
+export const LOCAL_FILES_ENABLED_BY_DEFAULT = true;
 export const LOCAL_FILES_IPC = {
   PICK_DIRECTORY: 'localFiles:pickDirectory', GET_CAPABILITIES: 'localFiles:getCapabilities',
   RESOLVE_CONTEXT: 'localFiles:resolveContext', RELEASE_CONTEXT: 'localFiles:releaseContext',

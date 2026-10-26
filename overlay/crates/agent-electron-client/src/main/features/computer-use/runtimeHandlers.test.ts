@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   stop: vi.fn(), pause: vi.fn(), resume: vi.fn(), recover: vi.fn(), selfTest: vi.fn(), clear: vi.fn(),
   taskPause: vi.fn(), taskStop: vi.fn(), taskResume: vi.fn(), taskMode: vi.fn(),
   runtime: { phase: "running" }, register: vi.fn(), shortcut: vi.fn(), send: vi.fn(),
+  show: vi.fn(), focus: vi.fn(), restore: vi.fn(),
   listener: undefined as ((state: any) => void) | undefined,
   activities: [] as Array<{ actions: Array<{ id: string; run(): void }> } | null>,
 }));
@@ -72,7 +73,9 @@ function register(loggedIn = true, permissions?: unknown) {
     translate: (key: string) => key,
     settings: { read: () => null, write: () => true },
     session: { isAuthenticated: () => loggedIn },
-    windows: { getMain: () => ({ isDestroyed: () => false, webContents: { send: mocks.send } }) as any },
+    windows: { getMain: () => ({ isDestroyed: () => false, isMinimized: () => false,
+      show: mocks.show, focus: mocks.focus, restore: mocks.restore,
+      webContents: { send: mocks.send } }) as any },
     activities: { set: (activity: any) => { mocks.activities.push(activity); } },
     agent: {
       setLocalMcpServer: async () => undefined,
@@ -149,13 +152,20 @@ describe("Computer Use trusted controls", () => {
     mocks.listener!({ phase: "stopped", controlPending: true, reason: "userStopped" });
     expect(mocks.activities.at(-1)?.actions.map(action => action.id)).toEqual(["center", "preview", "stop"]);
   });
-  it("prompts target setup once inside the client, leaving bound tasks in the floating preview", () => {
+  it("keeps target selection in the operation list without automatically opening or focusing it", () => {
     register(); mocks.send.mockClear();
     const state = { multiwindow: true, tasks: [{ taskId: "new", phase: "paused", scope: { kind: "window", pid: 0, windowId: 0 } }] };
     mocks.listener!(state); mocks.listener!(state);
-    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(1);
+    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(0);
     mocks.listener!({ ...state, tasks: [{ ...state.tasks[0], taskId: "bound", scope: { kind: "window", pid: 5, windowId: 6 } }] });
-    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(1);
+    expect(mocks.send.mock.calls.filter(([name]) => name === "cua:openCenter")).toHaveLength(0);
+    expect(mocks.show).not.toHaveBeenCalled();
+    expect(mocks.focus).not.toHaveBeenCalled();
+    mocks.activities.at(-1)?.actions.find(action => action.id === "center")?.run();
+    expect(mocks.send).toHaveBeenCalledWith("cua:openCenter");
+    expect(mocks.show).toHaveBeenCalledOnce();
+    expect(mocks.focus).toHaveBeenCalledOnce();
+    expect(mocks.stop).not.toHaveBeenCalled();
   });
 
 });

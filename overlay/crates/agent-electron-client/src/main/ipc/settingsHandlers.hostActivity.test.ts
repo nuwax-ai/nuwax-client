@@ -40,6 +40,18 @@ beforeEach(() => {
 });
 
 describe("settings:set host activity refresh", () => {
+  it("本机文件开关独立保存布尔值，拒绝字符串 false，删除后由特性默认值接管", () => {
+    const set = mocks.handlers.get("settings:set")!;
+    expect(set({}, "features.local-files.enabled", "false")).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(set({}, "features.local-files.enabled", false)).toBe(true);
+    expect(mocks.run).toHaveBeenCalledWith("features.local-files.enabled", "false");
+    expect(set({}, "features.local-files.enabled", null)).toBe(true);
+    expect(mocks.run).toHaveBeenLastCalledWith("features.local-files.enabled");
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.notifyCapture).not.toHaveBeenCalled();
+  });
+
   it('capture accelerators reject reserved and duplicate keys and notify menus only after persistence', () => {
     const notify = mocks.notifyCapture;
     const set = mocks.handlers.get('settings:set')!;
