@@ -2,7 +2,7 @@
 
 - 分级：安装域中等需求，仅此计划；用户已明确要求实施，不依赖原故障归因。
 - 基线：`origin/release/v3.0.23` / `e8a69795`；商业 overlay，独立工作树。
-- 状态：实施中。
+- 状态：实现及专项验证完成；真实全载荷安装包验收待后续集成。
 
 ## 范围与模型
 
@@ -19,6 +19,7 @@
 2. `build/windows-install-space.nsh` 与 `build/installer.nsh`：最终范围下预检；目录选择后错误页与执行前重查。
 3. `scripts/test-installer-space.ps1`：同/异卷、边界、64 位、查询失败、真实卷检查，均在临时目录。
 4. `scripts/installer-space.test.mjs`：真实 NSIS 预处理/编译和时序集成检查。
+5. `scripts/acceptance/windows-installer-space.cjs`、`scripts/test-installer-space-ui.ps1`：随机身份的原生静默/交互 NSIS 验证；Windows 构建现有夹具步骤增加空间 helper gate。
 
 ## 验证
 
@@ -26,6 +27,14 @@
 - Windows PowerShell 5.1 原生夹具（不运行生产安装器、不写生产注册表）；NSIS 合成脚本使用实际 3.0.4.1 SDK 编译。
 - 相关安装脚本/归档回归；不在共享检出运行会清 overlay 的 base:test。
 - 真实全载荷低空间安装、普通用户/UAC UI 操作及安装途中耗尽空间若未验证，明确保留验收项，不计完成。
+- 结果见 `docs/acceptance/20261026-windows-install-disk-space.md`：独立相关回归 39 项、Windows PowerShell 原生 9 项、合成 NSIS 静默/交互 4 项通过；不使用这些结果代替全载荷和 UAC 验收。
+
+## 实现补充
+
+- 不新增归档大小生成 hook；完整 EXE 长度为内嵌归档的保守上界，随包自动变化。
+- helper 使用 UTF-8 BOM（兼容 Windows PowerShell 5.1），报告用 UTF-16 供 NSIS 直接读取；正缺口显示向上取整到 0.01 GiB，避免拦截时显示缺少零空间。
+- 空间页读取 SDK 最终目录规整结果；失败可返回目录，下一次进入重新检查，安装执行前再次检查。NSIS 阶段必须延迟到 customHeader 才发出 helper 函数，以保证 vendor 架构宏和 installMode 已声明。
+- GUI 夹具首次使用 GetWindowText 跨进程读取 Edit 得到假阴性；改为检查所属 PID 后使用有超时的 WM_GETTEXT。生产 PageLeave 逻辑未为测试放宽。
 
 ## 回退
 
