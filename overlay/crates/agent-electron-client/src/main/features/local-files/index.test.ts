@@ -201,6 +201,53 @@ function harness() {
 }
 
 describe("local files IPC/context ownership", () => {
+  it.each([null, ""])("accepts legacy PC Web optional fields as %s for list and preview", async (empty) => {
+    const h = harness();
+    await writeFile(path.join(root, "legacy.txt"), "legacy PC Web");
+    const resolved = await h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, {
+      cId: 1,
+      sandboxId: "local-device",
+      projectId: empty,
+      userId: empty,
+      workspacePath: empty,
+      serviceType: empty,
+    });
+    expect(resolved).toMatchObject({ success: true, data: { cId: "1", root } });
+    expect(h.workspace.resolveRoot).toHaveBeenCalledWith({
+      cId: "1", projectId: undefined, userId: undefined,
+      workspacePath: undefined, serviceType: undefined,
+    });
+    const { contextId } = resolved.data;
+    expect(await h.invoke(IPC.LIST_FILES, h.one.event, contextId, {}))
+      .toMatchObject({ success: true });
+    const [requestUrl] = h.deps.fetch.mock.calls[0] as unknown as [string];
+    const url = new URL(requestUrl);
+    expect(url.searchParams.get("userId")).toBe("local");
+    expect(url.searchParams.get("customTargetDir")).toBe(root);
+    const preview = await h.invoke(IPC.PREPARE_PREVIEW, h.one.event, { contextId, path: "legacy.txt" });
+    expect(preview).toMatchObject({ success: true });
+    expect(await (await h.one.response(new Request(preview.data.url))).text()).toBe("legacy PC Web");
+  });
+
+  it("keeps required identity and malformed nonempty inputs strict for old pages", async () => {
+    const h = harness();
+    const base = { cId: 1, sandboxId: "local-device" };
+    for (const cId of [null, "", {}]) {
+      expect(await h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, { ...base, cId }))
+        .toMatchObject({ success: false, code: "invalid-argument" });
+    }
+    for (const key of ["projectId", "userId", "workspacePath", "serviceType"]) {
+      for (const value of [{}, false, ["bad"]]) {
+        expect(await h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, { ...base, [key]: value }))
+          .toMatchObject({ success: false, code: "invalid-argument" });
+      }
+    }
+    expect(await h.invoke(IPC.RESOLVE_CONTEXT, h.one.event, {
+      ...base, sandboxId: "remote", projectId: null,
+    })).toMatchObject({ success: false, code: "not-local" });
+    expect(h.workspace.resolveRoot).not.toHaveBeenCalled();
+  });
+
   it("writes through owned IPC and refuses foreign contexts", async () => {
     const h = harness();
     const context = await h.resolve();
