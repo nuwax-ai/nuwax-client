@@ -4,6 +4,7 @@ import { I18N_KEYS } from "@shared/constants";
 import { t } from "./i18n";
 import { setTrayUnreadCount } from "../window/trayManager";
 import { createIMBadgePng, formatIMBadgeCount, normalizeIMUnreadCount } from "./imBadgeImage";
+import { MacNativeNotification } from "./system/macNativeNotification";
 
 export { createIMBadgePng, formatIMBadgeCount } from "./imBadgeImage";
 
@@ -28,7 +29,7 @@ export interface IMNativePresentationOptions {
   isSessionCurrent(sessionGeneration: number): boolean;
   isNotificationAllowed?(): boolean;
   platform?: NodeJS.Platform;
-  /** 测试可注入系统对象；生产始终使用 Electron 原生能力。 */
+  /** 测试可注入系统对象；macOS 使用现代原生 API，其余平台使用 Electron。 */
   notificationBackend?: {
     isSupported(): boolean;
     create(options: NotificationConstructorOptions): IMNativeNotification;
@@ -50,10 +51,13 @@ const MAX_MESSAGE_KEYS = 2048;
 const MAX_NATIVE_NOTIFICATIONS = 20;
 export function createIMNativePresentation(options: IMNativePresentationOptions): IMNativePresentation {
   const platform = options.platform ?? process.platform;
-  const backend = options.notificationBackend ?? {
+  const backend = options.notificationBackend ?? (platform === "darwin" ? {
+    isSupported: () => true,
+    create: (details: NotificationConstructorOptions) => new MacNativeNotification(details),
+  } : {
     isSupported: () => Notification.isSupported(),
     create: (details: NotificationConstructorOptions) => new Notification(details),
-  };
+  });
   const setDockBadge = options.setDockBadge ?? ((text: string) => {
     const dock = app.dock;
     if (!dock) return;

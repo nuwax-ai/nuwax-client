@@ -3,7 +3,10 @@ import { createRequire } from "node:module";
 import log from "electron-log";
 
 export type NotificationPermissionStatus = "granted" | "denied" | "unknown";
-type NativeReader = { readSettings(): Promise<number> };
+type NativeReader = {
+  readSettings(): Promise<number>;
+  requestAuthorization(): Promise<number>;
+};
 
 /** Apple UNAuthorizationStatus。新值/失败不能误报成已开启。 */
 export function notificationPermissionStatus(status: number): NotificationPermissionStatus {
@@ -14,6 +17,7 @@ export function notificationPermissionStatus(status: number): NotificationPermis
 
 let reader: NativeReader | undefined;
 let pending: Promise<NotificationPermissionStatus> | undefined;
+let pendingRequest: Promise<NotificationPermissionStatus> | undefined;
 const loadNative = createRequire(__filename);
 
 /** 只合并正在进行的检测，不缓存结果，用户可以随时撤销系统通知授权。 */
@@ -30,4 +34,20 @@ export function checkMacNotificationPermission(): Promise<NotificationPermission
     }
   }).finally(() => { pending = undefined; });
   return pending;
+}
+
+/** Only explicit user actions may request authorization; passive checks stay read-only. */
+export function requestMacNotificationPermission(): Promise<NotificationPermissionStatus> {
+  if (process.platform !== "darwin") return Promise.resolve("unknown");
+  if (pendingRequest) return pendingRequest;
+  pendingRequest = Promise.resolve().then(async () => {
+    try {
+      reader ??= loadNative(path.join(__dirname, "mac-notification-permission.node")) as NativeReader;
+      return notificationPermissionStatus(await reader.requestAuthorization());
+    } catch (error) {
+      log.warn("[MacNotificationPermission] authorization request failed:", error);
+      return "unknown" as const;
+    }
+  }).finally(() => { pendingRequest = undefined; });
+  return pendingRequest;
 }
