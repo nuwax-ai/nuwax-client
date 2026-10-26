@@ -39,7 +39,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-s
 - 清理空间后重查成功并继续的实际磁盘容量变化、安装中途被其他进程耗尽空间。
 - base:test / test:commercial 全应用双轨，本轮仅安装域专项检查，不触发共享 overlay 清理。
 
-没有创建版本、tag、发布物、推送、合并或更新公开指针；不迁移 TEMP/缓存，不删除用户文件或恢复备份。
+初次专项验证阶段没有创建版本、tag、发布物、推送、合并或更新公开指针；后续代码集成见末节。不迁移 TEMP/缓存，不删除用户文件或恢复备份。
 
 清理核验：测试机临时计划任务和自建 fixture 目录已移除，所属运行进程为零；未改生产应用/注册表。标准临时诊断日志保留，不清理其他用户文件。
 
@@ -58,3 +58,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-s
 | 测试与证据 | 保留 ef3cf7e1 的失败测试先行、87e02cd1 的实现与前述 39/9/4 结果；完整固定 SDK installer/uninstaller 编译已通过。本次补查发现 Stable workflow 缺少同一空间 fixture gate，先补发布渠道断言并观察失败，再补工作流；`release-workflows` 与 `release-stable` 本轮 7 项全绿、0 跳过（较原有 39 项新增 1 个独立门禁用例）。NSIS/PS 安装逻辑未变，未启动新 GUI/完整包验收。`git diff --check` 再次通过；原有未验项随 3.0.22 一起验收。 |
 
 停止独立验收时只进行了本地 UTM 状态和设备硬件只读查询，没有恢复/操作虚拟机、创建 VHD/账号/新任务或启动新验收进程，无本轮新增远端资源需清理。
+
+## 3.0.22 集成与父任务质量复核
+
+目标为现有 `fix/stable-3.0.22`，集成起点 `1709673a`。仅拣入本专项的失败测试、实现、代码自查及 Stable/Beta 门禁补齐提交，保留来源提交标记；未合入 `release/v3.0.23` 的其他功能。三个 submodule pin 与目标起点完全一致。
+
+按 `pre-commit-quality-review` 三问复核，结论：**本批代码可合入；完整包低空间、UAC、自动更新统一随 3.0.22 验收。**
+
+| 问题 | 结论及证据 |
+| --- | --- |
+| 功能逻辑是否内聚 | 预算聚合和余量、卷查询、结果判定统一在 `build/installer-space.ps1:15,47,87`；`installer.nsh:353` 只接入前置检查，后续原有停进程/保全/卸载链未拆分或复制。 |
+| 代码分层是否正确 | 商业行为全部位于外层 overlay；`windows-install-space.nsh:10,82,98` 负责 NSIS 架构/范围及 UI 编排，独立 PowerShell helper 负责空间查询。基座、前端、产物 pin 未变化。 |
+| 后续是否便于维护 | 使用 builder 的分架构展开大小和当前 EXE 大小，不依赖固定版本体积；错误码区分不足和查询失败，有限超时并保留诊断。Stable/Beta 共用 `test-installer-space.ps1`，`release-workflows.test.mjs` 防止渠道门禁遗漏。 |
+
+集成后的已跟踪源码快照在隔离临时目录执行六组安装/发布域检查：`installer-space`、`installer-archive-policy`、`uninstall-payload`、`system-app-name`、`release-workflows`、`release-stable`，**40 项通过、0 失败、0 跳过**。依赖显式指向既有固定 builder 25.1.8，不在共享工作树同步或清理 overlay；临时验证副本已删除。本轮仅必要的代码回归和编译检查，没有重启独立完整包/GUI/UAC 验收。
+
+`git diff --check` 与新增 CJS 语法检查通过。已核对 Beta 工作流仅增加两行空间门禁调用，没有带入其他分支的缓存/发布流程改动；Stable 工作流增加同一门禁。未修改现有 `v3.0.22` tag 或公开发布指针。
