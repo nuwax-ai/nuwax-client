@@ -21,6 +21,7 @@
 3. `scripts/test-installer-space.ps1`：同/异卷、边界、64 位、查询失败、真实卷检查，均在临时目录。
 4. `scripts/installer-space.test.mjs`：真实 NSIS 预处理/编译和时序集成检查。
 5. `scripts/acceptance/windows-installer-space.cjs`、`scripts/test-installer-space-ui.ps1`：随机身份的原生静默/交互 NSIS 验证；Windows 构建现有夹具步骤增加空间 helper gate。
+6. Stable/Beta 两条发布 workflow 均运行同一 Windows PowerShell 5.1 空间 helper gate；`scripts/release-workflows.test.mjs` 固定两条渠道的条件、退出码和资源准备前执行时机。
 
 ## 验证
 
@@ -36,6 +37,7 @@
 - helper 使用 UTF-8 BOM（兼容 Windows PowerShell 5.1），报告用 UTF-16 供 NSIS 直接读取；正缺口显示向上取整到 0.01 GiB，避免拦截时显示缺少零空间。
 - 空间页读取 SDK 最终目录规整结果；失败可返回目录，下一次进入重新检查，安装执行前再次检查。NSIS 阶段必须延迟到 customHeader 才发出 helper 函数，以保证 vendor 架构宏和 installMode 已声明。
 - GUI 夹具首次使用 GetWindowText 跨进程读取 Edit 得到假阴性；改为检查所属 PID 后使用有超时的 WM_GETTEXT。生产 PageLeave 逻辑未为测试放宽。
+- 3.0.22 集成前补查发现最初仅 Beta 存在空间夹具 gate；用 4978c925 先提交失败断言，再补 Stable 同脚本入口。此次不改安装运行逻辑，发布域针对性测试 7 项通过。
 
 ## 回退
 

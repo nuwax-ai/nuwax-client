@@ -10,7 +10,7 @@
 - 交互不足页列出卷、用途、需要、可用、缺口；可重新检查或返回目录。实际执行前再检查；静默失败 exit 2。查询失败和不足分开报告，不把通用解压错误都改为磁盘不足。
 - 小的正缺口向上显示为至少 0.01 GiB，避免“缺少 0.00”却不能继续；执行前失败弹窗明确取消会结束本次安装。
 - helper 查询有 30 秒无输出超时；失败诊断尽力追加到 `%TEMP%\Nuwax-installer-space.log`，写日志失败不会使预检放行。
-- Windows 构建已有 recovery fixture 步骤追加原生空间 helper 测试。
+- Beta Windows 构建在已有 recovery fixture 步骤追加原生空间 helper 测试；Stable Windows 构建在商业依赖安装后、资源准备前运行同一脚本。两处均显式使用 Windows PowerShell 5.1 并检查退出码。
 
 ## 已通过的验证
 
@@ -47,7 +47,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-s
 
 用户最新决定：停止独立完整包/VHD/UAC/自动更新专项验收，先完善代码，合入现有 `fix/stable-3.0.22` 后随该版本整体验收。此前未验项目继续如实保留，不作为本次代码集成的额外审批门槛；外部用户这次故障的具体根因仍未确认。本专项不切换或修改集成目标分支。
 
-按根 `REVIEW.md` 五遍自查，结论：**没有发现新的阻塞性代码缺陷；保留现有实现及已通过的针对性检查，供父任务集成。** 这是实现者自查，不是 PR 自批。
+按根 `REVIEW.md` 五遍自查，结论：**没有发现新的安装逻辑缺陷；补齐 Stable 发布渠道空间夹具门禁后，供父任务集成。** 这是实现者自查，不是 PR 自批。
 
 | 检查遍 | 本轮核对及证据 |
 | --- | --- |
@@ -55,6 +55,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-s
 | 安全与身份 | helper 只读目标/卷信息，不创建安装目录或删除用户数据。缓存路径与固定 SDK `include/installer.nsh` 的 `SetShellVarContext current` + `$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}` 一致，完成后恢复 all-users shell context；临时卷来自实际进程 `$PLUGINSDIR`。未知架构/缺失元数据、查询失败、报告缺失或超时均不会放行。未新增特权、环境变量/命令行绕过入口或修改公开更新源。实际过肩 UAC 行为仍由整体验收验证。 |
 | 范围与契约 | 只补安装前预算及交互，不迁移 TEMP/缓存、不改卸载恢复数据规则、压缩格式或更新器协议。目录页按当前最终目录规整；重查后 Next 依据新结果启停，Leave 和执行前均再查；既有原生 GUI 证明 Back 返回及再次确认不能绕过。空间不足和路径/查询失败保持不同报告，未替换通用解压错误或确认本次用户根因。 |
 | 分层与维护 | 商业逻辑只在 overlay；预算/格式/卷查询位于独立 PS helper，NSIS 负责架构、范围和 UI 组合。函数在 customHeader 发出，避免 vendor 架构宏/范围变量尚未声明；BUILD_UNINSTALLER 不嵌入安装空间代码。helper 通过 NSIS `File` 从 BUILD_RESOURCES_DIR 内嵌，不依赖安装后程序或网络。 |
-| 测试与证据 | 保留 ef3cf7e1 的失败测试先行、87e02cd1 的实现与前述 39/9/4 结果；完整固定 SDK installer/uninstaller 编译已通过。此轮没有源码变化，不重复跑已绿测试，也未启动新 GUI/完整包验收。`git diff --check` 再次通过；原有未验项随 3.0.22 一起验收。 |
+| 测试与证据 | 保留 ef3cf7e1 的失败测试先行、87e02cd1 的实现与前述 39/9/4 结果；完整固定 SDK installer/uninstaller 编译已通过。本次补查发现 Stable workflow 缺少同一空间 fixture gate，先补发布渠道断言并观察失败，再补工作流；`release-workflows` 与 `release-stable` 本轮 7 项全绿、0 跳过（较原有 39 项新增 1 个独立门禁用例）。NSIS/PS 安装逻辑未变，未启动新 GUI/完整包验收。`git diff --check` 再次通过；原有未验项随 3.0.22 一起验收。 |
 
 停止独立验收时只进行了本地 UTM 状态和设备硬件只读查询，没有恢复/操作虚拟机、创建 VHD/账号/新任务或启动新验收进程，无本轮新增远端资源需清理。
