@@ -312,6 +312,8 @@ jobs:
         run: |
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-installer-recovery.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Windows installer recovery fixtures failed.' }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-installer-space.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer disk space fixtures failed.' }
 
       - name: Set version & commercial branding in package.json
         shell: bash
