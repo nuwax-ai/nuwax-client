@@ -17,6 +17,35 @@
 - **防泄回**：提交基座前跑 `npm run check:pin`（overlay 托管路径不得进基座提交，
   CI 另有 `--remote origin/main` 字节级防线）。
 
+## 同步安全与恢复
+
+同步、清理和删减 overlay 都先检查所有目标，再执行任何覆写。目标含开发者的 tracked、
+untracked、staged 内容时会停止；即使 staged 字节与 overlay 相同，也不会清除 index。
+`assume-unchanged` / `skip-worktree` 可能隐藏本地改动，因此相关目标必须先由开发者
+核实并去掉标记。同步证明干净基座时比较实际 checkout 字节，兼容 Git 的换行/编码转换。
+路径数组损坏、越界、Git 元数据路径、Windows 路径别名和符号链接会拒绝处理。
+
+`.overlay-sync.json` 仍是旧版兼容的路径数组；它本身不证明文件可以被删除。
+新工具另在 `.cache/overlay-sync/state.json` 保存最后应用的 SHA-256 和权限。
+旧清单没有这份记录时，只有干净基座，或与**当前 overlay 字节完全相同**的文件，
+可以通过显式同步建立所有权；相同字节不会重写文件。未知旧内容不会被推断为同步产物，
+请先另存改动或换隔离工作树。不要只删清单/ledger 来强行绕过检查。
+
+每次有变更时，覆盖/删除前会在 `.cache/overlay-sync/backups/<事务ID>/` 持久保存
+本次涉及文件的原字节、权限、旧 manifest/ledger 和 `transaction.json`。备份按变更文件
+保存，不复制整个基座，且**不会自动删除**。异常会恢复已经写入的文件；若检测到外部并发
+改动，会保留这些新字节，并将事务标为 `recovery-required`，在错误中给出恢复目录。
+该状态或中断留下的 `prepared` 事务会阻止后续同步，须先人工对照日志中的 SHA-256、
+`backup` 文件与当前内容，另存需保留的内容后完成恢复；不要不加检查地全量还原目录。
+确认恢复完成、已无待保留内容后，才由开发者移除该事务目录；历史成功备份也须人工确认
+后才能删除。同步互斥锁在 `.cache/overlay-sync/lock.json`，残留锁应先确认原进程已结束。
+不提供强制覆盖开关。`--check` 始终只读，不建立 ledger、备份或锁。
+
+CI/in-base 正常顺序仍是先同步 overlay，再生成版本、品牌和打包配置；这些生成步骤修改
+的是基座的 `package.json`，当前不属于 overlay 路径，不影响重复同步。商业依赖安装在
+外层根目录，也不写 overlay 托管文件。`sub:update` 切换基座前同样通过同步事务清理，
+不再用独立无备份的逐文件恢复路径。
+
 IM 原生通知与未读角标只用于商业 Nuwax。其 `ws`、`json-bigint` 及类型依赖由本仓根
 `package.json` / `pnpm-lock.yaml` 管理，商业 prepare、in-base 和发布 CI 自动准备，
 由 esbuild 打进 main bundle；不写入基座依赖文件。社区入口不安装这些依赖，
