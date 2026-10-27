@@ -108,7 +108,6 @@ export function PageLoadRecovery({
   busy = mode === "reloading",
 }: PageLoadRecoveryProps) {
   const copy = recoveryCopy(lang, stage);
-  const animated = mode === "loading" || mode === "reloading";
   const actionable = mode !== "loading";
   return (
     <div
@@ -129,7 +128,6 @@ export function PageLoadRecovery({
             width="48"
             height="48"
           />
-          {animated && <span className={styles.spinner} aria-hidden="true" />}
         </div>
         <h1 className={styles.title}>{copy[mode]}</h1>
         <p className={styles.hint}>
