@@ -87,15 +87,24 @@ import { protocol } from "electron";
 import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
+import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
 
 const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
+let cdpDiagnosticsDecision: ReturnType<typeof configureCdpDiagnostics> | null = null;
 if (APP_NAME_IDENTIFIER === "nuwax") {
   configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
   // Keep the Windows updater/taskbar identity under the commercial product guard.
   if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
+  // 商业版诊断通道：userData/diagnostics.json 显式开启本机 CDP（默认关闭、仅 127.0.0.1、
+  // 剥离外部 remote-debugging* 命令行、坏配置 fail closed）。commandLine 开关仅在
+  // app.ready 前生效，此处应用、改动下次启动生效；此处早于 initLogging，先不落日志。
+  cdpDiagnosticsDecision = configureCdpDiagnostics({
+    userDir: app.getPath("userData"),
+    commandLine: app.commandLine,
+  });
 }
 
 // 处理 EPIPE 错误（社区最佳实践）
@@ -170,6 +179,12 @@ initLogging();
 initI18n();
 log.info("Application starting...");
 log.info("[FeatureFlags][main]", FEATURES);
+// 日志通道就绪后再输出 CDP 决策：开启=info 明示（日志可见"调试中"），坏配置=warn 诊断。
+if (cdpDiagnosticsDecision) {
+  const described = describeCdpDecision(cdpDiagnosticsDecision);
+  if (described.level === "info") log.info(described.message);
+  else if (described.level === "warn") log.warn(described.message);
+}
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
