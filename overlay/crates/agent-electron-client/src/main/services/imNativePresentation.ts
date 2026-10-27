@@ -16,6 +16,30 @@ export interface IMNativeMessage {
   body: string;
   /** 进程内诊断序号，不得使用真实消息或会话 ID。 */
   diagnosticTrace?: number;
+  /** 会话类别：1=单聊/私信(P2P), 2=自建群(GROUP), 3=系统会话(SYSTEM), 4=团队群(TEAM) */
+  convType?: number;
+  /** 发送者类型：1=真人(HUMAN), 2=智能体/机器人(BOT), 3=系统(SYSTEM) */
+  senderType?: number;
+  /** 消息内容类别：text, rich_text, image, file, card, merge_forward... */
+  msgType?: string;
+  /** 关联空间 ID（若属于空间团队群） */
+  spaceId?: string;
+  /** 智能体 ID（智能体会话） */
+  agentId?: string;
+  /** 对端用户 ID（单聊/私信） */
+  userId?: string;
+}
+
+export interface IMNativeNotificationTarget {
+  sessionGeneration: number;
+  convId: string;
+  convType?: number;
+  senderType?: number;
+  msgType?: string;
+  spaceId?: string;
+  agentId?: string;
+  userId?: string;
+  msgId?: string;
 }
 
 export interface IMNativeNotification {
@@ -30,6 +54,7 @@ export interface IMNativePresentationOptions {
   getBusinessWindows?(): readonly BrowserWindow[];
   isSessionCurrent(sessionGeneration: number): boolean;
   isNotificationAllowed?(): boolean;
+  onNotificationClick?(target: IMNativeNotificationTarget): void;
   platform?: NodeJS.Platform;
   /** 测试可注入系统对象；macOS 使用现代原生 API，其余平台使用 Electron。 */
   notificationBackend?: {
@@ -163,8 +188,16 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
     if (!Number.isSafeInteger(message.sessionGeneration) || message.sessionGeneration < 0
       || typeof message.msgId !== "string" || !message.msgId || message.msgId.length > 256
       || typeof message.convId !== "string" || !message.convId || message.convId.length > 256) return false;
-    // 点击回调只留代次，避免把收到的完整消息内容留到通知关闭。
+    // 点击回调只留代次、会话标识及分类扩展元数据，避免把收到的完整消息内容留到通知关闭。
     const generation = message.sessionGeneration;
+    const convId = message.convId;
+    const convType = message.convType;
+    const senderType = message.senderType;
+    const msgType = message.msgType;
+    const spaceId = message.spaceId;
+    const agentId = message.agentId;
+    const userId = message.userId;
+    const msgId = message.msgId;
     const trace = Number.isSafeInteger(message.diagnosticTrace) && message.diagnosticTrace! > 0 ? message.diagnosticTrace : undefined;
     try {
       if (!sessionCurrent(generation)) return false;
@@ -223,7 +256,21 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
+            if (platform === "darwin") {
+              app.focus?.({ steal: true });
+            }
           }
+          options.onNotificationClick?.({
+            sessionGeneration: generation,
+            convId,
+            ...(convType !== undefined ? { convType } : {}),
+            ...(senderType !== undefined ? { senderType } : {}),
+            ...(msgType !== undefined ? { msgType } : {}),
+            ...(spaceId !== undefined ? { spaceId } : {}),
+            ...(agentId !== undefined ? { agentId } : {}),
+            ...(userId !== undefined ? { userId } : {}),
+            ...(msgId !== undefined ? { msgId } : {}),
+          });
         } catch {
           log.warn("[IM] Failed to restore notified application");
         }

@@ -338,7 +338,7 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     backend.state.unread = { total: 2, dndTotal: 1 };
     backend.sendMessage();
     await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledWith(expect.objectContaining({
-      convId: CONV_ID, msgId: MSG_ID, title: "Team", body: "Hello team",
+      convId: CONV_ID, msgId: MSG_ID, title: "Team", body: "Hello team", convType: 4,
     })), { timeout: 2500 });
     await vi.waitFor(() => expect(api.getIMUnreadSnapshot()?.total).toBe(2), { timeout: 2500 });
     expect(api.getIMUnreadSnapshot()!.revision).toBeGreaterThan(previous.revision);
@@ -499,9 +499,27 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     business.emit("did-finish-load");
     expect(mocks.hostCommand).not.toHaveBeenCalled();
     expect(mocks.nativeOptions!.isSessionCurrent(generation)).toBe(false);
+    mocks.nativeOptions!.onNotificationClick?.({ sessionGeneration: generation, convId: "conv-99" });
+    expect(mocks.hostCommand).not.toHaveBeenCalled();
     api.startIMReceiver("account-2");
     business.emit("did-finish-load");
     expect(mocks.hostCommand).not.toHaveBeenCalled();
+    mocks.nativeOptions!.onNotificationClick?.({ sessionGeneration: generation, convId: "conv-99" });
+    expect(mocks.hostCommand).not.toHaveBeenCalled();
+    const newGeneration = api.getIMUnreadSnapshot()!.sessionGeneration;
+    mocks.nativeOptions!.onNotificationClick?.({
+      sessionGeneration: newGeneration,
+      convId: "conv-100",
+      convType: 4,
+      spaceId: "space-1",
+    });
+    expect(mocks.hostCommand).toHaveBeenCalledWith({
+      type: "open-conversation",
+      convId: "conv-100",
+      convType: 4,
+      spaceId: "space-1",
+    });
+    mocks.hostCommand.mockClear();
     api.disposeIMReceiver();
     expect(business.listenerCount("did-finish-load")).toBe(0);
     expect(mocks.powerEvents!.eventNames()).toEqual([]);

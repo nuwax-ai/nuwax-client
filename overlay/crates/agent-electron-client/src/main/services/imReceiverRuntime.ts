@@ -10,6 +10,7 @@ import { nativeTicketHeaders } from "./nativeTicketCapability";
 import { getDeviceId } from "./system/deviceId";
 import { IMReceiver, IMReceiverError, type IMReceiverSession } from "./imReceiver";
 import { createIMNativePresentation } from "./imNativePresentation";
+import { sendHostCommandToMainWindowGuests } from "./hostActivity";
 import type { IMUnreadSnapshot } from "@shared/types/imReceiver";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
@@ -60,6 +61,14 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     getBusinessWindows: businessWindows,
     isSessionCurrent: generation => receiver.isGenerationCurrent(generation),
     isNotificationAllowed: canPresent,
+    onNotificationClick: (target) => {
+      if (!receiver.isGenerationCurrent(target.sessionGeneration)) return;
+      const { sessionGeneration, ...cmdTarget } = target;
+      sendHostCommandToMainWindowGuests({
+        type: "open-conversation",
+        ...cmdTarget,
+      });
+    },
   });
   const sameSession = (session: IMReceiverSession) => !disposed && !quitting &&
     session.origin === currentBusinessOrigin() && session.epoch === ticketEpoch() && !!currentTicket();
@@ -200,7 +209,30 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
         const group = [2, 4].includes(Number(conv.convType));
         const title = String(group ? conv.name || item.body.senderName || "IM" : item.body.senderName || conv.peerName || conv.name || "IM");
         const body = String(item.body.digest || "").replace(/<[^>]*>/g, "").replace(/[\r\n]+/g, " ").slice(0, 200);
-        const requested = native.showMessage({sessionGeneration: item.generation, msgId: String(item.body.msgId), convId, title, body, diagnosticTrace: item.trace});
+        const convType = Number.isInteger(Number(conv.convType)) ? Number(conv.convType) : undefined;
+        const senderType = Number.isInteger(Number(item.body.senderType)) ? Number(item.body.senderType) : undefined;
+        const msgType = typeof item.body.msgType === "string" && item.body.msgType.trim() ? item.body.msgType.trim() : undefined;
+        const spaceId = conv.spaceId !== undefined && conv.spaceId !== null && String(conv.spaceId).trim() ? String(conv.spaceId).trim() : undefined;
+        const agentId = senderType === 2 && item.body.senderId !== undefined && item.body.senderId !== null && String(item.body.senderId).trim()
+          ? String(item.body.senderId).trim()
+          : (conv.agentId !== undefined && conv.agentId !== null && String(conv.agentId).trim() ? String(conv.agentId).trim() : undefined);
+        const userId = senderType === 1 && convType === 1 && item.body.senderId !== undefined && item.body.senderId !== null && String(item.body.senderId).trim()
+          ? String(item.body.senderId).trim()
+          : (conv.peerUserId !== undefined && conv.peerUserId !== null && String(conv.peerUserId).trim() ? String(conv.peerUserId).trim() : undefined);
+        const requested = native.showMessage({
+          sessionGeneration: item.generation,
+          msgId: String(item.body.msgId),
+          convId,
+          title,
+          body,
+          diagnosticTrace: item.trace,
+          convType,
+          senderType,
+          msgType,
+          spaceId,
+          agentId,
+          userId,
+        });
         decision(item.trace, requested ? "native-requested" : "native-skipped");
       }).catch(() => {
         decision(item.trace, controller.signal.aborted ? "cancelled" : !item.current() ? "session-changed" : "conversation-lookup-failed");

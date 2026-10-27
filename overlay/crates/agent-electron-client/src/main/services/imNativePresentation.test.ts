@@ -239,7 +239,8 @@ describe("IM native notifications", () => {
   });
 
   it("notification click restores/shows/focuses the app once and retains unread counts", () => {
-    const fixture = setup();
+    const onNotificationClick = vi.fn();
+    const fixture = setup({ onNotificationClick });
     fixture.presentation.setUnreadCount(8);
     fixture.main.isMinimized.mockReturnValue(true);
     fixture.presentation.showMessage(message());
@@ -249,18 +250,52 @@ describe("IM native notifications", () => {
     expect(fixture.main.restore).toHaveBeenCalledOnce();
     expect(fixture.main.show).toHaveBeenCalledOnce();
     expect(fixture.main.focus).toHaveBeenCalledOnce();
+    expect(onNotificationClick).toHaveBeenCalledOnce();
+    expect(onNotificationClick).toHaveBeenCalledWith({
+      sessionGeneration: 1,
+      convId: "9223372036854775807",
+      msgId: "m1",
+    });
     expect(fixture.options.setTrayBadgeCount).toHaveBeenLastCalledWith(8);
     expect(fixture.options.setDockBadge).toHaveBeenLastCalledWith("8");
     expect(fixture.created[0].close).toHaveBeenCalledOnce();
   });
 
+  it("passes structured conversation metadata to onNotificationClick", () => {
+    const onNotificationClick = vi.fn();
+    const fixture = setup({ onNotificationClick });
+    fixture.presentation.showMessage({
+      ...message("m-structured"),
+      convType: 4,
+      senderType: 2,
+      msgType: "card",
+      spaceId: "space-abc",
+      agentId: "agent-bot-1",
+      userId: "user-sender-2",
+    });
+    fixture.created[0].emit("click");
+    expect(onNotificationClick).toHaveBeenCalledWith({
+      sessionGeneration: 1,
+      convId: "9223372036854775807",
+      msgId: "m-structured",
+      convType: 4,
+      senderType: 2,
+      msgType: "card",
+      spaceId: "space-abc",
+      agentId: "agent-bot-1",
+      userId: "user-sender-2",
+    });
+  });
+
   it("rejects stale creation and stale clicks across session generations", () => {
-    const fixture = setup();
+    const onNotificationClick = vi.fn();
+    const fixture = setup({ onNotificationClick });
     expect(fixture.presentation.showMessage(message("old", 0))).toBe(false);
     fixture.presentation.showMessage(message());
     fixture.setGeneration(2);
     fixture.created[0].emit("click");
     expect(fixture.main.show).not.toHaveBeenCalled();
+    expect(onNotificationClick).not.toHaveBeenCalled();
     expect(fixture.presentation.showMessage(message("m1", 2))).toBe(true);
   });
 
