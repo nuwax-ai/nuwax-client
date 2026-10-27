@@ -266,6 +266,16 @@ test('overlay preparation refuses to overwrite unowned base edits', async (t) =>
   assert.equal(f.calls.some((call) => call[0] === 'pnpm'), false);
 });
 
+test('preparation rejects malformed or unsafe legacy overlay manifests before starting sync', async t => {
+  const f = fixture(t); const options = { tools: f.tools, platform: f.platform, arch: f.arch };
+  for (const value of ['{', '{"files":[]}', '["../outside"]', '["nested/.GiT/config"]']) {
+    write(path.join(f.root, '.overlay-sync.json'), value); f.calls.length = 0;
+    await assert.rejects(prepare(f.root, options), /overlay|路径/);
+    assert.equal(f.calls.some(call => call.includes(path.join(f.root, 'scripts/sync-overlay.js'))), false);
+    assert.equal(fs.readFileSync(path.join(f.root, '.overlay-sync.json'), 'utf8'), value);
+  }
+});
+
 test('input hashing ignores build/cache and catches source contents; packageReady checks declared entry', (t) => {
   const f = fixture(t);
   const before = inputDigest([f.kit]);

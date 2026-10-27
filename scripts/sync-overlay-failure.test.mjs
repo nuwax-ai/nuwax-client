@@ -96,7 +96,7 @@ test('a failure after file rename still rolls the in-flight target back', t => {
 
 test('a post-write read failure cannot leave a changed target marked rolled back', t => {
   const f = fixture(t); f.overlay('a.txt', 'overlay-a');
-  const result = f.injected(`const rename = fs.renameSync; const read = fs.readFileSync; let failRead = false; fs.renameSync = (from, to) => { rename(from, to); if (to === path.join(base, 'a.txt')) failRead = true; }; fs.readFileSync = (file, ...args) => { if (file === path.join(base, 'a.txt') && failRead) { failRead = false; throw new Error('injected post-write read failure'); } return read(file, ...args); };`);
+  const result = f.injected(`const rename = fs.renameSync; const read = fs.readFileSync; let failRead = false; let armed = false; fs.renameSync = (from, to) => { rename(from, to); if (!armed && to === path.join(base, 'a.txt')) { armed = true; failRead = true; } }; fs.readFileSync = (file, ...args) => { if (file === path.join(base, 'a.txt') && failRead) { failRead = false; throw new Error('injected post-write read failure'); } return read(file, ...args); };`);
   assert.equal(result.status, 1); assert.equal(f.read('a.txt'), 'base-a'); assert.equal(f.journals().at(-1).status, 'rolled-back');
 });
 
@@ -140,4 +140,19 @@ test('backup write failure happens before target mutation and leaves a named rec
   const result = f.injected(`const open = fs.openSync; fs.openSync = (file, ...args) => { if (typeof file === 'string' && file.endsWith('file-0.original')) throw new Error('injected backup disk failure'); return open(file, ...args); };`);
   assert.equal(result.status, 1); assert.equal(f.read('a.txt'), 'base-a'); assert.match(result.stderr, /backups/);
   assert.equal(fs.existsSync(path.join(f.root, '.overlay-sync.json')), false);
+});
+
+test('pristine worktree proof respects CRLF checkout conversion without trusting stat cache', t => {
+  const f = fixture(t); f.git('config', 'core.autocrlf', 'true');
+  f.write(f.base, 'a.txt', 'base text\r\n'); f.git('add', 'a.txt');
+  f.git('-c', 'user.name=Test', '-c', 'user.email=test@localhost', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'CRLF fixture');
+  f.overlay('a.txt', 'overlay LF\n'); const synced = f.run(); assert.equal(synced.status, 0, synced.stderr); assert.equal(f.read('a.txt'), 'overlay LF\n');
+  const cleaned = f.run('--clean'); assert.equal(cleaned.status, 0, cleaned.stderr); assert.equal(f.read('a.txt'), 'base text\r\n');
+});
+
+test('ownership ledger safely supports a literal __proto__ filename', t => {
+  const f = fixture(t); f.overlay('__proto__', 'generated prototype-named file');
+  assert.equal(f.run().status, 0); const state = JSON.parse(fs.readFileSync(path.join(f.root, '.cache/overlay-sync/state.json')));
+  assert.equal(Object.hasOwn(state.files, '__proto__'), true); assert.equal(f.run('--check').status, 0);
+  assert.equal(f.run('--clean').status, 0); assert.equal(fs.existsSync(path.join(f.base, '__proto__')), false);
 });

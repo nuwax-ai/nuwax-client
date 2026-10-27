@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import { configureSystemAppName } from './client/system-app-name.mjs';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -28,14 +29,15 @@ function write(file, content = 'fixture') {
   fs.writeFileSync(file, content);
 }
 function standardBuild(output, channel = 'beta') {
-  const build = updater.configureUpdater(structuredClone(originalPackage.build), {
+  const build = configureSystemAppName(updater.configureUpdater(structuredClone(originalPackage.build), {
     feedBase: 'https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron',
-  });
+  }), { platform: 'win32', arch: 'x64' });
   build.appId = 'com.nuwax-ai.nuwax';
   build.productName = 'Nuwax';
   build.extraMetadata = { ...build.extraMetadata, name: 'nuwax' };
   build.directories.output = output;
-  build.nsis.include = 'build/installer.nsh';
+  build.nsis.warningsAsErrors = false;
+  build.extraResources.push({ from: '../../../nuwax/dist', to: 'nuwax-dist' });
   return { ...originalPackage, version: channel === 'beta' ? '3.0.23-beta.8' : '3.0.23', build };
 }
 function standardEnv(output) {
@@ -101,30 +103,42 @@ function sdk() {
   const sdkRequire = createRequire(require.resolve('electron-builder/package.json', { paths: [project] }));
   assert.equal(sdkRequire('electron-builder/package.json').version, '25.1.8');
   assert.equal(sdkRequire('app-builder-lib/package.json').version, '25.1.8');
-  return sdkRequire('app-builder-lib');
+  return { api: sdkRequire('app-builder-lib'), ...sdkRequire('app-builder-lib/out/util/config/config.js') };
 }
 
-test('real pinned SDK receives dir then distinct prepackaged target maps with the complete unchanged product configuration', async () => {
-  const api = sdk();
+test('real pinned SDK receives dir then distinct prepackaged target maps with the complete unchanged product configuration', async (t) => {
+  const { api, getConfig, validateConfiguration } = sdk();
+  const projectRoot = temporary(t);
   const pkg = standardBuild('D:/a/_temp/final');
+  write(path.join(projectRoot, 'package.json'), JSON.stringify(pkg));
   const before = structuredClone(pkg);
   for (const stage of ['app', 'msi', 'nsis']) {
-    const job = { stage, arch: 'x64', projectRoot: '/fixture/client', output: `/fixture/${stage}/o`, app: `/fixture/${stage}/a` };
+    const job = { stage, arch: 'x64', projectRoot, output: `/fixture/${stage}/o`, app: `/fixture/${stage}/a` };
     const options = helper().createBuilderOptions(pkg, job, api);
+    const effective = await getConfig(projectRoot, null, structuredClone(options.config));
+    await validateConfiguration(effective, { isEnabled: false });
     api.checkBuildRequestOptions(options);
     assert.equal(options.publish, 'never');
     assert.equal(options.prepackaged, stage === 'app' ? undefined : job.app);
     assert.deepEqual([...options.targets.get(api.Platform.WINDOWS).get(api.Arch.x64)], [stage === 'app' ? 'dir' : stage]);
-    assert.equal(options.config.nsis.useZip, true);
-    assert.equal(options.config.nsis.differentialPackage, false);
-    assert.equal(options.config.nsis.include, pkg.build.nsis.include);
-    assert.equal(options.config.nsis.shortcutName, pkg.build.nsis.shortcutName);
-    assert.equal(options.config.msi.artifactName, pkg.build.msi.artifactName);
-    assert.equal(options.config.afterPack, pkg.build.afterPack);
-    assert.equal(options.config.afterSign, pkg.build.afterSign);
-    assert.equal(options.config.compression, 'normal');
-    assert.equal(options.config.afterAllArtifactBuild, policy.BLOCKMAP_HOOK);
-    assert.equal(options.config.directories.output, job.output);
+    assert.equal(effective.nsis.useZip, true);
+    assert.equal(effective.nsis.differentialPackage, false);
+    assert.equal(effective.nsis.include, pkg.build.nsis.include);
+    assert.equal(effective.nsis.shortcutName, pkg.build.nsis.shortcutName);
+    assert.equal(effective.nsis.shortcutName, '女娲Nuwax');
+    assert.equal(effective.nsis.warningsAsErrors, false);
+    assert.equal(effective.msi.artifactName, pkg.build.msi.artifactName);
+    assert.equal(effective.afterPack, pkg.build.afterPack);
+    assert.equal(effective.afterSign, pkg.build.afterSign);
+    assert.equal(effective.compression, 'normal');
+    assert.equal(effective.afterAllArtifactBuild, policy.BLOCKMAP_HOOK);
+    assert.equal(effective.directories.output, job.output);
+    assert.equal(effective.appId, pkg.build.appId);
+    assert.equal(effective.productName, pkg.build.productName);
+    assert.deepEqual(effective.publish, pkg.build.publish);
+    assert.deepEqual(effective.extraMetadata, pkg.build.extraMetadata);
+    assert.deepEqual(effective.win.extraResources, pkg.build.win.extraResources);
+    assert.deepEqual(effective.nsis, { ...pkg.build.nsis, differentialPackage: false, useZip: true });
   }
   assert.deepEqual(pkg, before);
   // This calls the SDK's real early-return path: it must not touch filesystem,
@@ -193,6 +207,39 @@ test('real child processes overlap only after one app build, using physical app 
   assert.equal(fs.readFileSync(path.join(fixture.dir, 'original-cache/seed'), 'utf8'), 'unchanged source');
   assert.ok(fs.existsSync(path.join(result.work, 'nsis/o/builder-debug.yml')), 'diagnostics are kept outside the uploaded directory');
   assert.equal(fs.readFileSync(path.join(states[0].app, 'Nuwax.exe'), 'utf8'), 'signed-app');
+});
+
+test('promotion moves installer bytes within the work volume instead of keeping a second complete installer set', async (t) => {
+  const fixture = pipelineFixture(t);
+  const result = await helper().orchestrateInstallers(fixture.options, fixture.dependencies);
+  for (const [stage, names] of [['msi', ['Nuwax.msi']], ['nsis', ['Nuwax-Setup.exe', 'Nuwax-Setup.exe.blockmap', 'latest.yml']]]) {
+    for (const name of names) {
+      assert.equal(fs.existsSync(path.join(result.work, stage, 'o', name)), false, `${name} must be moved, not copied`);
+      assert.ok(fs.statSync(path.join(fixture.output, name)).size);
+    }
+    assert.ok(fs.existsSync(path.join(result.work, stage, 'o/builder-debug.yml')), 'diagnostics remain in the private target directory');
+  }
+});
+
+test('a Windows cleanup lock after promotion reports its directory without failing the complete build', async (t) => {
+  const fixture = pipelineFixture(t);
+  const originalRm = fs.rmSync, originalWarn = console.warn, originalError = console.error;
+  const warnings = [], errors = [];
+  let result;
+  try {
+    fs.rmSync = (file, options) => {
+      if (String(file).startsWith(path.join(fixture.dir, 'ni-'))) throw Object.assign(new Error('fixture file locked'), { code: 'EBUSY' });
+      return originalRm(file, options);
+    };
+    console.warn = (...args) => warnings.push(args.join(' '));
+    console.error = (...args) => errors.push(args.join(' '));
+    result = await helper().orchestrateInstallers(fixture.options, { ...fixture.dependencies, keepWork: false });
+  } finally { fs.rmSync = originalRm; console.warn = originalWarn; console.error = originalError; }
+  assert.ok(fs.existsSync(path.join(fixture.output, 'Nuwax.msi')));
+  assert.ok(fs.existsSync(path.join(fixture.output, 'Nuwax-Setup.exe')));
+  assert.ok(fs.existsSync(result.work));
+  assert.equal(errors.length, 0, 'complete promotion must not print a no-promotion error');
+  assert.ok(warnings.some(warning => warning.includes(result.work)), 'cleanup warning must identify the retained directory');
 });
 
 test('a failed target waits for its sibling and never promotes a partial installer or metadata set', async (t) => {
