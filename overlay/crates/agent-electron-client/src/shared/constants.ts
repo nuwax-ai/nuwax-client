@@ -94,6 +94,9 @@ export const DEFAULT_GUI_MCP_PORT = 60008 + NUWAX_PORT_OFFSET;
 /** 本地 MCP 管理中 GUI MCP 条目的固定 Server ID（与 ACP 注入名一致） */
 export const GUI_MCP_SERVER_ID = "gui-agent";
 
+/** 本地 MCP 管理中 Computer Use (cua) 条目的固定 Server ID */
+export const CUA_MCP_SERVER_ID = "cua";
+
 /** Admin Server 默认端口（管理接口） */
 export const DEFAULT_ADMIN_SERVER_PORT = 60007 + NUWAX_PORT_OFFSET;
 
