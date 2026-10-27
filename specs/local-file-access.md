@@ -9,6 +9,8 @@
 ## 数据与路由
 前端传 cId、sandboxId 与明确工作区/项目上下文；主进程绑定 owner 文档及登录代次。实际 cwd 优先，其次 workspacePath，再唯一历史目录命中，禁止设备 ID 推导用户目录。列表和搜索由主进程调用本机 file-server，明确 customTargetDir，不传云端 cookie/token；字节由 fs 提供。
 
+选择宿主当前电脑的项目目录时，共用工作目录入口直接调用系统目录选择框；本机取消或已确认本机后的操作失败不改开远端目录浏览器。文件树、编辑、保存、导出和预览保持同一来源。预览正文与本机子资源不经过云端文件代理；PDF 字符映射随前端包提供，首次预览不依赖外部 CDN 缓存。页面内本来指向外站的资源仍须网络，不将其他电脑/云端文件冒充本机离线副本。
+
 ## 协议
 nuwax-local://<grant>/<relative-path>，GET/HEAD/单段 Range，标准 MIME、长度、206/416。授权绑定 owner、文档、代次、真实资源根；路径只解码一次，拒绝 NUL、编码分隔符及授权根越界。显式文件按存在即读，自动子资源不沿链接逃逸。仅当前业务 session 装 handler；启动前声明标准/secure/fetch/cors/stream 权限，不 bypassCSP，不启用 ServiceWorker。
 

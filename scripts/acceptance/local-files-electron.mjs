@@ -9,6 +9,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+import { readPdfCharacterMaps } from "../../nuwax/scripts/pdf-character-maps.js";
 
 const bundleIndex = process.argv.indexOf("--bundle-only");
 const bundleArgument = bundleIndex < 0 ? null : process.argv[bundleIndex + 1];
@@ -122,6 +123,7 @@ try {
   await fs.writeFile(path.join(workspace,'index.html'),'<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><body>Relative resources</body>');
   const media=await fs.open(path.join(workspace,'large.mp4'),'w');await media.truncate(110*1024*1024);await media.close();
   await fs.copyFile(path.join(temp,'playback.mp4'),path.join(workspace,'playback.mp4'));
+  await fs.copyFile(path.join(temp,'chinese.pdf'),path.join(workspace,'chinese.pdf'));
   await fs.mkdir(path.join(workspace,'.hidden'));await fs.mkdir(path.join(workspace,'empty'));
   await fs.writeFile(path.join(workspace,'.hidden/note.txt'),'hidden fixture');
   await fs.writeFile(path.join(workspace,'hard-source.txt'),'hard fixture');
@@ -209,6 +211,20 @@ try {
   assert.equal(zipNames.includes('workspace/complete.zip'),false);assert.equal(zipNames.some(name=>name.includes('.nuwax-')),false);
   assert.equal((await fs.readdir(workspace)).some(name=>name.includes('.nuwax-')),false);
   pass('real Electron export IPC exports a workspace above 100MiB with hidden/hardlink/symlink/empty entries',{saveDialog:'fixture-selected destination; no human installer action',uncompressedLargeFile:110*1024*1024,symlinkVerified:symlinkSupported,entryCount:zipNames.length});
+  // 只断开此隔离 Electron 会话的网络，不改用户机器或正在运行的客户端。
+  await owner.webContents.session.setProxy({mode:'fixed_servers',proxyRules:'http=127.0.0.1:1;https=127.0.0.1:1',proxyBypassRules:'<-loopback>'});
+  await owner.webContents.session.closeAllConnections();
+  assert.equal((await request(owner,origin+'/offline-probe')).blocked,true);
+  const offlinePreview=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'note.txt'})).data;
+  assert.equal((await request(owner,offlinePreview.url)).text,'0123456789');
+  pass('offline HTTP transport cannot block a newly authorized local file preview');
+  // 真实预览库 + 未嵌入字体的中文 PDF，强制覆盖需要字符映射的首次断网渲染。
+  await evaluate(owner,await fs.readFile(path.join(temp,'pdf-preview.js'),'utf8'));
+  const pdf=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'chinese.pdf'})).data;
+  const renderedPdf=await evaluate(owner,'window.renderOfflinePdf('+JSON.stringify(pdf.url)+')');
+  assert.ok(renderedPdf.maps.includes('UniGB-UCS2-H'));
+  assert.ok(renderedPdf.inkPixels>0);
+  pass('offline Chinese PDF renders actual canvas pixels with bundled character maps',renderedPdf);
   const html=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'index.html'})).data;
   await evaluate(owner,'window.fixtureMessages=[];window.addEventListener("message",event=>window.fixtureMessages.push(event.data));const iframe=document.createElement("iframe");iframe.sandbox="allow-scripts allow-same-origin";iframe.src='+JSON.stringify(html.url)+';iframe.id="local-preview";document.body.appendChild(iframe);');
   await waitFor(()=>evaluate(owner,'window.fixtureMessages.some(message=>message.type==="local-html-ready")'),'HTML CSS JS relative resources');
@@ -217,6 +233,8 @@ try {
   pass('sandboxed local HTML loads relative CSS/JS and has no host bridge');
   const localFrame=owner.webContents.mainFrame.frames.find(frame=>frame.url===html.url);assert.ok(localFrame);
   const relativeFetch=await localFrame.executeJavaScript('(async()=>{try{const response=await fetch(new URL("note.txt",location.href));return {status:response.status,text:await response.text()};}catch(error){return {error:String(error)};}})()');assert.equal(relativeFetch.status,200);assert.equal(relativeFetch.text,'0123456789');
+  pass('offline local HTML still loads its local CSS, JavaScript and referenced file bytes');
+  await owner.webContents.session.setProxy({mode:'direct'});
   const forbidden=await localFrame.executeJavaScript('(async()=>{try{await fetch('+JSON.stringify(origin+'/api/private')+');return false;}catch{return true;}})()');assert.equal(forbidden,true);
   pass('local HTML cannot call business/loopback endpoints');
   await localFrame.executeJavaScript('location.href="data:text/plain,preview";');
@@ -259,6 +277,45 @@ try {
 
 try {
   await createVideoFixture();
+  const content='BT /F1 32 Tf 50 700 Td <4F60597D4E2D6587> Tj ET';
+  const objects=[
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>',
+    '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [5 0 R] >>',
+    '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 6 0 R /DW 1000 >>',
+    '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [-25 -254 1000 880] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf='%PDF-1.4\n';const offsets=[0];
+  objects.forEach((object,index)=>{offsets.push(Buffer.byteLength(pdf));pdf+=`${index+1} 0 obj\n${object}\nendobj\n`;});
+  const xref=Buffer.byteLength(pdf);
+  pdf+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;
+  for(const offset of offsets.slice(1))pdf+=`${String(offset).padStart(10,'0')} 00000 n \n`;
+  pdf+=`trailer << /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  await fs.writeFile(path.join(temporary,'chinese.pdf'),pdf);
+  await build({
+    bundle:true,platform:'browser',format:'iife',target:'chrome120',
+    stdin:{resolveDir:path.join(root,'nuwax'),loader:'ts',contents:`
+      import pdf from '@js-preview/pdf';
+      import {bundledPdfResources} from './src/components/business-component/FilePreview/pdfCharacterMaps';
+      window.renderOfflinePdf=async url=>{
+        const bytes=await (await fetch(url,{credentials:'omit'})).arrayBuffer();
+        const host=document.createElement('div');host.style.cssText='width:800px;height:600px';document.body.appendChild(host);
+        const maps=[];class TracedMaps extends bundledPdfResources.CMapReaderFactory{fetch(input){maps.push(input.name);return super.fetch(input);}}
+        return new Promise((resolve,reject)=>{
+          const preview=pdf.init(host,{...bundledPdfResources,CMapReaderFactory:TracedMaps,width:780,onError:reject,onRendered:()=>{
+            const canvas=host.querySelector('canvas');if(!canvas)return reject(Error('No PDF canvas'));
+            const rgba=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+            let inkPixels=0;for(let i=0;i<rgba.length;i+=4)if(rgba[i+3]&&rgba[i]+rgba[i+1]+rgba[i+2]<600)inkPixels++;
+            resolve({maps,inkPixels,canvases:host.querySelectorAll('canvas').length});preview.destroy();
+          }});preview.preview(bytes);
+        });
+      };
+    `},
+    define:{NUWAX_PDF_CMAPS:JSON.stringify(readPdfCharacterMaps())},
+    outfile:path.join(temporary,'pdf-preview.js'),
+  });
   const common = {
     bundle: true,
     platform: "node",
@@ -286,7 +343,7 @@ try {
   });
   if (bundleDirectory) {
     await fs.mkdir(bundleDirectory, { recursive: true });
-    for (const file of ["main.cjs", "preload.cjs", "playback.mp4"])
+    for (const file of ["main.cjs", "preload.cjs", "playback.mp4", "chinese.pdf", "pdf-preview.js"])
       await fs.copyFile(path.join(temporary, file), path.join(bundleDirectory, file));
     console.log(`LOCAL_FILES_ELECTRON_BUNDLE ${bundleDirectory}`);
   } else {
