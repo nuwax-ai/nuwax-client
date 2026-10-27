@@ -1,6 +1,6 @@
 # 构建优化与同步安全：P1 和后续封装提速
 
-状态：P1 已提交并推送，Draft PR #76 正在运行源码 CI。用户在查看剩余事项后要求继续；本轮补同步防覆盖与 Windows 封装提速，完成代码、提交并更新同一 PR。不启动新包、tag、Release、部署或修改更新指针。
+状态：P1 已提交并推送，Draft [PR #76](https://github.com/nuwax-ai/nuwax-client/pull/76) 的首轮源码 CI 全部通过。用户在查看剩余事项后要求继续；本轮同步防覆盖与 Windows 封装提速均已实现并通过独立检查，提交后更新同一 PR。不启动新包、tag、Release、部署或修改更新指针。
 
 依据：beta.8 run `40358051690` 全链69分15秒；Mac Intel helper 22分28秒、Windows helper10分15秒，均出现外层 artifact HIT 后内层 `record_missing` 重编。Windows 打包目录出现 `resources/git/.cache/PortableGit-*.7z.exe`。
 
@@ -33,6 +33,25 @@
 Windows 若固定 SDK 的共享目录或签名行为不能安全并行，保留可靠路径并记录具体阻碍，不以牺牲发布完整性换速度。真实耗时收益仍待后续打包测量。
 
 同步护栏防止重演覆盖问题；此前已丢失的原始 WIP 没有可恢复字节，本轮不能宣称找回。首次重启、WebView/Dock 及系统通知中心真实行为继续留待用户实机验收。
+
+## 后续结果与独立验证
+
+- 同步：保留旧数组清单，另存 SHA-256 所有权、互斥锁、持久原字节与事务日志。未知 tracked/untracked/staged、隐藏 index 标记、损坏清单、链接和跨平台 Git 路径别名均拒绝；修改前全量预检，中途失败按可信输出恢复，外部并发字节保留并阻止继续猜测。prepare/update 共用严格 reader，切换 pin 前也走备份清理。`--check` 只读。
+- Windows：固定 SDK 25.1.8 标准商业 CI 只准备一次应用；可用空间达到 `6A + 2C + 1 GiB` 额外预算时才复制并行封装，否则复用已准备应用和缓存串行生成两种目标。A/C 是当前应用和预热缓存的实测字节，预算是保守估算；不代表真实包体或峰值。签名、自定义 hook、EXE-only、本地 pack 和 QA 入口保留原路并解释原因。
+- 完整性：目标进程全部结束后验证 MSI/EXE/blockmap/更新元数据；冲突拒绝合并，同卷移动后整体提升最终目录。保留 NSIS 后的 elevate、卸载清单、安装空间检查和产品配置；成功后清理锁只报告残留目录，不将完整包误判为失败。
+- 红证据先提交：同步原实现 12 例中 10 失败；隐藏 index/in-flight 故障 15 例中 8 失败；Windows 首项直接复现原串行入口，其余新编排测试在实现前失败。磁盘不足、配置真实合并、提升/清理及 Git 别名追加回归均先记录失败再修复。
+- 最终独立检查：完整脚本 **453 通过 / 0 失败 / 0 跳过**；隔离社区 **1682 通过 / 0 失败 / 18 既有跳过**；隔离商业 **3623 通过 / 0 失败 / 18 既有跳过**。新增同步 30 例与 Windows 14 例全部执行，包含真实固定 SDK 配置合并/schema与子进程。8 份脚本语法及 diff 检查通过。
+- 仅在隔离副本验证；已有 9 个商业依赖版本逐一核对后准备隔离缓存 marker，未执行安装、未改原始依赖。未启动新包，不能把以上结论当作签名安装包、真实磁盘峰值、跨 run 缓存收益或设备行为验收。
+
+证据日志：`/tmp/nuwax-overlay-safety-{red,final}-20261027.log`、`/tmp/nuwax-overlay-safety-fault-{red,final}-20261027.log`、`/tmp/nuwax-overlay-git-alias-red-20261027.log`、`/tmp/nuwax-windows-installers-{red,domain,space-red,space-green}-20261027.log`；独立 verifier 保留 453/1682/3623 原始汇总。
+
+## 后续三问与五遍自查
+
+1. 内聚：所有权、预检、备份、提交与回滚收在 `scripts/sync-overlay.js:163`、`:240`、`:317`；prepare/update 消费同一清单读取器，不再独立无备份删除。Windows 空间策略与原子提升集中在 `windows-installer-orchestration.cjs:28`、`:229`。
+2. 分层：商业 Windows wrapper 只判断适用入口并调用编排；helper 让固定 SDK 自行读取原 package 配置，仅覆盖输出与归档策略（`:110`），避免 publish 数组合并或产品字段复制漂移。底层 SDK 与业务运行时代码均未修改。
+3. 维护：相同输入同步不重写、干跑不写 ledger；故障注入验证部分写入、并发和恢复日志。Windows 以真实 SDK 和真实 Node 子进程验证配置/同步点，并提供空间回退及明确日志。单卷移动避免额外完整包复制，清理失败不破坏成功结果。
+
+五遍结论：逻辑/安全边界/范围/分层/测试均通过；没有凭证、更新指针或 submodule pin 变更。Windows 真实封装与 UI/设备行为保留未验收。此为 writer 自查和独立测试报告，PR 仍为 Draft，不自行批准或合并。
 
 ## 结果与验证
 
