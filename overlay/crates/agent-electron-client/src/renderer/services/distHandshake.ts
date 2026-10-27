@@ -49,7 +49,9 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
     update({ snapshot: null, checking: false });
     void refresh();
   };
-  if (typeof getSnapshot === "function") for (const event of SOURCE_EVENTS) api?.on?.(event, changed);
+  // Preload stores one IPC wrapper on each callback, so channels need separate references.
+  const subscriptions = SOURCE_EVENTS.map(event => ({ event, listener: () => changed() }));
+  if (typeof getSnapshot === "function") for (const { event, listener } of subscriptions) api?.on?.(event, listener);
   return {
     refresh,
     dispose() {
@@ -60,7 +62,7 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
         settle();
       }
       deadlines.clear();
-      if (typeof getSnapshot === "function") for (const event of SOURCE_EVENTS) api?.off?.(event, changed);
+      if (typeof getSnapshot === "function") for (const { event, listener } of subscriptions) api?.off?.(event, listener);
     },
   };
 }

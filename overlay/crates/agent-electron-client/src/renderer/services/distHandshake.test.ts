@@ -51,6 +51,35 @@ describe("dist mismatch notice", () => {
     observer.dispose(); expect(off).toHaveBeenCalledTimes(3);
   });
 
+  it("removes every listener with the preload's callback wrapper bookkeeping", async () => {
+    type Listener = (() => void) & { __ipcWrapper?: () => void };
+    const channels = new Map<string, Set<() => void>>();
+    const api = {
+      app: { getDistHandshake: vi.fn().mockResolvedValue(snapshot) },
+      on(event: string, callback: Listener) {
+        const wrapper = () => callback();
+        callback.__ipcWrapper = wrapper;
+        const listeners = channels.get(event) ?? new Set();
+        listeners.add(wrapper);
+        channels.set(event, listeners);
+      },
+      off(event: string, callback: Listener) {
+        channels.get(event)?.delete(callback.__ipcWrapper ?? callback);
+      },
+    };
+    for (let visit = 0; visit < 3; visit++) {
+      const update = vi.fn();
+      const observer = observeDistHandshake(api, update);
+      await observer.refresh();
+      expect([...channels.values()].map(listeners => listeners.size)).toEqual([1, 1, 1]);
+      observer.dispose();
+      expect([...channels.values()].map(listeners => listeners.size)).toEqual([0, 0, 0]);
+      update.mockClear();
+      for (const listeners of channels.values()) for (const listener of listeners) listener();
+      expect(update).not.toHaveBeenCalled();
+    }
+  });
+
   it("a hung or disposed IPC request cannot disable manual recheck forever or update unmounted UI", async () => {
     vi.useFakeTimers();
     let finish!: (value: DistHandshakeView) => void;
