@@ -4,6 +4,13 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
+/** Deliberate invalidation lever for the build-resource caches. This file is
+ * a cache-recipe member, so bumping this constant invalidates every platform's
+ * helper/capture caches. Bump it ONLY when the staged file set or manifest
+ * admission contract changes (build-resource-artifacts.mjs is no longer a
+ * recipe member — transport/observability edits there must not invalidate). */
+export const RESOURCE_STAGING_CONTRACT = 1;
+
 export function paths(root) {
   const base = path.join(root, 'nuwa-electron-shell');
   return { root, base, client: path.join(base, 'crates', 'agent-electron-client'),

@@ -7,14 +7,20 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as core from './core.mjs';
 
+// Recipe membership rule: only files whose bytes influence the PRODUCED
+// artifacts may be listed. The transport/reporting layer
+// (build-resource-artifacts.mjs, resource-report.mjs) moves and observes
+// artifacts but never builds them — keeping it out of the recipes means
+// observability/transport tweaks (annotations, log format, upload policy)
+// no longer force a five-platform cold rebuild. When the staged file set or
+// manifest admission contract changes instead, bump RESOURCE_STAGING_CONTRACT
+// in core.mjs (a recipe member) to invalidate deliberately.
 const HELPER_RECIPE = [
   'scripts/computer-use/build-helper.sh', 'scripts/client/native-build-cache.mjs', 'scripts/client/core.mjs',
-  'scripts/client/build-resource-artifacts.mjs',
   'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch',
 ];
 const CAPTURE_RECIPE = [
   'scripts/client/native-build-cache.mjs', 'scripts/client/core.mjs',
-  'scripts/client/build-resource-artifacts.mjs',
   'scripts/client/capture-resources.mjs', 'scripts/client/capture-window-resources.mjs',
   'scripts/client/third-party-notices.mjs', 'scripts/prepare-release-capture.mjs',
   'third-party/capture-sources.json', 'third-party/capture-window-sources.json', 'third-party/manifest.json',

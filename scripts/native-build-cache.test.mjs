@@ -8,7 +8,7 @@ import test from 'node:test';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const recipe = ['scripts/computer-use/build-helper.sh', 'scripts/client/native-build-cache.mjs',
-  'scripts/client/build-resource-artifacts.mjs', 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'];
+  'scripts/client/core.mjs', 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'];
 
 // The production module is copied unchanged. Only its command adapter is replaced,
 // so this exercises the real key/save/restore path without a Rust build or host SDK.
@@ -146,4 +146,39 @@ test('failed or warning-only compiler probes cannot create a reusable identity',
   assert.throws(() => f.consumerApi.nativeHelperResourceKey(f.consumer), /Cannot identify compiler/);
   f.update({ empty: true });
   assert.throws(() => f.consumerApi.nativeHelperResourceKey(f.consumer), /Cannot identify compiler/);
+});
+
+test('transport and observability layers stay outside the cache recipes', () => {
+  const text = fs.readFileSync(path.join(root, 'scripts/client/native-build-cache.mjs'), 'utf8');
+  const helper = text.match(/const HELPER_RECIPE = \[([^\]]+)\]/)?.[1];
+  const capture = text.match(/const CAPTURE_RECIPE = \[([^\]]+)\]/)?.[1];
+  assert.ok(helper && capture, 'recipe arrays remain simple literals');
+  for (const body of [helper, capture]) {
+    assert.ok(!body.includes('build-resource-artifacts.mjs'), 'transport layer must stay out of recipes');
+    assert.ok(!body.includes('resource-report.mjs'), 'observability layer must stay out of recipes');
+    assert.ok(body.includes('scripts/client/core.mjs'), 'core.mjs keeps the staging-contract lever in the identity');
+  }
+  assert.ok(helper.includes('build-helper.sh') && helper.includes('cua-nuwax-helper-bundle.patch'));
+  assert.ok(capture.includes('capture-resources.mjs') && capture.includes('third-party/manifest.json'));
+});
+
+test('transport-layer edits do not invalidate the helper cache identity', async t => {
+  const f = await fixture(t);
+  const expected = f.producerApi.nativeHelperResourceKey(f.producer);
+  // The transport script exists in the fixture tree but is not hashed into
+  // the identity: annotations, log format and upload policy changes there
+  // must not force a five-platform cold rebuild.
+  const transport = path.join(f.producer, 'scripts/client/build-resource-artifacts.mjs');
+  fs.copyFileSync(path.join(root, 'scripts/client/build-resource-artifacts.mjs'), transport);
+  fs.appendFileSync(transport, '\n// observability tweak: new annotation or log line\n');
+  assert.equal(f.producerApi.nativeHelperResourceKey(f.producer), expected);
+});
+
+test('bumping the staging contract constant invalidates the helper identity', async t => {
+  const f = await fixture(t);
+  const expected = f.producerApi.nativeHelperResourceKey(f.producer);
+  // core.mjs is a recipe member; the facade replaced it in the fixture, so
+  // mutate the facade copy the same way a real contract bump would.
+  fs.appendFileSync(path.join(f.producer, 'scripts/client/core.mjs'), '\nexport const RESOURCE_STAGING_CONTRACT = 2;\n');
+  assert.notEqual(f.producerApi.nativeHelperResourceKey(f.producer), expected);
 });
