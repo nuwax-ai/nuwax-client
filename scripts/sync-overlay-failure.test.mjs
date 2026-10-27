@@ -66,6 +66,15 @@ test('manifest paths cannot use Git metadata or Windows aliases', t => {
   }
 });
 
+test('Git metadata short-name and ignorable-character aliases reject before mutation', t => {
+  const f = fixture(t); f.overlay('a.txt', 'overlay-a');
+  for (const entry of ['GIT~1/config', '.git~1', 'x/.gi\u200ct/config', 'x/.git\ufeff/config']) {
+    f.write(f.root, '.overlay-sync.json', JSON.stringify([entry]));
+    const result = f.run(); assert.equal(result.status, 1, entry); assert.match(result.stderr, /路径/);
+    assert.equal(f.read('a.txt'), 'base-a');
+  }
+});
+
 test('base and overlay roots cannot be directory symlinks', t => {
   const f = fixture(t); f.overlay('a.txt', 'overlay-a');
   for (const name of ['overlay', 'nuwa-electron-shell']) {

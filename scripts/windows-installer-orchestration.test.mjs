@@ -112,7 +112,7 @@ test('real pinned SDK receives dir then distinct prepackaged target maps with th
   const pkg = standardBuild('D:/a/_temp/final');
   write(path.join(projectRoot, 'package.json'), JSON.stringify(pkg));
   const before = structuredClone(pkg);
-  for (const stage of ['app', 'msi', 'nsis']) {
+  for (const stage of ['app', 'msi', 'nsis', 'serial']) {
     const job = { stage, arch: 'x64', projectRoot, output: `/fixture/${stage}/o`, app: `/fixture/${stage}/a` };
     const options = helper().createBuilderOptions(pkg, job, api);
     const effective = await getConfig(projectRoot, null, structuredClone(options.config));
@@ -120,7 +120,7 @@ test('real pinned SDK receives dir then distinct prepackaged target maps with th
     api.checkBuildRequestOptions(options);
     assert.equal(options.publish, 'never');
     assert.equal(options.prepackaged, stage === 'app' ? undefined : job.app);
-    assert.deepEqual([...options.targets.get(api.Platform.WINDOWS).get(api.Arch.x64)], [stage === 'app' ? 'dir' : stage]);
+    assert.deepEqual([...options.targets.get(api.Platform.WINDOWS).get(api.Arch.x64)], stage === 'serial' ? ['msi', 'nsis'] : [stage === 'app' ? 'dir' : stage]);
     assert.equal(effective.nsis.useZip, true);
     assert.equal(effective.nsis.differentialPackage, false);
     assert.equal(effective.nsis.include, pkg.build.nsis.include);
@@ -165,6 +165,16 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   if (fs.readFileSync(path.join(process.env.FIXTURE_CACHE,'seed'),'utf8') !== 'unchanged source') throw Error('source cache changed');
   const state = { app:job.app, cache:job.cache, temp:process.env.TEMP, output:job.output, inode:fs.statSync(path.join(job.app,'Nuwax.exe')).ino };
   write(path.join(process.env.FIXTURE_BARRIER,job.stage+'.json'),JSON.stringify(state));
+  if(job.stage==='serial') {
+    if(process.env.FIXTURE_FAIL==='serial') throw Error('deliberate serial failure');
+    write(path.join(job.output,'Nuwax.msi'),'signed msi');
+    write(path.join(job.app,'resources','elevate.exe'),'signed elevate');
+    write(path.join(job.output,'Nuwax-Setup.exe'),'signed nsis');
+    write(path.join(job.output,'Nuwax-Setup.exe.blockmap'),'verified blockmap');
+    write(path.join(job.output,'latest.yml'),'path: Nuwax-Setup.exe');
+    write(path.join(job.output,'builder-debug.yml'),'serial debug');
+    write(job.receipt,JSON.stringify({output:job.output,appOutDir:job.app})); return;
+  }
   for(let i=0;!fs.existsSync(path.join(process.env.FIXTURE_BARRIER,(job.stage==='msi'?'nsis':'msi')+'.json'));i++) { if(i>300) throw Error('builders did not overlap'); await wait(10); }
   if(process.env.FIXTURE_FAIL===job.stage) { await wait(20); throw Error('deliberate target failure'); }
   if(job.stage==='nsis') {
@@ -192,12 +202,21 @@ function pipelineFixture(t, env = {}) {
   const cache = path.join(dir, 'original-cache');
   write(workerFile, fixtureWorker);
   write(path.join(cache, 'seed'), 'unchanged source');
-  return { dir, output, options: { projectRoot: dir, output, arch: 'x64', env: { ...process.env, ELECTRON_BUILDER_CACHE: cache, FIXTURE_CACHE: cache, FIXTURE_BARRIER: path.join(dir, 'barrier'), ...env } }, dependencies: { workerFile, keepWork: true } };
+  return { dir, output, options: { projectRoot: dir, output, arch: 'x64', env: { ...process.env, ELECTRON_BUILDER_CACHE: cache, FIXTURE_CACHE: cache, FIXTURE_BARRIER: path.join(dir, 'barrier'), ...env } }, dependencies: { workerFile, keepWork: true, statfs: () => ({ bsize: 1n, bavail: 1024n ** 5n }) } };
 }
+
+test('parallel disk estimate reserves two app/cache copies and separate archive/output working bytes', () => {
+  const { parallelSpaceRequirement, PARALLEL_DISK_RESERVE_BYTES } = helper();
+  assert.equal(PARALLEL_DISK_RESERVE_BYTES, 1024n ** 3n);
+  assert.equal(parallelSpaceRequirement(100n, 20n), 6n * 100n + 2n * 20n + PARALLEL_DISK_RESERVE_BYTES);
+});
 
 test('real child processes overlap only after one app build, using physical app copies, warm independent caches and temporary/output directories', async (t) => {
   const fixture = pipelineFixture(t);
   const result = await helper().orchestrateInstallers(fixture.options, fixture.dependencies);
+  assert.equal(result.mode, 'parallel');
+  assert.ok(result.space.appBytes > 0n && result.space.cacheBytes > 0n, 'measure the actual prepared fixture');
+  assert.ok(result.space.availableBytes >= result.space.requiredBytes);
   const states = ['msi','nsis'].map(stage => JSON.parse(fs.readFileSync(path.join(fixture.dir, 'barrier', stage+'.json'))));
   for (const key of ['app','cache','temp','output','inode']) assert.notEqual(states[0][key], states[1][key], key+' must be isolated');
   assert.notEqual(states[0].inode, fs.statSync(path.join(fixture.output, 'win-unpacked/Nuwax.exe')).ino, 'copies must not be hardlinks');
@@ -207,6 +226,39 @@ test('real child processes overlap only after one app build, using physical app 
   assert.equal(fs.readFileSync(path.join(fixture.dir, 'original-cache/seed'), 'utf8'), 'unchanged source');
   assert.ok(fs.existsSync(path.join(result.work, 'nsis/o/builder-debug.yml')), 'diagnostics are kept outside the uploaded directory');
   assert.equal(fs.readFileSync(path.join(states[0].app, 'Nuwax.exe'), 'utf8'), 'signed-app');
+});
+
+for (const [name, statfs] of [
+  ['low free disk', () => ({ bsize: 1n, bavail: 1n })],
+  ['unreadable free disk', () => { throw new Error('fixture statfs unavailable'); }],
+]) {
+  test(`${name} reuses the prepared application and warm cache in one serial installer process`, async (t) => {
+    const fixture = pipelineFixture(t);
+    const result = await helper().orchestrateInstallers(fixture.options, { ...fixture.dependencies, statfs });
+    assert.equal(result.mode, 'serial');
+    assert.match(result.space.reason, /space|disk|statfs/i);
+    const state = JSON.parse(fs.readFileSync(path.join(fixture.dir, 'barrier/serial.json')));
+    assert.equal(state.app, path.join(result.work, 'app/o/win-unpacked'));
+    assert.equal(state.cache, path.join(result.work, 'app/c'));
+    assert.equal(state.inode, fs.statSync(path.join(fixture.output, 'win-unpacked/Nuwax.exe')).ino, 'serial fallback must not copy the application');
+    for (const stage of ['msi', 'nsis']) {
+      assert.equal(fs.existsSync(path.join(fixture.dir, 'barrier', stage + '.json')), false, 'must not launch separate target workers');
+      assert.equal(fs.existsSync(path.join(result.work, stage, 'a')), false, 'must not create application copies');
+      assert.equal(fs.existsSync(path.join(result.work, stage, 'c')), false, 'must not create cache copies');
+    }
+    assert.deepEqual(fs.readdirSync(fixture.output).sort(), ['Nuwax-Setup.exe', 'Nuwax-Setup.exe.blockmap', 'Nuwax.msi', 'latest.yml', 'win-unpacked'].sort());
+    assert.equal(fs.readFileSync(path.join(fixture.output, 'win-unpacked/resources/elevate.exe'), 'utf8'), 'signed elevate');
+    assert.equal(fs.readFileSync(path.join(fixture.dir, 'original-cache/seed'), 'utf8'), 'unchanged source');
+  });
+}
+
+test('a serial fallback failure never promotes an installer or updater metadata set', async (t) => {
+  const fixture = pipelineFixture(t, { FIXTURE_FAIL: 'serial' });
+  await assert.rejects(helper().orchestrateInstallers(fixture.options, {
+    ...fixture.dependencies, statfs: () => ({ bsize: 1n, bavail: 1n }),
+  }), /serial.*failed/i);
+  assert.ok(fs.existsSync(path.join(fixture.dir, 'barrier/serial.json')));
+  assert.equal(fs.existsSync(fixture.output), false);
 });
 
 test('promotion moves installer bytes within the work volume instead of keeping a second complete installer set', async (t) => {
