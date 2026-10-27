@@ -119,6 +119,26 @@ function main() {
   }
 
   const compression = archiveMode && archiveMode !== '7z-qa' ? ZIP_COMPRESSION : 'maximum';
+  const commercialActions = process.env.GITHUB_ACTIONS === 'true' && process.env.NUWAX_APP_IDENTIFIER === 'nuwax';
+  if (archivePlatform === 'win32' && process.platform === 'win32' && !commercialActions) {
+    console.log('[build:electron] parallel installers: original path (requires the commercial Actions release entry point)');
+  }
+  if (archivePlatform === 'win32' && process.platform === 'win32' && commercialActions) {
+    const { parallelInstallerEligibility } = require('./windows-installer-orchestration.cjs');
+    const eligibility = parallelInstallerEligibility({
+      pkg: JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')),
+      argv: extraArgs, env: process.env, platform: process.platform, arch: targetArch,
+      builderVersions: installedBuilderVersions(projectRoot),
+    });
+    console.log(`[build:electron] parallel installers: ${eligibility.eligible ? 'enabled' : 'original path'} (${eligibility.reason})`);
+    if (eligibility.eligible) {
+      execFileSync(process.execPath, [path.join(__dirname, 'windows-installer-orchestration.cjs'),
+        '--project', projectRoot, '--output', eligibility.output, '--arch', eligibility.arch], {
+        cwd: projectRoot, stdio: 'inherit',
+      });
+      return;
+    }
+  }
   const cmd = `npx electron-builder --config.compression=${compression} ${[...extraArgs, ...archiveArgs].join(' ')}`;
   console.log('[build:electron]', cmd);
   execSync(cmd, { cwd: projectRoot, stdio: 'inherit' });

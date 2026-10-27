@@ -188,6 +188,24 @@ test('overlay movement refuses staged changes and mismatching previous generated
   assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'developer changed generated file\n');
 });
 
+test('shell movement rejects malformed overlay manifests before changing either source checkout', async () => {
+  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell'), frontend = path.join(f.root, 'nuwax');
+  const shellHead = git(shell, 'rev-parse', 'HEAD'), frontendHead = git(frontend, 'rev-parse', 'HEAD');
+  f.advance('nuwa-electron-shell'); f.advance();
+  write(f.root, '.overlay-sync.json', '{');
+  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /overlay-sync.*损坏/);
+  assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead); assert.equal(git(frontend, 'rev-parse', 'HEAD'), frontendHead);
+  assert.equal(f.builds, 0); assert.equal(fs.readFileSync(path.join(f.root, '.overlay-sync.json'), 'utf8'), '{');
+});
+
+test('shell movement refuses hidden index flags instead of overwriting hidden developer edits', async () => {
+  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell'), before = git(shell, 'rev-parse', 'HEAD');
+  git(shell, 'update-index', '--assume-unchanged', 'source.txt'); write(shell, 'source.txt', 'hidden developer WIP\n');
+  assert.equal(git(shell, 'diff', '--name-only'), ''); f.advance('nuwa-electron-shell');
+  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /index|特殊标记/);
+  assert.equal(git(shell, 'rev-parse', 'HEAD'), before); assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'hidden developer WIP\n');
+});
+
 function makeShallow(f, name, pin) {
   const dir = path.join(f.root, name); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir);
   git(dir, 'clone', '--depth=1', pathToFileURL(f.remotes[name]).href, '.');

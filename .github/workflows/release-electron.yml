@@ -438,6 +438,9 @@ jobs:
       - name: Configure commercial update package
         run: node scripts/prepare-release-updater.mjs
 
+      - name: Exclude build caches from release payload
+        run: node scripts/client/package-payload.mjs --package nuwa-electron-shell/crates/agent-electron-client/package.json
+
       - name: Clean previous build artifacts
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -522,6 +525,13 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
         run: node scripts/prepare-release-updater.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
+
+      - name: Verify packaged resources exclude build caches
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/client/package-payload.mjs --verify-output "$OUT_DIR" --arch "$TARGET_ARCH"
 
       - name: Verify packaged Windows terminal compatibility resources
         if: runner.os == 'Windows'

@@ -3,12 +3,14 @@ import path from 'node:path';
 import * as core from './client/core.mjs';
 import { commercialEnv } from './client/prepare.mjs';
 import { pack } from './client/pack.mjs';
+import { verifyPackagePayload } from './client/package-payload.mjs';
 import { prepareReleaseCapture, injectReleaseCapture, verifyReleaseCaptureOutput } from './prepare-release-capture.mjs';
 import { notarizeSignedApp, packageNotarizedApp } from './release-mac-notarization.mjs';
 
 export async function packSignedValidationMac(root, options, {
   tools = core, env = process.env, packFn = pack, captureFn = prepareReleaseCapture,
   notarizeFn = notarizeSignedApp, packageFn = packageNotarizedApp, verifyCaptureFn = verifyReleaseCaptureOutput,
+  verifyPayloadFn = verifyPackagePayload,
 } = {}) {
   if (options.platform !== 'darwin' || options.arch !== 'arm64') throw new Error('Private Mac acceptance requires native ARM64');
   for (const key of ['APPLE_SIGNING_IDENTITY', 'CSC_KEYCHAIN', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_ISSUER_ID']) {
@@ -46,6 +48,7 @@ export async function packSignedValidationMac(root, options, {
     ...tools, run: (command, args, opts) => tools.run(command, args, { ...opts, env: signingEnv }),
   } });
   await verifyCaptureFn(root, options.output, { platform: 'darwin', arch: options.arch });
+  await verifyPayloadFn(options.output, { platform: 'darwin', arch: options.arch });
   await tools.run('spctl', ['--assess', '--type', 'execute', '--verbose', app], { capture: true });
   const verified = await tools.run('codesign', ['-d', '--verbose=4', app], { capture: true });
   const text = `${verified.stdout}\n${verified.stderr}`;

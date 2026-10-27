@@ -4,6 +4,19 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const workflow = (name) => readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
+test('stable and beta filter build caches and verify the final payload before upload', () => {
+  for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
+    const text = workflow(name);
+    const configure = text.indexOf('node scripts/client/package-payload.mjs --package nuwa-electron-shell/crates/agent-electron-client/package.json');
+    const verify = text.indexOf('node scripts/client/package-payload.mjs --verify-output "$OUT_DIR" --arch "$TARGET_ARCH"');
+    assert.ok(configure > text.indexOf('- name: Inject computer-use extraResources'), `${name} filters the final configured resource list`);
+    assert.ok(configure < text.indexOf('- name: Build Electron app'), `${name} filters before packaging`);
+    assert.ok(verify > text.indexOf('- name: Verify packaged updater configuration'), `${name} verifies actual output`);
+    assert.ok(verify < text.indexOf('- name: Record platform source'), `${name} rejects leaked caches before provenance/upload`);
+    if (name === 'release-electron-dev.yml') assert.ok(verify < text.indexOf('- name: Stage isolated QA packages'));
+  }
+});
+
 test('stable and beta run native Windows installer space checks before building resources', () => {
   for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
     const text = workflow(name);

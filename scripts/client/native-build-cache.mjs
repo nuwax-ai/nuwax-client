@@ -30,7 +30,11 @@ function recipe(root, files) {
 
 function probe(command, args, options = {}) {
   const result = core.run(command, args, { capture: true, allowFailure: true, ...options });
-  const output = (result.stdout + result.stderr).trim();
+  // rustup may install workspace components on the first successful version
+  // probe. Its stderr progress is not compiler identity and disappears before
+  // save-helper, which used to make restore/save choose different record names.
+  // MSVC's no-argument version banner is the declared stderr/exit-2 exception.
+  const output = (options.acceptBanner ? result.stdout + result.stderr : result.stdout).trim();
   if (!output || (result.status !== 0 && !(options.acceptBanner && result.status === 2))) throw new Error('[native-cache] Cannot identify compiler: ' + command);
   return output;
 }
@@ -109,7 +113,7 @@ function helperEntry(root, source, target) {
 export function restoreHelper(root, source, target, destination) {
   const entry = helperEntry(root, source, target);
   const miss = reason => {
-    console.warn('[native-cache] helper unsigned binary cache miss: ' + reason);
+    console.warn('[native-cache] helper unsigned binary cache miss: ' + reason + '; expected key: ' + entry.key);
     return false;
   };
   let record;

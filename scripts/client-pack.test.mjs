@@ -3,11 +3,60 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import { builderConfig, pack, prepareComputerUse, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
 import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { packagedResources } from './prepare-release-updater.mjs';
+
+test('pack resource selection excludes tool download caches without changing their source or runtime payload', async (t) => {
+  const client = process.env.NUWAX_TEST_BUILDER_CLIENT_DIR
+    ?? fileURLToPath(new URL('../nuwa-electron-shell/crates/agent-electron-client', import.meta.url));
+  assert.ok(path.isAbsolute(client), 'Builder fixture override must be an absolute client directory');
+  const require = createRequire(import.meta.url);
+  const builder = createRequire(require.resolve('electron-builder/package.json', { paths: [client] }));
+  assert.equal(builder('./package.json').version, '25.1.8');
+  assert.equal(builder('app-builder-lib/package.json').version, '25.1.8');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-pack-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const output = path.join(root, 'out');
+  const files = [
+    'resources/git/bin/git.exe', 'resources/git/libexec/git-core/git-remote-https.exe',
+    'resources/git/LICENSE.txt', 'resources/git/share/archive.zip',
+    'resources/git/share/.cache/runtime-index', 'resources/node/node.exe',
+    'resources/uv/bin/uv', 'resources/ripgrep/bin/rg', 'frontend/download.zip',
+  ];
+  const caches = ['git', 'node', 'uv', 'ripgrep'].map(name => `resources/${name}/.cache/download.zip`);
+  for (const file of [...files, ...caches]) {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), file);
+  }
+  const pkg = { build: {
+    extraResources: ['resources/ripgrep', ...['node', 'uv'].map(name => ({ from: `resources/${name}`, to: name }))],
+    win: { extraResources: [{ from: 'resources/git', to: 'git', filter: ['**/*'] }] },
+  } };
+  const build = builderConfig(pkg, {
+    frontendDist: path.join(root, 'frontend'), output, platform: 'win32',
+    version: '3.0.23-beta.8', builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' },
+  });
+  const resources = packagedResources(output, 'win32', 'x64');
+  const { getFileMatchers, copyFiles } = builder('app-builder-lib/out/fileMatcher');
+  const matchers = getFileMatchers(build, 'extraResources', resources, {
+    macroExpander: value => value, customBuildOptions: build.win,
+    globalOutDir: output, defaultSrc: root,
+  });
+  await copyFiles(matchers, null, false);
+  const expected = ['git/bin/git.exe', 'git/libexec/git-core/git-remote-https.exe', 'git/LICENSE.txt',
+    'git/share/archive.zip', 'git/share/.cache/runtime-index', 'node/node.exe', 'uv/bin/uv',
+    'resources/ripgrep/bin/rg', 'nuwax-dist/download.zip'];
+  for (const file of expected) assert.ok(fs.statSync(path.join(resources, file)).isFile(), file);
+  for (const name of ['git', 'node', 'uv', 'resources/ripgrep']) {
+    assert.equal(fs.existsSync(path.join(resources, name, '.cache')), false, `${name} download cache leaked into payload`);
+  }
+  for (const file of caches) assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), file, 'development cache source must remain untouched');
+});
 
 test('independent builder config contains commercial identity/payload and leaves package unchanged', () => {
   const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'resources/agent-gui-server', to: 'agent-gui-server' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }, { from: 'stale/dist', to: 'nuwax-dist' }, { from: 'resources/sandbox-runtime', to: 'sandbox-runtime' }, { from: 'resources/sandboxed-bash-mcp', to: 'sandboxed-bash-mcp' }, { from: 'resources/sandboxed-fs-mcp', to: 'sandboxed-fs-mcp' }], win: { extraResources: [{ from: 'resources/sandbox-helper', to: 'sandbox-helper' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
@@ -179,6 +228,10 @@ test('default pack consumes configured frontend pin and creates complete package
     buildFrontend: async () => { assert.fail('default pack must consume its prepared pin'); },
     prepareComputerUse: async () => path.join(p.client, 'resources/computer-use'),
     generateNotices: async (_root, options) => { assert.equal(options.strict, true); },
+    verifyPackagePayload: async (output, options) => {
+      assert.equal(output, path.join(root, config.pack.outputDir, '1.2.3'));
+      assert.equal(options.platform, 'darwin');
+    },
     verifyUpdaterOutput: async (output, options) => {
       assert.equal(output, path.join(root, config.pack.outputDir, '1.2.3'));
       assert.equal(options.archives, true);

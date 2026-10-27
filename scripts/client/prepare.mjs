@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import overlaySync from '../sync-overlay.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import config from '../../client.config.mjs';
@@ -145,6 +146,7 @@ function sanitizeLinks(dir) {
 
 function overlayFiles(root) {
   const directory = path.join(root, 'overlay');
+  overlaySync.assertSafeFile(root, 'overlay', true);
   const files = [];
   const walk = (dir, prefix = '') => {
     if (!fs.existsSync(dir)) return;
@@ -161,8 +163,10 @@ function overlayFiles(root) {
 
 async function syncOverlay(p, tools, state) {
   const files = overlayFiles(p.root);
-  const previous = safeJson(path.join(p.root, '.overlay-sync.json')) ?? [];
+  const previous = overlaySync.readManifest(p.root);
   for (const relative of new Set([...files, ...previous])) {
+    overlaySync.assertSafeFile(p.base, relative);
+    overlaySync.assertSafeFile(p.root, `overlay/${relative}`);
     const destination = path.join(p.base, relative);
     if (!fs.existsSync(destination)) continue;
     const source = path.join(p.root, 'overlay', relative);

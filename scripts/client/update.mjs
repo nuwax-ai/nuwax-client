@@ -4,6 +4,7 @@ import path from 'node:path';
 import * as core from './core.mjs';
 import { buildFrontend } from './frontend.mjs';
 import { assertOverlayCompatibility } from '../check-overlay-compatibility.mjs';
+import overlaySync from '../sync-overlay.js';
 
 const names = ['nuwa-electron-shell', 'nuwax', 'nuwax-dist'];
 const message = (text) => console.log(`[sub:update] ${text}`);
@@ -39,15 +40,19 @@ async function cleanSource(tools, dir, frontend = false) {
 
 async function managedOverlayChanges(tools, root, dir) {
   if (await tools.git(dir, ['diff', '--cached', '--name-only'])) throw new Error('壳子模块有暂存改动；请先保留改动，更新器不会清除暂存区');
+  // These flags can hide developer bytes from diff/status before checkout.
+  const index = (await tools.git(dir, ['ls-files', '-v', '-z'])).split('\0').filter(Boolean);
+  const hidden = index.find(record => record[0] !== 'H');
+  if (hidden) throw new Error(`壳子模块 index 含特殊标记，拒绝切换基座: ${hidden.slice(2)}；请先检查 assume-unchanged / skip-worktree`);
   const changed = (await tools.git(dir, ['diff', '--name-only', '-z'])).split('\0').filter(Boolean);
   const untracked = (await tools.git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean);
-  let manifest;
-  try { manifest = JSON.parse(fs.readFileSync(path.join(root, '.overlay-sync.json'), 'utf8')); } catch { manifest = []; }
-  if (!Array.isArray(manifest)) manifest = [];
+  const manifest = overlaySync.readManifest(root);
   const owned = new Set(manifest);
   const result = [];
   for (const relative of new Set([...changed, ...untracked])) {
     const source = path.join(root, 'overlay', relative), destination = path.join(dir, relative);
+    overlaySync.assertSafeFile(root, `overlay/${relative}`);
+    overlaySync.assertSafeFile(dir, relative);
     let generated = false;
     try {
       generated = owned.has(relative) && fs.lstatSync(source).isFile() && fs.lstatSync(destination).isFile() && fs.readFileSync(source).equals(fs.readFileSync(destination));
@@ -60,10 +65,10 @@ async function managedOverlayChanges(tools, root, dir) {
 
 async function moveShell(tools, root, module, target, overlay) {
   if (overlay.length) {
-    for (const entry of overlay) {
-      if (entry.tracked) await tools.git(module.dir, ['restore', '--worktree', '--', entry.relative]);
-      else fs.unlinkSync(path.join(module.dir, entry.relative));
-    }
+    // Establish byte ownership for matching legacy overlays, then use the same
+    // backed-up clean transaction as every other caller before switching pins.
+    await tools.run(process.execPath, [path.join(root, 'scripts/sync-overlay.js')], { cwd: root });
+    await tools.run(process.execPath, [path.join(root, 'scripts/sync-overlay.js'), '--clean'], { cwd: root });
   }
   try { await tools.git(module.dir, ['checkout', '--detach', target]); }
   finally {

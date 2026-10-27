@@ -2,13 +2,29 @@
 
 > 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。v3.0.10 由 `v3.0.10` tag push 触发 GitHub Actions；stable 消费锁定的 `nuwax-dist` pin，beta 仍从源码 pin 构建。stable 构建后保持 Draft，完成 Windows 签名与安装验收，再显式同步公开。下文的 v3.0.2–v3.0.6 耗时和执行口径为历史记录。
 
-Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本、正式 7z 压缩及签名规则保留。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征。v3.0.11-beta.4 的 Windows MSI/NSIS 构建、来源记录和上传已成功，五平台与 S3/OSS 同步实测见 [验收记录](./acceptance/20261008-release-channels.md)。
+Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本与签名规则保留，归档方式由共用 installer archive policy 决定。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征。v3.0.11-beta.4 的 Windows MSI/NSIS 构建、来源记录和上传已成功，五平台与 S3/OSS 同步实测见 [验收记录](./acceptance/20261008-release-channels.md)。
 
 ## 本次问题暴露的缺口
 
 `electron-v3.0.2` 与 `electron-v3.0.3` 的构建门禁可以通过，但安装后的 `/repo`、`/instant-message` 仍可能因 Electron 请求路由错误而加载 HTML 代替 JavaScript。构建成功、来源哈希正确，只能证明产物可生成且未被替换，不能证明安装包里的 WebView 能打开业务页。
 
 当时 `sub:update` 构建并推送 `nuwax-dist`，正式发布工作流却从 `nuwax` 源码 pin 在五个平台各重建一次前端，`nuwax-dist` pin 不参与打包。这使“双 pin”看起来锁定了发布载荷，实际安装包使用的是五次现场构建的结果；stable 后续已改为消费产物 pin。
+
+## 2026-10-27 P1 源码优化
+
+beta.8 的 Mac Intel helper 出现 artifact 命中后内层 `record_missing`，重新编译22分28秒。编译器版本探测曾将 rustup 首次安装组件的 stderr 进度一并哈希，造成还原与保存键漂移。本轮只用成功探测的 stdout 版本输出，保留 MSVC 的 stderr 版本 banner，并在共享 native action 预装锁定工作区所需的 rustfmt。来源、源码、锁文件、编译参数、工具链和二进制哈希准入保持。
+
+`scripts/client/package-payload.mjs` 是本地、Stable、Beta 和独立验证共用的资源过滤策略，只排除 Git/Node/uv/ripgrep 资源根的 `.cache`。开发缓存不删除，运行文件、合法压缩资源和许可保留；构建后只读检查固定缓存根，发现泄漏则阻止后续发布，不修改已签名应用。
+
+本轮通过 Draft PR 运行源码 CI，未启动打包 Actions。配方哈希更新后首次构建需要填充新缓存；节省时间须看相同输入的后续 `compiler cache: hit`，不能将外层 artifact HIT 视为已经复用编译结果。实际包体缩减与全链耗时尚待测量。实现和自动化结果见 [构建优化计划](../plans/20261027-build-p1-optimization-plan.md)。
+
+## Windows 安装包封装调度
+
+商业 Beta/Stable 的标准 Windows x64 CI 先用固定版本 electron-builder/app-builder-lib 25.1.8 完成一次 `--dir` 应用准备，再按可用磁盘决定封装方式。空间充足时，MSI 与 NSIS 使用独立的应用实体副本、预热工具缓存、临时和输出目录并行运行；空间不足或无法确认时，复用已准备应用串行生成两种安装包。不会因回退重新构建应用。
+
+NSIS 会向应用副本加入 `elevate.exe`，因此并行进程不能共用同一个 `--prepackaged` 目录。两种安装包都成功且 EXE/MSI/blockmap/更新元数据完整后，才整体移动到最终输出；同名异字节产物会阻止合并。最终 `win-unpacked` 保留原串行流程的 NSIS 后形状，卸载清单、低空间安装检查、品牌、快捷方式和更新配置沿用原配置。Stable 的后续 SimplySign 阶段保持原顺序。
+
+并行增加两份应用和两份工具缓存的临时空间；安装包在同一卷内移动合并，避免再次复制完整 MSI/EXE。日志记录空间预算、选择的模式与各阶段耗时。`NUWAX_WINDOWS_PARALLEL_INSTALLERS=0` 可显式沿用原 builder 路径；自定义签名/hook、外部配置、EXE-only 验证、归档 QA 和本地 `pack` 同样沿用原入口，并打印原因。真实 Windows 构建耗时与磁盘峰值仍待后续包测量。
 
 ## 实测耗时与优化顺序
 
