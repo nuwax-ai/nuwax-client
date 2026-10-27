@@ -1,0 +1,42 @@
+.notice {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 12px 16px;
+  border: 1px solid var(--color-border, #d9dee7);
+  border-radius: 12px;
+  background: var(--color-bg-container, #fff);
+  color: var(--color-text, #263248);
+  box-shadow: 0 4px 20px #0002;
+  -webkit-app-region: no-drag;
+}
+.message {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.close,
+.settings {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.close {
+  padding: 0 2px;
+}
+.settings {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border, #d9dee7);
+  border-radius: 6px;
+}
+.close:focus-visible,
+.settings:focus-visible {
+  outline: 2px solid var(--color-primary, #5147ff);
+  outline-offset: 2px;
+}

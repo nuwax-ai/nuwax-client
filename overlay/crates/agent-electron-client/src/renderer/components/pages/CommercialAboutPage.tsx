@@ -1,3 +1,4 @@
+import { I18N_KEYS } from "@shared/constants";
 /**
  * 商业版「关于」页：在基座 `AboutPage` 之后追加「开源组件声明」一行（点击打开声明弹窗）。
  *
@@ -13,10 +14,12 @@ import { t } from "../../services/core/i18n";
 import styles from "../../styles/components/AboutPage.module.css";
 import { OpenSourceNoticesModal } from "../../features/open-source-notices";
 import AboutPage, { type AboutPageProps } from "./AboutPage";
+import { useDistHandshake } from "../../hooks/useDistHandshake";
 
 interface ElectronApiWithNotices {
   notices?: NoticesBridge;
   shell?: { openExternal?: (url: string) => Promise<unknown> };
+  app?: { getDistHandshake?: (force?: boolean) => Promise<unknown> };
 }
 
 const electronApi = (): ElectronApiWithNotices | undefined =>
@@ -27,10 +30,39 @@ export default function CommercialAboutPage(props: AboutPageProps = {}) {
   // 固定桥对象的引用：弹窗里的加载 effect 依赖它，引用每次渲染都变会导致反复加载
   const bridge = useMemo(() => electronApi()?.notices, []);
 
+  const { snapshot: distSnap, checking: distChecking, observedAt, refresh: refreshDist } = useDistHandshake();
+
   const openExternal = (url: string) => {
     electronApi()
       ?.shell?.openExternal?.(url)
       ?.catch((error: unknown) => console.error("[CommercialAboutPage] openExternal failed:", error));
+  };
+
+  const distStateText = (): string => {
+    if (!distSnap) return t(distChecking ? I18N_KEYS.DistCheck.LOADING : I18N_KEYS.DistCheck.STATE_UNKNOWN);
+    const local = distSnap.bundled?.version ?? "-";
+    const cloud = distSnap.cloud?.version ?? "-";
+    switch (distSnap.relation) {
+      case "match":
+        return t(I18N_KEYS.DistCheck.STATE_MATCH, { version: local });
+      case "different":
+        return t(I18N_KEYS.DistCheck.STATE_DIFFERENT);
+      case "behind":
+        return t(I18N_KEYS.DistCheck.STATE_BEHIND, { local, cloud });
+      case "ahead":
+        return t(I18N_KEYS.DistCheck.STATE_AHEAD, { local, cloud });
+      default:
+        return t(I18N_KEYS.DistCheck.STATE_UNKNOWN);
+    }
+  };
+
+  const distCheckedText = (): string | null => {
+    if (!distSnap?.checkedAt) return null;
+    const minutes = Math.max(
+      1,
+      Math.round((observedAt - distSnap.checkedAt) / 60_000),
+    );
+    return t(I18N_KEYS.DistCheck.CHECKED_AT, { minutes });
   };
 
   return (
@@ -38,6 +70,32 @@ export default function CommercialAboutPage(props: AboutPageProps = {}) {
     // 否则 AboutPage 的内容溢出会把末尾卡片和底部 padding 一起裁掉。
     <div style={{ display: "flex", flexDirection: "column", flex: "0 0 auto" }}>
       <AboutPage {...props} />
+      {electronApi()?.app?.getDistHandshake ? (
+        <div className={styles.group} style={{ flexShrink: 0 }}>
+          <div className={styles.groupCard}>
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <div className={styles.rowLabel}>
+                  {t(I18N_KEYS.DistCheck.LINK)}
+                </div>
+                <div className={styles.rowDesc}>
+                  {distStateText()}
+                  {distCheckedText() ? ` · ${distCheckedText()}` : ""}
+                </div>
+              </div>
+              <div className={styles.rowControl}>
+                <Button
+                  size="small"
+                  loading={distChecking}
+                  onClick={() => void refreshDist()}
+                >
+                  {t(I18N_KEYS.DistCheck.REFRESH)}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className={styles.group} style={{ flexShrink: 0, marginBottom: 0 }}>
         <div className={styles.groupCard}>
           <div className={styles.row}>

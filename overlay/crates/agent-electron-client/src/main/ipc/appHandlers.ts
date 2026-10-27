@@ -33,12 +33,16 @@ import {
   isMacPrivacyPane,
 } from "../services/system/macPermissions";
 import { getBundledDistVersion } from "../services/frontendDistVersion";
+import { distHandshake } from "../services/distVersionHandshake";
+import { createDistHandshakeReader } from "../services/distVersionHandshakeIPC";
+import { loopbackGatewayStatus, resolveBackendOrigin } from "../services/loopbackGateway";
+import { ticketEpoch } from "../services/commercialTicketSession";
 import { getTrayManager } from "../window/trayManager";
 import { createAutoLaunchManager, getAutoLaunchManager } from "../window/autoLaunchManager";
 import { t } from "../services/i18n";
 import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, I18N_KEYS } from "@shared/constants";
 import { checkMacNotificationPermission } from "../services/system/macNotificationPermission";
-import { canUseUpdater as canUseUpdaterFrom } from "./bridgeTrust";
+import { canUseUpdater as canUseUpdaterFrom, isHostRendererSender } from "./bridgeTrust";
 
 function platformDisplayName(): string {
   switch (process.platform) {
@@ -216,6 +220,23 @@ export function registerAppHandlers(ctx: HandlerContext): void {
       bundledDist,
     };
   });
+
+  const readDistHandshake = createDistHandshakeReader({
+    handshake: distHandshake,
+    backendOrigin: resolveBackendOrigin,
+    sessionEpoch: ticketEpoch,
+    gatewayStatus: loopbackGatewayStatus,
+  });
+  // This is shell-only IPC, not a new business-WebView capability.
+  ipcMain.handle(
+    "app:getDistHandshake",
+    (event, force?: boolean) => {
+      if (!isHostRendererSender(event, ctx.getMainWindow()?.webContents, app.isPackaged)) {
+        throw new Error("Host renderer required");
+      }
+      return readDistHandshake(force === true);
+    },
+  );
 
   // ---- webview（nuwax 前端）触达的宿主更新能力：与壳关于页共用同一 autoUpdater
   // 单例（download 不会双跑），桥前端见 preload/webviewPerfBridge.ts updater 命名空间 ----

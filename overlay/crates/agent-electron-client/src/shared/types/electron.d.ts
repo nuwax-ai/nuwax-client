@@ -545,6 +545,7 @@ import type {
 export interface AppAPI {
   checkUpdate: (options?: UpdateCheckOptions) => Promise<UpdateInfo>;
   getVersion: () => Promise<string>;
+  getDistHandshake?: (force?: boolean) => Promise<import("./distVersionHandshake").DistHandshakeView>;
   getSystemInfo: () => Promise<{
     clientVersion: string;
     platform: string;
