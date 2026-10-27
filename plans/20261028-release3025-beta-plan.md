@@ -27,7 +27,7 @@
 
 ## 批次三问走查
 
-- 内聚：来源与重挂载历史统一收在 `nuwax/src/features/client-shell/localFileService.ts:41` / `:209`；预览器只消费授权 URL。字体映射由 `scripts/pdf-character-maps.js` 在构建时收集、`FilePreview/pdfCharacterMaps.ts:4` 在运行时解码，不增加页面请求分流点。
+- 内聚：来源与重挂载历史统一收在 `nuwax/src/features/client-shell/localFileService.ts:55` / `:203`；预览器只消费授权 URL。字体映射由 `scripts/pdf-character-maps.js` 在构建时收集、`FilePreview/pdfCharacterMaps.ts:4` 在运行时解码，不增加页面请求分流点。
 - 分层：原生文件授权、跨窗与路径边界仍由 local-files 域处理；前端字节到渲染器不带业务鉴权。捕获修复沿既有后端/偏好/窗口运行时层；CI 优化只改门禁编排，tag ref 显式全量，未削弱发布测试。
 - 维护：来源失效与显式远端切换有相反方向回归；本机相对资源保留授权根校验；映射未知名称明确失败、不回 CDN，版本锁定与 frozen install 通过。Markdown 改动局限块边界，保留代码围栏；服务端若已丢列表标记仍待证。
 - 结论：本批源码域检查通过，完成生产构建和签名 Beta 后交用户实机验收；不把远端文件当本机离线副本，不声称任意 HTML 外部 CDN 依赖可离线。
@@ -35,3 +35,9 @@
 ## 用户补充：目录选择与本地操作直觉
 
 用户确认选当前电脑目录应直接弹系统目录选择框，文件树与预览沿本机来源。核对现有 `WorkspaceDirPickerModal` 共用入口先等待 `pickLocalWorkspaceDirectory`，本机成功/取消/失败均不挂载远端目录组件；仅明确未接管的旧桥、浏览器和其他电脑保留远端入口。`workspaceDirectoryPicker` 核对宿主 sandboxId、串行系统对话框，并在返回时复核身份；选择路径通过会话 workspacePath 交给原生工作区解析器。该入口已存在，本轮复用并验证，不新造另一套目录浏览 UI。
+
+- 此次确认后进一步收紧首次访问：完整 v2 桥和 sandboxId 匹配即确认本机来源，不再等到目录解析成功才设标记。首次解析失败回归在改前实际失败 1 项；修后 4 文件 60 项通过，旧桥及显式远端兼容保留。
+- 目录选择入口 2 文件 18 项通过。真实 Electron 中实际 PureMarkdownRenderer + ds-markdown + rehypeRaw 验证无序/有序列表的流式残留和最终剥离共 4 场景，通过；旁路业务卡片使用夹具，不代替完整在线会话验收。
+- 外层脚本 456 项通过。前端冻结只选择本轮修复，另以合并提交送入声明版本线以满足 pin 远端可达，不将版本线上后续无关 AppDev 更新带入 Beta。
+- 页面加载方式与文件数据路线独立：本地化页面消费包内 pin；直连页面消费线上部署。Beta 带配套前端，说明中提示开启本地化加速验收包内修复；本轮未部署生产 PC Web，也不修改用户当前客户端加载设置。
+- 基座 472 项未提交状态已存档到 `.cache/workspace-backups/pre-beta3025-base-overlay.zip`；仅 14 个与旧 overlay 字节相同的捕获文件同步本轮修改，保留独立 hostBridge 注释差异，不清理或提交基座 WIP。
