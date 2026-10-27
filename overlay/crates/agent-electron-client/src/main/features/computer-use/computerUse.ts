@@ -240,8 +240,9 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
   if (!cuaGateway.ready && !IS_WIN) fs.rmSync(socketPath, { force: true });
   await cuaGateway.listen(socketPath, selected.token);
   if (!IS_WIN) fs.chmodSync(socketPath, 0o600);
+  const relayScript = stdioRelayScriptPath();
   cuaSessionAuthority.configure(path.join(stableInstallDir(), `session-grants-${process.pid}`),
-    (file) => ({ command: computerUseHost().resolveNodeBinary()!, args: ["-e", CUA_STDIO_RELAY],
+    (file) => ({ command: computerUseHost().resolveNodeBinary()!, args: [relayScript],
       env: { NUWAX_CUA_GATEWAY: socketPath, NUWAX_CUA_GATEWAY_TOKEN: selected.tokenFile, NUWAX_CUA_SESSION_FILE: file } }),
     (owner, cancelled) => {
       confirmationGate.retire(owner); cuaElements.forget(owner);
@@ -355,6 +356,20 @@ function endpoint(): CuaEndpoint {
 /** helper 安装的稳定路径（首用安装流目标；学 ZCode：数据目录 + 安装锁）。 */
 function stableInstallDir(): string {
   return path.join(app.getPath("userData"), "computer-use");
+}
+
+/**
+ * stdio 中继脚本落盘路径（原子写，内容不变即复用）。引擎侧在 Windows 经 shell
+ * 拼接启动 MCP stdio 服务器，多行 `-e` 内联参数会在首个换行被截断（node 报
+ * "-e requires an argument"）；必须以脚本文件路径传参，与其他 MCP 条目同构。
+ */
+function stdioRelayScriptPath(): string {
+  const file = path.join(stableInstallDir(), "cua-stdio-relay.cjs");
+  try { if (fs.readFileSync(file, "utf8") === CUA_STDIO_RELAY) return file; } catch { /* 首次或被清理 */ }
+  const staged = `${file}.${randomUUID()}.stage`;
+  fs.writeFileSync(staged, CUA_STDIO_RELAY, { mode: 0o644 });
+  fs.renameSync(staged, file);
+  return file;
 }
 
 /** helper 候选探测：稳定安装位 → /Applications（仅 dev 态回退，spike/dev 机）→ 随包 Resources。 */
@@ -835,7 +850,7 @@ export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
       const gatewayPath = await ensureCuaGateway(helperRoot);
       await host.setLocalMcpServer(MCP_SERVER_ID, {
         command: node,
-        args: ["-e", CUA_STDIO_RELAY],
+        args: [stdioRelayScriptPath()],
         env: { NUWAX_CUA_GATEWAY: gatewayPath, NUWAX_CUA_GATEWAY_TOKEN: endpoint().tokenFile },
         enabled: true,
         allowTools: CUA_ALLOWED_TOOLS,

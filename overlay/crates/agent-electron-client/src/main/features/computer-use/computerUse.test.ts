@@ -353,7 +353,10 @@ describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
     const entry = readMcpServers().cua;
     expect(entry).toBeTruthy();
     expect(entry!.command).toBe("/bundled/node");
-    expect(entry!.args).toEqual(["-e", "relay"]);
+    // 引擎在 Windows 截断多行 `-e` 内联参数：条目必须传落盘中继脚本路径，且文件内容即中继脚本。
+    const relayPath = path.join(mocks.userDataURL, "computer-use", "cua-stdio-relay.cjs");
+    expect(entry!.args).toEqual([relayPath]);
+    expect(fs.readFileSync(relayPath, "utf8")).toBe("relay");
     expect(entry!.allowTools).toContain("click");
     expect(entry!.allowTools).not.toContain("check_for_update");
     expect(entry!.allowTools).not.toContain("replay_trajectory");
