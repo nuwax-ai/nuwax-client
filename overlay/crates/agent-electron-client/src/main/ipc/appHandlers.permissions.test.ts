@@ -20,6 +20,10 @@ vi.mock("../services/system/macPermissions", () => ({
   openMacPrivacySettings: openSettings,
 }));
 vi.mock("../services/frontendDistVersion", () => ({}));
+vi.mock("../services/loopbackGateway", () => ({
+  resolveBackendOrigin: () => "https://test.example", loopbackGatewayStatus: () => ({ running: false }),
+}));
+vi.mock("../services/commercialTicketSession", () => ({ ticketEpoch: () => 0 }));
 vi.mock("../window/trayManager", () => ({}));
 vi.mock("../window/autoLaunchManager", () => ({}));
 vi.mock("../services/i18n", () => ({ t: (key: string) => key }));

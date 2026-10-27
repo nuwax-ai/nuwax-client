@@ -326,6 +326,20 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  DistCheck: {
+    LINK: "Claw.About.distCheck.link",
+    LOADING: "Claw.About.distCheck.loading",
+    STATE_MATCH: "Claw.About.distCheck.stateMatch",
+    STATE_BEHIND: "Claw.About.distCheck.stateBehind",
+    STATE_AHEAD: "Claw.About.distCheck.stateAhead",
+    STATE_UNKNOWN: "Claw.About.distCheck.stateUnknown",
+    STATE_DIFFERENT: "Claw.About.distCheck.stateDifferent",
+    NOTICE: "Claw.About.distCheck.notice",
+    DISMISS: "Claw.About.distCheck.dismiss",
+    OPEN_SETTINGS: "Claw.About.distCheck.openSettings",
+    CHECKED_AT: "Claw.About.distCheck.checkedAt",
+    REFRESH: "Claw.About.distCheck.refresh",
+  },
   Capture: {
     RECORD_MODE: "Claw.Capture.recordMode",
     GIF_MODE: "Claw.Capture.gifMode",

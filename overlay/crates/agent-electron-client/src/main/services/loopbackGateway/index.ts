@@ -153,8 +153,9 @@ function resolveTargetOrigin(): string {
 
 /** 后端 origin（dist 模式的 /api 反代目标与 cookie 会话源）：一律真实后端
  *  （serverHost / DEFAULT_SERVER_HOST，NUWAX_LOOPBACK_TARGET 可覆盖）——
- *  dev 缺省的 localhost:3000 是 nuwax dev server，不是 API 后端。 */
-function resolveBackendOrigin(): string {
+ *  dev 缺省的 localhost:3000 是 nuwax dev server，不是 API 后端。
+ *  导出供 distVersionHandshake 的 IPC 装配取云端基址（只读，无副作用）。 */
+export function resolveBackendOrigin(): string {
   if (process.env.NUWAX_LOOPBACK_TARGET)
     return process.env.NUWAX_LOOPBACK_TARGET;
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;

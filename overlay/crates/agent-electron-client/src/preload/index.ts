@@ -570,6 +570,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("app:checkUpdate", options),
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     getSystemInfo: () => ipcRenderer.invoke("app:getSystemInfo"),
+    getDistHandshake: (force?: boolean) =>
+      ipcRenderer.invoke("app:getDistHandshake", force),
     downloadUpdate: () => ipcRenderer.invoke("app:downloadUpdate"),
     installUpdate: () => ipcRenderer.invoke("app:installUpdate"),
     getUpdateState: () => ipcRenderer.invoke("app:getUpdateState"),
