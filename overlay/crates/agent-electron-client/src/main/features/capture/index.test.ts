@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => {
     captureStill: vi.fn(), record: vi.fn(), resolveFfmpeg: vi.fn(), showSaveDialog: vi.fn(), setActions: vi.fn(),
     windowDispose: vi.fn(), recorderDispose: vi.fn(), recorderStop: vi.fn(),
     copyTo: vi.fn(() => true), release: vi.fn((id: string) => { data.delete(id); }),
-    copy: vi.fn(),
+    copy: vi.fn(), fromWebContents: vi.fn(),
     releaseAll: vi.fn(() => { data.clear(); }),
     put: vi.fn((bytes: Buffer, mime: string) => { const resultId = `capture-${++sequence}`; data.set(resultId, bytes); return { resultId, bytes: bytes.length, mime }; }),
     readChunk: vi.fn((id: string, offset: number, length: number) => data.get(id)?.subarray(offset, offset + length) ?? null),
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => {
 });
 vi.mock('electron', () => ({
   app: { commandLine: { getSwitchValue: () => '' } },
-  BrowserWindow: { fromWebContents: () => null }, dialog: { showSaveDialog: mocks.showSaveDialog },
+  BrowserWindow: { fromWebContents: mocks.fromWebContents }, dialog: { showSaveDialog: mocks.showSaveDialog },
   powerMonitor: mocks.power, screen: mocks.screen,
 }));
 vi.mock('./electronDeps', () => ({ getScreenPermission: () => 'granted', getAllDisplays: () => [{ id: 1, scaleFactor: 2 }] }));
@@ -84,6 +84,7 @@ beforeEach(() => {
   mocks.captureStill.mockResolvedValue(still); mocks.record.mockResolvedValue(null); mocks.resolveFfmpeg.mockResolvedValue(null);
   mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/fixture/saved.png' });
   mocks.copy.mockResolvedValue({ success: true, kind: 'image' });
+  mocks.fromWebContents.mockReturnValue(null);
   channels = new Map(); lifecycle = createFeatureLifecycle();
   const ipcMain = { handle(channel: string, handler: (event: never, ...args: never[]) => unknown) { channels.set(channel, handler); }, removeHandler(channel: string) { channels.delete(channel); } };
   const trust = (role: Sender['role']) => (event: ReturnType<typeof frameEvent>) => event.sender.role === role && !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame;
@@ -108,6 +109,30 @@ beforeEach(() => {
 afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
+  it('reveals a background shell only after successful capture and leaves canceled/business captures alone', async () => {
+    const parent = { isDestroyed: () => false, isVisible: () => false, isMinimized: () => true,
+      restore: vi.fn(), show: vi.fn(), focus: vi.fn() };
+    mocks.fromWebContents.mockReturnValue(parent);
+    const frame = deferred<StillCapture>();
+    mocks.captureStill.mockReturnValueOnce(frame.promise);
+    const pending = capture(business());
+    await vi.waitFor(() => expect(mocks.captureStill).toHaveBeenCalledOnce());
+    expect(parent.restore).not.toHaveBeenCalled();
+    expect(parent.show).not.toHaveBeenCalled();
+    frame.resolve(still);
+    await pending;
+    expect(parent.restore).toHaveBeenCalledOnce();
+    expect(parent.show).toHaveBeenCalledOnce();
+    expect(parent.focus).toHaveBeenCalledOnce();
+    parent.show.mockClear(); parent.focus.mockClear(); parent.restore.mockClear();
+    mocks.captureStill.mockResolvedValueOnce(null);
+    expect(await invoke(CAPTURE_IPC.SCREENSHOT, business(), {})).toEqual({ success: false, code: 'canceled' });
+    await capture(host(), true);
+    expect(parent.show).not.toHaveBeenCalled();
+    expect(parent.focus).not.toHaveBeenCalled();
+    expect(parent.restore).not.toHaveBeenCalled();
+  });
+
   it('only an explicit trusted interactive call enables output switching for IM', async () => {
     const sender = business();
     await capture(sender);
