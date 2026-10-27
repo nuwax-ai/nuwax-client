@@ -14,6 +14,7 @@ import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
 import updater from '../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { configureSystemAppName } from './system-app-name.mjs';
+import { configurePackagePayload, verifyPackagePayload } from './package-payload.mjs';
 
 const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
 
@@ -99,7 +100,7 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.win.extraResources = (result.win.extraResources ?? []).filter((entry) => typeof entry === 'string' || !legacySandboxResources.has(entry.to));
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
-  return applyInstallerArchivePolicy(updater.configureUpdater(configureSystemAppName(result, { platform, arch, product,
+  return applyInstallerArchivePolicy(updater.configureUpdater(configureSystemAppName(configurePackagePayload(result), { platform, arch, product,
     macStringsFile: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/build/InfoPlist.strings', import.meta.url)),
   }), {
     feedBase: product.feedBase,
@@ -190,6 +191,7 @@ export async function pack(root, options = {}) {
   const target = platform === 'darwin' ? '--mac' : platform === 'win32' ? '--win' : '--linux';
   await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...((options.dir ?? config.pack.dir) ? ['--dir'] : [])], { env });
   if (!fs.existsSync(output) || fs.readdirSync(output).length === 0) throw new Error(`[pack] 打包完成但输出目录为空: ${output}`);
+  await (options.verifyPackagePayload ?? verifyPackagePayload)(output, { platform, arch });
   await (options.verifyUpdaterOutput ?? verifyUpdaterOutput)(output, { platform, arch, archives: !(options.dir ?? config.pack.dir), tools });
   console.log(`[pack] Nuwax 无签名包: ${output}；前端 ${frontend.stamp ?? frontend.sourceSha} (${frontendMode})`);
   return { output, configFile, frontend, platform, arch, version };

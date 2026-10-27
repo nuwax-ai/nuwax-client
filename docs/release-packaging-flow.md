@@ -10,6 +10,14 @@ Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta �
 
 当时 `sub:update` 构建并推送 `nuwax-dist`，正式发布工作流却从 `nuwax` 源码 pin 在五个平台各重建一次前端，`nuwax-dist` pin 不参与打包。这使“双 pin”看起来锁定了发布载荷，实际安装包使用的是五次现场构建的结果；stable 后续已改为消费产物 pin。
 
+## 2026-10-27 P1 源码优化
+
+beta.8 的 Mac Intel helper 出现 artifact 命中后内层 `record_missing`，重新编译22分28秒。编译器版本探测曾将 rustup 首次安装组件的 stderr 进度一并哈希，造成还原与保存键漂移。本轮只用成功探测的 stdout 版本输出，保留 MSVC 的 stderr 版本 banner，并在共享 native action 预装锁定工作区所需的 rustfmt。来源、源码、锁文件、编译参数、工具链和二进制哈希准入保持。
+
+`scripts/client/package-payload.mjs` 是本地、Stable、Beta 和独立验证共用的资源过滤策略，只排除 Git/Node/uv/ripgrep 资源根的 `.cache`。开发缓存不删除，运行文件、合法压缩资源和许可保留；构建后只读检查固定缓存根，发现泄漏则阻止后续发布，不修改已签名应用。
+
+本轮仅提交源码，未启动包或 Actions。配方哈希更新后首次构建需要填充新缓存；节省时间须看相同输入的后续 `compiler cache: hit`，不能将外层 artifact HIT 视为已经复用编译结果。实际包体缩减与全链耗时尚待测量。实现和自动化结果见 [P1 计划](../plans/20261027-build-p1-optimization-plan.md)。
+
 ## 实测耗时与优化顺序
 
 以 `electron-v3.0.3` 的成功构建为基线：前端门禁约 5 分 29 秒，随后五平台并行。最慢的 macOS x64 job 约 1 小时 42 分，其中重复构建前端约 8 分、Computer Use helper 约 7 分 31 秒、`Build Electron app` 约 1 小时 20 分。该步在 20:36 完成 DMG blockmap，直到 21:31 才完成 ZIP blockmap；约 55 分钟集中在 macOS ZIP 产出阶段。macOS arm64 的 `Build Electron app` 也约 1 小时 14 分。Windows 与 Linux 分别约 37 分、29 分，因此只缩短前端构建不会解决总耗时。
