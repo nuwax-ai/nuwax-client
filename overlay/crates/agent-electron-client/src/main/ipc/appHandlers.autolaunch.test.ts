@@ -24,6 +24,10 @@ vi.mock("../services/system/deviceId", () => ({}));
 vi.mock("../services/system/macNotificationPermission", () => ({}));
 vi.mock("../services/system/macPermissions", () => ({}));
 vi.mock("../services/frontendDistVersion", () => ({}));
+vi.mock("../services/loopbackGateway", () => ({
+  resolveBackendOrigin: () => "https://test.example", loopbackGatewayStatus: () => ({ running: false }),
+}));
+vi.mock("../services/commercialTicketSession", () => ({ ticketEpoch: () => 0 }));
 vi.mock("../window/trayManager", () => ({ getTrayManager: () => ({ refreshAutoLaunchState: mocks.refreshTray }) }));
 vi.mock("../window/autoLaunchManager", () => ({
   getAutoLaunchManager: mocks.existing,
