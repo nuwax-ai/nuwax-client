@@ -11,14 +11,17 @@ export interface CaptureCommandLine {
 
 const featureNames = (value: string) => value.split(',').map(entry => entry.trim().split(/[<:]/)[0]).filter(Boolean);
 
-/** Must be called before app readiness so Chromium selects the PipeWire capturer. */
+/** Configure capture and global shortcut portals before app readiness. */
 export function configureCaptureBackend(commandLine: CaptureCommandLine, platform: NodeJS.Platform = process.platform,
   env: { XDG_SESSION_TYPE?: string; WAYLAND_DISPLAY?: string } = process.env): boolean {
   if (!captureBackendAvailable(commandLine, platform, env)) return false;
   if (!usesCapturePortal(platform, env)) return true;
   const enabled = commandLine.getSwitchValue('enable-features');
-  if (!featureNames(enabled).includes('WebRTCPipeWireCapturer')) {
-    commandLine.appendSwitch('enable-features', [enabled, 'WebRTCPipeWireCapturer'].filter(Boolean).join(','));
+  const disabled = featureNames(commandLine.getSwitchValue('disable-features'));
+  const missing = ['WebRTCPipeWireCapturer', 'GlobalShortcutsPortal']
+    .filter(feature => !featureNames(enabled).includes(feature) && !disabled.includes(feature));
+  if (missing.length) {
+    commandLine.appendSwitch('enable-features', [enabled, ...missing].filter(Boolean).join(','));
   }
   return true;
 }

@@ -318,6 +318,69 @@ app.whenReady().then(async () => {
   windows.setActions('screenshot', []);
   console.log('PASS interactive screenshot/MP4/GIF mode tabs preserve crop');
 
+  // 用真实 Chromium 输入调整裁剪范围，覆盖八个方向、移动、取消调整及最终导出。
+  pending = windows.captureStill(new AbortController().signal);
+  const adjustable = (await prepared())[0];
+  await drag(adjustable, [120, 120], [400, 300]);
+  await tool(adjustable, 'rectangle'); await drag(adjustable, [180, 160], [220, 190]);
+  await click(adjustable, 270, 220); // 取消标注选中，保留选择工具。
+  const annotated = await frame(adjustable);
+  const adjustments: Array<{ from: [number, number]; to: [number, number]; size: string }> = [
+    { from: [120, 120], to: [100, 100], size: '600 × 400 px' },
+    { from: [250, 100], to: [250, 90], size: '600 × 420 px' },
+    { from: [400, 90], to: [420, 80], size: '640 × 440 px' },
+    { from: [420, 190], to: [440, 190], size: '680 × 440 px' },
+    { from: [440, 300], to: [460, 320], size: '720 × 480 px' },
+    { from: [280, 320], to: [280, 340], size: '720 × 520 px' },
+    { from: [100, 340], to: [90, 360], size: '740 × 560 px' },
+    { from: [90, 220], to: [80, 220], size: '760 × 560 px' },
+  ];
+  for (const adjustment of adjustments) {
+    await drag(adjustable, adjustment.from, adjustment.to);
+    assert.equal(await script(adjustable, `document.querySelector('.dimensions').textContent`), adjustment.size);
+    assert.equal(await frame(adjustable), annotated, '调整裁剪范围不能缩放或移动已有标注');
+  }
+  await mouse(adjustable, 'mouseDown', 460, 360);
+  await script(adjustable, `document.querySelector('.mask').onpointermove(new PointerEvent('pointermove',{clientX:2000,clientY:2000}))`);
+  assert.equal(await script(adjustable, `document.querySelector('.dimensions').textContent`), '1760 × 1040 px', '选框不能超出来源像素');
+  await key(adjustable, 'Escape'); await mouse(adjustable, 'mouseUp', 460, 360);
+  await mouse(adjustable, 'mouseDown', 460, 360); await mouse(adjustable, 'mouseMove', 0, 0);
+  assert.equal(await script(adjustable, `document.querySelector('.dimensions').textContent`), '1 × 1 px', '跨过对边时保持至少一个像素');
+  await key(adjustable, 'Escape'); await mouse(adjustable, 'mouseUp', 0, 0);
+  await mouse(adjustable, 'mouseDown', 80, 80); await mouse(adjustable, 'mouseMove', 100, 100);
+  await script(adjustable, `document.querySelector('.mask').dispatchEvent(new PointerEvent('pointercancel'))`);
+  await mouse(adjustable, 'mouseUp', 100, 100);
+  assert.equal(await script(adjustable, `document.querySelector('.dimensions').textContent`), '760 × 560 px', '系统取消拖拽时恢复原范围');
+  await drag(adjustable, [150, 150], [160, 160]);
+  assert.equal(await frame(adjustable), annotated, '移动选框不能移动已有标注');
+  await mouse(adjustable, 'mouseDown', 90, 90); await mouse(adjustable, 'mouseMove', 60, 60);
+  await key(adjustable, 'Enter');
+  assert.equal(BrowserWindow.getAllWindows().length, 3, '拖拽期间 Enter 不应提交选区');
+  await key(adjustable, 'Escape'); await mouse(adjustable, 'mouseUp', 60, 60);
+  assert.equal(await script(adjustable, `document.querySelector('.dimensions').textContent`), '760 × 560 px', 'Esc 撤销本次调整');
+  await checkDock(adjustable); await saveScreenshot(adjustable, 'adjustable-selection');
+  await tool(adjustable, 'confirm');
+  const adjusted = await pending; assert.ok(adjusted);
+  assert.deepEqual(adjusted.image.getSize(), { width: 760, height: 560 });
+  const expectedCrop = nativeImage.createFromDataURL(annotated).crop({ x: 180, y: 180, width: 760, height: 560 });
+  assert.ok(adjusted.image.toBitmap().equals(expectedCrop.toBitmap()), '导出像素应来自移动后的最终范围');
+
+  for (const action of ['mp4', 'gif'] as const) {
+    windows.setActions('screenshot', ['screenshot', 'mp4', 'gif']);
+    const changed = windows.captureStill(new AbortController().signal).catch(error => error);
+    const selector = (await prepared())[0];
+    await drag(selector, [120, 120], [400, 300]);
+    await tool(selector, `mode-${action}`);
+    await drag(selector, [400, 300], [440, 320]);
+    await drag(selector, [200, 200], [220, 210]);
+    await tool(selector, 'confirm');
+    const chosen = await changed;
+    assert.equal(chosen.action, action);
+    assert.deepEqual(chosen.selected.crop, { x: 280, y: 260, width: 640, height: 400 });
+  }
+  windows.setActions('screenshot', []);
+  console.log('PASS screenshot crop resize in eight directions, move, cancel, annotation preservation and MP4/GIF final crops');
+
   for (const stage of ['empty', 'text', 'record-selection'] as const) {
     const controller = new AbortController();
     const canceled = stage === 'record-selection' ? windows.select('record', controller.signal) : windows.captureStill(controller.signal);

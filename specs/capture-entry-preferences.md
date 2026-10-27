@@ -6,10 +6,11 @@
 
 - capture.hideAppWindow 缺省 false；主进程每次采集读取，截图和录屏共用，仅恢复本会话实际隐藏的窗口。
 - capture.screenshotShortcut 缺省 CmdOrCtrl+Shift+A，capture.recordShortcut 缺省 CmdOrCtrl+Shift+R；使用按键录入，限定修饰键加字母、数字或 F 键，拒绝纯修饰键和已有应用内常用命令冲突。保存失败保留原设置，菜单显示最后保存成功的组合。
-- Win/Linux 在宿主和 guest 拦截当前快捷键，macOS 由原生应用菜单 accelerator 执行。保存设置后原生菜单重建、自绘菜单更新。两个快捷键不允许相同。
+- 截图/录屏由主进程在 macOS、Windows、Linux 注册系统全局快捷键，窗口失焦、隐藏或最小化时继续生效，退出时释放自身绑定。Wayland 走 GlobalShortcutsPortal，受系统授权与显式禁用控制；保留原生菜单及 Win/Linux 宿主/guest 按键路由。保存设置后更新全局绑定与菜单；注册或持久化失败保留旧配置及绑定。两个快捷键不允许相同。
 - 应用菜单显示截图、MP4、GIF；宿主选择浮层传入初始 action 和允许模式，切换不改变冻结帧和 crop；确认才执行所选动作。业务页面通过显式 interactive API 开放类型切换，既有 screenshot/record 保持固定返回类型。
 - 截图服务与 FFmpeg 检测解耦；视频能力请求及录屏仍等待已验证的编码资源。截图使用轻量能力探测；默认能力调用保留完整能力语义。
 - 同分辨率屏幕共用一次 getSources，混合分辨率按原生像素分组，窗口缩略图与屏幕冻结并发完成，所有采集完成后才创建覆盖层。
+- 截图和录屏最终确认前，可从选框的四边/四角缩放范围，选择工具下可拖动选区空白处移动；范围限制在原始来源内，保留既有标注的源像素。模式切换保留调整后的范围，确认/开始录制后锁定。macOS 浮层使用 panel 并跳过 Electron 的进程类型转换，避免截屏/录屏隐藏整个应用的 Dock 图标。
 
 ## 异常与验证
 

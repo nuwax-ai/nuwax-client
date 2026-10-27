@@ -85,6 +85,8 @@ export async function mountCaptureWindow(
   let annotationDrag: { index: number; original: CaptureAnnotation; start: AnnotationPoint; handle: number | null; moved: boolean } | null = null;
   let propertyChange: { index: number; value: CaptureAnnotation } | null = null;
   let drag: { x: number; y: number } | null = null;
+  type CropEdge = { x: -1 | 0 | 1; y: -1 | 0 | 1 };
+  let cropDrag: { original: CaptureRect; start: AnnotationPoint; edge: CropEdge | null } | null = null;
   // Window rectangles of this display's frozen frame; undefined where desktop geometry is unknown.
   const regions = previewPresentation ? undefined : config.regions;
   let hover: CaptureRect | null = null;
@@ -166,6 +168,44 @@ export async function mountCaptureWindow(
     return { x: Math.max(crop.x, Math.min(crop.x + crop.width, p.x)), y: Math.max(crop.y, Math.min(crop.y + crop.height, p.y)) };
   }
   const pixelScale = () => frame.width / bounds().width;
+  function cropHandles() {
+    if (!crop) return [];
+    const positions: CropEdge[] = [{ x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 0 },
+      { x: 1, y: 1 }, { x: 0, y: 1 }, { x: -1, y: 1 }, { x: -1, y: 0 }];
+    return positions.map(edge => ({ edge, x: crop!.x + (edge.x + 1) * crop!.width / 2, y: crop!.y + (edge.y + 1) * crop!.height / 2 }));
+  }
+  function hitCropEdge(p: AnnotationPoint): CropEdge | null {
+    if (!crop) return null;
+    const radius = 7 * pixelScale();
+    const handle = cropHandles().find(h => Math.abs(h.x - p.x) <= radius && Math.abs(h.y - p.y) <= radius);
+    if (handle) return handle.edge;
+    const x = Math.abs(p.x - crop.x) <= radius ? -1 : Math.abs(p.x - crop.x - crop.width) <= radius ? 1 : 0;
+    const y = Math.abs(p.y - crop.y) <= radius ? -1 : Math.abs(p.y - crop.y - crop.height) <= radius ? 1 : 0;
+    return (x || y) && p.x >= crop.x - radius && p.x <= crop.x + crop.width + radius
+      && p.y >= crop.y - radius && p.y <= crop.y + crop.height + radius ? { x, y } : null;
+  }
+  function insideCrop(p: AnnotationPoint) {
+    return crop && p.x >= crop.x && p.x <= crop.x + crop.width && p.y >= crop.y && p.y <= crop.y + crop.height;
+  }
+  function adjustCrop(p: AnnotationPoint) {
+    if (!cropDrag) return;
+    const { original, start, edge } = cropDrag;
+    if (!edge) {
+      crop = { ...original,
+        x: Math.max(0, Math.min(frame.width - original.width, Math.round(original.x + p.x - start.x))),
+        y: Math.max(0, Math.min(frame.height - original.height, Math.round(original.y + p.y - start.y))) };
+      return;
+    }
+    let left = original.x, top = original.y, right = left + original.width, bottom = top + original.height;
+    if (edge.x === -1) left = Math.min(right - 1, Math.round(p.x));
+    if (edge.x === 1) right = Math.max(left + 1, Math.round(p.x));
+    if (edge.y === -1) top = Math.min(bottom - 1, Math.round(p.y));
+    if (edge.y === 1) bottom = Math.max(top + 1, Math.round(p.y));
+    crop = { x: left, y: top, width: right - left, height: bottom - top };
+  }
+  function cropCursor(edge: CropEdge) {
+    return edge.x === 0 ? 'ns-resize' : edge.y === 0 ? 'ew-resize' : edge.x === edge.y ? 'nwse-resize' : 'nesw-resize';
+  }
   function selectedAnnotation() {
     if (selectedIndex === null) return null;
     return annotationDrag && active ? active : propertyChange?.value ?? history.values()[selectedIndex] ?? null;
@@ -209,7 +249,7 @@ export async function mountCaptureWindow(
     dock.style.left = `${position.x}px`; dock.style.top = `${position.y}px`;
     // Hide while drawing so the controls cannot intercept the pointer or obscure
     // the area being selected. They reappear beside the final selection on release.
-    dock.style.visibility = drag || active ? 'hidden' : 'visible';
+    dock.style.visibility = drag || cropDrag || active ? 'hidden' : 'visible';
     hint.style.left = `${area.x + area.width / 2}px`;
     hint.style.top = `${Math.max(area.y + 12, position.y - hint.offsetHeight - 12)}px`;
     hint.hidden = Boolean(crop);
@@ -243,6 +283,14 @@ export async function mountCaptureWindow(
       maskContext.clearRect(crop.x, crop.y, crop.width, crop.height);
       maskContext.strokeStyle = '#36d5ae'; maskContext.lineWidth = Math.max(1, frame.width / bounds().width);
       maskContext.strokeRect(crop.x, crop.y, crop.width, crop.height);
+      if (!busy) {
+        const scale = pixelScale();
+        maskContext.fillStyle = '#fff';
+        for (const handle of cropHandles()) {
+          maskContext.fillRect(handle.x - 3 * scale, handle.y - 3 * scale, 6 * scale, 6 * scale);
+          maskContext.strokeRect(handle.x - 3 * scale, handle.y - 3 * scale, 6 * scale, 6 * scale);
+        }
+      }
       dimensions.textContent = `${crop.width} × ${crop.height} px`;
     } else if (hover) {
       // Inset so a full-display candidate keeps its whole outline on screen.
@@ -266,7 +314,7 @@ export async function mountCaptureWindow(
     }
     dimensions.hidden = !crop && !hover;
     toolBar.hidden = !crop || captureMode === 'record';
-    buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy;
+    buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy || Boolean(drag || cropDrag || annotationDrag || active);
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
     buttons.deleteAnnotation.disabled = selectedIndex === null;
     const styleTool = pendingText?.tool ?? selected?.tool ?? (tool === 'select' ? null : tool);
@@ -361,7 +409,7 @@ export async function mountCaptureWindow(
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finishText(e.key === 'Enter'); }
   };
-  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; }
+  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; cropDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; }
   /** Hover detection runs only over this display's own frozen frame, before any selection exists. */
   function detecting() { return regions !== undefined && mode === 'region' && !crop && !drag && frame.selection.sourceId === displayFrame.selection.sourceId; }
   function updateHover(p: { x: number; y: number }) {
@@ -391,7 +439,7 @@ export async function mountCaptureWindow(
   captureModes.hidden = !captureActions.length;
   button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
-    if (!crop || busy || crop.width < 1 || crop.height < 1) return;
+    if (!crop || busy || drag || cropDrag || annotationDrag || active || crop.width < 1 || crop.height < 1) return;
     finishText();
     finishPropertyChange();
     busy = true; active = null; draw();
@@ -479,12 +527,20 @@ export async function mountCaptureWindow(
     e.preventDefault(); finishText(); finishPropertyChange();
     mask.setPointerCapture(e.pointerId);
     const p = point(e);
-    const handle = hitHandle(p), hit = hitAnnotation(p);
+    const handle = hitHandle(p), hit = hitAnnotation(p), edge = hitCropEdge(p);
     const index = handle !== null ? selectedIndex : hit;
     const existing = index === null ? null : history.values()[index];
-    if (crop && existing && (handle !== null || tool === 'select' || existing.tool === tool)) {
+    if (crop && edge && handle === null) {
+      selectedIndex = null; hover = null;
+      cropDrag = { original: { ...crop }, start: p, edge };
+      mask.style.cursor = cropCursor(edge);
+    } else if (crop && existing && (handle !== null || tool === 'select' || existing.tool === tool)) {
       selectedIndex = index; syncProperties(existing);
       annotationDrag = { index: index!, original: existing, start: p, handle, moved: false };
+    } else if (crop && insideCrop(p) && (captureMode === 'record' || !tool || tool === 'select')) {
+      selectedIndex = null; hover = null;
+      cropDrag = { original: { ...crop }, start: p, edge: null };
+      mask.style.cursor = 'move';
     } else if (crop && tool && tool !== 'select') {
       selectedIndex = null;
       const a = clipped(p); const scale = frame.width / bounds().width;
@@ -504,7 +560,8 @@ export async function mountCaptureWindow(
     if (press && Math.hypot(e.clientX - press.clientX, e.clientY - press.clientY) > 4) {
       drag = press.point; crop = rect(drag, p); clear();
     }
-    if (drag) crop = rect(drag, p);
+    if (cropDrag) adjustCrop(p);
+    else if (drag) crop = rect(drag, p);
     else if (annotationDrag && crop) {
       const { original, start, handle } = annotationDrag;
       if (Math.hypot(p.x - start.x, p.y - start.y) > 2 * pixelScale()) annotationDrag.moved = true;
@@ -530,13 +587,15 @@ export async function mountCaptureWindow(
       if (active.tool === 'pen') active.points.push(next);
       else active.points = [active.points[0], next];
     }
-    if (drag || active) draw();
+    if (drag || cropDrag || active) draw();
     if (!press && detecting()) updateHover(p);
-    if (!drag && !annotationDrag && !active) {
-      const handle = hitHandle(p), hit = hitAnnotation(p);
+    if (!drag && !cropDrag && !annotationDrag && !active) {
+      const handle = hitHandle(p), hit = hitAnnotation(p), edge = hitCropEdge(p);
       const existing = hit === null ? null : history.values()[hit];
+      const moving = existing && (tool === 'select' || existing.tool === tool)
+        || insideCrop(p) && (captureMode === 'record' || !tool || tool === 'select');
       mask.style.cursor = handle !== null ? (handle % 2 ? 'nesw-resize' : 'nwse-resize')
-        : existing && (tool === 'select' || existing.tool === tool) ? 'move' : tool === 'text' ? 'text' : 'crosshair';
+        : edge ? cropCursor(edge) : moving ? 'move' : tool === 'text' ? 'text' : 'crosshair';
     }
     showMagnifier(e, p);
   };
@@ -549,7 +608,7 @@ export async function mountCaptureWindow(
       press = null;
       if (hover) { const chosen = hover; clear(); crop = { ...chosen }; }
     }
-    drag = null;
+    drag = null; cropDrag = null;
     if (annotationDrag) {
       const current = annotationDrag; annotationDrag = null;
       if (current.moved && active) history.replace(current.index, active);
@@ -560,10 +619,16 @@ export async function mountCaptureWindow(
     if (crop && !tool) tool = 'select';
     magnifier.hidden = true; draw();
   };
+  mask.onpointercancel = () => {
+    if (cropDrag) crop = cropDrag.original;
+    cropDrag = null; drag = null; press = null; annotationDrag = null; active = null;
+    magnifier.hidden = true; draw();
+  };
   document.onkeydown = (e) => {
     if (e.target instanceof HTMLInputElement) return;
     if (e.key === 'Escape') {
-      if (annotationDrag) { annotationDrag = null; active = null; draw(); }
+      if (cropDrag) { crop = cropDrag.original; cropDrag = null; draw(); }
+      else if (annotationDrag) { annotationDrag = null; active = null; draw(); }
       else if (selectedIndex !== null) { selectedIndex = null; draw(); }
       else bridge.action('cancel');
     }

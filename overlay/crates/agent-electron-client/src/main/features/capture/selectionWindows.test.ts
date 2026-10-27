@@ -196,6 +196,20 @@ describe('Linux X11 selector native fullscreen', () => {
 });
 
 describe('capture window policy composition', () => {
+  it('uses macOS panels without hiding the application in cold-created screenshot and recording windows', async () => {
+    windows.dispose(); windows = createCaptureWindows({ platform: 'darwin', portal: false, log: mock.log });
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    const selection: CaptureSelection = { sourceId: 'screen:1', sourceKind: 'screen', sourceSize: { width: 2400, height: 1600 }, crop: { x: 300, y: 300, width: 800, height: 600 }, displayBounds: mock.display.bounds, displayId: '1', hdrToneMapped: false };
+    const controls = windows.createRecordingControls(selection, vi.fn());
+    expect(mock.windows).toHaveLength(3);
+    for (const window of mock.windows) {
+      expect(window.options).toMatchObject({ type: 'panel' });
+      expect(window.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    }
+    abort.abort(); expect(await pending).toBeNull(); controls.dispose();
+  });
   it.each(['darwin', 'win32'] as const)('preserves protected desktop controls for %s independent of the host OS', (platform) => {
     windows.dispose();
     windows = createCaptureWindows({ platform: 'linux', portal: false, windowPolicy: resolveCaptureWindowPolicy(platform, false), log: mock.log });

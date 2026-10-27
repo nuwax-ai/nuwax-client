@@ -25,7 +25,7 @@ function reserveShortcut(shortcut: string, platform: NodeJS.Platform): (() => vo
 
 /** Keep the new registration through the write; macOS success does not imply exclusivity. */
 export function saveCaptureShortcutPreference(shortcut: string, action: CaptureMenuAction, persist: () => void, platform: NodeJS.Platform = process.platform): boolean {
-  if ((platform === 'darwin' || platform === 'win32') && shortcutOwner?.isActive()) return shortcutOwner.save(shortcut, action, persist);
+  if (shortcutOwner?.isActive()) return shortcutOwner.save(shortcut, action, persist);
   const release = reserveShortcut(shortcut, platform);
   if (!release) return false;
   try {
@@ -41,18 +41,18 @@ export function onCapturePreferencesChanged(listener: () => void): () => void {
   return () => { changes.removeListener('changed', listener); };
 }
 
-/** Windows keeps global hotkeys while hidden; macOS releases them outside the foreground app. */
+/** Own global hotkeys for the app lifetime, including hidden and unfocused windows. */
 export function bindCaptureShortcuts(
-  target: Pick<BrowserWindow, 'on' | 'removeListener' | 'isFocused' | 'isDestroyed'>,
+  target: Pick<BrowserWindow, 'on' | 'removeListener' | 'isDestroyed'>,
   bindings: () => ReadonlyArray<readonly [string, CaptureMenuAction]>,
   dispatch: (action: CaptureMenuAction) => void,
   options: { platform?: NodeJS.Platform; onUnavailable?: (shortcut: string) => void } = {},
 ): () => void {
   const platform = options.platform ?? process.platform;
-  if (platform !== 'darwin' && platform !== 'win32') return () => {};
+  if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') return () => {};
   const owned = new Map<string, { action: CaptureMenuAction; active: boolean }>();
   let disposed = false;
-  const isActive = () => !disposed && !target.isDestroyed() && (platform === 'win32' || target.isFocused()) && app.isReady();
+  const isActive = () => !disposed && !target.isDestroyed() && app.isReady();
   const remove = (shortcut: string) => {
     const entry = owned.get(shortcut);
     if (!entry) return;
@@ -119,15 +119,9 @@ export function bindCaptureShortcuts(
     disposed = true;
     release();
     offPreferences();
-    target.removeListener('focus', refresh);
-    target.removeListener('blur', release);
     target.removeListener('closed', dispose);
     app.removeListener('will-quit', dispose);
   };
-  if (platform === 'darwin') {
-    target.on('focus', refresh);
-    target.on('blur', release);
-  }
   app.on('will-quit', dispose);
   target.on('closed', dispose);
   refresh();

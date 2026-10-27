@@ -102,6 +102,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       frame: preview, transparent: !preview && config.kind !== 'selection',
       resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls, fullscreenable: false,
       ...selectorPolicy?.options,
+      ...(platform === 'darwin' && !preview ? { type: 'panel' } : {}),
       skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview && !controls, enableLargerThanScreen: !preview,
       roundedCorners: config.kind !== 'border',
       title: config.kind === 'selection' ? `${config.mode === 'still' ? labels.screenshot : labels.record}` : config.kind === 'controls' ? labels.record : '',
@@ -118,7 +119,9 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     windows.set(window.webContents.id, owned);
     if (!preview) {
       window.setAlwaysOnTop(true, 'screen-saver');
-      window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      // macOS panels can cover fullscreen apps without demoting the whole app
+      // to an accessory process (Electron otherwise calls DockHide here).
+      window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, ...(platform === 'darwin' ? { skipTransformProcessType: true } : {}) });
     }
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());

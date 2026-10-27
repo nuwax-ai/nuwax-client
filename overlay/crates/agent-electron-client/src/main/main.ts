@@ -486,8 +486,8 @@ function createWindow() {
     });
   }
 
-  // Windows 保持全局注册以支持其他窗口/屏幕与托盘；macOS 仅在前台注册。
-  if ((process.platform === 'darwin' || process.platform === 'win32') && isDesktopFeatureRegistered('capture')) {
+  // 应用退到后台或隐藏到托盘时，截图/录屏仍由系统全局快捷键触发。
+  if (isDesktopFeatureRegistered('capture')) {
     bindCaptureShortcuts(mainWindow, () => [
       [captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), 'screenshot'],
       [recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), 'mp4'],
@@ -502,7 +502,7 @@ function createWindow() {
 async function dispatchCaptureMenuAction(action: CaptureMenuAction, trigger: "menu" | "shortcut" = "menu", focused = webContents.getFocusedWebContents()) {
   if (!isDesktopFeatureRegistered("capture") || !mainWindow || mainWindow.isDestroyed()) return;
   const originWindow = mainWindow;
-  if (trigger === 'shortcut' && focused && focused.hostWebContents === originWindow.webContents &&
+  if (trigger === 'shortcut' && originWindow.isFocused() && focused && focused.hostWebContents === originWindow.webContents &&
     await routeCaptureShortcut(focused, action)) return;
   if (mainWindow !== originWindow || originWindow.isDestroyed()) return;
   // 后台全局热键保持桌面原状，捕获成功后由服务显示结果窗口。
