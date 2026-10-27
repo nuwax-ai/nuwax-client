@@ -6,6 +6,7 @@ import { setTimeout as realDelay } from "node:timers/promises";
 import { RECORDING_IPC } from "@shared/features/capture/recordingContract";
 import { createScratchDir } from "../_kit/scratchDir";
 import { createRecordEngine, createCaptureSourceStill, createCapturePortalFrame } from "./recorder";
+import { resolveCapturePlatform } from './platforms';
 import type { CaptureSelection, RecordingAction } from "@shared/features/capture/windowContract";
 import type { CaptureState } from "@shared/features/capture/contract";
 
@@ -89,6 +90,29 @@ describe("private desktop recorder", () => {
     vi.useRealTimers();
     await realDelay(5);
     await rm(root,{recursive:true,force:true}); expect(fake.handlers.size).toBe(0);
+  });
+
+  it.each([
+    ['gif', undefined, undefined, 15],
+    ['gif', 60, 'lossless', 20],
+    ['gif', 30, 'medium', 12],
+    ['gif', 30, 'low', 10],
+    ['gif', 5, 'high', 5],
+    ['mp4', 60, 'high', 60],
+    ['webm', 30, 'low', 30],
+  ] as const)('%s capture at %s fps / %s avoids frames the output would discard', async (output, fps, quality, expectedFps) => {
+    const platform = resolveCapturePlatform('win32');
+    const acquire = vi.fn(async () => null);
+    const adapter = { ...platform, source: { ...platform.source, acquireRecording: acquire } };
+    const engine = createRecordEngine({ scratch: createScratchDir(root), platform: 'win32', adapter,
+      log: { warn: vi.fn(), error: vi.fn() },
+      ffmpeg: { path: '/trusted/ffmpeg', version: 'test', configuration: '--disable-gpl',
+        encoders: ['h264_mf', 'libvpx-vp9', 'gif'], filters: ['crop', 'pad', 'format', 'fps', 'split', 'palettegen', 'paletteuse'],
+        formats: { mp4: true, webm: true, gif: true } },
+      windows: { select: async () => selection, createRecordingControls: vi.fn() } });
+    engines.push(engine);
+    expect(await engine.record({ output, fps, compression: quality ? { quality } : undefined }, new AbortController().signal, () => {})).toBeNull();
+    expect(acquire).toHaveBeenCalledWith(expect.objectContaining({ fps: expectedFps }));
   });
 
   function deps() {

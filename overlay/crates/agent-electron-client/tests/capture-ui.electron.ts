@@ -318,12 +318,35 @@ app.whenReady().then(async () => {
   windows.setActions('screenshot', []);
   console.log('PASS interactive screenshot/MP4/GIF mode tabs preserve crop');
 
+  for (const stage of ['empty', 'text', 'record-selection'] as const) {
+    const controller = new AbortController();
+    const canceled = stage === 'record-selection' ? windows.select('record', controller.signal) : windows.captureStill(controller.signal);
+    const selector = (await prepared())[2];
+    if (stage === 'text') {
+      await tool(selector, 'screen'); await tool(selector, 'text'); await click(selector, 100, 100);
+      await selector.webContents.insertText('右键取消不能提交');
+    }
+    let contextMenus = 0;
+    selector.webContents.on('context-menu', () => { contextMenus++; });
+    selector.webContents.focus();
+    const location = stage === 'text' ? { x: 110, y: 110 } : { x: 100, y: 100 };
+    selector.webContents.sendInputEvent({ type: 'mouseDown', ...location, button: 'right', clickCount: 1 });
+    selector.webContents.sendInputEvent({ type: 'mouseUp', ...location, button: 'right', clickCount: 1 });
+    const result = await Promise.race([canceled, new Promise(resolve => setTimeout(() => resolve('timeout'), 1000))]);
+    controller.abort();
+    assert.equal(result, null, `${stage} 右键应直接取消整次捕获`);
+    assert.equal(contextMenus, 0, '右键不能弹出上下文菜单');
+    assert.equal(BrowserWindow.getAllWindows().length, 0, '右键应关闭全部屏幕的选区窗口');
+  }
+  console.log('PASS right-click cancels empty, text-editing and recording selections across all synthetic displays');
+
   // 只创建隔离的控制条/区域边框，不开启媒体流或真实录屏。
+  const recordingActions: string[] = [];
   const recordingControls = windows.createRecordingControls({
     sourceId: 'screen:1', sourceKind: 'screen', sourceSize: { width: 1920, height: 1200 },
     crop: { x: 160, y: 160, width: 1280, height: 640 }, displayBounds: { ...displays[0].bounds },
     displayId: '1', hdrToneMapped: false,
-  }, () => {});
+  }, action => { recordingActions.push(action); });
   try {
     await delay(); // 工厂在微任务中导航，先等待这次导航开始。
     const [controlWindow, borderWindow] = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id);
@@ -331,6 +354,11 @@ app.whenReady().then(async () => {
       while (window.webContents.isLoadingMainFrame()) await delay();
       await script(window, `new Promise(resolve=>{const check=()=>document.body.classList.contains('${className}')?resolve(true):setTimeout(check,10);check()})`);
     }
+    await controlWindow.webContents.capturePage();
+    controlWindow.webContents.sendInputEvent({ type: 'mouseDown', x: 10, y: 10, button: 'right', clickCount: 1 });
+    controlWindow.webContents.sendInputEvent({ type: 'mouseUp', x: 10, y: 10, button: 'right', clickCount: 1 });
+    await delay();
+    assert.deepEqual(recordingActions, [], '录制控制条右键不能误取消或停止录屏');
     assert.equal(await script(borderWindow, `getComputedStyle(document.body).borderRadius`), '0px', '录制区域边框必须保持直角');
     for (const state of ['recording', 'paused', 'encoding'] as const) {
       recordingControls.update({ state, elapsedMs: 65_000 });

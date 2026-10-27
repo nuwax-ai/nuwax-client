@@ -3,12 +3,13 @@ import { EventEmitter } from 'node:events';
 
 const runtime = vi.hoisted(() => ({
   ready: vi.fn(), registered: vi.fn(), register: vi.fn(), unregister: vi.fn(),
+  on: vi.fn(), removeListener: vi.fn(),
 }));
 vi.mock('electron', () => ({
-  app: { isReady: runtime.ready },
+  app: { isReady: runtime.ready, on: runtime.on, removeListener: runtime.removeListener },
   globalShortcut: { isRegistered: runtime.registered, register: runtime.register, unregister: runtime.unregister },
 }));
-import { bindCaptureForegroundShortcuts, notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from './preferences';
+import { bindCaptureShortcuts, notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from './preferences';
 
 const shortcut = 'CmdOrCtrl+Shift+A';
 const isCaptureShortcutAvailable = (key: string, platform: NodeJS.Platform) => saveCaptureShortcutPreference(key, 'screenshot', () => {}, platform);
@@ -29,7 +30,7 @@ describe('macOS foreground capture shortcuts', () => {
     let screenshot = shortcut;
     const dispatch = vi.fn();
     const unavailable = vi.fn();
-    const dispose = bindCaptureForegroundShortcuts(target as never,
+    const dispose = bindCaptureShortcuts(target as never,
       () => [[screenshot, 'screenshot'], ['CmdOrCtrl+Shift+R', 'mp4']], dispatch,
       { platform, onUnavailable: unavailable });
     disposers.push(dispose);
@@ -128,8 +129,8 @@ describe('macOS foreground capture shortcuts', () => {
     expect(f.dispatch.mock.calls).toEqual([['screenshot']]);
   });
 
-  it.each(['win32', 'linux'] as const)('%s retains the existing input/menu route', platform => {
-    const f = bind(platform); f.focus();
+  it('Linux retains the existing input/menu route', () => {
+    const f = bind('linux'); f.focus();
     expect(runtime.register).not.toHaveBeenCalled();
     expect(f.target.listenerCount('focus')).toBe(0);
   });
@@ -182,5 +183,74 @@ describe('capture shortcut availability', () => {
     expect(() => saveCaptureShortcutPreference(shortcut, 'screenshot', persist, 'darwin')).toThrow('write failed');
     expect(persist).toHaveBeenCalledOnce();
     expect(runtime.unregister).toHaveBeenCalledWith(shortcut);
+  });
+});
+
+describe('Windows global capture shortcuts', () => {
+  function bind() {
+    const target = Object.assign(new EventEmitter(), {
+      isFocused: vi.fn(() => false), isDestroyed: vi.fn(() => false),
+    });
+    let screenshot = shortcut;
+    const dispatch = vi.fn();
+    const unavailable = vi.fn();
+    const dispose = bindCaptureShortcuts(target as never,
+      () => [[screenshot, 'screenshot'], ['CmdOrCtrl+Shift+R', 'mp4']], dispatch,
+      { platform: 'win32', onUnavailable: unavailable });
+    disposers.push(dispose);
+    return { target, dispatch, unavailable, dispose,
+      change: (value: string) => { screenshot = value; notifyCapturePreferencesChanged(); } };
+  }
+
+  it('captures outside the client and keeps bindings after focus loss or hiding to tray', () => {
+    const f = bind();
+    expect(runtime.register.mock.calls.map(([key]) => key)).toEqual([shortcut, 'CmdOrCtrl+Shift+R']);
+    const callbacks = runtime.register.mock.calls.map(([, callback]) => callback);
+    f.target.emit('blur'); f.target.emit('hide');
+    callbacks.forEach(callback => callback());
+    expect(f.dispatch.mock.calls).toEqual([['screenshot'], ['mp4']]);
+    expect(runtime.unregister).not.toHaveBeenCalled();
+    f.target.emit('closed');
+    expect(runtime.unregister.mock.calls).toEqual([[shortcut], ['CmdOrCtrl+Shift+R']]);
+    callbacks.forEach(callback => callback());
+    expect(f.dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reserves replacement keys through persistence, rolls back failures and disables stale callbacks', () => {
+    const f = bind();
+    const original = runtime.register.mock.calls[0]?.[1];
+    const persist = vi.fn();
+    runtime.register.mockReturnValue(false);
+    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'win32')).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    runtime.register.mockReturnValue(true);
+    persist.mockImplementation(() => { throw new Error('write failed'); });
+    expect(() => saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'win32')).toThrow('write failed');
+    original?.();
+    expect(f.dispatch).toHaveBeenCalledWith('screenshot');
+    persist.mockImplementation(() => {
+      runtime.register.mock.calls.at(-1)![1]();
+      expect(f.dispatch).toHaveBeenCalledTimes(1);
+    });
+    expect(saveCaptureShortcutPreference('CmdOrCtrl+Alt+G', 'screenshot', persist, 'win32')).toBe(true);
+    const replacement = runtime.register.mock.calls.at(-1)![1];
+    f.change('CmdOrCtrl+Alt+G');
+    original?.(); replacement();
+    expect(f.dispatch.mock.calls).toEqual([['screenshot'], ['screenshot']]);
+    expect(runtime.unregister.mock.calls).toEqual([['CmdOrCtrl+Alt+G'], [shortcut]]);
+  });
+
+  it('preserves another feature key and releases its own bindings at app quit', () => {
+    runtime.registered.mockImplementation(key => key === shortcut);
+    const f = bind();
+    expect(f.unavailable).toHaveBeenCalledWith(shortcut);
+    expect(runtime.register.mock.calls.map(([key]) => key)).toEqual(['CmdOrCtrl+Shift+R']);
+    const callback = runtime.register.mock.calls[0][1];
+    runtime.on.mock.calls.find(([event]) => event === 'will-quit')![1]();
+    expect(runtime.unregister.mock.calls).toEqual([['CmdOrCtrl+Shift+R']]);
+    callback();
+    expect(f.dispatch).not.toHaveBeenCalled();
+    f.change('CmdOrCtrl+Alt+G');
+    expect(runtime.register).toHaveBeenCalledOnce();
   });
 });

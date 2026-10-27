@@ -139,6 +139,19 @@ describe("capture encoding", () => {
     expect(gif).toContain("paletteuse=dither=bayer");
   });
 
+  it('reads an immutable recording independently for the palette so GIF frames need not queue behind it', () => {
+    const geometry = transcodeGeometry({ x: 20, y: 10, width: 301, height: 201 }, { width: 1920, height: 1080 }, 'gif');
+    const args = transcodeArguments('source.webm', 'result.gif', { output: 'gif', fps: 30 }, 'high', geometry, 'win32');
+    expect(args.filter(value => value === '-i')).toHaveLength(2);
+    expect(args[args.lastIndexOf('-i') + 1]).toBe('source.webm');
+    const graph = args[args.indexOf('-filter_complex') + 1];
+    expect(graph).toContain('[0:v:0]crop=301:201:20:10:exact=1,fps=15,palettegen=max_colors=256:stats_mode=diff[p]');
+    expect(graph).toContain('[1:v:0]crop=301:201:20:10:exact=1,fps=15[b]');
+    expect(graph).toContain('[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle[out]');
+    expect(graph).not.toContain('split');
+    expect(args.slice(-5)).toEqual(['-loop', '0', '-f', 'gif', 'result.gif']);
+  });
+
   it("terminates the independent process on cancel and bounds failure output", async () => {
     const controller = new AbortController();
     const task = runCaptureFfmpeg(process.execPath, ["-e", "setInterval(() => {},1000)"], controller.signal);

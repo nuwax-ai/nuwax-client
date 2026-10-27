@@ -193,6 +193,17 @@ export const captureFeature: DesktopFeature = {
           svc.release(result.resultId); return { success: false, code: "canceled" };
         }
         owners.set(result.resultId, { senderId: event.sender.id, result });
+        // Shell captures need their result preview even when a global shortcut
+        // started them from the tray. Reveal only after freezing/recording ends;
+        // business-page captures keep their own draft and focus behavior.
+        if (channels === CAPTURE_IPC) {
+          const parent = BrowserWindow.fromWebContents(event.sender);
+          if (parent && !parent.isDestroyed()) {
+            if (parent.isMinimized()) parent.restore();
+            parent.show();
+            parent.focus();
+          }
+        }
       }
       if (svc.getState() === "idle") active = null;
       return result;

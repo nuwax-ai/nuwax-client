@@ -63,6 +63,10 @@ export async function mountCaptureWindow(
     document.onkeydown = (e) => { if (e.key === 'Escape') bridge.action('cancel'); };
     bridge.onState(update); update(config.state); return;
   }
+  document.oncontextmenu = (event) => {
+    event.preventDefault();
+    bridge.action('cancel');
+  };
   const captureActions = config.actions ?? [];
   let captureMode = config.mode;
   let captureAction = config.action ?? (config.mode === 'record' ? 'mp4' : 'screenshot');
@@ -469,7 +473,7 @@ export async function mountCaptureWindow(
     ctx.strokeStyle = '#36d5ae'; ctx.beginPath(); ctx.moveTo(80, 0); ctx.lineTo(80, 160); ctx.moveTo(0, 80); ctx.lineTo(160, 80); ctx.stroke();
   }
   mask.onpointerdown = (e) => {
-    if (busy || mode === 'window' && !sourceGrid.hidden) return;
+    if (e.button !== 0 || busy || mode === 'window' && !sourceGrid.hidden) return;
     hideTooltip();
     // 阻止画布抢焦点，并在切换标注前提交当前编辑。
     e.preventDefault(); finishText(); finishPropertyChange();
@@ -539,7 +543,8 @@ export async function mountCaptureWindow(
   // 每个显示器有独立的选区窗口；跨屏后旧窗口必须撤掉放大框。
   mask.onpointerleave = () => { magnifier.hidden = true; if (hover && !press) { hover = null; draw(); } };
   window.addEventListener('blur', () => { magnifier.hidden = true; hideTooltip(); });
-  mask.onpointerup = () => {
+  mask.onpointerup = (e) => {
+    if (e.button !== 0) return;
     if (press) {
       press = null;
       if (hover) { const chosen = hover; clear(); crop = { ...chosen }; }
