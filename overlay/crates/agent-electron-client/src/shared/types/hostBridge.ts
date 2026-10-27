@@ -252,7 +252,7 @@ export interface CaptureBridge {
 }
 
 /** 当前 preload 暴露的完整能力；IM 仅在商业宿主受信顶层页面提供。 */
-/** 本机文件访问：可选宿主能力，旧客户端和浏览器保持原路线。 */
+/** 本机文件直连：可选宿主能力，旧客户端和浏览器保持原路线。 */
 export type LocalFilesErrorCode =
   | 'untrusted'
   | 'unavailable'

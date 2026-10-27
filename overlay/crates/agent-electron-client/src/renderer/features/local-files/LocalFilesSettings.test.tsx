@@ -85,7 +85,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("本机文件访问设置", () => {
+describe("本机文件直连设置", () => {
   it("缺省开启，加载不写默认值，提示重启生效", async () => {
     mount();
     await ready();
