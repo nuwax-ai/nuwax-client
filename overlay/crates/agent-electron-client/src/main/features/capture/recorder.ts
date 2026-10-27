@@ -13,6 +13,7 @@ import { CaptureCanceledError, CaptureRecordingError } from './captureErrors';
 import { openRecordingWindow, deferred, canceled, dimensions as recordingDimensions, type PrivateRecordingSession } from './recordingSession';
 import { resolveCapturePlatform, type CapturePlatformAdapter } from './platforms';
 import { portalRecordingConfig } from './platforms/sources';
+import { getTierParams } from './tiers';
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -226,7 +227,12 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
           },
         };
         const acquired = await adapter.source.acquireRecording({
-          signal, fps: options.fps ?? 30, framePipeline: adapter.framePipeline,
+          // GIF already caps its final frame rate. Avoid recording/decoding frames
+          // that every quality fallback would discard, including the stop flush.
+          signal, fps: options.output === 'gif'
+            ? Math.min(options.fps ?? 30, getTierParams(options.compression?.quality ?? 'high').gifMaxFps)
+            : options.fps ?? 30,
+          framePipeline: adapter.framePipeline,
           windows: preselected ? {
             select: async () => preselected,
             selectPrepared: async (_mode, image) => ({ ...image.selection, crop: preselected.crop }),

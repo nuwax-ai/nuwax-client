@@ -62,8 +62,12 @@ export function transcodeArguments(input: string, output: string, options: Recor
   const common = ["-hide_banner", "-nostdin", "-y", "-i", input, "-an"];
   if (options.output === "gif") {
     const dither = quality === "low" ? "bayer:bayer_scale=3" : quality === "medium" ? "bayer:bayer_scale=2" : "sierra2_4a";
-    return [...common, "-filter_complex",
-      `${geometry.filter},fps=${Math.min(fps, tier.gifMaxFps)},split[a][b];[a]palettegen=max_colors=${tier.gifColors}:stats_mode=diff[p];[b][p]paletteuse=dither=${dither}:diff_mode=rectangle[out]`,
+    const frames = `${geometry.filter},fps=${Math.min(fps, tier.gifMaxFps)}`;
+    // A split queues the whole clip while its global palette is generated.
+    // Independent readers of the closed, immutable source bound that queue,
+    // preserving the same palette, dithering and physical output pixels.
+    return [...common, "-i", input, "-filter_complex",
+      `[0:v:0]${frames},palettegen=max_colors=${tier.gifColors}:stats_mode=diff[p];[1:v:0]${frames}[b];[b][p]paletteuse=dither=${dither}:diff_mode=rectangle[out]`,
       "-map", "[out]", "-c:v", "gif", "-loop", "0", "-f", "gif", output];
   }
   const color = ["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"];

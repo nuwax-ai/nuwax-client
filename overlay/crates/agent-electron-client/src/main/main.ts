@@ -49,7 +49,7 @@ import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
 import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/contract';
 import { routeCaptureShortcut } from './features';
-import { onCapturePreferencesChanged, bindCaptureForegroundShortcuts } from './features';
+import { onCapturePreferencesChanged, bindCaptureShortcuts } from './features';
 import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
 import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
@@ -471,13 +471,13 @@ function createWindow() {
     });
   }
 
-  // macOS 只在主窗口获得焦点时加入系统热键分发，失焦后释放。
-  if (process.platform === 'darwin' && isDesktopFeatureRegistered('capture')) {
-    bindCaptureForegroundShortcuts(mainWindow, () => [
+  // Windows 保持全局注册以支持其他窗口/屏幕与托盘；macOS 仅在前台注册。
+  if ((process.platform === 'darwin' || process.platform === 'win32') && isDesktopFeatureRegistered('capture')) {
+    bindCaptureShortcuts(mainWindow, () => [
       [captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), 'screenshot'],
       [recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), 'mp4'],
     ], action => { void dispatchCaptureMenuAction(action, 'shortcut'); }, {
-      onUnavailable: shortcut => log.warn('[Capture] Foreground shortcut unavailable', shortcut),
+      onUnavailable: shortcut => log.warn('[Capture] Shortcut unavailable', shortcut),
     });
   }
   // Create application menu
@@ -490,8 +490,11 @@ async function dispatchCaptureMenuAction(action: CaptureMenuAction, trigger: "me
   if (trigger === 'shortcut' && focused && focused.hostWebContents === originWindow.webContents &&
     await routeCaptureShortcut(focused, action)) return;
   if (mainWindow !== originWindow || originWindow.isDestroyed()) return;
-  originWindow.show();
-  originWindow.focus();
+  // 后台全局热键保持桌面原状，捕获成功后由服务显示结果窗口。
+  if (trigger === 'menu') {
+    originWindow.show();
+    originWindow.focus();
+  }
   originWindow.webContents.send(HOST_CAPTURE_MENU_IPC, action);
 }
 

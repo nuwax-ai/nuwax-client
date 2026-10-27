@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   app: { isReady: runtime.ready, on: runtime.on, removeListener: runtime.removeListener },
   globalShortcut: { isRegistered: runtime.registered, register: runtime.register, unregister: runtime.unregister },
 }));
-import { bindCaptureForegroundShortcuts, notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from './preferences';
+import { bindCaptureShortcuts, notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from './preferences';
 
 const shortcut = 'CmdOrCtrl+Shift+A';
 const isCaptureShortcutAvailable = (key: string, platform: NodeJS.Platform) => saveCaptureShortcutPreference(key, 'screenshot', () => {}, platform);
@@ -30,7 +30,7 @@ describe('macOS foreground capture shortcuts', () => {
     let screenshot = shortcut;
     const dispatch = vi.fn();
     const unavailable = vi.fn();
-    const dispose = bindCaptureForegroundShortcuts(target as never,
+    const dispose = bindCaptureShortcuts(target as never,
       () => [[screenshot, 'screenshot'], ['CmdOrCtrl+Shift+R', 'mp4']], dispatch,
       { platform, onUnavailable: unavailable });
     disposers.push(dispose);
@@ -194,7 +194,7 @@ describe('Windows global capture shortcuts', () => {
     let screenshot = shortcut;
     const dispatch = vi.fn();
     const unavailable = vi.fn();
-    const dispose = bindCaptureForegroundShortcuts(target as never,
+    const dispose = bindCaptureShortcuts(target as never,
       () => [[screenshot, 'screenshot'], ['CmdOrCtrl+Shift+R', 'mp4']], dispatch,
       { platform: 'win32', onUnavailable: unavailable });
     disposers.push(dispose);
