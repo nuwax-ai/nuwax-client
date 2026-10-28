@@ -24,6 +24,16 @@ function fixture(t) {
 }
 const run = (id, attempts, series = 'pr-66', extra = {}) => ({ id, run_attempt: attempts, display_title: `Package validation / ${series}`, ...extra });
 
+test('Intel validation uses a native Intel runner and keeps its architecture for upgrade pairs', t => {
+  const f = fixture(t);
+  f.git('tag', 'v3.0.23-beta.2');
+  const identity = validationIdentity(f.cwd, { ...f.env, VALIDATION_PLATFORMS: 'mac-x64', VALIDATION_UPGRADE_FROM_TAG: 'v3.0.23-beta.2' });
+  assert.deepEqual(identity.matrix, [
+    { runner: 'macos-26-intel', platform: 'darwin', arch: 'x64', baselineTag: 'v3.0.23-beta.3' },
+    { runner: 'macos-26-intel', platform: 'darwin', arch: 'x64', baselineTag: 'v3.0.23-beta.2' },
+  ]);
+});
+
 test('uses only an existing Beta/Stable baseline without creating a version or changing git', t => {
   const f = fixture(t), before = f.git('show-ref', '--tags'), status = f.git('status', '--porcelain');
   assert.equal(f.identity.packageVersion, '3.0.23-beta.3');

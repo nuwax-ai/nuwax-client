@@ -12,7 +12,7 @@ export async function packSignedValidationMac(root, options, {
   notarizeFn = notarizeSignedApp, packageFn = packageNotarizedApp, verifyCaptureFn = verifyReleaseCaptureOutput,
   verifyPayloadFn = verifyPackagePayload,
 } = {}) {
-  if (options.platform !== 'darwin' || options.arch !== 'arm64') throw new Error('Private Mac acceptance requires native ARM64');
+  if (options.platform !== 'darwin' || !['arm64', 'x64'].includes(options.arch)) throw new Error('Private Mac acceptance requires native ARM64 or x64');
   for (const key of ['APPLE_SIGNING_IDENTITY', 'CSC_KEYCHAIN', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_ISSUER_ID']) {
     if (!env[key]) throw new Error(`Private Mac acceptance requires ${key}`);
   }
@@ -26,7 +26,7 @@ export async function packSignedValidationMac(root, options, {
     ...capture, platform: 'darwin', arch: options.arch, macPreSigned: true,
   });
   builder.mac = { ...builder.mac, identity: env.APPLE_SIGNING_IDENTITY, hardenedRuntime: true, notarize: false };
-  builder.dmg = { ...builder.dmg, artifactName: '${productName}-${version}-arm64.${ext}' };
+  builder.dmg = { ...builder.dmg, artifactName: '${productName}-${version}' + (options.arch === 'arm64' ? '-arm64' : '') + '.${ext}' };
   const helper = path.join(client, 'resources/computer-use/Nuwax Computer Use.app');
   await tools.run('codesign', ['--force', '--sign', env.APPLE_SIGNING_IDENTITY, '--keychain', env.CSC_KEYCHAIN,
     '--timestamp', '--options', 'runtime', helper], { capture: true });
@@ -40,12 +40,13 @@ export async function packSignedValidationMac(root, options, {
     SKIP_PREPARE: '1', SKIP_WINDOWS_AFTER_SIGN: '1', ELECTRON_BUILDER_COMPRESSION_LEVEL: '1',
     APPLE_API_KEY: '', APPLE_API_KEY_ID: '', APPLE_ISSUER_ID: '' });
   await tools.pnpmRun(client, ['exec', 'electron-builder', '--config', built.configFile,
-    '--mac', '--arm64', '--dir', '--publish', 'never'], { env: signingEnv });
-  const app = path.join(options.output, 'mac-arm64/Nuwax.app');
-  await notarizeFn({ app, stateFile: path.join(options.output, 'mac-arm64/.nuwax-notary.json'),
+    '--mac', `--${options.arch}`, '--dir', '--publish', 'never'], { env: signingEnv });
+  const appDirectory = path.join(options.output, options.arch === 'arm64' ? 'mac-arm64' : 'mac');
+  const app = path.join(appDirectory, 'Nuwax.app');
+  await notarizeFn({ app, stateFile: path.join(appDirectory, '.nuwax-notary.json'),
     auth: { key: env.APPLE_API_KEY, keyId: env.APPLE_API_KEY_ID, issuer: env.APPLE_ISSUER_ID } });
-  await packageFn({ client, app, arch: options.arch, configFile: built.configFile, tools: {
-    ...tools, run: (command, args, opts) => tools.run(command, args, { ...opts, env: signingEnv }),
+  await packageFn({ client, app, arch: options.arch, configFile: built.configFile, env: signingEnv, tools: {
+    ...tools, run: (command, args, opts) => tools.run(command, args, { ...opts, env: { ...signingEnv, ...opts?.env } }),
   } });
   await verifyCaptureFn(root, options.output, { platform: 'darwin', arch: options.arch });
   await verifyPayloadFn(options.output, { platform: 'darwin', arch: options.arch });

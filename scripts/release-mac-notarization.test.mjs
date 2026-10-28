@@ -12,9 +12,12 @@ const cdhash = 'a'.repeat(40);
 function fixture(t, behavior = () => undefined) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mac-notary-test-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const calls = [], waits = [];
-  const tools = { run: async (command, args, options) => {
+  const calls = [], waits = [], logs = [];
+  const tools = { log: value => logs.push(value), run: async (command, args, options) => {
     calls.push({ command, args, options });
+    if (command === process.execPath && args.includes('--prepackaged') && options.env?.NUWAX_DMG_TRACE_FILE) {
+      fs.appendFileSync(options.env.NUWAX_DMG_TRACE_FILE, JSON.stringify({ id: 'fixture', event: 'end', phase: 'create', filesystem: 'APFS', format: 'UDRW', status: 0, elapsedMs: 100 }) + '\n');
+    }
     const supplied = behavior(command, args, calls);
     if (supplied) return supplied;
     if (command === 'codesign' && args[0] === '-d') return { status: 0, stderr: `CDHash=${cdhash}\nTeamIdentifier=TEAM1234\nAuthority=Developer ID Application: test\n` };
@@ -26,7 +29,7 @@ function fixture(t, behavior = () => undefined) {
   fs.writeFileSync(path.join(app, 'Contents/Resources/app-update.yml'), updater.configBytes(config.product.feedBase));
   const options = { app, stateFile: path.join(root, 'state.json'), auth: { key: '/not-read.p8', keyId: 'KEY1234', issuer: 'issuer' },
     tools, wait: async ms => waits.push(ms) };
-  return { root, calls, waits, tools, options };
+  return { root, calls, waits, logs, tools, options };
 }
 
 test('network errors retry the same submitted app and ticket; credentials stay out of persisted state', async t => {
@@ -96,9 +99,20 @@ test('packaging requires a valid ticket and uses the app without another signing
   assert.ok(packaged.args.includes('--x64'));
   assert.ok(f.calls.findIndex(c => c.args[1] === 'validate') < f.calls.indexOf(packaged));
   assert.equal(f.calls.filter(c => c.args[1] === 'validate').length, 2);
+  assert.equal(packaged.options.env.NUWAX_DMG_ARCH, 'x64');
+  assert.equal(fs.existsSync(path.dirname(packaged.options.env.NUWAX_DMG_TRACE_FILE)), false);
+  assert.ok(f.logs.some(value => /create.*APFS/.test(value)));
   const denied = fixture(t, (_command, args) => args[1] === 'validate' ? { status: 65, stderr: 'invalid ticket' } : undefined);
   await assert.rejects(packageNotarizedApp({ client: '/client', app: denied.options.app, arch: 'x64', builderCli: '/builder.js', tools: denied.tools }), /ticket validation/);
   assert.equal(denied.calls.some(c => c.command === process.execPath), false);
+});
+
+test('builder failure preserves the exit code and removes temporary DMG tools', async t => {
+  const f = fixture(t, command => command === process.execPath ? { status: 7 } : undefined);
+  await assert.rejects(packageNotarizedApp({ client: '/client', app: f.options.app, arch: 'x64', builderCli: '/builder.js', tools: f.tools }), /packaging failed \(7\)/);
+  const packaged = f.calls.find(c => c.command === process.execPath);
+  assert.equal(fs.existsSync(path.dirname(packaged.options.env.NUWAX_DMG_TRACE_FILE)), false);
+  assert.equal(f.calls.filter(c => c.args[1] === 'validate').length, 1);
 });
 
 test('state is beside the app, outside public asset uploads; both architectures resolve the versioned output', t => {

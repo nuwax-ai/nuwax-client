@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as core from './client/core.mjs';
 import { verifyUpdaterApp } from './prepare-release-updater.mjs';
+import { createDmgEnvironment } from './mac-dmg.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -18,7 +19,9 @@ export function transientAppleError(output) {
 
 async function command(tools, executable, args, { stage, retry = false, wait, timeout = 120000 } = {}) {
   for (let attempt = 0; ; attempt++) {
+    const started = performance.now();
     const result = await tools.run(executable, args, { capture: true, allowFailure: true, timeout });
+    tools.log?.(`[mac-notary] ${stage}: ${((performance.now() - started) / 1000).toFixed(2)}s (exit ${result.status})`);
     if (result.status === 0) return result;
     const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
     if (!retry || attempt >= RETRY_DELAYS.length || !transientAppleError(output)) {
@@ -110,7 +113,7 @@ export function macAppPaths(client, arch) {
   return { app, output, stateFile: path.join(path.dirname(app), '.nuwax-notary.json') };
 }
 
-export async function packageNotarizedApp({ client, app, arch, builderCli, configFile, tools = core, wait = sleep }) {
+export async function packageNotarizedApp({ client, app, arch, builderCli, configFile, tools = core, wait = sleep, env = process.env }) {
   if (!['arm64', 'x64'].includes(arch)) throw new Error('[mac-notary] Unsupported architecture');
   // Resume and --prepackaged may only verify: writing here breaks the seal.
   verifyUpdaterApp(app);
@@ -119,9 +122,20 @@ export async function packageNotarizedApp({ client, app, arch, builderCli, confi
   const cli = builderCli || createRequire(import.meta.url).resolve('electron-builder/out/cli/cli.js', { paths: [client] });
   // macPackager's prepackaged branch skips doPack/sign and only generates targets.
   // The final ticket must survive; a second signing pass would invalidate it.
-  const result = await tools.run(process.execPath, [cli, '--prepackaged', app, '--mac', `--${arch}`, '--publish', 'never', '--config.mac.notarize=false', ...(configFile ? ['--config', configFile] : [])],
-    { cwd: client, capture: false, allowFailure: true });
-  if (result.status !== 0) throw new Error(`[mac-notary] Distribution packaging failed (${result.status})`);
+  const log = tools.log ?? console.log;
+  const dmg = createDmgEnvironment({ arch, env, log });
+  const started = performance.now();
+  let packaged = false;
+  try {
+    log(`[mac-dmg] ${arch} distribution staging: APFS; compression level ${dmg.env.ELECTRON_BUILDER_COMPRESSION_LEVEL || 'builder default'}`);
+    const result = await tools.run(process.execPath, [cli, '--prepackaged', app, '--mac', `--${arch}`, '--publish', 'never', '--config.mac.notarize=false', ...(configFile ? ['--config', configFile] : [])],
+      { cwd: client, capture: false, allowFailure: true, env: dmg.env });
+    if (result.status !== 0) throw new Error(`[mac-notary] Distribution packaging failed (${result.status})`);
+    packaged = true;
+  } finally {
+    log(`[mac-dmg] Distribution archives: ${((performance.now() - started) / 1000).toFixed(2)}s`);
+    try { dmg.finish(packaged); } finally { dmg.cleanup(); }
+  }
   const final = await signature(app, tools);
   if (final.cdhash !== original.cdhash || final.team !== original.team) throw new Error('[mac-notary] Packaging changed the signed app');
   verifyUpdaterApp(app);

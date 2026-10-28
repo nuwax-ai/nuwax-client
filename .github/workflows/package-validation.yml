@@ -19,11 +19,11 @@ on:
         required: true
         type: string
       platforms:
-        description: Private acceptance targets (signed Mac, Windows EXE only)
+        description: Private acceptance targets (signed Mac ARM64/Intel, Windows EXE only)
         required: true
         type: choice
         default: both
-        options: [both, mac-arm64, windows-x64]
+        options: [both, mac-arm64, mac-x64, windows-x64]
       upgrade_from_tag:
         description: Optional existing lower Beta/Stable tag for the same-source Mac upgrade pair
         required: false
