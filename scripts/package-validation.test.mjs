@@ -24,6 +24,16 @@ function fixture(t) {
 }
 const run = (id, attempts, series = 'pr-66', extra = {}) => ({ id, run_attempt: attempts, display_title: `Package validation / ${series}`, ...extra });
 
+test('Intel validation uses a native Intel runner and keeps its architecture for upgrade pairs', t => {
+  const f = fixture(t);
+  f.git('tag', 'v3.0.23-beta.2');
+  const identity = validationIdentity(f.cwd, { ...f.env, VALIDATION_PLATFORMS: 'mac-x64', VALIDATION_UPGRADE_FROM_TAG: 'v3.0.23-beta.2' });
+  assert.deepEqual(identity.matrix, [
+    { runner: 'macos-26-intel', platform: 'darwin', arch: 'x64', baselineTag: 'v3.0.23-beta.3' },
+    { runner: 'macos-26-intel', platform: 'darwin', arch: 'x64', baselineTag: 'v3.0.23-beta.2' },
+  ]);
+});
+
 test('uses only an existing Beta/Stable baseline without creating a version or changing git', t => {
   const f = fixture(t), before = f.git('show-ref', '--tags'), status = f.git('status', '--porcelain');
   assert.equal(f.identity.packageVersion, '3.0.23-beta.3');
@@ -129,6 +139,8 @@ test('validation has explicit isolated launch, private Mac signing, and no publi
   assert.match(workflow, /APPLE_CERTIFICATE/);
   assert.doesNotMatch(workflow, /contents: write|secrets: inherit|GH_PAT|SimplySign|sync-electron-to-oss|gh release|git push|release-electron/);
   assert.match(workflow, /Recheck stop condition before build setup/);
+  assert.ok(workflow.indexOf('echo "MACOSX_DEPLOYMENT_TARGET=12.0"') < workflow.indexOf('- name: Restore admitted unsigned native resource caches'),
+    'private Mac cache identity must use the same deployment target as the subsequent compilation');
   const beta = fs.readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8');
   const betaTriggers = beta.slice(beta.indexOf('\non:'), beta.indexOf('\npermissions:'));
   assert.match(betaTriggers, /"v\*-beta\.\*"/); assert.doesNotMatch(betaTriggers, /workflow_dispatch:|branches:|qa\//);

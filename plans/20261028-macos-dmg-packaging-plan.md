@@ -1,0 +1,33 @@
+# Intel macOS DMG 打包优化
+
+## 目标与证据
+
+用户要求处理 Intel macOS 约 40 分钟的打包耗时，使后续 stable 正式发布使用优化。Beta.2 / Beta.3 的 Intel job 为 46:30 / 36:16；其中安装包生成 20:17 / 11:46，DMG 到生成 blockmap 为 19:44 / 10:53，ZIP 为 0:53 / 1:22。资源缓存已命中，压缩等级已经为 1。当前 electron-builder 25.1.8 的 Intel 中间镜像采用 HFS+，ARM 采用 APFS。
+
+## 实施
+
+1. 在公证后打包的共同入口使用临时 hdiutil 包装器，仅将 DMG 中间镜像的 HFS+ 创建切换为 APFS，保留既有 UDZO 压缩、DMG/ZIP 名称、blockmap、签名及公证票据检查。系统 hdiutil 通过绝对路径执行，不修改依赖或宿主安装。
+2. 记录 hdiutil 创建、调整大小、挂载、卸载、转换的分段耗时和失败；不向需要解析的命令标准输出混入日志。临时包装器与记录在 finally 清理。stable / Beta / 私有验包复用同一入口。
+3. 为已有独立 package-validation 增加 Intel macOS 选择，沿用已存在的 Beta 基线版本、固定源码和双 pin、签名公证及四次启动限制。修正私有验包的环境透传，确保打包包装器被消费。
+4. 跑真实 hdiutil 夹具、签名票据与错误传播回归，以及发布/验包编排检查。在 package-validation 启动一次 Intel 实包验证，保存步骤耗时和实包检查证据；不发新 tag/Release，不推进更新指针。
+
+## 验收与边界
+
+- 系统工具输出、退出码及原有镜像参数保持兼容；只修改明确的 UDRW 中间镜像 HFS+ 参数，移除仅适用于 HFS+ 的 fsargs；非目标调用透传。
+- 生成的镜像可只读挂载，应用内容、签名、公证票据与原有更新配置通过检查；生成失败、签名变化或票据失效阻止交付。
+- 仅以真实 Intel runner 的结果报告性能收益；本机 ARM 夹具仅证明功能正确。
+- 本优化问题的独立验证累计最多 4 次，首次为 1/4；不重置或绕过既有其他问题账本。
+- 不修改原生资源缓存配方、前端/基座 pin，不触碰冻结 Beta 标签。
+
+## 实施结果
+
+- 公证后的共享打包入口已接入临时 hdiutil 包装器；只改 Intel 的 HFS+ UDRW 中间镜像，标准输出和系统工具退出码透传，计时独立收集，失败及成功均清理临时文件。压缩、签名、公证票据及来源检查保留。没有修改资源缓存配方。
+- 私有验包增加 `mac-x64` 原生 runner，保留固定版本、双 pin、四次启动限制和 artifacts-only 输出；ARM 既有入口继续覆盖。修正私有打包的 scoped PATH 透传，并保持禁用自动公证的环境值。
+- 三问走查通过：镜像参数与临时文件归 `scripts/mac-dmg.mjs`，公证/签名及分发归 `scripts/release-mac-notarization.mjs`；私有验包调用共享入口，无反向依赖或第三方源码修改；只重写明确的中间镜像参数，保留签名不变断言和失败退出码，Intel 成功路径须有 APFS 创建证据。
+- 全量 `npm run test:scripts` **463/463 通过**，包含本机真实 hdiutil 创建/只读挂载、APFS 文件系统确认、中文文件逐字节读取，以及 XML stdout 保持完整。首次全量因隔离副本缺打包 SDK 入口出现环境失败；补齐固定版本依赖链接后整套重跑通过。未修改产品源码。
+- 独立 Intel 验包使用基线 `v3.0.25-beta.3`，系列 `macos-dmg-apfs-20261028`。第一次 run `40676524415` 因 push 提交标题不是固定系列名，在准备阶段被拦截，没有进入编译；仍保守计为 **1/4**。第二次触发提交标题与系列一致，累计 **2/4**（自动预算查询按系列只看到这次的 1 个命名匹配 run，人工账本始终额外计入前次准备失败，不据此重置上限）。单元/ARM 本机工具测试不证明 Intel 性能收益。
+- 第 2 次 [Intel 验包 run 40676694577](https://github.com/nuwax-ai/nuwax-client/actions/runs/40676694577) 成功，验证源码 `d7f85aac5678d47ef9ff99402a28c176f2d3f040`。DMG 从开始到 blockmap 为 **74.82 秒**，DMG/ZIP 分发阶段共 **81.03 秒**；hdiutil create(APFS) **49.92s**、resize **2.71s**、attach **9.19s**、detach **0.19s**、convert(UDZO) **11.38s**。相对历史 Intel DMG 的 653.31 / 1183.69 秒，此轮约减少 **88.5% / 93.7%**；为真实 Intel 样本对比，不把它外推为整个发布流程的同比承诺。
+- CI 继续通过签名、公证及票据检查。私有产物仅上传 Actions artifact `12811984756`，共 1,648,201,721 字节；无 tag/Release/更新指针变更。下载后的完整镜像复核使用证据目录中的 `verify-private-mac.mjs`，校验 artifact 上下文中的 DMG/ZIP SHA256、只读挂载后的 APFS、Developer ID、Gatekeeper、公证票据、x64 架构及包内版本/前端 stamp，逐项结果输出 `private-packages/verified-mac-x64.json`。
+- 日志另证实既有私有验包顺序问题：缓存探测时尚未设置 `MACOSX_DEPLOYMENT_TARGET=12.0`，helper/capture MISS，随后编译却请求与发布命中相同的 helper key，导致 helper 冷编 **648s**。已将原有部署目标设置移至缓存探测前，不修改配方或编译目标；新增顺序断言改前失败，最终相关域 **38/38 通过**。这项调整不改变上述已经验过的签名包或 DMG 实现，不另起安装包验证。
+
+完整日志、历史耗时、私有产物和实包检查保存在 `/Users/apple/Documents/Codex/2026-10-28/macos-dmg-optimization/`。stable / Beta 共用的打包代码已通过 Intel 实包；真实安装体验仍由后续发布的安装包验收。

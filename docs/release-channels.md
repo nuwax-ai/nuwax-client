@@ -47,7 +47,11 @@ CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` �
 
 Windows 的 stable、beta 与 QA 打包共用 `configure-windows-output.mjs`，将 builder 输出放到 `RUNNER_TEMP/nw-<run>-<attempt>-<arch>`。来源记录、Release 上传和 QA staging 必须读取同一个 `NUWAX_WINDOWS_OUTPUT_DIR`，缺失时提前失败。完整版本仍注入应用与资产文件名，资源载荷保持完整。修改输出目录时须同时验证这些消费者；只设置 Git longpaths 不能保证 WiX 的原生文件访问支持长路径。
 
-macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆盖基座构建命令的 maximum。保留完整 DMG/ZIP、签名、公证和来源检查；较低压缩级别会增加包体。beta.4 已冻结的 workflow 尚未包含此对齐，后续 tag 生效；实际 SDK 25.1.8 的 ZIP/7z 参数回归防止再次遗漏。
+macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆盖基座构建命令的 maximum。保留完整 DMG/ZIP、签名、公证和来源检查；较低压缩级别会增加包体。实际 SDK 25.1.8 的 ZIP/7z 参数回归防止再次遗漏。
+
+公证后的安装包统一由 `release-mac-notarization.mjs` 生成。该入口在单次打包进程的 PATH 中提供临时 hdiutil 包装器，将 Intel 的 UDRW 中间镜像从 HFS+ 改为 APFS，保留现有 UDZO 压缩和完整应用。ARM 的 APFS 路径保持不变。包装器只透传系统工具的标准输出，分段耗时单独收集，结束后打印 create / resize / attach / detach / convert 耗时并清理临时文件；Intel 成功路径须确认真实执行过 APFS 中间镜像创建。打包前后继续检查应用签名与公证票据。stable、Beta 及私有验包共用该实现，已冻结的旧 tag 不变。
+
+`package-validation.yml` 可选择 `mac-x64`，使用 `macos-26-intel` 原生签名验包；沿用既有 Beta/Stable 基线版本和四次启动限制，只上传私有 Actions artifacts，不创建 Release 或推进更新指针。
 
 版本解析由 `release-version.mjs` 共用，CLI 编排在 `client/release.mjs`，来源核验在 `release-provenance.mjs`，镜像指针事务在 `publish-release-pointers.mjs`。签名机只处理安装包，安装验收和镜像发布由外层负责。
 

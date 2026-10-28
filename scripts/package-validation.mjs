@@ -24,7 +24,9 @@ export function validationIdentity(cwd, env = process.env) {
   if (!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || sha !== env.GITHUB_SHA) throw new Error('验证源码不是冻结的 workflow SHA');
   if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '') || !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ATTEMPT ?? '')) throw new Error('缺少有效 run id / attempt');
   const platforms = { both: [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }, { runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
-    'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }], 'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
+    'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }],
+    'mac-x64': [{ runner: 'macos-26-intel', platform: 'darwin', arch: 'x64' }],
+    'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
   const selectedPlatforms = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
   if (!selectedPlatforms) throw new Error('未知验证平台');
   const matrix = selectedPlatforms.map(item => ({ ...item, baselineTag: target.tag }));
@@ -35,7 +37,7 @@ export function validationIdentity(cwd, env = process.env) {
     if (!matrix.some(item => item.platform === 'darwin') || previous.channel !== target.channel ||
         compareReleaseVersions(previous.version, target.version) >= 0) throw new Error('Mac 升级基线须为同通道已存在的较低版本');
     gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${previous.tag}^{commit}`);
-    matrix.push({ runner: 'macos-latest', platform: 'darwin', arch: 'arm64', baselineTag: previous.tag });
+    matrix.push({ ...selectedPlatforms.find(item => item.platform === 'darwin'), baselineTag: previous.tag });
   }
   const baseline = parseReleaseTag(env.VALIDATION_PACKAGE_BASELINE_TAG || target.tag);
   if (!matrix.some(item => item.baselineTag === baseline.tag)) throw new Error('构建版本不在冻结验证矩阵中');
@@ -84,7 +86,7 @@ export async function checkValidationBudget(identity, env = process.env, fetcher
 }
 
 export async function stageValidation(cwd, output, stage, identity, platform, signing = null) {
-  if (!['darwin', 'win32'].includes(platform)) throw new Error('验证仅支持 Mac ARM64 / Windows x64 EXE');
+  if (!['darwin', 'win32'].includes(platform)) throw new Error('验证仅支持 Mac ARM64/x64 / Windows x64 EXE');
   const entries = fs.readdirSync(output, { withFileTypes: true });
   if (platform === 'win32' && entries.some(entry => entry.isFile() && /\.msi$/i.test(entry.name))) throw new Error('Windows 验证不应生成 MSI');
   const packages = entries.filter(entry => entry.isFile() && (platform === 'win32' ? /\.exe$/i : /\.(zip|dmg)$/i).test(entry.name));
