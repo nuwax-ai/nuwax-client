@@ -213,6 +213,20 @@ async function settled(): Promise<void> {
 }
 
 describe("IM receiver local HTTP/WebSocket integration", () => {
+  it("restores the sound preference before IM UI mount and persists changes independently of banners", async () => {
+    const backend = await localBackend();
+    mocks.settings.set("nuwax.im.messageSound.enabled", false);
+    await start(backend);
+    expect(mocks.nativeOptions!.isMessageSoundEnabled!()).toBe(false);
+    mocks.settings.set("nuwax.im.messageSound.enabled", true);
+    expect(mocks.nativeOptions!.isMessageSoundEnabled!()).toBe(true);
+    mocks.settings.set("nuwax.im.messageSound.enabled", false);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+    expect(mocks.nativeOptions!.isNotificationAllowed!()).toBe(true);
+    expect(mocks.nativeOptions!.isMessageSoundEnabled!()).toBe(false);
+  });
   it.each([
     ["capture", "file:///app/capture.html", false],
     ["Computer Use", "file:///app/computer-use.html", false],

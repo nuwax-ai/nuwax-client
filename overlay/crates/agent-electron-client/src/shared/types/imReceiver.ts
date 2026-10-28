@@ -3,6 +3,8 @@ export type {
   HostImBridge as IMReceiverBridge,
 } from './hostBridge';
 
+export const IM_MESSAGE_SOUND_SETTING = "nuwax.im.messageSound.enabled";
+
 export const IM_IPC_CHANNELS = {
   NOTIFICATION_ENABLED: "nuwax:im:notify:enabled",
   UNREAD_SNAPSHOT: "nuwax:im:unread:snapshot",
