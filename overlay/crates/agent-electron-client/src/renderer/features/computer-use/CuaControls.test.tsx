@@ -36,7 +36,7 @@ describe("Computer Use controls", () => {
     expect(render()).toBe("");
     harness.cursor = 0;
     harness.states[0] = { ...harness.states[0], presentationConversationId: "A" };
-    expect(render()).toContain("Claw.Cua.stop");
+    expect(render()).toContain("Claw.Cua.pause");
   });
   it("leaves multiwindow floating controls to the host PiP instead of adding a second panel", () => {
     harness.states[0] = { ...harness.states[0], multiwindow: true, tasks: [] };
@@ -58,10 +58,10 @@ describe("Computer Use controls", () => {
     expect(html).not.toContain("Claw.Cua.multiwindow.title");
     expect(html).not.toContain("Claw.Settings.computerUse.diagnostics");
   });
-  it("keeps emergency stop enabled during another pending operation", () => {
+  it("keeps pause disabled during another pending operation without exposing stop", () => {
     harness.states[3] = true;
     expect(render()).not.toContain("Claw.Cua.shortcutUnavailable");
-    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop").disabled).toBeUndefined();
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop")).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause").disabled).toBe(true);
   });
   it("shows stopping until input has actually stopped", () => {
@@ -93,33 +93,34 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "stopped", controlPending: true, reason: "userStopped" };
     const html = render();
     expect(html).toContain("Claw.Cua.stopping");
-    expect(html).toContain("Claw.Cua.stop");
+    expect(html).not.toContain("Claw.Cua.stop");
     expect(html).not.toContain("Claw.Cua.reason.userStopped");
-    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop")?.disabled).toBeUndefined();
+    expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop")).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause")).toBeUndefined();
   });
-  it("leaves stop on screen when the helper did not confirm it stopped", () => {
+  it("shows the helper failure without reintroducing a stop button", () => {
     harness.states[0] = { ...harness.states[0], phase: "failed", reason: "helperStillRunning" };
     const html = render();
     expect(html).toContain("Claw.Cua.reason.helperStillRunning");
-    expect(html).toContain("Claw.Cua.stop");
+    expect(html).not.toContain("Claw.Cua.stop");
   });
   it("keeps the control bar hidden without a task", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
     expect(render()).toBe("");
   });
-  it("keeps takeover, stop and Computer Use off on the compact card", async () => {
+  it("keeps takeover, pause and Computer Use off on the compact card without stop", async () => {
     Object.assign(api, { takeOver: vi.fn(async () => ({ success: true })), setEnabled: vi.fn(async () => ({ success: true })) });
     const html = render();
     expect(html).toContain('data-phase="running"');
     const takeover = harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.takeover");
     await takeover.onClick();
     expect((api as any).takeOver).toHaveBeenCalledOnce();
-    await harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop").onClick();
-    expect(api.stop).toHaveBeenCalledOnce();
+    await harness.buttons.find(b => b["aria-label"] === "Claw.Cua.pause").onClick();
+    expect(api.pause).toHaveBeenCalledOnce();
+    expect(api.stop).not.toHaveBeenCalled();
     const off = harness.buttons.find(b => b["aria-label"] === "Claw.Settings.computerUse.enableOff");
     expect(off.children).toBeUndefined(); expect(off.icon).toBeDefined();
-    expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop").children).toBeUndefined();
+    expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop")).toBeUndefined();
     expect(html).toContain("Claw.Settings.computerUse.enableOff");
     expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close")).toBeUndefined();
   });

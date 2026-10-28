@@ -37,10 +37,10 @@ const mock = vi.hoisted(() => {
     setAlwaysOnTop = vi.fn(); setVisibleOnAllWorkspaces = vi.fn(); setIgnoreMouseEvents() {} setFocusable() {} show() { if (settings.clampOnShow) this.bounds = {...this.bounds,x:this.options.x + 66,y:this.options.y + 32,height:this.options.height - 32}; focusedId = this.webContents.id; timeline.push('show'); } focus() { focusedId = this.webContents.id; } showInactive() { if (settings.clampOnShow) this.bounds = {...this.bounds,x:this.options.x + 66,y:this.options.y + 32,height:this.options.height - 32}; timeline.push('inactive'); } setContentProtection = vi.fn(); hide = vi.fn();
   }
   const display = { id: 1, size: { width: 1200, height: 800 }, scaleFactor: 2, bounds: { x: 0, y: 0, width: 1200, height: 800 }, workArea: { x: 0, y: 0, width: 1200, height: 760 } };
-  const thumbnail = { isEmpty: () => false, getSize: () => ({ width: 2400, height: 1600 }), toDataURL: () => 'data:image/png;base64,fixture' };
+  const thumbnail = { isEmpty: () => false, getSize: () => ({ width: 2400, height: 1600 }), toDataURL: () => 'data:image/png;base64,fixture', toPNG: () => Buffer.from('validated PNG') };
   const displays = [display];
   const cursor = { x: 20, y: 20 };
-  return { windows, settings, FakeWindow, display, displays, cursor, thumbnail, timeline, handlers, requests, windowSources, focused: () => focusedId, log: { error: vi.fn() } };
+  return { windows, settings, FakeWindow, display, displays, cursor, thumbnail, timeline, handlers, requests, windowSources, saveDialog: vi.fn(), writeFile: vi.fn(), focused: () => focusedId, log: { error: vi.fn() } };
 });
 vi.mock('electron', () => ({
   BrowserWindow: mock.FakeWindow,
@@ -53,7 +53,9 @@ vi.mock('electron', () => ({
   screen: { getAllDisplays: () => mock.displays, getDisplayMatching: () => mock.display, getCursorScreenPoint: () => mock.cursor, getDisplayNearestPoint: () => mock.displays.find(display => mock.cursor.x >= display.bounds.x && mock.cursor.x < display.bounds.x + display.bounds.width) ?? mock.display },
   ipcMain: { handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => mock.handlers.set(channel, listener), removeHandler: (channel: string) => mock.handlers.delete(channel), on: vi.fn(), removeListener: vi.fn() },
   nativeImage: { createFromDataURL: () => mock.thumbnail },
+  dialog: { showSaveDialog: mock.saveDialog },
 }));
+vi.mock('node:fs', () => ({ writeFileSync: mock.writeFile }));
 import { createCaptureWindows, type CaptureWindows } from './selectionWindows';
 import { resolveCaptureWindowPolicy } from './platforms/windowing';
 import { portalSource } from './platforms/sources';
@@ -64,6 +66,71 @@ const service = () => createCaptureService({
 });
 beforeEach(() => { mock.windows.length = 0; mock.displays.splice(0, mock.displays.length, mock.display); mock.cursor.x = 20; mock.cursor.y = 20; mock.timeline.length = 0; mock.handlers.clear(); mock.requests.length = 0; mock.windowSources.length = 0; mock.settings.loadError = null; mock.settings.clampOnShow = false; vi.clearAllMocks(); windows = createCaptureWindows({ platform: 'win32', portal: false, log: mock.log }); });
 afterEach(() => windows.dispose());
+
+describe('saving a still from the selection toolbar (2696)', () => {
+  const payload = { crop: { x: 0, y: 0, width: 2400, height: 1600 }, png: 'data:image/png;base64,fixture', save: true };
+  beforeEach(() => {
+    mock.saveDialog.mockReset().mockResolvedValue({ canceled: false, filePath: '/chosen/screenshot.png' });
+    mock.writeFile.mockReset();
+  });
+  async function start() {
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    void pending.catch(() => undefined);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    const owned = mock.windows[0];
+    const event = { sender: owned.webContents, senderFrame: owned.webContents.mainFrame };
+    const finish = (value: unknown = payload) => mock.handlers.get(CH.finish)!(event, value);
+    return { abort, pending, owned, event, finish };
+  }
+  it('writes the validated PNG only to the native dialog destination and completes capture', async () => {
+    const f = await start();
+    expect(await f.finish()).toBe(true);
+    expect(mock.saveDialog).toHaveBeenCalledOnce();
+    expect(mock.writeFile).toHaveBeenCalledWith('/chosen/screenshot.png', Buffer.from('validated PNG'));
+    expect(await f.pending).toMatchObject({ image: mock.thumbnail });
+  });
+  it('keeps selection open after cancel and allows a later save', async () => {
+    mock.saveDialog.mockResolvedValueOnce({ canceled: true });
+    const f = await start();
+    expect(await f.finish()).toBe(false);
+    expect(f.owned.destroyed).toBe(false);
+    expect(mock.writeFile).not.toHaveBeenCalled();
+    expect(await f.finish()).toBe(true);
+    expect(await f.pending).toMatchObject({ image: mock.thumbnail });
+  });
+  it('keeps selection open after a write failure and allows retry', async () => {
+    mock.writeFile.mockImplementationOnce(() => { throw new Error('disk full'); });
+    const f = await start();
+    await expect(Promise.resolve().then(() => f.finish())).rejects.toThrow('disk full');
+    expect(f.owned.destroyed).toBe(false);
+    expect(await f.finish()).toBe(true);
+    await f.pending;
+  });
+  it('does not open the dialog for an untrusted frame, invalid crop, or recording output', async () => {
+    windows.setActions('screenshot', ['screenshot', 'mp4']);
+    const f = await start();
+    expect(await mock.handlers.get(CH.finish)!({ ...f.event, senderFrame: { ...f.event.senderFrame } }, payload)).toBe(false);
+    expect(await f.finish({ ...payload, crop: { ...payload.crop, x: -1 } })).toBe(false);
+    expect(await f.finish({ ...payload, action: 'mp4' })).toBe(false);
+    expect(mock.saveDialog).not.toHaveBeenCalled();
+    expect(mock.writeFile).not.toHaveBeenCalled();
+    f.abort.abort(); await f.pending;
+  });
+  it('blocks duplicate confirmation and ignores a dialog result after cancellation', async () => {
+    let resolve!: (result: { canceled: boolean; filePath: string }) => void;
+    mock.saveDialog.mockReturnValue(new Promise(done => { resolve = done; }));
+    const f = await start();
+    const saving = f.finish();
+    await vi.waitFor(() => expect(mock.saveDialog).toHaveBeenCalledOnce());
+    expect(await f.finish()).toBe(false);
+    expect(await f.finish({ ...payload, save: false })).toBe(false);
+    f.abort.abort(); expect(await f.pending).toBeNull();
+    resolve({ canceled: false, filePath: '/chosen/stale.png' });
+    expect(await saving).toBe(false);
+    expect(mock.writeFile).not.toHaveBeenCalled();
+  });
+});
 
 describe('Linux portal source preview', () => {
   const image = { dataUrl: 'data:image/png;base64,frame', width: 100, height: 80,

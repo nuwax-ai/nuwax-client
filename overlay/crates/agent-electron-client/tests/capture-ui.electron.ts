@@ -66,9 +66,9 @@ app.whenReady().then(async () => {
   const click = async (selector: BrowserWindow, x: number, y: number) => {
     await mouse(selector, 'mouseDown', x, y); await mouse(selector, 'mouseUp', x, y);
   };
-  const key = async (selector: BrowserWindow, keyCode: string) => {
-    selector.webContents.sendInputEvent({ type: 'keyDown', keyCode });
-    selector.webContents.sendInputEvent({ type: 'keyUp', keyCode }); await delay();
+  const key = async (selector: BrowserWindow, keyCode: string, modifiers: Electron.KeyboardInputEvent['modifiers'] = []) => {
+    selector.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+    selector.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await delay();
   };
   const script = (selector: BrowserWindow, source: string) => selector.webContents.executeJavaScript(source);
   const tool = (selector: BrowserWindow, name: string) => script(selector, `document.querySelector('[data-action=${name}]').click()`);
@@ -134,6 +134,11 @@ app.whenReady().then(async () => {
   assert.equal((await editing(current)).display, 'block', '输入法确认候选词不能结束编辑');
   await key(current, 'Enter');
   assert.equal(current.isDestroyed(), false, '文字 Enter 不能确认整张截图');
+  assert.equal((await editing(current)).display, 'block', 'Enter 应换行并保持文字编辑');
+  assert.equal((await editing(current)).value, 'T文字 Test\n');
+  await current.webContents.insertText('第二行\n\n第四行');
+  assert.equal((await editing(current)).value, 'T文字 Test\n第二行\n\n第四行');
+  await key(current, 'Enter', ['control']);
   assert.equal((await editing(current)).display, 'none');
   await tool(current, 'undo');
   assert.equal(await script(current, `document.querySelector('[data-action=undo]').disabled`), true, '失焦和 Enter 不能重复保存同一条文字');
@@ -181,19 +186,19 @@ app.whenReady().then(async () => {
   pending = windows.captureStill(new AbortController().signal);
   const textWindow = (await prepared())[1];
   await tool(textWindow, 'screen'); await delay(); await tool(textWindow, 'text'); await click(textWindow, 100, 100);
-  await textWindow.webContents.insertText('原文字'); await key(textWindow, 'Enter');
+  await textWindow.webContents.insertText('原文字'); await key(textWindow, 'Enter', ['control']);
   const originalText = await frame(textWindow);
   await click(textWindow, 108, 108);
   assert.equal((await editing(textWindow)).value, '原文字', '点击已有文字必须载入原内容');
-  await textWindow.webContents.insertText('修改完成'); await key(textWindow, 'Enter');
+  await textWindow.webContents.insertText('修改完成'); await key(textWindow, 'Enter', ['control']);
   const editedText = await frame(textWindow); assert.notEqual(editedText, originalText);
   await click(textWindow, 108, 108); assert.equal((await editing(textWindow)).value, '修改完成');
   await textWindow.webContents.insertText('取消本次修改'); await key(textWindow, 'Escape');
   assert.equal(await frame(textWindow), editedText, '取消重编辑必须恢复原内容');
-  await click(textWindow, 108, 108); await key(textWindow, 'Enter');
+  await click(textWindow, 108, 108); await key(textWindow, 'Enter', ['control']);
   await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), originalText, '不改内容的再次确认不能增加历史');
   await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), editedText);
-  await click(textWindow, 108, 108); await key(textWindow, 'Enter');
+  await click(textWindow, 108, 108); await key(textWindow, 'Enter', ['control']);
   const fontPoint = await script(textWindow, `(()=>{const r=document.querySelector('[data-action=fontSize]').getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`);
   await click(textWindow, fontPoint[0], fontPoint[1]);
   await script(textWindow, `document.querySelector('[data-action=fontSize]').select()`);
@@ -201,7 +206,7 @@ app.whenReady().then(async () => {
   const resizedText = await frame(textWindow); assert.notEqual(resizedText, editedText, '字号修改必须改变实际画布');
   await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), editedText);
   await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), resizedText);
-  await click(textWindow, 108, 108); await key(textWindow, 'Enter');
+  await click(textWindow, 108, 108); await key(textWindow, 'Enter', ['control']);
   await clickControl(textWindow, '.fontPreset[data-size="24"]');
   const presetText = await frame(textWindow); assert.notEqual(presetText, resizedText, '字号快捷按钮必须修改已选中的文字');
   assert.equal(await script(textWindow, `document.querySelector('[data-action=fontSize]').value`), '24');
@@ -211,7 +216,7 @@ app.whenReady().then(async () => {
   const movedText = await frame(textWindow); assert.notEqual(movedText, presetText, '拖动文字应移动对象而非开启空输入框');
   await tool(textWindow, 'undo'); assert.equal(await frame(textWindow), presetText);
   await tool(textWindow, 'redo'); assert.equal(await frame(textWindow), movedText);
-  await click(textWindow, 158, 138); await key(textWindow, 'Enter');
+  await click(textWindow, 158, 138); await key(textWindow, 'Enter', ['control']);
   assert.equal(await visible(textWindow, '.fontSizeControl'), true);
   assert.equal(await visible(textWindow, '.widthControl'), false, '文字工具不应显示线宽');
   await checkDock(textWindow); await saveScreenshot(textWindow, 'annotation-text');
