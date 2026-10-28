@@ -202,17 +202,35 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     controllers.add(controller);
     presenting++;
     void request(snapshotSession, `/api/instant-message/conversations/${encodeURIComponent(convId)}`, controller.signal)
-      .then(conv => {
+      .then(async conv => {
         const blocked = controller.signal.aborted ? "cancelled" : !item.current() ? "session-changed" : presentationBlock();
         if (blocked) { decision(item.trace, blocked); return; }
         const mentioned = item.body.mentionAll === true ||
           (Array.isArray(item.body.mentionUserIds) && item.body.mentionUserIds.some((id: unknown) => String(id) === item.selfId));
         if (conv.dnd === true && !mentioned) { decision(item.trace, "dnd"); return; }
         const group = [2, 4].includes(Number(conv.convType));
-        const title = String(group ? conv.name || item.body.senderName || "IM" : item.body.senderName || conv.peerName || conv.name || "IM");
-        const body = String(item.body.digest || "").replace(/<[^>]*>/g, "").replace(/[\r\n]+/g, " ").slice(0, 200);
         const convType = Number.isInteger(Number(conv.convType)) ? Number(conv.convType) : undefined;
         const senderType = Number.isInteger(Number(item.body.senderType)) ? Number(item.body.senderType) : undefined;
+        let senderDisplayName: string | undefined;
+        if (convType === 1 && (senderType === undefined || senderType === 1)) {
+          // IM 通讯录的 displayName 按备注 > 昵称 > 账号名生成；消息快照可能仍是旧账号名。
+          // 每次展示现查，避免修改备注/昵称后继续命中旧名称；旧协议可能没有 senderType。
+          const senderId = item.body.senderId ?? conv.peerUserId;
+          const contacts = await request(snapshotSession, "/api/instant-message/contacts", controller.signal)
+            .catch(error => {
+              if (error instanceof IMReceiverError) throw error;
+              return undefined;
+            });
+          const contact = (Array.isArray(contacts?.items) ? contacts.items : [])
+            .find((row: any) => row?.userId != null && String(row.userId) === String(senderId));
+          senderDisplayName = [contact?.displayName, contact?.remark, contact?.nickName, contact?.userName]
+            .find((name: unknown) => typeof name === "string" && name.trim())?.trim();
+        }
+        // 查询通讯录期间可能切账号、锁屏、关闭通知或将业务窗口切回前台。
+        const afterLookup = controller.signal.aborted ? "cancelled" : !item.current() ? "session-changed" : presentationBlock();
+        if (afterLookup) { decision(item.trace, afterLookup); return; }
+        const title = String(group ? conv.name || item.body.senderName || "IM" : senderDisplayName || conv.peerName || item.body.senderName || conv.name || "IM");
+        const body = String(item.body.digest || "").replace(/<[^>]*>/g, "").replace(/[\r\n]+/g, " ").slice(0, 200);
         const msgType = typeof item.body.msgType === "string" && item.body.msgType.trim() ? item.body.msgType.trim() : undefined;
         const spaceId = conv.spaceId !== undefined && conv.spaceId !== null && String(conv.spaceId).trim() ? String(conv.spaceId).trim() : undefined;
         const agentId = senderType === 2 && item.body.senderId !== undefined && item.body.senderId !== null && String(item.body.senderId).trim()

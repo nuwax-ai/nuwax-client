@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   hostCommand: vi.fn(), info: vi.fn(), warn: vi.fn(),
   ignoreAbortPath: "",
   nativeOptions: null as IMNativePresentationOptions | null,
-  native: { setUnreadCount: vi.fn(), showMessage: vi.fn(() => true), clear: vi.fn(), dispose: vi.fn() },
+  native: { setUnreadCount: vi.fn(), showMessage: vi.fn((_details: Record<string, unknown>) => true), clear: vi.fn(), dispose: vi.fn() },
 }));
 
 vi.mock("electron", async () => {
@@ -101,12 +101,14 @@ async function localBackend() {
   const transports = new Set<Socket>();
   const state = {
     unread: { total: 9, dndTotal: 2 },
-    conversation: { dnd: false, convType: 4, name: "Team" },
+    conversation: { dnd: false, convType: 4, name: "Team" } as { dnd: boolean; convType: number; name: string; peerName?: string },
+    contacts: { items: [] } as { items: Array<{ userId: string | number; remark?: string | null; displayName?: string; nickName?: string | null; userName?: string | null }> },
     registerReject: null as { code: string; status: number; rawBody?: string } | null,
     upgradeCookie: null as string | null,
     connectReject: null as string | null,
     unreadHandler: null as ((response: ServerResponse) => void) | null,
     conversationHandler: null as ((response: ServerResponse) => void) | null,
+    contactsHandler: null as ((response: ServerResponse) => void) | null,
   };
   const server = http.createServer(async (request, response) => {
     let text = "";
@@ -123,6 +125,8 @@ async function localBackend() {
       if (state.unreadHandler) state.unreadHandler(response); else reply(response, state.unread);
     } else if (path.startsWith("/api/instant-message/conversations/")) {
       if (state.conversationHandler) state.conversationHandler(response); else reply(response, state.conversation);
+    } else if (path === "/api/instant-message/contacts") {
+      if (state.contactsHandler) state.contactsHandler(response); else reply(response, state.contacts);
     } else reply(response, null, "unexpected_test_route", 404);
   });
   server.on("connection", (socket) => {
@@ -213,6 +217,98 @@ async function settled(): Promise<void> {
 }
 
 describe("IM receiver local HTTP/WebSocket integration", () => {
+  it.each(["", ',"senderType":1'])("uses the latest direct-contact remark after rename and clear (sender type: %s)", async senderType => {
+    const backend = await localBackend();
+    backend.state.conversation = { dnd: false, convType: 1, name: "", peerName: "PeerNick" };
+    backend.state.contacts.items = [{ userId: "9223372036854775804", remark: "  测试备注一  ", nickName: "联系人昵称", userName: "18008056121" }];
+    await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage("9223372036854775800", senderType);
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(1));
+    expect(mocks.native.showMessage.mock.calls[0][0].title).toBe("测试备注一");
+    backend.state.contacts.items[0].remark = "测试备注二";
+    backend.sendMessage("9223372036854775801", senderType);
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(2));
+    expect(mocks.native.showMessage.mock.calls[1][0].title).toBe("测试备注二");
+    backend.state.contacts.items[0].remark = "";
+    backend.sendMessage("9223372036854775802", senderType);
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(3));
+    expect(mocks.native.showMessage.mock.calls[2][0].title).toBe("联系人昵称");
+    backend.state.contacts.items[0].nickName = "修改后的昵称";
+    backend.sendMessage("9223372036854775803", senderType);
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(4));
+    expect(mocks.native.showMessage.mock.calls[3][0].title).toBe("修改后的昵称");
+    expect(backend.requests.filter(request => request.path.endsWith("/contacts"))).toHaveLength(4);
+  });
+
+  it.each([
+    { fields: { displayName: "  11  ", nickName: "原昵称", userName: "赵立坤" }, title: "11" },
+    { fields: { remark: "  11  ", nickName: "原昵称", userName: "赵立坤" }, title: "11" },
+    { fields: { remark: " ", nickName: "  当前昵称  ", userName: "赵立坤" }, title: "当前昵称" },
+    { fields: { nickName: " ", userName: "  赵立坤  " }, title: "赵立坤" },
+    { fields: { displayName: " ", remark: " ", nickName: " ", userName: " " }, title: "PeerNick" },
+  ])("uses the IM display name as the direct notification title: $title", async ({ fields, title }) => {
+    const backend = await localBackend();
+    backend.state.conversation = { dnd: false, convType: 1, name: "", peerName: "PeerNick" };
+    backend.state.contacts.items = [{ userId: "9223372036854775804", ...fields }];
+    await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage(MSG_ID, ',"senderType":1');
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+    expect(mocks.native.showMessage.mock.calls[0][0].title).toBe(title);
+  });
+
+  it.each(["unknown", "unavailable"])("falls back to the current conversation name when contacts are %s and leaves group titles intact", async mode => {
+    const backend = await localBackend();
+    backend.state.conversation = { dnd: false, convType: 1, name: "", peerName: "PeerNick" };
+    backend.state.contacts.items = [{ userId: 1, remark: "别人的备注" }];
+    if (mode === "unavailable") backend.state.contactsHandler = response => reply(response, null, "unavailable", 503);
+    await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage("9223372036854775800", ',"senderType":1');
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(1));
+    expect(mocks.native.showMessage.mock.calls[0][0].title).toBe("PeerNick");
+    backend.state.conversation = { dnd: false, convType: 4, name: "Team" };
+    backend.sendMessage("9223372036854775801", ',"senderType":1');
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(2));
+    expect(mocks.native.showMessage.mock.calls[1][0].title).toBe("Team");
+    expect(backend.requests.filter(request => request.path.endsWith("/contacts"))).toHaveLength(1);
+  });
+
+  it.each(["account", "foreground", "disabled", "lock"])("suppresses a late contact-name response after %s changes", async change => {
+    const backend = await localBackend();
+    backend.state.conversation = { dnd: false, convType: 1, name: "" };
+    let held: ServerResponse | null = null;
+    backend.state.contactsHandler = response => { held = response; };
+    mocks.ignoreAbortPath = "/api/instant-message/contacts";
+    const { api, main } = await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage(MSG_ID, ',"senderType":1');
+    await vi.waitFor(() => expect(held).not.toBeNull());
+    if (change === "account") { api.stopIMReceiver(); mocks.epoch++; api.startIMReceiver("account-2"); }
+    else if (change === "foreground") main.isFocused.mockReturnValue(true);
+    else if (change === "disabled") api.setIMNotificationEnabled(false);
+    else mocks.powerEvents!.emit("lock-screen");
+    reply(held!, { items: [{ userId: "9223372036854775804", remark: "旧账号的备注" }] });
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", {
+      trace: 1, reason: change === "foreground" ? "business-foreground" : "cancelled",
+    }));
+    expect(mocks.native.showMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])("does not show a fallback notification when contact lookup rejects authentication (%s)", async status => {
+    const backend = await localBackend();
+    backend.state.conversation = { dnd: false, convType: 1, name: "" };
+    backend.state.contactsHandler = response => reply(response, null, "IM_10401", status);
+    await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    backend.sendMessage(MSG_ID, ',"senderType":1');
+    await vi.waitFor(() => expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] notification", {
+      trace: 1, reason: "conversation-lookup-failed",
+    }));
+    expect(mocks.native.showMessage).not.toHaveBeenCalled();
+  });
+
   it("restores the sound preference before IM UI mount and persists changes independently of banners", async () => {
     const backend = await localBackend();
     mocks.settings.set("nuwax.im.messageSound.enabled", false);
