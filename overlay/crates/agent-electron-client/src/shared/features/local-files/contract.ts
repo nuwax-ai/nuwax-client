@@ -1,5 +1,5 @@
 export const LOCAL_FILES_SCHEME = 'nuwax-local';
-export const LOCAL_FILES_API_VERSION = 2;
+export const LOCAL_FILES_API_VERSION = 3;
 export const LOCAL_FILES_ENABLED_SETTING = 'features.local-files.enabled';
 export const LOCAL_FILES_ENABLED_BY_DEFAULT = true;
 export const LOCAL_FILES_IPC = {
@@ -9,11 +9,13 @@ export const LOCAL_FILES_IPC = {
   PREPARE_PREVIEW: 'localFiles:preparePreview', RELEASE_PREVIEW: 'localFiles:releasePreview',
   OPEN_PATH: 'localFiles:openPath', REVEAL_IN_FOLDER: 'localFiles:revealInFolder',
   UPDATE_FILES: 'localFiles:updateFiles',
+  BEGIN_TRANSFER: 'localFiles:beginTransfer', WRITE_TRANSFER_CHUNK: 'localFiles:writeTransferChunk',
+  COMMIT_TRANSFER: 'localFiles:commitTransfer',
   SAVE_FILE: 'localFiles:saveFile', EXPORT_WORKSPACE: 'localFiles:exportWorkspace', CANCEL: 'localFiles:cancel',
 } as const;
 export type { HostLocalFilesBridge, LocalFilesErrorCode, LocalFilesResult, LocalFilesCapabilities,
   LocalFilesContextInput, LocalFilesContext, LocalFileTarget, LocalFilesListOptions, LocalFilesSearchOptions,
-  LocalFileEntry, LocalFilesList, LocalFileMetadata, LocalFilePreview, LocalFileSaveOptions, LocalFileSaved, LocalFileChange,
+  LocalFileEntry, LocalFilesList, LocalFileMetadata, LocalFilePreview, LocalFileSaveOptions, LocalFileSaved, LocalFileChange, LocalFileTransferInput,
 } from '@shared/types/hostBridge';
 
 /** Grant hosts are credentials; never log them or pass them as an HTTP referrer. */

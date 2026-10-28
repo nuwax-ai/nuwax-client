@@ -120,7 +120,7 @@ describe("filesystem paths and preview resources", () => {
     const full = await resourceResponse(new Request(url), resource);
     expect(full.status).toBe(200);
     expect(streams.size).toBe(1);
-    expect(full.headers.get("content-type")).toBe("text/plain");
+    expect(full.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(full.headers.get("content-length")).toBe("10");
     expect(full.headers.get("access-control-allow-origin")).toBe(
       resource.origin

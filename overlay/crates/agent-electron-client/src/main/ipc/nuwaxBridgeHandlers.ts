@@ -351,7 +351,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       getIdentity: () => {
         const registration = readSetting("auth.user_info") as { id?: unknown; currentDomain?: string } | null;
         const sandboxId = normalizeComputerSandboxId(registration?.id);
-        if (!currentTicket() || switching || !["starting", "ready"].includes(serviceState.phase) ||
+        // 本机文件身份独立于 Agent/file-server 的就绪状态。
+        if (!currentTicket() || switching ||
             registration?.currentDomain !== currentBusinessOrigin() || !sandboxId) return null;
         return { sandboxId, businessOrigins: [...trustedOrigins()] };
       },

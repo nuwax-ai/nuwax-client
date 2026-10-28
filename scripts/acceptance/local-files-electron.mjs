@@ -120,7 +120,7 @@ try {
   await fs.writeFile(path.join(workspace,'assets/app.js'),
     'window.addEventListener("load",()=>{document.body.dataset.ready="yes";parent.postMessage({type:"local-html-ready",bridge:typeof window.NuwaClawBridge,electron:typeof window.electronAPI,color:getComputedStyle(document.body).color},"*")});');
   await fs.writeFile(path.join(workspace,'assets/style.css'),'body {color:rgb(31,63,127)}');
-  await fs.writeFile(path.join(workspace,'index.html'),'<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="assets/style.css"><script src="assets/app.js"></script><body>Relative resources</body>');
+  await fs.writeFile(path.join(workspace,'index.html'),'<!doctype html><link rel="stylesheet" href="/api/computer/static/1/assets/style.css?customTargetDir="><script src="/api/computer/static/1/assets/app.js"></script><body>中文本机预览</body>');
   const media=await fs.open(path.join(workspace,'large.mp4'),'w');await media.truncate(110*1024*1024);await media.close();
   await fs.copyFile(path.join(temp,'playback.mp4'),path.join(workspace,'playback.mp4'));
   await fs.copyFile(path.join(temp,'chinese.pdf'),path.join(workspace,'chinese.pdf'));
@@ -227,7 +227,7 @@ try {
   pass('offline Chinese PDF renders actual canvas pixels with bundled character maps',renderedPdf);
   const html=(await localCall(owner,'preparePreview',{contextId:bridgeContext.contextId,path:'index.html'})).data;
   await evaluate(owner,'window.fixtureMessages=[];window.addEventListener("message",event=>window.fixtureMessages.push(event.data));const iframe=document.createElement("iframe");iframe.sandbox="allow-scripts allow-same-origin";iframe.src='+JSON.stringify(html.url)+';iframe.id="local-preview";document.body.appendChild(iframe);');
-  await waitFor(()=>evaluate(owner,'window.fixtureMessages.some(message=>message.type==="local-html-ready")'),'HTML CSS JS relative resources');
+  await waitFor(()=>evaluate(owner,'window.fixtureMessages.some(message=>message.type==="local-html-ready")'),'HTML legacy same-conversation CSS and JS resources');
   const htmlMessage=await evaluate(owner,'window.fixtureMessages.find(message=>message.type==="local-html-ready")');
   assert.equal(htmlMessage.bridge,'undefined');assert.equal(htmlMessage.electron,'undefined');assert.equal(htmlMessage.color,'rgb(31, 63, 127)');
   pass('sandboxed local HTML loads relative CSS/JS and has no host bridge');

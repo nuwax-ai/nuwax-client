@@ -45,3 +45,8 @@
 - base:test 会清 overlay，必须在隔离副本运行；商业测试需同步 overlay 后单独运行，提测还须验证真实安装包。
 - 双轨门禁命令：社区 `npm run base:test`、商业 `npm run test:commercial`（--no-env：同步 overlay 不注 env）；CI（ci.yml）双 job 各跑一轨。
 - 提交基座前必须 `npm run check:pin`：基座脏文件/staged 不得混入 overlay 托管路径（CI 另有 --remote origin/main 字节级防线）。分支模型为单主干（feat 线 PR 进 main，pin 跟随 main），勿 rebase 改写已 pin 的基座 SHA。
+
+## 文件面板回归边界
+
+- 文件入口按 `specs/local-file-management.md` 分工；文件树面板功能与会话附件发送是两条链路，会话框此次仅含目录选择。
+- 修改本机来源或恢复逻辑时，须覆盖“同电脑新会话服务未就绪”和“首次工作区解析失败后主动重试”；仅测已成功解析的会话，不能证明失败不回云端或重试可恢复。

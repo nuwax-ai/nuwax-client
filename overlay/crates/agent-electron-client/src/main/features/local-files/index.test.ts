@@ -32,6 +32,26 @@ import {
 
 let root: string;
 const runtimes: LocalFilesRuntime[] = [];
+
+it('keeps chunk transfers, cancellation and commit bound to the owning document and context', async () => {
+  const h = harness();
+  const context = await h.resolve();
+  const input = { kind: 'files', files: [{ path: 'uploaded.bin', size: 3 }] };
+  const started = await h.invoke(IPC.BEGIN_TRANSFER, h.one.event, context.contextId, input);
+  expect(started.success).toBe(true);
+  const id = started.data.transferId;
+  expect(await h.invoke(IPC.WRITE_TRANSFER_CHUNK, h.two.event, id, 0, 0, new Uint8Array([1, 2, 3])))
+    .toMatchObject({ success: false, code: 'untrusted' });
+  await h.invoke(IPC.CANCEL, h.two.event, id);
+  expect(await h.invoke(IPC.WRITE_TRANSFER_CHUNK, h.one.event, id, 0, 0, new Uint8Array([1, 2, 3])))
+    .toMatchObject({ success: true });
+  expect(await h.invoke(IPC.COMMIT_TRANSFER, h.one.event, id)).toMatchObject({ success: true, data: { count: 1 } });
+  expect(await readFile(path.join(root, 'uploaded.bin'))).toEqual(Buffer.from([1, 2, 3]));
+  const next = await h.invoke(IPC.BEGIN_TRANSFER, h.one.event, context.contextId, input);
+  await h.invoke(IPC.RELEASE_CONTEXT, h.one.event, context.contextId);
+  expect(await h.invoke(IPC.COMMIT_TRANSFER, h.one.event, next.data.transferId))
+    .toMatchObject({ success: false, code: 'expired' });
+});
 beforeEach(async () => {
   root = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "nuwax-local-main-"))
@@ -151,7 +171,7 @@ function harness() {
     ),
   };
   const runtime = new LocalFilesRuntime(
-    ctx,
+    ctx as unknown as FeatureContext,
     deps as unknown as ConstructorParameters<typeof LocalFilesRuntime>[1]
   );
   runtimes.push(runtime);
@@ -318,7 +338,7 @@ describe("local files IPC/context ownership", () => {
       trusted: false,
     } as unknown as IpcMainInvokeEvent;
     expect(await h.invoke(IPC.GET_CAPABILITIES, untrusted)).toEqual({
-      apiVersion: 2,
+      apiVersion: 3,
       available: false,
       writable: false,
     });

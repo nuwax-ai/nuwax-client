@@ -27,6 +27,7 @@ import type {
   LocalFileSaveOptions,
   LocalFileSaved,
   LocalFileChange,
+  LocalFileTransferInput,
 } from "@shared/features/local-files/contract";
 import type { DesktopFeature, FeatureContext } from "../_kit/types";
 import {
@@ -45,6 +46,7 @@ import {
   type FileOperation,
 } from "./operations";
 import { applyFileChanges } from "./mutations";
+import { LocalFileTransfer } from "./transfers";
 
 type Owner = {
   event: IpcMainInvokeEvent;
@@ -155,6 +157,8 @@ export class LocalFilesRuntime {
   private epoch = 0;
   private disposed = false;
   private mutationQueue: Promise<void> = Promise.resolve();
+  private readonly transfers = new Map<string, { operation: Operation; transfer: LocalFileTransfer }>();
+  private pendingTransfers = 0;
 
   constructor(
     private readonly ctx: FeatureContext,
@@ -375,14 +379,36 @@ export class LocalFilesRuntime {
       const grant = this.grants.get(localGrantId(request.url) ?? "");
       if (!grant || !this.valid(grant.context))
         return new Response(null, { status: 403 });
-      return resourceResponse(request, {
+      let localRequest = request;
+      const url = new URL(request.url);
+      const legacy = /^\/api\/computer\/static\/([^/]+)\/(.*)$/.exec(
+        url.pathname
+      );
+      if (legacy) {
+        const root = url.searchParams.get("customTargetDir");
+        if (
+          legacy[1] !== grant.context.cId ||
+          (root && path.resolve(root) !== grant.root)
+        )
+          return new Response(null, { status: 403 });
+        url.pathname = `/${legacy[2]}`;
+        url.searchParams.delete("customTargetDir");
+        localRequest = new Request(url, request);
+      }
+      return resourceResponse(localRequest, {
         root: grant.root,
         origin: grant.context.owner.origin,
         streams: grant.streams,
-        onAccessError: error => {
-          void this.ctx.permissions?.onFileAccessError(error, () =>
-            this.grants.get(grant.id) === grant && this.valid(grant.context)
-          ).catch(error => this.ctx.log.warn("[LocalFiles] permission guide failed", error));
+        onAccessError: (error) => {
+          void this.ctx.permissions
+            ?.onFileAccessError(
+              error,
+              () =>
+                this.grants.get(grant.id) === grant && this.valid(grant.context)
+            )
+            .catch((error) =>
+              this.ctx.log.warn("[LocalFiles] permission guide failed", error)
+            );
         },
         valid: () =>
           this.grants.get(grant.id) === grant && this.valid(grant.context),
@@ -795,6 +821,93 @@ export class LocalFilesRuntime {
         this.deps.shell.showItemInFolder(info.path);
       }
     );
+    handle(
+      LOCAL_FILES_IPC.BEGIN_TRANSFER,
+      async (event, id: string, input: LocalFileTransferInput) => {
+        const context = this.context(event, id);
+        if (this.transfers.size + this.pendingTransfers >= 4)
+          throw new LocalFilesFailure("unavailable");
+        if (
+          input?.customTargetDir &&
+          path.resolve(input.customTargetDir) !== context.root
+        )
+          throw new LocalFilesFailure("permission-denied");
+        const operation = this.operation(context);
+        this.pendingTransfers++;
+        try {
+          const transfer = await LocalFileTransfer.create(input, operation);
+          this.check(context);
+          this.transfers.set(operation.id, { operation, transfer });
+          const timeout = setTimeout(
+            () => operation.controller.abort(),
+            10 * 60 * 1000
+          );
+          timeout.unref();
+          operation.controller.signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timeout);
+              const clean = transfer.dispose().finally(() => {
+                this.transfers.delete(operation.id);
+                this.operations.delete(operation.id);
+              });
+              this.pendingIO.add(clean);
+              void clean
+                .finally(() => this.pendingIO.delete(clean))
+                .catch(() => undefined);
+            },
+            { once: true }
+          );
+          return { transferId: operation.id };
+        } catch (error) {
+          operation.controller.abort();
+          this.operations.delete(operation.id);
+          throw error;
+        } finally { this.pendingTransfers--; }
+      }
+    );
+    handle(
+      LOCAL_FILES_IPC.WRITE_TRANSFER_CHUNK,
+      (event, id: string, index: number, offset: number, bytes: Uint8Array) => {
+        const entry = this.transfers.get(requireString(id));
+        if (!entry) throw new LocalFilesFailure("expired");
+        this.context(event, entry.operation.context.contextId);
+        return entry.transfer.write(index, offset, bytes);
+      }
+    );
+    handle(LOCAL_FILES_IPC.COMMIT_TRANSFER, async (event, id: string) => {
+      const entry = this.transfers.get(requireString(id));
+      if (!entry) throw new LocalFilesFailure("expired");
+      const context = this.context(event, entry.operation.context.contextId);
+      const work = this.mutationQueue.then(async () => {
+        this.check(context);
+        return entry.transfer.commit(
+          context.root,
+          context.cId,
+          context.input.userId === undefined
+            ? "local"
+            : scalar(context.input.userId),
+          this.ctx.workspace!.getFileServerPort(),
+          this.deps.fetch
+        );
+      });
+      this.mutationQueue = work.then(
+        () => undefined,
+        () => undefined
+      );
+      const pending = work.then(
+        () => undefined,
+        () => undefined
+      );
+      this.pendingIO.add(pending);
+      try {
+        return await work;
+      } finally {
+        entry.operation.controller.abort();
+        await entry.transfer.dispose();
+        this.pendingIO.delete(pending);
+      }
+    });
     handle(
       LOCAL_FILES_IPC.UPDATE_FILES,
       async (event, id: string, changes: LocalFileChange[]) => {

@@ -178,7 +178,9 @@ export async function resourceResponse(
     const info = await file.stat();
     if (!info.isFile()) throw new LocalFilesFailure("not-found");
     if (!resource.valid()) throw new LocalFilesFailure("expired");
-    headers.set("Content-Type", lookup(resolved) || "application/octet-stream");
+    const mime = lookup(resolved) || "application/octet-stream";
+    // Match the UTF-8 text preview path even when an HTML file has no charset meta tag.
+    headers.set("Content-Type", /^text\//.test(mime) ? `${mime}; charset=utf-8` : mime);
     headers.set("X-File-Size", String(info.size));
     let range: ByteRange | null;
     try {
