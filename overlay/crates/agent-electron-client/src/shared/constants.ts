@@ -444,6 +444,8 @@ export const I18N_KEYS = {
   },
   IM: {
     UNREAD_MESSAGES: "Claw.IM.unreadMessages",
+    MESSAGE_SOUND: "Claw.IM.messageSound",
+    MESSAGE_SOUND_DESC: "Claw.IM.messageSoundDesc",
   },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",

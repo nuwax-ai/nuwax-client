@@ -42,6 +42,17 @@ beforeEach(() => {
 });
 
 describe("settings:set host activity refresh", () => {
+  it("消息提示音只保存布尔值，重置时恢复默认，不改变其它设置", () => {
+    const set = mocks.handlers.get("settings:set")!;
+    const key = "nuwax.im.messageSound.enabled";
+    expect(set({}, key, "false")).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(set({}, key, false)).toBe(true);
+    expect(mocks.run).toHaveBeenCalledWith(key, "false");
+    expect(set({}, key, null)).toBe(true);
+    expect(mocks.run).toHaveBeenLastCalledWith(key);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
   it("本机文件开关独立保存布尔值，拒绝字符串 false，删除后由特性默认值接管", () => {
     const set = mocks.handlers.get("settings:set")!;
     expect(set({}, "features.local-files.enabled", "false")).toBe(false);

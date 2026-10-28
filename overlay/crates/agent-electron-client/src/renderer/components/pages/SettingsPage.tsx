@@ -33,6 +33,7 @@ import {
 import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
+import { MessageSoundSettings } from "../settings/MessageSoundSettings";
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -470,6 +471,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
           {t("Claw.Settings.system.title")}
         </div>
         <div className={styles.groupCard}>
+          <MessageSoundSettings t={t} Row={SettingsRow} />
           <SettingsRow
             label={t("Claw.Settings.system.autoLaunch")}
             desc={t("Claw.Settings.system.autoLaunchDesc", {

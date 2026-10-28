@@ -54,6 +54,7 @@ export interface IMNativePresentationOptions {
   getBusinessWindows?(): readonly BrowserWindow[];
   isSessionCurrent(sessionGeneration: number): boolean;
   isNotificationAllowed?(): boolean;
+  isMessageSoundEnabled?(): boolean;
   onNotificationClick?(target: IMNativeNotificationTarget): void;
   platform?: NodeJS.Platform;
   /** 测试可注入系统对象；macOS 使用现代原生 API，其余平台使用 Electron。 */
@@ -105,6 +106,7 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
   let lastAppliedWindow: BrowserWindow | null = null;
   let lastAppliedCount: number | null = null;
   let windowSync: ReturnType<typeof setImmediate> | null = null;
+  let lastSoundAt = -Infinity;
 
   function applyBadge(force = false): void {
     if (disposed) return;
@@ -210,10 +212,13 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
       // 前台已经读到的消息不在随后失焦或恢复连接时重新弹出。
       if (!notificationAllowed() || businessWindowFocused() || !backend.isSupported()) return false;
       const currentEpoch = epoch;
+      // 仅节流声音，通知横幅和未读角标仍按原链路更新。
+      const soundAllowed = options.isMessageSoundEnabled?.() !== false
+        && senderType !== 3 && msgType !== "system" && Date.now() - lastSoundAt >= 3000;
       const notification = backend.create({
         title: String(message.title).slice(0, 128),
         body: String(message.body).slice(0, 256),
-        silent: false,
+        silent: !soundAllowed,
       });
       const release = (close = false): void => {
         if (!notifications.delete(notification)) return;
@@ -277,6 +282,7 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
       });
       try {
         notification.show();
+        if (soundAllowed) lastSoundAt = Date.now();
         return true;
       } catch {
         release(true);
@@ -291,6 +297,7 @@ export function createIMNativePresentation(options: IMNativePresentationOptions)
 
   function clear(): void {
     epoch += 1;
+    lastSoundAt = -Infinity;
     for (const close of [...notifications.values()]) close();
     seenMessageKeys.clear();
     cachedImage = null;

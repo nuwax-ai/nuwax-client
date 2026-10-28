@@ -67,6 +67,43 @@ function message(msgId = "m1", sessionGeneration = 1): IMNativeMessage {
   return { sessionGeneration, msgId, convId: "9223372036854775807", title: "Team", body: "Hello" };
 }
 
+describe("IM message notification sounds", () => {
+  it("silences bursts across conversations for 3 seconds without dropping banners or unread counts", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10000);
+    try {
+      const fixture = setup();
+      for (let index = 0; index < 50; index++) {
+        fixture.presentation.showMessage({ ...message(`m${index}`), convId: `c${index}` });
+      }
+      expect(fixture.created).toHaveLength(50);
+      expect(fixture.created.filter(item => item.details.silent === false)).toHaveLength(1);
+      fixture.presentation.setUnreadCount(50);
+      expect(fixture.options.setDockBadge).toHaveBeenLastCalledWith("50");
+      now.mockReturnValue(12999);
+      fixture.presentation.showMessage(message("before-boundary"));
+      expect(fixture.created.at(-1)!.details.silent).toBe(true);
+      now.mockReturnValue(13000);
+      fixture.presentation.showMessage(message("at-boundary"));
+      expect(fixture.created.at(-1)!.details.silent).toBe(false);
+      fixture.presentation.dispose();
+    } finally { now.mockRestore(); }
+  });
+
+  it("applies the sound switch immediately and suppresses system sounds without consuming cooldown", () => {
+    let enabled = false;
+    const fixture = setup({ isMessageSoundEnabled: () => enabled });
+    fixture.presentation.showMessage(message("disabled"));
+    expect(fixture.created.at(-1)!.details.silent).toBe(true);
+    enabled = true;
+    fixture.presentation.showMessage({ ...message("system-sender"), senderType: 3 });
+    fixture.presentation.showMessage({ ...message("system-type"), msgType: "system" });
+    expect(fixture.created.every(item => item.details.silent)).toBe(true);
+    fixture.presentation.showMessage(message("enabled"));
+    expect(fixture.created.at(-1)!.details.silent).toBe(false);
+    fixture.presentation.dispose();
+  });
+});
+
 describe("IM native unread badge", () => {
   it("caps display at 99+ and clears only on an explicit zero/account cleanup", () => {
     const fixture = setup();
