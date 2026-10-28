@@ -1,0 +1,129 @@
+import { useSplashFloor } from "./bootTiming";
+import React, { useState, useEffect } from "react";
+import ReactDOM from "react-dom/client";
+import { ConfigProvider } from "antd";
+import enUS from "antd/locale/en_US";
+import zhCN from "antd/locale/zh_CN";
+import zhTW from "antd/locale/zh_TW";
+import zhHK from "antd/locale/zh_HK";
+import App from "./App";
+import i18n, { initSupportedLangs } from "./services/i18n"; // 初始化 i18next（自动检测浏览器语言）
+import { initI18n, getCurrentLang } from "./services/core/i18n"; // 初始化自定义 i18n 服务
+import { rootTheme } from "./styles/theme";
+import { AppIconLoading } from "./components/AppIconLoading";
+import "./index.css";
+
+// i18n 就绪标志（模块级别，由 initI18n 设置）
+let i18nReady = false;
+const i18nReadyListeners: Array<(ready: boolean) => void> = [];
+
+function onI18nReady(callback: (ready: boolean) => void) {
+  i18nReadyListeners.push(callback);
+}
+
+function notifyI18nReady(ready: boolean) {
+  i18nReady = ready;
+  i18nReadyListeners.forEach((cb) => cb(ready));
+}
+
+// 初始化 i18n（API 驱动 + 本地缓存）- 尽快开始
+Promise.all([initSupportedLangs(), initI18n()])
+  .then(async () => {
+    const lang = getCurrentLang();
+    try {
+      await i18n.changeLanguage(lang);
+    } catch {
+      // ignore i18next sync failure, keep app booting
+    }
+    notifyI18nReady(true);
+  })
+  .catch((error) => {
+    console.error(error);
+    notifyI18nReady(true);
+  });
+
+// antd locale 映射
+const antdLocales: Record<string, typeof zhCN> = {
+  en: enUS,
+  "en-us": enUS,
+  "en-gb": enUS,
+  zh: zhCN,
+  "zh-cn": zhCN,
+  "zh-hans": zhCN,
+  "zh-tw": zhTW,
+  "zh-hk": zhHK,
+};
+
+function resolveAntdLocale(lang: string) {
+  const normalized = String(lang || "").toLowerCase();
+  if (normalized.startsWith("zh-tw")) return zhTW;
+  if (normalized.startsWith("zh-hk")) return zhHK;
+  if (normalized.startsWith("zh")) return zhCN;
+  if (normalized.startsWith("en")) return enUS;
+
+  const exactMatch = antdLocales[normalized];
+  return exactMatch || zhCN;
+}
+
+function toHtmlLang(lang: string): string {
+  const normalized = String(lang || "").toLowerCase();
+  if (normalized.startsWith("zh-tw")) return "zh-TW";
+  if (normalized.startsWith("zh-hk")) return "zh-HK";
+  if (normalized.startsWith("zh")) return "zh-CN";
+  return "en-US";
+}
+
+function Main() {
+  const splashFloorMet = useSplashFloor();
+  const [antdLocale, setAntdLocale] = useState(zhCN);
+  const [ready, setReady] = useState(i18nReady);
+
+  // 动态更新 antd locale（所有渲染都会执行）
+  useEffect(() => {
+    const updateLocale = () => {
+      const lang = i18n.language || "zh-CN";
+      document.documentElement.lang = toHtmlLang(lang);
+      setAntdLocale(resolveAntdLocale(lang));
+    };
+
+    updateLocale();
+
+    // 监听语言变化
+    i18n.on("languageChanged", updateLocale);
+    return () => {
+      i18n.off("languageChanged", updateLocale);
+    };
+  }, []);
+
+  // 订阅 i18n 就绪状态
+  useEffect(() => {
+    if (i18nReady) {
+      setReady(true);
+      return;
+    }
+    onI18nReady(setReady);
+  }, []);
+
+  // i18n 未就绪时显示加载状态（所有 hooks 已经在上面执行完毕）。
+  // 与 App 内加载分支共用 AppIconLoading（图标扫光动效，等待态不出文案），
+  // 避免启动早期出现「先无图标、后带图标」的跳变。
+  if (!ready || !splashFloorMet) {
+    return (
+      <ConfigProvider locale={zhCN}>
+        <AppIconLoading />
+      </ConfigProvider>
+    );
+  }
+
+  return (
+    <ConfigProvider locale={antdLocale} theme={rootTheme}>
+      <App />
+    </ConfigProvider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <Main />
+  </React.StrictMode>,
+);
