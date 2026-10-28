@@ -12,6 +12,7 @@ import { IMReceiver, IMReceiverError, type IMReceiverSession } from "./imReceive
 import { createIMNativePresentation } from "./imNativePresentation";
 import { sendHostCommandToMainWindowGuests } from "./hostActivity";
 import type { IMUnreadSnapshot } from "@shared/types/imReceiver";
+import { IM_MESSAGE_SOUND_SETTING } from "@shared/types/imReceiver";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
 const json = JSONBigInt({storeAsString: true, strict: true});
@@ -61,6 +62,7 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     getBusinessWindows: businessWindows,
     isSessionCurrent: generation => receiver.isGenerationCurrent(generation),
     isNotificationAllowed: canPresent,
+    isMessageSoundEnabled: () => readSetting(IM_MESSAGE_SOUND_SETTING) !== false,
     onNotificationClick: (target) => {
       if (!receiver.isGenerationCurrent(target.sessionGeneration)) return;
       const { sessionGeneration, ...cmdTarget } = target;
