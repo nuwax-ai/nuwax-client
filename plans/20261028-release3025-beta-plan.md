@@ -1,6 +1,6 @@
 # 3.0.25 Beta 汇总
 
-状态：Beta.2 已于 2026-10-28 14:07（北京时间）公开发布；用户再次明确要求开始新 Beta，正在准备 Beta.3。
+状态：Beta.3 已于 2026-10-28 17:19（北京时间）公开发布，五平台及 29 个资产校验通过；用户再次要求开始新 Beta，正在准备 Beta.4。
 
 ## 范围
 
@@ -63,3 +63,12 @@
 - 外层脚本首轮 **454/456 通过**，另外 2 项因隔离副本未初始化前端契约源码而失败；检出已固定前端 pin 后，整个契约文件 **12/12 定向复测通过**，覆盖这两项。模块导入边界、`overlay:check`（0 待同步）、`check:pin`、`git diff --check` 均通过。测试依赖链接已移除，基座仅剩可逐字节核对的 overlay 同步产物。
 - 新说明 `release-notes/v3.0.25-beta.3.md` 明确本次增量与实机验收边界。通过标准 `npm run release -- --version 3.0.25-beta.3 --dry-run` 后启动同版本标准发布入口；不可变 tag、五平台门禁、安装包和镜像哈希遵循既有流程。
 - 本轮检查不等于 Beta.3 安装包验收；物理多屏/DPI、系统剪贴板与 Mac/Windows 系统发声继续交真实安装包验证。
+
+## Beta.4 冻结与发布准备（2026-10-28）
+
+- Beta.3 的发布 run `40656936243` 已成功，Release 于北京时间 17:19 公开；标准发布入口已完成 GitHub/S3/OSS 来源与 29 个资产 SHA256 校验，日志在 `/Users/apple/Documents/Codex/2026-10-28/v3.0.25-beta.3/release.log`。
+- 用户再次要求“开始打新的 beta 版本”。沿用现有干净隔离 worktree，快进到发布线 `a9816380655349db64336110365a621581e8a776`；本次 Beta.4 首跑计入上次重新授权后的 **2/4**，不重置累计次数。原工作区不变。
+- 本次增量为 `63b44280` 的宿主交互捕获 IPC 修复，以及 `a9816380` 的启动等待文案调整。提示音 intent/spec 是补交文档，实际提示音实现已在 Beta.3。基座、前端和产物 pin 均与 Beta.3 相同。
+- 走查：宿主和业务页交互入口由 `overlay/crates/agent-electron-client/src/main/features/capture/index.ts:248` 共用参数校验与捕获实现，各自仍经 hostIpc / ipc 信任校验；preload 在 `overlay/crates/agent-electron-client/src/preload/features/capture.ts:62` 按桥身份选择独立通道，所有权、生命周期与清理沿用属主，不增加公开桥契约。真实 preload 串主进程的截图/MP4/GIF、越权拒绝、模式切换及无效输入有回归。无阻塞发现。
+- 当前冻结源码隔离商业轨 **303 文件 / 3732 项通过，18 跳过**；模块导入边界、`host-bridge:check`、`overlay:check`（0 待同步）、`check:pin`、`git diff --check` 均通过。基座 pin 未变，社区基线沿用 Beta.3 的 1682 项通过证据；tag 发布仍会重新运行完整 CI 门禁。
+- 新增 `release-notes/v3.0.25-beta.4.md`，执行标准 release dry-run 后创建不可变 Beta.4 tag。真实全局快捷键、物理多屏、系统剪贴板及安装包验收仍待修复包验证；不以源码回归替代实机验收。
