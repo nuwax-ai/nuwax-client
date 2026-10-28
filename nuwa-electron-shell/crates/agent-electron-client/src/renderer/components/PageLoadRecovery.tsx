@@ -11,7 +11,7 @@ export function recoveryCopy(lang = "zh-CN", stage: RecoveryStage = "load") {
   if (lang.startsWith("zh")) {
     if (/zh-(tw|hk)/i.test(lang))
       return {
-        loading: "正在開啟 Nuwax…",
+        loading: "正在啟動",
         waiting: "載入時間有點久",
         reloading: "正在重新載入…",
         failed:
@@ -35,7 +35,7 @@ export function recoveryCopy(lang = "zh-CN", stage: RecoveryStage = "load") {
         code: "錯誤碼",
       };
     return {
-      loading: "正在打开 Nuwax…",
+      loading: "正在启动",
       waiting: "加载时间有点久",
       reloading: "正在重新加载…",
       failed:
@@ -60,7 +60,7 @@ export function recoveryCopy(lang = "zh-CN", stage: RecoveryStage = "load") {
     };
   }
   return {
-    loading: "Opening Nuwax…",
+    loading: "Starting",
     waiting: "This is taking a little longer",
     reloading: "Reloading…",
     failed:

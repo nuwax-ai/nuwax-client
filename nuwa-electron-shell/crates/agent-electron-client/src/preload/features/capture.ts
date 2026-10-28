@@ -12,7 +12,7 @@ import type { IpcRenderer } from "electron";
 import {
   CAPTURE_IPC,
   HOST_CAPTURE_IPC,
-  CAPTURE_INTERACTIVE_IPC, CAPTURE_SHORTCUT_REQUEST_IPC, CAPTURE_SHORTCUT_ACK_IPC,
+  CAPTURE_INTERACTIVE_IPC, HOST_CAPTURE_INTERACTIVE_IPC, CAPTURE_SHORTCUT_REQUEST_IPC, CAPTURE_SHORTCUT_ACK_IPC,
   type CaptureChannels,
   type CaptureBridge,
   type HostCaptureBridge,
@@ -57,7 +57,9 @@ export async function captureCapabilityProbe(
 export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CAPTURE_IPC): Omit<HostCaptureBridge, 'save'> {
   return {
     async interactive(options) {
-      try { return await ipc.invoke(CAPTURE_INTERACTIVE_IPC, options) as CaptureResult; }
+      try {
+        return await ipc.invoke(channels === HOST_CAPTURE_IPC ? HOST_CAPTURE_INTERACTIVE_IPC : CAPTURE_INTERACTIVE_IPC, options) as CaptureResult;
+      }
       catch (error) { return toFailure(error); }
     },
     onShortcut(listener) {

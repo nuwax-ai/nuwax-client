@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, InputNumber, Modal, Select, Space, message } from "antd";
-import { CameraOutlined, CopyOutlined, FileGifOutlined, SaveOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { CameraOutlined, CopyOutlined, DownloadOutlined, FileGifOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { CaptureCapabilities, CaptureMenuAction, CaptureQuality, CaptureResult, CaptureState, CaptureSuccess, HostCaptureBridge, RecordOutput } from "@shared/features/capture/contract";
 import { readCaptureBlob } from "./result";
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/preferences';
 import { CapturePreferences } from './CapturePreferences';
+import { RecordingPreview } from './RecordingPreview';
 import { DEFAULT_RECORDING_DURATION_MINUTES, MAX_RECORDING_DURATION_MINUTES, RECORDING_DURATION_SETTING, recordingDurationMinutes } from "@shared/features/capture/recordingPreferences";
 
 interface Props {
@@ -148,7 +149,10 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
       let ready: Promise<unknown>;
       do { ready = settingsReady.current; await ready; } while (ready !== settingsReady.current);
       if (!alive.current) return;
-      result = output
+      const action = output ?? 'screenshot';
+      result = capture.interactive && action !== 'webm'
+        ? await capture.interactive({ action, compression: { quality }, maxDurationMs: durationRef.current * 60_000 })
+        : output
         ? await capture.record({ output, compression: { quality }, maxDurationMs: durationRef.current * 60_000 })
         : await capture.screenshot({ compression: { quality } });
       if (!result.success) {
@@ -158,6 +162,21 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
         return;
       }
       if (!alive.current) { await capture.release(result.resultId); return; }
+      if (result.mime.startsWith('image/') && result.mime !== 'image/gif') {
+        const resultId = result.resultId;
+        // A confirmed still is the final image. Keep the capture lock until copy finishes.
+        result = undefined;
+        try {
+          const copied = await capture.copy?.(resultId);
+          if (alive.current) {
+            if (copied?.success) message.success(text('imageCopied'));
+            else message.error(text('copyFailed'));
+          }
+        } catch {
+          if (alive.current) message.error(text('copyFailed'));
+        } finally { await capture.release(resultId); }
+        return;
+      }
       const blob = await readCaptureBlob(capture, result);
       if (!alive.current) { await capture.release(result.resultId); return; }
       const next = { result, url: blob ? URL.createObjectURL(blob) : null };
@@ -240,21 +259,13 @@ export const CaptureLauncher: React.FC<Props> = ({ capture, t, panelTarget, onAv
   </div>;
   return <>
     {panelTarget && createPortal(panel, panelTarget)}
-    <Modal open={!!preview} title={text("preview")} onCancel={closePreview} width={880}
+    <Modal open={!!preview} title={text("recordingPreview")} className="capture-recording-modal" onCancel={closePreview} width={960}
       closable={!saving && !copying} maskClosable={!saving && !copying} keyboard={!saving && !copying}
       footer={<Space><Button onClick={closePreview} disabled={saving || copying}>{text("close")}</Button>
         {capture.copy && <Button icon={<CopyOutlined />} loading={copying} disabled={saving} onClick={() => void copy()}>
-          {text(preview?.result.mime.startsWith('image/') && preview.result.mime !== 'image/gif' ? 'copyImage' : 'copyFile')}</Button>}
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={copying} onClick={() => void save()}>{text("save")}</Button></Space>}>
-      {preview && <>
-        {preview.url ? preview.result.mime.startsWith("video/")
-          ? <video src={preview.url} controls style={{ maxWidth: "100%", maxHeight: "65vh" }} />
-          : <img src={preview.url} alt={text("preview")} style={{ maxWidth: "100%", maxHeight: "65vh", display: "block", margin: "auto" }} />
-          : <p>{text("saveToView")}</p>}
-        <p style={{ color: "#666", marginTop: 12 }}>{preview.result.width} × {preview.result.height} · {(preview.result.bytes / 1024 / 1024).toFixed(2)} MB
-          {preview.result.durationMs !== undefined ? ` · ${(preview.result.durationMs / 1000).toFixed(1)} s` : ""}</p>
-        {preview.result.exceedsMaxBytes && <p>{text("exceedsMaxBytes")}</p>}
-      </>}
+          {text('copyToClipboard')}</Button>}
+        <Button type="primary" icon={<DownloadOutlined />} loading={saving} disabled={copying} onClick={() => void save()}>{text("download")}</Button></Space>}>
+      {preview && <RecordingPreview result={preview.result} url={preview.url} text={text} />}
     </Modal>
   </>;
 };

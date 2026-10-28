@@ -36,7 +36,7 @@ export interface RecordingControls {
   dispose(): void;
 }
 export interface CaptureWindowLabels {
-  screenshot: string; recordMode: string; gifMode: string; screen: string; window: string; region: string; rectangle: string; ellipse: string;
+  screenshot: string; recordMode: string; gifMode: string; format: string; screen: string; window: string; region: string; rectangle: string; ellipse: string;
   arrow: string; pen: string; text: string; mosaic: string; undo: string; redo: string;
   cancel: string; confirm: string; record: string; pause: string; resume: string; stop: string;
   countdown: string; recording: string; paused: string; encoding: string; remaining: string;
@@ -46,7 +46,7 @@ export interface CaptureWindowLabels {
   entireSource: string;
 }
 export const DEFAULT_CAPTURE_WINDOW_LABELS: CaptureWindowLabels = {
-  screenshot: '截图', recordMode: '录屏', gifMode: 'GIF', screen: '整屏', window: '窗口', region: '区域', rectangle: '矩形', ellipse: '椭圆',
+  screenshot: '截图', recordMode: '录屏', gifMode: 'GIF', format: '选择格式', screen: '整屏', window: '窗口', region: '区域', rectangle: '矩形', ellipse: '椭圆',
   arrow: '箭头', pen: '画笔', text: '文字', mosaic: '马赛克', undo: '撤销', redo: '重做',
   cancel: '取消', confirm: '确认', record: '开始录制', pause: '暂停', resume: '继续', stop: '停止',
   countdown: '即将录制', recording: '正在录制', paused: '已暂停', encoding: '正在处理',

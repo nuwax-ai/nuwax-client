@@ -346,6 +346,11 @@ export const I18N_KEYS = {
   Capture: {
     RECORD_MODE: "Claw.Capture.recordMode",
     GIF_MODE: "Claw.Capture.gifMode",
+    FORMAT: "Claw.Capture.format",
+    RECORDING_PREVIEW: "Claw.Capture.recordingPreview",
+    COPY_TO_CLIPBOARD: "Claw.Capture.copyToClipboard",
+    DOWNLOAD: "Claw.Capture.download",
+    LOOP_PREVIEW: "Claw.Capture.loopPreview",
     HIDE_APP_WINDOW: "Claw.Capture.hideAppWindow",
     SHORTCUT: "Claw.Capture.shortcut",
     RECORD_SHORTCUT: "Claw.Capture.recordShortcut",
@@ -439,6 +444,8 @@ export const I18N_KEYS = {
   },
   IM: {
     UNREAD_MESSAGES: "Claw.IM.unreadMessages",
+    MESSAGE_SOUND: "Claw.IM.messageSound",
+    MESSAGE_SOUND_DESC: "Claw.IM.messageSoundDesc",
   },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",
