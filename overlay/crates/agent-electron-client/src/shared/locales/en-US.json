@@ -3,6 +3,8 @@
   "Claw.Webview.leaveMessage": "This page may have a pending payment or unsaved work. Do you want to leave?",
   "Claw.Webview.leave": "Leave",
   "Claw.Webview.stay": "Stay",
+  "Claw.IM.messageSound": "New message sound",
+  "Claw.IM.messageSoundDesc": "Play a sound for messages when the window is unfocused, at most once every 3 seconds.",
   "Claw.IM.unreadMessages": "{0} unread messages",
   "Claw.Common.loading": "Loading...",
   "Claw.Common.save": "Save",

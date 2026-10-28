@@ -7,6 +7,7 @@ import { APP_NAME_IDENTIFIER } from '@shared/constants';
 import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, CAPTURE_SHORTCUT_UNAVAILABLE_ERROR, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/contract';
 import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from '../features';
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
+import { IM_MESSAGE_SOUND_SETTING } from '@shared/types/imReceiver';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {
@@ -30,6 +31,7 @@ export function registerSettingsHandlers(): void {
       }
     };
     if (key === LOCAL_FILES_ENABLED_SETTING && value != null && typeof value !== 'boolean') return false;
+    if (key === IM_MESSAGE_SOUND_SETTING && value != null && typeof value !== 'boolean') return false;
     if ([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING].includes(key)) {
       const shortcut = value == null ? (key === CAPTURE_SHORTCUT_SETTING ? captureShortcut(null) : recordShortcut(null)) : parseCaptureShortcut(value);
       if (!shortcut) return false;
