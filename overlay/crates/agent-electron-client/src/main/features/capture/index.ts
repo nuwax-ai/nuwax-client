@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, powerMonitor, screen } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import path from "node:path";
 import {
-  CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC,
+  CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, HOST_CAPTURE_INTERACTIVE_IPC,
   type CaptureChannels, type CaptureCapabilities, type CaptureCopyResult, type CaptureResult, type CaptureSuccess,
 } from "@shared/features/capture/contract";
 import { DEFAULT_CAPTURE_WINDOW_LABELS, type CaptureWindowLabels } from "@shared/features/capture/windowContract";
@@ -244,17 +244,18 @@ export const captureFeature: DesktopFeature = {
             !event.sender.isDestroyed() && frame === event.sender.mainFrame);
         } finally { pendingCopies.delete(controller); }
       }, { success: false, code: 'untrusted' });
+      ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(
+        channels === HOST_CAPTURE_IPC ? HOST_CAPTURE_INTERACTIVE_IPC : CAPTURE_INTERACTIVE_IPC, (event, raw) => {
+          if (!raw || typeof raw !== 'object') return { success: false, code: 'invalid-argument' };
+          const { action, compression, maxDurationMs } = raw as { action?: unknown; compression?: unknown; maxDurationMs?: unknown };
+          if (!['screenshot', 'mp4', 'gif'].includes(String(action))) return { success: false, code: 'invalid-argument' };
+          return action === 'screenshot' ? invokeCapture(event, channels, 'screenshot', { compression }, true, maxDurationMs)
+            : invokeCapture(event, channels, 'record', { output: action, compression, maxDurationMs }, true);
+        }, UNTRUSTED);
     };
     registerBridge(ctx.ipc, CAPTURE_IPC);
     registerBridge(ctx.hostIpc, HOST_CAPTURE_IPC);
     const offShortcutRouting = registerCaptureShortcutRouting(ctx.ipc);
-    ctx.ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(CAPTURE_INTERACTIVE_IPC, (event, raw) => {
-      if (!raw || typeof raw !== 'object') return { success: false, code: 'invalid-argument' };
-      const { action, compression, maxDurationMs } = raw as { action?: unknown; compression?: unknown; maxDurationMs?: unknown };
-      if (!['screenshot', 'mp4', 'gif'].includes(String(action))) return { success: false, code: 'invalid-argument' };
-      return action === 'screenshot' ? invokeCapture(event, CAPTURE_IPC, 'screenshot', { compression }, true, maxDurationMs)
-        : invokeCapture(event, CAPTURE_IPC, 'record', { output: action, compression, maxDurationMs }, true);
-    }, UNTRUSTED);
     ctx.hostIpc.handle<IpcMainInvokeEvent, [unknown], Promise<{ success: boolean; canceled?: boolean; error?: string }> | { success: boolean; error: string }>(
       HOST_CAPTURE_SAVE_IPC, async (event, id) => {
         if (typeof id !== "string") return { success: false, error: "invalid result" };

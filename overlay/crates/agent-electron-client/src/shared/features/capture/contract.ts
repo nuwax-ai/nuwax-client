@@ -37,6 +37,8 @@ export const HOST_CAPTURE_SAVE_IPC = "capture:host:save";
 /** 原生菜单仅向宿主壳发送命令，不进入业务页公开桥。 */
 export const HOST_CAPTURE_MENU_IPC = "capture:host:menu";
 export const CAPTURE_INTERACTIVE_IPC = 'capture:interactive';
+/** 宿主交互入口与业务页使用独立受信通道。 */
+export const HOST_CAPTURE_INTERACTIVE_IPC = 'capture:host:interactive';
 export const CAPTURE_SHORTCUT_REQUEST_IPC = 'capture:shortcut:request';
 export const CAPTURE_SHORTCUT_ACK_IPC = 'capture:shortcut:ack';
 export type CaptureMenuAction = "screenshot" | RecordOutput;

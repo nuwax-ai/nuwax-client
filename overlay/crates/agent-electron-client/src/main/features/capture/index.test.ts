@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, type CaptureResult } from '@shared/features/capture/contract';
+import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, HOST_CAPTURE_INTERACTIVE_IPC, type CaptureResult } from '@shared/features/capture/contract';
 import { createTrustedIpc } from '../_kit/trustedIpc';
 import { createFeatureLifecycle } from '../_kit/lifecycle';
 import type { FeatureContext, FeatureHandle } from '../_kit/types';
 import type { RecordCapture, StillCapture } from './captureService';
+import { createCaptureBridge } from '@preload/features/capture';
+import { CaptureModeSwitch } from './modeSwitch';
 
 const mocks = vi.hoisted(() => {
   const emitter = () => {
@@ -109,6 +111,73 @@ beforeEach(() => {
 afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
+  it.each(['screenshot', 'mp4', 'gif'] as const)('宿主快捷键通过真实 preload 交互桥执行 %s，并保持宿主结果所有权', async action => {
+    const sender = host();
+    const ipc = { invoke: vi.fn((channel: string, ...args: unknown[]) => invoke(channel, sender, ...args)),
+      on: vi.fn(), removeListener: vi.fn() };
+    const bridge = createCaptureBridge(ipc as never, HOST_CAPTURE_IPC);
+    const copyResult = { success: true, kind: action === 'screenshot' ? 'image' : 'file' } as const;
+    mocks.copy.mockResolvedValueOnce(copyResult);
+    mocks.record.mockResolvedValueOnce({ data: Buffer.from('host-recording'),
+      mime: action === 'gif' ? 'image/gif' : 'video/mp4', width: 1200, height: 800,
+      durationMs: 1000, qualityUsed: 'high', hdrToneMapped: false } satisfies RecordCapture);
+    const result = await bridge.interactive!({ action, compression: { quality: 'high' }, maxDurationMs: 60_000 });
+    expect(result).toMatchObject({ success: true });
+    if (!result.success) throw new Error(JSON.stringify(result));
+    expect(mocks.setActions).toHaveBeenLastCalledWith(action, ['screenshot', 'mp4', 'gif']);
+    expect(sender.send).toHaveBeenCalledWith(HOST_CAPTURE_IPC.STATE_CHANGED, 'selecting');
+    expect(sender.send).not.toHaveBeenCalledWith(CAPTURE_IPC.STATE_CHANGED, expect.anything());
+    if (action === 'screenshot') {
+      expect(mocks.captureStill).toHaveBeenCalledOnce();
+      expect(mocks.resolveFfmpeg).not.toHaveBeenCalled();
+    }
+    else expect(mocks.record.mock.calls[0][0]).toMatchObject({ output: action, maxDurationMs: 60_000 });
+    expect(await bridge.readChunk(result.resultId, 0, result.bytes)).toBeInstanceOf(ArrayBuffer);
+    expect(await invoke(CAPTURE_IPC.READ_CHUNK, business(), result.resultId, 0, result.bytes)).toBeNull();
+    expect(await bridge.copy!(result.resultId)).toEqual(copyResult);
+    await bridge.release(result.resultId);
+    expect(await bridge.readChunk(result.resultId, 0, result.bytes)).toBeNull();
+  });
+
+  it('宿主交互通道拒绝业务页、外部页、子 frame、旧 frame 和已销毁的页面', async () => {
+    const sender = host();
+    const destroyed = host(); destroyed.destroyed = true;
+    for (const rejected of [business(), new Sender(30, 'other'), destroyed]) {
+      expect(await invoke(HOST_CAPTURE_INTERACTIVE_IPC, rejected, { action: 'screenshot' }))
+        .toEqual({ success: false, code: 'untrusted' });
+    }
+    for (const frame of [null, { ...sender.mainFrame }]) {
+      expect(await channels.get(HOST_CAPTURE_INTERACTIVE_IPC)!(frameEvent(sender, frame) as never, { action: 'screenshot' } as never))
+        .toEqual({ success: false, code: 'untrusted' });
+    }
+    expect(await invoke(CAPTURE_INTERACTIVE_IPC, sender, { action: 'screenshot' }))
+      .toEqual({ success: false, code: 'untrusted' });
+    expect(mocks.captureStill).not.toHaveBeenCalled();
+    expect(mocks.resolveFfmpeg).not.toHaveBeenCalled();
+  });
+
+  it('宿主截图切换录屏仍保留选区、质量和调用方时长限制', async () => {
+    const selection = { coordinateSpace: 'source', sourceId: 'screen:1', sourceKind: 'screen',
+      sourceSize: { width: 1200, height: 800 }, crop: { x: 10, y: 20, width: 800, height: 600 },
+      hdrToneMapped: false } as const;
+    mocks.captureStill.mockRejectedValueOnce(new CaptureModeSwitch('gif', selection));
+    expect(await invoke(HOST_CAPTURE_INTERACTIVE_IPC, host(),
+      { action: 'screenshot', compression: { quality: 'medium' }, maxDurationMs: 25_000 }))
+      .toEqual({ success: false, code: 'canceled' });
+    expect(mocks.record).toHaveBeenCalledWith(
+      expect.objectContaining({ output: 'gif', compression: { quality: 'medium' }, maxDurationMs: 25_000 }),
+      expect.any(AbortSignal), expect.any(Function), selection);
+  });
+
+  it('宿主交互通道在采集前拒绝无效动作、质量与录制时长', async () => {
+    for (const raw of [null, { action: 'webm' }, { action: 'screenshot', compression: { quality: 'invalid' } },
+      { action: 'screenshot', maxDurationMs: 0 }, { action: 'mp4', maxDurationMs: 0 }]) {
+      expect(await invoke(HOST_CAPTURE_INTERACTIVE_IPC, host(), raw)).toMatchObject({ code: 'invalid-argument' });
+    }
+    expect(mocks.captureStill).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
   it('keeps confirmed still captures in the background and reveals recording previews', async () => {
     const parent = { isDestroyed: () => false, isVisible: () => false, isMinimized: () => true,
       restore: vi.fn(), show: vi.fn(), focus: vi.fn() };
