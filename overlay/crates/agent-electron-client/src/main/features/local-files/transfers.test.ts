@@ -48,6 +48,25 @@ const response = (count = 1) =>
   );
 
 describe("native file-panel transfers", () => {
+  it("respects distinct Linux file names and rejects case collisions on Windows/macOS", async () => {
+    const pending = create({
+      kind: "files",
+      files: [
+        { path: "Foo", size: 1 },
+        { path: "foo", size: 1 },
+      ],
+    });
+    if (process.platform !== "linux") {
+      await expect(pending).rejects.toMatchObject({ code: "invalid-argument" });
+      return;
+    }
+    const transfer = await pending;
+    await transfer.write(0, 0, Buffer.from("A"));
+    await transfer.write(1, 0, Buffer.from("B"));
+    await transfer.commit(root, "7", "local", 0, vi.fn());
+    expect(await readFile(path.join(root, "Foo"), "utf8")).toBe("A");
+    expect(await readFile(path.join(root, "foo"), "utf8")).toBe("B");
+  });
   it("atomically installs exact binary bytes and empty files without a file-server dependency", async () => {
     const bytes = Buffer.alloc(TRANSFER_CHUNK_BYTES + 7, 0xac);
     const transfer = await create({

@@ -21,6 +21,10 @@ import type { FileOperation } from "./operations";
 
 export const TRANSFER_CHUNK_BYTES = 1024 * 1024;
 const MAX_TRANSFER_FILES = 10000;
+// Linux workspaces commonly contain distinct Foo/foo entries. Windows and
+// default macOS volumes need an early conflict check before installing bytes.
+const transferPathKey = (name: string) =>
+  process.platform === "linux" ? name : name.toLowerCase();
 
 /** Only relative entry paths cross this boundary; the working root comes from the native context. */
 function safeTransferPath(value: unknown): string {
@@ -80,7 +84,7 @@ function checkProjectArchive(file: string): void {
   let expanded = 0;
   for (const entry of entries) {
     const name = safeTransferPath(entry.entryName.replace(/\/$/, ""));
-    const key = name.toLowerCase();
+    const key = transferPathKey(name);
     if (all.has(key)) throw new LocalFilesFailure("invalid-argument");
     all.add(key);
     if (!entry.isDirectory) files.add(key);
@@ -142,7 +146,7 @@ export class LocalFileTransfer {
       path: safeTransferPath(file?.path),
       size: file?.size,
     }));
-    const names = new Set(files.map((file) => file.path.toLowerCase()));
+    const names = new Set(files.map((file) => transferPathKey(file.path)));
     if (
       names.size !== files.length ||
       files.some((file) =>
@@ -150,12 +154,7 @@ export class LocalFileTransfer {
           .split("/")
           .slice(0, -1)
           .some((_part, index, parts) =>
-            names.has(
-              parts
-                .slice(0, index + 1)
-                .join("/")
-                .toLowerCase()
-            )
+            names.has(transferPathKey(parts.slice(0, index + 1).join("/")))
           )
       )
     )
