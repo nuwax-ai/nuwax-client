@@ -1,6 +1,6 @@
 # 3.0.25 Beta 汇总
 
-状态：Beta.1 保持不变；Beta.2 已于 2026-10-28 14:07（北京时间）公开发布，五平台及镜像校验通过。
+状态：Beta.2 已于 2026-10-28 14:07（北京时间）公开发布；用户再次明确要求开始新 Beta，正在准备 Beta.3。
 
 ## 范围
 
@@ -52,3 +52,14 @@
 - 标准入口确认 [Beta.2 已公开](https://github.com/nuwax-ai/nuwax-client/releases/tag/v3.0.25-beta.2)，29 个资产 SHA256 校验通过；S3 安装资产、OSS 版本元数据和 Beta 指针均已验证。
 - 两套实际 Mac DMG 从 S3 下载，校验安装包 SHA256、只读挂载、codesign、Gatekeeper、公证票据、CPU 架构和 ASAR 内版本及本次新代码均通过；包内 `nuwax-dist` 每个文件计算的树哈希与上述 CI 前端哈希一致。此为包结构与签名验证，Windows 两项 UI 留白、Linux 桌面及用户完整安装体验继续按 Beta 验收。
 - 证据保存在 `/Users/apple/Documents/Codex/2026-10-28/v3.0.25-beta.2/`，包括五份构建清单、公开状态、流水线任务、发布日志、Windows 报告与两套 Mac 实包复核 JSON；不将其他在途截屏 UI 或提示音改动混入本 tag。
+
+## Beta.3 集成与发布准备（2026-10-28）
+
+- 用户明确要求“开始打新的 beta 版本”，本轮按该指令重新启动新 Beta；上轮 4/4 的账本保留。本轮正式构建首跑计 1/4，后续同问题的 run/rerun 累计不超过 4 次，不以改版本或改系列绕过。
+- 从本地截图提交 `f2b1a0e08dda78286e2d6c33f75f5fe850c747a1` 的干净隔离 worktree，保留历史合并远端提示音提交 `75cf9c24beaad9a72941320f727515b3c906a4df`，功能集成提交为 `c83f4971`；四语言与常量自动合并无冲突。原工作区基座 overlay 和未提交文档保留。
+- 相比 Beta.2，新增截图/录屏切换、浅色标注工具栏、确认截图直接复制、MP4/GIF 录屏设置与预览，以及客户端持久化消息提示音开关和跨会话 3 秒声音节流。基座、前端和产物三个 pin 沿用 Beta.2；不顺带更新依赖或缓存契约。
+- 三问走查通过：捕获结果的并发锁与释放统一留在 `overlay/crates/agent-electron-client/src/renderer/features/capture/CaptureLauncher.tsx:130` / `:177`，声音条件及账号清理留在 `overlay/crates/agent-electron-client/src/main/services/imNativePresentation.ts:216` / `:298`；主进程经 `imReceiverRuntime.ts:65` 读取当前偏好，设置组件仅消费既有 settings 桥，依赖方向未变；复制失败/卸载/格式切换以及声音 2999/3000ms 边界、50 会话突发和持久化失败均有回归覆盖。无阻塞发现。
+- 合并后隔离副本实跑社区 **138 文件 / 1682 项通过，18 跳过**，商业 **303 文件 / 3726 项通过，18 跳过**。首次社区环境缺 MCP 代理生成资源，按既有 prepare 脚本补齐后整轨通过；未改产品代码。
+- 外层脚本首轮 **454/456 通过**，另外 2 项因隔离副本未初始化前端契约源码而失败；检出已固定前端 pin 后，整个契约文件 **12/12 定向复测通过**，覆盖这两项。模块导入边界、`overlay:check`（0 待同步）、`check:pin`、`git diff --check` 均通过。测试依赖链接已移除，基座仅剩可逐字节核对的 overlay 同步产物。
+- 新说明 `release-notes/v3.0.25-beta.3.md` 明确本次增量与实机验收边界。通过标准 `npm run release -- --version 3.0.25-beta.3 --dry-run` 后启动同版本标准发布入口；不可变 tag、五平台门禁、安装包和镜像哈希遵循既有流程。
+- 本轮检查不等于 Beta.3 安装包验收；物理多屏/DPI、系统剪贴板与 Mac/Windows 系统发声继续交真实安装包验证。
