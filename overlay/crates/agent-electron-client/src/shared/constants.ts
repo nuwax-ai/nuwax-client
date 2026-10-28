@@ -350,6 +350,7 @@ export const I18N_KEYS = {
     RECORDING_PREVIEW: "Claw.Capture.recordingPreview",
     COPY_TO_CLIPBOARD: "Claw.Capture.copyToClipboard",
     DOWNLOAD: "Claw.Capture.download",
+    SAVE: "Claw.Capture.save",
     LOOP_PREVIEW: "Claw.Capture.loopPreview",
     HIDE_APP_WINDOW: "Claw.Capture.hideAppWindow",
     SHORTCUT: "Claw.Capture.shortcut",

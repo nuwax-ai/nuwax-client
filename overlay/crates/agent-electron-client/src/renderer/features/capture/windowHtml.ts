@@ -10,7 +10,7 @@ export function buildCaptureWindowHtml(nonce: string): string {
 [hidden]{display:none!important}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;font:13px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#edf1f7;background:transparent;user-select:none;-webkit-font-smoothing:antialiased}
 body{background:#12161b}
-button,input{font:inherit}
+button,input,textarea{font:inherit}
 button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:7px 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#c8d1dd;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s,color .12s}
 button:hover:not(:disabled){background:#ffffff12;color:#fff}
 button:active:not(:disabled){background:#ffffff1c}
@@ -99,7 +99,7 @@ button.source{min-width:0;min-height:160px;display:flex;flex-direction:column;al
 button.source:hover:not(:disabled){border-color:#5cddbb88;background:#2cd7ac0c}
 .source img{width:100%;height:120px;border-radius:5px;background:#0d141b;object-fit:contain}
 .source span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d7e1ec;font-size:12px}
-.textInput{position:fixed;z-index:10;display:none;min-width:140px;padding:5px;border:2px solid #53d5b3;border-radius:4px;background:#18222ff5;color:#edf1f7;box-shadow:0 2px 12px #0004;text-shadow:0 0 1px #ffffffb3}
+.textInput{position:fixed;z-index:10;display:none;min-width:140px;padding:5px;border:2px solid #53d5b3;border-radius:4px;background:#18222ff5;color:#edf1f7;box-shadow:0 2px 12px #0004;text-shadow:0 0 1px #ffffffb3;resize:none;white-space:pre;overflow:auto;line-height:1.2}
 .textInput::placeholder{color:#8ea0b3;text-shadow:none}
 .textInput:focus-visible{outline:none}
 .border{background:transparent;border:3px solid #ed4c60;border-radius:0;outline:0;box-shadow:none;pointer-events:none}

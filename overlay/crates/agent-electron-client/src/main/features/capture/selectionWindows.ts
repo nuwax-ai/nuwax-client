@@ -1,5 +1,6 @@
-import { BrowserWindow, desktopCapturer, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   CAPTURE_WINDOW_CHANNELS as CH, DEFAULT_CAPTURE_WINDOW_LABELS,
@@ -73,6 +74,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   let disposed = false;
   let pending: ((result: null) => void) | null = null;
   let sourceCatalog: CaptureWindowSource[] = [];
+  let saving = false;
   let action: CaptureMenuAction = 'screenshot';
   let actions: CaptureMenuAction[] = [];
   const trusted = (event: IpcMainEvent | IpcMainInvokeEvent): ManagedWindow | undefined => {
@@ -167,7 +169,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   });
   ipcMain.handle(CH.source, async (event, rawId: unknown) => {
     const owned = trusted(event);
-    if (!owned || owned.config.kind !== 'selection' || owned.loading || typeof rawId !== 'string' || !owned.sourceIds?.has(rawId)) return null;
+    if (!owned || saving || owned.config.kind !== 'selection' || owned.loading || typeof rawId !== 'string' || !owned.sourceIds?.has(rawId)) return null;
     if (rawId === owned.config.image.selection.sourceId) { owned.chosen = undefined; return owned.config.image; }
     if (!options.captureWindowFrame) return null;
     const source = sourceCatalog.find((entry) => entry.id === rawId);
@@ -190,8 +192,9 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   });
   ipcMain.handle(CH.finish, (event, payload: unknown) => {
     const owned = trusted(event);
-    if (!owned || owned.config.kind !== 'selection' || owned.signal?.aborted || !payload || typeof payload !== 'object') return false;
-    const raw = payload as { crop?: unknown; png?: unknown; action?: unknown };
+    if (!owned || saving || owned.loading || owned.config.kind !== 'selection' || owned.signal?.aborted || !payload || typeof payload !== 'object') return false;
+    const raw = payload as { crop?: unknown; png?: unknown; action?: unknown; save?: unknown };
+    if (raw.save !== undefined && typeof raw.save !== 'boolean') return false;
     const image = owned.chosen ?? owned.config.image;
     if (!isValidCaptureCrop(raw.crop, image.selection.sourceSize)) return false;
     const selection = { ...image.selection, crop: raw.crop as CaptureRect };
@@ -199,6 +202,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     const chosenAction = raw.action ?? initialAction;
     if (chosenAction !== initialAction && !owned.config.actions?.includes(chosenAction as CaptureMenuAction)) return false;
     if (chosenAction !== 'screenshot') {
+      if (raw.save) return false;
       if (chosenAction === initialAction) owned.finish?.(selection);
       else owned.fail?.(new CaptureModeSwitch(chosenAction as CaptureMenuAction, selection));
       return true;
@@ -209,8 +213,34 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     const size = result.getSize();
     if (size.width !== selection.crop.width || size.height !== selection.crop.height) return false;
     const still = { image: result, hdrToneMapped: selection.hdrToneMapped };
-    if (chosenAction === initialAction) owned.finish?.(still);
-    else owned.fail?.(new CaptureModeSwitch('screenshot', still));
+    const complete = () => {
+      if (chosenAction === initialAction) owned.finish?.(still);
+      else owned.fail?.(new CaptureModeSwitch('screenshot', still));
+    };
+    if (raw.save) {
+      saving = true;
+      // Let the native dialog sit above the frozen desktop on every display.
+      const selectors = [...windows.values()].filter(window => window.config.kind === 'selection');
+      return (async () => {
+        try {
+          for (const selector of selectors) selector.window.hide();
+          const saved = await dialog.showSaveDialog({ title: owned.config.kind === 'selection' ? owned.config.labels.save : '',
+            defaultPath: `Nuwax-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+            filters: [{ name: 'PNG', extensions: ['png'] }] });
+          if (saved.canceled || !saved.filePath || owned.signal?.aborted || !trusted(event)) return false;
+          writeFileSync(saved.filePath, result.toPNG());
+          complete();
+          return true;
+        } finally {
+          saving = false;
+          for (const selector of selectors) {
+            if (windows.get(selector.id) === selector && !selector.window.isDestroyed()) selector.window.showInactive();
+          }
+          if (windows.get(owned.id) === owned && !owned.window.isDestroyed()) { owned.window.show(); owned.window.focus(); }
+        }
+      })();
+    }
+    complete();
     return true;
   });
   const actionHandler = (event: IpcMainEvent, action: unknown) => {

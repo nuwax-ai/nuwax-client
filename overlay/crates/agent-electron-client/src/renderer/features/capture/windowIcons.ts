@@ -17,6 +17,7 @@ export function createCaptureIcon(name: string): SVGSVGElement {
     mosaic: ['M3 3h6v6H3zM15 3h6v6h-6zM9 9h6v6H9zM3 15h6v6H3zM15 15h6v6h-6z'],
     undo: ['M9 5 4 10l5 5', 'M4 10h10a6 6 0 0 1 0 12'],
     redo: ['m15 5 5 5-5 5', 'M20 10H10a6 6 0 0 0 0 12'],
+    save: ['M12 3v12m-5-5 5 5 5-5', 'M4 17v4h16v-4'],
     cancel: ['m6 6 12 12M18 6 6 18'],
     confirm: ['m4 12 5 5L20 6'],
     record: ['M20 12a8 8 0 1 1-16 0 8 8 0 1 1 16 0'],

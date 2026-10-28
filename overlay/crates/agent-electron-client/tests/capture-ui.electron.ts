@@ -4,9 +4,9 @@
  * pnpm exec esbuild tests/capture-ui.electron.ts --bundle --platform=node --format=cjs --external:electron --outfile=/tmp/nuwax-capture-ui.cjs --tsconfig=tsconfig.json
  * pnpm exec electron /tmp/nuwax-capture-ui.cjs
  */
-import { app, BrowserWindow, desktopCapturer, nativeImage, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, nativeImage, screen } from 'electron';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCaptureWindows } from '../src/main/features/capture/selectionWindows';
@@ -68,7 +68,8 @@ app.whenReady().then(async () => {
   };
   const key = async (selector: BrowserWindow, keyCode: string, modifiers: Electron.KeyboardInputEvent['modifiers'] = []) => {
     selector.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
-    selector.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await delay();
+    if (keyCode === 'Enter' && !modifiers?.length && !selector.isDestroyed()) selector.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+    if (!selector.isDestroyed()) selector.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers }); await delay();
   };
   const script = (selector: BrowserWindow, source: string) => selector.webContents.executeJavaScript(source);
   const tool = (selector: BrowserWindow, name: string) => script(selector, `document.querySelector('[data-action=${name}]').click()`);
@@ -224,6 +225,55 @@ app.whenReady().then(async () => {
   await tool(textWindow, 'confirm');
   const textResult = await pending; assert.ok(textResult);
   assert.equal(textResult.image.toBitmap().equals(expectedText), true, '导出应包含修改后的文字与字号，不能包含选中框');
+
+  // 原生保存面板只在本测试进程中替换；PNG 经真实可信窗口桥写入隔离目录。
+  const nativeSave = dialog.showSaveDialog;
+  const saveDirectory = process.env.NUWAX_CAPTURE_UI_SCREENSHOTS ? path.resolve(process.env.NUWAX_CAPTURE_UI_SCREENSHOTS) : profile;
+  mkdirSync(saveDirectory, { recursive: true });
+  const savedPath = path.join(saveDirectory, 'saved-multiline.png');
+  let saveRequests = 0;
+  dialog.showSaveDialog = (async () => {
+    saveRequests++;
+    return saveRequests === 1 ? { canceled: true }
+      : { canceled: false, filePath: saveRequests === 2 ? path.join(profile, 'missing-directory', 'screenshot.png') : savedPath };
+  }) as typeof dialog.showSaveDialog;
+  try {
+    pending = windows.captureStill(new AbortController().signal);
+    const saving = (await prepared())[0];
+    await drag(saving, [80, 80], [700, 400]);
+    await tool(saving, 'text'); await click(saving, 100, 100);
+    await saving.webContents.insertText('第一行'); await key(saving, 'Enter');
+    await saving.webContents.insertText('第二行\n\n第四行');
+    await key(saving, 'Enter', process.platform === 'darwin' ? ['meta'] : ['control']);
+    const expected = await frame(saving);
+    assert.deepEqual(await script(saving, `[...document.querySelector('.actionGroup').children].map(b=>b.dataset.action)`), ['save', 'cancel', 'confirm'], '保存必须紧邻取消左侧');
+    await clickControl(saving, '[data-action=save]');
+    assert.equal(saving.isDestroyed(), false, '取消保存面板后保留截图选区');
+    assert.equal(await script(saving, `document.querySelector('[data-action=save]').disabled`), false, '取消保存后解除互斥锁');
+    assert.equal(await frame(saving), expected, '取消保存不能丢失多行文字或画面');
+    await clickControl(saving, '[data-action=save]');
+    await script(saving, `new Promise(resolve=>{const check=()=>!document.querySelector('[data-action=save]').disabled?resolve(true):setTimeout(check,10);check()})`);
+    assert.equal(await script(saving, `document.querySelector('.hint').textContent`), '保存失败，请重试');
+    assert.equal(await script(saving, `document.querySelector('.hint').getBoundingClientRect().bottom <= document.querySelector('.selectionDock').getBoundingClientRect().top`), true, '保存错误必须在工具栏外可读');
+    assert.equal(await frame(saving), expected, '写入失败后保留标注并可重试');
+    await saveScreenshot(saving, 'multiline-save-toolbar');
+    await clickControl(saving, '[data-action=save]');
+    const saved = await pending; assert.ok(saved); assert.equal(saveRequests, 3);
+    const savedImage = nativeImage.createFromBuffer(readFileSync(savedPath));
+    assert.deepEqual(savedImage.getSize(), { width: 1240, height: 640 });
+    assert.equal(savedImage.toBitmap().equals(saved.image.toBitmap()), true, '磁盘 PNG 必须与最终选区和多行标注逐像素相同');
+    const savedPixels = savedImage.toBitmap();
+    const hasRed = (top: number, bottom: number) => {
+      for (let y = top; y < bottom; y++) for (let x = 40; x < 400; x++) {
+        const offset = (y * 1240 + x) * 4;
+        if (savedPixels[offset] === 82 && savedPixels[offset + 1] === 59 && savedPixels[offset + 2] === 255) return true;
+      }
+      return false;
+    };
+    assert.ok(hasRed(40, 70) && hasRed(75, 105) && hasRed(140, 172), 'PNG 必须包含换行后的第一、二、四行');
+    assert.equal(hasRed(110, 138), false, '空行必须保留');
+    console.log('PASS toolbar PNG save, cancellation, failed write/retry and multiline pixels');
+  } finally { dialog.showSaveDialog = nativeSave; }
 
   // 棋盘背景让马赛克的移动、缩放也能通过真实像素变化来验证。
   const checker = Buffer.alloc(1920 * 1200 * 4, 255);

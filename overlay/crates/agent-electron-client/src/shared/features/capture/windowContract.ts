@@ -38,7 +38,7 @@ export interface RecordingControls {
 export interface CaptureWindowLabels {
   screenshot: string; recordMode: string; gifMode: string; format: string; screen: string; window: string; region: string; rectangle: string; ellipse: string;
   arrow: string; pen: string; text: string; mosaic: string; undo: string; redo: string;
-  cancel: string; confirm: string; record: string; pause: string; resume: string; stop: string;
+  save: string; saveFailed: string; cancel: string; confirm: string; record: string; pause: string; resume: string; stop: string;
   countdown: string; recording: string; paused: string; encoding: string; remaining: string;
   selectHint: string; windowSelectHint: string; annotationHint: string; textHint: string; loading: string; loadFailed: string; color: string; lineWidth: string;
   select: string; fontSize: string; deleteAnnotation: string;
@@ -48,12 +48,12 @@ export interface CaptureWindowLabels {
 export const DEFAULT_CAPTURE_WINDOW_LABELS: CaptureWindowLabels = {
   screenshot: '截图', recordMode: '录屏', gifMode: 'GIF', format: '选择格式', screen: '整屏', window: '窗口', region: '区域', rectangle: '矩形', ellipse: '椭圆',
   arrow: '箭头', pen: '画笔', text: '文字', mosaic: '马赛克', undo: '撤销', redo: '重做',
-  cancel: '取消', confirm: '确认', record: '开始录制', pause: '暂停', resume: '继续', stop: '停止',
+  save: '保存图片', saveFailed: '保存失败，请重试', cancel: '取消', confirm: '确认', record: '开始录制', pause: '暂停', resume: '继续', stop: '停止',
   countdown: '即将录制', recording: '正在录制', paused: '已暂停', encoding: '正在处理',
   remaining: '剩余',
   selectHint: '拖动选择区域 · Esc 取消', windowSelectHint: '单击选择窗口或整屏 · 拖动选择区域 · Esc 取消',
   annotationHint: '拖动边框调整范围 · 拖动选区空白处移动 · 点击标注可编辑 · Enter 完成',
-  textHint: '输入文字', loading: '正在加载窗口…', loadFailed: '无法获取该窗口，请选择其他窗口或区域', color: '颜色', lineWidth: '线条宽度',
+  textHint: '输入文字 · Enter 换行 · Ctrl/⌘+Enter 完成', loading: '正在加载窗口…', loadFailed: '无法获取该窗口，请选择其他窗口或区域', color: '颜色', lineWidth: '线条宽度',
   select: '选择与移动', fontSize: '字号', deleteAnnotation: '删除标注',
   linuxRecordingHint: '录制时控制条会隐藏。可用托盘控制，或切回客户端按 Ctrl+Alt+R 停止、Ctrl+Alt+P 暂停/继续。',
   entireSource: '整个来源',
@@ -81,7 +81,7 @@ export type CaptureWindowConfiguration = {
 export interface CaptureWindowBridge {
   init(): Promise<CaptureWindowConfiguration | null>;
   source(id: string): Promise<CaptureWindowImage | null>;
-  finish(payload: { crop: CaptureRect; png?: string; action?: CaptureMenuAction }): Promise<boolean>;
+  finish(payload: { crop: CaptureRect; png?: string; action?: CaptureMenuAction; save?: boolean }): Promise<boolean>;
   action(action: 'cancel' | RecordingAction): void;
   onState(callback: (state: RecordingControlState) => void): () => void;
 }

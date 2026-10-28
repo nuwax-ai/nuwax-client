@@ -123,7 +123,8 @@ export async function mountCaptureWindow(
   const tooltip = node('div', 'tooltip'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip');
   const dimensions = node('div', 'dimensions');
   const magnifier = node('canvas', 'magnifier'); magnifier.width = 160; magnifier.height = 160;
-  const textInput = node('input', 'textInput'); textInput.placeholder = labels.textHint;
+  const textInput = node('textarea', 'textInput'); textInput.placeholder = labels.textHint;
+  textInput.rows = 1; textInput.wrap = 'off'; textInput.setAttribute('aria-label', labels.textHint);
   textInput.style.userSelect = 'text';
   let pendingText: CaptureAnnotation | null = null;
   let pendingTextIndex: number | null = null;
@@ -261,9 +262,9 @@ export async function mountCaptureWindow(
     // Hide while drawing so the controls cannot intercept the pointer or obscure
     // the area being selected. They reappear beside the final selection on release.
     dock.style.visibility = drag || cropDrag || active ? 'hidden' : 'visible';
+    hint.hidden = Boolean(crop) && !sourceError;
     hint.style.left = `${area.x + area.width / 2}px`;
     hint.style.top = `${Math.max(area.y + 12, position.y - hint.offsetHeight - 12)}px`;
-    hint.hidden = Boolean(crop);
     const labelled = toClient(crop ?? hover);
     if (labelled) {
       const x = Math.max(area.x + 4, Math.min(area.x + area.width - dimensions.offsetWidth - 4, labelled.x));
@@ -331,6 +332,7 @@ export async function mountCaptureWindow(
     const actionParent = captureMode === 'record' ? recordingPanel : toolBar;
     if (actionGroup.parentElement !== actionParent) actionParent.insertBefore(actionGroup, captureMode === 'record' ? formatOptions : null);
     buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy || Boolean(drag || cropDrag || annotationDrag || active);
+    buttons.save.hidden = captureMode !== 'still'; buttons.save.disabled = buttons.confirm.disabled;
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
     buttons.deleteAnnotation.disabled = selectedIndex === null;
     const styleTool = pendingText?.tool ?? selected?.tool ?? (tool === 'select' ? null : tool);
@@ -364,7 +366,6 @@ export async function mountCaptureWindow(
     }
     hint.textContent = sourceError || (crop ? labels.annotationHint : detecting() ? labels.windowSelectHint : labels.selectHint);
     placeDock();
-    if (sourceError) hint.hidden = false;
   }
   function finishText(commit = true) {
     const operation = pendingText;
@@ -384,13 +385,15 @@ export async function mountCaptureWindow(
   function placeTextInput() {
     if (!pendingText) return;
     const scale = pixelScale(), r = bounds(), point = pendingText.points[0];
-    textInput.style.font = `${(pendingText.fontSize ?? Math.max(12, pendingText.width * 7)) / scale}px sans-serif`;
+    const size = (pendingText.fontSize ?? Math.max(12, pendingText.width * 7)) / scale;
+    textInput.style.font = `${size}px sans-serif`; textInput.style.lineHeight = '1.2';
     textInput.style.color = pendingText.color;
     const channels = pendingText.color.match(/[a-f\d]{2}/gi)?.map(value => parseInt(value, 16)) ?? [255, 255, 255];
     const brightness = channels[0] * .299 + channels[1] * .587 + channels[2] * .114;
     textInput.style.backgroundColor = brightness < 135 ? '#f3f6fa' : '#18222f';
     textInput.style.textShadow = 'none';
     textInput.style.width = `${Math.min(innerWidth - 16, Math.max(180, painter.bounds(context, { ...pendingText, text: textInput.value }).width / scale + 22))}px`;
+    textInput.style.height = `${Math.min(innerHeight - 16, Math.max(size * 1.2 + 14, textInput.value.split('\n').length * size * 1.2 + 14))}px`;
     textInput.style.left = `${Math.max(0, Math.min(innerWidth - textInput.offsetWidth, r.x + point.x / scale - 7))}px`;
     textInput.style.top = `${Math.max(0, Math.min(innerHeight - textInput.offsetHeight, r.y + point.y / scale - 7))}px`;
   }
@@ -426,7 +429,7 @@ export async function mountCaptureWindow(
     e.stopPropagation();
     // 候选词确认的 Enter 必须交给输入法，不能提前结束文字标注。
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finishText(e.key === 'Enter'); }
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); finishText(e.key === 'Enter'); }
   };
   function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; cropDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; }
   /** Hover detection runs only over this display's own frozen frame, before any selection exists. */
@@ -476,16 +479,19 @@ export async function mountCaptureWindow(
       : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + choices.length) % choices.length;
     choices[next].click(); choices[next].focus();
   };
+  button(actionGroup, 'save', labels.save, () => { void confirm(true); });
   button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
-  async function confirm() {
+  async function confirm(save = false) {
     if (!crop || busy || drag || cropDrag || annotationDrag || active || crop.width < 1 || crop.height < 1) return;
+    if (save && captureMode !== 'still') return;
     finishText();
     finishPropertyChange();
-    busy = true; active = null; draw();
+    busy = true; active = null; sourceError = ''; draw();
     const output = node('canvas'); output.width = crop.width; output.height = crop.height;
     output.getContext('2d')!.drawImage(canvas, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
-    try { await bridge.finish({ crop, ...(captureActions.length ? { action: captureAction } : {}), ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
-    finally { busy = false; }
+    try { await bridge.finish({ crop, ...(save ? { save: true } : {}), ...(captureActions.length ? { action: captureAction } : {}), ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
+    catch { sourceError = save ? labels.saveFailed : labels.loadFailed; }
+    finally { busy = false; draw(); }
   }
   const confirmButton = button(actionGroup, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
   buttonVisual(confirmButton, captureMode === 'record' ? null : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, captureMode === 'record');

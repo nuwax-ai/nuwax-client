@@ -93,7 +93,7 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "stopped", controlPending: true, reason: "userStopped" };
     const html = render();
     expect(html).toContain("Claw.Cua.stopping");
-    expect(html).not.toContain("Claw.Cua.stop");
+    expect(html).not.toContain('aria-label="Claw.Cua.stop"');
     expect(html).not.toContain("Claw.Cua.reason.userStopped");
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.stop")).toBeUndefined();
     expect(harness.buttons.find((b) => b["aria-label"] === "Claw.Cua.pause")).toBeUndefined();
@@ -102,7 +102,7 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "failed", reason: "helperStillRunning" };
     const html = render();
     expect(html).toContain("Claw.Cua.reason.helperStillRunning");
-    expect(html).not.toContain("Claw.Cua.stop");
+    expect(html).not.toContain('aria-label="Claw.Cua.stop"');
   });
   it("keeps the control bar hidden without a task", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
