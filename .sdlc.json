@@ -10,5 +10,10 @@
   "protectedWrite": [],
   "envPrefix": "NUWACLAW",
   "test": "npm run base:test",
-  "grillExtra": []
+  "grillExtra": [],
+  "verification": {
+    "schemaVersion": 1,
+    "recipe": ".verification/client-tooling.json",
+    "runner": "scripts/sdlc-verify.mjs"
+  }
 }

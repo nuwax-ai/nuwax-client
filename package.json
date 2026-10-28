@@ -18,6 +18,7 @@
     "base:bundle": "node scripts/client/cli.mjs pack",
     "test:commercial": "node scripts/in-base.js --no-env -- npm run test:electron",
     "test:scripts": "node --test scripts/*.test.mjs",
+    "verify:tooling": "node scripts/sdlc-verify.mjs --root . --recipe .verification/client-tooling.json",
     "diagnostics:export": "node scripts/export-diagnostics.mjs",
     "check:pin": "node scripts/check-base-purity.js",
     "frontend:build": "node scripts/client/cli.mjs frontend:build",
