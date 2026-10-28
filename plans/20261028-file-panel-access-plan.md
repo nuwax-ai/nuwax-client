@@ -2,7 +2,7 @@
 
 - 对应规格：`specs/local-file-management.md`、`specs/local-file-access.md`。
 - 范围：依据用户 2026-10-28 澄清，以文件树面板全部文件操作为核心；会话框仅含选择项目目录，不改消息附件链路。
-- 状态：代码及配对产物已提交，Mac 隔离开发客户端和文件协议验证通过；Windows 实机验证由 ZCode 会话 `session_cb2fb9c54189a13a41e6ed10966fcebb` 进行，其上午源码快照的文件域 80 项已通过，GIF 和 GUI 验证仍在进行。已发布 Beta.1 不包含本次补齐。
+- 状态：代码及配对产物已提交，Mac 隔离开发客户端和文件协议验证通过；Windows 实机验证由 ZCode 会话 `session_cb2fb9c54189a13a41e6ed10966fcebb` 完成最终 `e07b3687` 的文件域 81 项复核和主要面板操作、GIF 基准。用户已授权打 `v3.0.25-beta.2`；已发布 Beta.1 不包含本次补齐。
 - 冻结前端：`fce588e8930a4539b2d365def91fe87219a75a99`；配对产物：`46c000f68017a3ae656f1db85944f9c0ba0c4893`。客户端以 `release/v3.0.25` 本次提交为准，基座仍为 `d12d001a0d51e28513cba2b60e76413275cad161`。
 
 ## 实施顺序
@@ -19,7 +19,7 @@
 - 真实临时文件：增删改名/跨目录移动、草稿与内容保留、上传结构/冲突、ZIP 路径与保留项、导出字节；临时 profile 的 Electron 验证桥与协议，不能替代实际安装包验收。
 - 面板入口：列表、搜索、预览、打开/定位、新建、编辑、删除、重命名、移动、上传文件/文件夹、导入和导出逐项核对；会话框只验目录选择边界。
 - 复用文件域回归、宿主契约同步检查、分层及改动路径类型检查；社区和商业质量门在隔离副本运行，保留当前基座工作区。
-- 本轮范围澄清不等同于新包发布授权；不移动 Beta.1 tag，不自行启动下一次打包或发布。
+- 用户现已授权在 Windows 结果无阻塞后发布 Beta.2；保留 Beta.1 tag 和资产。Windows 原生目录选择器及 ZIP 导入完整 UI 流受环境限制待验，Linux 实机仍待验，作为本 Beta 验收范围明确披露。
 
 ## 已取得的证据与剩余验收
 
@@ -35,9 +35,10 @@
 - 默认高画质改用低扰动的有序抖动，最高档保留原有误差扩散算法；不调整选区像素、帧率或色数，也不修改 FFmpeg 原生资源配方。
 - 使用随包 FFmpeg，对同一段 1280×720、30fps、5 秒 VP8 素材交替编码三轮：默认高画质输出均为 1280×720、75 帧、5 秒；平均 2,753ms → 1,073ms，输出 7,444,397 → 6,518,604 字节，样本 SSIM 0.957970 → 0.960744。详见 `.cache/acceptance/gif-file-panel-20261028.json`。
 - 该基准使用 Windows 参数路径、运行于 Mac ARM64，不能标作 Windows 性能验收；Windows 实际耗时和主观观感由 win-dbg 验证补齐。
+- Windows 补充：使用 Beta.1 NSIS 内生产 FFmpeg，同一素材交替三轮，平均 4,198ms → 2,613ms（-37.8%），产物减少 11.8%，尺寸/75 帧/5 秒一致；SSIM 0.9566 → 0.9610。详见 `plans/20261028-file-panel-windows-verification.md`，不将样本指标概括为所有素材的速度或观感保证。
 
 ## 三问自查
 
-- 内聚：本机来源及重试归 `localFileService`，分块生命周期和原子上传归 `local-files/transfers`，面板移动复用草稿保存队列，不改消息附件上传。
-- 分层：页面/面板消费统一文件服务；所有新 IPC 仍校验 owner、上下文与登录代次，原生主进程固定资源根与 loopback 目标；无新增架构违规。
-- 维护：新命令采用可选 v3 能力，旧读取/写入能力继续兼容；本机缺少新命令时明确失败而非回云端。移动同步普通/差异页签与后代路径，失败保留源文件和草稿。
+- 内聚：本机来源及重试归 `nuwax/src/features/client-shell/localFileService.ts:364` / `:516`，分块生命周期和原子上传归 `overlay/crates/agent-electron-client/src/main/features/local-files/transfers.ts:111` / `:327`，面板移动复用 `nuwax/src/components/business-component/FileTreePreviewPanel/hooks/useFileTreePreviewView.tsx:1711` 的草稿保存队列，不改消息附件上传。
+- 分层：页面/面板经 `nuwax/src/features/client-shell/filePanelTransfers.ts:9` 消费统一文件服务；新 IPC 在 `overlay/crates/agent-electron-client/src/main/features/local-files/index.ts:825` 起校验 owner、上下文与登录代次，主进程固定资源根与 loopback 目标；无新增架构违规。
+- 维护：新命令采用可选 v3 能力，旧读取/写入能力继续兼容；本机缺少新命令时明确失败而非回云端（`filePanelTransfers.ts:19`）。移动同步普通/差异页签与后代路径，失败保留源文件和草稿（`useFileTreePreviewView.tsx:1894`）。本次发布前按 Beta.1→最终源码批次复核，既有质量门及 Windows 最终基线复核均通过。
