@@ -139,6 +139,8 @@ test('validation has explicit isolated launch, private Mac signing, and no publi
   assert.match(workflow, /APPLE_CERTIFICATE/);
   assert.doesNotMatch(workflow, /contents: write|secrets: inherit|GH_PAT|SimplySign|sync-electron-to-oss|gh release|git push|release-electron/);
   assert.match(workflow, /Recheck stop condition before build setup/);
+  assert.ok(workflow.indexOf('echo "MACOSX_DEPLOYMENT_TARGET=12.0"') < workflow.indexOf('- name: Restore admitted unsigned native resource caches'),
+    'private Mac cache identity must use the same deployment target as the subsequent compilation');
   const beta = fs.readFileSync(new URL('../.github/workflows/release-electron-dev.yml', import.meta.url), 'utf8');
   const betaTriggers = beta.slice(beta.indexOf('\non:'), beta.indexOf('\npermissions:'));
   assert.match(betaTriggers, /"v\*-beta\.\*"/); assert.doesNotMatch(betaTriggers, /workflow_dispatch:|branches:|qa\//);

@@ -129,6 +129,8 @@ jobs:
       - name: Setup macOS capture compiler
         if: runner.os == 'macOS'
         run: |
+          # Resolve the same native cache key as release and later compilation.
+          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
           command -v nasm >/dev/null || brew install nasm
           command -v pkg-config >/dev/null || brew install pkgconf
       - name: Restore admitted unsigned native resource caches
@@ -165,7 +167,6 @@ jobs:
           echo "APPLE_API_KEY=$RUNNER_TEMP/validation-notary/AuthKey.p8" >> "$GITHUB_ENV"
           echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_ISSUER_ID=$APPLE_ISSUER_ID" >> "$GITHUB_ENV"
-          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
       - name: Build private acceptance packages without publishing
         id: build
         env:
