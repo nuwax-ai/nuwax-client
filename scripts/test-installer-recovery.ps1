@@ -3,7 +3,7 @@
 # Run from the client repository:
 # powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer-recovery.ps1
 param(
-  [string]$RecoveryScript = (Join-Path $PSScriptRoot '../overlay/crates/agent-electron-client/build/normalize-old-install.ps1'),
+  [string]$RecoveryScript = (Join-Path $PSScriptRoot '../nuwa-electron-shell/crates/agent-electron-client/build/normalize-old-install.ps1'),
   [switch]$KeepFixture
 )
 

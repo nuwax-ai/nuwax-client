@@ -22,9 +22,9 @@ async function launch() {
   let child;
   let watchdog;
   try {
-    const services = path.join(root, 'overlay/crates/agent-electron-client/src/main/services');
+    const services = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     const baseServices = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
-    const locale = JSON.parse(await fs.readFile(path.join(root, 'overlay/crates/agent-electron-client/src/shared/locales/zh-CN.json'), 'utf8'));
+    const locale = JSON.parse(await fs.readFile(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/shared/locales/zh-CN.json'), 'utf8'));
     const stubs = new Map([
       ['electron-log', 'export default {info(){},warn(){},error(){},debug(){}};'],
       ['@shared/constants', 'export const APP_NAME_IDENTIFIER="nuwax", DEFAULT_SERVER_HOST="https://unused.example", WEBVIEW_POPUP_BASE_WIDTH=600, WEBVIEW_POPUP_BASE_HEIGHT=400, WEBVIEW_POPUP_MIN_WIDTH=640, WEBVIEW_POPUP_MIN_HEIGHT=480;'],

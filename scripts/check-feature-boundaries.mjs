@@ -2,7 +2,7 @@
 /**
  * 特性模块边界检查（守卫）。
  *
- * 扫描 overlay 源码树 `overlay/crates/agent-electron-client/src`，强制特性之间、特性与
+ * 扫描 overlay 源码树 `nuwa-electron-shell/crates/agent-electron-client/src`，强制特性之间、特性与
  * 客户端其余代码之间保持独立：
  *
  *   R1 特性文件只能 import：自身特性的文件、`main/features/_kit`、`shared/types/hostBridge`、
@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const defaultRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const overlaySrc = 'overlay/crates/agent-electron-client/src';
+export const overlaySrc = 'nuwa-electron-shell/crates/agent-electron-client/src';
 
 const ALIASES = [
   ['@shared/', 'shared/'],

@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 /**
- * 在基座（nuwa-electron-shell/ submodule，main 分支）内执行命令，并预注入商业构建环境变量。
+ * 在壳（nuwa-electron-shell/，已并入本仓直接维护）内执行命令，并预注入商业构建环境变量。
  *
  * 用法：
  *   node scripts/in-base.js [--no-inject | --no-env] -- <command> [args...]
  *   npm run base:install / base:dev / base:test / base:bundle / test:commercial
  *
  * 执行顺序：
- *   1. overlay 同步（scripts/sync-overlay.js）——把 overlay/ 商业自有代码覆写进基座
- *      工作树（当前为空即 no-op）；--no-inject 跳过（社区基线须用干净基座源码跑）。
- *   2. 仅商业入口准备壳根依赖，社区 --no-inject 不安装、不修改基座依赖。
- *   3. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
+ *   1. 仅商业入口准备壳根依赖，--no-inject 不安装、不修改依赖。
+ *   2. 商业 env 注入（可被外层同名变量覆盖），与 CI 构建步骤保持一致：
  *   NUWAX_APP_IDENTIFIER=nuwax        → 数据目录 ~/.nuwax（历史目录迁移链已被
  *                                       overlay 覆写 migrate.ts 阻断，全新开始）
  *   NUWAX_APP_DISPLAY_NAME=女娲Nuwax  → 客户端展示名（窗口标题/菜单/托盘/设置「关于」）；
@@ -33,10 +31,8 @@ const rootDir = path.join(__dirname, '..');
 const baseDir = path.join(rootDir, 'nuwa-electron-shell');
 
 // 解析参数：[--no-inject | --no-env] -- <command> [args...]
-// --no-inject：不注入商业 env；并先还原已同步的 overlay 文件（社区基线须用
-//              干净基座源码 + 社区默认值跑，商业行为由专项 env 测试覆盖，如
-//              migrate.commercial.test.ts / constants.port-offset.test.ts）
-// --no-env   ：同步 overlay 但不注入 env（商业测试门禁 test:commercial 口径）
+// --no-inject：不注入商业 env、不准备商业依赖
+// --no-env   ：准备商业依赖但不注入 env（商业测试门禁 test:commercial 口径）
 const argv = process.argv.slice(2);
 const noInject = argv[0] === '--no-inject';
 if (noInject) argv.shift();
@@ -49,31 +45,12 @@ if (argv[0] !== '--' || argv.length < 2) {
 const cmd = argv.slice(1);
 
 if (!noInject) {
-  const sync = spawnSync('node', [path.join(__dirname, 'sync-overlay.js')], {
-    stdio: 'inherit',
-    cwd: rootDir,
-  });
-  if (sync.status !== 0) {
-    console.error('[in-base] overlay 同步失败，中止');
-    process.exit(sync.status ?? 1);
-  }
   const dependencies = spawnSync(process.execPath, [path.join(__dirname, 'client/commercial-dependencies.mjs')], {
     stdio: 'inherit', cwd: rootDir,
   });
   if (dependencies.status !== 0) {
     console.error('[in-base] 商业依赖准备失败，中止');
     process.exit(dependencies.status ?? 1);
-  }
-} else {
-  // 社区基线须跑在干净基座源码上：还原上一轮同步进工作树的 overlay 文件
-  // （仅清单内文件；不影响基座工作树里的其他本地改动）
-  const clean = spawnSync('node', [path.join(__dirname, 'sync-overlay.js'), '--clean'], {
-    stdio: 'inherit',
-    cwd: rootDir,
-  });
-  if (clean.status !== 0) {
-    console.error('[in-base] overlay 还原失败，中止');
-    process.exit(clean.status ?? 1);
   }
 }
 

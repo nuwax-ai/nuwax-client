@@ -9,7 +9,7 @@ import config from '../client.config.mjs';
 import { configureSystemAppName } from './client/system-app-name.mjs';
 import { prepareReleaseSystemName, verifyMacSystemName } from './prepare-release-system-name.mjs';
 
-const strings = path.resolve(import.meta.dirname, '../overlay/crates/agent-electron-client/build/InfoPlist.strings');
+const strings = path.resolve(import.meta.dirname, '../nuwa-electron-shell/crates/agent-electron-client/build/InfoPlist.strings');
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-system-name-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

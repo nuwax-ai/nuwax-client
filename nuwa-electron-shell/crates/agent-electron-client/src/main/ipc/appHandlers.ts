@@ -5,9 +5,13 @@ import {
   shell,
   systemPreferences,
   BrowserWindow,
+  desktopCapturer,
 } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import * as path from "path";
+import { pathToFileURL } from "node:url";
+import { createExternalOpenHandler } from "./openExternal";
+import { DEFAULT_DEV_SERVER_PORT } from "../services/constants";
 import * as fs from "fs";
 import * as os from "os";
 import { execSync } from "child_process";
@@ -29,11 +33,16 @@ import {
   isMacPrivacyPane,
 } from "../services/system/macPermissions";
 import { getBundledDistVersion } from "../services/frontendDistVersion";
+import { distHandshake } from "../services/distVersionHandshake";
+import { createDistHandshakeReader } from "../services/distVersionHandshakeIPC";
+import { loopbackGatewayStatus, resolveBackendOrigin } from "../services/loopbackGateway";
+import { ticketEpoch } from "../services/commercialTicketSession";
 import { getTrayManager } from "../window/trayManager";
-import { getAutoLaunchManager } from "../window/autoLaunchManager";
+import { createAutoLaunchManager, getAutoLaunchManager } from "../window/autoLaunchManager";
 import { t } from "../services/i18n";
-import { APP_NAME_IDENTIFIER } from "@shared/constants";
-import { canUseUpdater as canUseUpdaterFrom } from "./bridgeTrust";
+import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, I18N_KEYS } from "@shared/constants";
+import { checkMacNotificationPermission } from "../services/system/macNotificationPermission";
+import { canUseUpdater as canUseUpdaterFrom, isHostRendererSender } from "./bridgeTrust";
 
 function platformDisplayName(): string {
   switch (process.platform) {
@@ -95,10 +104,8 @@ export function registerAppHandlers(ctx: HandlerContext): void {
   // Autolaunch
   ipcMain.handle("autolaunch:get", async () => {
     try {
-      const mgr = getAutoLaunchManager();
-      if (mgr) return mgr.isEnabled();
-      const settings = app.getLoginItemSettings({ args: ["--hidden"] });
-      return settings.openAtLogin;
+      const mgr = getAutoLaunchManager() ?? createAutoLaunchManager();
+      return await mgr.isEnabled();
     } catch (error) {
       log.error("[IPC] autolaunch:get failed:", error);
       return false;
@@ -107,18 +114,9 @@ export function registerAppHandlers(ctx: HandlerContext): void {
 
   ipcMain.handle("autolaunch:set", async (_, enabled: boolean) => {
     try {
-      const mgr = getAutoLaunchManager();
-      let success = false;
-      if (mgr) {
-        success = await mgr.setEnabled(enabled);
-      } else {
-        app.setLoginItemSettings({
-          openAtLogin: enabled,
-          openAsHidden: true,
-          args: ["--hidden"],
-        });
-        success = true;
-      }
+      // 启动较早的 IPC 也复用管理器，避免备用路径重新写入隐藏 Dock 的旧策略。
+      const mgr = getAutoLaunchManager() ?? createAutoLaunchManager();
+      const success = await mgr.setEnabled(enabled);
       if (!success)
         return {
           success: false,
@@ -222,6 +220,23 @@ export function registerAppHandlers(ctx: HandlerContext): void {
       bundledDist,
     };
   });
+
+  const readDistHandshake = createDistHandshakeReader({
+    handshake: distHandshake,
+    backendOrigin: resolveBackendOrigin,
+    sessionEpoch: ticketEpoch,
+    gatewayStatus: loopbackGatewayStatus,
+  });
+  // This is shell-only IPC, not a new business-WebView capability.
+  ipcMain.handle(
+    "app:getDistHandshake",
+    (event, force?: boolean) => {
+      if (!isHostRendererSender(event, ctx.getMainWindow()?.webContents, app.isPackaged)) {
+        throw new Error("Host renderer required");
+      }
+      return readDistHandshake(force === true);
+    },
+  );
 
   // ---- webview（nuwax 前端）触达的宿主更新能力：与壳关于页共用同一 autoUpdater
   // 单例（download 不会双跑），桥前端见 preload/webviewPerfBridge.ts updater 命名空间 ----
@@ -351,9 +366,8 @@ export function registerAppHandlers(ctx: HandlerContext): void {
         arch: process.arch,
         isPackaged: app.isPackaged,
         appVersion: app.getVersion(),
-        // dev 下 app.getName() 读 crate package.json name（@nuwax-ai/nuwaclaw）；
-        // 商业构建由产品壳 CI 覆写顶层 productName（如 Nuwax 壳），app.getName() 优先读它
-        appName: app.getName(),
+        // 关于页展示产品名称；app.getName() 的 ASCII 值仍供更新程序定位卸载文件。
+        appName: APP_DISPLAY_NAME,
         appPath: app.getAppPath(),
         exePath: app.getPath("exe"),
         installerType,
@@ -403,6 +417,12 @@ export function registerAppHandlers(ctx: HandlerContext): void {
           description: t("Claw.PermissionsPage.macosFullDiskAccessDesc"),
           status: "unknown" as const,
         },
+        {
+          key: "notifications",
+          name: t(I18N_KEYS.PermissionsPage.MACOS_NOTIFICATIONS),
+          description: t(I18N_KEYS.PermissionsPage.MACOS_NOTIFICATIONS_DESC),
+          status: await checkMacNotificationPermission(),
+        },
       ];
       return items;
     } catch (error) {
@@ -418,6 +438,16 @@ export function registerAppHandlers(ctx: HandlerContext): void {
         if (!isMacPrivacyPane(permissionKey)) {
           return { success: false, error: "Unknown permission" };
         }
+        // macOS lists an app under Screen Recording only after it has requested capture once.
+        if (
+          permissionKey === "screen_recording" &&
+          process.platform === "darwin" &&
+          systemPreferences.getMediaAccessStatus("screen") !== "granted"
+        ) {
+          await desktopCapturer
+            .getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+            .catch((error) => log.warn("[IPC] screen recording request failed:", error));
+        }
         const ok = await openMacPrivacySettings(permissionKey);
         return ok
           ? { success: true }
@@ -430,15 +460,14 @@ export function registerAppHandlers(ctx: HandlerContext): void {
   );
 
   // Shell
-  ipcMain.handle("shell:openExternal", async (_, url: string) => {
-    try {
-      await shell.openExternal(url);
-      return { success: true };
-    } catch (error) {
-      log.error("[IPC] shell:openExternal failed:", error);
-      return { success: false, error: String(error) };
-    }
-  });
+  const rendererEntry = app.isPackaged
+    ? pathToFileURL(path.join(process.resourcesPath, "app.asar", "dist", "index.html")).href
+    : `http://localhost:${DEFAULT_DEV_SERVER_PORT}/`;
+  ipcMain.handle("shell:openExternal", createExternalOpenHandler(
+    () => ctx.getMainWindow()?.webContents,
+    rendererEntry,
+    (url) => shell.openExternal(url),
+  ));
 
   ipcMain.handle("shell:openPath", async (_, targetPath: string) => {
     try {

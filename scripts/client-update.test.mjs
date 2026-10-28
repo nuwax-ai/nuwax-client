@@ -7,7 +7,6 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { update } from './client/update.mjs';
 import * as core from './client/core.mjs';
-import { checkOverlayCompatibility } from './check-overlay-compatibility.mjs';
 
 const temporary = [];
 afterEach(() => { for (const dir of temporary.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
@@ -24,7 +23,7 @@ function fixture({ trackedDist = false } = {}) {
   const root = path.join(temp, 'client');
   const remotes = {}, seeds = {};
   let source;
-  for (const name of ['nuwa-electron-shell', 'nuwax', 'nuwax-dist']) {
+  for (const name of ['nuwax', 'nuwax-dist']) {
     const remote = path.join(temp, `${name}.git`), seed = path.join(temp, `${name}-seed`);
     fs.mkdirSync(remote); git(remote, 'init', '--bare', '--initial-branch=main');
     fs.mkdirSync(seed); git(seed, 'init', '--initial-branch=main');
@@ -50,7 +49,7 @@ function fixture({ trackedDist = false } = {}) {
     git(root, 'config', '-f', '.gitmodules', `submodule.${name}.branch`, 'main');
     git(path.join(root, name), 'config', 'user.name', 'Toolchain Test'); git(path.join(root, name), 'config', 'user.email', 'test@example.invalid'); git(path.join(root, name), 'config', 'commit.gpgsign', 'false');
   }
-  write(root, '.gitignore', '.cache/\n.overlay-sync.json\n');
+  write(root, '.gitignore', '.cache/\n');
   commit(root, 'notes.txt', 'original\n');
   const outerRemote = path.join(temp, 'client.git'); fs.mkdirSync(outerRemote); git(outerRemote, 'init', '--bare', '--initial-branch=main');
   git(root, 'remote', 'add', 'origin', outerRemote); git(root, 'push', '-u', 'origin', 'main');
@@ -102,108 +101,6 @@ test('source WIP is rejected even with --force before changing checkouts', async
   await assert.rejects(update(f.root, { force: true }, { buildFrontend: f.buildFrontend }), /有源码改动/);
   assert.equal(git(path.join(f.root, 'nuwax'), 'rev-parse', 'HEAD'), previous);
   assert.equal(f.builds, 0);
-});
-
-test('unchanged shell HEAD permits existing overlay edits, movement refuses them', async () => {
-  const f = fixture(); f.advance(); const shell = path.join(f.root, 'nuwa-electron-shell');
-  write(shell, 'source.txt', 'synchronized overlay\n');
-  await update(f.root, {}, { buildFrontend: f.buildFrontend });
-  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'synchronized overlay\n');
-  f.advance('nuwa-electron-shell');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /有未托管改动/);
-});
-
-test('managed overlay permits shell movement and resync; other source WIP remains protected', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
-  write(f.root, 'overlay/source.txt', 'commercial generated overlay\n');
-  write(f.root, 'scripts/sync-overlay.js', fs.readFileSync(new URL('./sync-overlay.js', import.meta.url), 'utf8'));
-  commit(f.root, 'overlay/README.md', 'overlay fixture\n');
-  write(f.root, '.overlay-sync.json', JSON.stringify(['source.txt']));
-  write(shell, 'source.txt', 'commercial generated overlay\n');
-  const target = f.advance('nuwa-electron-shell'); f.advance();
-  git(shell, 'fetch', 'origin');
-  const compatibility = await checkOverlayCompatibility(f.root, { from: 'HEAD', to: target });
-  commit(f.root, 'overlay-base-reviews.json', JSON.stringify({ schemaVersion: 1, reviews: compatibility.changes.map(change => ({
-    path: change.path, baseBlob: change.newBase?.blob ?? null, baseMode: change.newBase?.mode ?? null,
-    overlaySha256: change.overlaySha256, note: 'Reviewed fixture base changes and retained commercial override.',
-  })) }));
-  await update(f.root, {}, { buildFrontend: f.buildFrontend });
-  assert.equal(git(shell, 'rev-parse', 'HEAD'), target);
-  assert.equal(git(f.root, 'rev-parse', 'HEAD:nuwa-electron-shell'), target);
-  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'commercial generated overlay\n');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.root, '.overlay-sync.json'), 'utf8')), ['source.txt']);
-  write(shell, 'developer.ts', 'developer WIP\n'); f.advance('nuwa-electron-shell');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /developer.ts 有未托管改动/);
-  assert.equal(git(shell, 'rev-parse', 'HEAD'), target);
-  assert.equal(fs.readFileSync(path.join(shell, 'developer.ts'), 'utf8'), 'developer WIP\n');
-  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'commercial generated overlay\n');
-});
-
-test('unreviewed base overlap blocks shell and frontend movement before restoring overlay or WIP', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
-  write(f.root, 'overlay/source.txt', 'commercial generated overlay\n');
-  write(f.root, 'scripts/sync-overlay.js', fs.readFileSync(new URL('./sync-overlay.js', import.meta.url), 'utf8'));
-  commit(f.root, 'overlay/README.md', 'overlay fixture\n');
-  write(f.root, '.overlay-sync.json', JSON.stringify(['source.txt']));
-  write(shell, 'source.txt', 'commercial generated overlay\n');
-  write(f.root, 'notes.txt', 'unrelated staged WIP\n'); git(f.root, 'add', 'notes.txt');
-  const before = Object.fromEntries(['nuwa-electron-shell', 'nuwax', 'nuwax-dist'].map(name => [name, git(path.join(f.root, name), 'rev-parse', 'HEAD')]));
-  const index = fs.readFileSync(path.join(f.root, '.git/index'));
-  const manifest = fs.readFileSync(path.join(f.root, '.overlay-sync.json'));
-  f.advance('nuwa-electron-shell'); f.advance();
-  await assert.rejects(update(f.root, { force: true }, { buildFrontend: f.buildFrontend }), /overlay.*兼容审查/);
-  for (const [name, sha] of Object.entries(before)) assert.equal(git(path.join(f.root, name), 'rev-parse', 'HEAD'), sha);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, '.git/index')), index);
-  assert.deepEqual(fs.readFileSync(path.join(f.root, '.overlay-sync.json')), manifest);
-  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'commercial generated overlay\n');
-  assert.equal(fs.readFileSync(path.join(f.root, 'notes.txt'), 'utf8'), 'unrelated staged WIP\n');
-  assert.equal(f.builds, 0);
-});
-
-test('compatibility gate accepts injected tools and runs before either source checkout', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
-  const shellHead = git(shell, 'rev-parse', 'HEAD'), frontendHead = git(path.join(f.root, 'nuwax'), 'rev-parse', 'HEAD');
-  const target = f.advance('nuwa-electron-shell'); f.advance();
-  let checked = false;
-  const injectedRun = (...args) => core.run(...args);
-  await assert.rejects(update(f.root, {}, {
-    buildFrontend: f.buildFrontend, run: injectedRun,
-    async assertOverlayCompatibility(root, options, tools) {
-      checked = true; assert.equal(root, f.root); assert.deepEqual(options, { from: shellHead, to: target }); assert.equal(tools.run, injectedRun);
-      assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead); assert.equal(git(path.join(f.root, 'nuwax'), 'rev-parse', 'HEAD'), frontendHead);
-      throw new Error('compatibility gate fixture failure');
-    },
-  }), /compatibility gate fixture failure/);
-  assert.equal(checked, true); assert.equal(f.builds, 0); assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead);
-});
-
-test('overlay movement refuses staged changes and mismatching previous generated files', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell');
-  write(f.root, 'overlay/source.txt', 'commercial generated overlay\n'); commit(f.root, 'overlay/README.md', 'overlay fixture\n');
-  write(f.root, '.overlay-sync.json', JSON.stringify(['source.txt']));
-  write(shell, 'source.txt', 'commercial generated overlay\n'); git(shell, 'add', 'source.txt'); f.advance('nuwa-electron-shell');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /壳子模块有暂存改动/);
-  git(shell, 'restore', '--staged', 'source.txt'); write(shell, 'source.txt', 'developer changed generated file\n');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /source.txt 有未托管改动/);
-  assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'developer changed generated file\n');
-});
-
-test('shell movement rejects malformed overlay manifests before changing either source checkout', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell'), frontend = path.join(f.root, 'nuwax');
-  const shellHead = git(shell, 'rev-parse', 'HEAD'), frontendHead = git(frontend, 'rev-parse', 'HEAD');
-  f.advance('nuwa-electron-shell'); f.advance();
-  write(f.root, '.overlay-sync.json', '{');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /overlay-sync.*损坏/);
-  assert.equal(git(shell, 'rev-parse', 'HEAD'), shellHead); assert.equal(git(frontend, 'rev-parse', 'HEAD'), frontendHead);
-  assert.equal(f.builds, 0); assert.equal(fs.readFileSync(path.join(f.root, '.overlay-sync.json'), 'utf8'), '{');
-});
-
-test('shell movement refuses hidden index flags instead of overwriting hidden developer edits', async () => {
-  const f = fixture(), shell = path.join(f.root, 'nuwa-electron-shell'), before = git(shell, 'rev-parse', 'HEAD');
-  git(shell, 'update-index', '--assume-unchanged', 'source.txt'); write(shell, 'source.txt', 'hidden developer WIP\n');
-  assert.equal(git(shell, 'diff', '--name-only'), ''); f.advance('nuwa-electron-shell');
-  await assert.rejects(update(f.root, {}, { buildFrontend: f.buildFrontend }), /index|特殊标记/);
-  assert.equal(git(shell, 'rev-parse', 'HEAD'), before); assert.equal(fs.readFileSync(path.join(shell, 'source.txt'), 'utf8'), 'hidden developer WIP\n');
 });
 
 function makeShallow(f, name, pin) {
@@ -396,6 +293,6 @@ test('dry-run never changes tracked state or remote refs; with-test uses isolati
   assert.equal(git(f.root, 'rev-parse', 'HEAD'), before);
   assert.equal(git(f.root, 'status', '--porcelain'), '');
   let tested = false;
-  await update(f.root, { withTest: true }, { buildFrontend: f.buildFrontend, isolatedTests: async (root, modules) => { tested = true; assert.equal(root, f.root); assert.equal(Object.keys(modules).length, 3); } });
+  await update(f.root, { withTest: true }, { buildFrontend: f.buildFrontend, isolatedTests: async (root, modules) => { tested = true; assert.equal(root, f.root); assert.equal(Object.keys(modules).length, 2); } });
   assert.equal(tested, true);
 });

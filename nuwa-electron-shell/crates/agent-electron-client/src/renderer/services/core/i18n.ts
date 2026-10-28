@@ -9,6 +9,9 @@
  */
 
 import { apiRequest } from "./api";
+import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
+import i18n from "../i18n";
 
 // ========== 类型定义 ==========
 
@@ -30,7 +33,7 @@ export interface I18nLangDto {
 /**
  * 产品默认语言：简体中文。
  * 语义=无持久化用户选择时的默认值，**优先于系统语言**（不再跟随 navigator.language）；
- * 用户在设置页显式选择、或 webview 多语言同步（nuwax:lang-changed）后以该值为准。
+ * 商业版以 webview 多语言同步（nuwax:lang-changed）为准；尚未同步时使用此默认值。
  */
 const DEFAULT_I18N_LANG = "zh-cn";
 
@@ -97,6 +100,7 @@ let isCurrentLangSupported_ = true;
 let zhBaseMap: SystemLangMap = { ...(zhCN as SystemLangMap) };
 let zhValueToKeyMap: Record<string, string> = {};
 let initPromise: Promise<void> | null = null;
+let languageRevision = 0;
 const warnedLegacyKeys = new Set<string>();
 const warnedInvalidKeys = new Set<string>();
 const warnedMissingKeys = new Set<string>();
@@ -325,12 +329,20 @@ export const getCurrentLangMap = (): SystemLangMap => ({ ...langMap });
 export const isCurrentLangSupported = (): boolean => isCurrentLangSupported_;
 
 export const setCurrentLang = async (lang?: string | null): Promise<void> => {
-  const resolvedLang = normalizeLang(lang || getDefaultLang());
+  const resolvedLang =
+    APP_NAME_IDENTIFIER === "nuwax"
+      ? resolveShellLang(lang)
+      : normalizeLang(lang || getDefaultLang());
+  const revision = ++languageRevision;
   currentLang = resolvedLang;
   isCurrentLangSupported_ = isLocaleSupported(resolvedLang);
 
   langMap = { ...getLocalBaseMap(resolvedLang) };
   await writeToSettings(I18N_STORAGE_KEYS.ACTIVE_LANG, resolvedLang);
+  // 快速连续切换时，迟到的设置写入回调不能把 i18next 改回旧语言。
+  if (revision !== languageRevision) return;
+  // main.tsx 通过 i18next 的 languageChanged 更新 antd locale 和 HTML lang。
+  await i18n.changeLanguage(resolvedLang);
 };
 
 export const initI18n = (): Promise<void> => {
@@ -340,20 +352,30 @@ export const initI18n = (): Promise<void> => {
 };
 
 const _doInitI18n = async (): Promise<void> => {
-  const cachedLang = await readLangFromCache();
-  // 无持久化选择 → 产品默认（简体中文），不跟随系统语言
-  const resolvedLang = normalizeLang(cachedLang || getDefaultLang());
+  // 商业版只恢复 webview 上次上报的语言；旧壳语言缓存不能充当启动来源。
+  const cachedLang =
+    APP_NAME_IDENTIFIER === "nuwax"
+      ? await readFromSettings(NUWAX_WEBVIEW_LANG_KEY)
+      : await readLangFromCache();
+  // webview 从未上报时显示产品默认（简体中文），不跟随系统语言
+  const resolvedLang =
+    APP_NAME_IDENTIFIER === "nuwax"
+      ? resolveShellLang(cachedLang)
+      : normalizeLang(cachedLang || getDefaultLang());
   const forceRefreshLang = await readForceRefreshLangOnInit();
   const shouldForceRefresh = forceRefreshLang === resolvedLang;
   if (forceRefreshLang) {
     await writeToSettings(I18N_STORAGE_KEYS.LANG_FORCE_REFRESH_ON_INIT, "");
   }
   await setCurrentLang(resolvedLang);
-  // 启动时同步主进程语言，避免主进程弹窗（如自动更新）与渲染进程语言不一致
-  try {
-    await window.electronAPI?.i18n?.setLang(resolvedLang);
-  } catch {
-    // ignore sync failures
+  // 商业版主进程已从 webview 镜像恢复，启动同步不能走壳→guest 的 set-lang。
+  // 社区版仍需将本地语言选择同步到主进程。
+  if (APP_NAME_IDENTIFIER !== "nuwax") {
+    try {
+      await window.electronAPI?.i18n?.setLang(resolvedLang);
+    } catch {
+      // ignore sync failures
+    }
   }
 
   const baseMap = getLocalBaseMap(resolvedLang);

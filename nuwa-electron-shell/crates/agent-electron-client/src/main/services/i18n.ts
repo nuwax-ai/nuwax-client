@@ -60,6 +60,7 @@ function loadLocaleFile(locale: string): SystemLangMap {
 
 let currentLang: string;
 let langMap: SystemLangMap;
+const mainLangListeners = new Set<(lang: string) => void>();
 
 // ========== 工具函数 ==========
 
@@ -154,12 +155,21 @@ export function getMainLang(): string {
   return currentLang;
 }
 
+/** 监听真正的语言变化；订阅者读取到的语言字典已完成更新。 */
+export function onMainLangChanged(listener: (lang: string) => void): () => void {
+  mainLangListeners.add(listener);
+  return () => {
+    mainLangListeners.delete(listener);
+  };
+}
+
 /**
  * 运行时切换主进程语言
  * @param lang 语言代码（如 "zh-CN"、"en"）
  */
 export function setMainLang(lang: string): void {
   const normalized = normalizeLang(lang) || DEFAULT_MAIN_LANG;
+  const changed = normalized !== currentLang;
   currentLang = normalized;
   langMap = loadLocaleFile(normalized);
   const devModeKey = "Claw.AutoUpdater.devModeUnsupported";
@@ -167,6 +177,15 @@ export function setMainLang(lang: string): void {
   log.info(
     `[i18n] setMainLang("${lang}") → normalized="${normalized}", ${devModeKey}=${hasDevModeUnsupported ? "present" : "missing"}, loadedKeys=${Object.keys(langMap).length}`,
   );
+  if (changed) {
+    for (const listener of mainLangListeners) {
+      try {
+        listener(currentLang);
+      } catch (error) {
+        log.warn("[i18n] Language listener failed:", error);
+      }
+    }
+  }
 }
 
 // 延迟初始化（等待 app ready）

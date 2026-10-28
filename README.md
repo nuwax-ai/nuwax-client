@@ -98,7 +98,7 @@
 | | **Nuwax 客户端**（＝**商业版**；本仓产品） | **nuwax 前端**（仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)，包名 `nuwax-frontend`） |
 |---|---|---|
 | 是什么 | Electron 桌面应用——「壳」 | React/UMI web 应用——业务 UI 本体 |
-| 仓库 | **本仓 nuwax-client**（基座 submodule + overlay 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（发布 tag 锁定源码并重建 dist）、线上部署（PC web） |
+| 仓库 | **本仓 nuwax-client**（壳 `nuwa-electron-shell/` 已并入本仓直接维护 + 构建期 env 注入身份） | 同一前端仓的三个落位：独立检出 `workspace/nuwax`（mac dev 用）、壳根 `nuwax/` submodule（发布 tag 锁定源码并重建 dist）、线上部署（PC web） |
 | 职责 | 窗口/webview 容器 + 桌面能力：登录态桥、本地化承载、沙箱、文件服务、引擎管理、自动更新 | 工作台/会话/资料库等全部页面逻辑 |
 | 运行形态 | 安装包分发：productName=`Nuwax`、identifier=`nuwax`、appId=`com.nuwax-ai.nuwax`、数据目录 `~/.nuwax` | ① 浏览器直接访问（PC web，无桥自动降级）；② 客户端窗口内 webview（本地伺服或直连线上） |
 | 对外身份 | 注入的 identifier `nuwax` = 宿主产品 id（`x-client-type` 头、桥 `getProduct()`） | 用 `getProduct()`/`isNuwaClaw()` 识别宿主并适配 |
@@ -111,26 +111,25 @@
 
 ### 仓库结构
 
-功能模块在基座仓 [nuwa-electron-shell](https://github.com/nuwax-ai/nuwa-electron-shell)，本仓注入商业身份并编排开发、构建和发布。前端源码与客户端资源分别固定版本：
+功能模块在 `nuwa-electron-shell/`（原基座仓 [nuwa-electron-shell](https://github.com/nuwax-ai/nuwa-electron-shell) 的快照，已并入本仓直接维护，不再是 submodule、不再回流上游），本仓注入商业身份并编排开发、构建和发布。前端源码与客户端资源分别固定版本：
 
 ```
 nuwax-client/（main = 商业产品壳）
-├── nuwa-electron-shell/   # submodule → 基座仓 main 分支（产品中立功能模块）
+├── nuwa-electron-shell/   # 壳：功能模块与构建系统，直接在本仓维护（上游快照 d12d001a）
 ├── nuwax/                 # submodule → nuwax 前端；发布时从 tag 内 gitlink 源码重建 dist
 ├── nuwax-dist/            # submodule → public 产物仓 main；本地开发/打包默认消费
-├── overlay/               # 商业自有代码（整文件覆写进基座工作树，见下「overlay/」）
 ├── scripts/client/        # 跨平台统一 CLI：自动准备、前端构建、开发、打包、更新、发布和诊断
 ├── client.config.mjs      # 非敏感产品身份、端口和发布目标；凭据来自主机登录态/env
-├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml 双轨）
+├── .github/workflows/     # 发布编排（release / sync）+ 测试门禁（ci.yml）
 ├── release-notes/  docs/
 └── package.json
 ```
 
-商业开发线 = 基座仓 main 分支（产品中立，服务 nuwa-cli / nuwaclaw / Nuwax 三方）；本仓差异 = 4 个构建期注入 env（`NUWAX_APP_IDENTIFIER/DISPLAY_NAME/UPDATE_FEED_BASE/PORT_OFFSET`，机制在基座 `constants.ts`，不注入=社区版行为）+ `overlay/` 商业自有代码 + 商业前端 pin。
+商业开发线 = 本仓 main。壳与社区版 NuwaClaw 已分叉，不再同步上游；商业身份仍由 4 个构建期注入 env（`NUWAX_APP_IDENTIFIER/DISPLAY_NAME/UPDATE_FEED_BASE/PORT_OFFSET`，机制在 `constants.ts`）+ 商业前端 pin 决定。原 `overlay/` 覆写层已合并进 `nuwa-electron-shell/`。
 
 ### 一键开发、前端构建与本地打包
 
-前置安装 Git、Node.js 22 或更新版本，启用 Corepack（或安装对应仓库 `packageManager` 指定的 pnpm）。准备引擎会初始化缺失子模块、同步 overlay，先构建 agent-kit 再安装工作区依赖，重建 Electron 原生模块并准备运行资源。
+前置安装 Git、Node.js 22 或更新版本，启用 Corepack（或安装对应仓库 `packageManager` 指定的 pnpm）。准备引擎会初始化缺失子模块，先构建 agent-kit 再安装工作区依赖，重建 Electron 原生模块并准备运行资源。
 
 ```bash
 git clone https://github.com/nuwax-ai/nuwax-client.git && cd nuwax-client
@@ -185,39 +184,38 @@ macOS 编码资源原生构建需要 Xcode/Command Line Tools、NASM 和 pkg-con
 
 Linux x64/arm64 录屏资源在对应架构原生构建，需要 GCC/G++、make、pkg-config 和 nasm。Ubuntu/Debian 可准备 `build-essential pkg-config nasm` 后运行 `npm run prepare:capture`；`npm run pack` 也会准备并核验资源。固定源码构建的 LGPL FFmpeg 使用 OpenH264 输出 MP4，源码、许可证和 SHA 随资源打包，不使用系统 PATH 中的 FFmpeg。OpenH264 自编译版本与 Cisco 官方二进制的分发授权不同，详情见 [Linux 验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 
-旧入口 `base:dev`、`base:bundle` 转发到统一 CLI。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将三个子模块对齐已提交 pin；普通开发只初始化缺失子模块。
+旧入口 `base:dev`、`base:bundle` 转发到统一 CLI。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将两个子模块（`nuwax`、`nuwax-dist`）对齐已提交 pin；普通开发只初始化缺失子模块。
 
 ### 子模块一键更新
 
 ```bash
 npm run sub:update
 npm run sub:update -- --nuwax feat-2026.9.30
-npm run sub:update -- --nuwax <branch-or-tag-or-sha> --shell <ref> --push
+npm run sub:update -- --nuwax <branch-or-tag-or-sha> --push
 ```
 
-完整链为：拉取源码 → 构建 `nuwax/dist` → 校验版本戳 → 刷新 [nuwax-ai/nuwax-dist](https://github.com/nuwax-ai/nuwax-dist) → 提交并推送产物 `main` → 提交外层 `nuwax`、`nuwax-dist` 双 gitlink（以及有变化的基座 pin）。产物仓根 README 保留，所有仍被客户端 pin 引用的提交保留历史。
+完整链为：拉取源码 → 构建 `nuwax/dist` → 校验版本戳 → 刷新 [nuwax-ai/nuwax-dist](https://github.com/nuwax-ai/nuwax-dist) → 提交并推送产物 `main` → 提交外层 `nuwax`、`nuwax-dist` 双 gitlink。产物仓根 README 保留，所有仍被客户端 pin 引用的提交保留历史。
 
 `nuwax/dist` 是本地暂存，不提交进前端源码仓。独立 `frontend:build` 会保留它；更新器完成或失败后清理本轮构建暂存和生成版本文件。源码改动、已有待推产物提交和无关暂存文件都会受到保护。
 
 更新参数：`--no-build` 仅复用与目标源码 SHA 匹配的产物；`--force-build` 强制构建；`--with-test` 增加商业测试；`--no-commit` 全链跳过提交与推送，不能搭配 `--push`；`--no-push-dist` 留本地产物提交；`--push` 推送外层当前分支。`--force` 只放宽外层无关 WIP 检查，不绕过覆盖或远端可达性保护。推送不强推；产物远端竞争最多重做一次，其他情况失败后按提示处理再重跑。
 
-### 分支模型与双轨门禁
+### 分支模型与门禁
 
-**单主干**：两仓均为 `feat/* 开发线 → PR → main → tag 发布`；基座 pin 跟随基座 main（`.gitmodules` branch=main），历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+**单主干**：本仓 `feat/* 开发线 → PR → main → tag 发布`；`nuwax` / `nuwax-dist` pin 跟随 `.gitmodules` 声明分支，历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
-| 社区基线 | `npm run base:test` | `--no-inject`：干净基座 + 社区默认值（会还原工作树 overlay） | ci.yml · community job |
-| 商业门禁 | `npm run test:commercial` | `--no-env`：同步 overlay、不注 env，全量 vitest | ci.yml · commercial job |
-| 守卫自测 | `npm run test:scripts` | pin、overlay、来源清单及本地诊断用例 | ci.yml · commercial job |
+| 商业门禁 | `npm run test:commercial` | `--no-env`：不注 env，全量 vitest | ci.yml · commercial job |
+| 守卫自测 | `npm run test:scripts` | 来源清单、发布与本地诊断用例 | ci.yml · commercial job |
 | 前端源码 | `pnpm -C nuwax exec vitest run`、`pnpm -C nuwax lint:arch` | tag 锁定的前端源码 | ci.yml · frontend job |
 
-`base:test` 会把 overlay 产物清出基座工作树，须在隔离副本运行；商业门禁另行同步 overlay 执行。脚本测试、商业测试和真实安装包验收分别报告。
+脚本测试、商业测试和真实安装包验收分别报告。
 
-### 与基座 / 社区版 / 前端的同步
+### 与社区版 / 前端的关系
 
-- **提交基座**：中立改动在 nuwa-electron-shell 内 feat 线经 PR 进 main（勿 rebase 改写已 pin 的 SHA）→ 本仓 `npm run check:pin`（基座脏文件/staged 不得混入 overlay 托管路径，CI 另有 `--remote origin/main` 字节级防线）→ bump submodule pin → `npm run overlay:check` 核对覆写差异 → `npm run test:commercial`。
-- **社区版**：社区产品壳与商业版同源基座、各自独立发布，互不影响。
+- **改壳**：直接在 `nuwa-electron-shell/` 内改，随本仓 PR 评审、`npm run test:commercial` 验证；不再有 pin bump、overlay 兼容审查或 check:pin。
+- **社区版**：壳源自同一上游，现已分叉，各自独立演进与发布，互不影响；需要借鉴社区改动时按 diff 人工移植。
 - **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 仍从源码 pin 现场构建。工作区已有 dist 不代表正式包内容。 direct 优先加载线上前端，不要求包内前端 pin 等于远端最新；发布仍固定可达源码与对应产物，并通过兼容及质量门。
 
 ### 发版流程
@@ -253,6 +251,3 @@ npm run release -- --tag v3.0.11 --stage sync
 - [ ] Windows 签名机按 docs/sign-windows.md 完成一次 sign:win 演练
 - [ ] 验证 OSS `nuwax-electron/` 指针与社区版 `nuwaclaw-electron/` 互不影响
 
-### overlay/ —— 商业自有代码（文件覆写机制）
-
-商业专属实现不进基座（基座产品中立，服务三方），放在 `overlay/` 下按基座相对路径组织，构建/开发前由 `scripts/sync-overlay.js` 整文件覆写进基座工作树（统一 CLI 与 CI 已自动前置同步；`--check` 干跑核对、`--clean` 还原）。准备引擎拒绝覆盖未被本轮工具链管理的基座本地改动。机制与纪律详见 [overlay/README.md](./overlay/README.md)。

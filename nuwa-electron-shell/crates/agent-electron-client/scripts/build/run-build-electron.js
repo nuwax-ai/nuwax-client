@@ -7,8 +7,17 @@
  * - CI：workflow 通过 TARGET_ARCH 传入 matrix.arch
  * - 本地：从 electron-builder 的 --x64 / --arm64 参数推导并注入 TARGET_ARCH
  */
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 const { getProjectRoot } = require('../utils/project-paths');
+const {
+  resolveInstallerArchiveMode,
+  resolveBuilderPlatform,
+  installedBuilderVersions,
+  installerArchiveCliArgs,
+  ZIP_COMPRESSION,
+} = require('./installer-archive-policy.cjs');
 
 /**
  * 从 electron-builder CLI 参数解析目标 CPU 架构。
@@ -63,9 +72,21 @@ function main() {
   const extraArgs = process.argv.slice(2);
   const targetArch = resolveTargetArch(extraArgs);
   const archFromArgs = parseArchFromElectronBuilderArgs(extraArgs);
+  const archivePlatform = resolveBuilderPlatform(extraArgs, process.platform);
+  const archiveMode = resolveInstallerArchiveMode({ env: process.env, platform: archivePlatform });
+  const archiveArgs = archiveMode ? installerArchiveCliArgs(
+    JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).build ?? {},
+    { env: process.env, platform: archivePlatform, builderVersions: installedBuilderVersions(projectRoot), argv: extraArgs },
+  ) : [];
 
   const skipPrepare =
     process.env.SKIP_PREPARE === '1' || process.env.SKIP_PREPARE === 'true';
+
+  if (process.env.NUWAX_APP_IDENTIFIER === 'nuwax') {
+    execFileSync(process.execPath, [path.resolve(projectRoot, '../../../scripts/prepare-release-updater.mjs'), '--client', projectRoot], {
+      cwd: projectRoot, stdio: 'inherit',
+    });
+  }
 
   const prepareEnv = {
     ...process.env,
@@ -97,7 +118,28 @@ function main() {
     console.log('[build:electron] SKIP_PREPARE=1, skipping prepare:all');
   }
 
-  const cmd = `npx electron-builder --config.compression=maximum ${extraArgs.join(' ')}`;
+  const compression = archiveMode && archiveMode !== '7z-qa' ? ZIP_COMPRESSION : 'maximum';
+  const commercialActions = process.env.GITHUB_ACTIONS === 'true' && process.env.NUWAX_APP_IDENTIFIER === 'nuwax';
+  if (archivePlatform === 'win32' && process.platform === 'win32' && !commercialActions) {
+    console.log('[build:electron] parallel installers: original path (requires the commercial Actions release entry point)');
+  }
+  if (archivePlatform === 'win32' && process.platform === 'win32' && commercialActions) {
+    const { parallelInstallerEligibility } = require('./windows-installer-orchestration.cjs');
+    const eligibility = parallelInstallerEligibility({
+      pkg: JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')),
+      argv: extraArgs, env: process.env, platform: process.platform, arch: targetArch,
+      builderVersions: installedBuilderVersions(projectRoot),
+    });
+    console.log(`[build:electron] parallel installers: ${eligibility.eligible ? 'enabled' : 'original path'} (${eligibility.reason})`);
+    if (eligibility.eligible) {
+      execFileSync(process.execPath, [path.join(__dirname, 'windows-installer-orchestration.cjs'),
+        '--project', projectRoot, '--output', eligibility.output, '--arch', eligibility.arch], {
+        cwd: projectRoot, stdio: 'inherit',
+      });
+      return;
+    }
+  }
+  const cmd = `npx electron-builder --config.compression=${compression} ${[...extraArgs, ...archiveArgs].join(' ')}`;
   console.log('[build:electron]', cmd);
   execSync(cmd, { cwd: projectRoot, stdio: 'inherit' });
 }

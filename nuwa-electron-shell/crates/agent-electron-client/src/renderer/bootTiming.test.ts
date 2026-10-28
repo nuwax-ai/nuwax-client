@@ -86,3 +86,18 @@ it("超硬上限必掀开（防 webview 长加载永挂）", () => {
     }),
   ).toBe(0);
 });
+
+// A stopped request may be an error, so recovery must not wait behind the splash.
+it.each(["failed", "waiting"] as const)(
+  "uncovers actionable guest %s immediately",
+  (phase) => {
+    expect(
+      loadingCoverRemainingMs(false, {
+        stoppedAt: 0,
+        mountAt: 1000,
+        now: 1001,
+        phase,
+      }),
+    ).toBe(0);
+  },
+);

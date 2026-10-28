@@ -19,6 +19,7 @@ const path = require('path');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const root = path.resolve(__dirname, '..', '..');
+require('./build-mac-notification-permission.cjs').buildMacNotificationPermission(root);
 
 const ALIASES = [
   ['@main/', 'src/main/'],
@@ -82,11 +83,17 @@ const external = [
 
 esbuild
   .build({
-    entryPoints: [
-      'src/main/main.ts',
-      'src/preload/index.ts',
-      'src/preload/webviewPerfBridge.ts',
-    ],
+    entryPoints: {
+      'main/main': 'src/main/main.ts',
+      'preload/index': 'src/preload/index.ts',
+      'preload/cuaControls': 'src/preload/features/computer-use/controlPreload.ts',
+      'preload/permissionChip': 'src/preload/features/permissionChip.ts',
+      'preload/webviewPerfBridge': 'src/preload/webviewPerfBridge.ts',
+      ...(fs.existsSync(path.join(root, 'src/preload/features/capture/windowPreload.ts'))
+        ? { 'preload/captureWindow': 'src/preload/features/capture/windowPreload.ts' } : {}),
+      ...(fs.existsSync(path.join(root, 'src/preload/features/capture/recordingPreload.ts'))
+        ? { 'preload/captureRecording': 'src/preload/features/capture/recordingPreload.ts' } : {}),
+    },
     bundle: true,
     platform: 'node',
     format: 'cjs',

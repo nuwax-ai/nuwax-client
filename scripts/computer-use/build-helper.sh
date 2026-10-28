@@ -164,7 +164,7 @@ if [ "$PLATFORM" = "mac" ]; then
   chmod +x "$APP/Contents/MacOS/Nuwax Computer Use"
   # The dependency checkout can still contain the community AI icon. Read the
   # same commercial source used for the main app without depending on sync order.
-  ICON_ICNS="${ICON_ICNS:-$REPO_ROOT/overlay/crates/agent-electron-client/public/icon.icns}"
+  ICON_ICNS="${ICON_ICNS:-$REPO_ROOT/nuwa-electron-shell/crates/agent-electron-client/public/icon.icns}"
   [ -f "$ICON_ICNS" ] || { echo "::error::main application icon.icns not found: $ICON_ICNS"; exit 1; }
   cp "$ICON_ICNS" "$APP/Contents/Resources/AppIcon.icns"
   sed -e "s/@@CUA_VERSION@@/$CUA_VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"

@@ -11,8 +11,8 @@ import { CAPTURE_RESOURCE_FILES, captureWindowSourceLockFile, inspectCaptureWind
 import { generateThirdPartyNotices, shippedResourcePaths } from './third-party-notices.mjs';
 import { terminalCompatLockFile, inspectTerminalCompatResource } from './terminal-compat-resources.mjs';
 import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
-import updater from '../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
-import archivePolicy from '../../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+import updater from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import archivePolicy from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { configureSystemAppName } from './system-app-name.mjs';
 import { configurePackagePayload, verifyPackagePayload } from './package-payload.mjs';
 
@@ -56,7 +56,7 @@ export function validateOutput(root, output, tools = core) {
   const candidate = canonical(output);
   const repository = canonical(root);
   if (inside(candidate, repository)) throw new Error('[pack] 输出目录不能是仓库根或其父目录');
-  const protectedPaths = [p.base, p.frontend, p.dist, p.cache, ...['.git', '.github', '.agents', '.claude', '.zcode', 'overlay', 'scripts', 'docs', 'plans', 'specs', 'release-notes', 'templates'].map((name) => path.join(root, name))];
+  const protectedPaths = [p.base, p.frontend, p.dist, p.cache, ...['.git', '.github', '.agents', '.claude', '.zcode', 'scripts', 'docs', 'plans', 'specs', 'release-notes', 'templates'].map((name) => path.join(root, name))];
   if (protectedPaths.some((file) => inside(canonical(file), candidate))) throw new Error('[pack] 输出目录不能位于源码、子模块或工具链缓存中');
   if (fs.existsSync(path.join(candidate, '.git')) || fs.existsSync(candidate) && !fs.statSync(candidate).isDirectory()) throw new Error('[pack] 输出目标必须是独立产物目录');
   return output;
@@ -101,10 +101,10 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
   return applyInstallerArchivePolicy(updater.configureUpdater(configureSystemAppName(configurePackagePayload(result), { platform, arch, product,
-    macStringsFile: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/build/InfoPlist.strings', import.meta.url)),
+    macStringsFile: fileURLToPath(new URL('../../nuwa-electron-shell/crates/agent-electron-client/build/InfoPlist.strings', import.meta.url)),
   }), {
     feedBase: product.feedBase,
-    hook: fileURLToPath(new URL('../../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs', import.meta.url)),
+    hook: fileURLToPath(new URL('../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs', import.meta.url)),
   }), { env, platform, builderVersions });
 }
 

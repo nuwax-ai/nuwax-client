@@ -57,7 +57,12 @@ export function useSplashFloor(): boolean {
 }
 
 /** webview 首载阶段：resolving=URL 重解析（启动/域名形态切换），loading/stopped 为 guest 加载周期。 */
-export type GuestLoadPhase = "resolving" | "loading" | "stopped";
+export type GuestLoadPhase =
+  | "resolving"
+  | "loading"
+  | "stopped"
+  | "failed"
+  | "waiting";
 
 /**
  * 覆盖层距掀开还需等待的 ms（0 = 已可掀开）。
@@ -66,8 +71,14 @@ export type GuestLoadPhase = "resolving" | "loading" | "stopped";
  */
 export function loadingCoverRemainingMs(
   hasStopped: boolean,
-  opts: { stoppedAt: number; mountAt: number; now: number },
+  opts: {
+    stoppedAt: number;
+    mountAt: number;
+    now: number;
+    phase?: GuestLoadPhase;
+  },
 ): number {
+  if (opts.phase === "failed" || opts.phase === "waiting") return 0;
   const elapsed = opts.mountAt > 0 ? opts.now - opts.mountAt : 0;
   const capRemaining = Math.max(0, MAX_LOADING_OVERLAY_MS - elapsed);
   if (!hasStopped) return capRemaining;
@@ -93,6 +104,10 @@ export function useLoadingCover(
 
   useEffect(() => {
     if (!active) return;
+    if (phase === "failed" || phase === "waiting") {
+      setCovered(false);
+      return;
+    }
     const now = Date.now();
     if (phase === "resolving") {
       setCovered(true);
@@ -121,5 +136,5 @@ export function useLoadingCover(
     return () => window.clearTimeout(timer);
   }, [active, phase, covered]);
 
-  return covered;
+  return covered && phase !== "failed" && phase !== "waiting";
 }

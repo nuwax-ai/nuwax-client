@@ -9,7 +9,7 @@ export const hostBridgeSources = [
   'nuwax/src/types/interfaces/hostBridge.types.ts',
   hostBridgeSource,
 ];
-export const hostBridgeSnapshot = 'overlay/crates/agent-electron-client/src/shared/types/hostBridge.ts';
+export const hostBridgeSnapshot = 'nuwa-electron-shell/crates/agent-electron-client/src/shared/types/hostBridge.ts';
 const generatedNotice = source => `// Generated from ${source}; do not edit.\n// Refresh: node scripts/sync-host-bridge-contract.mjs\n\n`;
 const normalizeLineEndings = text => text.replace(/\r\n/g, '\n');
 

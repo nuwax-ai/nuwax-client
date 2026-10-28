@@ -346,8 +346,9 @@ function bundledKey() {
     if (!digest) throw new Error('Missing bundled preparation input');
     return [file, digest];
   });
-  const basePin = core.git(root, ['rev-parse', 'HEAD:nuwa-electron-shell']);
-  return `bundled-v4-${process.platform}-${arch}-${core.fingerprint({ recipe, basePin })}`;
+  // 基座已并入本仓，不再以子模块 pin 入键：配方文件字节已覆盖影响产物的输入，
+  // 否则基座任意源码改动都会灭缓存。
+  return `bundled-v5-${process.platform}-${arch}-${core.fingerprint({ recipe })}`;
 }
 
 const [command, kind, key, ...args] = process.argv.slice(2);

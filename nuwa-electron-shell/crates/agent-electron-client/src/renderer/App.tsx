@@ -31,6 +31,7 @@ import {
   LoadingOutlined,
   RocketOutlined,
   CloseOutlined,
+  CameraOutlined,
 } from "@ant-design/icons";
 import {
   setupService,
@@ -71,11 +72,15 @@ import { getNuwaxAccessTokenKey } from "@shared/utils/domain";
 import { TITLEBAR_EMPTY_GRACE_MS } from "@shared/utils/titlebarDragRegions";
 import SetupDependencies from "./components/setup/SetupDependencies";
 import { AppIconLoading } from "./components/AppIconLoading";
+import { PageLoadRecovery } from "./components/PageLoadRecovery";
+import { observeServiceReadiness, type ServiceGateActivity } from "./services/serviceReadiness";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
-import AboutPage from "./components/pages/AboutPage";
+import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
+import PermissionOnboardingEntry from "./components/PermissionOnboardingEntry";
+import { supportsPermissionGuide, type PermissionGuideTarget } from "@shared/types/permissionOnboarding";
 import PermissionsPage from "./components/pages/PermissionsPage";
 import SessionsPage from "./components/pages/SessionsPage";
 import { type BrowserTarget } from "./components/pages/BrowserHomePage";
@@ -83,6 +88,10 @@ import NuwaxHostWebview, {
   type NuwaxHostWebviewHandle,
 } from "./components/pages/NuwaxHostWebview";
 import TrafficLightToolbar from "./components/TrafficLightToolbar";
+import { CuaControls } from "./features/computer-use";
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT } from '@shared/features/capture/contract';
+import { CaptureLauncher } from "./features/capture";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
 import MCPSettings from "./components/settings/MCPSettings";
 import { ModeNavIcon } from "./components/icons/ModeNavIcon";
 import { createLogger } from "./services/utils/rendererLog";
@@ -98,6 +107,7 @@ import {
   shouldShowServiceAttention,
   type CommercialServicePhase,
 } from "./services/serviceAttention";
+import { bindUiStatusActivity, createUiStatusPoller } from "./services/uiStatusPoller";
 
 // 主题类型
 export type ThemeMode = "light" | "dark" | "system";
@@ -142,6 +152,7 @@ type TabKey =
   | "sessions"
   | "mcp"
   | "settings"
+  | "capture"
   | "dependencies"
   | "permissions"
   | "logs"
@@ -241,6 +252,9 @@ function App() {
     elapsedMs?: number;
   } | null>(null);
 
+  const [servicesActivity, setServicesActivity] = useState<ServiceGateActivity>("loading");
+  const servicesObserver = useRef<ReturnType<typeof observeServiceReadiness> | null>(null);
+
   // ============================================
   // 主题状态
   // ============================================
@@ -282,25 +296,11 @@ function App() {
     };
   }, []);
 
-  // 启动服务门禁：核心服务 ready 前停在启动 loading（不挂 webview，杜绝页面
-  // 首屏 API 抢跑的「服务连接失败」弹窗）。先读缓存（事件可能早于 renderer
-  // 挂载已发），再监听后续推送；失败屏的重试经 waitForReady 重跑门禁。
+  // Main-process readiness remains authoritative; cached reads cannot replace newer events.
   useEffect(() => {
-    void window.electronAPI?.services
-      ?.readyState()
-      .then((s) => {
-        if (s) setServicesGate(s as { ok: boolean; detail?: string[] });
-      })
-      .catch(() => {});
-    const onServicesReady = (payload: unknown) => {
-      if (payload && typeof payload === "object" && "ok" in payload) {
-        setServicesGate(payload as { ok: boolean; detail?: string[] });
-      }
-    };
-    window.electronAPI?.on("services:ready", onServicesReady as any);
-    return () => {
-      window.electronAPI?.off("services:ready", onServicesReady as any);
-    };
+    const observer = observeServiceReadiness(window.electronAPI, setServicesGate, setServicesActivity);
+    servicesObserver.current = observer;
+    return () => { observer.dispose(); servicesObserver.current = null; };
   }, []);
 
   // 二级页同窗承载（默认形态）：nuwax 经 native:openWindow 请求打开的站内页
@@ -345,6 +345,10 @@ function App() {
   // nuwax 布局状态 → 工具栏收起按钮显隐：当前页无二级菜单时按钮无意义，隐藏。
   // 默认 false（隐藏）——nuwax 布局挂载后推送真实值；/Login 等无布局页不推或推 false。
   const [secondMenuAvailable, setSecondMenuAvailable] = useState(false);
+  // 商业版等待后台菜单状态；社区版保留原有的新建任务入口。
+  const [newTaskAvailable, setNewTaskAvailable] = useState(
+    APP_NAME_IDENTIFIER !== "nuwax",
+  );
   const [titlebarDragRegions, setTitlebarDragRegions] = useState<
     TitlebarDragRegion[]
   >([]);
@@ -356,6 +360,7 @@ function App() {
     const active = shellTheme?.active === true && !isDarkMode;
     const vars: Array<[string, string | undefined]> = [
       ["--color-primary", active ? shellTheme?.primary : undefined],
+      ["--nuwax-recovery-accent", active ? shellTheme?.primary : undefined],
       ["--color-bg-layout", active ? shellTheme?.bgContent : undefined],
       ["--color-bg-container", active ? shellTheme?.bgContent : undefined],
       ["--color-bg-elevated", active ? shellTheme?.bgContent : undefined],
@@ -582,6 +587,7 @@ function App() {
     const onNuwaxLayoutChanged = (payload: {
       secondMenuAvailable?: boolean;
       secondMenuCollapsed?: boolean;
+      newTaskAvailable?: boolean;
       titlebarDragRegions?: TitlebarDragRegion[];
     }) => {
       if (payload?.secondMenuAvailable !== undefined) {
@@ -589,6 +595,9 @@ function App() {
       }
       if (payload?.secondMenuCollapsed !== undefined) {
         setSecondMenuCollapsed(payload.secondMenuCollapsed === true);
+      }
+      if (typeof payload?.newTaskAvailable === "boolean") {
+        setNewTaskAvailable(payload.newTaskAvailable);
       }
       if (Array.isArray(payload?.titlebarDragRegions)) {
         const regions = payload.titlebarDragRegions;
@@ -620,6 +629,18 @@ function App() {
   }, []);
   // 系统配置浮层（替代原 mainViewMode=config 整页切换，沉浸式下不打断 webview）
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [captureAvailable, setCaptureAvailable] = useState(false);
+  const [captureShortcut, setCaptureShortcut] = useState(DEFAULT_CAPTURE_SHORTCUT);
+  const [recordShortcut, setRecordShortcut] = useState(DEFAULT_RECORD_SHORTCUT);
+  const [capturePanelTarget, setCapturePanelTarget] = useState<HTMLDivElement | null>(null);
+  const captureAfterSettingsClose = useRef<(() => void) | null>(null);
+  const captureActionHandler = useRef<((action: CaptureMenuAction) => void) | null>(null);
+  const handleCaptureActionReady = useCallback((handler: ((action: CaptureMenuAction) => void) | null) => {
+    captureActionHandler.current = handler;
+  }, []);
+  const handleCaptureMenu = useCallback((action: CaptureMenuAction) => {
+    captureActionHandler.current?.(action);
+  }, []);
   /** 是否已登录（有 config_key）；未登录时不展示平台切换 */
   const [isAuthLoggedIn, setIsAuthLoggedIn] = useState(false);
   // 保持 isAuthLoggedInRef 与 state 同步（restartAllServices 空依赖闭包读 ref）
@@ -642,7 +663,6 @@ function App() {
   const [startingServices, setStartingServices] = useState<Set<string>>(
     new Set(),
   );
-  const servicesPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * 上一次同步给托盘的整体服务状态（true=有服务在跑 / false=全部停止）。
    * 避免每 5 秒轮询都向主进程发一次 tray:updateServicesStatus IPC。
@@ -893,9 +913,8 @@ function App() {
   }, []);
 
   // webview 多语言同步（main 转发 nuwax:lang-changed，来源 nuwax 语言开关/设置/
-  // 登录后用户资料同步）：壳 UI 文案与主进程语言跟随。与设置页切换同链路
-  //（setCurrentLang + 预拉翻译 + 主进程同步），但不整窗 reload——避免连带
-  // 重载 webview 丢失会话态；context lang 变更驱动消费组件重渲染。
+  // 登录后用户资料同步）：主进程已在桥接时更新语言，renderer 只更新自身
+  // 文案和词典。不能再走 i18n:setLang，以免反向下发 set-lang 重载 guest。
   useEffect(() => {
     const log = createLogger("LangSync");
     const onLangChanged = (payload: { lang?: string }) => {
@@ -907,7 +926,6 @@ function App() {
           await setCurrentLang(lang);
           setI18nLang(getCurrentLang());
           void prefetchLangMap(lang).catch(() => {});
-          await window.electronAPI?.i18n?.setLang(lang);
         } catch (e) {
           log.error("apply failed:", e);
         }
@@ -994,8 +1012,9 @@ function App() {
   // 直发 guest）：新建任务/打开搜索 = nuwax 前端已有快捷键能力的宿主命令，
   // 工作空间目录 = 壳侧目录选择器/文件管理器
   const handleMenuNewTask = useCallback(() => {
+    if (!newTaskAvailable) return;
     webviewRef.current?.sendHostCommand({ type: "new-task" });
-  }, []);
+  }, [newTaskAvailable]);
   const handleMenuOpenSearch = useCallback(() => {
     webviewRef.current?.sendHostCommand({ type: "open-search" });
   }, []);
@@ -1015,7 +1034,12 @@ function App() {
     [],
   );
   const handleGuestNavigationStart = useCallback(
-    () => setTitlebarDragRegions([]),
+    (event?: { isInPlace?: boolean }) => {
+      setTitlebarDragRegions([]);
+      if (!event?.isInPlace) {
+        setNewTaskAvailable(APP_NAME_IDENTIFIER !== "nuwax");
+      }
+    },
     [],
   );
   const handleOpenSettings = useCallback(() => setSettingsModalOpen(true), []);
@@ -1121,7 +1145,7 @@ function App() {
   // ============================================
   // 服务状态轮询
   // ============================================
-  const pollServicesStatus = useCallback(async () => {
+  const loadServicesStatus = useCallback(async (isCurrent: () => boolean) => {
     try {
       const items: ServiceItem[] = [];
       // 任一 status() 抛错不应阻塞其他服务的轮询；用 allSettled 单点隔离。
@@ -1137,6 +1161,7 @@ function App() {
         window.electronAPI?.guiServer?.isEnabled(),
         window.electronAPI?.ttyd.status(),
       ]);
+      if (!isCurrent()) return;
       const unwrap = <T,>(r: PromiseSettledResult<T>, fallback: T): T =>
         r.status === "fulfilled" ? (r.value ?? fallback) : fallback;
       const fsStatus = unwrap(settled[0], { running: false });
@@ -1225,11 +1250,24 @@ function App() {
       }
     } catch (error) {
       console.error("[App] pollServicesStatus failed:", error);
-      setPollFailCount((count) => count + 1);
+      if (isCurrent()) setPollFailCount((count) => count + 1);
     } finally {
-      setServicesLoading(false);
+      if (isCurrent()) setServicesLoading(false);
     }
   }, []);
+
+  const servicesPoller = useMemo(
+    () => createUiStatusPoller(loadServicesStatus),
+    [loadServicesStatus],
+  );
+  const pollServicesStatus = useCallback(
+    () => servicesPoller.refresh(),
+    [servicesPoller],
+  );
+  useEffect(() => {
+    servicesPoller.resume();
+    return () => servicesPoller.dispose();
+  }, [servicesPoller]);
 
   // ============================================
   // 逐个启动服务（实时更新状态）
@@ -1529,19 +1567,15 @@ function App() {
   // 启动服务状态轮询
   useEffect(() => {
     if (isSetupComplete !== true) return;
-
-    // 立即执行一次
-    pollServicesStatus();
-
-    // 每 5 秒轮询一次
-    servicesPollTimer.current = setInterval(pollServicesStatus, 5000);
-
-    return () => {
-      if (servicesPollTimer.current) {
-        clearInterval(servicesPollTimer.current);
-      }
-    };
-  }, [isSetupComplete]);
+    const api = window.electronAPI;
+    return bindUiStatusActivity(servicesPoller, {
+      getSnapshot: api?.window?.getHostActivity,
+      subscribe(listener) {
+        api?.on("nuwax:host-activity-changed", listener);
+        return () => api?.off("nuwax:host-activity-changed", listener);
+      },
+    }, document);
+  }, [isSetupComplete, servicesPoller]);
 
   // ============================================
   // 监听更新状态（header tag 展示）
@@ -1699,9 +1733,21 @@ function App() {
   const badge = STATUS_CONFIG[agentStatus] || STATUS_CONFIG.idle;
 
   // ============================================
-  // 平台检测
+  // 授权引导入口
   // ============================================
-  const isMacOS = navigator.platform.toUpperCase().includes("MAC");
+  const permissionGuideAvailable = supportsPermissionGuide(navigator.platform);
+  const [permissionTarget, setPermissionTarget] = useState<PermissionGuideTarget>("overview");
+  const [permissionPanelOpen, setPermissionPanelOpen] = useState(false);
+  const closePermissionPanel = useCallback(() => {
+    setPermissionPanelOpen(false);
+    // 拖拽浮条只在引导可见时有意义，关闭引导时一并收起
+    void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined);
+  }, []);
+  const openPermissionOnboarding = useCallback((target: PermissionGuideTarget) => {
+    if (!permissionGuideAvailable) return;
+    setPermissionTarget(target);
+    setPermissionPanelOpen(true);
+  }, [permissionGuideAvailable]);
 
   // ============================================
   // 菜单配置（对齐 Tauri 客户端）
@@ -1734,12 +1780,15 @@ function App() {
         label: t("Claw.Menu.dependencies"),
       },
     ];
-    if (isMacOS) {
+    if (permissionGuideAvailable) {
       items.push({
         key: "permissions",
         icon: <SafetyOutlined />,
         label: t("Claw.Menu.authorization"),
       });
+    }
+    if (APP_NAME_IDENTIFIER === "nuwax" && captureAvailable) {
+      items.push({ key: "capture", icon: <CameraOutlined />, label: t("Claw.Capture.title") });
     }
     items.push(
       { key: "logs", icon: <FileTextOutlined />, label: t("Claw.Menu.logs") },
@@ -1750,7 +1799,7 @@ function App() {
       },
     );
     return items;
-  }, [isMacOS, i18nLang]);
+  }, [i18nLang, captureAvailable, permissionGuideAvailable]);
 
   // ============================================
   // i18n Context value
@@ -1820,41 +1869,202 @@ function App() {
   // 失败态优先短路（错误提示立即出现，不受最少展示时长影响）；
   // 等待态同样并入最少展示时长。
   // ============================================
-  const servicesGateFailed = !!servicesGate && !servicesGate.ok;
+  // Shared local settings stay reachable even before the guest/service gate is ready.
+  const clientSettingsModal = (
+    <Modal
+      open={settingsModalOpen}
+      afterClose={() => { captureAfterSettingsClose.current?.(); captureAfterSettingsClose.current = null; }}
+      onCancel={() => setSettingsModalOpen(false)}
+      footer={null}
+      centered
+      width={1000}
+      closable={false}
+      styles={{
+        // 弹窗整体灰底：让页面内白色卡片在灰底上浮出
+        content: {
+          padding: "0",
+          borderRadius: "12px",
+          overflow: "hidden",
+          background: "var(--color-bg-layout)",
+        },
+        // 固定尺寸 1000×640：外壳不滚，左菜单/右内容在固定高度容器内各自滚动
+        body: {
+          height: 640,
+          boxSizing: "border-box",
+          overflow: "hidden",
+        },
+        // 遮罩：玻璃模糊（低不透明度，透出背景）
+        mask: {
+          background: "rgba(0, 0, 0, 0.3)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+        },
+      }}
+      destroyOnHidden
+    >
+      <div
+        className={styles.configPane}
+        style={{
+          display: "flex",
+          height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
+        }}
+      >
+        <div
+          className={
+            i18nLang.toLowerCase().startsWith("en")
+              ? "app-sider app-sider-en"
+              : "app-sider"
+          }
+        >
+          <div className="app-sider-caption">{APP_DISPLAY_NAME}</div>
+          <nav className="app-sider-nav">
+            {menuItems
+              .filter((item) => item.key !== "about")
+              .map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`app-sider-item${
+                    activeTab === item.key
+                      ? " app-sider-item-active"
+                      : ""
+                  }`}
+                  onClick={() => setActiveTab(item.key as TabKey)}
+                >
+                  <span className="app-sider-item-icon">
+                    {item.icon}
+                  </span>
+                  <span className="app-sider-item-label">
+                    {item.label}
+                  </span>
+                </button>
+              ))}
+          </nav>
+          {/* 关于钉底：弹性占位 + 分隔线，推到左栏底部 */}
+          <div className="app-sider-spacer" />
+          <div className="app-sider-divider" />
+          {menuItems
+            .filter((item) => item.key === "about")
+            .map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`app-sider-item${
+                  activeTab === item.key
+                    ? " app-sider-item-active"
+                    : ""
+                }`}
+                onClick={() => setActiveTab(item.key as TabKey)}
+              >
+                <span className="app-sider-item-icon">
+                  {item.icon}
+                </span>
+                <span className="app-sider-item-label">
+                  {item.label}
+                </span>
+              </button>
+            ))}
+        </div>
+        <div className="app-content">
+          <div className="app-content-titlebar">
+            <span className="app-content-title">
+              {menuItems.find((item) => item.key === activeTab)
+                ?.label ?? ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button
+              type="text"
+              size="small"
+              aria-label={t("Claw.Common.close")}
+              onClick={() => setSettingsModalOpen(false)}
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 13,
+                // 右移补偿：让 icon 视觉中心对齐标题行右内边距
+                marginInlineEnd: -4,
+                color: "var(--color-text-tertiary)",
+              }}
+            >
+              <CloseOutlined />
+            </Button>
+          </div>
+          <div className="app-content-body">
+            {activeTab === "client" && (
+              <ClientPage
+                onNavigate={(tab) => setActiveTab(tab as TabKey)}
+                isWebviewLoggedIn={isAuthLoggedIn}
+                services={services}
+                servicesLoading={servicesLoading}
+                startingServices={startingServices}
+                setStartingServices={setStartingServices}
+                onRefreshServices={pollServicesStatus}
+                authRefreshTrigger={authRefreshTrigger}
+                onAuthChange={handleAuthChange}
+                onLoginComplete={openBrowserHome}
+                onStartSession={openStartSession}
+                onGotoLogin={() => {
+                  setSettingsModalOpen(false);
+                  setMainViewMode("browser");
+                }}
+              />
+            )}
+            {activeTab === "sessions" && (
+              <SessionsPage onOpenInBrowser={openInBrowser} />
+            )}
+            <div
+              style={{
+                display: activeTab === "mcp" ? "contents" : "none",
+              }}
+            >
+              <MCPSettings isOpen={activeTab === "mcp"} />
+            </div>
+            {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
+            {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
+            {activeTab === "dependencies" && <DependenciesPage />}
+            {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => { setSettingsModalOpen(false); void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined); }} />}
+            {activeTab === "logs" && <LogViewer />}
+            {activeTab === "about" && <AboutPage webMeta={webMeta} />}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+
+  const servicesGateFailed = (!!servicesGate && !servicesGate.ok) || servicesActivity === "failed";
   if (servicesGateFailed || !servicesGate || !splashFloorMet) {
+    const pending = servicesActivity === "loading" || servicesActivity === "waiting";
+    const recoveryMode = servicesActivity === "waiting"
+      ? "waiting"
+      : pending || (!splashFloorMet && !servicesGateFailed) ? "loading" : "failed";
     return (
       <I18nContext.Provider value={i18nContextValue}>
         <ConfigProvider theme={currentTheme}>
-          {/* 等待态不出文案：加载语义由图标扫光动效表达，启动瞬间只见品牌图标。
-              失败态静止图标 + 标题/未就绪明细/重试按钮。 */}
-          <AppIconLoading animated={!servicesGateFailed}>
-            {servicesGateFailed ? (
-              <>
-                <div
-                  className="app-loading-text"
-                  style={{ fontSize: 16, fontWeight: 600 }}
-                >
-                  本地服务启动失败
-                </div>
-                <div
-                  className="app-loading-text"
-                  style={{ maxWidth: 420, textAlign: "center", marginTop: 8 }}
-                >
-                  未就绪：{(servicesGate.detail ?? []).join("、")}
-                </div>
-                <Button
-                  type="primary"
-                  style={{ marginTop: 16 }}
-                  onClick={() => {
-                    setServicesGate(null);
-                    void window.electronAPI?.services?.waitForReady();
-                  }}
-                >
-                  重试
-                </Button>
-              </>
-            ) : null}
-          </AppIconLoading>
+          <ThemeContext.Provider value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}>
+            <div className="app-container">
+              <TrafficLightToolbar
+                menuCollapsed={false} menuAvailable={false}
+                canGoBack={false} canGoForward={false}
+                onToggleMenu={() => {}} onBack={() => {}} onForward={() => {}}
+                onReload={() => servicesObserver.current?.retry()}
+                onOpenSettings={handleOpenSettings} onOpenSettingsMenu={handleOpenSettings}
+                onOpenAbout={handleOpenAbout}
+              />
+              <PageLoadRecovery
+                stage="services"
+                mode={recoveryMode}
+                lang={getCurrentLang()}
+                busy={servicesActivity === "loading"}
+                onReload={() => servicesObserver.current?.retry()}
+                onOpenSettings={handleOpenSettings}
+              />
+              {clientSettingsModal}
+            </div>
+          </ThemeContext.Provider>
         </ConfigProvider>
       </I18nContext.Provider>
     );
@@ -1870,9 +2080,11 @@ function App() {
           value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
         >
           <div className="app-container">
-            {/* webview 首载覆盖层：图标扫光动效盖住 guest 白屏/页内 loading，
-                加载停止 + 宽限（或硬上限）后掀开，见 useLoadingCover。 */}
-            {loadingCovered && <AppIconLoading overlay />}
+            {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
+            {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} />}
+
+            {/* 首载使用本地恢复卡片；失败/慢等待立即让位，工具栏始终可达。 */}
+            {loadingCovered && <PageLoadRecovery mode="loading" overlay lang={getCurrentLang()} />}
             {/* 顶部栏：Logo + 模式切换 + 浏览器刷新 + 用户状态 + 升级提示 */}
             {/* 顶栏撤除：沉浸式 webview 顶到窗口上沿。原顶栏的 Segmented 模式切换与账号登录态
                 移除；新版本更新入口迁入工具栏 updateEntry（Agent 运行状态不再展示）；
@@ -1880,6 +2092,7 @@ function App() {
             <TrafficLightToolbar
               menuCollapsed={secondMenuCollapsed}
               menuAvailable={secondMenuAvailable}
+              newTaskAvailable={newTaskAvailable}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
               onToggleMenu={handleToggleMenu}
@@ -1903,6 +2116,10 @@ function App() {
               onOpenSearch={handleMenuOpenSearch}
               onModifyWorkspace={handleMenuModifyWorkspace}
               onOpenWorkspace={handleMenuOpenWorkspace}
+              captureAvailable={APP_NAME_IDENTIFIER === "nuwax" && captureAvailable}
+              captureShortcut={captureShortcut}
+              recordShortcut={recordShortcut}
+              onCapture={handleCaptureMenu}
               statusEntry={
                 // 单一语义：仅已登录后的确定终态故障显示红点。未登录、启动中、
                 // 主动停止、单轮探测抖动与正常运行均不渲染。
@@ -1971,16 +2188,16 @@ function App() {
                   </Tooltip>
                 ) : updateState.status === "downloaded" ? (
                   <Tooltip
-                    title={t("Claw.About.installUpdate")}
+                    title={t("Claw.App.UpdateTag.update")}
                     mouseEnterDelay={0.7}
                   >
                     <Button
                       type="text"
                       size="small"
-                      aria-label={t("Claw.About.installUpdate")}
+                      aria-label={t("Claw.App.UpdateTag.update")}
                       onClick={handleOpenAbout}
                       style={{
-                        // 橙底安装 icon：点击进入关于页确认重启安装。
+                        // 橙底安装 icon：点击进入关于页查看日志和升级。
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -2059,6 +2276,7 @@ function App() {
                     onNavStateChange={handleNavStateChange}
                     onNavigationStart={handleGuestNavigationStart}
                     onGuestLoadStateChange={setGuestLoadPhase}
+                    onOpenSettings={handleOpenSettings}
                   />
                 </div>
               </div>
@@ -2066,163 +2284,43 @@ function App() {
               {/* 系统配置浮层：原 configPane 整页切换 → antd Modal，沉浸式下不打断 webview。
                   无顶栏标题（样式对齐参考设计）：页标题移到右栏顶部行、关闭钮随行右上角；
                   左栏为自绘导航（caption + 图标项，「关于」经分隔线钉底）。 */}
-              <Modal
-                open={settingsModalOpen}
-                onCancel={() => setSettingsModalOpen(false)}
-                footer={null}
-                centered
-                width={1000}
-                closable={false}
-                styles={{
-                  // 弹窗整体灰底：让页面内白色卡片在灰底上浮出
-                  content: {
-                    padding: "0",
-                    borderRadius: "12px",
-                    overflow: "hidden",
-                    background: "var(--color-bg-layout)",
-                  },
-                  // 固定尺寸 1000×640：外壳不滚，左菜单/右内容在固定高度容器内各自滚动
-                  body: {
-                    height: 640,
-                    boxSizing: "border-box",
-                    overflow: "hidden",
-                  },
-                  // 遮罩：玻璃模糊（低不透明度，透出背景）
-                  mask: {
-                    background: "rgba(0, 0, 0, 0.3)",
-                    backdropFilter: "blur(10px)",
-                    WebkitBackdropFilter: "blur(10px)",
-                  },
-                }}
-                destroyOnHidden
-              >
-                <div
-                  className={styles.configPane}
-                  style={{
-                    display: "flex",
-                    height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
+              {clientSettingsModal}
+              {/* 授权引导悬浮浮层：首次总览与权限受阻跳转的承接面（设置 → 授权 tab 为常驻管理入口） */}
+              {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && (
+                <Modal
+                  open={permissionPanelOpen}
+                  onCancel={closePermissionPanel}
+                  afterClose={() => setPermissionTarget("overview")}
+                  footer={null}
+                  centered
+                  width={720}
+                  closable={false}
+                  styles={{
+                    content: {
+                      padding: "0",
+                      borderRadius: "12px",
+                      overflow: "hidden",
+                      background: "var(--color-bg-layout)",
+                    },
+                    body: { maxHeight: "76vh", overflowY: "auto" },
                   }}
                 >
-                  <div
-                    className={
-                      i18nLang.toLowerCase().startsWith("en")
-                        ? "app-sider app-sider-en"
-                        : "app-sider"
-                    }
-                  >
-                    <div className="app-sider-caption">{APP_DISPLAY_NAME}</div>
-                    <nav className="app-sider-nav">
-                      {menuItems
-                        .filter((item) => item.key !== "about")
-                        .map((item) => (
-                          <button
-                            key={item.key}
-                            type="button"
-                            className={`app-sider-item${
-                              activeTab === item.key
-                                ? " app-sider-item-active"
-                                : ""
-                            }`}
-                            onClick={() => setActiveTab(item.key as TabKey)}
-                          >
-                            <span className="app-sider-item-icon">
-                              {item.icon}
-                            </span>
-                            <span className="app-sider-item-label">
-                              {item.label}
-                            </span>
-                          </button>
-                        ))}
-                    </nav>
-                    {/* 关于钉底：弹性占位 + 分隔线，推到左栏底部 */}
-                    <div className="app-sider-spacer" />
-                    <div className="app-sider-divider" />
-                    {menuItems
-                      .filter((item) => item.key === "about")
-                      .map((item) => (
-                        <button
-                          key={item.key}
-                          type="button"
-                          className={`app-sider-item${
-                            activeTab === item.key
-                              ? " app-sider-item-active"
-                              : ""
-                          }`}
-                          onClick={() => setActiveTab(item.key as TabKey)}
-                        >
-                          <span className="app-sider-item-icon">
-                            {item.icon}
-                          </span>
-                          <span className="app-sider-item-label">
-                            {item.label}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                  <div className="app-content">
-                    <div className="app-content-titlebar">
-                      <span className="app-content-title">
-                        {menuItems.find((item) => item.key === activeTab)
-                          ?.label ?? ""}
-                      </span>
-                      <span style={{ flex: 1 }} />
-                      <Button
-                        type="text"
-                        size="small"
-                        aria-label={t("Claw.Common.close")}
-                        onClick={() => setSettingsModalOpen(false)}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          padding: 0,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 13,
-                          // 右移补偿：让 icon 视觉中心对齐标题行右内边距
-                          marginInlineEnd: -4,
-                          color: "var(--color-text-tertiary)",
-                        }}
-                      >
-                        <CloseOutlined />
-                      </Button>
-                    </div>
-                    <div className="app-content-body">
-                      {activeTab === "client" && (
-                        <ClientPage
-                          onNavigate={(tab) => setActiveTab(tab as TabKey)}
-                          isWebviewLoggedIn={isAuthLoggedIn}
-                          services={services}
-                          servicesLoading={servicesLoading}
-                          startingServices={startingServices}
-                          setStartingServices={setStartingServices}
-                          onRefreshServices={pollServicesStatus}
-                          authRefreshTrigger={authRefreshTrigger}
-                          onAuthChange={handleAuthChange}
-                          onLoginComplete={openBrowserHome}
-                          onStartSession={openStartSession}
-                          onGotoLogin={() => setMainViewMode("browser")}
-                        />
-                      )}
-                      {activeTab === "sessions" && (
-                        <SessionsPage onOpenInBrowser={openInBrowser} />
-                      )}
-                      <div
-                        style={{
-                          display: activeTab === "mcp" ? "contents" : "none",
-                        }}
-                      >
-                        <MCPSettings isOpen={activeTab === "mcp"} />
-                      </div>
-                      {activeTab === "settings" && <SettingsPage />}
-                      {activeTab === "dependencies" && <DependenciesPage />}
-                      {activeTab === "permissions" && <PermissionsPage />}
-                      {activeTab === "logs" && <LogViewer />}
-                      {activeTab === "about" && <AboutPage webMeta={webMeta} />}
-                    </div>
-                  </div>
-                </div>
-              </Modal>
+                  {permissionPanelOpen && <PermissionsPage target={permissionTarget} onClose={closePermissionPanel} />}
+                </Modal>
+              )}
+              {APP_NAME_IDENTIFIER === "nuwax" && <CaptureLauncher capture={window.electronAPI?.capture} t={t}
+                settings={window.electronAPI?.settings}
+                panelTarget={capturePanelTarget} onAvailabilityChange={setCaptureAvailable}
+                onActionReady={handleCaptureActionReady}
+                onShortcutChange={setCaptureShortcut}
+                onRecordShortcutChange={setRecordShortcut}
+                onCaptureStart={() => {
+                  if (!settingsModalOpen) return Promise.resolve();
+                  return new Promise<void>((resolve) => {
+                    captureAfterSettingsClose.current = resolve;
+                    setSettingsModalOpen(false);
+                  });
+                }} />}
             </div>
           </div>
         </ThemeContext.Provider>

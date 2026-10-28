@@ -4,7 +4,8 @@
  *
  * 执行策略：
  *   Phase 1: prepare-uv → prepare-sign-uv（签名依赖 uv 二进制，必须顺序执行）
- *   Phase 2: 其余 13 个脚本全部并行（各自操作不同的 resources/ 子目录，互不干扰）
+ *   Phase 2: 其余脚本并行（各自操作不同的 resources/ 子目录，互不干扰）
+ *   商业版按产品标识跳过已停用的旧沙箱资源，社区版保留基座准备流程。
  *
  * 用法：
  *   node scripts/prepare/prepare-all.js
@@ -18,6 +19,13 @@ const projectRoot = path.resolve(__dirname, '..', '..');
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const dryRun = process.argv.includes('--dry-run');
+const legacyCommercialScripts = new Set([
+  'prepare:sandboxed-mcp',
+  'prepare:sandbox-helper-win',
+  'prepare:sandbox-runtime',
+  'prepare:gui-server',
+  'prepare:windows-mcp',
+]);
 
 /**
  * Phase 3：resources/ 符号链接清洗——打包前兜底，保证进 electron-builder 产物
@@ -189,7 +197,7 @@ async function main() {
     'prepare:windows-mcp',
     'prepare:nuwax-file-server',
     'prepare:claude-code-acp-ts',
-  ];
+  ].filter((name) => process.env.NUWAX_APP_IDENTIFIER !== 'nuwax' || !legacyCommercialScripts.has(name));
   console.log(`[prepare-all] Phase 2: 并行执行 ${phase2.length} 个脚本`);
   const r2 = await runParallel(phase2);
   if (r2.code !== 0) {

@@ -6,12 +6,12 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { configureSystemAppName } from './client/system-app-name.mjs';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const buildDir = path.join(root, 'overlay/crates/agent-electron-client/scripts/build');
+const buildDir = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/scripts/build');
 const helperFile = path.join(buildDir, 'windows-installer-orchestration.cjs');
 const wrapperFile = path.join(buildDir, 'run-build-electron.js');
 const originalPackage = JSON.parse(fs.readFileSync(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/package.json')));

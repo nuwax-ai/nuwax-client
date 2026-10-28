@@ -13,7 +13,7 @@ const outDir = "/tmp/cu-bench";
 fs.mkdirSync(outDir, { recursive: true });
 const outfile = path.join(outDir, "harness.cjs");
 execFileSync(esbuild, [path.join(here, "harness.ts"), "--bundle", "--platform=node", "--format=cjs",
-  `--outfile=${outfile}`, `--alias:@shared=${path.join(root, "overlay/crates/agent-electron-client/src/shared")}`, "--log-level=warning"], { stdio: "inherit" });
+  `--outfile=${outfile}`, `--alias:@shared=${path.join(root, "nuwa-electron-shell/crates/agent-electron-client/src/shared")}`, "--log-level=warning"], { stdio: "inherit" });
 process.env.CU_BENCH_DIR = here;
 const { main } = await import(pathToFileURL(outfile).href);
 await main(process.argv.slice(2));

@@ -9,6 +9,7 @@ import { DEFAULT_FILE_SERVER_PORT } from "@shared/constants";
 import { createServiceManager } from "../window/serviceManager";
 import { getTrayManager } from "../window/trayManager";
 import { getConfiguredPorts } from "../services/startupPorts";
+import { getLocalPortManager } from "../services/localPorts";
 import { killProcessTreesListeningOnTcpPort } from "../services/utils/processTree";
 
 export const lanproxyConfigSchema = z.object({
@@ -176,6 +177,27 @@ export async function restartAllServicesNow(signal?: AbortSignal): Promise<{
   return { success: Object.values(results).every((r) => r.success), results };
 }
 
+/** Reconnect only after registration for the current runtime endpoints committed. */
+export async function reconnectLanproxyNow(signal?: AbortSignal): Promise<void> {
+  signal ??= getLocalPortManager()?.operationSignal;
+  const ctx = _ctx;
+  const sm = _serviceManager;
+  if (!ctx || !sm) throw new Error("Service manager not initialized");
+  const { readSetting } = await import("../db");
+  const config = (readSetting("lanproxy_config") || {}) as Record<string, unknown>;
+  const key = readSetting("auth.saved_key") as string | null;
+  const host = (config.serverIp || readSetting("lanproxy.server_host")) as string | undefined;
+  const port = (config.serverPort || readSetting("lanproxy.server_port")) as number | undefined;
+  if (!key || !host || !port) throw new Error("Lanproxy registration missing");
+  signal?.throwIfAborted();
+  const stopped = await ctx.lanproxy.stopAsync(3000);
+  if (!stopped.success) throw new Error(stopped.message || "Lanproxy stop failed");
+  signal?.throwIfAborted();
+  const result = await sm.startLanproxy({ serverIp: host.replace(/^https?:\/\//, ""), serverPort: port, clientKey: key, ssl: config.ssl as boolean | undefined });
+  if (signal?.aborted) { await ctx.lanproxy.stopAsync(3000); signal.throwIfAborted(); }
+  if (!result.success) throw new Error(result.error || "Lanproxy reconnect failed");
+}
+
 export function registerProcessHandlers(ctx: HandlerContext): void {
   _serviceManager = createServiceManager({
     lanproxy: ctx.lanproxy,
@@ -192,8 +214,10 @@ export function registerProcessHandlers(ctx: HandlerContext): void {
   const startFileServerProcess = async (
     port: number,
   ): Promise<{ success: boolean; error?: string }> => {
-    await ctx.fileServer.stopAsync(3000);
-    await clearServicePort("fileServer:start", port);
+    if (!getLocalPortManager()) {
+      await ctx.fileServer.stopAsync(3000);
+      await clearServicePort("fileServer:start", port);
+    }
     return sm.startFileServer(port);
   };
 
@@ -258,6 +282,11 @@ export function registerProcessHandlers(ctx: HandlerContext): void {
         ssl?: boolean;
       },
     ) => {
+      if (getLocalPortManager()) {
+        await getLocalPortManager()!.beforePublish();
+        await reconnectLanproxyNow();
+        return { success: true };
+      }
       const parsed = lanproxyConfigSchema.safeParse(config);
       if (!parsed.success) {
         return invalidArgs("lanproxy:start", parsed.error.issues);
@@ -381,6 +410,7 @@ export function registerProcessHandlers(ctx: HandlerContext): void {
   registerServiceHandler(
     "fileServer:start",
     async (_, port: number = DEFAULT_FILE_SERVER_PORT) => {
+      if (getLocalPortManager()) return sm.startFileServer(getConfiguredPorts().fileServer);
       const parsed = portSchema.safeParse(port);
       if (!parsed.success) {
         return invalidArgs("fileServer:start", parsed.error.issues);
@@ -392,11 +422,12 @@ export function registerProcessHandlers(ctx: HandlerContext): void {
   registerServiceHandler("fileServer:stop", async () => {
     const result = await ctx.fileServer.stopAsync(3000);
     await clearServicePort("fileServer:stop", getConfiguredPorts().fileServer);
+    if (result.success) await getLocalPortManager()?.release("fileServer");
     return result;
   });
 
   registerServiceHandler("fileServer:status", () => {
-    return ctx.fileServer.status();
+    return { ...ctx.fileServer.status(), ...(getLocalPortManager() ? { port: getLocalPortManager()!.get("fileServer")?.port } : {}) };
   });
 
   // Computer Server handlers (Agent HTTP 接口服务，对齐 rcoder /computer/* API)
@@ -408,6 +439,7 @@ export function registerProcessHandlers(ctx: HandlerContext): void {
 
   registerServiceHandler("computerServer:start", async (_, port?: number) => {
     const { startComputerServer } = await import("../services/computerServer");
+    if (getLocalPortManager()) return startComputerServer(getConfiguredPorts().agent);
     const resolvedPortRaw = port ?? getConfiguredPorts().agent;
     const parsed = portSchema.safeParse(resolvedPortRaw);
     if (!parsed.success) {

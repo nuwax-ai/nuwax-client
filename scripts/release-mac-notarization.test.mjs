@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { notarizeSignedApp, packageNotarizedApp, macAppPaths, transientAppleError } from './release-mac-notarization.mjs';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import config from '../client.config.mjs';
 
 const id = '36bad44d-20b0-465a-a9f2-3a114ee0b282';

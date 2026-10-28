@@ -8,10 +8,12 @@
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { execSync } from "child_process";
+import { createHash } from "crypto";
+import { execFileSync, execSync } from "child_process";
 import log from "electron-log";
 import { getAppDataDir, getAppBinDir, getResourcesPath } from "./appPaths";
 import { isWindows } from "./shellEnv";
+import { resolveTtydBinary } from "./ttydPlatform";
 
 // ==================== Electron 内置 Node.js 路径 ====================
 
@@ -291,19 +293,52 @@ export function getLanproxyEntryPath(): string {
 // ==================== ttyd ====================
 
 export function getTtydBinPath(): string {
-  const resourcesPath = getResourcesPath();
-  const binariesDir = path.join(resourcesPath, "ttyd", "binaries");
-  const binDir = path.join(resourcesPath, "ttyd", "bin");
-  const exeName = isWindows() ? "ttyd.exe" : "ttyd";
-  const platformKey = `${process.platform}-${process.arch}`;
-  const binaryPath = path.join(binariesDir, platformKey, exeName);
-  if (fs.existsSync(binaryPath)) return binaryPath;
-  const binPath = path.join(binDir, exeName);
-  if (fs.existsSync(binPath)) return binPath;
-  return path.join(binDir, exeName);
+  return resolveTtydBinary({
+    resourcesPath: getResourcesPath(),
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+  });
 }
 
 // ==================== nuwaxcode ====================
+
+const NUWAXCODE_REQUIRED_VERSION = "1.17.11";
+
+let cachedNuwaxcodeCheck: {
+  file: string;
+  size: number;
+  mtimeMs: number;
+  expectedHash: string;
+  valid: boolean;
+} | null = null;
+
+function isDownloadedNuwaxcodeValid(binary: string, hashFile: string): boolean {
+  const expectedHash = fs.readFileSync(hashFile, "utf-8").trim();
+  if (!/^[a-f0-9]{64}$/.test(expectedHash)) return false;
+  const stat = fs.statSync(binary);
+  if (cachedNuwaxcodeCheck?.file === binary &&
+      cachedNuwaxcodeCheck.size === stat.size &&
+      cachedNuwaxcodeCheck.mtimeMs === stat.mtimeMs &&
+      cachedNuwaxcodeCheck.expectedHash === expectedHash) {
+    return cachedNuwaxcodeCheck.valid;
+  }
+  const actualHash = createHash("sha256").update(fs.readFileSync(binary)).digest("hex");
+  let valid = actualHash === expectedHash;
+  if (valid) {
+    try {
+      valid = execFileSync(binary, ["-v"], {
+        encoding: "utf-8", stdio: "pipe", timeout: 10000, windowsHide: true,
+      }).trim().replace(/^v/, "") === NUWAXCODE_REQUIRED_VERSION;
+    } catch {
+      valid = false;
+    }
+  }
+  cachedNuwaxcodeCheck = {
+    file: binary, size: stat.size, mtimeMs: stat.mtimeMs, expectedHash, valid,
+  };
+  return valid;
+}
 
 export function getNuwaxcodeBundledBinPath(): string | null {
   const platformMap: Record<string, string> = {
@@ -326,7 +361,13 @@ export function getNuwaxcodeBundledBinPath(): string | null {
     "bin",
     binary,
   );
-  if (fs.existsSync(bundledPath)) return bundledPath;
+  const bundledVersionFile = path.join(getResourcesPath(), "nuwaxcode", ".version");
+  try {
+    if (fs.existsSync(bundledPath) &&
+        fs.readFileSync(bundledVersionFile, "utf-8").trim() === NUWAXCODE_REQUIRED_VERSION) {
+      return bundledPath;
+    }
+  } catch {}
 
   // 回退：应用数据目录（nuwaxcode 运行时下载通道的安装位置，
   // 目录布局与 resources 打包布局一致）
@@ -337,7 +378,21 @@ export function getNuwaxcodeBundledBinPath(): string | null {
     "bin",
     binary,
   );
-  return fs.existsSync(downloadedPath) ? downloadedPath : null;
+  // 旧版 AppData 缓存没有平台版本标记；不能仅凭文件存在就作为新版本启动。
+  const downloadedVersionFile = path.join(
+    getAppDataDir(), "nuwaxcode", `${platform}-${arch}`, ".version",
+  );
+  const downloadedHashFile = path.join(
+    getAppDataDir(), "nuwaxcode", `${platform}-${arch}`, ".sha256",
+  );
+  try {
+    if (fs.existsSync(downloadedPath) &&
+        fs.readFileSync(downloadedVersionFile, "utf-8").trim() === NUWAXCODE_REQUIRED_VERSION &&
+        isDownloadedNuwaxcodeValid(downloadedPath, downloadedHashFile)) {
+      return downloadedPath;
+    }
+  } catch {}
+  return null;
 }
 
 // ==================== codex-acp ====================

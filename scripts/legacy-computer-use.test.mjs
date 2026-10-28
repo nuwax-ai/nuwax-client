@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { stripTypeScriptTypes } from 'node:module';
 
 const root = path.resolve(import.meta.dirname, '..');
-const overlay = path.join(root, 'overlay/crates/agent-electron-client');
+const overlay = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
 
 test('commercial prepare skips both legacy desktop automation resources; community retains them', () => {
   const script = path.join(overlay, 'scripts/prepare/prepare-all.js');

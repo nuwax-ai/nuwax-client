@@ -6,6 +6,7 @@
  */
 import { shell } from "electron";
 import log from "electron-log";
+import { requestMacNotificationPermission } from "./macNotificationPermission";
 
 /** macOS 隐私面板 → 系统设置 URL（模块私有：外部统一走 openMacPrivacySettings，避免绕过平台/错误处理） */
 const MAC_PRIVACY_PANE_URLS = {
@@ -15,13 +16,15 @@ const MAC_PRIVACY_PANE_URLS = {
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
   file_access:
     "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+  notifications:
+    "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
 } as const;
 
 export type MacPrivacyPane = keyof typeof MAC_PRIVACY_PANE_URLS;
 
 /** 判断给定 key 是否是受支持的隐私面板。 */
 export function isMacPrivacyPane(key: string): key is MacPrivacyPane {
-  return key in MAC_PRIVACY_PANE_URLS;
+  return Object.prototype.hasOwnProperty.call(MAC_PRIVACY_PANE_URLS, key);
 }
 
 /**
@@ -32,12 +35,39 @@ export async function openMacPrivacySettings(
   pane: MacPrivacyPane,
 ): Promise<boolean> {
   if (process.platform !== "darwin") return false;
+  // macOS has no manual add-app control for notifications. Register the host
+  // from this explicit user action before navigating to its system settings.
+  if (pane === "notifications") await requestMacNotificationPermission();
   const url = MAC_PRIVACY_PANE_URLS[pane];
   try {
     await shell.openExternal(url);
     return true;
   } catch (e) {
     log.error(`[macPermissions] openExternal failed for "${pane}":`, e);
+    if (pane !== "notifications") {
+      try {
+        await shell.openExternal(
+          "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension",
+        );
+        return true;
+      } catch (fallbackError) {
+        log.error(
+          "[macPermissions] privacy settings fallback failed:",
+          fallbackError,
+        );
+      }
+    } else {
+      try {
+        return !(await shell.openPath(
+          "/System/Applications/System Settings.app",
+        ));
+      } catch (fallbackError) {
+        log.error(
+          "[macPermissions] notification settings fallback failed:",
+          fallbackError,
+        );
+      }
+    }
     return false;
   }
 }

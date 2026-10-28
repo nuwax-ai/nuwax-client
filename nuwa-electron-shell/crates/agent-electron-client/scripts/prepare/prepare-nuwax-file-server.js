@@ -3,9 +3,10 @@
  * 准备 nuwax-file-server 源码并复制到 resources/
  *
  * 策略：
- *   1. 以远程 origin/<branch> 为准（fetch + reset --hard + clean）
- *   2. 用远程 commit hash 做缓存：与 resources/.commit-hash 一致且产物齐全则跳过
- *   3. commit 变更时必须重新 install + build，再完整复制到 resources/
+ *   1. 在自有缓存中解析 origin/<branch>，开发者 sources/ 不参与更新
+ *   2. 源码补丁只应用到一次性构建副本，缓存命中包含补丁 SHA-256
+ *   3. 用远程 commit hash 做缓存：与 resources/.commit-hash 一致且产物齐全则跳过
+ *   4. commit 变更时必须重新 install + build，再完整复制到 resources/
  *
  * 产物：
  *   resources/nuwax-file-server/
@@ -19,6 +20,8 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
+const productRoot = path.resolve(__dirname, '../../../../..');
+const sourcePatches = require(path.join(productRoot, 'scripts/source-patches.cjs'));
 
 const projectRoot = getProjectRoot();
 const electronClientRoot = projectRoot;
@@ -30,8 +33,11 @@ const pkgJson = JSON.parse(
 const { url: GIT_REPO, branch: GIT_BRANCH } =
   pkgJson.bundledSources['nuwax-file-server'];
 
-const SOURCE_DIR = path.join(electronClientRoot, 'sources', 'nuwax-file-server');
+const SOURCE_DIR = path.join(electronClientRoot, '.cache', 'bundled-sources', 'nuwax-file-server');
+let buildSourceDir = SOURCE_DIR;
+const sourcePatch = sourcePatches.fileServerPatch(productRoot, GIT_REPO);
 const destDir = path.join(electronClientRoot, 'resources', 'nuwax-file-server');
+const patchMarker = path.join(destDir, '.source-patch-sha256');
 /** resources 侧缓存的远程 commit 文件 */
 const DEST_COMMIT_HASH_PATH = path.join(destDir, '.commit-hash');
 
@@ -101,13 +107,17 @@ function hasDestBuild() {
  * 确保 SOURCE_DIR 是可 fetch 的 git 仓库；缺失则 clone。
  */
 function ensureSourceRepo() {
-  if (fs.existsSync(path.join(SOURCE_DIR, '.git'))) return;
+  if (fs.existsSync(path.join(SOURCE_DIR, '.git'))) {
+    if (git(SOURCE_DIR, 'remote get-url origin') !== GIT_REPO) throw new Error('Unowned bundled source cache');
+    if (git(SOURCE_DIR, 'status --porcelain --untracked-files=no')) throw new Error('Bundled source cache has local changes');
+    return;
+  }
 
   console.log('[prepare-nuwax-file-server] 克隆源码...');
   fs.mkdirSync(path.dirname(SOURCE_DIR), { recursive: true });
   if (fs.existsSync(SOURCE_DIR)) {
     // 半成品目录（无 .git）会挡住 clone
-    fs.rmSync(SOURCE_DIR, { recursive: true, force: true });
+    throw new Error('Unowned directory in bundled source cache');
   }
   exec(`git clone --branch ${GIT_BRANCH} ${GIT_REPO} "${SOURCE_DIR}"`);
 }
@@ -142,17 +152,18 @@ function hardResetToRemote(remoteHash) {
  * commit 变更时必须重建，禁止复用旧 dist。
  */
 function installAndBuild() {
-  const nm = path.join(SOURCE_DIR, 'node_modules');
+  const nm = path.join(buildSourceDir, 'node_modules');
   if (fs.existsSync(nm)) {
     console.log('[prepare-nuwax-file-server] 清理旧的 node_modules...');
     fs.rmSync(nm, { recursive: true, force: true });
   }
 
   console.log('[prepare-nuwax-file-server] 安装依赖...');
-  exec(`cd "${SOURCE_DIR}" && npm install --ignore-scripts`);
+  // Windows 的临时副本可能与仓库不在同一盘符，cwd 必须由子进程设置。
+  exec('npm install --ignore-scripts', { cwd: buildSourceDir });
 
   console.log('[prepare-nuwax-file-server] 构建项目...');
-  exec(`cd "${SOURCE_DIR}" && npm run build`);
+  exec('npm run build', { cwd: buildSourceDir });
 }
 
 /**
@@ -161,7 +172,7 @@ function installAndBuild() {
  */
 function copyToResources(remoteHash) {
   const srcPkg = JSON.parse(
-    fs.readFileSync(path.join(SOURCE_DIR, 'package.json'), 'utf8'),
+    fs.readFileSync(path.join(buildSourceDir, 'package.json'), 'utf8'),
   );
   console.log(
     `[prepare-nuwax-file-server] 源码版本: ${srcPkg.name}@${srcPkg.version}`,
@@ -173,21 +184,21 @@ function copyToResources(remoteHash) {
   fs.mkdirSync(destDir, { recursive: true });
 
   console.log('[prepare-nuwax-file-server] 复制 dist/...');
-  copyDir(path.join(SOURCE_DIR, 'dist'), path.join(destDir, 'dist'));
+  copyDir(path.join(buildSourceDir, 'dist'), path.join(destDir, 'dist'));
 
   fs.copyFileSync(
-    path.join(SOURCE_DIR, 'package.json'),
+    path.join(buildSourceDir, 'package.json'),
     path.join(destDir, 'package.json'),
   );
 
   console.log('[prepare-nuwax-file-server] 复制 node_modules/（跳过 .bin 符号链接）...');
   copyDir(
-    path.join(SOURCE_DIR, 'node_modules'),
+    path.join(buildSourceDir, 'node_modules'),
     path.join(destDir, 'node_modules'),
     nodeModulesCopyFilter,
   );
 
-  const licenseSrc = path.join(SOURCE_DIR, 'LICENSE');
+  const licenseSrc = path.join(buildSourceDir, 'LICENSE');
   if (fs.existsSync(licenseSrc)) {
     fs.copyFileSync(licenseSrc, path.join(destDir, 'LICENSE'));
   }
@@ -209,7 +220,7 @@ function main() {
   const destReady = hasDestBuild();
 
   // 缓存命中：远程未变 + resources 产物齐全 → 整段跳过
-  if (cachedHash && cachedHash === remoteHash && destReady) {
+  if (cachedHash && cachedHash === remoteHash && destReady && (!sourcePatch || readTrimmedFile(patchMarker) === sourcePatch.hash)) {
     let version = 'unknown';
     try {
       version = JSON.parse(
@@ -239,8 +250,13 @@ function main() {
   }
 
   hardResetToRemote(remoteHash);
-  installAndBuild();
-  copyToResources(remoteHash);
+  const patched = sourcePatch ? sourcePatches.createPatchedSource(SOURCE_DIR, sourcePatch.file) : undefined;
+  buildSourceDir = patched?.directory ?? SOURCE_DIR;
+  try {
+    installAndBuild();
+    copyToResources(remoteHash);
+    if (sourcePatch) fs.writeFileSync(patchMarker, `${sourcePatch.hash}\n`);
+  } finally { patched?.dispose(); }
 }
 
 main();

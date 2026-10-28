@@ -13,7 +13,7 @@ import fs from "node:fs";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
 import type { CallResult } from "./harness";
-import type { CuaScope } from "../../../overlay/crates/agent-electron-client/src/shared/features/computer-use/contract";
+import type { CuaScope } from "../../../nuwa-electron-shell/crates/agent-electron-client/src/shared/features/computer-use/contract";
 
 export interface BenchContext {
   root: string;

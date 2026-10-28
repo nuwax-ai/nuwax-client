@@ -8,7 +8,8 @@
  *      → 设置（注入 onOpenSettings 时渲染；nuwax 宿主入口在 web 用户区，不传不渲染）
  *      → 历史导航（后退/前进）→ statusEntry（服务异常点）；
  *    - 左（仅 Win/Linux，功能区之后）：自绘菜单栏 关于(A)/文件(F)/编辑(E)/窗口(W)/
- *      帮助(H)（antd Dropdown，12px 菜单文字）；文件菜单为 nuwax 快捷键能力
+ *      帮助(H)（antd Dropdown，12px 菜单文字）；Win/Linux 在菜单展示允许且能力可用时还显示
+ *      「截图与录屏」菜单；文件菜单为 nuwax 快捷键能力
  *      （新建任务/搜索）+ 工作空间目录动作（App 注入回调）；编辑动作经
  *      menu:editAction 路由到焦点 webContents（webview guest 优先），页面/窗口
  *      动作复用 App 注入的 onBack/onForward/onReload 与 window:* IPC；
@@ -20,9 +21,10 @@
  * 后退/前进/刷新不占顶行：Win/Linux 收进「窗口(W)」菜单；mac 收进系统菜单
  * 「窗口」（role back/forward/reload）。
  *
- * tooltip 暂用中文面量（桌面端次要 UI）；后续如需多语言可统一抽 i18n key。
+ * 文案经壳 i18n，随 webview 当前语言更新。
  */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Button, Dropdown, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import {
@@ -31,9 +33,18 @@ import {
   SettingOutlined,
   LeftOutlined,
   RightOutlined,
+  CameraOutlined,
+  VideoCameraOutlined,
+  FileGifOutlined,
 } from "@ant-design/icons";
 import { MinGlyph, MaxGlyph, RestoreGlyph, CloseGlyph } from "./captionGlyphs";
+import { resolveHostToolbarHeight } from "./guestPageInsetPolicy";
 import type { TitlebarDragRegion } from "@shared/types/webview";
+import type { CaptureMenuAction } from "@shared/features/capture/contract";
+import { DEFAULT_CAPTURE_SHORTCUT, DEFAULT_RECORD_SHORTCUT, displayCaptureShortcut } from '@shared/features/capture/contract';
+import { CAPTURE_APPLICATION_MENU_VISIBLE } from "@shared/captureMenuPolicy";
+import { I18N_KEYS } from "@shared/constants";
+import { t } from "../services/core/i18n";
 
 /** macOS 用 navigator.platform 判定（渲染器无 process.platform）。 */
 const isMac = /mac/i.test(navigator.platform);
@@ -42,8 +53,11 @@ const isMac = /mac/i.test(navigator.platform);
 const DRAG = { WebkitAppRegion: "drag" } as any;
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as any;
 
-/** Win/Linux 顶行高：36px（对齐 nuwax shellAvoid.TOP=36）；mac 保持 48px（图标与红绿灯同高对齐）。 */
-const ROW_H = isMac ? 48 : 36;
+/** Win/Linux 顶行高：28px——内容贴顶收上边距（36 居中时墨迹顶 12.3px 已与参考
+ * 产品持平但用户观感仍偏松，28 居中收至 ~6.5px；窗口三键 28px 恰满行。行透明
+ * 仅承载字形+拖拽 spacer，前端避让独立走 shellAvoid.TOP/CONTENT_TOP 不联动）；
+ * mac 保持 48px。 */
+const ROW_H = resolveHostToolbarHeight(navigator.platform);
 
 type EditAction = "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll";
 
@@ -56,6 +70,8 @@ export interface TrafficLightToolbarProps {
   menuCollapsed: boolean;
   /** 当前页是否存在可收起的二级菜单（nuwax 经桥推送；无则隐藏收起按钮）。 */
   menuAvailable: boolean;
+  /** 后台菜单允许新建任务时展示文件菜单入口；宿主按布局推送更新。 */
+  newTaskAvailable?: boolean;
   /** webview 后退能力（false 时禁用后退项）。 */
   canGoBack: boolean;
   /** webview 前进能力（false 时禁用前进项）。 */
@@ -79,6 +95,14 @@ export interface TrafficLightToolbarProps {
   onModifyWorkspace?: () => void;
   /** 「文件(F) → 打开工作空间目录」：系统文件管理器打开当前目录。 */
   onOpenWorkspace?: () => void;
+  /** 本机采集能力可用时，Win/Linux 自绘菜单提供截图与录屏入口。 */
+  captureAvailable?: boolean;
+  captureShortcut?: string;
+  recordShortcut?: string;
+  /** 应用菜单展示策略，与采集能力及快捷键开关独立。 */
+  captureMenuVisible?: boolean;
+  /** 交由常驻 CaptureLauncher 执行，保留预览和保存流程。 */
+  onCapture?: (action: CaptureMenuAction) => void;
   /** 服务状态指示器（非绿色时由 App.tsx 注入颜色点，点击打开设置弹窗；全绿不渲染）。 */
   statusEntry?: React.ReactNode;
   /** 新版本更新入口（仅当检测到新版本时注入：下载 icon / 下载中百分比 / 待安装；其余不渲染）。 */
@@ -87,20 +111,35 @@ export interface TrafficLightToolbarProps {
   dragRegions?: TitlebarDragRegion[];
 }
 
-/** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。 */
-const TopMenu: React.FC<{ label: string; items: MenuProps["items"] }> = ({
-  label,
-  items,
-}) => (
+/** 顶栏菜单收起信号（主进程推送：guest 页面点击/获焦、窗口失焦）。 */
+const DISMISS_CHANNEL = "nuwax:dismiss-topbar-menus";
+
+/** 顶行菜单栏单项（Win/Linux 自绘；label 沿用 Windows 助记后缀惯例，真实 Alt 快捷键后续再补）。
+ * 受控 open：antd 的「点外部收起」只听宿主 document，webview guest 内点击收不到
+ * （bug 2427），故订阅主进程收起信号强制闭合；悬停即展开，跨菜单移动直接切换，
+ * 点击/键盘激活仍可使用。禁用退场动画，避免菜单切换重叠或进入截图。 */
+const TopMenu: React.FC<{
+  menuId: string;
+  label: string;
+  items: MenuProps["items"];
+  activeMenu: string | null;
+  onActiveMenuChange: React.Dispatch<React.SetStateAction<string | null>>;
+}> = ({ menuId, label, items, activeMenu, onActiveMenuChange }) => (
   <Dropdown
-    menu={{ items }}
-    trigger={["click"]}
-    // 下拉面板观感走 index.css .topbar-app-menu（Win11 原生菜单风）
+    menu={{ items, onClick: () => onActiveMenuChange(null) }}
+    trigger={["hover", "click"]}
+    mouseEnterDelay={0}
+    mouseLeaveDelay={0.15}
+    transitionName=""
+    open={activeMenu === menuId}
+    onOpenChange={(open) => {
+      // 旧菜单迟到的关闭事件不得关掉刚打开的新菜单。
+      if (open) onActiveMenuChange(menuId);
+      else onActiveMenuChange(current => current === menuId ? null : current);
+    }}
     rootClassName="topbar-app-menu"
   >
-    <button type="button" className="topbar-menu-btn">
-      {label}
-    </button>
+    <button type="button" className="topbar-menu-btn">{label}</button>
   </Dropdown>
 );
 
@@ -116,6 +155,7 @@ const menuRow = (text: string, shortcut?: string): React.ReactNode => (
 const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   menuCollapsed,
   menuAvailable,
+  newTaskAvailable = true,
   canGoBack,
   canGoForward,
   onToggleMenu,
@@ -129,10 +169,42 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   onOpenSearch,
   onModifyWorkspace,
   onOpenWorkspace,
+  captureAvailable = false,
+  captureShortcut = DEFAULT_CAPTURE_SHORTCUT,
+  recordShortcut = DEFAULT_RECORD_SHORTCUT,
+  captureMenuVisible = CAPTURE_APPLICATION_MENU_VISIBLE,
+  onCapture,
   statusEntry,
   updateEntry,
   dragRegions = [],
 }) => {
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const captureFrame = useRef<number | null>(null);
+  const captureHandlerRef = useRef(onCapture);
+  captureHandlerRef.current = onCapture;
+  useEffect(() => () => {
+    if (captureFrame.current !== null) cancelAnimationFrame(captureFrame.current);
+  }, []);
+  const startCaptureFromMenu = (action: CaptureMenuAction) => {
+    if (captureFrame.current !== null) return;
+    // 同步收起无动画的菜单；跨过一次实际绘制，再交给控制器冻结屏幕。
+    flushSync(() => setActiveMenu(null));
+    captureFrame.current = requestAnimationFrame(() => {
+      captureFrame.current = requestAnimationFrame(() => {
+        captureFrame.current = null;
+        captureHandlerRef.current?.(action);
+      });
+    });
+  };
+  useEffect(() => {
+    const close = () => setActiveMenu(null);
+    window.electronAPI?.on(DISMISS_CHANNEL, close);
+    return () => window.electronAPI?.off(DISMISS_CHANNEL, close);
+  }, []);
+  // app-region:drag 不派发 DOM 点击。菜单展开时临时作为点击区域，
+  // 首次按下收起菜单；收起后恢复原生拖拽与双击最大化。
+  const dragStyle = activeMenu ? NO_DRAG : DRAG;
+
   // Win/Linux 最大化状态（自绘按钮图标）；mac 用原生红绿灯不渲染按钮
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
@@ -146,6 +218,40 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
   }, []);
+
+  // 历史导航真值（主进程 navigationHistory 读数+推送，nuwax:webview-nav-*）：
+  // gateway 形态下 webview 元素 canGoBack/goBack 失明（bug 2432 收银台无法退出，
+  // 见 nuwaxBridgeHandlers 注释），工具栏优先进此通道；无此通道（老 preload）回退
+  // App 注入的 props/回调（=元素方法，https 直连形态下正确）。
+  const [navTruth, setNavTruth] = useState<{
+    canGoBack: boolean;
+    canGoForward: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!window.electronAPI?.webviewNav) return;
+    const onPush = (state: unknown) => {
+      const s = state as { canGoBack?: boolean; canGoForward?: boolean } | null;
+      if (s && typeof s.canGoBack === "boolean")
+        setNavTruth({ canGoBack: s.canGoBack, canGoForward: !!s.canGoForward });
+    };
+    window.electronAPI.on("nuwax:webview-nav-state", onPush);
+    void window.electronAPI.webviewNav.state().then(onPush).catch(() => {});
+    return () => {
+      window.electronAPI?.off("nuwax:webview-nav-state", onPush);
+    };
+  }, []);
+  const goBackCap = navTruth ? navTruth.canGoBack : canGoBack;
+  const goForwardCap = navTruth ? navTruth.canGoForward : canGoForward;
+  const doBack = () => {
+    if (window.electronAPI?.webviewNav)
+      void window.electronAPI.webviewNav.go("back");
+    else onBack();
+  };
+  const doForward = () => {
+    if (window.electronAPI?.webviewNav)
+      void window.electronAPI.webviewNav.go("forward");
+    else onForward();
+  };
 
   const onMin = () => window.electronAPI?.window.minimize();
   const onMax = () => window.electronAPI?.window.maximize();
@@ -182,7 +288,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
    * 违背常驻开关的定位）。
    */
   const sidebarToggle = iconBtn(
-    menuCollapsed ? "展开侧栏" : "收起侧栏",
+    menuCollapsed ? t(I18N_KEYS.Toolbar.EXPANDSIDEBAR) : t(I18N_KEYS.Toolbar.COLLAPSESIDEBAR),
     false,
     onToggleMenu,
     menuCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />,
@@ -191,18 +297,18 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
   // 设置按钮：宿主未注入 onOpenSettings 时不渲染（nuwax 宿主入口已迁至
   // web 用户区「客户端设置」按钮，经 nuwax:open-client-settings 链路回开本弹窗）
   const settingsBtn = onOpenSettings
-    ? iconBtn("设置", false, onOpenSettings, <SettingOutlined />)
+    ? iconBtn(t("Claw.Menu.settings"), false, onOpenSettings, <SettingOutlined />)
     : null;
 
-  /** 历史导航：后退/前进（能力由 webview 事件推送，不可用时置灰）。 */
+  /** 历史导航：后退/前进（能力走主进程真值通道，不可用时置灰）。 */
   const historyNav = (
     <>
-      {iconBtn("后退", !canGoBack, onBack, <LeftOutlined />)}
-      {iconBtn("前进", !canGoForward, onForward, <RightOutlined />)}
+      {iconBtn(t("Claw.ContextMenu.back"), !goBackCap, doBack, <LeftOutlined />)}
+      {iconBtn(t("Claw.ContextMenu.forward"), !goForwardCap, doForward, <RightOutlined />)}
     </>
   );
 
-  /** Win/Linux 自绘菜单栏（参考产品同款四项）。 */
+  /** Win/Linux 自绘菜单栏。 */
   const menuBar = !isMac && (
     <div
       style={{
@@ -214,20 +320,15 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
       }}
     >
       <TopMenu
-        label="关于(A)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="about"
+        label={t(I18N_KEYS.Toolbar.ABOUT)}
         items={[
-          {
-            key: "about",
-            label: menuRow("关于与检查更新"),
-            onClick: onOpenAbout,
-          },
+          { key: "about", label: menuRow(t(I18N_KEYS.Toolbar.ABOUTUPDATE)), onClick: onOpenAbout },
           { type: "divider" },
           // 设置项与 mac 应用菜单「设置…」对齐；商业版 web 用户区入口并存不冲突
-          {
-            key: "settings",
-            label: menuRow("设置"),
-            onClick: onOpenSettingsMenu,
-          },
+          { key: "settings", label: menuRow(t("Claw.Menu.settings")), onClick: onOpenSettingsMenu },
         ]}
       />
       {/*
@@ -236,98 +337,133 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         动作实现收口在 App.tsx（与 menu:workspace 通道共用 services/core/workspaceDir）
       */}
       <TopMenu
-        label="文件(F)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="file"
+        label={t(I18N_KEYS.Toolbar.FILE)}
         items={[
-          {
-            key: "newTask",
-            label: menuRow("新建任务", "Ctrl+N"),
-            onClick: onNewTask,
-          },
+          ...(newTaskAvailable
+            ? [{
+                key: "newTask",
+                label: menuRow(t(I18N_KEYS.Toolbar.NEWTASK), "Ctrl+N"),
+                onClick: onNewTask,
+              }]
+            : []),
           {
             key: "search",
-            label: menuRow("搜索", "Ctrl+K"),
+            label: menuRow(t(I18N_KEYS.Toolbar.SEARCH), "Ctrl+K"),
             onClick: onOpenSearch,
           },
           { type: "divider" },
           {
             key: "modifyWorkspace",
-            label: menuRow("更改工作空间目录…"),
+            label: menuRow(t(I18N_KEYS.Toolbar.MODIFYWORKSPACE)),
             onClick: onModifyWorkspace,
           },
           {
             key: "openWorkspace",
-            label: menuRow("打开工作空间目录"),
+            label: menuRow(t(I18N_KEYS.Toolbar.OPENWORKSPACE)),
             onClick: onOpenWorkspace,
           },
         ]}
       />
       <TopMenu
-        label="编辑(E)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="edit"
+        label={t(I18N_KEYS.Toolbar.EDIT)}
         items={[
           {
             key: "undo",
-            label: menuRow("撤销", "Ctrl+Z"),
+            label: menuRow(t("Claw.ContextMenu.undo"), "Ctrl+Z"),
             onClick: () => editAction("undo"),
           },
           {
             key: "redo",
-            label: menuRow("重做", "Shift+Ctrl+Z"),
+            label: menuRow(t("Claw.ContextMenu.redo"), "Shift+Ctrl+Z"),
             onClick: () => editAction("redo"),
           },
           { type: "divider" },
           {
             key: "cut",
-            label: menuRow("剪切", "Ctrl+X"),
+            label: menuRow(t("Claw.ContextMenu.cut"), "Ctrl+X"),
             onClick: () => editAction("cut"),
           },
           {
             key: "copy",
-            label: menuRow("复制", "Ctrl+C"),
+            label: menuRow(t("Claw.ContextMenu.copy"), "Ctrl+C"),
             onClick: () => editAction("copy"),
           },
           {
             key: "paste",
-            label: menuRow("粘贴", "Ctrl+V"),
+            label: menuRow(t("Claw.ContextMenu.paste"), "Ctrl+V"),
             onClick: () => editAction("paste"),
           },
           {
             key: "selectAll",
-            label: menuRow("全选", "Ctrl+A"),
+            label: menuRow(t("Claw.ContextMenu.selectAll"), "Ctrl+A"),
             onClick: () => editAction("selectAll"),
           },
         ]}
       />
-      <TopMenu
-        label="窗口(W)"
+      {!isMac && captureMenuVisible && captureAvailable && onCapture && <TopMenu
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="capture"
+        label={t("Claw.Capture.title")}
         items={[
-          { key: "back", label: "后退", disabled: !canGoBack, onClick: onBack },
+          {
+            key: "capture-screenshot",
+            icon: <CameraOutlined />,
+            label: menuRow(t("Claw.Capture.screenshot"), displayCaptureShortcut(captureShortcut, false)),
+            onClick: () => startCaptureFromMenu("screenshot"),
+          },
+          { type: "divider" },
+          ...(["mp4", "gif"] as const).map((output) => ({
+            key: `capture-${output}`,
+            icon: output === "gif" ? <FileGifOutlined /> : <VideoCameraOutlined />,
+            label: menuRow(`${t("Claw.Capture.record")} · ${output.toUpperCase()}`, output === "mp4" ? displayCaptureShortcut(recordShortcut, false) : undefined),
+            onClick: () => startCaptureFromMenu(output),
+          })),
+        ]}
+      />}
+      <TopMenu
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="window"
+        label={t(I18N_KEYS.Toolbar.WINDOW)}
+        items={[
+          { key: "back", label: t("Claw.ContextMenu.back"), disabled: !goBackCap, onClick: doBack },
           {
             key: "forward",
-            label: "前进",
-            disabled: !canGoForward,
-            onClick: onForward,
+            label: t("Claw.ContextMenu.forward"),
+            disabled: !goForwardCap,
+            onClick: doForward,
           },
           {
             key: "reload",
-            label: menuRow("刷新页面", "Ctrl+R"),
+            label: menuRow(t("Claw.ContextMenu.reload"), "Ctrl+R"),
             onClick: onReload,
           },
           { type: "divider" },
-          { key: "minimize", label: "最小化", onClick: onMin },
+          { key: "minimize", label: t(I18N_KEYS.Toolbar.MINIMIZE), onClick: onMin },
           {
             key: "maximize",
-            label: maximized ? "还原" : "最大化",
+            label: maximized ? t(I18N_KEYS.Toolbar.RESTORE) : t(I18N_KEYS.Toolbar.MAXIMIZE),
             onClick: onMax,
           },
-          { key: "close", label: "关闭", onClick: onClose },
+          { key: "close", label: t("Claw.Common.close"), onClick: onClose },
         ]}
       />
       <TopMenu
-        label="帮助(H)"
+        activeMenu={activeMenu}
+        onActiveMenuChange={setActiveMenu}
+        menuId="help"
+        label={t(I18N_KEYS.Toolbar.HELP)}
         items={[
           {
             key: "logs",
-            label: "打开日志目录",
+            label: t(I18N_KEYS.Toolbar.OPENLOGS),
             onClick: () => {
               void window.electronAPI?.log?.openDir?.();
             },
@@ -339,22 +475,16 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
 
   return (
     <>
-      {/* 真正的 drag region 只能存在于宿主 renderer。优先按 guest 上报的明确
-          空白矩形渲染；旧前端/导航切换尚未上报时退化为 8px 安全窄条。 */}
-      {(dragRegions.length > 0
-        ? dragRegions
-        : [
-            {
-              x: isMac ? 80 : 0,
-              y: 0,
-              width: Math.max(0, window.innerWidth - (isMac ? 80 : 0)),
-              height: 8,
-            },
-          ]
-      ).map((region, index) => (
+      {/* 2026-09-17 架构切换：不再渲染任何拖拽矩形——旧「guest 上报矩形+挖洞」
+          层盖在 webview 上，挖洞遗漏即吞页面点击（自绘控件/画布/iframe 无法枚举）。
+          现由 guest mousedown 命中判定→主进程跟随光标拖窗（nuwax:titlebar-drag-*）。
+          dragRegions 通道保留仅为兼容旧前端，无回退条（8px 保底条会吞内容区顶部）。 */}
+      {dragRegions.map((region, index) => (
         <div
           key={`${region.x}:${region.y}:${region.width}:${region.height}:${index}`}
           aria-hidden
+          onPointerDown={() => setActiveMenu(null)}
+          onClick={() => setActiveMenu(null)}
           style={{
             position: "fixed",
             left: region.x,
@@ -363,7 +493,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
             height: region.height,
             zIndex: 1099,
             userSelect: "none",
-            ...DRAG,
+            ...dragStyle,
           }}
         />
       ))}
@@ -374,7 +504,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           left: 0,
           // mac：顶行仅占左侧 300px（图标簇+拖拽区）——mac 不默认退让后，
           // 内容区顶部必须可交互，全宽行会整条挡死；Win/Linux 仍满宽
-          //（内容区恒避让 36px 顶行，无遮挡冲突）
+          //（内容区恒避让 28px 顶行，无遮挡冲突）
           ...(isMac ? { width: 300 } : { right: 0 }),
           height: ROW_H,
           zIndex: 1100,
@@ -384,11 +514,15 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           // Win/Linux 右上角被贴角的窗口控制三键（40×28，3 键共 120px）占据，
           // 容器留出对应右内边距，防止更新入口等流内元素被其覆盖
           paddingRight: isMac ? 8 : 128,
+          // 2026-09-17 手势化后行容器不再整行 drag（其下是 guest 内容顶部，
+          // 整行 drag 会吞 logo 等点击）：整行穿透，按钮子块 auto+no-drag，
+          // 行内空白由显式 spacer（见下）承担原生拖拽+双击缩放。
           pointerEvents: "none",
+          ...NO_DRAG,
           // 全平台透明浮层：顶行不涂底色，透出 webview 顶部避让带的页面自身
           // 背景（nuwax 顶带即页面 body 底色），与内容天然无缝、随主题自动一致；
           // 实底涂色会在页面底色与容器色有微差时形成可见断层（评审否决项）。
-          // 空白拖拽由上方矩形层承担；本容器只让显式子块恢复 pointer events。
+          // （手势化后拖拽调试可视化由 guest 自绘：localStorage nuwax-debug-titlebar）
         }}
       >
         {/* 左侧功能区（全平台同构）：侧栏开关 → 设置（可选） → 历史导航 → 服务状态，
@@ -409,8 +543,21 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {menuBar}
         </div>
 
-        {/* 中间留白：拖拽手柄 */}
-        <div style={{ flex: 1 }} />
+        {/* 中间留白：显式原生拖拽手柄（app-region:drag；双击走系统原生缩放）。
+            容器已 pointerEvents:none，仅此 spacer 恢复事件——覆盖按钮群与右侧
+            （win 为窗口三键/更新入口）之间的全部空白，其余区域全穿透给 guest，
+            guest 侧由标题栏手势（nuwax:titlebar-drag-*）接管空白带拖拽。 */}
+        <div
+          data-testid="topbar-drag-spacer"
+          onPointerDown={() => setActiveMenu(null)}
+          onClick={() => setActiveMenu(null)}
+          style={{
+            flex: 1,
+            height: "100%",
+            pointerEvents: "auto",
+            ...dragStyle,
+          }}
+        />
 
         {/* 右侧：更新入口（仅 Win/Linux；mac 顶行只占左侧 300px，
             更新入口单独浮在窗口右上，见下方） */}
@@ -445,13 +592,13 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
               ...NO_DRAG,
             }}
           >
-            <CtrlButton title="最小化" onClick={onMin}>
+            <CtrlButton title={t(I18N_KEYS.Toolbar.MINIMIZE)} onClick={onMin}>
               <MinGlyph />
             </CtrlButton>
-            <CtrlButton title={maximized ? "还原" : "最大化"} onClick={onMax}>
+            <CtrlButton title={maximized ? t(I18N_KEYS.Toolbar.RESTORE) : t(I18N_KEYS.Toolbar.MAXIMIZE)} onClick={onMax}>
               {maximized ? <RestoreGlyph /> : <MaxGlyph />}
             </CtrlButton>
-            <CtrlButton title="关闭" danger onClick={onClose}>
+            <CtrlButton title={t("Claw.Common.close")} danger onClick={onClose}>
               <CloseGlyph />
             </CtrlButton>
           </div>

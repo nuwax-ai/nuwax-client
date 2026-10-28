@@ -2,10 +2,9 @@
  * 单元测试: NuwaClawBridge host 命名空间（宿主产品身份）
  *
  * 锁定契约：
- * 1. 桥上暴露 host.getProduct()，返回值 = APP_NAME_IDENTIFIER（构建期 define 注入），
- *    nuwax 前端凭此区分宿主是 nuwaclaw（社区版）还是 nuwax（商业版）。
- * 2. 测试进程不注入 NUWAX_APP_IDENTIFIER → 社区版缺省 "nuwaclaw"；
- *    商业版构建（nuwax）时 define 联动，同一断言自动跟随。
+ * 1. 桥上暴露 host.getProduct()，优先采用主进程传入的运行时身份；未传时回退
+ *    APP_NAME_IDENTIFIER。nuwax 前端凭此区分社区版与商业版。
+ * 2. 即使 preload 后来被社区构建覆盖，商业主进程中的整页导航仍保持商业身份。
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -30,6 +29,7 @@ vi.mock("electron", () => ({
 
 import "./webviewPerfBridge";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { ipcRenderer } from "electron";
 
 describe("NuwaClawBridge host 命名空间", () => {
   it("桥上暴露 host.getProduct()，值与 APP_NAME_IDENTIFIER 一致", () => {
@@ -43,5 +43,31 @@ describe("NuwaClawBridge host 命名空间", () => {
 
   it("未注入 env 时为社区版缺省身份 nuwaclaw", () => {
     expect(APP_NAME_IDENTIFIER).toBe("nuwaclaw");
+  });
+
+  it("运行中的商业主进程身份优先于后来重建的社区 preload", () => {
+    const bridge = exposed.get("NuwaClawBridge") as {
+      host: { getProduct(): string };
+    };
+    process.argv.push("--nuwax-host-product=nuwax");
+    try {
+      expect(APP_NAME_IDENTIFIER).toBe("nuwaclaw");
+      expect(bridge.host.getProduct()).toBe("nuwax");
+    } finally {
+      process.argv.pop();
+    }
+  });
+});
+
+describe("NuwaClawBridge 新建任务菜单状态", () => {
+  it("启用和隐藏状态沿现有布局通道上报", () => {
+    const bridge = exposed.get("NuwaClawBridge") as {
+      layout: { setNewTaskAvailable(available: boolean): void };
+    };
+    vi.mocked(ipcRenderer.send).mockClear();
+    bridge.layout.setNewTaskAvailable(true);
+    bridge.layout.setNewTaskAvailable(false);
+    expect(ipcRenderer.send).toHaveBeenNthCalledWith(1, "nuwax:layout-sync", { newTaskAvailable: true });
+    expect(ipcRenderer.send).toHaveBeenNthCalledWith(2, "nuwax:layout-sync", { newTaskAvailable: false });
   });
 });

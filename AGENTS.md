@@ -17,7 +17,7 @@
 
 - 本文件、`templates/`、`REVIEW.md`、skills 正文全是纯 markdown：skills 双落点播种 `.claude/skills/` 与 `.agents/skills/`（后者供 ZCode workspace 级自动发现）；codex / opencode / cursor 等**直接读任一副本即可**，需要某条流程时让 agent `cat <落点>/<name>/SKILL.md` 照做。
 - 强制机制差异：PreToolUse hooks 在 Claude Code（`.claude/settings.json`）与 ZCode（`.zcode/config.json`，v1.3.0 起由安装器合入）都强制执行；其余 agent 的兜底 = 提交前按同一规则自查，非协商护栏建议下沉 git pre-commit / CI（agent 无关的强制地板）。
-- verifier 等价物：任何 agent 跑 `npm run base:test` 按报告格式贴结论即可，不必有子代理机制。
+- verifier 等价物：任何 agent 跑 `npm run test:commercial` 按报告格式贴结论即可，不必有子代理机制。
 
 <!-- nuwa-sdlc-kit:end -->
 
@@ -42,9 +42,8 @@
 - 注册、启停、登出失效与换域统一由主进程 commercialAuth + AuthLifecycle 编排；renderer 不另起自动注册或启动链。迟到注册响应必须在写库前校验会话代次。
 - 企业登录和设置页修改域名必须共用 configureServerHost；不得直接写域名后继续使用旧 cookie 会话或代理配置。
 - 未登录只运行页面所需的 loopback gateway。商业版不按端口杀未知进程，避免干扰 NuwaClaw/CLI。
-- base:test 会清 overlay，必须在隔离副本运行；商业测试需同步 overlay 后单独运行，提测还须验证真实安装包。
-- 双轨门禁命令：社区 `npm run base:test`、商业 `npm run test:commercial`（--no-env：同步 overlay 不注 env）；CI（ci.yml）双 job 各跑一轨。
-- 提交基座前必须 `npm run check:pin`：基座脏文件/staged 不得混入 overlay 托管路径（CI 另有 --remote origin/main 字节级防线）。分支模型为单主干（feat 线 PR 进 main，pin 跟随 main），勿 rebase 改写已 pin 的基座 SHA。
+- **壳（`nuwa-electron-shell/`）已并入本仓直接维护**，不再是子模块、不再有 overlay 覆写层与社区基线轨：商业改动直接改 `nuwa-electron-shell/`，与社区版 NuwaClaw 的差异不再同步/回流。上游历史止于子模块 pin `d12d001a`。
+- 门禁命令：`npm run test:commercial`（`--no-env`：不注入商业 env，测试断言缺省身份）；CI（ci.yml）单 commercial job。提测还须验证真实安装包。分支模型为单主干（feat 线 PR 进 main）；仅 `nuwax/`、`nuwax-dist/` 仍为 submodule pin，勿 rebase 改写已 pin 的 SHA。
 
 ## 文件面板回归边界
 

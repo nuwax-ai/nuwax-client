@@ -7,11 +7,11 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { installedBuilder } from './test-support/fixtures.mjs';
-import blockmaps from '../overlay/crates/agent-electron-client/scripts/build/installer-blockmap.cjs';
+import blockmaps from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/installer-blockmap.cjs';
 import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { createServer, request } from 'node:http';
-import policy from '../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+import policy from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { builderConfig, pack } from './client/pack.mjs';
 import * as core from './client/core.mjs';
 
@@ -25,7 +25,7 @@ const zipArgs = ['--config.nsis.differentialPackage=false', '--config.nsis.useZi
 const versions = { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' };
 const zipOptions = { env: enabled, platform: 'win32', builderVersions: versions };
 const configOptions = { frontendDist: '/fixture/frontend', helperDir: '/fixture/computer-use', output: '/fixture/release', version: '3.0.9-beta.1' };
-const wrapperPath = path.join(root, 'overlay/crates/agent-electron-client/scripts/build/run-build-electron.js');
+const wrapperPath = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/scripts/build/run-build-electron.js');
 const wrapperSource = fs.readFileSync(wrapperPath, 'utf8');
 const require = createRequire(import.meta.url);
 

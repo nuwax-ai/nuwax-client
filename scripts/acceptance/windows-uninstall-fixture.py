@@ -28,7 +28,7 @@ def prepare_source(phase, run_id):
     vendor = VENDOR.read_text(encoding='utf-8')
     functions = vendor[vendor.index('Function un.atomicRMDir'):vendor.index('Section "un.install"')]
     removal = vendor[vendor.index('  # delete the installed files'):vendor.index('  ${ifNot} ${isKeepShortcuts}')]
-    header = BASELINE.read_text(encoding='utf-8') if phase == 'before' else (CLIENT / 'overlay/crates/agent-electron-client/build/installer.nsh').read_text(encoding='utf-8')
+    header = BASELINE.read_text(encoding='utf-8') if phase == 'before' else (CLIENT / 'nuwa-electron-shell/crates/agent-electron-client/build/installer.nsh').read_text(encoding='utf-8')
     (folder / 'canonical.nsh').write_text(header,encoding='utf-8')
     (folder / 'payload.json').write_text(json.dumps({
         'schemaVersion': 1, 'executable': 'Nuwax.exe', 'files': ['Nuwax.exe'], 'directories': [],
@@ -51,7 +51,7 @@ SilentUnInstall silent
 !define APP_PACKAGE_NAME "nuwax-fixture"
 !define INSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
 !define UNINSTALL_REGISTRY_KEY "Software\\NuwaxInstallerFixture\\{run_id}"
-!define BUILD_RESOURCES_DIR "{CLIENT / 'overlay/crates/agent-electron-client/build'}"
+!define BUILD_RESOURCES_DIR "{CLIENT / 'nuwa-electron-shell/crates/agent-electron-client/build'}"
 !define NUWAX_UNINSTALL_MANIFEST "{folder / 'payload.json'}"
 !define isUpdated '"$updateMode" == "1"'
 Var updateMode

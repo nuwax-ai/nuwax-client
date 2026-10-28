@@ -1,4 +1,4 @@
-param([string]$SpaceScript = (Join-Path $PSScriptRoot '../overlay/crates/agent-electron-client/build/installer-space.ps1'))
+param([string]$SpaceScript = (Join-Path $PSScriptRoot '../nuwa-electron-shell/crates/agent-electron-client/build/installer-space.ps1'))
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Native Windows is required.' }

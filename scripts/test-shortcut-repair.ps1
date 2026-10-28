@@ -1,5 +1,5 @@
 param(
-  [string]$RepairScript = (Join-Path $PSScriptRoot '../overlay/crates/agent-electron-client/build/repair-shortcuts.ps1')
+  [string]$RepairScript = (Join-Path $PSScriptRoot '../nuwa-electron-shell/crates/agent-electron-client/build/repair-shortcuts.ps1')
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

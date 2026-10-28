@@ -1,4 +1,16 @@
+// Computer Use 运行时与 API 契约的单一事实源在特性 contract；此处转出供既有 import 路径使用。
+export type {
+  CuaRuntime, CuaControlResult, CuaCheck, CuaWindow,
+  ComputerUseStatus, ComputerUseAPI,
+} from "../features/computer-use/contract";
 // Type definitions for Electron API exposed via preload
+import type { HostBridgeContract } from './hostBridge';
+import type { HostCaptureBridge } from '../features/capture/contract';
+import type { NoticesBridge } from '../features/open-source-notices/contract';
+import type { ComputerUseAPI } from '../features/computer-use/contract';
+
+/** 业务 webview 契约来自前端 canonical 的生成快照，与宿主 renderer 的 ElectronAPI 分开。 */
+export type NuwaClawBridgeAPI = HostBridgeContract;
 
 export type McpServerEntry =
   | {
@@ -524,11 +536,16 @@ export interface LogAPI {
   ) => Promise<void>;
 }
 
-import type { UpdateInfo, UpdateState } from "./updateTypes";
+import type {
+  UpdateCheckOptions,
+  UpdateInfo,
+  UpdateState,
+} from "./updateTypes";
 
 export interface AppAPI {
-  checkUpdate: () => Promise<UpdateInfo>;
+  checkUpdate: (options?: UpdateCheckOptions) => Promise<UpdateInfo>;
   getVersion: () => Promise<string>;
+  getDistHandshake?: (force?: boolean) => Promise<import("./distVersionHandshake").DistHandshakeView>;
   getSystemInfo: () => Promise<{
     clientVersion: string;
     platform: string;
@@ -584,6 +601,32 @@ export interface PermissionsAPI {
   openSettings: (
     permissionKey: string,
   ) => Promise<{ success: boolean; error?: string }>;
+}
+
+/** 「允许锁屏运行」电源保活档位：off=关闭；keepAwake=熄屏后保持唤醒；keepDisplayOn=保持屏幕常亮 */
+export type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
+
+export interface PowerPolicyAPI {
+  get: () => Promise<PowerPolicyMode>;
+  setMode: (mode: PowerPolicyMode) => Promise<{ mode: PowerPolicyMode }>;
+}
+
+/** 全磁盘访问（macOS FDA）状态：supported=平台是否有此机制；granted=探测真值；dismissed=用户拒绝过初始化引导 */
+export interface FullDiskAccessStatus {
+  supported: boolean;
+  granted: boolean;
+  probeStatus?: "granted" | "denied" | "unknown";
+  dismissed: boolean;
+}
+
+export interface FullDiskAccessAPI {
+  getStatus: () => Promise<FullDiskAccessStatus>;
+  openSettings: () => Promise<boolean>;
+  recheck: () => Promise<{
+    supported: boolean;
+    granted: boolean;
+    probeStatus?: "granted" | "denied" | "unknown";
+  }>;
 }
 
 export interface ShellAPI {
@@ -721,6 +764,10 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  capture: HostCaptureBridge;
+  notices: NoticesBridge;
+  /** 已注册的桌面特性 id（用于显示/隐藏宿主壳入口）。 */
+  features: { registered: () => Promise<string[]> };
   versions: {
     node: string;
     electron: string;
@@ -783,12 +830,19 @@ export interface ElectronAPI {
     minimize: () => Promise<void>;
     maximize: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
+    getHostActivity?: () => Promise<{ visible: boolean } | null>;
     close: () => Promise<void>;
   };
   menu: {
     editAction: (
       action: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll",
     ) => Promise<boolean>;
+  };
+  /** webview 历史导航真值通道（gateway 形态 Electron canGoBack/goBack 失明的替代，
+   * 见 nuwaxBridgeHandlers 的 nuwax:webview-nav-*）。 */
+  webviewNav: {
+    state: () => Promise<{ canGoBack: boolean; canGoForward: boolean }>;
+    go: (dir: "back" | "forward") => Promise<boolean>;
   };
   mcp: MCPAPI;
   lanproxy: LanproxyAPI;
@@ -813,6 +867,10 @@ export interface ElectronAPI {
   log: LogAPI;
   app: AppAPI;
   permissions: PermissionsAPI;
+  permissionOnboarding: import("./permissionOnboarding").PermissionOnboardingAPI;
+  computerUse: ComputerUseAPI;
+  powerPolicy: PowerPolicyAPI;
+  fullDiskAccess: FullDiskAccessAPI;
   quickInit: QuickInitAPI;
   perf: PerfAPI;
   on: (channel: string, callback: (...args: unknown[]) => void) => void;
@@ -822,5 +880,6 @@ export interface ElectronAPI {
 declare global {
   interface Window {
     electronAPI?: ElectronAPI;
+    NuwaClawBridge?: NuwaClawBridgeAPI;
   }
 }

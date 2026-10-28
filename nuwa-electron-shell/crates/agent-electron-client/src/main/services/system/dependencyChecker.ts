@@ -71,6 +71,8 @@ export interface LocalDependencyItem extends LocalDependencyConfig {
 
 // ==================== Required Dependencies ====================
 
+const NUWAXCODE_REQUIRED_VERSION = "1.17.11";
+
 export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
   return [
     {
@@ -99,9 +101,9 @@ export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
       required: true,
       binName: "nuwax-file-server",
       // npm 兜底通道版本须与构建期 bundled 产物（prepare:nuwax-file-server）一致；
-      // bundled 取自 sources/nuwax-file-server 的 package.json（当前 1.5.5）
-      installVersion: "1.5.5",
-      npmFallback: { packageName: "nuwax-file-server", version: "1.5.5" },
+      // bundled 取自 sources/nuwax-file-server 的 package.json（当前 1.5.8）
+      installVersion: "1.5.8",
+      npmFallback: { packageName: "nuwax-file-server", version: "1.5.8" },
     },
     {
       name: "nuwaxcode",
@@ -110,7 +112,7 @@ export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
       description: t(I18N_KEYS.Pages.Dependencies.DESC_NUWAXCODE),
       required: true,
       binName: "nuwaxcode",
-      installVersion: "1.17.5",
+      installVersion: NUWAXCODE_REQUIRED_VERSION,
     },
     {
       name: "claude-code-acp-ts",
@@ -359,12 +361,21 @@ export async function checkNuwaxcodeBundled(): Promise<{
     log.info("[checkNuwaxcodeBundled] Bundled integration binary not found");
     return { available: false };
   }
-  const versionFile = path.join(getResourcesPath(), "nuwaxcode", ".version");
+  const resourcesRoot = path.join(getResourcesPath(), "nuwaxcode");
+  const relative = path.relative(resourcesRoot, bundledPath);
+  const isBundled = relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  const versionFile = isBundled
+    ? path.join(resourcesRoot, ".version")
+    : path.join(path.dirname(path.dirname(bundledPath)), ".version");
   let version: string | undefined;
   try {
     if (fs.existsSync(versionFile))
       version = fs.readFileSync(versionFile, "utf-8").trim();
   } catch {}
+  if (version !== NUWAXCODE_REQUIRED_VERSION) {
+    log.warn(`[checkNuwaxcodeBundled] Version marker missing or outdated: ${versionFile}`);
+    return { available: false, version };
+  }
   log.info(
     `[checkNuwaxcodeBundled] Bundled available: ${bundledPath}, version=${version ?? "unknown"}`,
   );

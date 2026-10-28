@@ -1,5 +1,94 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { restoreSpaDocumentRoute } from "./spaDocumentRestore";
+import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
+import {
+  parseComputerServiceStateCommand,
+  type ComputerServiceStateCommand,
+} from "@shared/types/computerServiceState";
+import {
+  IM_IPC_CHANNELS,
+  type IMReceiverBridge,
+  type IMUnreadSnapshot,
+} from "@shared/types/imReceiver";
+import type {
+  ClientUpdateCheckResult,
+  ClientUpdateState,
+  HostBridgeContract,
+  HostCommand,
+  ShellThemePayload,
+} from "@shared/types/hostBridge";
+import { featureNamespaces } from "./features";
+import { CAN_USE_IPC } from "@shared/hostCapabilities";
+import { createCanUse } from "./canUse";
+
+/** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
+function mayExposeBusinessBridge(): boolean {
+  const runtimeProduct = process.argv
+    .find((arg) => arg.startsWith("--nuwax-host-product="))
+    ?.slice("--nuwax-host-product=".length);
+  const product = runtimeProduct || APP_NAME_IDENTIFIER;
+  if (product !== "nuwax") return true;
+  const encoded = process.argv
+    .find((arg) => arg.startsWith("--nuwax-trusted-origins="))
+    ?.slice("--nuwax-trusted-origins=".length);
+  if (!encoded || typeof window === "undefined") return false;
+  try {
+    const allowed: unknown = JSON.parse(decodeURIComponent(encoded));
+    if (window.location.href) {
+      const documentUrl = new URL(window.location.href);
+      if (!/^https?:$/.test(documentUrl.protocol) || documentUrl.username || documentUrl.password)
+        return false;
+    }
+    return Array.isArray(allowed) && allowed.includes(window.location.origin);
+  } catch {
+    return false;
+  }
+}
+
+const bridgeAllowed = mayExposeBusinessBridge();
+
+/** IM 展示桥仅供商业客户端的受信顶层业务页消费。 */
+function mayExposeIMBridge(): boolean {
+  const runtimeProduct = process.argv
+    .find((arg) => arg.startsWith("--nuwax-host-product="))
+    ?.slice("--nuwax-host-product=".length);
+  return bridgeAllowed && (runtimeProduct || APP_NAME_IDENTIFIER) === "nuwax"
+    && typeof window !== "undefined" && window.top === window;
+}
+
+// Umi 创建路由前同步恢复业务 URL，页面首个脚本即能挂载完整主站布局。
+if (typeof window !== "undefined") {
+  restoreSpaDocumentRoute(mayExposeIMBridge() && process.argv.includes(SPA_RESTORE_ARGUMENT), window);
+}
+
+const im: IMReceiverBridge = {
+  async setNotificationEnabled(enabled): Promise<void> {
+    await ipcRenderer.invoke(IM_IPC_CHANNELS.NOTIFICATION_ENABLED, enabled === true);
+  },
+  getUnreadSnapshot: () => ipcRenderer.invoke(IM_IPC_CHANNELS.UNREAD_SNAPSHOT),
+  onUnreadChanged(listener) {
+    let disposed = false;
+    const receive = (_event: Electron.IpcRendererEvent, snapshot: IMUnreadSnapshot | null) => {
+      if (!disposed) listener(snapshot);
+    };
+    ipcRenderer.on(IM_IPC_CHANNELS.UNREAD_CHANGED, receive);
+    return () => {
+      disposed = true;
+      ipcRenderer.removeListener(IM_IPC_CHANNELS.UNREAD_CHANGED, receive);
+    };
+  },
+};
+
+// guest 与宿主是独立文档：点击 webview 不会触发宿主 antd 菜单的外部点击监听。
+// 捕获阶段通知主进程收起顶栏菜单，即使 guest 原本已有焦点也能生效。
+if (bridgeAllowed && typeof window !== "undefined") {
+  window.addEventListener(
+    "pointerdown",
+    () => ipcRenderer.send("nuwax:guest-pointer-down"),
+    true,
+  );
+}
 
 type PerfPayload = Record<string, unknown>;
 
@@ -91,21 +180,36 @@ const perf = {
 };
 
 /**
- * auth 命名空间：nuwax webview ↔ nuwaclaw 壳的 ACCESS_TOKEN 双向同步。
- * nuwax 用 localStorage.ACCESS_TOKEN 鉴权（Authorization header），非 cookie；
- * token 由主进程按 webview 来源 origin 持久化到 settings 表，跨重启复用。
+ * auth 命名空间：业务 webview 与宿主的会话协调。
+ * 商业宿主以 ticket cookie 为登录事实源，由主进程确认并持久化会话；
+ * getToken/persistToken 仅保留旧调用兼容，在商业宿主为 no-op。
  * 后端见 main/ipc/nuwaxBridgeHandlers.ts。
  */
 const auth = {
-  /** 读取本 origin 持久化的 nuwax ACCESS_TOKEN（重启免登）。 */
+  /** 主进程提供当前业务域与加载形态；不从回环页面的 origin 推断业务域。 */
+  getContext(): Promise<{
+    businessOrigin: string;
+    gatewayOrigin: string | null;
+    loadMode: "gateway" | "direct";
+  } | null> {
+    return ipcRenderer.invoke("auth:getContext");
+  },
+  /** Chromium has already stored Set-Cookie; ask main to validate and mirror it. */
+  syncSession(): Promise<boolean> {
+    return ipcRenderer.invoke("auth:syncSession");
+  },
+  beginLogin(): Promise<boolean> {
+    return ipcRenderer.invoke("auth:beginLogin");
+  },
+  /** @deprecated 商业宿主返回 null；请使用 cookie 会话与 syncSession。 */
   getToken(): Promise<string | null> {
     return ipcRenderer.invoke("auth:getToken");
   },
-  /** nuwax 登录成功后持久化 token（写入 settings 表）。 */
+  /** @deprecated 商业宿主返回 false，不持久化 token。 */
   persistToken(token: string): Promise<boolean> {
     return ipcRenderer.invoke("auth:persistToken", token);
   },
-  /** nuwax 登出联动：清除本 origin 的持久化 token。 */
+  /** 业务登出联动：清除宿主会话并停止对应服务。 */
   clear(): Promise<boolean> {
     return ipcRenderer.invoke("auth:clear");
   },
@@ -113,9 +217,12 @@ const auth = {
    * 企业登录：切换客户端后端域名并重新初始化（写业务域名配置 + 立即停全部
    * 本地服务 + webview 重载到新域登录页）。仅壳内有效；浏览器端返回未处理。
    */
-  configureServerHost(
+  async configureServerHost(
     host: string,
   ): Promise<{ success: boolean; serverHost?: string; error?: string }> {
+    // SPA 登出会更新会话代次；显式切域前重新绑定当前可信文档。
+    const context = await ipcRenderer.invoke("auth:getContext");
+    if (!context) return { success: false, error: "Stale document" };
     return ipcRenderer.invoke("auth:configureServerHost", host);
   },
 };
@@ -130,6 +237,13 @@ const native = {
     filename?: string,
   ): Promise<{ success: boolean; path?: string; error?: string }> {
     return ipcRenderer.invoke("native:saveImage", { url, filename });
+  },
+  /** 产物文件另存：允许源扩展与 MIME 对应的 HTML/JSON 文档。 */
+  saveFile(
+    url: string,
+    filename?: string,
+  ): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> {
+    return ipcRenderer.invoke("native:saveFile", { url, filename });
   },
   /**
    * 新开独立窗口打开 nuwax 页面（智能体详情/工作流/我的电脑等全屏页）。
@@ -150,34 +264,24 @@ const native = {
 };
 
 /**
- * localFiles 命名空间：宿主原生目录选择器。
- * 仅返回所选目录的绝对路径；文件数据面由 nuwax 走 file-server（customTargetDir）。
- */
-const localFiles = {
-  pickDirectory(): Promise<{ canceled: boolean; paths: string[] }> {
-    return ipcRenderer.invoke("localFiles:pickDirectory");
-  },
-};
-
-/**
  * updater 命名空间：宿主客户端自身的更新状态与动作（nuwax 前端 logo 旁版本徽标消费）。
  * 与壳关于页共用主进程同一 autoUpdater 单例（不会双下载）；旧宿主无此命名空间，
  * nuwax 侧 feature-detect 后整体隐藏徽标。
  */
 const updater = {
   /** 当前更新状态 + 宿主客户端版本号（hostVersion）。 */
-  getState(): Promise<Record<string, unknown> | null> {
+  getState(): Promise<ClientUpdateState | null> {
     return ipcRenderer.invoke("updater:get-state");
   },
   /** 触发一次更新检查（与关于页「检查更新」同源）。 */
-  check(): Promise<Record<string, unknown> | null> {
+  check(): Promise<ClientUpdateCheckResult | null> {
     return ipcRenderer.invoke("updater:check");
   },
-  /** 下载更新（幂等：已在下载/已下载时由主进程侧守卫）。 */
+  /** 下载更新；installAfterDownload 策略由主进程继续安装并重启。 */
   download(): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke("updater:download");
   },
-  /** 重启并安装（仅 downloaded 状态有意义）。 */
+  /** 重启并安装；一键策略按需补齐下载，其他宿主须先下载。 */
   install(): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke("updater:install");
   },
@@ -185,19 +289,45 @@ const updater = {
 
 /**
  * events 命名空间：宿主→nuwax 入站命令通道。
- * nuwaclaw 工具栏等通过 <webview>.send('nuwax:host-command', payload) 下发，
+ * 工具栏经 <webview>.send、主进程直接向受信 guest 下发 nuwax:host-command，
  * 此处 ipcRenderer.on 接收并转发给 nuwax 注册的回调（contextBridge 保证回调在 guest
  * 上下文执行，从而能操作 nuwax 的 React/model 状态）。payload 协议见 nuwax 侧
- * global.d.ts 的 HostCommand。
+ * shared/types/hostBridge 的 HostCommand。
  */
-let hostCommandHandler: ((payload: unknown) => void) | null = null;
-ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
-  hostCommandHandler?.(payload);
-});
+let hostCommandHandler: ((payload: HostCommand) => void) | null = null;
+let latestHostActivity: { type: "host-activity"; visible: boolean } | null = null;
+let latestComputerServiceState: ComputerServiceStateCommand | null = null;
+if (bridgeAllowed) {
+  ipcRenderer.on("nuwax:host-command", (_e, payload: unknown) => {
+    // 状态允许迟订阅同步；动作命令只在到达时分发，不能重放新建任务等业务动作。
+    if (payload && typeof payload === "object") {
+      const activity = payload as { type?: unknown; visible?: unknown };
+      if (activity.type === "host-activity" && typeof activity.visible === "boolean") {
+        latestHostActivity = { type: "host-activity", visible: activity.visible };
+      }
+    }
+    const computerState = parseComputerServiceStateCommand(payload);
+    if (computerState) {
+      latestComputerServiceState = computerState;
+      hostCommandHandler?.({ ...computerState });
+      return;
+    }
+    if ((payload as { type?: unknown } | null)?.type === "computer-service-state") return;
+    // IPC 载荷仍原样转发；宿主命令的编译期契约在桥边界统一。
+    hostCommandHandler?.(payload as HostCommand);
+  });
+}
 const events = {
   /** 注册/注销宿主命令回调（传 null 注销）。 */
-  onHostCommand(cb: ((payload: unknown) => void) | null): void {
+  onHostCommand(cb: ((payload: HostCommand) => void) | null): void {
     hostCommandHandler = cb;
+    if (cb) {
+      // 新文档没有旧 preload 的缓存，向宿主请求当前态补齐重载/冷启动时序。
+      ipcRenderer.send("nuwax:host-activity-sync");
+      if (host.getProduct() === "nuwax") ipcRenderer.send("nuwax:computer-service-state-sync");
+      if (latestHostActivity) cb({ ...latestHostActivity });
+      if (latestComputerServiceState) cb({ ...latestComputerServiceState });
+    }
   },
 };
 
@@ -209,7 +339,7 @@ const events = {
  */
 const theme = {
   /** 推送主题状态给壳。 */
-  syncTheme(payload: Record<string, unknown>): void {
+  syncTheme(payload: ShellThemePayload): void {
     ipcRenderer.send("nuwax:theme-sync", payload);
   },
 };
@@ -220,6 +350,10 @@ const theme = {
  * renderer，工具栏据此显隐收起按钮。fire-and-forget。
  */
 const layout = {
+  /** 新建任务是否由后台菜单启用，宿主菜单和快捷键使用同一状态。 */
+  setNewTaskAvailable(available: boolean): void {
+    ipcRenderer.send("nuwax:layout-sync", { newTaskAvailable: available === true });
+  },
   /** 告知壳当前页是否有二级菜单可收起。 */
   setSecondMenuAvailable(available: boolean): void {
     ipcRenderer.send("nuwax:layout-sync", { secondMenuAvailable: !!available });
@@ -282,27 +416,42 @@ const meta = {
  * host 命名空间：宿主身份只读信息（host→nuwax）。
  * nuwax 凭 getProduct() 区分宿主产品：`nuwaclaw`（社区版）/ `nuwax`（商业版，
  * 2026-09 前为 nuwawork，存量宿主仍可能返回历史值），
- * 用于按宿主开关桌面专属能力或降级。值由构建期 define 注入（同 4-env 注入契约），
- * 不经 IPC、无运行时 process 访问。
+ * 用于按宿主开关桌面专属能力或降级。主进程通过 additionalArguments 传递运行时
+ * 身份；旧宿主未传时回退到构建期 define 注入值，避免 dev 整页导航后读到被其他
+ * 构建覆盖的 preload 身份。
  */
 const host = {
-  /** 宿主产品标识：nuwaclaw（社区版）/ nuwax（商业版；存量宿主可能返回历史值 nuwawork）。 */
+  /** 宿主产品标识：优先读取运行时主进程身份，未提供时回退构建期常量。 */
   getProduct(): string {
+    // Dev 中可能在主进程未退出时重建 preload。此时构建期常量会变，
+    // 但正在运行的主进程身份不会变；优先使用主进程传给 guest 的运行时身份。
+    const runtimeProduct = process.argv
+      .find((arg) => arg.startsWith("--nuwax-host-product="))
+      ?.slice("--nuwax-host-product=".length);
+    if (runtimeProduct) return runtimeProduct;
     return APP_NAME_IDENTIFIER;
   },
 };
 
-contextBridge.exposeInMainWorld("NuwaClawBridge", {
-  perf,
-  auth,
-  native,
-  localFiles,
-  updater,
-  events,
-  theme,
-  layout,
-  titlebar,
-  i18n,
-  meta,
-  host,
-});
+const businessFeatures = featureNamespaces(ipcRenderer);
+if (bridgeAllowed) {
+  const bridge = {
+    perf,
+    auth,
+    native,
+    localFiles: businessFeatures.localFiles,
+    updater,
+    events,
+    theme,
+    layout,
+    titlebar,
+    i18n,
+    meta,
+    host,
+    ...(mayExposeIMBridge() ? { im, capture: businessFeatures.capture } : {}),
+  } satisfies HostBridgeContract;
+  contextBridge.exposeInMainWorld("NuwaClawBridge", {
+    ...bridge,
+    canUse: createCanUse(bridge, name => ipcRenderer.invoke(CAN_USE_IPC, name)),
+  } satisfies HostBridgeContract);
+}

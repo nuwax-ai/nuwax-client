@@ -11,19 +11,23 @@
 import { Tray, Menu, nativeImage, app, dialog, BrowserWindow } from "electron";
 import * as path from "path";
 import log from "electron-log";
-import { APP_DISPLAY_NAME } from "@shared/constants";
+import { APP_DISPLAY_NAME, I18N_KEYS } from "@shared/constants";
 import {
   createAutoLaunchManager,
   AutoLaunchManager,
 } from "./autoLaunchManager";
 import { t } from "../services/i18n";
+import { desktopFeatureActivities, onDesktopFeatureActivitiesChanged, type ActivityEntry } from "../features";
+import { createIMBadgePng, formatIMBadgeCount, normalizeIMUnreadCount, paintWindowsTrayBadgeBitmap } from "../services/imBadgeImage";
 
 // ==================== Types ====================
 
 export type TrayStatus = "running" | "stopped" | "error" | "starting";
 
 export interface TrayManagerOptions {
+  platform?: NodeJS.Platform;
   onShowWindow: () => void;
+  onOpenSettings?: () => void;
   onRestartServices: () => Promise<void>;
   onStopServices: () => Promise<void>;
 }
@@ -40,6 +44,8 @@ export interface TrayManagerOptions {
 const TRAY_ICON_MAC = "trayTemplate.png";
 const TRAY_ICON_MAC_RETINA = "trayTemplate@2x.png";
 const TRAY_ICON_DEFAULT = "tray.png";
+/** 即使托盘尚未创建/被暂时关闭，也只保留最后成功未读数。 */
+let latestUnreadCount = 0;
 
 // ==================== Tray Manager ====================
 
@@ -50,20 +56,37 @@ export class TrayManager {
   private autoLaunchEnabled: boolean = false;
   private autoLaunchManager: AutoLaunchManager;
   private options: TrayManagerOptions;
+  private platform: NodeJS.Platform;
+  private unreadCount = latestUnreadCount;
+  private baseIcon: Electron.NativeImage | null = null;
+  private badgeIcon: Electron.NativeImage | null = null;
+  private badgeLabel = "";
+  private featureActivityEntries: ActivityEntry[] = [];
+  private offFeatureActivities: (() => void) | null = null;
 
   constructor(options: TrayManagerOptions) {
     this.options = options;
+    this.platform = options.platform ?? process.platform;
     this.autoLaunchManager = createAutoLaunchManager();
+    this.featureActivityEntries = desktopFeatureActivities();
+    this.offFeatureActivities = onDesktopFeatureActivitiesChanged((entries) => {
+      this.featureActivityEntries = entries;
+      this.updateMenu();
+    });
   }
 
   /**
    * 创建托盘
    */
   async create(): Promise<void> {
+    // 重复初始化不创建第二份原生托盘；关闭后再创建会补回缓存数值。
+    if (this.tray) return;
     const icon = this.createTrayIcon("stopped");
+    this.baseIcon = icon;
 
     this.tray = new Tray(icon);
     this.tray.setToolTip(APP_DISPLAY_NAME);
+    this.updateIcon();
 
     // 左键点击显示窗口
     this.tray.on("click", () => {
@@ -102,6 +125,15 @@ export class TrayManager {
     this.updateMenu();
   }
 
+  /** 系统托盘角标仅按最后成功总数刷新，聚焦不会清除计数。 */
+  setUnreadCount(count: number): void {
+    const normalized = normalizeIMUnreadCount(count);
+    latestUnreadCount = normalized;
+    if (normalized === this.unreadCount) return;
+    this.unreadCount = normalized;
+    this.updateIcon();
+  }
+
   /**
    * 刷新自启动缓存状态（当外部修改了自启动设置时调用）
    */
@@ -116,8 +148,37 @@ export class TrayManager {
   private updateIcon(): void {
     if (!this.tray) return;
 
-    const icon = this.createTrayIcon(this.status);
-    this.tray.setImage(icon);
+    const label = formatIMBadgeCount(this.unreadCount);
+    const original = this.baseIcon ??= this.createTrayIcon(this.status);
+    if (this.platform === "darwin") {
+      // 原 template 图标继续跟随系统主题，数量显示在菜单栏图标右侧。
+      this.tray.setImage(original);
+      this.tray.setTitle(label, { fontType: "monospacedDigit" });
+    } else {
+      if (label && (label !== this.badgeLabel || !this.badgeIcon)) {
+        this.badgeLabel = label;
+        if (this.platform === "win32") {
+          try {
+            const normal = nativeImage.createFromBitmap(
+              paintWindowsTrayBadgeBitmap(original.toBitmap(), this.unreadCount, 1),
+              { width: 16, height: 16 },
+            );
+            const retina = nativeImage.createFromBitmap(
+              paintWindowsTrayBadgeBitmap(original.toBitmap({ scaleFactor: 2 }), this.unreadCount, 2),
+              { width: 32, height: 32 },
+            );
+            normal.addRepresentation({ scaleFactor: 2, dataURL: retina.toDataURL() });
+            this.badgeIcon = normal;
+          } catch (error) {
+            log.error("[Tray] Failed to draw Windows unread badge:", error);
+            this.badgeIcon = original;
+          }
+        } else {
+          this.badgeIcon = nativeImage.createFromBuffer(createIMBadgePng(this.unreadCount));
+        }
+      }
+      this.tray.setImage(label ? this.badgeIcon! : original);
+    }
 
     const statusKey: Record<TrayStatus, string> = {
       running: "Claw.Tray.Status.running",
@@ -125,7 +186,8 @@ export class TrayManager {
       error: "Claw.Tray.Status.error",
       starting: "Claw.Tray.Status.starting",
     };
-    this.tray.setToolTip(`${APP_DISPLAY_NAME} - ${t(statusKey[this.status])}`);
+    const unread = label ? ` - ${t(I18N_KEYS.IM.UNREAD_MESSAGES, String(this.unreadCount))}` : "";
+    this.tray.setToolTip(`${APP_DISPLAY_NAME} - ${t(statusKey[this.status])}${unread}`);
   }
 
   /**
@@ -135,10 +197,18 @@ export class TrayManager {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
+      ...this.featureActivityEntries.flatMap(({ activity }) => [
+        ...activity.actions.map((action) => ({ label: t(action.labelKey), click: () => action.run() })),
+        { type: "separator" as const },
+      ]),
       {
         label: t("Claw.Tray.showWindow"),
         click: () => this.options.onShowWindow(),
       },
+      ...(this.options.onOpenSettings ? [{
+        label: t("Claw.Menu.settings"),
+        click: () => this.options.onOpenSettings?.(),
+      }] : []),
       { type: "separator" },
       {
         label: t("Claw.Tray.restartServices"),
@@ -211,23 +281,13 @@ export class TrayManager {
 
   /**
    * 获取托盘图标路径
-   * 开发模式：使用 __dirname 相对路径，避免 process.cwd() 在 monorepo 或从其他目录启动时指向错误目录导致图标加载失败、托盘不显示。
-   * 编译后 main 在 dist/main/，window 在 dist/main/window/，故 ../../../ 为包根目录。
+   * 开发模式：使用应用根目录，不依赖启动工作目录或 esbuild 合并模块后的 __dirname。
    */
   private getIconPath(fileName: string): string {
     if (app.isPackaged) {
       return path.join(process.resourcesPath, "tray", fileName);
     }
-    const devPath = path.join(
-      __dirname,
-      "..",
-      "..",
-      "..",
-      "public",
-      "tray",
-      fileName,
-    );
-    return devPath;
+    return path.join(app.getAppPath(), "public", "tray", fileName);
   }
 
   /**
@@ -239,7 +299,7 @@ export class TrayManager {
    * Windows / Linux: 使用彩色图标，优先高清版，并缩放到合适尺寸。
    */
   private createTrayIcon(_status: TrayStatus): Electron.NativeImage {
-    if (process.platform === "darwin") {
+    if (this.platform === "darwin") {
       const isDev = !app.isPackaged;
 
       if (isDev) {
@@ -294,7 +354,7 @@ export class TrayManager {
     }
 
     // Windows / Linux: 彩色图标，参考 macOS 的处理方式
-    const targetSize = process.platform === "win32" ? 16 : 22; // Windows 托盘图标标准尺寸 16x16
+    const targetSize = this.platform === "win32" ? 16 : 22;
     const pathNormal = this.getIconPath(TRAY_ICON_DEFAULT);
     const pathRetina = this.getIconPath("tray@2x.png");
 
@@ -306,12 +366,28 @@ export class TrayManager {
 
     if (!icon.isEmpty()) {
       const size = icon.getSize();
+      if (this.platform === "win32") {
+        // 彩色资源四周有 1/8 透明留白；裁掉大部分留白后提供 16/32px 两档，
+        // 让 Windows 在高 DPI 托盘中选到清晰且占比合适的图像。
+        const inset = Math.round(Math.min(size.width, size.height) * 3 / 32);
+        const cropped = icon.crop({
+          x: inset,
+          y: inset,
+          width: size.width - inset * 2,
+          height: size.height - inset * 2,
+        });
+        const retina = cropped.resize({ width: 32, height: 32 });
+        icon = cropped.resize({ width: 16, height: 16 });
+        icon.addRepresentation({ scaleFactor: 2, dataURL: retina.toDataURL() });
+        log.info("[Tray] Windows tray icon loaded with 1x/2x representations");
+        return icon;
+      }
       // 如果图标尺寸过大，缩放到目标尺寸
       if (size.width > targetSize || size.height > targetSize) {
         icon = icon.resize({ width: targetSize, height: targetSize });
       }
       log.info(
-        `[Tray] ${process.platform} tray icon loaded, size:`,
+        `[Tray] ${this.platform} tray icon loaded, size:`,
         icon.getSize(),
       );
       return icon;
@@ -342,6 +418,9 @@ export class TrayManager {
       this.tray.destroy();
       this.tray = null;
     }
+    this.baseIcon = null;
+    this.badgeIcon = null;
+    this.badgeLabel = "";
   }
 
   /**
@@ -374,4 +453,10 @@ export function createTrayManager(options: TrayManagerOptions): TrayManager {
 
 export function getTrayManager(): TrayManager | null {
   return trayManager;
+}
+
+/** 壳接收器可以先于托盘运行；创建/替换实例时立即重放这一个数值。 */
+export function setTrayUnreadCount(count: number): void {
+  latestUnreadCount = normalizeIMUnreadCount(count);
+  getTrayManager()?.setUnreadCount(latestUnreadCount);
 }

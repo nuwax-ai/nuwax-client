@@ -25,7 +25,7 @@ const shell = path.join(
   root,
   "nuwa-electron-shell/crates/agent-electron-client"
 );
-const source = path.join(root, "overlay/crates/agent-electron-client/src");
+const source = path.join(root, "nuwa-electron-shell/crates/agent-electron-client/src");
 const requireShell = createRequire(path.join(shell, "package.json"));
 const { build } = requireShell("esbuild");
 const temporary = await fs.realpath(

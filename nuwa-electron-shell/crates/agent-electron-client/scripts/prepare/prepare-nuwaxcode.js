@@ -28,8 +28,20 @@ const { URL } = require('url');
 const { execSync, execFileSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
 
-const NUWAXCODE_VERSION = '1.17.5';
+const NUWAXCODE_VERSION = '1.17.11';
 const NUWAXCODE_REPO = process.env.NUWAXCODE_REPO || 'nuwax-ai/nuwaxcode';
+
+// 官方稳定版 v1.17.11 Release 资产的 GitHub digest。
+// 固定归档哈希，避免 CI 将损坏或过期的同名缓存误打进安装包。
+const RELEASE_ARCHIVE_SHA256 = {
+  'darwin-arm64': '9df3c3c08973fb8c9f4297cccc8f516892e573c46c7879831d96a7bb8fed7438',
+  'darwin-x64': 'e7c58fe220c2b8c45541c4ea46f92c152434ed9a5679dd4d42c7d6adfbfd585d',
+  'linux-arm64': '087e6b14aeb20128cd887f4580b2c8cbbdca994bb1e2cc6575cfea24aaa17008',
+  'linux-arm64-musl': '7f79fc3d8632a44686c3798ee2083dda1be8f19c0d4d701baf40d0791bbe5558',
+  'linux-x64': '84b9ddde59ba473deb321304a6bfd1e9723e2ec04ecac04e1eee5f7ca563f575',
+  'linux-x64-musl': '1732f933265383e8ec047cd7d2789003d2168d55738e5d6d1d85b66107943ffe',
+  'win32-x64': '54ee92454f655c176070865b6b02d0c0ef28191422e39aa1fe9b99f1b16b7e66',
+};
 
 /** CI 通过 GH_TOKEN 传入 github.token，避免未认证 API 触发 403 限流 */
 function getGithubToken() {
@@ -75,6 +87,10 @@ const RESOURCE_PLATFORM_KEY_MAP = {
 function getPlatformKey() {
   const a = process.env.TARGET_ARCH || process.arch;
   return `${process.platform}-${a}`;
+}
+
+function canRunTargetBinary(key) {
+  return key === `${process.platform}-${process.arch}`;
 }
 
 function getResourcePlatformKey(key) {
@@ -166,10 +182,6 @@ function ensureModelJson(destDir, version) {
  */
 const FORCE_REFRESH_ON_MATCH = false;
 
-function getGithubToken() {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
-}
-
 function formatGithubRateLimitReset(value) {
   const seconds = Number(value);
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
@@ -204,6 +216,8 @@ function copyFromDist(key) {
   const binary = getBinaryName(key);
   const destDir = path.join(resDir, resourceKey, 'bin');
   const destPath = path.join(destDir, binary);
+  // 本地 dist 并非固定的官方 Release 资产，不能沿用之前的归档来源标记。
+  fs.rmSync(path.join(resDir, `.archive-sha256-${resourceKey}`), { force: true });
 
   const source = findDistSourceBinary(nuwaxcodeDist, distName, key);
   if (!source) {
@@ -228,9 +242,10 @@ function copyFromDist(key) {
         if (currentHash === expectedHash) {
           // 额外校验：二进制内部版本号可能与 .version 不一致（曾发生过标记更新但二进制未更新）
           const innerVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, currentHash);
-          if (innerVersion && innerVersion !== NUWAXCODE_VERSION) {
+          if (innerVersion !== NUWAXCODE_VERSION &&
+              (innerVersion !== null || canRunTargetBinary(key))) {
             console.warn(
-              `[prepare-nuwaxcode] ${key}: 版本标记为 ${NUWAXCODE_VERSION} 但二进制为 ${innerVersion}，将重新复制覆盖`,
+              `[prepare-nuwaxcode] ${key}: 版本无法确认或不匹配 (${innerVersion})，将重新复制覆盖`,
             );
           } else {
             console.log(
@@ -292,7 +307,11 @@ function copyFromDist(key) {
   const hash = sha256File(destPath);
 
   // 验证二进制内部版本号 + 打印 SHA256
-  verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, hash);
+  const copiedVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, hash);
+  if (copiedVersion !== NUWAXCODE_VERSION &&
+      (copiedVersion !== null || canRunTargetBinary(key))) {
+    throw new Error(`本地 dist 二进制版本不符: ${copiedVersion} (expected ${NUWAXCODE_VERSION})`);
+  }
 
   // 保存 SHA256 记录，下次可精确跳过
   fs.writeFileSync(path.join(resDir, `.sha256-${resourceKey}`), hash, 'utf-8');
@@ -310,10 +329,14 @@ function isPlatformResourceReady(key) {
   const destPath = path.join(resDir, resourceKey, 'bin', getBinaryName(key));
   const versionFile = path.join(resDir, '.version');
   const shaFile = path.join(resDir, `.sha256-${resourceKey}`);
-  if (!fs.existsSync(destPath) || !fs.existsSync(versionFile) || !fs.existsSync(shaFile)) {
+  const sourceShaFile = path.join(resDir, `.archive-sha256-${resourceKey}`);
+  if (!fs.existsSync(destPath) || !fs.existsSync(versionFile) || !fs.existsSync(shaFile) || !fs.existsSync(sourceShaFile)) {
     return false;
   }
   if (fs.readFileSync(versionFile, 'utf-8').trim() !== NUWAXCODE_VERSION) {
+    return false;
+  }
+  if (fs.readFileSync(sourceShaFile, 'utf-8').trim() !== RELEASE_ARCHIVE_SHA256[key]) {
     return false;
   }
   const expectedHash = fs.readFileSync(shaFile, 'utf-8').trim();
@@ -513,59 +536,44 @@ async function downloadFromRelease(key) {
   const binary = getBinaryName(key);
   const destDir = path.join(resDir, resourceKey, 'bin');
   const destPath = path.join(destDir, binary);
+  const expectedArchiveHash = RELEASE_ARCHIVE_SHA256[key];
+  if (!expectedArchiveHash) {
+    console.error(`[prepare-nuwaxcode] ${key}: 缺少官方 Release 资产 SHA256`);
+    return false;
+  }
 
   // 检查是否已是最新（版本匹配 + SHA256 一致）
   const versionFile = path.join(resDir, '.version');
-  if (fs.existsSync(destPath) && fs.existsSync(versionFile)) {
-    if (fs.readFileSync(versionFile, 'utf-8').trim() === NUWAXCODE_VERSION) {
-      // 额外校验：比对已缓存 tar.gz 与当前 dest 的 SHA256 是否记录一致
-      // 防止 release 被 force-push 后 .version 匹配但二进制已过期
-      const shaFile = path.join(resDir, `.sha256-${getResourcePlatformKey(key)}`);
-      if (fs.existsSync(shaFile)) {
-        const expectedHash = fs.readFileSync(shaFile, 'utf-8').trim();
-        const currentHash = sha256File(destPath);
-        if (currentHash === expectedHash) {
-          // 关键：即使命中 SHA256 + .version，也必须校验二进制内部版本号，
-          // 否则一旦资源目录里的二进制未更新但标记文件被更新，会导致永远跳过下载。
-          const innerVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, currentHash);
-          if (innerVersion && innerVersion !== NUWAXCODE_VERSION) {
-            console.warn(
-              `[prepare-nuwaxcode] ${key}: 版本标记为 ${NUWAXCODE_VERSION} 但二进制为 ${innerVersion}，将强制重新下载覆盖`,
-            );
-          } else {
-            const sizeMB = (fs.statSync(destPath).size / 1024 / 1024).toFixed(1);
-            console.log(
-              `[prepare-nuwaxcode] ${key} ✓ (已是最新 ${sizeMB} MB, SHA256=${currentHash.slice(0, 16)}...)`
-              + (FORCE_REFRESH_ON_MATCH ? '，将执行目录重铺以清理残留文件' : ''),
-            );
-            if (!FORCE_REFRESH_ON_MATCH) return true;
-          }
-        }
-        console.warn(`[prepare-nuwaxcode] ${key}: SHA256 不匹配，需重新下载 (expected=${expectedHash.slice(0, 16)}... current=${currentHash.slice(0, 16)}...)`);
+  const sourceShaFile = path.join(resDir, `.archive-sha256-${resourceKey}`);
+  const shaFile = path.join(resDir, `.sha256-${resourceKey}`);
+  if (fs.existsSync(destPath) && fs.existsSync(versionFile) &&
+      fs.existsSync(shaFile) && fs.existsSync(sourceShaFile) &&
+      fs.readFileSync(versionFile, 'utf-8').trim() === NUWAXCODE_VERSION &&
+      fs.readFileSync(sourceShaFile, 'utf-8').trim() === expectedArchiveHash) {
+    const expectedHash = fs.readFileSync(shaFile, 'utf-8').trim();
+    const currentHash = sha256File(destPath);
+    if (currentHash === expectedHash) {
+      const innerVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, currentHash);
+      if (innerVersion !== NUWAXCODE_VERSION &&
+          (innerVersion !== null || canRunTargetBinary(key))) {
+        console.warn(
+          `[prepare-nuwaxcode] ${key}: 缓存二进制版本无法确认或不匹配 (${innerVersion})，将重新下载`,
+        );
       } else {
-        // 无 SHA256 记录时也做一次内部版本校验：避免“标记已更新、二进制未更新”被掩盖
-        const innerVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, null);
-        if (innerVersion && innerVersion !== NUWAXCODE_VERSION) {
-          console.warn(
-            `[prepare-nuwaxcode] ${key}: 版本标记为 ${NUWAXCODE_VERSION} 但二进制为 ${innerVersion}，将重新下载覆盖`,
-          );
-        } else {
-          const sizeMB = (fs.statSync(destPath).size / 1024 / 1024).toFixed(1);
-          console.log(
-            `[prepare-nuwaxcode] ${key} ✓ (版本匹配 ${sizeMB} MB，无 SHA256 记录)`
-            + (FORCE_REFRESH_ON_MATCH ? '，将执行目录重铺以清理残留文件' : '，跳过下载'),
-          );
-          if (!FORCE_REFRESH_ON_MATCH) return true;
-        }
+        const sizeMB = (fs.statSync(destPath).size / 1024 / 1024).toFixed(1);
+        console.log(
+          `[prepare-nuwaxcode] ${key} ✓ (已是最新 ${sizeMB} MB, SHA256=${currentHash.slice(0, 16)}...)`
+          + (FORCE_REFRESH_ON_MATCH ? '，将执行目录重铺以清理残留文件' : ''),
+        );
+        if (!FORCE_REFRESH_ON_MATCH) return true;
       }
+    } else {
+      console.warn(`[prepare-nuwaxcode] ${key}: SHA256 不匹配，需重新下载 (expected=${expectedHash.slice(0, 16)}... current=${currentHash.slice(0, 16)}...)`);
     }
   }
 
-  // Release 资产命名兼容策略：
-  // 1) 新命名（带版本后缀）：nuwaxcode-xxx-v1.1.96.tar.gz
-  // 2) 旧命名（不带版本后缀）：nuwaxcode-xxx.tar.gz
-  // 先尝试新命名，404 再回退旧命名，兼容历史 release 与新 CI 命名规则。
-  const assetCandidates = [`${distName}-v${NUWAXCODE_VERSION}.tar.gz`, `${distName}.tar.gz`];
+  // 此稳定版每个平台资产均有版本后缀，且必须命中对应的固定 SHA256。
+  const assetCandidates = [`${distName}-v${NUWAXCODE_VERSION}.tar.gz`];
 
   // Windows：PATH 里常见的是 System32 的 bsdtar，它不认 MSYS 的 /d/a/... 路径，
   // 只认盘符路径（D:\... 或 D:/...）。Git for Windows 的 GNU tar 也接受 D:/...。
@@ -587,11 +595,17 @@ async function downloadFromRelease(key) {
         const force = attempt > 0;
         if (force) {
           console.warn(
-            `[prepare-nuwaxcode] ${key}: 归档解压失败（常见于缓存被截断），将删除缓存并重新下载 ${assetName}`,
+            `[prepare-nuwaxcode] ${key}: 缓存校验或解压失败，将删除缓存并重新下载 ${assetName}`,
           );
         }
 
         const archivePath = await download(downloadUrl, assetName, { force });
+        const archiveHash = sha256File(archivePath);
+        if (archiveHash !== expectedArchiveHash) {
+          console.warn(`[prepare-nuwaxcode] ${key}: 归档 SHA256 不匹配 (${archiveHash})`);
+          if (attempt === 0) continue;
+          throw new Error(`归档 SHA256 不匹配: ${assetName}`);
+        }
 
         // 解压到临时目录
         const extractDir = path.join(cacheDir, `extract-${key}`);
@@ -668,7 +682,8 @@ async function downloadFromRelease(key) {
 
         // 验证二进制内部版本号 + 打印 SHA256
         const innerVersion = verifyBinaryVersion(destPath, NUWAXCODE_VERSION, key, hash);
-        if (innerVersion && innerVersion !== NUWAXCODE_VERSION) {
+        if (innerVersion !== NUWAXCODE_VERSION &&
+            (innerVersion !== null || canRunTargetBinary(key))) {
           // 常见于：本地缓存的 tar.gz 仍是旧内容（例如同名资产被替换、或缓存命中导致一直用旧包）
           // 第一次发现不一致时，删除缓存并强制重新下载再试一次。
           if (attempt === 0) {
@@ -677,17 +692,18 @@ async function downloadFromRelease(key) {
             );
             continue;
           }
+          throw new Error(`二进制版本无法确认或不符: ${innerVersion} (expected ${NUWAXCODE_VERSION})`);
         }
 
         // 保存 SHA256 记录，下次可精确跳过
         fs.writeFileSync(path.join(resDir, `.sha256-${resourceKey}`), hash, 'utf-8');
+        fs.writeFileSync(sourceShaFile, expectedArchiveHash, 'utf-8');
 
         return true;
       }
     } catch (err) {
       lastErr = err;
-      // 如果新命名不存在（404），自动回退旧命名继续尝试；其他错误也继续尝试下一候选。
-      console.warn(`[prepare-nuwaxcode] ${key}: 资产 ${assetName} 失败 (${err.message})，尝试下一个命名...`);
+      console.warn(`[prepare-nuwaxcode] ${key}: 官方资产 ${assetName} 失败 (${err.message})`);
     }
   }
 
@@ -877,7 +893,7 @@ async function main() {
 
   console.log(`[prepare-nuwaxcode] 完成: ${ok} 成功, ${fail} 失败`);
 
-  if (fail > 0 && !allPlatforms) {
+  if (fail > 0) {
     process.exit(1);
   }
 }

@@ -1,4 +1,5 @@
 import type { McpServerEntry } from "@shared/types/electron";
+import { isComputerUseManagedServerId } from "@shared/guiMcp";
 import { t } from "../../services/core/i18n";
 
 /**
@@ -183,4 +184,57 @@ export function isMcpServerIdDuplicate(
 ): boolean {
   const exclude = new Set(excludeServerIds.filter(Boolean));
   return existingServerIds.some((id) => id === serverId && !exclude.has(id));
+}
+
+/**
+ * 提取可执行文件基名，去除冗长路径（例如将 Windows / Mac / Linux 绝对路径简化为 node.exe / node / npx）
+ */
+export function simplifyCommandPath(command: string): string {
+  if (!command) return "";
+  const trimmed = command.trim();
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : trimmed;
+}
+
+/**
+ * 格式化 MCP 服务的描述地址信息：
+ * - display: 精简关键信息（如 Computer Use 运行时中继、可执行文件名），避免冗长安装路径或内联长脚本占据界面
+ * - full: 完整命令/地址，用于 tooltip 鼠标悬停查看完整细节
+ */
+export function formatMcpServerSummary(
+  serverId: string,
+  entry: McpServerEntry,
+  translate: (key: string, ...args: any[]) => string = t,
+): { display: string; full: string } {
+  if (!("command" in entry)) {
+    const url = entry.url || "";
+    return { display: url, full: url };
+  }
+
+  const command = entry.command || "";
+  const args = entry.args ?? [];
+  const full = `${command} ${args.join(" ")}`.trim();
+
+  if (isComputerUseManagedServerId(serverId)) {
+    return {
+      display: translate("Claw.MCP.list.cuaDisplaySummary"),
+      full,
+    };
+  }
+
+  const baseCommand = simplifyCommandPath(command);
+  const displayArgs = args.map((arg, idx) => {
+    // 若为 -e 后跟的长脚本，简化显示
+    if (idx > 0 && args[idx - 1] === "-e" && arg.length > 20) {
+      return "[inline script]";
+    }
+    // 若参数本身是长路径，简化显示基名
+    if (arg.length > 40 && /[\\/]/.test(arg)) {
+      return simplifyCommandPath(arg);
+    }
+    return arg;
+  });
+
+  const display = `${baseCommand} ${displayArgs.join(" ")}`.trim();
+  return { display, full };
 }

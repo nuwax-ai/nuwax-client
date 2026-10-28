@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import overlaySync from '../sync-overlay.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import config from '../../client.config.mjs';
@@ -106,7 +105,7 @@ export function electronBinary(client, platform = process.platform) {
 async function ensureSubmodules(root, options, tools) {
   const declared = await tools.git(root, ['config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$']);
   const names = declared.split('\n').map((line) => line.trim().split(/\s+/).slice(1).join(' ')).filter(Boolean);
-  const missing = names.filter((name) => !fs.existsSync(path.join(root, name, '.git')));
+  const missing = names.filter((name) => name !== 'nuwa-electron-shell' && !fs.existsSync(path.join(root, name, '.git')));
   if (missing.length) {
     console.log(`[prepare] 初始化缺失子模块: ${missing.join(', ')}`);
     if (!options.dryRun) await tools.run('git', ['submodule', 'update', '--init', '--depth', '1', '--', ...missing], { cwd: root });
@@ -142,43 +141,6 @@ function sanitizeLinks(dir) {
     if (entry.isDirectory()) sanitizeLinks(file);
     else if (entry.isSymbolicLink() && (path.isAbsolute(fs.readlinkSync(file)) || !fs.existsSync(file))) fs.unlinkSync(file);
   }
-}
-
-function overlayFiles(root) {
-  const directory = path.join(root, 'overlay');
-  overlaySync.assertSafeFile(root, 'overlay', true);
-  const files = [];
-  const walk = (dir, prefix = '') => {
-    if (!fs.existsSync(dir)) return;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!prefix && entry.name === 'README.md') continue;
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(path.join(dir, entry.name), relative);
-      else files.push(relative);
-    }
-  };
-  walk(directory);
-  return files;
-}
-
-async function syncOverlay(p, tools, state) {
-  const files = overlayFiles(p.root);
-  const previous = overlaySync.readManifest(p.root);
-  for (const relative of new Set([...files, ...previous])) {
-    overlaySync.assertSafeFile(p.base, relative);
-    overlaySync.assertSafeFile(p.root, `overlay/${relative}`);
-    const destination = path.join(p.base, relative);
-    if (!fs.existsSync(destination)) continue;
-    const source = path.join(p.root, 'overlay', relative);
-    const digest = inputDigest([destination]);
-    if (fs.existsSync(source) && digest === inputDigest([source])) continue;
-    if (state.overlay?.[relative] === digest) continue;
-    if (await tools.git(p.base, ['status', '--porcelain', '--untracked-files=all', '--', relative])) {
-      throw new Error(`[prepare] overlay 同步将覆盖基座本地改动 ${relative}；请先保留改动`);
-    }
-  }
-  await tools.run(process.execPath, [path.join(p.root, 'scripts/sync-overlay.js')], { cwd: p.root });
-  state.overlay = Object.fromEntries(files.map((relative) => [relative, inputDigest([path.join(p.base, relative)])]));
 }
 
 async function prepareSource(p, name, source, options, tools, state, save) {
@@ -261,7 +223,7 @@ export async function prepare(root, options = {}) {
   const opt = { frontend: config.frontend.mode, platform: process.platform, arch: process.arch, ...options };
   if (!['dist', 'source'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist 或 source');
   await ensureSubmodules(root, opt, tools);
-  const plan = ['overlay', 'commercial-dependencies', 'agent-kit', 'workspace', 'native', 'resources'];
+  const plan = ['commercial-dependencies', 'agent-kit', 'workspace', 'native', 'resources'];
   if (opt.dryRun) {
     console.log(`[prepare] dry-run: ${plan.join(' → ')} (${opt.platform}-${opt.arch}, frontend=${opt.frontend})`);
     return { ...p, dryRun: true, steps: plan };
@@ -273,8 +235,6 @@ export async function prepare(root, options = {}) {
   const state = safeJson(stateFile) ?? {};
   const save = () => tools.atomicJson(stateFile, state);
   const env = commercialEnv(root, { TARGET_ARCH: opt.arch });
-    await syncOverlay(p, tools, state);
-    save();
     await ensureCommercialDependencies(root, tools);
     const kit = path.join(p.base, 'crates/agent-kit');
     // The inherited workspace postinstall can generate an ignored standalone

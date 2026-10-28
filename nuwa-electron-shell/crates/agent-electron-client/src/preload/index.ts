@@ -1,8 +1,20 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { legacyAgentRunnerUnavailable } from "@shared/legacyAgentRunner";
 import type { SandboxPolicy } from "@shared/types/sandbox";
+import type { UpdateCheckOptions } from "@shared/types/updateTypes";
+import { hostFeatureNamespaces } from "./features";
+
+// Main-process net.fetch does not appear in the shell renderer's Network tab.
+// Mirror credential-free registration checkpoints into its Console for QA.
+ipcRenderer.on("nuwax:registrationTrace", (_event, trace: unknown) => {
+  console.info("[NuwaxReg]", trace);
+});
 
 // Expose protected methods to the renderer process
 contextBridge.exposeInMainWorld("electronAPI", {
+  // 桌面特性命名空间（如 notices：「关于」页的开源组件声明）
+  ...hostFeatureNamespaces(ipcRenderer),
+
   // Process info (available in preload but not in renderer)
   versions: {
     node: process.versions.node,
@@ -22,6 +34,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     maximize: () => ipcRenderer.invoke("window:maximize"),
     isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+    getHostActivity: () => ipcRenderer.invoke("window:getHostActivity") as Promise<{ visible: boolean } | null>,
     close: () => ipcRenderer.invoke("window:close"),
   },
 
@@ -30,6 +43,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     editAction: (
       action: "undo" | "redo" | "cut" | "copy" | "paste" | "selectAll",
     ) => ipcRenderer.invoke("menu:editAction", action) as Promise<boolean>,
+  },
+
+  // webview 历史导航真值（修 gateway 形态 Electron canGoBack/goBack 失明，
+  // 见 nuwaxBridgeHandlers 的 nuwax:webview-nav-* 注释）；无 guest 时全 false。
+  webviewNav: {
+    state: () =>
+      ipcRenderer.invoke("nuwax:webview-nav-state") as Promise<{
+        canGoBack: boolean;
+        canGoForward: boolean;
+      }>,
+    go: (dir: "back" | "forward") =>
+      ipcRenderer.invoke("nuwax:webview-nav-go", dir) as Promise<boolean>,
   },
 
   // MCP Proxy management (@nuwax-ai/mcp-proxy-ts 聚合代理)
@@ -68,16 +93,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
       }>,
   },
 
-  // Agent Runner management (via IPC to main process)
+  // Legacy compatibility surface: reject start locally before transmitting config.
   agentRunner: {
-    start: (config: {
+    start: (_config: {
       binPath: string;
       backendPort: number;
       proxyPort: number;
       apiKey: string;
       apiBaseUrl: string;
       defaultModel: string;
-    }) => ipcRenderer.invoke("agentRunner:start", config),
+    }) => Promise.resolve(legacyAgentRunnerUnavailable()),
     stop: () => ipcRenderer.invoke("agentRunner:stop"),
     status: () => ipcRenderer.invoke("agentRunner:status"),
   },
@@ -541,9 +566,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // App
   app: {
-    checkUpdate: () => ipcRenderer.invoke("app:checkUpdate"),
+    checkUpdate: (options?: UpdateCheckOptions) =>
+      ipcRenderer.invoke("app:checkUpdate", options),
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     getSystemInfo: () => ipcRenderer.invoke("app:getSystemInfo"),
+    getDistHandshake: (force?: boolean) =>
+      ipcRenderer.invoke("app:getDistHandshake", force),
     downloadUpdate: () => ipcRenderer.invoke("app:downloadUpdate"),
     installUpdate: () => ipcRenderer.invoke("app:installUpdate"),
     getUpdateState: () => ipcRenderer.invoke("app:getUpdateState"),
@@ -553,11 +581,39 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getHostname: () => ipcRenderer.invoke("app:getHostname"),
   },
 
+  permissionOnboarding: {
+    snapshot: () => ipcRenderer.invoke("permissions:onboarding:snapshot"),
+    markSeen: () => ipcRenderer.invoke("permissions:onboarding:seen"),
+    openSettings: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:settings", key),
+    showApp: () => ipcRenderer.invoke("permissions:onboarding:showApp"),
+    restart: () => ipcRenderer.invoke("permissions:onboarding:restart"),
+    showDragChip: (
+      key: import("@shared/types/permissionOnboarding").PermissionKey,
+    ) => ipcRenderer.invoke("permissions:onboarding:showDragChip", key),
+    hideDragChip: () =>
+      ipcRenderer.invoke("permissions:onboarding:hideDragChip"),
+  },
+
   // Permissions (macOS)
   permissions: {
     check: () => ipcRenderer.invoke("permissions:check"),
     openSettings: (permissionKey: string) =>
       ipcRenderer.invoke("permissions:openSettings", permissionKey),
+  },
+
+  // 允许锁屏运行（电源保活档位；商业版 overlay 注入，基座无此命名空间）
+  powerPolicy: {
+    get: () => ipcRenderer.invoke("powerPolicy:get"),
+    setMode: (mode: string) => ipcRenderer.invoke("powerPolicy:setMode", mode),
+  },
+
+  // 全磁盘访问检测/引导（仅 mac 有意义；商业版 overlay 注入，基座无此命名空间）
+  fullDiskAccess: {
+    getStatus: () => ipcRenderer.invoke("fullDiskAccess:getStatus"),
+    openSettings: () => ipcRenderer.invoke("fullDiskAccess:openSettings"),
+    recheck: () => ipcRenderer.invoke("fullDiskAccess:recheck"),
   },
 
   // Quick Init — 读取快捷初始化配置
@@ -593,6 +649,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "cowork:permission",
       "agent:event",
       "computer:progress",
+      "cua:runtime",
+      "cua:openCenter",
+      "cua:showPreview",
       "update:status",
       "deps:syncCompleted",
       "autolaunch:changed",
@@ -605,11 +664,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "intervention:updated",
       "nuwax:authChanged",
       "nuwax:serviceState",
+      "nuwax:host-activity-changed",
       "nuwax:theme-changed",
       "nuwax:layout-changed",
       "nuwax:open-same-window",
       "nuwax:open-client-settings",
+      "permissions:guide",
       "nuwax:loopback-changed",
+      "nuwax:webview-nav-state",
+      "nuwax:dismiss-topbar-menus",
       "nuwax:login-confirmed",
       "nuwax:serverHostChanged",
       "nuwax:lang-changed",

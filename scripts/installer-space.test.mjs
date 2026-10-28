@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { installedBuilder } from './test-support/fixtures.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const build = path.join(root, 'overlay/crates/agent-electron-client/build');
+const build = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/build');
 test('space check is before app shutdown, preservation and the vendor uninstall', () => {
   const source = fs.readFileSync(path.join(build, 'installer.nsh'), 'utf8');
   const macro = source.split('!macro customCheckAppRunning')[1].split('!macroend')[0];
@@ -36,7 +36,7 @@ test('pinned vendor installer and uninstaller compile with the complete commerci
   for (const file of fs.readdirSync(build)) if (/\.(nsh|ps1)$/.test(file)) fs.copyFileSync(path.join(build, file), path.join(resources, file));
   const { createRequire } = await import('node:module');
   const require = createRequire(import.meta.url);
-  const manifest = require('../overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs').writeUninstallPayload({ appOutDir: app, arch: 1, packager: { projectDir: dir, appInfo: { name: 'nuwax-space-qa', productFilename: 'Nuwax' } } });
+  const manifest = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/uninstall-payload.cjs').writeUninstallPayload({ appOutDir: app, arch: 1, packager: { projectDir: dir, appInfo: { name: 'nuwax-space-qa', productFilename: 'Nuwax' } } });
   const include = path.join(resources, 'qa-include.nsh');
   fs.writeFileSync(include, `!define NUWAX_UNINSTALL_MANIFEST "${manifest}"\n!include "${path.join(resources, 'installer.nsh')}"\n`);
   const original = NsisTarget.prototype.computeScriptAndSignUninstaller;

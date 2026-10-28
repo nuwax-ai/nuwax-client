@@ -1,81 +1,42 @@
 #!/bin/bash
-# Electron Linux post-install script
-# Set SUID bit on chrome-sandbox to enable proper sandboxing
-#
-# Security considerations:
-# - Validates file type to prevent symlink attacks
-# - Only sets SUID on valid ELF executables
-# - Provides clear error messages for troubleshooting
-#
-# Note: This script runs as root during package installation
-
+# Nuwax deb/rpm 安装后启用 Electron SUID sandbox。
+# electron-builder 25.1.8 将商业 productName=Nuwax 安装到 /opt/Nuwax。
+# 仅处理本产品，不能扫描/修改同机 NuwaClaw 或任意外部目录。
 set -e
 
-# Possible chrome-sandbox locations based on electron-builder defaults
-# deb installs to /opt/{productName}/
-# rpm installs to /opt/{productName}/ or /usr/lib/{packageName}/
-SANDBOX_PATHS=(
-    "/opt/NuwaClaw/chrome-sandbox"
-    "/opt/NuwaClaw/resources/chrome-sandbox"
-    "/opt/nuwaclaw/chrome-sandbox"
-    "/opt/nuwaclaw/resources/chrome-sandbox"
-    "/usr/lib/nuwaclaw/chrome-sandbox"
-    "/usr/lib64/nuwaclaw/chrome-sandbox"
-)
+fail() {
+    echo "Nuwax post-install: $*" >&2
+    exit 1
+}
 
-SANDBOX_FOUND=false
-# Check if 'file' command is available (most systems have it, but be safe)
-HAS_FILE_CMD=$(command -v file >/dev/null 2>&1 && echo "yes" || echo "no")
+[ "$(id -u)" = "0" ] || fail "root privileges are required"
+SANDBOX_PATH="/opt/Nuwax/chrome-sandbox"
 
-for SANDBOX_PATH in "${SANDBOX_PATHS[@]}"; do
-    if [ -e "$SANDBOX_PATH" ]; then
-        # Security: Skip symlinks to prevent symlink attacks
-        if [ -L "$SANDBOX_PATH" ]; then
-            echo "Warning: $SANDBOX_PATH is a symlink, skipping for security"
-            continue
-        fi
-
-        # Security: Verify it's a regular file
-        if [ ! -f "$SANDBOX_PATH" ]; then
-            echo "Warning: $SANDBOX_PATH is not a regular file, skipping"
-            continue
-        fi
-
-        # Security: Verify file type is ELF executable (if 'file' command is available)
-        if [ "$HAS_FILE_CMD" = "yes" ]; then
-            if ! file "$SANDBOX_PATH" 2>/dev/null | grep -qE "ELF.*(executable|shared object)"; then
-                echo "Warning: $SANDBOX_PATH is not a valid ELF binary, skipping"
-                continue
-            fi
-        else
-            # Fallback: Check file magic bytes for ELF header (0x7f ELF)
-            ELF_HEADER=$(head -c 4 "$SANDBOX_PATH" 2>/dev/null | od -A n -t x1 | tr -d ' ')
-            if [ "$ELF_HEADER" != "7f454c46" ]; then
-                echo "Warning: $SANDBOX_PATH does not have valid ELF header, skipping"
-                continue
-            fi
-        fi
-
-        echo "Found chrome-sandbox at $SANDBOX_PATH"
-
-        # Set ownership and SUID bit
-        if chown root:root "$SANDBOX_PATH" 2>/dev/null; then
-            if chmod 4755 "$SANDBOX_PATH" 2>/dev/null; then
-                echo "SUID sandbox enabled successfully."
-                SANDBOX_FOUND=true
-                break
-            else
-                echo "Warning: Failed to set permissions on $SANDBOX_PATH"
-            fi
-        else
-            echo "Warning: Failed to change ownership of $SANDBOX_PATH"
-        fi
-    fi
+# 不跟随父目录或文件链接，也不对可被普通用户替换的文件授予 SUID。
+for INSTALL_DIR in / /opt /opt/Nuwax; do
+    [ ! -L "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR" ] || fail "unsafe installation directory: $INSTALL_DIR"
+    DIR_INFO=$(stat -c '%u:%a' "$INSTALL_DIR") || fail "cannot inspect installation directory: $INSTALL_DIR"
+    IFS=: read -r DIR_UID DIR_MODE <<< "$DIR_INFO"
+    [[ "$DIR_UID" = "0" && "$DIR_MODE" =~ ^[0-7]{3,4}$ ]] || fail "untrusted installation directory owner: $INSTALL_DIR"
+    (( (8#$DIR_MODE & 0022) == 0 )) || fail "writable installation directory: $INSTALL_DIR"
 done
 
-if [ "$SANDBOX_FOUND" = false ]; then
-    echo "Warning: chrome-sandbox not found or validation failed."
-    echo "The application may need to run with ELECTRON_DISABLE_SANDBOX=1"
+[ ! -L "$SANDBOX_PATH" ] && [ -f "$SANDBOX_PATH" ] || fail "missing or unsafe chrome-sandbox: $SANDBOX_PATH"
+FILE_INFO=$(stat -c '%u:%a:%h' "$SANDBOX_PATH") || fail "cannot inspect chrome-sandbox"
+IFS=: read -r FILE_UID FILE_MODE FILE_LINKS <<< "$FILE_INFO"
+[[ "$FILE_UID" = "0" && "$FILE_MODE" =~ ^[0-7]{3,4}$ && "$FILE_LINKS" = "1" ]] || fail "untrusted chrome-sandbox owner or hard links"
+(( (8#$FILE_MODE & 0022) == 0 )) || fail "writable chrome-sandbox"
+
+# file 不是 deb/rpm 的保证依赖；缺少时保留 ELF magic 检查。
+if command -v file >/dev/null 2>&1; then
+    file "$SANDBOX_PATH" 2>/dev/null | grep -qE 'ELF.*(executable|shared object)' || fail "chrome-sandbox is not an ELF executable"
+else
+    ELF_HEADER=$(head -c 4 "$SANDBOX_PATH" | od -A n -t x1 | tr -d ' \n')
+    [ "$ELF_HEADER" = "7f454c46" ] || fail "chrome-sandbox has no ELF header"
 fi
 
-exit 0
+chown root:root "$SANDBOX_PATH" || fail "cannot set chrome-sandbox owner"
+[ "$(stat -c '%u:%g' "$SANDBOX_PATH")" = "0:0" ] || fail "chrome-sandbox owner verification failed"
+chmod 4755 "$SANDBOX_PATH" || fail "cannot set chrome-sandbox permissions"
+[ "$(stat -c '%u:%g:%a' "$SANDBOX_PATH")" = "0:0:4755" ] || fail "chrome-sandbox permission verification failed"
+echo "Nuwax post-install: SUID sandbox enabled."

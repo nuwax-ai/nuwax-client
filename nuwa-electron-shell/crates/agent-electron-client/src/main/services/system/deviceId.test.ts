@@ -21,6 +21,9 @@ const mockMachineIdSync = vi.fn();
 vi.mock("node-machine-id", () => ({
   machineIdSync: (...args: unknown[]) => mockMachineIdSync(...args),
 }));
+vi.mock("./commercialDeviceId", () => ({
+  getCommercialDeviceId: vi.fn(() => "commercial-hardware-device"),
+}));
 
 // Mock os.hostname
 const mockHostname = vi.fn(() => "mock-hostname");
@@ -29,7 +32,6 @@ vi.mock("os", () => ({
 }));
 
 const COMMUNITY_SALT = "nuwax-agent";
-const PRODUCT_SALT = "nuwax:device:v1";
 const expectedId = (raw: string, salt: string) =>
   createHash("sha256")
     .update(raw + salt)
@@ -121,8 +123,9 @@ describe("deviceId", () => {
     vi.resetModules();
     const product = (await import("./deviceId")).getDeviceId();
 
-    expect(product).toBe(expectedId("mock-machine-id", PRODUCT_SALT));
+    expect(product).toBe("commercial-hardware-device");
     expect(product).not.toBe(expectedId("mock-machine-id", COMMUNITY_SALT));
+    expect(mockMachineIdSync).not.toHaveBeenCalled();
   });
 
   it("should fall back to the community identity when no env is set", async () => {

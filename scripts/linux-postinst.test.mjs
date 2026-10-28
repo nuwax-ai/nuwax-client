@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const hook = path.join(root, 'overlay/crates/agent-electron-client/scripts/linux/postinst.sh');
+const hook = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/scripts/linux/postinst.sh');
 const source = fs.readFileSync(hook, 'utf8');
 const base = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
 

@@ -1,7 +1,8 @@
 /**
  * NuwaxHostWebview - 客户端主窗口宿主组件（沉浸式）。
  *
- * 全屏嵌入 nuwax PC 站点（含登录页），作为客户端主界面。webview 占满整窗（含顶部），
+ * 全屏嵌入 nuwax PC 站点（含登录页），作为客户端主界面。站内 webview 占满整窗，
+ * 收银台外域整页在顶部留出壳工具栏高度，
  * 顶部覆盖层（红绿灯后工具栏 TrafficLightToolbar）由 App.tsx 渲染，承载窗口拖拽、
  * webview 导航（后退/前进/刷新）、二级菜单收起、设置入口与账号/更新状态。
  *
@@ -19,38 +20,40 @@ import React, {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import { APP_DISPLAY_NAME, DEFAULT_SERVER_HOST } from "@shared/constants";
+import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST } from "@shared/constants";
 import { normalizeServerHost } from "../../services/core/auth";
 import { buildHomeUrl } from "../../services/utils/sessionUrl";
 import { logger } from "../../services/utils/logService";
 import type { GuestLoadPhase } from "../../bootTiming";
-import { AppIconLoading } from "../AppIconLoading";
+import { PageLoadRecovery } from "../PageLoadRecovery";
+import { GuestPageViewport } from "../GuestPageViewport";
+import { DistSnapshotNotice } from "../DistSnapshotNotice";
+import { getCurrentLang } from "../../services/core/i18n";
+import {
+  diagnosticPageUrl,
+  mainDocumentFailure,
+  type GuestLoadFailure,
+} from "../../services/webviewLoadFailure";
 
-/** 暴露给 App.tsx 的 webview 控制句柄（工具栏 icon 经此调用）。 */
+export const GUEST_SLOW_HINT_MS = 15_000;
 export interface NuwaxHostWebviewHandle {
   goBack: () => void;
   goForward: () => void;
   reload: () => void;
   canGoBack: () => boolean;
   canGoForward: () => boolean;
-  /** 下发宿主命令到 nuwax（经 webviewPerfBridge 的 nuwax:host-command 通道）。 */
   sendHostCommand: (payload: unknown) => void;
-  /** 同窗导航（二级页承载）：主 webview 加载目标 URL。 */
   navigate: (url: string) => void;
 }
-
 export interface NuwaxHostWebviewProps {
-  /** 递增时强制 reload webview（兼容旧刷新入口；工具栏刷新优先走 handle.reload()）。 */
   reloadKey?: number;
-  /** webview 导航能力变化上报（canGoBack/canGoForward），供工具栏按钮启用态。 */
   onNavStateChange?: (state: {
     canGoBack: boolean;
     canGoForward: boolean;
   }) => void;
-  /** guest 顶层导航开始时清除旧页面上报的拖拽矩形。 */
-  onNavigationStart?: () => void;
-  /** guest 加载阶段上报（resolving/loading/stopped），供 App 首载覆盖层计时。 */
+  onNavigationStart?: (event?: { isInPlace?: boolean }) => void;
   onGuestLoadStateChange?: (phase: GuestLoadPhase) => void;
+  onOpenSettings?: () => void;
 }
 
 const NuwaxHostWebview = forwardRef<
@@ -62,182 +65,313 @@ const NuwaxHostWebview = forwardRef<
     onNavStateChange,
     onNavigationStart,
     onGuestLoadStateChange,
+    onOpenSettings,
   },
   ref,
 ) {
   const [url, setUrl] = useState("");
+  const [pageUrl, setPageUrl] = useState("");
+  const [failure, setFailure] = useState<GuestLoadFailure | null>(null);
+  const [waiting, setWaiting] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [ua, setUa] = useState<string | undefined>();
   const [webviewEpoch, setWebviewEpoch] = useState(0);
   const webviewRef = useRef<HTMLElement | null>(null);
+  const generation = useRef(0);
+  const activity = useRef(0);
+  const loading = useRef(false);
+  const reloadLocked = useRef(false);
+  const failureRef = useRef<GuestLoadFailure | null>(null);
+  const activeDocument = useRef("");
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callbacks = useRef({
+    onNavStateChange,
+    onNavigationStart,
+    onGuestLoadStateChange,
+  });
+  callbacks.current = {
+    onNavStateChange,
+    onNavigationStart,
+    onGuestLoadStateChange,
+  };
 
-  // 自定义 UA：保留产品/<version> 标识，便于 nuwax 侧识别客户端环境。
-  // 主进程可能已把默认 UA 的 @nuwax-ai/nuwaclaw/<ver> 替换为产品名——追加前
-  // 查重，避免同一 token 出现两次（社区版含空格名走此追加路径不变）
+  const clearSlowTimer = () => {
+    if (slowTimer.current !== null) clearTimeout(slowTimer.current);
+    slowTimer.current = null;
+  };
+  const beginLoading = (phase: GuestLoadPhase, fresh = false) => {
+    if (loading.current && !fresh) return;
+    clearSlowTimer();
+    const currentGeneration = generation.current;
+    const currentActivity = ++activity.current;
+    loading.current = true;
+    setWaiting(false);
+    callbacks.current.onGuestLoadStateChange?.(phase);
+    slowTimer.current = setTimeout(() => {
+      if (
+        generation.current !== currentGeneration ||
+        activity.current !== currentActivity
+      )
+        return;
+      slowTimer.current = null;
+      // A hint is not a timeout: the live guest and its pending requests stay mounted.
+      setWaiting(true);
+      reloadLocked.current = false;
+      setReloading(false);
+      callbacks.current.onGuestLoadStateChange?.("waiting");
+    }, GUEST_SLOW_HINT_MS);
+  };
+  const finishLoading = () => {
+    clearSlowTimer();
+    loading.current = false;
+    reloadLocked.current = false;
+    setWaiting(false);
+    setReloading(false);
+  };
+  const showFailure = (next: GuestLoadFailure) => {
+    finishLoading();
+    failureRef.current = next;
+    setFailure(next);
+    callbacks.current.onGuestLoadStateChange?.("failed");
+  };
+  const rebuildGuest = () => {
+    // Invalidate old callbacks synchronously, before React has detached the old node.
+    ++generation.current;
+    clearSlowTimer();
+    loading.current = false;
+    setWaiting(false);
+    failureRef.current = null;
+    setFailure(null);
+    activeDocument.current = "";
+    setPageUrl("");
+    setHasLoaded(false);
+    setUrl("");
+    setWebviewEpoch((epoch) => epoch + 1);
+  };
+
   useEffect(() => {
+    let active = true;
     window.electronAPI?.app
       .getVersion()
-      .then((v) => {
-        const token = `${APP_DISPLAY_NAME}/${v}`;
-        const next = navigator.userAgent.includes(token)
-          ? navigator.userAgent
-          : `${navigator.userAgent} ${token}`;
-        setUa(next);
-        logger.info(`webview UA: ${next}`, "NuwaxHostWebview");
+      .then((version) => {
+        if (!active) return;
+        const token = `@nuwax-ai/${APP_NAME_IDENTIFIER}/${version}`;
+        setUa(
+          navigator.userAgent.includes(token)
+            ? navigator.userAgent
+            : `${navigator.userAgent} ${token}`,
+        );
       })
       .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // 调试：F12 / Cmd+Opt+I 开关 webview 页面的 DevTools（样式排查主入口）。
-  // 仅壳窗口持有焦点时生效——guest 聚焦时由主进程 webviewPolicy 的
-  // before-input-event 拦截同款快捷键（toggle），两侧行为一致。
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (event: KeyboardEvent) => {
       if (
-        e.key === "F12" ||
-        (e.metaKey && e.altKey && e.key.toLowerCase() === "i")
+        event.key === "F12" ||
+        (event.metaKey && event.altKey && event.key.toLowerCase() === "i")
       ) {
-        const webview = webviewRef.current as any;
-        if (webview?.isDevToolsOpened?.()) {
-          webview?.closeDevTools?.();
-        } else {
-          webview?.openDevTools?.();
-        }
+        const guest = webviewRef.current as any;
+        if (guest?.isDevToolsOpened?.()) guest.closeDevTools?.();
+        else guest?.openDevTools?.();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 解析 nuwax 根 URL（不依赖 nuwaclaw 登录态）；配置变更（形态/后端/域名切换）
-  // 经 nuwax:loopback-changed 重解析——webview src 变更即加载新目标。
   useEffect(() => {
-    const onLoopbackChanged = () => {
-      setUrl("");
-      setWebviewEpoch((epoch) => epoch + 1);
+    const changed = () => {
+      reloadLocked.current = false;
+      setReloading(false);
+      // A new domain needs a new guest: trusted preload origins are captured at attach.
+      rebuildGuest();
     };
-    window.electronAPI?.on("nuwax:loopback-changed", onLoopbackChanged as any);
+    window.electronAPI?.on("nuwax:loopback-changed", changed as any);
+    window.electronAPI?.on("nuwax:serverHostChanged", changed as any);
     return () => {
-      window.electronAPI?.off(
-        "nuwax:loopback-changed",
-        onLoopbackChanged as any,
-      );
+      window.electronAPI?.off("nuwax:loopback-changed", changed as any);
+      window.electronAPI?.off("nuwax:serverHostChanged", changed as any);
     };
   }, []);
 
-  // 企业登录切换业务域名（main 桥 auth:configureServerHost）：重解析 webview
-  // URL——生产直连形态即加载新域名的 /Login（gateway 形态网关已随域重指；
-  // direct 场景 loopback-changed 不会触发，需独立监听本事件）。
   useEffect(() => {
-    const onServerHostChanged = () => {
-      setUrl("");
-      // will-attach-webview captures the current trusted origins in preload
-      // arguments. A new domain needs a new guest, not a loadURL on the old one.
-      setWebviewEpoch((epoch) => epoch + 1);
-    };
-    window.electronAPI?.on(
-      "nuwax:serverHostChanged",
-      onServerHostChanged as any,
-    );
-    return () => {
-      window.electronAPI?.off(
-        "nuwax:serverHostChanged",
-        onServerHostChanged as any,
-      );
-    };
-  }, []);
-  useEffect(() => {
+    const currentGeneration = ++generation.current;
     let cancelled = false;
-    // URL 重解析开始（启动/域名形态切换）：上报 resolving，App 覆盖层重新兜盖。
-    onGuestLoadStateChange?.("resolving");
-    (async () => {
+    failureRef.current = null;
+    setFailure(null);
+    beginLoading("resolving", true);
+    void (async () => {
       try {
         const step1 = (await window.electronAPI?.settings.get(
           "step1_config",
         )) as { serverHost?: string } | null;
-        // Loopback Gateway 形态（阶段一，step1_config.nuwaxLoadMode/env 开关）：
-        // enabled 时经网关 origin 同源加载（登录态/Cookie 与回环 origin 绑定，
-        // 跨域类问题从根上消失）；未启用回落 serverHost 直连（现状不变）。
         const loopback = (await window.electronAPI?.settings.get(
           "nuwax.loopback",
         )) as { enabled?: boolean; origin?: string | null } | null;
-        // 调试覆盖前端域名（env NUWAX_WEBVIEW_ORIGIN → 主进程启动时写键）：
-        // 显式调试意图，优先级最高；后端域仍按 serverHost（前后端一体），
-        // 不受影响——不要为切前端去改 serverHost。
         const override = (await window.electronAPI?.settings.get(
           "nuwax.webviewOverride",
         )) as { origin?: string | null } | null;
-        // 直连形态（gateway 未启用）dev 与生产同源：加载 step1_config.serverHost /
-        // DEFAULT_SERVER_HOST——不再例外指本地 vite（localhost:3000）；前端本地
-        // 联调时用 NUWAX_WEBVIEW_ORIGIN 显式覆盖（优先级最高，不受本解析影响）。
-        const rawHost = override?.origin
-          ? override.origin
-          : loopback?.enabled && loopback.origin
-            ? loopback.origin
-            : step1?.serverHost || DEFAULT_SERVER_HOST;
+        if (cancelled || currentGeneration !== generation.current) return;
+        const rawHost =
+          override?.origin ||
+          (loopback?.enabled && loopback.origin) ||
+          step1?.serverHost ||
+          DEFAULT_SERVER_HOST;
         const domain = normalizeServerHost(rawHost);
         const finalUrl = buildHomeUrl(domain);
+        const target = new URL(finalUrl);
+        if (
+          !domain ||
+          !["http:", "https:"].includes(target.protocol) ||
+          target.username ||
+          target.password
+        )
+          throw new Error("Invalid webview origin");
+        activeDocument.current = finalUrl;
         logger.info(
           "[NuwaxHostWebview] resolved webview url",
           "NuwaxHostWebview",
-          {
-            dev: import.meta.env.DEV,
-            override: override?.origin ?? null,
-            loopback: loopback?.enabled ? loopback.origin : null,
-            step1ServerHost: step1?.serverHost ?? null,
-            rawHost,
-            url: finalUrl,
-          },
+          { url: diagnosticPageUrl(finalUrl) },
         );
-        if (!cancelled && domain) setUrl(finalUrl);
-      } catch (e) {
+        setUrl(finalUrl);
+      } catch {
+        if (cancelled || currentGeneration !== generation.current) return;
         logger.error(
           "[NuwaxHostWebview] resolve url failed",
           "NuwaxHostWebview",
-          e,
         );
+        showFailure({ kind: "resolve", url: "" });
       }
     })();
     return () => {
       cancelled = true;
+      clearSlowTimer();
     };
+    // Epoch is the sole source of guest recreation; callbacks are read through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webviewEpoch]);
 
-  // 绑定 webview 导航事件，上报 canGoBack/canGoForward（供工具栏按钮启用态）
-  // 与加载阶段（did-start/did-stop-loading 为整载周期，覆盖子资源；did-fail-load
-  // 视同停止，让覆盖层在失败时也能掀开）。
   useEffect(() => {
-    const wv = webviewRef.current as any;
-    if (!wv?.addEventListener) return;
-    const sync = () =>
-      onNavStateChange?.({
-        canGoBack: !!wv.canGoBack?.(),
-        canGoForward: !!wv.canGoForward?.(),
+    const guest = webviewRef.current as any;
+    if (!url || !guest?.addEventListener) return;
+    const currentGeneration = generation.current;
+    const current = () =>
+      generation.current === currentGeneration && webviewRef.current === guest;
+    const sync = (event?: { url?: string }) => {
+      if (!current()) return;
+      const nextUrl = event?.url || guest.getURL?.();
+      if (typeof nextUrl === "string") {
+        activeDocument.current = nextUrl;
+        setPageUrl(nextUrl);
+      }
+      callbacks.current.onNavStateChange?.({
+        canGoBack: !!guest.canGoBack?.(),
+        canGoForward: !!guest.canGoForward?.(),
       });
-    const clearTitlebarRegions = () => onNavigationStart?.();
-    const notifyLoading = () => onGuestLoadStateChange?.("loading");
-    const notifyStopped = () => onGuestLoadStateChange?.("stopped");
-    wv.addEventListener("dom-ready", sync);
-    wv.addEventListener("did-start-navigation", clearTitlebarRegions);
-    wv.addEventListener("did-navigate", sync);
-    wv.addEventListener("did-navigate-in-page", sync);
-    wv.addEventListener("did-start-loading", notifyLoading);
-    wv.addEventListener("did-stop-loading", notifyStopped);
-    wv.addEventListener("did-fail-load", notifyStopped);
-    return () => {
-      wv.removeEventListener?.("dom-ready", sync);
-      wv.removeEventListener?.("did-start-navigation", clearTitlebarRegions);
-      wv.removeEventListener?.("did-navigate", sync);
-      wv.removeEventListener?.("did-navigate-in-page", sync);
-      wv.removeEventListener?.("did-start-loading", notifyLoading);
-      wv.removeEventListener?.("did-stop-loading", notifyStopped);
-      wv.removeEventListener?.("did-fail-load", notifyStopped);
     };
-  }, [url, webviewEpoch, onNavStateChange, onNavigationStart, onGuestLoadStateChange]);
+    const navigationStarted = (event: {
+      isMainFrame?: boolean;
+      isInPlace?: boolean;
+      url?: string;
+    }) => {
+      if (!current() || event.isMainFrame !== true) return;
+      if (event.url) activeDocument.current = event.url;
+      if (!event.isInPlace) {
+        failureRef.current = null;
+        setFailure(null);
+        beginLoading("loading", true);
+      }
+      callbacks.current.onNavigationStart?.({ isInPlace: event.isInPlace });
+    };
+    const failed = (event: Parameters<typeof mainDocumentFailure>[0]) => {
+      if (!current()) return;
+      const next = mainDocumentFailure(event, activeDocument.current);
+      if (!next) return;
+      showFailure(next);
+      logger.error(
+        "[NuwaxHostWebview] main document failed",
+        "NuwaxHostWebview",
+        next,
+      );
+    };
+    const crashed = () => {
+      if (!current()) return;
+      // Arbitrary native crash detail is deliberately not rendered or logged here.
+      showFailure({
+        kind: "crash",
+        url: diagnosticPageUrl(activeDocument.current),
+      });
+      logger.error("[NuwaxHostWebview] renderer gone", "NuwaxHostWebview");
+    };
+    const started = () => {
+      if (current() && !failureRef.current) beginLoading("loading");
+    };
+    const stopped = () => {
+      if (!current() || failureRef.current) return;
+      finishLoading();
+      setHasLoaded(true);
+      // Only transport loading stopped. PC Web owns its own business-ready state.
+      callbacks.current.onGuestLoadStateChange?.("stopped");
+    };
+    const listeners = {
+      "dom-ready": sync,
+      "did-start-navigation": navigationStarted,
+      "did-navigate": sync,
+      "did-navigate-in-page": sync,
+      "did-start-loading": started,
+      "did-stop-loading": stopped,
+      "did-fail-load": failed,
+      "render-process-gone": crashed,
+    };
+    for (const [name, listener] of Object.entries(listeners))
+      guest.addEventListener(name, listener);
+    return () => {
+      for (const [name, listener] of Object.entries(listeners))
+        guest.removeEventListener?.(name, listener);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, webviewEpoch]);
 
-  // 外部 reloadKey 变化时重载 webview（兼容旧刷新入口）
+  const reload = () => {
+    if (reloadLocked.current) return;
+    reloadLocked.current = true;
+    setReloading(true);
+    setWaiting(false);
+    const guest = webviewRef.current as any;
+    if (failureRef.current || !url || !guest?.reload) {
+      rebuildGuest();
+      return;
+    }
+    const currentGeneration = generation.current;
+    beginLoading("loading", true);
+    const currentActivity = activity.current;
+    const rejected = () => {
+      if (
+        currentGeneration === generation.current &&
+        currentActivity === activity.current
+      )
+        showFailure({
+          kind: "load",
+          url: diagnosticPageUrl(activeDocument.current),
+        });
+    };
+    try {
+      const result = guest.reload();
+      if (result && typeof result.catch === "function")
+        void result.catch(rejected);
+    } catch {
+      rejected();
+    }
+  };
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
   useEffect(() => {
-    if (reloadKey > 0) (webviewRef.current as any)?.reload?.();
+    if (reloadKey > 0) reloadRef.current();
   }, [reloadKey]);
 
   useImperativeHandle(
@@ -245,7 +379,7 @@ const NuwaxHostWebview = forwardRef<
     () => ({
       goBack: () => (webviewRef.current as any)?.goBack?.(),
       goForward: () => (webviewRef.current as any)?.goForward?.(),
-      reload: () => (webviewRef.current as any)?.reload?.(),
+      reload,
       canGoBack: () => !!(webviewRef.current as any)?.canGoBack?.(),
       canGoForward: () => !!(webviewRef.current as any)?.canGoForward?.(),
       sendHostCommand: (payload: unknown) =>
@@ -253,46 +387,73 @@ const NuwaxHostWebview = forwardRef<
       navigate: (targetUrl: string) => {
         try {
           const target = new URL(targetUrl);
-          const current = new URL(url);
-          if ((target.protocol === "http:" || target.protocol === "https:") &&
-              !target.username && !target.password && target.origin === current.origin) {
-            (webviewRef.current as any)?.loadURL?.(target.href);
+          const source = new URL(url);
+          if (
+            ["http:", "https:"].includes(target.protocol) &&
+            !target.username &&
+            !target.password &&
+            target.origin === source.origin
+          ) {
+            const result = (webviewRef.current as any)?.loadURL?.(target.href);
+            if (result && typeof result.catch === "function")
+              void result.catch(() => {});
           }
         } catch {
-          // No programmatic navigation while the business URL is unresolved.
+          /* No programmatic navigation before the business URL resolves. */
         }
       },
     }),
-    [url],
+    [url, failure],
   );
 
+  const recoveryMode = failure
+    ? "failed"
+    : waiting
+      ? "waiting"
+      : reloading
+        ? "reloading"
+        : !url || !hasLoaded
+          ? "loading"
+          : null;
   return (
     <div
       style={{
         position: "relative",
         width: "100%",
         height: "100%",
-        background: "#fff",
+        background: "var(--color-bg-layout, #f7f8fa)",
         overflow: "hidden",
       }}
     >
-      {/* URL 重解析期（启动/企业切换域名瞬间）webview 尚无 src——以应用图标
-          扫光动效兜底，与全局加载视觉统一。 */}
-      {!url && <AppIconLoading />}
-      {url && <webview
-        key={webviewEpoch}
-        ref={webviewRef as any}
-        src={url}
-        useragent={ua}
-        allowpopups={"true" as any}
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          border: "none",
-        }}
-      />}
+      <GuestPageViewport pageUrl={pageUrl}>
+        {url && (
+          <webview
+            key={webviewEpoch}
+            ref={webviewRef as any}
+            src={url}
+            useragent={ua}
+            allowpopups={"true" as any}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              border: "none",
+            }}
+          />
+        )}
+      </GuestPageViewport>
+      {!recoveryMode && <DistSnapshotNotice key={url} guestUrl={pageUrl || url} onOpenSettings={onOpenSettings} />}
+      {recoveryMode && (
+        <PageLoadRecovery
+          mode={recoveryMode}
+          stage={failure?.kind || (!url ? "resolve" : "load")}
+          lang={getCurrentLang()}
+          code={failure?.code}
+          onReload={reload}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
     </div>
   );
 });

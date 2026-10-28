@@ -18,6 +18,21 @@ import type { BrowserTarget } from "./BrowserHomePage";
 import type { DetailedSession } from "@shared/types/sessions";
 import styles from "../../styles/components/SessionsPage.module.css";
 
+/**
+ * 「新建会话」入口可见性开关（禅道 bug 2530：客户端会话面板的新建会话功能隐藏）。
+ *
+ * 产品口径=藏掉不删除：置 false 仅隐藏按钮 UI，底层打开链路全部保留——
+ * handleNewSession / onOpenInBrowser({type:"newSession"}) / App.tsx 原生菜单
+ * 「新建会话」监听（menu:new-session）均不受影响；后续产品恢复入口时改回 true 即可。
+ */
+const NEW_SESSION_ENTRY_VISIBLE = false;
+
+/**
+ * 「打开会话」入口可见性开关：
+ * 客户端会话列表项中的「打开」按钮因目标页面状态与上下文展示问题予以隐藏，保留停止会话等管理能力。
+ */
+const OPEN_SESSION_ENTRY_VISIBLE = false;
+
 interface SessionsPageProps {
   /** 在浏览器模式中打开指定目标 */
   onOpenInBrowser?: (target: BrowserTarget) => void;
@@ -145,14 +160,16 @@ function SessionsPage({ onOpenInBrowser }: SessionsPageProps) {
             >
               {t("Claw.Sessions.refresh")}
             </Button>
-            <Button
-              size="small"
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleNewSession}
-            >
-              {t("Claw.Sessions.newSession")}
-            </Button>
+            {NEW_SESSION_ENTRY_VISIBLE && (
+              <Button
+                size="small"
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleNewSession}
+              >
+                {t("Claw.Sessions.newSession")}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -164,13 +181,15 @@ function SessionsPage({ onOpenInBrowser }: SessionsPageProps) {
           <div className={styles.emptyState}>
             <TeamOutlined className={styles.emptyIcon} />
             <span>{t("Claw.Sessions.noActiveSessions")}</span>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={handleNewSession}
-            >
-              {t("Claw.Sessions.newSession")}
-            </Button>
+            {NEW_SESSION_ENTRY_VISIBLE && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleNewSession}
+              >
+                {t("Claw.Sessions.newSession")}
+              </Button>
+            )}
           </div>
         ) : (
           <div className={styles.sessionList}>
@@ -195,13 +214,15 @@ function SessionsPage({ onOpenInBrowser }: SessionsPageProps) {
                     </div>
                   </div>
                   <div className={styles.sessionActions}>
-                    <Button
-                      size="small"
-                      icon={<PlayCircleOutlined />}
-                      onClick={() => handleOpenSession(session.projectId || "")}
-                    >
-                      {t("Claw.Sessions.open")}
-                    </Button>
+                    {OPEN_SESSION_ENTRY_VISIBLE && (
+                      <Button
+                        size="small"
+                        icon={<PlayCircleOutlined />}
+                        onClick={() => handleOpenSession(session.projectId || "")}
+                      >
+                        {t("Claw.Sessions.open")}
+                      </Button>
+                    )}
                     <Button
                       size="small"
                       danger

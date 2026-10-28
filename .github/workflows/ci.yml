@@ -1,14 +1,10 @@
 # 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
-# 外层仓测试 CI：双轨门禁 + 基座纯净守卫
+# 外层仓测试 CI：商业门禁
 #
-# 此前本仓 4 个 workflow（smoke/release×2/sync）均无测试步骤——商业侧 1309 条
-# 测试门禁只存在于本地。本 CI 把两轨都机制化：
-#   community  = base:test 口径（--no-inject：干净基座 + 社区默认值）
-#   commercial = test:commercial 口径（in-base 注入：sync-overlay + 商业 env）
-# 两轨 vitest 排除项与基座仓 .github/workflows/ci.yml 对齐（sandbox-integration
-# 的 linux-bwrap 需真实 bwrap 环境，ubuntu runner 不可用；两文件平台不符时自跳过）。
-# commercial 另跑 check-base-purity：基座远端 main 上 overlay 托管路径不得与
-# overlay/ 商业版字节相同（防商业代码泄回中立基座）。
+# 壳（nuwa-electron-shell/）已并入本仓直接维护，不再有 overlay 同步与社区基线轨，
+# 只保留 commercial = test:commercial 口径（in-base：商业依赖准备，不注入 env）。
+# vitest 排除项沿用原基座 CI（sandbox-integration 的 linux-bwrap 需真实 bwrap 环境，
+# ubuntu runner 不可用；两文件平台不符时自跳过）。
 name: CI (gates)
 
 # main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
@@ -41,13 +37,6 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Init pinned base
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh auth setup-git
-          git submodule update --init --depth 1 nuwa-electron-shell
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -57,8 +46,6 @@ jobs:
           package_json_file: nuwa-electron-shell/package.json
       # Match commercial --no-env preparation, invoking pnpm directly so the
       # Windows runner resolves its command shim without a nested Node spawn.
-      - name: Sync commercial overlay
-        run: node scripts/sync-overlay.js
       - name: Prepare commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs
       - name: Install agent-kit dependencies
@@ -110,57 +97,8 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/acceptance/terminal-compat.mjs
 
-  community:
-    name: community gate (base:test)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Init base submodule
-        shell: bash
-        env:
-          GH_SUBMODULE_TOKEN: ${{ github.token }}
-        run: |
-          export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
-          gh auth setup-git
-          git submodule update --init --depth 1 nuwa-electron-shell
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.5
-          package_json_file: nuwa-electron-shell/package.json
-
-      # Python 3.12+ 移除 distutils，node-gyp（better-sqlite3）依赖
-      - name: Install setuptools for node-gyp
-        run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools
-
-      # agent-kit 经基座根 package.json 的 pnpm.overrides file: 引用——必须先构建
-      # dist 再 install，否则快照无入口（与基座 ci.yml 同因）
-      - name: Build agent-kit (before install)
-        run: |
-          node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit install --ignore-workspace --prefer-offline
-          node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit run build
-
-      - name: Install workspace dependencies
-        run: node scripts/in-base.js --no-inject -- pnpm install --filter @nuwax-ai/nuwaclaw...
-
-      # mcp.test.ts 依赖型资源（gitignore，fresh clone 必做）
-      - name: Prepare test resources (mcp-proxy)
-        run: node scripts/in-base.js --no-inject -- bash -c "cd crates/agent-electron-client && npm run prepare:mcp-proxy"
-
-      - name: Run community tests
-        run: node scripts/in-base.js --no-inject -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
-
   commercial:
-    name: commercial gate (test:commercial + purity)
+    name: commercial gate (test:commercial)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -169,40 +107,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Init base and host contract source submodules
+      - name: Init host contract source submodule
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
         run: |
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
-          git submodule update --init --depth 1 nuwa-electron-shell nuwax
-          # purity 只读取 main 的文件快照；无需下载完整历史。
-          git -C nuwa-electron-shell fetch --no-tags --depth 1 origin '+refs/heads/main:refs/remotes/origin/main'
-
-      - name: Check overlay compatibility with base pin changes
-        shell: bash
-        env:
-          COMPARISON_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          comparison="$COMPARISON_REF"
-          if [ -z "$comparison" ] || [[ "$comparison" =~ ^0+$ ]]; then
-            comparison=HEAD^
-          fi
-          if ! git cat-file -e "$comparison^{commit}"; then
-            echo "Cannot resolve previous client commit: $comparison" >&2
-            exit 1
-          fi
-          previous_pin=$(git ls-tree "$comparison" -- nuwa-electron-shell | awk '$1 == "160000" {print $3}')
-          current_pin=$(git ls-tree HEAD -- nuwa-electron-shell | awk '$1 == "160000" {print $3}')
-          if [ -z "$previous_pin" ] || [ -z "$current_pin" ]; then
-            echo "Missing base gitlink in comparison commits" >&2
-            exit 1
-          fi
-          if ! git -C nuwa-electron-shell cat-file -e "$previous_pin^{commit}"; then
-            git -C nuwa-electron-shell fetch --no-tags --depth 1 origin "$previous_pin"
-          fi
-          node scripts/check-overlay-compatibility.mjs --from "$previous_pin" --to "$current_pin"
+          git submodule update --init --depth 1 nuwax
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -235,21 +147,10 @@ jobs:
       - name: Check host bridge contract snapshot
         run: npm run host-bridge:check
 
-      - name: Sync commercial overlay for static gates
-        run: npm run overlay:sync
-
-      - name: Verify overlay matches the tested base worktree
-        run: npm run overlay:check
-
       - name: Check Electron source boundaries and app directory literals
         run: |
           node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:boundaries"
           node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:appdir"
-
-      - name: Purity guard (base worktree + origin/main)
-        run: |
-          npm run check:pin
-          npm run check:pin -- --remote origin/main
 
       - name: Run commercial tests
         run: node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"

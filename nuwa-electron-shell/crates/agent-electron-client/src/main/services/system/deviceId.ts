@@ -2,6 +2,7 @@ import { machineIdSync } from "node-machine-id";
 import { createHash } from "crypto";
 import * as os from "os";
 import log from "electron-log";
+import { getCommercialDeviceId } from "./commercialDeviceId";
 
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 const APP_SALT =
@@ -10,6 +11,12 @@ let cachedDeviceId: string | null = null;
 
 export function getDeviceId(): string {
   if (cachedDeviceId) return cachedDeviceId;
+
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    cachedDeviceId = getCommercialDeviceId();
+    log.info(`[DeviceId] ${cachedDeviceId}`);
+    return cachedDeviceId;
+  }
 
   let raw: string;
   try {

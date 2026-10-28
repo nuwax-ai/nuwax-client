@@ -12,7 +12,7 @@ export function doctor(root, options = {}) {
   const tools = { node: { available: true, version: process.version }, git: inspect('git'), corepack: inspect('corepack') };
   if (!tools.git.available) issues.push('Install Git');
   if (Number(process.versions.node.split('.')[0]) < 22) issues.push('Use Node 22 or newer');
-  const modules = ['nuwa-electron-shell', 'nuwax', 'nuwax-dist'].map(name => {
+  const modules = ['nuwax', 'nuwax-dist'].map(name => {
     const dir = path.join(root, name), initialized = fs.existsSync(path.join(dir, '.git'));
     const rawPin = git(root, ['rev-parse', 'HEAD:' + name], { allowFailure: true });
     const pinned = /^[a-f0-9]{40}$/.test(rawPin) ? rawPin : null;

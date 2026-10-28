@@ -41,10 +41,10 @@ import type {
   McpProxyStatus,
   McpServerEntry,
 } from "@shared/types/electron";
-import { isGuiMcpManagedServerId } from "@shared/guiMcp";
+import { isComputerUseManagedServerId, isGuiMcpManagedServerId } from "@shared/guiMcp";
 import { t } from "../../services/core/i18n";
 import MCPServerEditor from "./MCPServerEditor";
-import { applyMcpServerDraft, looseJsonParse } from "./mcpServerEditorUtils";
+import { applyMcpServerDraft, formatMcpServerSummary, looseJsonParse } from "./mcpServerEditorUtils";
 
 const { Text } = Typography;
 
@@ -408,9 +408,25 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
     return false;
   };
 
+  // cua 条目跟随设置页「Computer Use」开关联动，此处一律拒绝手动改动。
+  const warnIfCuaManaged = (serverId: string): boolean => {
+    if (isComputerUseManagedServerId(serverId)) {
+      message.warning(t("Claw.MCP.list.computerUseManagedNotice"));
+      return true;
+    }
+    return false;
+  };
+
+  const warnIfManaged = (serverId: string): boolean =>
+    warnIfGuiManaged(serverId) || warnIfCuaManaged(serverId);
+
   const handleToggleServerEnabled = (serverId: string, enabled: boolean) => {
     if (isGuiMcpManagedServerId(serverId) && !enabled) {
       message.warning(t("Claw.MCP.list.guiAgentManaged"));
+      return;
+    }
+    if (isComputerUseManagedServerId(serverId)) {
+      message.warning(t("Claw.MCP.list.computerUseManagedNotice"));
       return;
     }
     const latest = getCurrentConfigForUi();
@@ -447,6 +463,11 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
         nextServers[serverId] = { ...entry, enabled: true };
         continue;
       }
+      // cua 跟随设置页「Computer Use」开关联动，同样不参与「全部停用」
+      if (isComputerUseManagedServerId(serverId)) {
+        nextServers[serverId] = { ...entry, enabled: true };
+        continue;
+      }
       nextServers[serverId] = { ...entry, enabled: false };
     }
     updateConfigFromUi({ ...latest, mcpServers: nextServers });
@@ -455,7 +476,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
   };
 
   const handleDeleteServer = (serverId: string) => {
-    if (warnIfGuiManaged(serverId)) return;
+    if (warnIfManaged(serverId)) return;
     const latest = getCurrentConfigForUi();
     if (!latest) {
       message.error(t("Claw.MCP.message.invalidJson"));
@@ -503,7 +524,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
   };
 
   const handleOpenEditorEdit = (serverId: string) => {
-    if (warnIfGuiManaged(serverId)) return;
+    if (warnIfManaged(serverId)) return;
     setEditorMode("edit");
     setEditingServerId(serverId);
     setPageMode("editor");
@@ -726,23 +747,29 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                     dataSource={serverEntries}
                     renderItem={([serverId, entry]) => {
                       const isManagedGui = isGuiMcpManagedServerId(serverId);
+                      const isManagedCua = isComputerUseManagedServerId(serverId);
                       const isStdio = "command" in entry;
-                      const summary = isStdio
-                        ? `${entry.command} ${(entry.args ?? []).join(" ")}`
-                        : entry.url;
+                      const { display: summary, full: summaryFull } =
+                        formatMcpServerSummary(serverId, entry);
                       return (
                         <List.Item
                           actions={[
-                            <Switch
+                            <Tooltip
                               key="enabled"
-                              checked={isManagedGui ? true : !!entry.enabled}
-                              disabled={isManagedGui}
-                              checkedChildren={t("Claw.MCP.switch.enable")}
-                              unCheckedChildren={t("Claw.MCP.switch.disable")}
-                              onChange={(checked) =>
-                                handleToggleServerEnabled(serverId, checked)
-                              }
-                            />,
+                              title={isManagedCua ? t("Claw.MCP.list.computerUseManagedSwitchTooltip") : undefined}
+                            >
+                              <span>
+                                <Switch
+                                  checked={isManagedGui || isManagedCua ? true : !!entry.enabled}
+                                  disabled={isManagedGui || isManagedCua}
+                                  checkedChildren={t("Claw.MCP.switch.enable")}
+                                  unCheckedChildren={t("Claw.MCP.switch.disable")}
+                                  onChange={(checked) =>
+                                    handleToggleServerEnabled(serverId, checked)
+                                  }
+                                />
+                              </span>
+                            </Tooltip>,
                             <>
                               <Button
                                 key="test"
@@ -756,24 +783,35 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                 }
                                 onClick={() => handleTestServer(serverId)}
                               />
-                              <Button
+                              <Tooltip
                                 key="edit"
-                                size="small"
-                                type="text"
-                                icon={<EditOutlined />}
-                                disabled={isManagedGui}
-                                onClick={() => handleOpenEditorEdit(serverId)}
-                              />
-                              <Button
+                                title={isManagedCua ? t("Claw.MCP.list.computerUseManagedActionTooltip") : undefined}
+                              >
+                                <span>
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    icon={<EditOutlined />}
+                                    disabled={isManagedGui || isManagedCua}
+                                    onClick={() => handleOpenEditorEdit(serverId)}
+                                  />
+                                </span>
+                              </Tooltip>
+                              <Tooltip
                                 key="delete"
-                                size="small"
-                                danger
-                                type="text"
-                                loading={deletingServerId === serverId}
-                                disabled={isManagedGui}
-                                icon={<DeleteOutlined />}
-                                onClick={() => handleDeleteServer(serverId)}
-                              />
+                                title={isManagedCua ? t("Claw.MCP.list.computerUseManagedActionTooltip") : undefined}
+                              >
+                                <span>
+                                  <Button
+                                    danger
+                                    type="text"
+                                    loading={deletingServerId === serverId}
+                                    disabled={isManagedGui || isManagedCua}
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => handleDeleteServer(serverId)}
+                                  />
+                                </span>
+                              </Tooltip>
                             </>,
                           ]}
                         >
@@ -789,6 +827,13 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                     {t("Claw.MCP.list.guiAgentManagedTag")}
                                   </Tag>
                                 ) : null}
+                                {isManagedCua ? (
+                                  <Tooltip title={t("Claw.MCP.list.computerUseManagedTagTooltip")}>
+                                    <Tag color="gold">
+                                      {t("Claw.MCP.list.computerUseManagedTag")}
+                                    </Tag>
+                                  </Tooltip>
+                                ) : null}
                               </Space>
                             }
                             description={
@@ -798,7 +843,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                   display: "inline-block",
                                   maxWidth: 680,
                                 }}
-                                ellipsis={{ tooltip: summary }}
+                                ellipsis={{ tooltip: summaryFull }}
                               >
                                 {summary}
                               </Text>

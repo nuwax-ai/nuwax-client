@@ -7,8 +7,13 @@
  * 1. 新目录不存在 → 整体 rename 旧目录
  * 2. 新目录已存在但 DB 为空（依赖安装等先创建了目录）→ 从旧目录复制 DB
  *
- * 优先级：社区/既有 beta 数据（.nuwaclaw，仅商业版构建） > .nuwax-agent > .nuwaxbot
- * （找到第一个存在的旧目录即迁移）
+ * overlay 商业版（Nuwax）：**从迁移链移除 .nuwaclaw**（2026-09-11 改名
+ * nuwawork→nuwax 决策：不迁移老 nuwaclaw 应用数据及登录状态，阻断基座默认
+ * 的「identifier≠nuwaclaw 时整体 rename ~/.nuwaclaw」劫持同机社区版数据；
+ * .nuwawork beta 数据同样不在链中、弃置）。.nuwax-agent/.nuwaxbot 远古产品
+ * 目录沿用基座迁移链，保持与基座社区测试（migrate.test.ts）同步态自洽。
+ * 此文件是对基座的有意行为性覆写（非严格超集），bump 基座 pin 后必须
+ * overlay:check 核对本文件与基座侧演进差异。
  */
 
 import * as fs from "fs";
@@ -25,19 +30,10 @@ interface LegacySource {
   configName: string | null;
 }
 
-// 商业版（identifier 已被构建期 env 覆盖，如 nuwawork）时，把既有 .nuwaclaw
-// 纳入迁移链，让老 beta 用户数据一次性平移到新目录；社区版目标即 .nuwaclaw，
-// 自身不能作为迁移来源（避免自我 rename）。
+// 商业版仅从迁移链移除 .nuwaclaw（不动同机社区版数据、不迁移老登录态）；
+// .nuwawork 不在链中（beta 数据弃置，~/.nuwax 全新开始）；
+// .nuwax-agent/.nuwaxbot 远古目录沿用基座迁移链（同步态社区测试自洽）。
 const LEGACY_SOURCES: LegacySource[] = [
-  ...(APP_NAME_IDENTIFIER === "nuwaclaw"
-    ? []
-    : [
-        {
-          dirName: ".nuwaclaw",
-          dbName: "nuwaclaw.db",
-          configName: "nuwaclaw.json",
-        },
-      ]),
   { dirName: ".nuwax-agent", dbName: "nuwax-agent.db", configName: null },
   { dirName: ".nuwaxbot", dbName: "nuwaxbot.db", configName: "nuwaxbot.json" },
 ];
@@ -134,6 +130,8 @@ function renameDbFiles(oldDb: string, newDb: string): void {
 }
 
 export function migrateDataDir(): void {
+  // 商业版全新开始：不探测、不导入任何历史产品目录。
+  if (APP_NAME_IDENTIFIER === "nuwax") return;
   const home = app.getPath("home");
   const newDir = path.join(home, `.${APP_NAME_IDENTIFIER}`);
   const newDbName = `${APP_NAME_IDENTIFIER}.db`;
@@ -229,7 +227,78 @@ function importLegacyDb(home: string, newDb: string): void {
  * 当用户手动选择的工作空间目录包含旧数据目录前缀时，替换为新前缀。
  * 必须在 initDatabase() 之后调用。
  */
+/**
+ * 商业版（v1.0.4 起）移除实验功能：Sandbox / GUI MCP（设置页入口已随
+ * overlay SettingsPage 删除）。历史版本（v1.0.0–v1.0.3）若用户开启过，
+ * 状态会残留在 DB 且删除 UI 后无从关闭——此处每次启动兜底强制归位关闭。
+ * 幂等：仅在发现开启时改写。mcp_local_config 的 gui-agent 残留条目无需
+ * 此处处理：flag 归 false 后，guiServerHandlers 注册时的
+ * syncGuiAgentLocalMcpConfig(getGuiMcpEnabled()) 会自动移除。
+ */
+function disableLegacyExperimentalFeatures(): void {
+  try {
+    const step1Config = readSetting("step1_config") as {
+      guiMcpEnabled?: boolean;
+    } | null;
+    if (step1Config?.guiMcpEnabled === true) {
+      writeSetting("step1_config", { ...step1Config, guiMcpEnabled: false });
+      log.info(
+        "[Migrate] Disabled legacy guiMcpEnabled (experimental feature removed)",
+      );
+    }
+  } catch (e) {
+    log.warn("[Migrate] Failed to reset guiMcpEnabled:", e);
+  }
+  try {
+    const sandboxPolicy = readSetting("sandbox_policy") as {
+      enabled?: boolean;
+    } | null;
+    if (sandboxPolicy?.enabled === true) {
+      writeSetting("sandbox_policy", { ...sandboxPolicy, enabled: false });
+      log.info(
+        "[Migrate] Disabled legacy sandbox policy (experimental feature removed)",
+      );
+    }
+  } catch (e) {
+    log.warn("[Migrate] Failed to reset sandbox policy:", e);
+  }
+}
+
+/**
+ * 商业版默认工作空间目录：step1_config.workspaceDir 未配置时，在用户目录
+ * 创建 Nuwax 并落为默认值——空值时 serviceManager 兜底的是隐藏目录
+ * ~/.nuwax/workspace，用户在 Finder/资源管理器不可见。幂等：已配置
+ * （用户自选目录、或旧前缀修补后的值）不覆盖；建目录失败不落值，维持空值兜底。
+ */
+function ensureDefaultWorkspaceDir(): void {
+  if (APP_NAME_IDENTIFIER !== "nuwax") return;
+  const current = readSetting("step1_config") as {
+    workspaceDir?: unknown;
+  } | null;
+  if (
+    typeof current?.workspaceDir === "string" &&
+    current.workspaceDir.trim()
+  ) {
+    return;
+  }
+  const dir = path.join(app.getPath("home"), "Nuwax");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    log.warn("[Migrate] Failed to create default workspace dir:", e);
+    return;
+  }
+  writeSetting("step1_config", { ...(current ?? {}), workspaceDir: dir });
+  log.info(`[Migrate] Default workspace dir ensured: ${dir}`);
+}
+
 export function migrateSettingsPaths(): void {
+  // 先于 workspaceDir 修补执行：sandbox_policy 独立于 step1_config，
+  // 不能被下方「step1Config 为空即 return」挡住
+  disableLegacyExperimentalFeatures();
+  // 同理：默认工作空间目录的落值须发生在空值早退之前
+  ensureDefaultWorkspaceDir();
+
   const home = app.getPath("home");
   const newPrefix = path.join(home, `.${APP_NAME_IDENTIFIER}`);
   const LEGACY_DIR_NAMES = [

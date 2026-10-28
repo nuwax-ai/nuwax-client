@@ -3,10 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import * as core from './core.mjs';
 import { buildFrontend } from './frontend.mjs';
-import { assertOverlayCompatibility } from '../check-overlay-compatibility.mjs';
-import overlaySync from '../sync-overlay.js';
 
-const names = ['nuwa-electron-shell', 'nuwax', 'nuwax-dist'];
+// nuwa-electron-shell 已并入本仓直接维护，不再是子模块。
+const names = ['nuwax', 'nuwax-dist'];
 const message = (text) => console.log(`[sub:update] ${text}`);
 const warn = (text) => console.warn(`[sub:update] ${text}`);
 
@@ -36,45 +35,6 @@ async function cleanSource(tools, dir, frontend = false) {
   const args = ['status', '--porcelain', '--untracked-files=all'];
   if (frontend) args.push('--', '.', ':(exclude)dist', ':(exclude)dist/**');
   if (await tools.git(dir, args)) throw new Error(`${path.basename(dir)} 有源码改动；请先提交或另建 worktree（--force 不覆盖源码）`);
-}
-
-async function managedOverlayChanges(tools, root, dir) {
-  if (await tools.git(dir, ['diff', '--cached', '--name-only'])) throw new Error('壳子模块有暂存改动；请先保留改动，更新器不会清除暂存区');
-  // These flags can hide developer bytes from diff/status before checkout.
-  const index = (await tools.git(dir, ['ls-files', '-v', '-z'])).split('\0').filter(Boolean);
-  const hidden = index.find(record => record[0] !== 'H');
-  if (hidden) throw new Error(`壳子模块 index 含特殊标记，拒绝切换基座: ${hidden.slice(2)}；请先检查 assume-unchanged / skip-worktree`);
-  const changed = (await tools.git(dir, ['diff', '--name-only', '-z'])).split('\0').filter(Boolean);
-  const untracked = (await tools.git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean);
-  const manifest = overlaySync.readManifest(root);
-  const owned = new Set(manifest);
-  const result = [];
-  for (const relative of new Set([...changed, ...untracked])) {
-    const source = path.join(root, 'overlay', relative), destination = path.join(dir, relative);
-    overlaySync.assertSafeFile(root, `overlay/${relative}`);
-    overlaySync.assertSafeFile(dir, relative);
-    let generated = false;
-    try {
-      generated = owned.has(relative) && fs.lstatSync(source).isFile() && fs.lstatSync(destination).isFile() && fs.readFileSync(source).equals(fs.readFileSync(destination));
-    } catch {}
-    if (!generated) throw new Error(`壳子模块 ${relative} 有未托管改动；请先保留改动（仅能还原 manifest 中与当前 overlay 完全相同的同步产物）`);
-    result.push({ relative, tracked: (await attempt(tools, dir, ['ls-files', '--error-unmatch', '--', relative])).status === 0 });
-  }
-  return result;
-}
-
-async function moveShell(tools, root, module, target, overlay) {
-  if (overlay.length) {
-    // Establish byte ownership for matching legacy overlays, then use the same
-    // backed-up clean transaction as every other caller before switching pins.
-    await tools.run(process.execPath, [path.join(root, 'scripts/sync-overlay.js')], { cwd: root });
-    await tools.run(process.execPath, [path.join(root, 'scripts/sync-overlay.js'), '--clean'], { cwd: root });
-  }
-  try { await tools.git(module.dir, ['checkout', '--detach', target]); }
-  finally {
-    // Restore only verified generated state; unknown developer edits were rejected above.
-    if (overlay.length) await tools.run(process.execPath, [path.join(root, 'scripts/sync-overlay.js')], { cwd: root });
-  }
 }
 
 async function cleanScratch(tools, dir) {
@@ -242,17 +202,10 @@ async function isolatedTests(root, modules, tools) {
       const sha = await tools.git(module.dir, ['rev-parse', 'HEAD']);
       await tools.git(destination, ['checkout', '--detach', sha]);
       if (module.name === 'nuwax-dist') copyAssets(module.dir, destination);
-      if (module.name === 'nuwa-electron-shell') {
-        for (const relative of ['node_modules', 'crates/agent-electron-client/node_modules', 'crates/agent-kit/node_modules', 'crates/agent-kit/dist', 'crates/agent-gui-server/node_modules']) {
-          const dependencies = path.join(module.dir, relative);
-          if (fs.existsSync(dependencies)) fs.cpSync(dependencies, path.join(destination, relative), { recursive: true, verbatimSymlinks: true });
-        }
-      }
     }
     await tools.npmRun(checkout, 'test:scripts');
     const base = path.join(checkout, 'nuwa-electron-shell');
     if (!fs.existsSync(path.join(base, 'crates/agent-electron-client/node_modules/.bin', process.platform === 'win32' ? 'vitest.cmd' : 'vitest'))) {
-      await tools.run(process.execPath, [path.join(checkout, 'scripts/sync-overlay.js')], { cwd: checkout });
       const kit = path.join(base, 'crates/agent-kit');
       await tools.pnpmRun(kit, ['install', '--ignore-workspace', fs.existsSync(path.join(kit, 'pnpm-lock.yaml')) ? '--frozen-lockfile' : '--lockfile=false'], { env: { ...process.env, CI: 'true' } });
       await tools.pnpmRun(kit, ['run', 'build']);
@@ -280,25 +233,17 @@ export async function update(root, options = {}, dependencies = {}) {
   if (await tools.git(root, ['status', '--porcelain', '--', '.gitmodules'])) throw new Error('.gitmodules 有未提交改动；先提交子模块声明，避免生成无法检出的 pin');
   for (const module of Object.values(modules)) {
     if (!fs.existsSync(path.join(module.dir, '.git'))) await tools.git(root, ['submodule', 'update', '--init', '--', module.name]);
-    if (module.name !== 'nuwa-electron-shell') await cleanSource(tools, module.dir, module.name === 'nuwax');
+    await cleanSource(tools, module.dir, module.name === 'nuwax');
   }
   return tools.withLock(root, 'update', async () => {
   let temporary;
   try {
     const targets = {};
-    for (const name of ['nuwa-electron-shell', 'nuwax']) targets[name] = await resolveTarget(tools, modules[name], options[name === 'nuwax' ? 'nuwax' : 'shell']);
-    const shellHead = await tools.git(modules['nuwa-electron-shell'].dir, ['rev-parse', 'HEAD']);
-    const shellOverlay = targets['nuwa-electron-shell'] !== shellHead ? await managedOverlayChanges(tools, root, modules['nuwa-electron-shell'].dir) : [];
-    if (targets['nuwa-electron-shell'] !== shellHead) {
-      await (dependencies.assertOverlayCompatibility ?? assertOverlayCompatibility)(root, { from: shellHead, to: targets['nuwa-electron-shell'] }, tools);
-    }
-    // Resolve all source refs before changing either source checkout.
-    for (const name of ['nuwa-electron-shell', 'nuwax']) {
-      if (name === 'nuwax') await cleanScratch(tools, modules[name].dir);
-      if (await tools.git(modules[name].dir, ['rev-parse', 'HEAD']) !== targets[name]) {
-        if (name === 'nuwa-electron-shell') await moveShell(tools, root, modules[name], targets[name], shellOverlay);
-        else await tools.git(modules[name].dir, ['checkout', '--detach', targets[name]]);
-      }
+    targets.nuwax = await resolveTarget(tools, modules.nuwax, options.nuwax);
+    // Resolve all source refs before changing the source checkout.
+    await cleanScratch(tools, modules.nuwax.dir);
+    if (await tools.git(modules.nuwax.dir, ['rev-parse', 'HEAD']) !== targets.nuwax) {
+      await tools.git(modules.nuwax.dir, ['checkout', '--detach', targets.nuwax]);
     }
     const sourceSha = targets.nuwax;
     const stamp = await tools.git(modules.nuwax.dir, ['rev-parse', '--short', 'HEAD']);
@@ -334,9 +279,7 @@ export async function update(root, options = {}, dependencies = {}) {
     if (options.withTest) await (dependencies.isolatedTests ?? isolatedTests)(root, modules, tools);
     if (!options.noCommit && !options.noPushDist) await pushAssets(tools, distModule, snapshot, stamp, generated, unpublished, baseline);
     if (!options.noCommit && options.noPushDist) warn('已跳过产物推送；外层本地 pin 在产物推送前不能用于 CI');
-    for (const name of ['nuwa-electron-shell', 'nuwax']) {
-      if (await tools.git(modules[name].dir, ['rev-parse', 'HEAD']) !== targets[name]) throw new Error(`${name} HEAD 在更新期间发生变化，拒绝提交双 pin`);
-    }
+    if (await tools.git(modules.nuwax.dir, ['rev-parse', 'HEAD']) !== targets.nuwax) throw new Error('nuwax HEAD 在更新期间发生变化，拒绝提交 pin');
     if (!options.noCommit) await cleanSource(tools, distModule.dir);
     const changed = [];
     for (const name of names) {

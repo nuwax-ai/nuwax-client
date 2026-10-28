@@ -8,7 +8,7 @@ const { execFileSync } = require('node:child_process');
 const [output, nsis] = process.argv.slice(2);
 if (!output || !nsis || !path.isAbsolute(output) || !path.isAbsolute(nsis) || fs.existsSync(output)) throw Error('Explicit new output directory and NSIS root required');
 fs.mkdirSync(output);
-const source = path.resolve(__dirname, '../../overlay/crates/agent-electron-client/build');
+const source = path.resolve(__dirname, '../../nuwa-electron-shell/crates/agent-electron-client/build');
 const identity = 'NuwaxSpaceQA-' + crypto.randomUUID();
 const compiler = path.join(nsis, process.platform === 'win32' ? 'Bin/makensis.exe' : 'mac/makensis');
 const plugins = path.join(path.dirname(nsis), 'nsis-resources-3.4.1/plugins/x86-unicode');

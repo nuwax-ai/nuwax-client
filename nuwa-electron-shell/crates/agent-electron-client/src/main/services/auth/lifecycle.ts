@@ -6,8 +6,14 @@ export type ServiceResult = {
 };
 export interface LifecycleAdapter<T> {
   authenticated(): boolean;
+  /** Revoke external capabilities before waiting for the service queue. */
+  invalidated?(): void;
   register(signal: AbortSignal): Promise<T>;
   commit(value: T): void;
+  registrationCurrent?(value: T): boolean;
+  servicesReady?(): boolean;
+  reconnect?(signal: AbortSignal): Promise<void>;
+  failed?(): Promise<void>;
   start(signal: AbortSignal): Promise<ServiceResult>;
   stop(): Promise<ServiceResult>;
   changed?(phase: string, error?: string): void;
@@ -21,6 +27,7 @@ export class AuthLifecycle<T> {
   private registered?: T;
   private ready = false;
   constructor(private adapter: LifecycleAdapter<T>) {}
+  get operationSignal(): AbortSignal { return this.controller.signal; }
   private enqueue<R>(work: () => Promise<R>): Promise<R> {
     const result = this.queue.then(work, work);
     this.queue = result.catch(() => undefined);
@@ -31,50 +38,64 @@ export class AuthLifecycle<T> {
     if (!this.adapter.authenticated()) throw new Error("Login required");
   }
   invalidate(): void {
+    this.adapter.invalidated?.();
     this.controller.abort();
     this.controller = new AbortController();
     this.registered = undefined;
     this.ready = false;
     this.starting = undefined;
   }
-  sync(): Promise<T> {
-    const signal = this.controller.signal;
-    return this.enqueue(async () => {
-      this.check(signal);
+  /** Called inline before tunnel activation; deliberately does not enqueue inside start(). */
+  async reconcileRegistration(signal = this.controller.signal, force = false): Promise<boolean> {
+    this.check(signal);
+    if (!force && this.registered && (this.adapter.registrationCurrent?.(this.registered) ?? true)) return false;
+    for (let attempt = 0; attempt < 3; attempt++) {
       this.adapter.changed?.("registering");
       const value = await this.adapter.register(signal);
       this.check(signal);
-      this.adapter.commit(value); // 同步提交，期间不允许登出穿插写回
+      if (this.adapter.registrationCurrent && !this.adapter.registrationCurrent(value)) continue;
+      this.adapter.commit(value);
       this.registered = value;
-      return value;
+      return true;
+    }
+    throw new Error("Local endpoints changed repeatedly during registration");
+  }
+  sync(): Promise<T> {
+    const signal = this.controller.signal;
+    return this.enqueue(async () => {
+      await this.reconcileRegistration(signal, true);
+      if (this.ready) await this.adapter.reconnect?.(signal);
+      this.check(signal);
+      return this.registered!;
     });
   }
   start(force = false): Promise<ServiceResult> {
     if (this.starting) return this.starting;
-    if (!force && this.ready && this.adapter.authenticated())
+    if (!force && this.ready && this.adapter.authenticated() && (this.adapter.servicesReady?.() ?? true))
       return Promise.resolve({ success: true });
     const signal = this.controller.signal;
     const operation = this.enqueue(async () => {
       try {
         this.check(signal);
-        if (!this.registered || force) {
-          this.adapter.changed?.("registering");
-          const value = await this.adapter.register(signal);
-          this.check(signal);
-          this.adapter.commit(value);
-          this.registered = value;
-        }
+        await this.reconcileRegistration(signal, force);
         this.check(signal);
         this.adapter.changed?.("starting");
         const result = await this.adapter.start(signal);
         this.check(signal);
         this.ready = result.success;
+        if (!result.success) await this.adapter.failed?.();
+        this.check(signal);
         this.adapter.changed?.(
           result.success ? "ready" : "service-failed",
           result.error,
         );
         return result;
       } catch (error) {
+        this.ready = false;
+        if (!signal.aborted && this.adapter.failed) {
+          try { await this.adapter.failed(); }
+          catch (cleanupError) { error = new Error(`${String(error)}; service cleanup failed: ${String(cleanupError)}`); }
+        }
         if (!signal.aborted)
           this.adapter.changed?.(
             this.registered ? "service-failed" : "registration-failed",
@@ -117,9 +138,31 @@ export class AuthLifecycle<T> {
     return this.enqueue(async () => {
       this.check(signal);
       if (!this.registered) throw new Error("Registration required");
-      const result = await work();
-      this.check(signal);
-      return result;
+      try {
+        const result = await work();
+        this.check(signal);
+        if (result && typeof result === "object" && "success" in result && result.success === false) {
+          const stale = this.adapter.registrationCurrent && !this.adapter.registrationCurrent(this.registered);
+          if (stale || !(this.adapter.servicesReady?.() ?? true)) {
+            this.ready = false;
+            await this.adapter.failed?.();
+            this.adapter.changed?.("service-failed", "Service operation failed");
+          }
+          return result;
+        }
+        const changed = await this.reconcileRegistration(signal);
+        if (changed && this.ready) await this.adapter.reconnect?.(signal);
+        this.check(signal);
+        return result;
+      } catch (error) {
+        this.ready = false;
+        if (!signal.aborted) {
+          try { await this.adapter.failed?.(); }
+          catch (cleanupError) { error = new Error(`${String(error)}; service cleanup failed: ${String(cleanupError)}`); }
+          this.adapter.changed?.("service-failed", String(error));
+        }
+        throw error;
+      }
     });
   }
 }

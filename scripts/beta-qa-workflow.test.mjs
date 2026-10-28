@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import archivePolicy from '../overlay/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
+import archivePolicy from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { prepareReleaseSystemName } from './prepare-release-system-name.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));

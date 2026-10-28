@@ -23,7 +23,7 @@ async function launch() {
   let child;
   let watchdog;
   try {
-    const services = path.join(root, 'overlay/crates/agent-electron-client/src/main/services');
+    const services = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     const baseServices = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     await fs.mkdir(path.join(temp, 'main/preload'), { recursive: true });
     // 此验收只测主进程策略，无需真实 IPC bridge 或 renderer 凭据。

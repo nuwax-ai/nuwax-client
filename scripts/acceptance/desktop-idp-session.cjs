@@ -18,7 +18,7 @@ const fixtureEnv = "NUWAX_DESKTOP_IDP_FIXTURE";
 const root = path.resolve(__dirname, "../..");
 const services = path.join(
   root,
-  "overlay/crates/agent-electron-client/src/main/services"
+  "nuwa-electron-shell/crates/agent-electron-client/src/main/services"
 );
 
 async function launch() {
@@ -39,7 +39,7 @@ async function launch() {
           "git",
           [
             "show",
-            `${baseline}:overlay/crates/agent-electron-client/src/main/services/loopbackGateway/routingPolicy.ts`,
+            `${baseline}:nuwa-electron-shell/crates/agent-electron-client/src/main/services/loopbackGateway/routingPolicy.ts`,
           ],
           { cwd: root, encoding: "utf8" }
         )
@@ -98,7 +98,7 @@ async function launch() {
       entryPoints: [
         path.join(
           root,
-          "overlay/crates/agent-electron-client/src/preload/webviewPerfBridge.ts"
+          "nuwa-electron-shell/crates/agent-electron-client/src/preload/webviewPerfBridge.ts"
         ),
       ],
       bundle: true,
@@ -109,11 +109,11 @@ async function launch() {
       alias: {
         "@shared/types/computerServiceState": path.join(
           root,
-          "overlay/crates/agent-electron-client/src/shared/types/computerServiceState.ts"
+          "nuwa-electron-shell/crates/agent-electron-client/src/shared/types/computerServiceState.ts"
         ),
         "@shared/types/imReceiver": path.join(
           root,
-          "overlay/crates/agent-electron-client/src/shared/types/imReceiver.ts"
+          "nuwa-electron-shell/crates/agent-electron-client/src/shared/types/imReceiver.ts"
         ),
         "@shared": path.join(
           root,

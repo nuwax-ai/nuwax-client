@@ -21,6 +21,7 @@ import {
   detectNpmPackage,
   checkNodeVersion,
   checkUvVersion,
+  checkNuwaxcodeBundled,
   detectShellCommand,
   type LocalDependencyItem,
 } from "./dependencyChecker";
@@ -34,7 +35,6 @@ import {
   getResourcesPath,
 } from "./appPaths";
 import {
-  getNuwaxcodeBundledBinPath,
   getCodexAcpBundledDir,
   getNuwaxFileServerBundledDir,
   getClaudeCodeAcpBundledDir,
@@ -171,19 +171,19 @@ export async function checkAllDependencies(options?: {
           break;
         }
         case "nuwaxcode": {
-          const bundledPath = getNuwaxcodeBundledBinPath();
-          if (bundledPath) {
+          const result = await checkNuwaxcodeBundled();
+          if (result.available && result.binPath && result.version === dep.installVersion) {
             item.status = "installed";
-            item.binPath = bundledPath;
-            item.version = dep.installVersion;
+            item.binPath = result.binPath;
+            item.version = result.version;
             log.info(
-              "[checkAllDependencies] nuwaxcode: using bundled binary:",
-              bundledPath,
+              "[checkAllDependencies] nuwaxcode: using verified binary:",
+              result.binPath,
             );
           } else {
             item.status = "missing";
             log.warn(
-              "[checkAllDependencies] nuwaxcode: bundled binary not found",
+              "[checkAllDependencies] nuwaxcode: current binary not found",
             );
           }
           break;

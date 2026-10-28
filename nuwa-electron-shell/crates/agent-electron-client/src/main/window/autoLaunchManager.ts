@@ -1,26 +1,17 @@
-/**
- * 开机自启动管理器
- *
- * 跨平台支持：
- * - Windows: 使用 app.setLoginItemSettings() 巻加注册表项
- * - macOS: 使用 app.setLoginItemSettings() 添加 LaunchAgent
- * - Linux: 使用 auto-launch 库创建 .desktop 文件
- */
+/** 开机自启动：系统状态为展示依据，本地选择用于防止默认值覆盖用户关闭。 */
+import { app } from "electron";
+import log from "electron-log";
+import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
+import { readSetting, writeSetting } from "../db";
 
-import { app } from 'electron';
-import * as fs from 'fs';
-import * as path from 'path';
-import log from 'electron-log';
-import { APP_DISPLAY_NAME } from '@shared/constants';
+const PREFERENCE_KEY = "nuwax.autoLaunch.enabled";
 
-// auto-launch 库用于 Linux 支持
+// Linux 使用 .desktop 自启动项，Windows/macOS 使用 Electron 原生 API。
 let AutoLaunch: any = null;
-
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  AutoLaunch = require('auto-launch');
-} catch (e) {
-  log.warn('[AutoLaunch] auto-launch module not available:', e);
+  AutoLaunch = require("auto-launch");
+} catch (error) {
+  log.warn("[AutoLaunch] auto-launch module not available:", error);
 }
 
 export interface AutoLaunchStatus {
@@ -29,116 +20,129 @@ export interface AutoLaunchStatus {
 }
 
 export class AutoLaunchManager {
-  private enabled: boolean = false;
-  private supported: boolean = true;
+  private supported = true;
+  /** Windows 的读写参数必须一致才能匹配同一注册表项。 */
+  private readonly loginItemArgs = ["--hidden"];
 
-  /** Windows 需要 args 一致才能正确匹配注册表项 */
-  private readonly loginItemArgs = ['--hidden'];
-
-  /**
-   * 检查是否支持自启动
-   */
   isSupported(): boolean {
     return this.supported;
   }
 
-  /**
-   * 检查自启动状态
-   */
+  /** 数据库就绪后调用一次；开发运行不注册开发用 Electron。 */
+  async initializeDefault(): Promise<void> {
+    if (!app.isPackaged) return;
+    try {
+      const savedPreference = readSetting(PREFERENCE_KEY);
+      if (typeof savedPreference === "boolean") {
+        // macOS 迁移修正：如果系统自启动已开启，但之前被错误写入了 openAsHidden: true，重写为 openAsHidden: false
+        if (process.platform === "darwin" && savedPreference) {
+          const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
+          if (settings.openAtLogin && (settings as any).openAsHidden) {
+            log.info("[AutoLaunchManager] Migrating macOS login item to openAsHidden: false");
+            await this.setEnabled(true);
+          }
+        }
+        return;
+      }
+      // 已有自启动项只记下初始化结果，不重复修改系统设置。
+      if (await this.readSystemEnabled()) {
+        writeSetting(PREFERENCE_KEY, true);
+        if (process.platform === "darwin") {
+          const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
+          if ((settings as any).openAsHidden) {
+            log.info("[AutoLaunchManager] Migrating macOS login item to openAsHidden: false");
+            await this.setEnabled(true);
+          }
+        }
+        return;
+      }
+      await this.setEnabled(true);
+    } catch (error) {
+      // 读取失败不视为“关闭”，避免凭空覆盖系统设置。
+      log.error("[AutoLaunchManager] Failed to initialize default:", error);
+    }
+  }
+
+  private createLinuxLauncher() {
+    if (!AutoLaunch) {
+      this.supported = false;
+      throw new Error("Auto-launch is not available");
+    }
+    return new AutoLaunch({
+      // auto-launch 用 name 生成 .desktop 文件名；改显示名时仍读写原有注册项。
+      name: APP_NAME_IDENTIFIER === "nuwax" ? "Nuwax" : APP_DISPLAY_NAME,
+      // AppImage 挂载目录会随启动变化，应注册原始包路径。
+      path: process.env.APPIMAGE || process.execPath,
+      isHidden: true,
+    });
+  }
+
+  private async readSystemEnabled(): Promise<boolean> {
+    if (process.platform === "linux") {
+      return this.createLinuxLauncher().isEnabled();
+    }
+    const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
+    // Windows 任务管理器禁用的注册表项不能显示成开启。
+    return (
+      settings.openAtLogin &&
+      (process.platform !== "win32" ||
+        settings.executableWillLaunchAtLogin !== false)
+    );
+  }
+
   async isEnabled(): Promise<boolean> {
     try {
-      if (process.platform === 'linux') {
-        // Linux: 使用 auto-launch 库
-        if (!AutoLaunch) {
-          this.supported = false;
-          return false;
-        }
-
-        const autoLauncher = new AutoLaunch({
-          name: APP_DISPLAY_NAME,
-          path: process.execPath,
-          isHiddenOnLaunch: true,
-        });
-
-        this.enabled = await autoLauncher.isEnabled();
-        return this.enabled;
-      } else {
-        // Windows/macOS: 使用 Electron 原生 API
-        const settings = app.getLoginItemSettings({
-          args: this.loginItemArgs,
-        });
-        this.enabled = settings.openAtLogin;
-        return this.enabled;
-      }
-    } catch (e) {
-      log.error('[AutoLaunchManager] Failed to check status:', e);
+      return await this.readSystemEnabled();
+    } catch (error) {
+      log.error("[AutoLaunchManager] Failed to check status:", error);
       return false;
     }
   }
 
-  /**
-   * 设置自启动
-   */
   async setEnabled(enabled: boolean): Promise<boolean> {
     try {
-      if (process.platform === 'linux') {
-        // Linux: 使用 auto-launch 库
-        if (!AutoLaunch) {
-          this.supported = false;
-          return false;
-        }
-
-        const autoLauncher = new AutoLaunch({
-          name: APP_DISPLAY_NAME,
-          path: process.execPath,
-          isHiddenOnLaunch: true,
-        });
-
-        if (enabled) {
-          await autoLauncher.enable();
-          log.info('[AutoLaunchManager] Auto-launch enabled');
-        } else {
-          await autoLauncher.disable();
-          log.info('[AutoLaunchManager] Auto-launch disabled');
-        }
-
-        this.enabled = enabled;
-        return true;
+      if (process.platform === "linux") {
+        const launcher = this.createLinuxLauncher();
+        if (enabled) await launcher.enable();
+        else await launcher.disable();
       } else {
-        // Windows/macOS: 使用 Electron 原生 API
         app.setLoginItemSettings({
           openAtLogin: enabled,
-          openAsHidden: true, // macOS: 启动时隐藏
+          openAsHidden: false,
           args: this.loginItemArgs,
+          ...(process.platform === "win32" ? { enabled } : {}),
         });
-
-        this.enabled = enabled;
-        log.info(`[AutoLaunchManager] Auto-launch ${enabled ? 'enabled' : 'disabled'}`);
-        return true;
       }
-    } catch (e) {
-      log.error('[AutoLaunchManager] Failed to set auto-launch:', e);
+      if ((await this.readSystemEnabled()) !== enabled) {
+        log.warn(
+          "[AutoLaunchManager] System did not apply auto-launch setting",
+        );
+        return false;
+      }
+      if (!writeSetting(PREFERENCE_KEY, enabled)) {
+        log.error("[AutoLaunchManager] Failed to save auto-launch preference");
+        return false;
+      }
+      log.info(
+        `[AutoLaunchManager] Auto-launch ${enabled ? "enabled" : "disabled"}`,
+      );
+      return true;
+    } catch (error) {
+      log.error("[AutoLaunchManager] Failed to set auto-launch:", error);
       return false;
     }
   }
 
-  /**
-   * 切换自启动状态
-   */
   async toggle(): Promise<boolean> {
-    const currentState = await this.isEnabled();
-    return this.setEnabled(!currentState);
+    return this.setEnabled(!(await this.isEnabled()));
   }
 }
-
-// ==================== Singleton ====================
 
 let autoLaunchManager: AutoLaunchManager | null = null;
 
 export function createAutoLaunchManager(): AutoLaunchManager {
-  // 直接创建新实例，保留用户设置
-  autoLaunchManager = new AutoLaunchManager();
-  return autoLaunchManager;
+  // 启动初始化、设置 IPC 与托盘复用同一实例。
+  return (autoLaunchManager ??= new AutoLaunchManager());
 }
 
 export function getAutoLaunchManager(): AutoLaunchManager | null {

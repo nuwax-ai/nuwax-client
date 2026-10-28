@@ -161,7 +161,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 初始化发布 tag 的三个 gitlink；前端嵌套子模块仅源码测试需要，
+      # 初始化发布 tag 的两个 gitlink（壳 nuwa-electron-shell/ 已并入本仓，随 checkout 即得）；前端嵌套子模块仅源码测试需要，
       # 正式包消费 nuwax-dist pin，无需在五个平台重复拉取/构建它们。
       - name: Init pinned submodules
         shell: bash
@@ -172,22 +172,13 @@ jobs:
           gh auth setup-git
           # Windows runner 可能启用 CRLF checkout；五平台必须复制相同的产物字节。
           git config --global core.autocrlf false
-          git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
           git submodule update --init nuwax-dist
           git submodule status
           # submodule update 内部重试失败时可能以 0 退出，逐项强校验。
-          test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
+          test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell missing from checkout"; exit 1; }
           test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
           test -f nuwax-dist/index.html || { echo "::error::nuwax-dist artifact submodule not checked out"; exit 1; }
-
-      # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
-      - name: Sync overlay into base worktree
-        shell: bash
-        run: |
-          node scripts/sync-overlay.js
-          node scripts/sync-overlay.js --check
-          git -C nuwa-electron-shell status --short | head -40 || true
 
       - name: Set version & commercial branding in package.json
         shell: bash

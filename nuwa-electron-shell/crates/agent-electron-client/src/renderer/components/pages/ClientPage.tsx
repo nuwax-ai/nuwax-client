@@ -12,7 +12,7 @@ import { APP_NAME_IDENTIFIER } from "@shared/constants";
  *   4. Quick action buttons — navigate to settings / deps / about
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Button,
   Tag,
@@ -134,7 +134,9 @@ function ClientPage({
   const [stoppingServices, setStoppingServices] = useState<Set<string>>(
     new Set(),
   );
-  const isAnyStarting = (startingServices?.size ?? 0) > 0;
+  const [startingAll, setStartingAll] = useState(false);
+  const startAllInFlight = useRef(false);
+  const isAnyStarting = startingAll || (startingServices?.size ?? 0) > 0;
   const isAnyStopping = stoppingServices.size > 0;
   const isAnyOperating = isAnyStarting || isAnyStopping;
 
@@ -375,45 +377,44 @@ function ClientPage({
   };
 
   const handleStartAll = async () => {
-    if (APP_NAME_IDENTIFIER === "nuwax") {
-      try {
-        const result = await window.electronAPI!.services.restartAll();
-        if (!result.success) message.error(t("Claw.App.RestartFailed"));
-      } finally {
-        await onRefreshServices();
-      }
-      return;
-    }
+    if (startAllInFlight.current) return;
     // 未登录（webview 登录态与壳侧注册态均无凭据）时禁止启动全部服务，避免
     // lanproxy 无 clientKey 的半启动状态。webview 已登录但 reg 未完成
     // （auth.config_key 缺失，如首登注册被后端拦截）时放行：先 reg，失败则
     // 明示注册失败，不依赖注册凭据的服务照常启动。
-    if (!authState.isLoggedIn && !isWebviewLoggedIn) {
+    if (APP_NAME_IDENTIFIER !== "nuwax" && !authState.isLoggedIn && !isWebviewLoggedIn) {
       message.warning(t("Claw.Client.loginFirstToStart"));
       return;
     }
-    if (missingDeps.length > 0) {
+    if (APP_NAME_IDENTIFIER !== "nuwax" && missingDeps.length > 0) {
       message.warning(t("Claw.Client.missingDeps"));
       return;
     }
 
-    // 确定需要启动的服务，提前设置 starting 状态（覆盖 reg 调用期间）
-    const allServices = await getStartupServiceKeys();
-    const servicesToStart = allServices.filter((key) => {
-      const svc = services.find((s) => s.key === key);
-      return svc && !svc.running;
-    });
-
-    // 提前设置所有待启动服务的 starting 状态
-    if (servicesToStart.length > 0) {
-      setStartingServices?.((prev) => {
-        const next = new Set(prev);
-        servicesToStart.forEach((key) => next.add(key));
-        return next;
-      });
-    }
-
+    // 商业版 restartAll 和社区版 reg 都可能在逐项服务状态变化前等待较久。
+    // 同步锁立即拦截连续点击，独立状态让按钮持续显示 loading。
+    startAllInFlight.current = true;
+    setStartingAll(true);
     try {
+      if (APP_NAME_IDENTIFIER === "nuwax") {
+        const result = await window.electronAPI!.services.restartAll();
+        if (!result.success) message.error(t("Claw.App.RestartFailed"));
+        return;
+      }
+
+      const allServices = await getStartupServiceKeys();
+      const servicesToStart = allServices.filter((key) => {
+        const svc = services.find((s) => s.key === key);
+        return svc && !svc.running;
+      });
+      if (servicesToStart.length > 0) {
+        setStartingServices?.((prev) => {
+          const next = new Set(prev);
+          servicesToStart.forEach((key) => next.add(key));
+          return next;
+        });
+      }
+
       let startedCount = 0;
 
       // 1. 先调用 reg 接口，获取最新配置（serverHost/serverPort）。
@@ -437,8 +438,16 @@ function ClientPage({
       if (startedCount === 0) {
         message.info(t("Claw.Client.allServicesRunning"));
       }
+    } catch (error) {
+      console.error("[ClientPage] Start all failed:", error);
+      message.error(t("Claw.App.RestartFailed"));
     } finally {
-      await onRefreshServices();
+      try {
+        await onRefreshServices();
+      } finally {
+        startAllInFlight.current = false;
+        setStartingAll(false);
+      }
     }
   };
 

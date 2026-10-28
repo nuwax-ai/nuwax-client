@@ -1,5 +1,8 @@
 import { stopManagedProcesses } from "./bootstrap/stopManagedProcesses";
 import { commercialLifecycle } from "./services/auth/lifecycle";
+import { disposeIMReceiver } from "./services/imReceiverRuntime";
+import { prepareDesktopFeaturesBeforeReady, runDesktopActivity, disposeDesktopFeatures, settleDesktopFeaturesForQuit, isDesktopFeatureRegistered } from "./features";
+import { HOST_CAPTURE_MENU_IPC, type CaptureMenuAction } from "@shared/features/capture/contract";
 import {
   app,
   BrowserWindow,
@@ -8,11 +11,15 @@ import {
   ipcMain,
   nativeImage,
   nativeTheme,
+  powerMonitor,
+  screen,
   session,
   webContents,
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
+import { pathToFileURL } from "node:url";
+import { guardHostNavigation } from "./services/system/hostNavigation";
 import log from "electron-log";
 import { initDatabase, closeDb, readSetting } from "./db";
 import { ManagedProcess } from "./processManager";
@@ -36,12 +43,24 @@ import {
   DEFAULT_WINDOW_MIN_HEIGHT,
   DEFAULT_WINDOW_MIN_WIDTH,
   DEFAULT_WINDOW_WIDTH,
+  DEFAULT_SERVER_HOST,
 } from "@shared/constants";
 import { initLogging, updateLogLevel } from "./bootstrap/logConfig";
-import { initI18n, setMainLang, DEFAULT_MAIN_LANG } from "./services/i18n";
+import { initI18n, setMainLang, DEFAULT_MAIN_LANG, onMainLangChanged, t } from "./services/i18n";
+import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, captureShortcut, recordShortcut } from '@shared/features/capture/contract';
+import { routeCaptureShortcut } from './features';
+import { onCapturePreferencesChanged, bindCaptureShortcuts } from './features';
+import { bindCaptureMenuShortcuts, buildMacApplicationMenu } from "./window/applicationMenu";
+import { isMainNewTaskAvailable, onMainNewTaskAvailabilityChanged } from "./services/newTaskAvailability";
+import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { createTrayManager, TrayStatus } from "./window/trayManager";
+import { createAutoLaunchManager } from "./window/autoLaunchManager";
+import { createDockVisibility } from "./window/dockVisibility";
+import { createServiceReadinessGate } from "./services/serviceReadinessGate";
 import { createServiceManager } from "./window/serviceManager";
-import { initAutoUpdater, showUpdateDialogFlow } from "./services/autoUpdater";
+import { createTrayServiceActions } from "./window/trayServiceActions";
+import { initAutoUpdater } from "./services/commercialAutoUpdater";
+import { showUpdateDialogFlow } from "./services/autoUpdater";
 import {
   attachHostActivityWindow,
   initHostActivity,
@@ -55,16 +74,37 @@ import {
 import { openLogDirectory } from "./ipc/appHandlers";
 import { shouldInjectWebviewPerfBridge } from "./ipc/bridgeTrust";
 import { migrateDataDir, migrateSettingsPaths } from "./bootstrap/migrate";
+import { configureCommercialAppIdentity } from "./bootstrap/appIdentity";
 import { getDeviceId, logSystemInfo } from "./services/system/deviceId";
-import { initWebviewPolicy, isolateUntrustedInitialWebview } from "./services/system/webviewPolicy";
+import { initWebviewPolicy, configureSharedWebview } from "./services/system/webviewPolicy";
 import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
 import { APP_DATA_DIR_NAME } from "@shared/constants";
+import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
+import { attachRendererRecovery } from "./services/rendererRecovery";
+import { initBusinessRequestRouting } from "./services/businessRequestRouting";
+import { protocol } from "electron";
+import { redactLocalFileUrl } from "@shared/features/local-files/contract";
+import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
+import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
+import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
+
+const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
+if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
 // 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
+let cdpDiagnosticsDecision: ReturnType<typeof configureCdpDiagnostics> | null = null;
 if (APP_NAME_IDENTIFIER === "nuwax") {
-  app.setName("Nuwax");
-  app.setPath("userData", path.join(app.getPath("appData"), "Nuwax"));
+  configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
+  // Keep the Windows updater/taskbar identity under the commercial product guard.
+  if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
+  // 商业版诊断通道：userData/diagnostics.json 显式开启本机 CDP（默认关闭、仅 127.0.0.1、
+  // 剥离外部 remote-debugging* 命令行、坏配置 fail closed）。commandLine 开关仅在
+  // app.ready 前生效，此处应用、改动下次启动生效；此处早于 initLogging，先不落日志。
+  cdpDiagnosticsDecision = configureCdpDiagnostics({
+    userDir: app.getPath("userData"),
+    commandLine: app.commandLine,
+  });
 }
 
 // 处理 EPIPE 错误（社区最佳实践）
@@ -139,6 +179,12 @@ initLogging();
 initI18n();
 log.info("Application starting...");
 log.info("[FeatureFlags][main]", FEATURES);
+// 日志通道就绪后再输出 CDP 决策：开启=info 明示（日志可见"调试中"），坏配置=warn 诊断。
+if (cdpDiagnosticsDecision) {
+  const described = describeCdpDecision(cdpDiagnosticsDecision);
+  if (described.level === "info") log.info(described.message);
+  else if (described.level === "warn") log.warn(described.message);
+}
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
@@ -146,6 +192,7 @@ let trayManager: ReturnType<typeof createTrayManager> | null = null;
 let isQuitting = false; // 标志：是否正在真正退出应用
 let isInstallingUpdate = false; // 标志：是否正在执行 quitAndInstall 安装更新
 let pendingSecondInstanceFocus = false; // 标志：窗口未创建前收到 second-instance 事件
+const dockVisibility = createDockVisibility({ app, platform: process.platform, isQuitting: () => isQuitting, log });
 
 // 单实例保护：Windows 托盘常驻场景下再次启动时，复用当前实例而不是创建新实例
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -156,6 +203,7 @@ if (!hasSingleInstanceLock) {
 
 app.on("second-instance", () => {
   log.info("[App] second-instance event received");
+  ensureDockVisible();
   if (!mainWindow) {
     pendingSecondInstanceFocus = true;
     if (app.isReady()) {
@@ -201,6 +249,41 @@ function getDockIconPath() {
     return path.join(process.resourcesPath, "icon-dock.png");
   }
   return path.join(process.cwd(), "public", "icon-dock.png");
+}
+
+/**
+ * 确保 macOS Dock 栏常驻显示应用图标，并保持激活策略为 regular。
+ * 避免因系统自启动 (openAsHidden) 或无窗口状态导致应用图标在 Dock 栏消失。
+ */
+function ensureDockVisible(reason = "app-lifecycle"): void {
+  dockVisibility.ensure(reason);
+}
+
+function setupDockIcon(): void {
+  if (process.platform !== "darwin") return;
+  ensureDockVisible();
+  if (app.dock) {
+    const iconPath = getDockIconPath();
+    log.info("Setting Dock icon from:", iconPath);
+    try {
+      const iconImage = nativeImage.createFromPath(iconPath);
+      log.info(
+        "Icon image size:",
+        iconImage.getSize(),
+        "isEmpty:",
+        iconImage.isEmpty(),
+      );
+      if (!iconImage.isEmpty()) {
+        app.dock.setIcon(iconImage);
+        log.info("Dock icon set successfully");
+      } else {
+        log.warn("Icon image is empty");
+      }
+    } catch (e) {
+      log.warn("Failed to set Dock icon:", e);
+    }
+    ensureDockVisible();
+  }
 }
 
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -251,16 +334,33 @@ function createWindow() {
     show: false,
   });
 
+  const indexPath = path.join(process.resourcesPath, "app.asar", "dist", "index.html");
+  const rendererEntry = isDev
+    ? `http://localhost:${DEFAULT_DEV_SERVER_PORT}/`
+    : pathToFileURL(indexPath).href;
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    guardHostNavigation(mainWindow.webContents, rendererEntry);
+  }
+
   // 为 webview guest 注入轻量 Bridge（NuwaClawBridge）。
-  // 商业版仅对当前业务/回环/开发覆盖域注入，社区版维持已有 http(s) 行为。
+  // 商业网页共享会话，桥由轻量 preload 按实际业务文档暴露。
   mainWindow.webContents.on(
     "will-attach-webview",
-    (_event, webPreferences, params) => {
+    (event, webPreferences, params) => {
       const targetUrl = String(params.src || "");
+      if (APP_NAME_IDENTIFIER === "nuwax") {
+        if (!configureSharedWebview(webPreferences, params)) {
+          event.preventDefault();
+        } else {
+          // 仅主窗口 guest 获得私有恢复标记处理；弹窗/独立窗口不继承。
+          webPreferences.additionalArguments = [
+            ...(webPreferences.additionalArguments ?? []).filter((arg) => arg !== SPA_RESTORE_ARGUMENT),
+            SPA_RESTORE_ARGUMENT,
+          ];
+        }
+        return;
+      }
       if (!shouldInjectWebviewPerfBridge(targetUrl, APP_NAME_IDENTIFIER)) {
-        // Initial <webview src> is a programmatic load and does not emit
-        // will-frame-navigate. Isolate an external target before its first request.
-        isolateUntrustedInitialWebview(webPreferences, params);
         return;
       }
       webPreferences.preload = WEBVIEW_PERF_BRIDGE_PRELOAD;
@@ -271,24 +371,20 @@ function createWindow() {
   // Load the app
   if (isDev) {
     const devCacheBust = Date.now();
-    const devUrl = `http://localhost:${DEFAULT_DEV_SERVER_PORT}/?_ncd=${devCacheBust}`;
+    const devUrl = `${rendererEntry}?_ncd=${devCacheBust}`;
     void mainWindow.webContents.session
       .clearCache()
       .catch((err) => log.warn("[DevCache] clearCache failed:", err))
       .finally(() => {
         void mainWindow?.loadURL(devUrl);
       });
-    mainWindow.webContents.openDevTools();
+    if (process.env.NUWAX_DEVTOOLS === "1") {
+      mainWindow.webContents.openDevTools({ activate: false });
+    }
   } else {
     // 生产环境：dist 目录被打包到 app.asar 中
     // 用 loadFile 让 Electron 内部走 pathToFileURL，避免 Windows 上路径含空格 / 中文 / 反斜杠时
     // 拼出畸形 file:// URL，进而影响 Monaco 等通过 window.location.href 解析相对路径的资源加载
-    const indexPath = path.join(
-      process.resourcesPath,
-      "app.asar",
-      "dist",
-      "index.html",
-    );
     log.info("Loading app from:", indexPath);
     mainWindow.loadFile(indexPath);
   }
@@ -297,18 +393,51 @@ function createWindow() {
   mainWindow.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL) => {
-      log.error("Failed to load:", validatedURL, errorCode, errorDescription);
+      log.error("Failed to load:", redactLocalFileUrl(validatedURL), errorCode, errorDescription);
       dialog.showErrorBox(
         "Load Error",
-        `Failed to load application: ${errorDescription}\n\nURL: ${validatedURL}`,
+        `Failed to load application: ${errorDescription}\n\nURL: ${redactLocalFileUrl(validatedURL)}`,
       );
     },
   );
 
+  // 壳 renderer 崩溃 / 卡死自愈；放弃自动恢复时让用户选择重启，否则托盘常驻下只剩空白窗口
+  attachRendererRecovery(mainWindow.webContents, {
+    isQuitting: () => isQuitting,
+    onGiveUp: () => {
+      void dialog
+        .showMessageBox({
+          type: "error",
+          title: APP_DISPLAY_NAME,
+          message:
+            "界面进程多次异常退出，已停止自动恢复。\nThe window process kept crashing; automatic recovery has stopped.",
+          buttons: ["重启应用 / Restart", "退出 / Quit"],
+          defaultId: 0,
+          cancelId: 1,
+        })
+        .then(({ response }) => {
+          if (response === 0) app.relaunch();
+          app.quit();
+        });
+    },
+  });
+
   mainWindow.once("ready-to-show", () => {
-    mainWindow?.maximize();
-    mainWindow?.show();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // 开发验收在当前操作的显示器打开，避免窗口出现在另一块屏幕上。
+    if (isDev) {
+      mainWindow.setBounds(
+        screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea,
+      );
+    }
+    mainWindow.maximize();
+    mainWindow.show();
+    if (isDev && process.platform === "darwin") {
+      app.focus({ steal: true });
+    }
+    mainWindow.focus();
     log.info("Main window shown (maximized)");
+    ensureDockVisible();
     // macOS 开发模式：窗口显示后再创建托盘，提高菜单栏图标出现概率
     if (process.platform === "darwin" && !app.isPackaged && !trayManager) {
       setTimeout(
@@ -325,6 +454,11 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // 隐藏/最小化不代表退出；恢复 Dock 与显示主窗各自独立，不抢用户焦点。
+  for (const event of ["show", "hide", "minimize", "restore"] as const) {
+    mainWindow.on(event, () => ensureDockVisible(`window-${event}`));
+  }
+
   // 所有平台：点击关闭按钮时隐藏到托盘，而不是退出应用
   // 只有从托盘菜单点击"退出"时才真正退出
   mainWindow.on("close", (e) => {
@@ -335,215 +469,116 @@ function createWindow() {
     // 阻止关闭，改为隐藏
     e.preventDefault();
     mainWindow?.hide();
+    ensureDockVisible();
     log.info("[App] Window hidden to tray (close intercepted)");
   });
 
   // 休眠控制：主窗口可见性 + 锁屏状态桥（不可见时通知 webview 暂停后台轮询）
   attachHostActivityWindow(mainWindow);
 
+  if ((process.platform === "win32" || process.platform === "linux") && isDesktopFeatureRegistered("capture")) {
+    // 菜单点击走宿主预览；快捷键优先由聚焦的 IM 编辑器认领并回填草稿。
+    // Linux 录制控制窗隐藏时，回到宿主即可通过 R 停止、P 暂停/继续。
+    const shortcutOptions = { platform: process.platform, getScreenshotShortcut: () => captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), getRecordShortcut: () => recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), controlRecording: (action: "pause" | "stop") => runDesktopActivity("capture", action) };
+    bindCaptureMenuShortcuts(mainWindow.webContents, action => { void dispatchCaptureMenuAction(action, "shortcut"); }, shortcutOptions);
+    mainWindow.webContents.on("did-attach-webview", (_event, guest) => {
+      bindCaptureMenuShortcuts(guest, action => { void dispatchCaptureMenuAction(action, "shortcut", guest); }, shortcutOptions);
+    });
+  }
+
+  // 应用退到后台或隐藏到托盘时，截图/录屏仍由系统全局快捷键触发。
+  if (isDesktopFeatureRegistered('capture')) {
+    bindCaptureShortcuts(mainWindow, () => [
+      [captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), 'screenshot'],
+      [recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), 'mp4'],
+    ], action => { void dispatchCaptureMenuAction(action, 'shortcut'); }, {
+      onUnavailable: shortcut => log.warn('[Capture] Shortcut unavailable', shortcut),
+    });
+  }
   // Create application menu
   createMenu();
 }
 
+async function dispatchCaptureMenuAction(action: CaptureMenuAction, trigger: "menu" | "shortcut" = "menu", focused = webContents.getFocusedWebContents()) {
+  if (!isDesktopFeatureRegistered("capture") || !mainWindow || mainWindow.isDestroyed()) return;
+  const originWindow = mainWindow;
+  if (trigger === 'shortcut' && originWindow.isFocused() && focused && focused.hostWebContents === originWindow.webContents &&
+    await routeCaptureShortcut(focused, action)) return;
+  if (mainWindow !== originWindow || originWindow.isDestroyed()) return;
+  // 后台全局热键保持桌面原状，捕获成功后由服务显示结果窗口。
+  if (trigger === 'menu') {
+    originWindow.show();
+    originWindow.focus();
+  }
+  originWindow.webContents.send(HOST_CAPTURE_MENU_IPC, action);
+}
+
 function createMenu() {
   if (process.platform === "darwin") {
-    // macOS 标准应用菜单（六菜单：应用/文件/编辑/视图/窗口/帮助），结构上与
-    // Win/Linux 自绘菜单栏（TrafficLightToolbar：关于(A)/文件(F)/编辑(E)/窗口(W)/
-    // 帮助(H)）对齐——新增入口须双轨同步评估。
-    // 编辑命令禁用裸 role（webview 场景 role 落在宿主页面恒灰、Cmd+C/V/Z/A
-    // 失灵），一律显式路由活跃 webContents（resolveEditTargetWebContents）；
-    // 窗口 role（隐藏/最小化/关闭等）无 webview 路由问题，保留原生快捷键。
-    const editClick = (action: EditAction) => () => {
-      const target = resolveEditTargetWebContents(() => mainWindow);
-      if (target) EDIT_ACTIONS[action](target);
-    };
-    // 宿主动作（新建任务/搜索）下发主窗口 webview guest，与 ⌘N 拦截
-    // （webviewPolicy）同一 nuwax:host-command 通道
+    // 与 Win/Linux 自绘菜单保持入口对齐，文案使用原生菜单独立 key。
+    // 动作每次点击时解析活跃 webContents，不持有可能已销毁的 guest。
     const hostCommand = (payload: unknown) => () => {
       sendHostCommandToMainWindowGuests(payload);
     };
-
-    const template: Electron.MenuItemConstructorOptions[] = [
-      {
-        label: APP_DISPLAY_NAME,
-        submenu: [
-          {
-            // 关于落壳设置弹窗 about tab（与 Win/Linux「关于(A)」同一定位），
-            // 不用原生 role:"about"（Electron 默认关于框，无壳信息）
-            label: `关于 ${APP_DISPLAY_NAME}`,
-            click: () => {
-              mainWindow?.webContents.send("menu:about");
-            },
-          },
-          {
-            label: "检查更新…",
-            click: async () => {
-              await showUpdateDialogFlow();
-            },
-          },
-          { type: "separator" },
-          {
-            label: "设置…",
-            accelerator: "CmdOrCtrl+,",
-            click: () => {
-              mainWindow?.webContents.send("menu:settings");
-            },
-          },
-          { type: "separator" },
-          { role: "services", label: "服务" },
-          { role: "hide", label: `隐藏 ${APP_DISPLAY_NAME}` },
-          { role: "hideOthers", label: "隐藏其他" },
-          { role: "unhide", label: "全部显示" },
-          { type: "separator" },
-          { role: "quit", label: `退出 ${APP_DISPLAY_NAME}` },
-        ],
+    const template = buildMacApplicationMenu(t, APP_DISPLAY_NAME, {
+      about: () => {
+        mainWindow?.webContents.send("menu:about");
       },
-      {
-        label: "文件",
-        submenu: [
-          {
-            label: "新建任务",
-            accelerator: "CmdOrCtrl+N",
-            click: hostCommand({ type: "new-task" }),
-          },
-          {
-            label: "搜索",
-            accelerator: "CmdOrCtrl+K",
-            click: hostCommand({ type: "open-search" }),
-          },
-          { type: "separator" },
-          {
-            label: "更改工作空间目录…",
-            click: () => {
-              mainWindow?.webContents.send("menu:workspace", {
-                action: "modify",
-              });
-            },
-          },
-          {
-            label: "打开工作空间目录",
-            click: () => {
-              mainWindow?.webContents.send("menu:workspace", {
-                action: "open",
-              });
-            },
-          },
-        ],
+      checkUpdate: async () => {
+        await showUpdateDialogFlow();
       },
-      {
-        label: "编辑",
-        submenu: [
-          {
-            label: "撤销",
-            accelerator: "CmdOrCtrl+Z",
-            click: editClick("undo"),
-          },
-          {
-            label: "重做",
-            accelerator: "Shift+CmdOrCtrl+Z",
-            click: editClick("redo"),
-          },
-          { type: "separator" },
-          {
-            label: "剪切",
-            accelerator: "CmdOrCtrl+X",
-            click: editClick("cut"),
-          },
-          {
-            label: "拷贝",
-            accelerator: "CmdOrCtrl+C",
-            click: editClick("copy"),
-          },
-          {
-            label: "粘贴",
-            accelerator: "CmdOrCtrl+V",
-            click: editClick("paste"),
-          },
-          {
-            label: "全选",
-            accelerator: "CmdOrCtrl+A",
-            click: editClick("selectAll"),
-          },
-        ],
+      settings: () => {
+        mainWindow?.webContents.send("menu:settings");
       },
-      {
-        label: "视图",
-        submenu: [
-          {
-            // 本版 Electron 类型不含 reload role，显式 click 作用于焦点
-            // webContents（webview guest 聚焦时即 guest）
-            label: "刷新页面",
-            accelerator: "CmdOrCtrl+R",
-            click: () => {
-              const wc = webContents.getFocusedWebContents();
-              if (wc && !wc.isDestroyed()) wc.reload();
-            },
-          },
-          { role: "togglefullscreen", label: "进入全屏" },
-          { type: "separator" },
-          { role: "toggleDevTools", label: "切换开发者工具" },
-        ],
+      newTask: () => {
+        if (isMainNewTaskAvailable()) {
+          sendHostCommandToMainWindowGuests({ type: "new-task" });
+        }
       },
-      {
-        label: "窗口",
-        submenu: [
-          // 本版 Electron 类型不含 back/forward role，显式 click 作用于焦点
-          // webContents（webview guest 聚焦时即 guest），与 Win/Linux 自绘
-          // 「窗口(W)」菜单对齐。goBack/goForward 在 webview guest 加载回环
-          // 网关 origin（http://127.0.0.1:46800）时失明（Electron 40 实证，
-          // bug 2432），改经 navigationHistory 真值 goToIndex（索引计算避开
-          // 同一失明路径）。
-          {
-            label: "后退",
-            accelerator: "CmdOrCtrl+[",
-            click: () => {
-              const wc = webContents.getFocusedWebContents();
-              if (!wc || wc.isDestroyed()) return;
-              try {
-                const h = wc.navigationHistory;
-                const active = h.getActiveIndex();
-                if (active > 0) h.goToIndex(active - 1);
-              } catch {
-                wc.goBack();
-              }
-            },
-          },
-          {
-            label: "前进",
-            accelerator: "CmdOrCtrl+]",
-            click: () => {
-              const wc = webContents.getFocusedWebContents();
-              if (!wc || wc.isDestroyed()) return;
-              try {
-                const h = wc.navigationHistory;
-                const active = h.getActiveIndex();
-                if (active < h.getAllEntries().length - 1)
-                  h.goToIndex(active + 1);
-              } catch {
-                wc.goForward();
-              }
-            },
-          },
-          { type: "separator" },
-          { role: "minimize", label: "最小化" },
-          { role: "zoom", label: "缩放" },
-          { role: "close", label: "关闭窗口" },
-          { type: "separator" },
-          { role: "front", label: "前置全部窗口" },
-        ],
+      search: hostCommand({ type: "open-search" }),
+      modifyWorkspace: () => {
+        mainWindow?.webContents.send("menu:workspace", { action: "modify" });
       },
-      {
-        label: "帮助",
-        submenu: [
-          {
-            label: "打开日志目录",
-            click: () => {
-              void openLogDirectory();
-            },
-          },
-        ],
+      openWorkspace: () => {
+        mainWindow?.webContents.send("menu:workspace", { action: "open" });
       },
-    ];
+      edit: (action: EditAction) => {
+        const target = resolveEditTargetWebContents(() => mainWindow);
+        if (target) EDIT_ACTIONS[action](target);
+      },
+      reload: () => {
+        const wc = webContents.getFocusedWebContents();
+        if (wc && !wc.isDestroyed()) wc.reload();
+      },
+      // 回环 gateway guest 的 goBack/goForward 在 Electron 40 会失明，
+      // 保留 navigationHistory 真值索引与旧版 fallback。
+      back: () => {
+        const wc = webContents.getFocusedWebContents();
+        if (!wc || wc.isDestroyed()) return;
+        try {
+          const h = wc.navigationHistory;
+          const active = h.getActiveIndex();
+          if (active > 0) h.goToIndex(active - 1);
+        } catch {
+          wc.goBack();
+        }
+      },
+      forward: () => {
+        const wc = webContents.getFocusedWebContents();
+        if (!wc || wc.isDestroyed()) return;
+        try {
+          const h = wc.navigationHistory;
+          const active = h.getActiveIndex();
+          if (active < h.getAllEntries().length - 1) h.goToIndex(active + 1);
+        } catch {
+          wc.goForward();
+        }
+      },
+      openLogs: () => {
+        void openLogDirectory();
+      },
+      capture: dispatchCaptureMenuAction,
+    }, { newTaskAvailable: isMainNewTaskAvailable(), captureAvailable: isDesktopFeatureRegistered("capture"), captureShortcut: captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), recordShortcut: recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)) });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   } else {
     // Windows/Linux: 去掉菜单栏，功能由界面（自绘顶行菜单栏）和系统托盘提供
@@ -559,10 +594,31 @@ async function initTrayManager() {
     agentRunner,
     ttyd,
   });
+  const serviceActions = createTrayServiceActions({
+    getCommercialLifecycle: () => commercialLifecycle,
+    serviceManager,
+    updateServicesStatus: (running) => trayManager?.updateServicesStatus(running),
+    setErrorStatus: () => trayManager?.setStatus("error"),
+  });
 
   trayManager = createTrayManager({
+    onOpenSettings: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      const openSettings = () => {
+        if (!window.isDestroyed()) window.webContents.send("nuwax:open-client-settings", {});
+      };
+      if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", openSettings);
+      else openSettings();
+    },
     onShowWindow: () => {
+      ensureDockVisible();
       if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.show();
         mainWindow.focus();
       } else {
@@ -572,14 +628,11 @@ async function initTrayManager() {
     },
     onRestartServices: async () => {
       log.info("[Tray] Restarting all services...");
-      if (commercialLifecycle) await commercialLifecycle.start(true);
-      else await serviceManager.restartAllServices();
-      trayManager?.updateServicesStatus(true);
+      await serviceActions.onRestartServices();
     },
     onStopServices: async () => {
       log.info("[Tray] Stopping all services...");
-      await serviceManager.stopAllServices();
-      trayManager?.updateServicesStatus(false);
+      await serviceActions.onStopServices();
       log.info("[Tray] All services stopped");
     },
   });
@@ -603,6 +656,7 @@ ipcMain.handle("tray:updateServicesStatus", (_, running: boolean) => {
 
 async function cleanupAllProcesses(): Promise<void> {
   log.info("[Cleanup] Stopping all processes...");
+  disposeIMReceiver();
   // Cancel registration/start before shutting down any dependent service.
   commercialLifecycle?.invalidate();
 
@@ -645,6 +699,16 @@ async function cleanupAllProcesses(): Promise<void> {
     await stopComputerServer();
   });
 
+  // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
+  // 置于长耗时步骤（引擎回收）前执行，防止被引擎超时耗尽总预算截断。
+  await runCleanupStep(
+    "Commercial extras stop",
+    async () => {
+      await commercialLifecycle?.stopExtras();
+    },
+    Math.max(stepTimeoutMs, 5000),
+  );
+
   await runCleanupStep("ttyd gateway stop", async () => {
     await stopTtydGateway();
   });
@@ -673,6 +737,10 @@ async function cleanupAllProcesses(): Promise<void> {
     });
   }
 
+  // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
+  // Both paths share the same feature shutdown promise, including daemon cleanup.
+  await runCleanupStep("Desktop features stop", disposeDesktopFeatures, Math.max(stepTimeoutMs, 8000));
+
   await runCleanupStep("Engine processes stop", () => {
     stopAllEngines();
     log.info("[Cleanup] Engine processes stopped");
@@ -682,16 +750,6 @@ async function cleanupAllProcesses(): Promise<void> {
     await processRegistry.killAll();
     log.info("[Cleanup] Process registry cleared");
   });
-
-  // 商业 overlay 注入的退出期附加清理（CUA daemon 等）；社区版未注入为 no-op。
-  // daemon 协议停机超时 4s + 兜底强杀，须高于默认步进超时（15s/6=2.5s）。
-  await runCleanupStep(
-    "Commercial extras stop",
-    async () => {
-      await commercialLifecycle?.stopExtras();
-    },
-    Math.max(stepTimeoutMs, 8000),
-  );
 
   // Await owned process trees before app.exit; fire-and-forget kill loses escalation.
   // NOTE: guiServer is a legacy placeholder and typically not started directly.
@@ -704,6 +762,29 @@ async function cleanupAllProcesses(): Promise<void> {
   ]);
 
   log.info("[Cleanup] All processes stopped");
+}
+
+// 更新入口须在 Windows 窗口/IPC 可调用前完成策略和清理回调初始化。
+function initializeClientUpdater(): void {
+  initAutoUpdater(
+    () => mainWindow,
+    cleanupAllProcesses,
+    () => {
+      // 在 quitAndInstall 前被调用：
+      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
+      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
+      //   保留 Squirrel.Mac 的正常退出流程
+      isQuitting = true;
+      isInstallingUpdate = true;
+      log.info(
+        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
+      );
+    },
+    {
+      installAfterDownload:
+        process.platform === "win32" || process.platform === "darwin",
+    },
+  );
 }
 
 // App lifecycle
@@ -734,31 +815,19 @@ app.whenReady().then(async () => {
   log.info("App ready");
   logSystemInfo();
 
-  // Dev mode: fix CORS duplicate header issue
-  // Server returns both specific origin and '*', causing browser to reject.
-  // Strip duplicate Access-Control-Allow-Origin values.
-  if (isDev) {
-    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      const headers = details.responseHeaders;
-      if (headers) {
-        const acoKey = Object.keys(headers).find(
-          (k) => k.toLowerCase() === "access-control-allow-origin",
-        );
-        if (acoKey && headers[acoKey] && headers[acoKey].length > 1) {
-          // Keep only the specific origin (not '*')
-          const specific = headers[acoKey].find((v) => v !== "*");
-          headers[acoKey] = [specific || "*"];
-          // 仅在确实修改了 ACO 时才回传 responseHeaders，
-          // 避免无条件替换导致 Set-Cookie 被 Chromium 网络服务丢弃
-          callback({ responseHeaders: headers });
-          return;
-        }
-      }
-      // 未修改任何 header → 不传 responseHeaders，Chromium 原样传递
-      callback({});
-    });
-    log.info("Dev CORS fix enabled");
+  // 在首个窗口导航前安装；开发 CORS 与商业防嵌入兼容共用监听器，避免相互覆盖。
+  initFrameEmbeddingPolicy({
+    app,
+    defaultSession: session.defaultSession,
+    isCommercial: APP_NAME_IDENTIFIER === "nuwax",
+    isDev,
+    allowLocalFiles: url => isDesktopFeatureRegistered("local-files") &&
+      businessBridgeOrigins().includes(httpOrigin(url) ?? ""),
+  });
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    log.info("Frame embedding response header policy enabled for all sessions");
   }
+  if (isDev) log.info("Dev CORS fix enabled");
 
   // 为所有 http/https 出站请求注入客户端标识头，供 nuwax 后端识别「桌面客户端内」环境，
   // 后端凭该头在登录响应里返回 token（nuwax 用 Authorization 头鉴权）。值非敏感
@@ -797,31 +866,16 @@ app.whenReady().then(async () => {
     "x-client-type header injection enabled (skipped for localhost/127.0.0.1 dev origin)",
   );
 
-  // Set Dock icon on macOS (development mode needs this)
-  if (process.platform === "darwin" && app.dock) {
-    const iconPath = getDockIconPath();
-    log.info("Setting Dock icon from:", iconPath);
-    try {
-      const iconImage = nativeImage.createFromPath(iconPath);
-      log.info(
-        "Icon image size:",
-        iconImage.getSize(),
-        "isEmpty:",
-        iconImage.isEmpty(),
-      );
-      if (!iconImage.isEmpty()) {
-        app.dock.setIcon(iconImage);
-        log.info("Dock icon set successfully");
-      } else {
-        log.warn("Icon image is empty");
-      }
-    } catch (e) {
-      log.warn("Failed to set Dock icon:", e);
-    }
+  // Set Dock icon on macOS and ensure regular activation policy
+  setupDockIcon();
+  if (process.platform === "darwin") {
+    powerMonitor.on("resume", () => ensureDockVisible("resume"));
+    powerMonitor.on("unlock-screen", () => ensureDockVisible("unlock-screen"));
   }
 
   migrateDataDir();
   initDatabase();
+  await createAutoLaunchManager().initializeDefault();
   migrateSettingsPaths();
   getDeviceId();
 
@@ -829,17 +883,15 @@ app.whenReady().then(async () => {
   const updateChannel = readSetting("update_channel") as string | undefined;
   updateLogLevel(updateChannel || "stable");
 
-  // 数据库就绪后，同步语言到主进程 i18n
-  // 优先级：本地保存 > 产品默认（简体中文，不跟随系统语言）
-  // 说明：本地保存值仅代表「渲染进程解析过的结果」，渲染进程就绪后会经
-  // i18n:setLang 再次同步（含用户显式选择/webview 多语言）；此处不再用
-  // app.getLocale() 兜底——默认语言由产品决定，与系统语言无关。
-  const savedLang = readSetting("i18n.active_lang") as string | undefined;
-  if (savedLang) {
-    setMainLang(savedLang);
-  } else {
-    setMainLang(DEFAULT_MAIN_LANG);
-  }
+  // 商业版仅恢复 webview 上次上报的语言；没有上报记录才默认简体中文。
+  // i18n.active_lang 可能是旧壳设置所留，不再作为商业版语言来源。
+  const savedLang =
+    APP_NAME_IDENTIFIER === "nuwax"
+      ? resolveShellLang(readSetting(NUWAX_WEBVIEW_LANG_KEY))
+      : (readSetting("i18n.active_lang") as string | undefined);
+  setMainLang(savedLang || DEFAULT_MAIN_LANG);
+
+  if (process.platform === "win32") initializeClientUpdater();
 
   const ctx: HandlerContext = {
     getMainWindow: () => mainWindow,
@@ -860,32 +912,44 @@ app.whenReady().then(async () => {
   await runStartupTasks();
 
   // 须在 createWindow 之前初始化，否则主窗口 webContents 会错过 did-attach-webview 监听
+  if (APP_NAME_IDENTIFIER === "nuwax") {
+    initBusinessRequestRouting(() => {
+      const step1 = readSetting("step1_config") as { serverHost?: string; nuwaxLoadMode?: string } | null;
+      const runtime = readSetting("nuwax.loopback") as { enabled?: boolean } | null;
+      if (runtime?.enabled || (step1?.nuwaxLoadMode ?? (process.env.NUWAX_LOOPBACK === "1" ? "gateway" : "direct")) !== "direct") return null;
+      const host = step1?.serverHost || DEFAULT_SERVER_HOST;
+      return httpOrigin(/^https?:\/\//i.test(host) ? host : `https://${host}`);
+    }, () => mainWindow?.webContents ?? null);
+  }
   initWebviewPolicy(() => mainWindow);
 
   // 休眠控制：powerMonitor 须在 app ready 后注册（锁屏/唤醒沿）
   initHostActivity();
 
+  // 主进程只订阅一次；guest 上报和壳 IPC 均经 setMainLang 更新原生菜单。
+  if (process.platform === "darwin") {
+    onMainLangChanged(createMenu);
+    onCapturePreferencesChanged(createMenu);
+    onMainNewTaskAvailabilityChanged(createMenu);
+  }
+
   createWindow();
   // 启动服务门禁：核心服务 ready 前壳层停在 loading（renderer 监听 services:ready）。
   {
-    let gateResult: unknown = null;
-    const sendGate = (r: unknown): void => {
-      mainWindow?.webContents.send("services:ready", r);
-    };
-    const runGate = (): void => {
-      void (async () => {
+    const gate = createServiceReadinessGate({
+      probe: async () => {
         const { runServicesGate } = await import("./services/servicesGate");
-        const r = await runServicesGate();
-        gateResult = r;
-        sendGate(r);
-      })();
-    };
-    ipcMain.handle("services:readyState", () => gateResult);
+        return runServicesGate();
+      },
+      publish: result => mainWindow?.webContents.send("services:ready", result),
+      warn: reason => log.warn("[ServicesGate] recovery", { reason }),
+    });
+    ipcMain.handle("services:readyState", () => gate.result());
     ipcMain.handle("services:waitForReady", () => {
-      runGate();
+      void gate.run();
       return null;
     });
-    runGate();
+    void gate.run();
   }
   // 诊断探针（NUWAX_AVOID_PROBE=1）：guest 的避让判定输入真值（桥/platform/菜单 paddingTop）
   if (process.env.NUWAX_AVOID_PROBE === "1") {
@@ -931,30 +995,24 @@ app.whenReady().then(async () => {
     mainWindow.focus();
   }
 
+  ensureDockVisible();
+
   // 非 macOS 或已打包：立即创建托盘。macOS 开发模式改为在 ready-to-show 后创建
   if (!(process.platform === "darwin" && !app.isPackaged)) {
-    if (process.platform === "darwin" && app.dock) app.dock.show();
     await initTrayManager();
   }
 
-  initAutoUpdater(
-    () => mainWindow,
-    cleanupAllProcesses,
-    () => {
-      // 在 quitAndInstall 前被调用：
-      // - isQuitting=true 防止窗口 close 事件被拦截到托盘
-      // - isInstallingUpdate=true 让 before-quit 跳过 e.preventDefault()，
-      //   保留 Squirrel.Mac 的正常退出流程
-      isQuitting = true;
-      isInstallingUpdate = true;
-      log.info(
-        "[App] Update install flagged: isQuitting=true, isInstallingUpdate=true",
-      );
-    },
-  );
+  if (process.platform !== "win32") initializeClientUpdater();
 });
 
 app.on("window-all-closed", () => {
+  if (isInstallingUpdate || isQuitting) {
+    log.info(
+      "[App] window-all-closed during update or quit, calling app.quit()",
+    );
+    app.quit();
+    return;
+  }
   // 窗口已隐藏到托盘，此事件不应触发
   // 如果触发，说明窗口被意外关闭，不退出应用
   log.info(
@@ -963,6 +1021,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
+  ensureDockVisible();
   // macOS：点击 Dock 图标时，窗口若被隐藏到托盘则重新显示并聚焦
   if (!mainWindow) {
     createWindow();
@@ -997,6 +1056,13 @@ function quitOnSignal(signal: NodeJS.Signals): void {
 process.on("SIGINT", () => quitOnSignal("SIGINT"));
 process.on("SIGTERM", () => quitOnSignal("SIGTERM"));
 
+// GPU / utility 子进程异常退出只留诊断日志（Chromium 会自行重启 GPU 进程）
+app.on("child-process-gone", (_event, details) => {
+  log.warn(
+    `[App] Child process gone: type=${details.type} name=${details.name ?? ""} reason=${details.reason} exitCode=${details.exitCode}`,
+  );
+});
+
 app.on("before-quit", (e) => {
   if (isCleaningUp) return;
   isCleaningUp = true;
@@ -1007,11 +1073,19 @@ app.on("before-quit", (e) => {
     // - cleanup 已在 installUpdate() 中先行触发，无需重复执行
     // - 不能调用 e.preventDefault()：各平台安装器依赖 app.quit() 的正常退出流程；
     //   若阻止退出再 app.exit(0)，安装器可能已经失去对退出时机的感知，导致安装失败
-    // 只关闭数据库后直接 return，让 Electron 正常完成退出，安装器接管
+    // 关闭数据库，确保 CUA daemon 停止，并在短延迟后强制退出以防未清理句柄阻止进程终止
     log.info(
-      "[App] Before quit - update install in progress, skipping preventDefault to allow installer",
+      "[App] Before quit - update install in progress, ensuring exit for installer",
+    );
+    // Share the pre-install cleanup; do not reload the removed legacy CUA entry.
+    void settleDesktopFeaturesForQuit().catch((error) =>
+      log.warn("[App] Update feature cleanup failed", error),
     );
     closeDb();
+    setTimeout(() => {
+      log.info("[App] Exiting process for update installer");
+      app.exit(0);
+    }, 500);
     return;
   }
 

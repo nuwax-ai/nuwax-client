@@ -98,7 +98,7 @@ export async function committedSigningTools(tools, root, automationSha) {
   if (!shaPattern.test(pin)) throw new Error('签名工具基座 pin 无效');
   const files = {};
   for (const name of signingFiles) {
-    files[name] = await tools.git(['show', `${pin}:crates/agent-electron-client/scripts/build/${name}`], path.join(root, 'nuwa-electron-shell'));
+    files[name] = await tools.git(['show', `${automationSha}:nuwa-electron-shell/crates/agent-electron-client/scripts/build/${name}`], root);
     if (!files[name]) throw new Error(`已提交签名工具为空：${name}`);
   }
   return { pin, files };
@@ -227,7 +227,9 @@ async function preflight(root, identity, options, tools, settings) {
     if (remote !== automationSha) findings.push(`远端分支 ${branch} 与当前 HEAD 不同；先推送发布提交`);
   }
   const source = { client: sha };
-  for (const [name, folder] of [['shell', 'nuwa-electron-shell'], ['frontend', 'nuwax'], ['dist', 'nuwax-dist']]) {
+  // 基座已并入本仓：shell 记录为目录 tree 哈希（内容标识），不再是子模块 pin，无需远端可达/脏检查。
+  try { source.shell = await tools.git(['rev-parse', `${sha}:nuwa-electron-shell`]); } catch { throw new Error('缺少 nuwa-electron-shell 目录'); }
+  for (const [name, folder] of [['frontend', 'nuwax'], ['dist', 'nuwax-dist']]) {
     let pin;
     try { pin = await tools.git(['rev-parse', `${sha}:${folder}`]); } catch { if (name === 'dist') continue; throw new Error(`缺少 ${folder} gitlink`); }
     if (!shaPattern.test(pin)) { findings.push(`${folder} 不是有效 gitlink`); continue; }
@@ -242,12 +244,7 @@ async function preflight(root, identity, options, tools, settings) {
     if (sha === automationSha && fs.existsSync(path.join(directory, '.git'))) {
       if (await tools.git(['rev-parse', 'HEAD'], directory) !== pin) findings.push(`${folder} 当前 HEAD 与发布 pin 不同`);
       const dirty = await tools.git(['diff', 'HEAD', '--name-only'], directory);
-      for (const file of dirty.split('\n').filter(Boolean)) {
-        const overlay = path.join(root, 'overlay', file), target = path.join(directory, file);
-        const managed = name === 'shell' && file !== 'README.md' && fs.existsSync(overlay) && fs.existsSync(target) &&
-          fs.readFileSync(overlay).equals(fs.readFileSync(target));
-        if (!managed) findings.push(`${folder} 受跟踪文件未提交：${file}`);
-      }
+      for (const file of dirty.split('\n').filter(Boolean)) findings.push(`${folder} 受跟踪文件未提交：${file}`);
     }
   }
   findings.push(...releaseSequenceFindings(identity, sha, remote));

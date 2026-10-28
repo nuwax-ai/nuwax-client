@@ -29,7 +29,7 @@ intent 开放问题的处理：
 
 全部改动都在商业 overlay 里，不改社区基座，也不改 Nuwax Computer Use 程序本身：
 
-| 文件（`overlay/crates/agent-electron-client/src/…`） | 改动 |
+| 文件（`nuwa-electron-shell/crates/agent-electron-client/src/…`） | 改动 |
 |---|---|
 | `main/services/cua/cuaOutcome.ts`（新增） | 纯函数：把一次工具回复分成 `ok`、`refused`、`uncertain` 三类，并提取观察目标和写操作目标 |
 | `main/services/cua/taskController.ts` | 状态机：结果分级、按目标的观察额度、"无进展"判定、越权计数；`finish` 改为接收结果分类，不再只收一个布尔值 |
