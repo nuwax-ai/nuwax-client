@@ -147,7 +147,7 @@ describe("capture encoding", () => {
     const graph = args[args.indexOf('-filter_complex') + 1];
     expect(graph).toContain('[0:v:0]crop=301:201:20:10:exact=1,fps=15,palettegen=max_colors=256:stats_mode=diff[p]');
     expect(graph).toContain('[1:v:0]crop=301:201:20:10:exact=1,fps=15[b]');
-    expect(graph).toContain('[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle[out]');
+    expect(graph).toContain('[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle[out]');
     expect(graph).not.toContain('split');
     expect(args.slice(-5)).toEqual(['-loop', '0', '-f', 'gif', 'result.gif']);
   });

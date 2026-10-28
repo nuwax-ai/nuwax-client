@@ -61,7 +61,10 @@ export function transcodeArguments(input: string, output: string, options: Recor
   const fps = options.fps ?? 30;
   const common = ["-hide_banner", "-nostdin", "-y", "-i", input, "-an"];
   if (options.output === "gif") {
-    const dither = quality === "low" ? "bayer:bayer_scale=3" : quality === "medium" ? "bayer:bayer_scale=2" : "sierra2_4a";
+    // Ordered dithering stabilizes UI text/flat colors and avoids serial error diffusion.
+    // The highest tier retains its gradient-oriented algorithm; dimensions/fps/colors are unchanged.
+    const dither = quality === "low" ? "bayer:bayer_scale=3" : quality === "medium" ? "bayer:bayer_scale=2" :
+      quality === "high" ? "bayer:bayer_scale=5" : "sierra2_4a";
     const frames = `${geometry.filter},fps=${Math.min(fps, tier.gifMaxFps)}`;
     // A split queues the whole clip while its global palette is generated.
     // Independent readers of the closed, immutable source bound that queue,
