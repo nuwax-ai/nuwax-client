@@ -1,5 +1,8 @@
 # nuwax-client · Agent 速览
 
+开发工具链验收优先使用仓内 `.agents/skills/verify-nuwax-client/SKILL.md`：
+`npm run verify:tooling -- --output <仓外证据目录>`。配方覆盖 doctor 结构、CLI、启动管理和缓存回归，结果为 source-tooling 层级；真实 Electron 界面及安装包另行验收。
+
 （由 nuwa-sdlc-kit 创建骨架，仓库内容请自行补全。）
 
 <!-- nuwa-sdlc-kit:begin v1（安装器托管区间，勿手工增删行；本节外的 AGENTS.md 内容归仓库所有） -->
