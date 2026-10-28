@@ -2,5 +2,5 @@
   "series": "macos-dmg-apfs-20261028",
   "baselineTag": "v3.0.25-beta.3",
   "platforms": "mac-x64",
-  "request": "1-intel-apfs-staging-signed-package"
+  "request": "2-intel-apfs-staging-signed-package"
 }
