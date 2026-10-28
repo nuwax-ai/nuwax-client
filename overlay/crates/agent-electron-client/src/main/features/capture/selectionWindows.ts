@@ -229,6 +229,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   async function select(mode: 'still' | 'record', signal: AbortSignal): Promise<StillCapture | CaptureSelection | null> {
     if (signal.aborted || disposed) return null;
     if (pending) throw new Error('a capture selector is already open');
+    const initialAction = mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action;
     const displays = screen.getAllDisplays();
     const preferredDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id;
     // Freeze every display before any overlay exists, so the overlays cannot enter the screenshot.
@@ -279,7 +280,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
           };
           const regions = desktopWindows
             ? { regions: projectWindowsToDisplay(desktopWindows, { bounds: display.bounds, physicalBounds: physicalDisplayBounds(display, platform) }, size) } : {};
-          const owned = create({ kind: 'selection', mode, labels, ...(actions.length ? { action, actions: [...actions] } : {}), image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
+          const owned = create({ kind: 'selection', mode, labels, action: initialAction, ...(actions.length ? { actions: [...actions] } : {}), image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
             ...regions, ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
           owned.signal = signal; owned.finish = finish; owned.fail = (error) => finish(null, error);
           owned.sourceIds = new Set([source.id, ...sourceCatalog.map((entry) => entry.id)]);
@@ -307,7 +308,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       try {
         // The compositor positions this ordinary window. Its local viewport is not a display.
         const viewport = { x: 0, y: 0, width: 1040, height: 740 };
-        owned = create({ kind: 'selection', mode, labels, ...(actions.length ? { action, actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation: 'preview',
+        owned = create({ kind: 'selection', mode, labels, action: mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action, ...(actions.length ? { actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation: 'preview',
           ...recordingHint(mode) }, viewport);
         owned.signal = signal; owned.finish = finish; owned.fail = error => finish(null, error);
         owned.sourceIds = new Set([image.selection.sourceId]);

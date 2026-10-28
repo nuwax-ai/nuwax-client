@@ -429,3 +429,19 @@ it('only interactive selectors can return a recording mode with the existing cro
   expect(mock.handlers.get(CH.finish)!(event, { crop, action: 'mp4' })).toBe(true);
   expect(await changed).toMatchObject({ action: 'mp4', selected: { sourceId: 'screen:1', crop } });
 });
+
+it.each([false, true])('fixed GIF recording keeps its format in the settings panel (prepared source: %s)', async prepared => {
+  const crop = { x: 10, y: 10, width: 40, height: 30 };
+  const image = { dataUrl: 'data:image/png;base64,frame', width: 100, height: 80,
+    selection: { sourceId: 'screen:portal', sourceKind: 'screen' as const, sourceSize: { width: 100, height: 80 },
+      crop: { x: 0, y: 0, width: 100, height: 80 }, coordinateSpace: 'source' as const, hdrToneMapped: false } };
+  windows.setActions('gif', []);
+  const signal = new AbortController().signal;
+  const pending = prepared ? windows.selectPrepared('record', image, signal) : windows.select('record', signal);
+  await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+  const owned = mock.windows[0], event = { sender: owned.webContents, senderFrame: owned.webContents.mainFrame };
+  expect(mock.handlers.get(CH.init)!(event)).toMatchObject({ mode: 'record', action: 'gif' });
+  expect(mock.handlers.get(CH.finish)!(event, { crop, action: 'mp4' })).toBe(false);
+  expect(mock.handlers.get(CH.finish)!(event, { crop })).toBe(true);
+  expect(await pending).toMatchObject({ crop });
+});

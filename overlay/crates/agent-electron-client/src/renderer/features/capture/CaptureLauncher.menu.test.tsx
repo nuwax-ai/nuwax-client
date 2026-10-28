@@ -90,17 +90,17 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
 
   it("Win/Linux 自绘菜单与原生菜单共用并发锁，保留产物等待预览保存", async () => {
     let finish!: (result: CaptureSuccess) => void;
-    const screenshot = vi.fn(() => new Promise<CaptureSuccess>(resolve => { finish = resolve; }));
-    const ui = mount({ screenshot });
-    ui.toolbarMenu("screenshot"); ui.menu("mp4"); await flush();
-    expect(screenshot).toHaveBeenCalledOnce();
-    expect(ui.capture.record).not.toHaveBeenCalled();
+    const record = vi.fn(() => new Promise<CaptureSuccess>(resolve => { finish = resolve; }));
+    const ui = mount({ record });
+    ui.toolbarMenu("mp4"); ui.menu("screenshot"); await flush();
+    expect(record).toHaveBeenCalledOnce();
+    expect(ui.capture.screenshot).not.toHaveBeenCalled();
     expect(errors).toHaveBeenLastCalledWith("Claw.Capture.error.busy");
-    finish({ success: true, resultId: "menu-preview", mime: "image/png", bytes: 0, width: 40, height: 30, qualityUsed: "high", hdrToneMapped: false });
+    finish({ success: true, resultId: "menu-preview", mime: "video/mp4", bytes: 0, width: 40, height: 30, qualityUsed: "high", hdrToneMapped: false });
     await flush();
     expect(ui.capture.release).not.toHaveBeenCalled();
     ui.menu("gif"); await flush();
-    expect(ui.capture.record).not.toHaveBeenCalled();
+    expect(ui.capture.record).toHaveBeenCalledOnce();
     expect(errors).toHaveBeenLastCalledWith("Claw.Capture.error.busy");
     ui.unmount();
     expect(ui.capture.release).toHaveBeenCalledTimes(1);

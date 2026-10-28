@@ -15,10 +15,10 @@ export async function mountCaptureWindow(
   const node = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
     const el = document.createElement(tag); if (cls) el.className = cls; if (text) el.textContent = text; return el;
   };
-  const buttonVisual = (button: HTMLButtonElement, icon: string, label: string, showText = false) => {
+  const buttonVisual = (button: HTMLButtonElement, icon: string | null, label: string, showText = false) => {
     button.title = label; button.setAttribute('aria-label', label);
     button.classList.toggle('iconOnly', !showText);
-    button.replaceChildren(makeIcon(icon));
+    button.replaceChildren(...(icon ? [makeIcon(icon)] : []));
     if (showText) button.append(node('span', '', label));
   };
   if (config.kind === 'border') {
@@ -70,6 +70,8 @@ export async function mountCaptureWindow(
   const captureActions = config.actions ?? [];
   let captureMode = config.mode;
   let captureAction = config.action ?? (config.mode === 'record' ? 'mp4' : 'screenshot');
+  const recordingActions = captureActions.filter(action => action !== 'screenshot');
+  let recordingAction = captureAction === 'screenshot' ? recordingActions[0] ?? 'mp4' : captureAction;
   const previewPresentation = config.presentation === 'preview';
   const workArea = config.workArea;
   const painter = makePainter();
@@ -107,10 +109,16 @@ export async function mountCaptureWindow(
   const palette = node('div', 'palette');
   properties.append(styleCaption, palette);
   const modeGroup = node('div', 'modeGroup'), actionGroup = node('div', 'actionGroup');
-  top.append(modeGroup, actionGroup);
-  const dockHint = node('div', 'dockHint', labels.annotationHint);
+  top.append(modeGroup);
   const captureModes = node('div', 'toolbar captureModes');
-  const dock = node('div', 'selectionDock'); dock.append(captureModes, toolBar, properties, top, dockHint);
+  const captureTabs = node('div', 'captureTabs');
+  captureModes.append(captureTabs, top);
+  const recordingPanel = node('div', 'recordingPanel');
+  const formatOptions = node('div', 'formatOptions');
+  formatOptions.setAttribute('role', 'radiogroup'); formatOptions.setAttribute('aria-label', labels.format);
+  recordingPanel.append(node('div', 'recordingHeading', labels.recordMode), formatOptions);
+  toolBar.append(actionGroup);
+  const dock = node('div', 'selectionDock'); dock.append(toolBar, properties, recordingPanel);
   const hint = node('div', 'hint', labels.selectHint);
   const tooltip = node('div', 'tooltip'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip');
   const dimensions = node('div', 'dimensions');
@@ -119,13 +127,13 @@ export async function mountCaptureWindow(
   textInput.style.userSelect = 'text';
   let pendingText: CaptureAnnotation | null = null;
   let pendingTextIndex: number | null = null;
-  document.body.append(dock, hint, dimensions, magnifier, textInput, tooltip);
+  document.body.append(captureModes, dock, hint, dimensions, magnifier, textInput, tooltip);
   if (config.recordingHint) document.body.append(node('div', 'recordingNotice', config.recordingHint));
   const sourceGrid = node('div', 'sourceGrid'); document.body.append(sourceGrid);
   const buttons: Record<string, HTMLButtonElement> = {};
   const button = (parent: HTMLElement, key: string, title: string, action: () => void) => {
     const b = node('button'); b.dataset.action = key; b.onclick = action;
-    buttonVisual(b, key === 'confirm' && captureMode === 'record' ? 'record' : key, title, ['screen', 'window', 'region', 'confirm'].includes(key));
+    buttonVisual(b, key === 'confirm' && captureMode === 'record' ? null : key, title, ['screen', 'window', 'region', 'confirm'].includes(key));
     buttons[key] = b; parent.append(b); return b;
   };
   function hideTooltip() { tooltip.hidden = true; }
@@ -245,6 +253,9 @@ export async function mountCaptureWindow(
     const area = previewPresentation ? { x: 0, y: 0, width: innerWidth, height: innerHeight }
       : { ...workArea, x: workArea.x - (display?.x ?? 0), y: workArea.y - (display?.y ?? 0) };
     dock.style.maxWidth = `${Math.max(1, area.width - 24)}px`;
+    captureModes.style.maxWidth = `${Math.max(1, area.width - 24)}px`;
+    captureModes.style.left = `${area.x + area.width / 2}px`;
+    captureModes.style.top = `${area.y + 12}px`;
     const position = placeToolbar(selected, area, { width: dock.offsetWidth, height: dock.offsetHeight });
     dock.style.left = `${position.x}px`; dock.style.top = `${position.y}px`;
     // Hide while drawing so the controls cannot intercept the pointer or obscure
@@ -314,12 +325,16 @@ export async function mountCaptureWindow(
     }
     dimensions.hidden = !crop && !hover;
     toolBar.hidden = !crop || captureMode === 'record';
+    recordingPanel.hidden = captureMode !== 'record';
+    dock.hidden = !crop && captureMode === 'still';
+    dock.classList.toggle('recordingDock', captureMode === 'record');
+    const actionParent = captureMode === 'record' ? recordingPanel : toolBar;
+    if (actionGroup.parentElement !== actionParent) actionParent.insertBefore(actionGroup, captureMode === 'record' ? formatOptions : null);
     buttons.confirm.disabled = !crop || crop.width < 1 || crop.height < 1 || busy || Boolean(drag || cropDrag || annotationDrag || active);
     buttons.undo.disabled = !history.canUndo(); buttons.redo.disabled = !history.canRedo();
     buttons.deleteAnnotation.disabled = selectedIndex === null;
     const styleTool = pendingText?.tool ?? selected?.tool ?? (tool === 'select' ? null : tool);
     properties.hidden = !crop || captureMode === 'record' || !styleTool;
-    dockHint.hidden = !crop || captureMode === 'record';
     if (styleTool && styleCaption.dataset.tool !== styleTool) {
       styleCaption.dataset.tool = styleTool;
       styleCaption.replaceChildren(makeIcon(styleTool), node('span', '', labels[styleTool]));
@@ -339,9 +354,13 @@ export async function mountCaptureWindow(
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
     }
-    for (const action of captureActions) {
-      const b = buttons[`mode-${action}`];
-      b.classList.toggle('selected', captureAction === action); b.setAttribute('aria-pressed', String(captureAction === action));
+    for (const [key, b] of Object.entries(buttons)) {
+      if (!key.startsWith('mode-') && !key.startsWith('format-')) continue;
+      const selected = key === 'mode-record' ? captureMode === 'record' : key === 'mode-screenshot' ? captureMode === 'still' : key === `format-${captureAction}`;
+      b.classList.toggle('selected', selected);
+      if (key.startsWith('format-')) { b.setAttribute('aria-checked', String(selected)); b.tabIndex = selected ? 0 : -1; }
+      else b.setAttribute('aria-pressed', String(selected));
+      b.disabled = busy || Boolean(drag || cropDrag || annotationDrag || active);
     }
     hint.textContent = sourceError || (crop ? labels.annotationHint : detecting() ? labels.windowSelectHint : labels.selectHint);
     placeDock();
@@ -423,20 +442,40 @@ export async function mountCaptureWindow(
   button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
   if (config.presentation === 'preview') buttons.window.hidden = true;
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
-  for (const action of captureActions) {
-    const label = action === 'screenshot' ? labels.screenshot : action === 'gif' ? labels.gifMode : labels.recordMode;
-    const b = button(captureModes, `mode-${action}`, label, () => {
-      if (busy) return;
-      finishText(); finishPropertyChange(); tool = null; selectedIndex = null;
-      captureAction = action; captureMode = action === 'screenshot' ? 'still' : 'record';
-      document.title = label;
-      buttonVisual(buttons.confirm, captureMode === 'record' ? 'record' : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, true);
-      draw();
-    });
-    buttonVisual(b, action === 'screenshot' ? 'camera' : action === 'gif' ? 'gif' : 'video', label, true);
-    b.title = action === 'screenshot' ? labels.screenshot : `${labels.record} · ${action.toUpperCase()}`;
+  function chooseAction(action: typeof captureAction) {
+    if (busy || drag || cropDrag || annotationDrag || active) return;
+    finishText(); finishPropertyChange(); tool = null; selectedIndex = null;
+    captureAction = action; captureMode = action === 'screenshot' ? 'still' : 'record';
+    if (action !== 'screenshot') recordingAction = action;
+    document.title = captureMode === 'still' ? labels.screenshot : labels.recordMode;
+    buttonVisual(buttons.confirm, captureMode === 'record' ? null : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, captureMode === 'record');
+    draw();
   }
-  captureModes.hidden = !captureActions.length;
+  if (captureActions.includes('screenshot')) {
+    const b = button(captureTabs, 'mode-screenshot', labels.screenshot, () => chooseAction('screenshot'));
+    buttonVisual(b, 'camera', labels.screenshot, true);
+  }
+  if (recordingActions.length) {
+    const b = button(captureTabs, 'mode-record', labels.recordMode, () => chooseAction(recordingAction));
+    buttonVisual(b, 'video', labels.recordMode, true);
+  }
+  captureTabs.hidden = !captureActions.length;
+  formatOptions.append(node('span', 'formatCaption', labels.format));
+  for (const action of recordingActions.length ? recordingActions : [recordingAction]) {
+    const b = button(formatOptions, `format-${action}`, action.toUpperCase(), () => chooseAction(action));
+    b.replaceChildren(node('span', 'radioMark'), node('span', '', action.toUpperCase()));
+    b.classList.remove('iconOnly'); b.setAttribute('role', 'radio');
+  }
+  formatOptions.onkeydown = (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const choices = [...formatOptions.querySelectorAll('button')].filter(b => !b.disabled);
+    if (!choices.length) return;
+    event.preventDefault(); event.stopPropagation();
+    const index = choices.findIndex(b => b === document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+      : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + choices.length) % choices.length;
+    choices[next].click(); choices[next].focus();
+  };
   button(actionGroup, 'cancel', labels.cancel, () => bridge.action('cancel'));
   async function confirm() {
     if (!crop || busy || drag || cropDrag || annotationDrag || active || crop.width < 1 || crop.height < 1) return;
@@ -448,7 +487,8 @@ export async function mountCaptureWindow(
     try { await bridge.finish({ crop, ...(captureActions.length ? { action: captureAction } : {}), ...(captureMode === 'still' ? { png: output.toDataURL('image/png') } : {}) }); }
     finally { busy = false; }
   }
-  button(actionGroup, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
+  const confirmButton = button(actionGroup, 'confirm', captureMode === 'record' ? labels.record : labels.confirm, () => { void confirm(); });
+  buttonVisual(confirmButton, captureMode === 'record' ? null : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, captureMode === 'record');
   buttons.confirm.classList.add('primary');
   button(toolGroup, 'select', labels.select, () => { finishText(); finishPropertyChange(); tool = 'select'; draw(); });
   for (const key of ['rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic'] as const) {

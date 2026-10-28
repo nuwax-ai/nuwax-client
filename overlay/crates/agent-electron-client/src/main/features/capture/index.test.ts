@@ -109,7 +109,7 @@ beforeEach(() => {
 afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
-  it('reveals a background shell only after successful capture and leaves canceled/business captures alone', async () => {
+  it('keeps confirmed still captures in the background and reveals recording previews', async () => {
     const parent = { isDestroyed: () => false, isVisible: () => false, isMinimized: () => true,
       restore: vi.fn(), show: vi.fn(), focus: vi.fn() };
     mocks.fromWebContents.mockReturnValue(parent);
@@ -121,6 +121,12 @@ describe('native capture entry point security', () => {
     expect(parent.show).not.toHaveBeenCalled();
     frame.resolve(still);
     await pending;
+    expect(parent.restore).not.toHaveBeenCalled();
+    expect(parent.show).not.toHaveBeenCalled();
+    expect(parent.focus).not.toHaveBeenCalled();
+    mocks.record.mockResolvedValueOnce({ data: Buffer.from('video'), mime: 'video/mp4', width: 1200, height: 800,
+      durationMs: 1000, qualityUsed: 'high', hdrToneMapped: false } satisfies RecordCapture);
+    expect(await invoke(CAPTURE_IPC.RECORD, business(), { output: 'mp4' })).toMatchObject({ success: true });
     expect(parent.restore).toHaveBeenCalledOnce();
     expect(parent.show).toHaveBeenCalledOnce();
     expect(parent.focus).toHaveBeenCalledOnce();
