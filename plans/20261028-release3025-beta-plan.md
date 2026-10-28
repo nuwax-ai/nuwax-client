@@ -1,6 +1,6 @@
 # 3.0.25 Beta 汇总
 
-状态：Beta.3 已于 2026-10-28 17:19（北京时间）公开发布，五平台及 29 个资产校验通过；用户再次要求开始新 Beta，正在准备 Beta.4。
+状态：Beta.4 已于 2026-10-28 19:53（北京时间）公开发布；用户要求先合并 Intel DMG 优化再启动新 Beta，正在准备 Beta.5。
 
 ## 范围
 
@@ -72,3 +72,12 @@
 - 走查：宿主和业务页交互入口由 `overlay/crates/agent-electron-client/src/main/features/capture/index.ts:248` 共用参数校验与捕获实现，各自仍经 hostIpc / ipc 信任校验；preload 在 `overlay/crates/agent-electron-client/src/preload/features/capture.ts:62` 按桥身份选择独立通道，所有权、生命周期与清理沿用属主，不增加公开桥契约。真实 preload 串主进程的截图/MP4/GIF、越权拒绝、模式切换及无效输入有回归。无阻塞发现。
 - 当前冻结源码隔离商业轨 **303 文件 / 3732 项通过，18 跳过**；模块导入边界、`host-bridge:check`、`overlay:check`（0 待同步）、`check:pin`、`git diff --check` 均通过。基座 pin 未变，社区基线沿用 Beta.3 的 1682 项通过证据；tag 发布仍会重新运行完整 CI 门禁。
 - 新增 `release-notes/v3.0.25-beta.4.md`，执行标准 release dry-run 后创建不可变 Beta.4 tag。真实全局快捷键、物理多屏、系统剪贴板及安装包验收仍待修复包验证；不以源码回归替代实机验收。
+
+## Beta.5 合并与发布准备（2026-10-28）
+
+- 用户要求“继续打一个新的 beta”，并明确先合并 `codex/macos-dmg-packaging-20261028`。PR #82 已合入 `release/v3.0.25`，合并提交 `ab9c92cbcda7d285d053f543826fdb63f7eb8ffc`；本次 Beta.5 从该提交冻结，不遗漏 DMG 优化。
+- 本次包含共享公证后打包入口的 Intel APFS 优化和 hdiutil 分段计时，供 Beta 及后续 stable 共用。真实 Intel 私有验包 DMG 为 74.82s、DMG/ZIP 为 81.03s；实际产物 SHA256、只读挂载后的 APFS、Developer ID、Gatekeeper、公证票据、x64、包内版本与前端 stamp 均通过。证据见 `plans/20261028-macos-dmg-packaging-plan.md` 和 `/Users/apple/Documents/Codex/2026-10-28/macos-dmg-optimization/private-packages/verified-mac-x64.json`。
+- 发布线同时包含 `49bbec0a` 的私聊通知显示名称修复：优先使用当前 IM 通讯录名称，查询后复核会话和通知条件，保留群聊及旧协议回退。合并后隔离商业轨 **303 文件 / 3747 项通过，18 跳过**；新异步查询的账号切换、取消与名称回退均有回归覆盖。三问走查无阻塞发现。
+- 基座、前端与产物 pin 均不变；`check:pin`、`overlay:check`（0 待同步）、`host-bridge:check`、`git diff --check` 通过。正式 tag 会重新执行完整门禁，之后才进入五平台构建。
+- Intel DMG 优化的问题账本累计为 2/4（一次准备失败、一次私有签名验包成功）；本次用户要求的 Beta.5 作为 **3/4** 启动。后续相同问题的构建/重跑最多再 1 次，不换系列或版本绕过。
+- 发布说明为 `release-notes/v3.0.25-beta.5.md`；标准 dry-run 成功后启动同版本标准入口。此前 Beta 标签均保持原 SHA。真实安装体验、物理快捷键和系统剪贴板仍按 Beta 实机验收。
