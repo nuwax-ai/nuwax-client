@@ -577,6 +577,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
 
   ipcMain.handle("auth:getContext", (event) => {
+    // [AuthDebug] 登录链路诊断：入口可见性（被拒时原为静默 return null）
+    log.info("[AuthDebug] auth:getContext called", {
+      origin: resolveSenderOrigin(event),
+      trusted: isTrustedSender(event),
+    });
     if (!isTrustedSender(event)) return null;
     documents.set(documentKey(event), authGeneration);
     const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
@@ -595,6 +600,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
   ipcMain.handle("auth:beginLogin", async (event) => {
     const scope = resolveSenderOrigin(event);
+    // [AuthDebug] 登录链路诊断：beginLogin 入口可见性
+    log.info("[AuthDebug] auth:beginLogin called", {
+      origin: scope,
+      trusted: isTrustedSender(event),
+    });
     if (!isTrustedSender(event)) return false;
     authClearHandled = false;
     authGeneration++;
@@ -617,6 +627,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // the cookie already stored by Chromium, including direct-mode renewals.
   ipcMain.handle("auth:syncSession", async (event) => {
     const scope = resolveSenderOrigin(event);
+    // [AuthDebug] 登录链路诊断：syncSession 入口可见性
+    log.info("[AuthDebug] auth:syncSession called", {
+      origin: scope,
+      trusted: isTrustedSender(event),
+    });
     if (!isTrustedSender(event)) return false;
     const key = documentKey(event);
     documents.set(key, authGeneration);
@@ -635,10 +650,22 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (generation !== authGeneration || businessOrigin !== currentBusinessOrigin()) return false;
     }
     if (!captured || generation !== authGeneration || !isCurrentDocument(event)) {
+      // [AuthDebug] 登录链路诊断：12 次重试后仍未捕获（区分无 cookie / 代次变化）
+      log.info("[AuthDebug] syncSession: ticket NOT captured", {
+        captured,
+        generationAlive: generation === authGeneration,
+        currentDocument: isCurrentDocument(event),
+        origin: businessOrigin,
+        source,
+      });
       if (!captured && generation === authGeneration)
         emitRegistrationTrace({ stage: "sync-session-no-cookie", origin: businessOrigin });
       return false;
     }
+    log.info("[AuthDebug] syncSession: ticket captured", {
+      origin: businessOrigin,
+      source,
+    });
     let ticket = currentTicket();
     if (!ticket) return false;
     const requestEpoch = ticketEpoch();
