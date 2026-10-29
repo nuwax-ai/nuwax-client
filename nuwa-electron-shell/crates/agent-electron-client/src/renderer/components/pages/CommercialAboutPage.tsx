@@ -1,9 +1,6 @@
 import { I18N_KEYS } from "@shared/constants";
 /**
- * 商业版「关于」页：在基座 `AboutPage` 之后追加「开源组件声明」一行（点击打开声明弹窗）。
- *
- * 为什么是组合而不是覆写：基座 `AboutPage.tsx` 有 790 行且由基座仓维护，整文件覆写会制造
- * 升级冲突面。这里只包一层、不改基座行为；`App.tsx` 里把 import 指向本文件即可。
+ * 在 AboutPage 之后追加「开源组件声明」入口，复用既有版本与更新展示。
  * 声明数据来自安装包内由工具生成的清单（见 features/open-source-notices）。
  */
 

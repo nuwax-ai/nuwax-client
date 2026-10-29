@@ -95,7 +95,7 @@ const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js'];
 
 export async function committedSigningTools(tools, root, automationSha) {
   const pin = await tools.git(['rev-parse', `${automationSha}:nuwa-electron-shell`]);
-  if (!shaPattern.test(pin)) throw new Error('签名工具基座 pin 无效');
+  if (!shaPattern.test(pin)) throw new Error('签名工具目录 tree 无效');
   const files = {};
   for (const name of signingFiles) {
     files[name] = await tools.git(['show', `${automationSha}:nuwa-electron-shell/crates/agent-electron-client/scripts/build/${name}`], root);
@@ -131,7 +131,7 @@ fi
 test "$(sha256sum "$unsigned" | awk '{print $1}')" = "$expected" || { echo 'unsigned EXE 与 CI 清单 SHA256 不一致' >&2; exit 1; }
 toolwork="$(mktemp -d "$signwork/.tools-XXXXXX")"
 ${payload}
-echo ${quote(`[release] signing tools base ${signing.pin}; target ${tag} @ ${sha}`)}
+echo ${quote(`[release] signing tools source tree ${signing.pin}; target ${tag} @ ${sha}`)}
 cd "$toolwork"
 SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true bash "$toolwork/sign-release-win-v2.sh" ${quote(version)} --skip-download
 `;

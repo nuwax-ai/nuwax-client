@@ -22,4 +22,4 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: 规则层 evals（引擎 hooks 行为断言）
         run: node scripts/sdlc-evals.mjs --dir .
-      # 本仓业务测试自行追加 job（测试命令见 .sdlc.json：npm run base:test）
+      # 本仓业务测试自行追加 job（测试命令见 .sdlc.json：npm run test:commercial）

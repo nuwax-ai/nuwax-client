@@ -1,10 +1,6 @@
-# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
-# 外层仓测试 CI：商业门禁
-#
-# 壳（nuwa-electron-shell/）已并入本仓直接维护，不再有 overlay 同步与社区基线轨，
-# 只保留 commercial = test:commercial 口径（in-base：商业依赖准备，不注入 env）。
-# vitest 排除项沿用原基座 CI（sandbox-integration 的 linux-bwrap 需真实 bwrap 环境，
-# ubuntu runner 不可用；两文件平台不符时自跳过）。
+# 当前仓库的客户端、前端和工具链门禁；发布与续跑规范见 docs/release-channels.md。
+# 壳源码直接位于 nuwa-electron-shell/。run-shell.cjs 仅负责工作目录、依赖与身份环境，
+# 商业测试不注入构建身份；需真实沙箱环境的集成用例不纳入通用 runner。
 name: CI (gates)
 
 # main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
@@ -132,14 +128,14 @@ jobs:
 
       - name: Build agent-kit (before install)
         run: |
-          node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit install --ignore-workspace --prefer-offline
-          node scripts/in-base.js --no-inject -- pnpm -C crates/agent-kit run build
+          node scripts/run-shell.cjs --no-inject -- pnpm -C crates/agent-kit install --ignore-workspace --prefer-offline
+          node scripts/run-shell.cjs --no-inject -- pnpm -C crates/agent-kit run build
 
       - name: Install workspace dependencies
-        run: node scripts/in-base.js --no-inject -- pnpm install --filter @nuwax-ai/nuwaclaw...
+        run: node scripts/run-shell.cjs --no-inject -- pnpm install --filter @nuwax-ai/nuwaclaw...
 
       - name: Prepare test resources (mcp-proxy)
-        run: node scripts/in-base.js --no-inject -- bash -c "cd crates/agent-electron-client && npm run prepare:mcp-proxy"
+        run: node scripts/run-shell.cjs --no-inject -- bash -c "cd crates/agent-electron-client && npm run prepare:mcp-proxy"
 
       - name: Guard scripts self-test
         run: npm run test:scripts
@@ -149,11 +145,11 @@ jobs:
 
       - name: Check Electron source boundaries and app directory literals
         run: |
-          node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:boundaries"
-          node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npm run check:appdir"
+          node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npm run check:boundaries"
+          node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npm run check:appdir"
 
       - name: Run commercial tests
-        run: node scripts/in-base.js --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
+        run: node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
 
   # 前端门禁快路径：门禁结论只由 nuwax pin + 本 workflow 决定。对照提交（push 前一
   # 尖端 / PR base）的 pin 与 ci.yml 均未变、且其 CI (gates) 已全绿时，下游

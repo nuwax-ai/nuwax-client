@@ -77,7 +77,7 @@
 - 迁移原有 CUA 测试（computerUse/mcpGateway/sessionAuthority/taskController/vlmDiagnostics/windowScope/runtime handlers/CuaControls）到新目录，mock 由 `vi.mock(db)` 改为注入宿主端口；断言不删减。
 - 新增：_kit 生命周期 v2、activities、registry（lockedOff、bridge 归属、requests 与注册无关、agentServers 残留清理、惰性参与者、settle 幂等）、宿主 MCP 端口实现、托盘渲染顺序、canUse 主进程/preload 探测下沉的回归。
 - 改：commercialAuth、acpEngine.cua、businessRequestRouting、sessionAuthInjection、nuwaxBridgeHandlers 相关测试按新入口调整。
-- 门禁：`npm run test:commercial`、隔离副本 `npm run base:test`、`node --test scripts/*.test.mjs`（含边界 R5）、`npm run check:pin`、`npm run overlay:check`、`npm run host-bridge:check`、商业 main/preload esbuild 构建。真实安装包与真机 Computer Use 验收另列，不以单测替代。
+- 门禁：`npm run test:commercial`、`npm run test:scripts`（含边界 R5）、`npm run host-bridge:check`、客户端 main/preload 构建。真实安装包与真机 Computer Use 验收另列，不以单测替代。
 
 ## 已否决的备选方案
 

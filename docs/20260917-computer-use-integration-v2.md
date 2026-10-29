@@ -1,5 +1,7 @@
 # 基于 Cua（cua-driver）集成 Computer-Use 能力——调研与集成方案 v2（壳仓实证修订版）
 
+> 历史记录：本文保留迁移前的设计或验证事实，其中旧基座/覆写层命令不适用于当前工作树。当前入口见 [npm 脚本参考](./npm-scripts.md)与[工程边界](./architecture.md)。
+
 - 记录日期：2026-09-17。**本文替代 v1**（`~/Downloads/20260916-cua-computer-use-integration.md`）：v1 撰写时壳 submodule 未检出，7 处标【待核对】；v2 在独立 worktree（`feat/computer-use-research`，基点 release/v1.0.x @ d4ab22b3）完成壳源码三路探查 + 本机 PoC 实证，全部【待核对】已落定为文件级锚点。
 - 调研方式：①壳基座源码全量探查（服务编排 / MCP·审批·模型设施 / 打包签名管线三路并行）；②cua 仓恢复检出 @ `625118a90`（v1 依据的本地检出已被移除，本次重新 clone 并核对契约文档与 TS typings）；③本机 PoC：进程内 SDK「截图→元素树→点击」闭环 + VLM 六轮任务循环，**全部通过**（证据见附录 A）。
 - 路径约定：**基座** = `nuwa-electron-shell/crates/agent-electron-client`（下文 `src/...` 均相对于此）；**外层** = nuwax-client 本仓；**前端** = nuwax 子模块（nuwax-ai/nuwax）。

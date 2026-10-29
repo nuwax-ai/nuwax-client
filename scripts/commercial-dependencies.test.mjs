@@ -19,8 +19,8 @@ function fixture(t) {
   write(path.join(root, 'pnpm-lock.yaml'), 'commercial-lock');
   const baseManifest = path.join(root, 'nuwa-electron-shell/package.json');
   const baseLock = path.join(root, 'nuwa-electron-shell/pnpm-lock.yaml');
-  write(baseManifest, 'community-manifest');
-  write(baseLock, 'community-lock');
+  write(baseManifest, 'shell-manifest');
+  write(baseLock, 'shell-lock');
   const calls = [];
   const tools = { ...core, pnpmRun(dir, args, options) {
     calls.push({ dir, args, options });
@@ -32,7 +32,7 @@ function fixture(t) {
   return { root, tools, calls, baseManifest, baseLock };
 }
 
-test('commercial install uses its own frozen lock and leaves neutral base manifests untouched', async (t) => {
+test('root install uses its own frozen lock and leaves shell manifests untouched', async (t) => {
   const f = fixture(t);
   await ensureCommercialDependencies(f.root, f.tools);
   assert.equal(f.calls.length, 1);
@@ -41,8 +41,8 @@ test('commercial install uses its own frozen lock and leaves neutral base manife
   assert.ok(f.calls[0].args.includes('--prod=false'));
   await ensureCommercialDependencies(f.root, f.tools);
   assert.equal(f.calls.length, 1, 'warm commercial entry performs no install');
-  assert.equal(fs.readFileSync(f.baseManifest, 'utf8'), 'community-manifest');
-  assert.equal(fs.readFileSync(f.baseLock, 'utf8'), 'community-lock');
+  assert.equal(fs.readFileSync(f.baseManifest, 'utf8'), 'shell-manifest');
+  assert.equal(fs.readFileSync(f.baseLock, 'utf8'), 'shell-lock');
 });
 
 test('changed lock or missing type entry invalidates commercial dependency cache', async (t) => {
@@ -64,19 +64,22 @@ test('failed commercial installation is never cached and releases its preparatio
   assert.equal(fs.existsSync(path.join(cache, 'commercial-dependencies.lock')), false);
 });
 
-test('community wrapper skips commercial dependency preparation; commercial test entry prepares it', (t) => {
+test('shell wrapper skips preparation only when requested; commercial test entry prepares dependencies', (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.root, 'scripts'), { recursive: true });
-  fs.copyFileSync(new URL('./in-base.js', import.meta.url), path.join(f.root, 'scripts/in-base.js'));
-  write(path.join(f.root, 'scripts/sync-overlay.js'), 'process.exitCode = 0;');
+  fs.copyFileSync(new URL('./run-shell.cjs', import.meta.url), path.join(f.root, 'scripts/run-shell.cjs'));
   const marker = path.join(f.root, 'commercial-prepared');
   write(path.join(f.root, 'scripts/client/commercial-dependencies.mjs'),
     `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, 'prepared');`);
-  const run = flag => spawnSync(process.execPath, [path.join(f.root, 'scripts/in-base.js'), flag, '--', process.execPath, '-e', ''], { encoding: 'utf8' });
-  const community = run('--no-inject');
-  assert.equal(community.status, 0, community.stderr);
+  const run = flag => spawnSync(process.execPath, [path.join(f.root, 'scripts/run-shell.cjs'), flag, '--', process.execPath, '-e',
+    'console.log(JSON.stringify({cwd: process.cwd(), identity: process.env.NUWAX_APP_IDENTIFIER}))'],
+    { encoding: 'utf8', env: { ...process.env, NUWAX_APP_IDENTIFIER: 'fixture-host' } });
+  const unprepared = run('--no-inject');
+  assert.equal(unprepared.status, 0, unprepared.stderr);
+  assert.deepEqual(JSON.parse(unprepared.stdout), { cwd: fs.realpathSync(path.join(f.root, 'nuwa-electron-shell')), identity: 'fixture-host' });
   assert.equal(fs.existsSync(marker), false);
   const commercial = run('--no-env');
   assert.equal(commercial.status, 0, commercial.stderr);
+  assert.deepEqual(JSON.parse(commercial.stdout), { cwd: fs.realpathSync(path.join(f.root, 'nuwa-electron-shell')), identity: 'fixture-host' });
   assert.equal(fs.existsSync(marker), true);
 });

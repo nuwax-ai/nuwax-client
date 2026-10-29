@@ -145,7 +145,7 @@ async function runParallel(scripts) {
     if (critical.length > 0 && process.platform === 'win32') {
       console.error(
         '[prepare-all] prepare:git failed on Windows: bundled Git Bash is required for dev/build. ' +
-          'Fix the error above, then re-run make electron-dev.'
+          'Fix the error above, then re-run npm run setup from the nuwax-client repository root.'
       );
     }
   }
@@ -174,7 +174,7 @@ async function main() {
     if (r1.name === 'prepare:git') {
       console.error(
         '[prepare-all] prepare:git failed: bundled Git Bash is required on Windows. ' +
-          'Fix the error above, then re-run make electron-dev.',
+          'Fix the error above, then re-run npm run setup from the nuwax-client repository root.',
       );
     }
     process.exit(1);

@@ -1,29 +1,11 @@
-# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
-# Nuwax 商业版 — Electron 客户端发布（薄壳编排）
-#
-# 本仓 = 商业产品壳：业务与构建系统在 nuwa-electron-shell/ submodule（基座仓
-# nuwax-ai/nuwa-electron-shell 的 main 分支；2026-09-09 三层架构定型：
-# 基座承载功能模块，产品壳注入身份并发布）。
-# 构建/签名/上传逻辑与社区版 release-electron.yml 同构，差异集中在本文件头注：
-#   1. checkout 用 submodules: true（非 recursive）：以 github.token 拉 submodule
-#      （基座仓公开）；显式两层 init 见 Init submodules 步骤
-#   2. nuwax 源码与 nuwax-dist 产物使用发布 tag 的双 gitlink；正式包消费
-#      已锁定的前端产物，校验版本戳与源码 pin，避免五平台重复构建。
-#   3. 所有 crates/ 路径前缀 nuwa-electron-shell/crates/；pnpm workspace 根在 nuwa-electron-shell/
-#   4. 「Set version & commercial branding」步骤覆盖 appId/productName（npm pkg），
-#      并删除 extendInfo.CFBundleIdentifier 旧覆盖使 macOS bundle id 与 appId 统一
-#   5. 构建注入商业 env：NUWAX_APP_IDENTIFIER=nuwax（→ ~/.nuwax；历史目录迁移链
-#      已被 overlay 覆写 migrate.ts 阻断，全新开始）、NUWAX_APP_DISPLAY_NAME、
-#      NUWAX_UPDATE_FEED_BASE（独立更新通道 nuwax-electron）、NUWAX_DOWNLOAD_PAGE_URL
-#      （不支持自动更新的安装形态引导页）、NUWAX_PORT_OFFSET=1000
-#      （端口整体 +1000，与社区版/nuwa-cli 同机错开）
-#   6. 商业版不准备或打包旧沙箱资源，保留基座社区版自身流程。
-#
-# Secrets（与社区版同值，共用证书）：
-#   GH_PAT（可选）；APPLE_TEAM_ID / APPLE_SIGNING_IDENTITY / APPLE_CERTIFICATE /
-#   APPLE_CERTIFICATE_PASSWORD / APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_ISSUER_ID；
-#   S3/OSS 凭据仅供独立的 sync-electron-to-oss.yml 使用
-# Windows 签名不在 CI：本地 SimplySign 手签，见 docs/sign-windows.md
+# Nuwax Stable 发布：客户端源码、壳与构建脚本均固定在本仓 tag。
+# nuwax/ 与 nuwax-dist/ 是前端双 pin；stable 校验并消费固定的前端产物。
+# 入口：npm run release -- --version X.Y.Z（先 --dry-run）。
+# 五平台构建后保留 Draft；macOS 在 CI 签名、公证，Windows 由发布状态机交给 win-pc 签名。
+# 安装包验收后显式 --stage sync，核验来源、签名与镜像，再推进更新指针。
+# 产品身份、数据目录及 nuwax-electron 通道由本仓配置注入，运行端口由主进程自动分配。
+# 壳 workspace 位于 nuwa-electron-shell/，无需其他壳仓库检出或同步。
+# 凭据来自发布环境；具体变量与阶段规则见 docs/sign-windows.md、docs/release-channels.md。
 
 name: Release Electron App (Nuwax)
 

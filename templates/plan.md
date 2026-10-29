@@ -21,7 +21,7 @@ SDLC Stage 3 · Build 工件模板
 ## 证明成立的测试
 
 - 新增测试：（失败测试先行的，先提交测试再修码）
-- 回归范围：npm run base:test
+- 回归范围：npm run test:commercial
 
 ## 风险与回退
 

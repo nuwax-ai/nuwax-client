@@ -1,6 +1,6 @@
 # Nuwax 商业版打包与发布流程
 
-> 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。v3.0.10 由 `v3.0.10` tag push 触发 GitHub Actions；stable 消费锁定的 `nuwax-dist` pin，beta 仍从源码 pin 构建。stable 构建后保持 Draft，完成 Windows 签名与安装验收，再显式同步公开。下文的 v3.0.2–v3.0.6 耗时和执行口径为历史记录。
+> 当前版本号、通道与续跑入口见 [发布与更新通道](./release-channels.md)。客户端、壳与构建脚本固定在本仓 tag；stable 消费锁定的 `nuwax-dist`，beta 从源码 pin 构建一次共享前端。stable 完成签名与安装验收后显式同步。下文带版本和日期的耗时、问题及改进清单属于历史记录，不作为当前待办。
 
 Windows Actions 使用 runner 临时目录下的短输出目录，避免 beta 完整版本加深 WiX 输入路径。统一配置脚本只改变 builder 输出位置，来源清单与上传共用同一变量；安装包资源、完整版本与签名规则保留，归档方式由共用 installer archive policy 决定。v3.0.11-beta.3 的 [Windows 失败日志](https://github.com/nuwax-ai/nuwax-client/actions/runs/37752266150/job/113231822050) 中路径长 260 字符，短目录下同一文件为 190 字符，符合 [Windows 传统路径限制](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation) 的故障特征。v3.0.11-beta.4 的 Windows MSI/NSIS 构建、来源记录和上传已成功，五平台与 S3/OSS 同步实测见 [验收记录](./acceptance/20261008-release-channels.md)。
 
@@ -36,7 +36,7 @@ NSIS 会向应用副本加入 `elevate.exe`，因此并行进程不能共用同�
 2. **裁剪包内资源。** 当前本地准备的 Electron `resources/` 约 1.7 GB，其中 `claude-code-acp-ts/node_modules` 约 382 MB、`nuwax-codex-acp-ts/vendor` 约 271 MB、`nuwax-file-server/node_modules` 约 132 MB；这些不是最终安装包的精确大小，但值得逐项核对运行必需文件、平台/架构文件和开发依赖。裁剪后运行对应功能的安装包验收。
 3. **前端只构建一次。** 正式版已改为让锁定的 `nuwax-dist` 作为五平台共同输入：逐平台校验产物 gitlink、工作树纯净和源码版本戳后复制到待打包目录，省去五次 `pnpm install + build:prod`。预期缩短每个平台约 5–8 分钟并减少 CI 总算力；总时长仍由 macOS ZIP 决定。beta 暂保持源码构建，后续统一。
 4. **缓存确定性构件。** 按源码 SHA、工具链版本、平台和架构缓存 Computer Use helper、agent-kit 与可复用资源；命中后仍核对产物 SHA 和 ABI。不要缓存最终安装包，也不要用无校验缓存掩盖缺失资源（v3.0.2 Windows 首轮故障属于此类准备缺口）。
-5. **避免无效重打包。** 在昂贵的五平台矩阵前完成前端/双轨测试、路由冒烟及产物 pin 检查。打包失败时只重跑失败平台，继续使用相同 tag/SHA；绝不为了提速跳过签名、公证和安装包验收。
+5. **避免无效重打包。** 在昂贵的五平台矩阵前完成前端/商业测试、路由冒烟及产物 pin 检查。打包失败时只重跑失败平台，继续使用相同 tag/SHA；绝不为了提速跳过签名、公证和安装包验收。
 
 ## v3.0.6 候选实测（2026-09-30）
 
@@ -60,8 +60,8 @@ v3.0.5 由用户取消，因此完整发布耗时用成功的 v3.0.3 作对照�
 
 | 阶段 | 动作 | 必须留存的证据 |
 | --- | --- | --- |
-| 1. 锁定输入 | 在隔离工作树更新并提交壳、前端源码与前端产物 pin；提交 overlay 修复和发布说明；推送发布分支 | 外层 commit、三个 gitlink、前端产物的完整源码 SHA 与内容 SHA256 |
-| 2. 预检 | 检查远端 pin 可达、工作树无非托管改动、overlay 与基座同步、前端产物来源一致 | `check:pin`、`overlay:check`、双轨测试、前端测试与架构检查 |
+| 1. 锁定输入 | 提交本仓客户端/壳源码、前端源码与产物双 pin、发布说明；推送发布分支 | 本仓 commit、壳目录 tree、前端双 gitlink、前端产物内容 SHA256 |
+| 2. 预检 | 检查前端 pin 远端可达、工作树无未提交改动、产物戳与来源一致 | 商业测试、工具链测试、前端测试、host bridge 与架构边界检查 |
 | 3. 候选构建 | 以不可变 tag 构建五平台安装包，仅上传 Draft Release | 每个平台的源码、前端载荷与安装包哈希清单；签名/公证结果 |
 | 4. 安装包验收 | 从 Draft 下载**本次 CI 产物**安装到隔离环境；登录测试账号，打开首页、资料库、女娲智联，并分别刷新或重启后直达；检查 Network/Console 无错误的 chunk 与资源 MIME；验证更新路径 | 平台、安装包 SHA256、测试账号环境、页面结果、失败日志/截图；至少 macOS 与 Windows 必过，Linux 在支持的桌面环境检查 |
 | 5. 签名与提升 | Windows 对 Draft 的 unsigned 安装包签名，核对签名前后来源；验收报告通过后单独触发 stable 同步 | 签名证书/PE 校验、签名安装包哈希、验收报告、GitHub/S3/OSS 镜像哈希与 `latest.json` |
@@ -72,7 +72,9 @@ v3.0.5 由用户取消，因此完整发布耗时用成功的 v3.0.3 作对照�
 
 现有 CI 已由 tag 启动，仍按源码 pin 重建前端。保留此来源并核对五平台清单，不在构建中途切换前端载荷。CI 成功后使用 `npm run release -- --channel stable --version 3.0.5 --stage sign` 处理 Windows 签名。先验收 CI 的真实安装包，确认 `/repo` 和 `/instant-message` 点击、刷新及重启直达都正常，再用 `--stage sync` 同步 stable。未验收通过前保持 Draft，不更新通道指针。
 
-## 下一版要落实到脚本和 CI 的改动
+## 历史改进清单（v3.0.5 时期）
+
+本节记录当时的后续设想，不作为当前待办；当前执行入口与阶段以 [发布规范](./release-channels.md) 为准。
 
 1. 已将 `nuwax-dist` pin 设为正式包的唯一前端载荷；下一步让产物仓额外写入完整前端源码 SHA 和内容 SHA256，发布预检及每个平台在打包前校验它们，并让 beta 共用相同机制。
 2. 增加真实 Electron/loopback 的路由冒烟测试：主文档 `/repo`、`/instant-message` 返回 SPA HTML，同一路径下加载的动态 JS/CSS 返回对应资源，后端 iframe/API 仍走代理。该测试应使用最终待打包前端目录运行；不可仅模拟 `Content-Type` 而忽略实际响应体。

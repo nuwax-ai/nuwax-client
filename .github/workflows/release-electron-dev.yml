@@ -1,36 +1,11 @@
-# 版本、触发路由与续跑规范：docs/release-channels.md；脚本入口：docs/npm-scripts.md。
-# Nuwax 商业版 — beta 预发布（v*-beta.* 触发，构建成功后公开 Release）
-# 商业产品壳（基座仓 nuwax-ai/nuwa-electron-shell main 分支承载业务）：
-# 路径前缀 nuwa-electron-shell/、checkout 后以 github.token 拉基座 submodule、pnpm 显式版本、
-# 旧沙箱资源排除。通道 nuwax-electron/；品牌/端口注入与 release-electron.yml 一致。
-
-# Electron 桌面客户端 — 预发布版本构建
-# 通过 v*-beta.* tag 触发，构建全平台安装包并创建 GitHub Draft Release，
-# 五个平台均构建成功后调用同步 workflow 校验来源/哈希，发布 beta 指针及公开 prerelease。
-# 构建验证使用独立的 package-validation.yml，不从发布入口发起。
-#
-# 触发方式（手动，无 nuwaxcode 自动联动）：
-#   1. 确认 nuwaxcode GitHub Release 已就绪（当前 v1.17.11）
-#   2. 准备 release-notes/v{x.y.z}-beta.1.md
-#   3. git tag v{x.y.z}-beta.1 && git push origin v{x.y.z}-beta.1
-#   → 源码门禁 → 五平台构建 → 自动校验同步 beta 指针 → 公开 prerelease
-#
-# 支持平台：
-#   - macOS arm64（macos-latest）
-#   - macOS x64（macos-26-intel，录屏资源原生构建）
-#   - Windows x64（NSIS EXE + MSI；beta 使用 CI 原产未签名 EXE）
-#   - Linux x64（AppImage + deb）
-#   - Linux arm64（AppImage + deb）
-#
-# 使用的 Secrets（可与 Tauri 共用 Apple 相关，也可单独配置）：
-#   - GH_PAT（可选）：创建 Release、上传资产（未配置时自动回退到 github.token，需 Contents: Write）
-#   - macOS 签名/公证（未配置时 Mac 构建无法通过发布门禁）：
-#     - APPLE_TEAM_ID / APPLE_SIGNING_IDENTITY / APPLE_CERTIFICATE（.p12 Base64）/ APPLE_CERTIFICATE_PASSWORD
-#     - 公证：APPLE_API_KEY（.p8 Base64）/ APPLE_API_KEY_ID / APPLE_ISSUER_ID
-#   - Windows：beta 不签名；stable 在正式版流程中使用 SimplySign 签名
-#   - S3/OSS 凭据供复用的 sync-electron-to-oss.yml 使用
-#
-# 产物目录：nuwa-electron-shell/crates/agent-electron-client/release/${version}/（由 package.json directories.output 决定）
+# Nuwax Beta 发布：源码、壳和构建脚本全部来自本仓固定 tag。
+# 前端从 nuwax/ 固定源码 pin 构建一次共享产物，供五平台使用。
+# 入口：npm run release -- --version X.Y.Z-beta.N（先 --dry-run）。
+# 五平台成功后核验来源与哈希、同步 S3/OSS、推进 Beta 指针并公开 prerelease。
+# 构建验证使用 package-validation.yml；macOS 完整签名/公证，Windows Beta 保持 unsigned。
+# 产品身份与 nuwax-electron 通道由本仓配置注入；凭据来自发布环境。
+# 产物目录：nuwa-electron-shell/crates/agent-electron-client/release/<version>/。
+# 完整准入、续跑和签名说明：docs/release-channels.md、docs/sign-windows.md。
 
 name: Release Electron App (Prerelease, Nuwax)
 

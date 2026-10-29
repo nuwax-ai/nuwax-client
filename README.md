@@ -70,7 +70,7 @@
 ## 数据与隔离
 
 - 数据目录 `~/.nuwax`（配置、凭据、本地服务数据）；默认工作空间 `~/Nuwax`（Agent 工作目录）。卸载不主动删除用户数据。
-- 与开源社区版 **NuwaClaw** 同源基座、同机可双开互不干扰：
+- 与开源社区版 **NuwaClaw** 保留历史同源关系，当前客户端独立维护，同机可双开互不干扰：
 
 | 维度 | 社区版 NuwaClaw | Nuwax（本产品） |
 |---|---|---|
@@ -111,11 +111,11 @@
 
 ### 仓库结构
 
-功能模块在 `nuwa-electron-shell/`（原基座仓 [nuwa-electron-shell](https://github.com/nuwax-ai/nuwa-electron-shell) 的快照，已并入本仓直接维护，不再是 submodule、不再回流上游），本仓注入商业身份并编排开发、构建和发布。前端源码与客户端资源分别固定版本：
+客户端功能模块与构建实现位于本仓 `nuwa-electron-shell/`，代码、测试、评审和发布统一维护。仅前端源码与产物使用子模块；当前工程边界见 [docs/architecture.md](./docs/architecture.md)。
 
 ```
 nuwax-client/（main = 商业产品壳）
-├── nuwa-electron-shell/   # 壳：功能模块与构建系统，直接在本仓维护（上游快照 d12d001a）
+├── nuwa-electron-shell/   # 壳：功能模块与构建系统，直接在本仓维护
 ├── nuwax/                 # submodule → nuwax 前端；发布时从 tag 内 gitlink 源码重建 dist
 ├── nuwax-dist/            # submodule → public 产物仓 main；本地开发/打包默认消费
 ├── scripts/client/        # 跨平台统一 CLI：自动准备、前端构建、开发、打包、更新、发布和诊断
@@ -125,7 +125,7 @@ nuwax-client/（main = 商业产品壳）
 └── package.json
 ```
 
-商业开发线 = 本仓 main。壳与社区版 NuwaClaw 已分叉，不再同步上游；商业身份仍由 4 个构建期注入 env（`NUWAX_APP_IDENTIFIER/DISPLAY_NAME/UPDATE_FEED_BASE/PORT_OFFSET`，机制在 `constants.ts`）+ 商业前端 pin 决定。原 `overlay/` 覆写层已合并进 `nuwa-electron-shell/`。
+本仓 main 是集成主干，当前版本线为 `release/v3.1.0`。壳源码与工具链同仓修改；商业身份由 `client.config.mjs` 和构建入口注入。旧仓快照和产品沿革保留在 Git 历史及第三方归属记录中。
 
 ### 一键开发、前端构建与本地打包
 
@@ -154,17 +154,17 @@ npm run pack -- --frontend source
 | `npm run release -- --version X.Y.Z[-beta.N]` | 完整版本推导通道；stable 默认停在签名/Draft，验收后 `--stage sync`；beta 五平台成功后自动同步公开。`--channel` 仅校验一致性，`--tag` 续跑已存在的历史发布 |
 | `npm run doctor -- --json` | 只读报告环境、依赖、资源和 pin 就绪状态 |
 
-两层 `package.json` 的完整脚本参考（含基座签名 / 打包 / prepare 族）见 [docs/npm-scripts.md](./docs/npm-scripts.md)。
+两层 `package.json` 的完整脚本参考（含客户端签名 / 打包 / prepare 族）见 [docs/npm-scripts.md](./docs/npm-scripts.md)。
 
 `client.config.mjs` 集中定义商业身份、前端模式与端口、前端构建/热更新的 Node 内存参数，以及打包输出目录和是否只生成解包应用。默认前端模式为 `dist`，构建/热更新分别使用 4096/8192 MB 堆内存，完整安装包输出到 `release/<version>/`；已有 `NODE_OPTIONS` 环境变量会原样优先使用，命令行参数可覆盖模式与打包选项。
 
-缓存位于 `.cache/client-toolchain/`，按锁文件、包管理器、agent-kit 内容、Electron ABI、平台及架构失效。再次开发会复用有效依赖、原生模块和运行资源，保留 Vite 缓存。`dev`、`pack`、`frontend:build` 支持 `--dry-run`；`dev`、`pack` 支持 `--refresh-resources`，显式刷新源码型资源来源。工具链在自有缓存中构建这些资源，保留基座 `sources/` 中的开发改动。
+缓存位于 `.cache/client-toolchain/`，按锁文件、包管理器、agent-kit 内容、Electron ABI、平台及架构失效。再次开发会复用有效依赖、原生模块和运行资源，保留 Vite 缓存。`dev`、`pack`、`frontend:build` 支持 `--dry-run`；`dev`、`pack` 支持 `--refresh-resources`，显式刷新源码型资源来源。工具链在自有缓存中构建这些资源，保留壳目录 `sources/` 中的开发改动。
 
 首次接入时，若 `resources/nuwax-file-server` 或 `resources/claude-code-acp-ts` 已存在普通旧产物，脚本会在新资源构建成功后将原目录移到 `.cache/client-toolchain/legacy-resources/<name>-<UUID>/` 并报告备份路径。资源目录中的 Git 检出、工具链产物中的本地修改仍会阻止覆盖；后续只更新归属明确且内容未被修改的产物。
 
 开发会检查占用端口、等待 HTTP 就绪，记录 `logs/frontend-dev.log`（源码模式）、`logs/vite-dev.log` 和 `logs/electron-dev.log`，退出时清理本轮启动的进程树。本机服务与主进程的完整日志仍在 `~/.nuwax/logs/`。已有前端源码改动请用 `--frontend source`；默认 dist 模式要求当前源码、产物 HEAD 与已提交双 pin 一致。
 
-本地打包使用独立商业配置，输出到 `release/<version>/`；默认版本来自最近可达的发布 tag 并加 `-dev`，无 tag 时用 `0.0.0-dev`。可用 `--version X.Y.Z`、`--output <目录>` 覆盖，`--dir` 只生成解包应用目录；输出目标不得占用仓库根、源码/子模块目录或工具链缓存，符号链接也会核对真实目标。配置不改基座 `package.json`，包含商业品牌、前端载荷及 Computer Use helper，不发布资产。
+本地打包使用独立商业配置，输出到 `release/<version>/`；默认版本来自最近可达的发布 tag 并加 `-dev`，无 tag 时用 `0.0.0-dev`。可用 `--version X.Y.Z`、`--output <目录>` 覆盖，`--dir` 只生成解包应用目录；输出目标不得占用仓库根、源码/子模块目录或工具链缓存，符号链接也会核对真实目标。配置不改壳内 `package.json`，包含商业品牌、前端载荷及 Computer Use helper，不发布资产。
 
 Windows 可以在 PowerShell 或 cmd 中直接运行以上 npm 命令，顶层入口无需通过 make 启动；内部源码资源构建仍需要各自工具链。准备 Windows 沙箱 helper 需要 Rust/Cargo 与 MSVC 构建工具；Electron 原生模块需要相应的 Python/C++ 构建环境。打包 Computer Use helper 还需要 Rust/rustup（Windows 使用已准备的 Git Bash；Linux 需平台构建依赖）。缺失工具或真实资源时脚本会退出并报告原因。
 
@@ -184,7 +184,7 @@ macOS 编码资源原生构建需要 Xcode/Command Line Tools、NASM 和 pkg-con
 
 Linux x64/arm64 录屏资源在对应架构原生构建，需要 GCC/G++、make、pkg-config 和 nasm。Ubuntu/Debian 可准备 `build-essential pkg-config nasm` 后运行 `npm run prepare:capture`；`npm run pack` 也会准备并核验资源。固定源码构建的 LGPL FFmpeg 使用 OpenH264 输出 MP4，源码、许可证和 SHA 随资源打包，不使用系统 PATH 中的 FFmpeg。OpenH264 自编译版本与 Cisco 官方二进制的分发授权不同，详情见 [Linux 验收记录](docs/acceptance/20261013-linux-native-capture.md)。
 
-旧入口 `base:dev`、`base:bundle` 转发到统一 CLI。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将两个子模块（`nuwax`、`nuwax-dist`）对齐已提交 pin；普通开发只初始化缺失子模块。
+开发使用 `npm run dev`，本地打包使用 `npm run pack`。`make dev DEV_WEBVIEW=dev FRONTEND_PORT=3001` 等价于 `npm run dev -- --frontend source --port 3001`；`make submodules-latest` 转发 `sub:update`。`make submodules` 可显式将两个子模块（`nuwax`、`nuwax-dist`）对齐已提交 pin；普通开发只初始化缺失子模块。
 
 ### 子模块一键更新
 
@@ -202,7 +202,7 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --push
 
 ### 分支模型与门禁
 
-**单主干**：本仓 `feat/* 开发线 → PR → main → tag 发布`；`nuwax` / `nuwax-dist` pin 跟随 `.gitmodules` 声明分支，历史 `pin/nuwawork` 线已退役。发布由 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），main 不直接发布。`main` 与 `release/**` 的 PR/push、发布 tag 均运行源码门禁。分支命名的权威规范见 [docs/branch-naming.md](./docs/branch-naming.md)，本节仅摘要。
+**集成主干与版本维护**：main 经 PR 集成；版本修复从目标维护线创建工作分支并回到同一目标线，当前 3.1.0 使用 `release/v3.1.0`。发布由不可变 tag 驱动（`vX.Y.Z` / `vX.Y.Z-beta.N`），固定本仓源码与前端输入；main 不直接发布。main/release 的 PR、push 和发布调用运行源码门禁。分支规范见 [docs/branch-naming.md](./docs/branch-naming.md)。
 
 | 门禁 | 命令 | 口径 | CI |
 |---|---|---|---|
@@ -214,9 +214,9 @@ npm run sub:update -- --nuwax <branch-or-tag-or-sha> --push
 
 ### 与社区版 / 前端的关系
 
-- **改壳**：直接在 `nuwa-electron-shell/` 内改，随本仓 PR 评审、`npm run test:commercial` 验证；不再有 pin bump、overlay 兼容审查或 check:pin。
+- **改壳**：直接在 `nuwa-electron-shell/` 内改，随本仓 PR 评审、`npm run test:commercial` 验证；壳源码与工具链使用同一仓库提交。
 - **社区版**：壳源自同一上游，现已分叉，各自独立演进与发布，互不影响；需要借鉴社区改动时按 diff 人工移植。
-- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 仍从源码 pin 现场构建。工作区已有 dist 不代表正式包内容。 direct 优先加载线上前端，不要求包内前端 pin 等于远端最新；发布仍固定可达源码与对应产物，并通过兼容及质量门。
+- **壳根 nuwax 双 pin**：`nuwax/` 固定前端源码，`nuwax-dist/` 固定对应构建资源；升级使用 `sub:update` 一起刷新。源码提交须在 `.gitmodules` 声明分支上可达，产物仓只使用 `main`。正式版 CI 校验 `nuwax-dist` gitlink、工作树纯净状态和 `version.json.gitHash` 对应的源码 pin，随后把该产物放入五平台安装包，避免重复构建；beta CI 从源码 pin 构建一次共享前端产物。工作区已有 dist 不代表正式包内容。 direct 优先加载线上前端，不要求包内前端 pin 等于远端最新；发布仍固定可达源码与对应产物，并通过兼容及质量门。
 
 ### 发版流程
 
@@ -234,7 +234,7 @@ npm run release -- --tag v3.0.11 --stage sync
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
 
 1. 提交 `release-notes/vX.Y.Z.md`（beta 使用 `release-notes/vX.Y.Z-beta.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
-2. `npm run release -- --version 3.0.10 --dry-run` 预检，随后正式运行；不可变 tag push 触发对应 Actions，先校验版本，再跑双轨/前端门禁和五平台矩阵。macOS 必须签名、公证，Windows 初始产出 unsigned 包。stable 默认停在 Draft 签名阶段。
+2. `npm run release -- --version 3.0.10 --dry-run` 预检，随后正式运行；不可变 tag push 触发对应 Actions，先校验版本，再跑商业、前端和脚本门禁和五平台矩阵。macOS 必须签名、公证，Windows 初始产出 unsigned 包。stable 默认停在 Draft 签名阶段。
 3. 完成 Windows SimplySign 签名和真实安装包验收后，运行 `npm run release -- --tag v3.0.10 --stage sync`：验证来源和哈希，同步镜像、推进 stable 及较旧 beta 指针，最后公开 Release。
 4. beta 五平台全部成功后自动同步 beta 指针并公开 prerelease。可以多轮 beta 后同号转正，也可直接或连续发 stable；正式 tag 创建后关闭同号 beta。序号从 1 开始，已有 tag/Draft 占用版本，源码变更必须升号。
 

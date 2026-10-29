@@ -105,7 +105,7 @@ export function electronBinary(client, platform = process.platform) {
 async function ensureSubmodules(root, options, tools) {
   const declared = await tools.git(root, ['config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$']);
   const names = declared.split('\n').map((line) => line.trim().split(/\s+/).slice(1).join(' ')).filter(Boolean);
-  const missing = names.filter((name) => name !== 'nuwa-electron-shell' && !fs.existsSync(path.join(root, name, '.git')));
+  const missing = names.filter((name) => !fs.existsSync(path.join(root, name, '.git')));
   if (missing.length) {
     console.log(`[prepare] 初始化缺失子模块: ${missing.join(', ')}`);
     if (!options.dryRun) await tools.run('git', ['submodule', 'update', '--init', '--depth', '1', '--', ...missing], { cwd: root });

@@ -187,7 +187,7 @@ intent 开放问题的处理：
   - `browser_prepare` 只允许接管选中的窗口。
   - 排除的工具不可见。
   - 生成的策略文件。
-- **T5 商业全量**：`npm run test:commercial`。社区 `npm run base:test` 必须在隔离副本里跑；因为只改了 overlay，预期没有影响。
+- **T5 商业全量**：`npm run test:commercial`，使用本仓客户端源码；工具链变更另跑 `npm run test:scripts`。
 - **T6 真实 helper 协议测试**（只读，可自动跑）：把附录 A 的报错采样纳入 `scripts/computer-use/`，用作 cua 升级时的回归测试。只要拒绝回复的结构变了，测试就会失败。
 - **T7 真机验证**（需要辅助功能授权，在 macOS 上由实现者跑；跑不了就列给负责人）：
   - 在整个桌面模式下，确认 `browser_prepare existing_profile` 在旧逻辑下能否不经审批就接管用户的浏览器（核实 R4 的前提）；新逻辑下必须被拒绝。

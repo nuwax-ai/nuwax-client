@@ -44,7 +44,7 @@
 
 - 单元：更新状态映射、关于页导航、发布信息、故障状态表、连续轮询阈值、矩形校验裁剪和清空。
 - 集成：guest layout bridge→主进程→renderer，路由/resize/收起状态重算，旧前端降级。
-- 门禁：隔离副本 `npm run base:test`；同步 overlay 后 `npm run test:commercial`、overlay check、前端 typecheck/vitest、`npm run check:pin`。
+- 门禁：`npm run test:commercial`、`npm run test:scripts`、前端 typecheck/vitest 和宿主桥检查；真实安装包验收另列。
 - 真机：macOS 与 Windows 安装包分别验证未登录更新、登录故障恢复、顶部点击、拖动和双击最大化/还原。
 
 ## 已否决的备选方案

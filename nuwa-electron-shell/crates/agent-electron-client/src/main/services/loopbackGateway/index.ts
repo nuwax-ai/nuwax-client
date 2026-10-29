@@ -3,16 +3,15 @@
  * 缺省 direct——不配置即完全维持现状）决定是否起网关；env NUWAX_LOOPBACK=1
  * 可强制开启（开发验收用）。
  *
- * 【overlay 商业实现】本文件经商业 overlay（Nuwax）覆写基座 no-op 插槽
- * （基座 services/loopbackGateway/index.ts）；导出面必须保持兼容
- * （stopLoopbackGateway / refreshLoopbackGateway）。
+ * 本仓网关生命周期统一由此编排；调用方通过
+ * stopLoopbackGateway / refreshLoopbackGateway 管理停止和刷新。
  *
  * 运行时真值写 settings 键 `nuwax.loopback` = { enabled, origin }：
  * renderer（NuwaxHostWebview）免新 IPC 面直接读，enabled 时 webview 从网关
  * origin 加载 nuwax。业务请求经主进程授权后从当前业务域镜像注入 ticket。
  *
- * dist 目录来源（dev）：优先 NUWAX_FRONTEND_DIST env（in-base.js 注入 =
- * 外层 nuwax-dist 产物子模块）；缺省回落外层根的 nuwax-dist。
+ * dist 目录来源（dev）：优先 NUWAX_FRONTEND_DIST（仓库根编排注入的前端产物路径）；
+ * 缺省回落仓库根的 nuwax-dist。
  * 打包形态恒为 resources/nuwax-dist（CI extraResources 注入）。
  */
 import { app, session } from "electron";

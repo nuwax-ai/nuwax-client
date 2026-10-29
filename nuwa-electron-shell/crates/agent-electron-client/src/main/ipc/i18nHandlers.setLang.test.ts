@@ -1,15 +1,12 @@
 /**
  * 单元测试：壳语言切换同步 webview guest（禅道 bug 2428「客户端 切换语言无效果」）
  *
- * 根因（打回复核结论）：修复代码（i18n:setLang 转发 nuwax:host-command set-lang 给
- * webview guest + 短延迟重载）曾只存在于开发工作树、从未提交进任何 prerelease tag
- * 钉的基座 pin（v1.0.22~25 二进制 grep "set-lang" = 0），QA 的 v1.0.24 客户端里
- * 壳侧根本没有这段转发，切语言只重载壳页、主界面 webview 不跟随。
+ * 只重载壳页无法更新 webview 业务界面的语言；需要下发宿主命令并重载 guest。
  *
  * 本用例锁住三件事：
  * 1. 语种变化且有 webview guest → set-lang 下发 + 800ms 后重载 guest；
  * 2. 语种未变化（壳 renderer 启动 initI18n 的同值同步）→ 不下发不重载；
- * 3. 无 guest（社区形态 / guest 尚未挂载）→ no-op 不抛错。
+ * 3. 无 guest（guest 尚未挂载）→ no-op 不抛错。
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
