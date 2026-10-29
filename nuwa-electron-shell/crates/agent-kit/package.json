@@ -25,7 +25,7 @@
   },
   "peerDependencies": {
     "@agentclientprotocol/sdk": "^0.26.0 || ^1.2.1",
-    "@nuwax-ai/nuwax-harness-acp-ts": "^1.2.21"
+    "@nuwax-ai/nuwax-harness-acp-ts": "^1.2.22"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
