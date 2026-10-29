@@ -25,13 +25,13 @@
     "prepare:terminal-compat": "node scripts/prepare-terminal-compat.mjs"
   },
   "dependencies": {
-    "archiver": "7.0.1",
+    "archiver": "8.0.0",
     "json-bigint": "1.0.0",
     "mime-types": "3.0.1",
-    "ws": "8.21.0"
+    "ws": "8.22.0"
   },
   "devDependencies": {
-    "@types/archiver": "6.0.3",
+    "@types/archiver": "8.0.0",
     "@types/json-bigint": "1.0.4",
     "@types/mime-types": "3.0.1",
     "@types/ws": "8.18.1",

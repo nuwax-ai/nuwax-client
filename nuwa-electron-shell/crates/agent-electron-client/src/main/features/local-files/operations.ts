@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { randomUUID } from "node:crypto";
-import archiver from "archiver";
+import { ZipArchive } from "archiver";
 import { LocalFilesFailure } from "./files";
 
 export interface FileOperation {
@@ -94,7 +94,7 @@ export async function exportWorkspaceAtomic(
   check(operation);
   const temporary = temporaryPath(destination);
   const excluded = new Set([path.resolve(destination), temporary]);
-  const archive = archiver("zip", { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
   const output = createWriteStream(temporary, { flags: "wx", mode: 0o600 });
   const completion = pipeline(archive, output, {
     signal: operation.controller.signal,
