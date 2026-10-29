@@ -806,6 +806,7 @@ export const CUA_I18N_KEYS = {
   "PAUSE": "Claw.Cua.pause",
   "RESUME": "Claw.Cua.resume",
   "STOP": "Claw.Cua.stop",
+  STOP_CURRENT: "Claw.Cua.stopCurrent",
   "RECOVER": "Claw.Cua.recover",
   "DISMISS": "Claw.Cua.dismiss",
   "STEPS": "Claw.Cua.steps",

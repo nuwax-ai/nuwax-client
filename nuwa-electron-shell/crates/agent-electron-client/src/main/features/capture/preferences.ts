@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { app, globalShortcut } from 'electron';
+import { app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import type { CaptureMenuAction } from '@shared/features/capture/contract';
+import { captureShortcutBackend } from './shortcutBackend';
 
 const ownedShortcuts = new Set<string>();
 interface CaptureShortcutOwner {
@@ -15,15 +16,16 @@ function reserveShortcut(shortcut: string, platform: NodeJS.Platform): (() => vo
   if (platform !== 'darwin' && platform !== 'win32') return () => {};
   try {
     if (!app.isReady()) return null;
-    if (globalShortcut.isRegistered(shortcut)) return ownedShortcuts.has(shortcut) ? () => {} : null;
-    if (!globalShortcut.register(shortcut, () => {})) return null;
-    return () => globalShortcut.unregister(shortcut);
+    const backend = captureShortcutBackend(platform);
+    if (backend.isRegistered(shortcut)) return ownedShortcuts.has(shortcut) ? () => {} : null;
+    if (!backend.register(shortcut, () => {})) return null;
+    return () => backend.unregister(shortcut);
   } catch {
     return null;
   }
 }
 
-/** Keep the new registration through the write; macOS success does not imply exclusivity. */
+/** Reserve using the same platform backend as the live binding before saving. */
 export function saveCaptureShortcutPreference(shortcut: string, action: CaptureMenuAction, persist: () => void, platform: NodeJS.Platform = process.platform): boolean {
   if (shortcutOwner?.isActive()) return shortcutOwner.save(shortcut, action, persist);
   const release = reserveShortcut(shortcut, platform);
@@ -50,6 +52,7 @@ export function bindCaptureShortcuts(
 ): () => void {
   const platform = options.platform ?? process.platform;
   if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') return () => {};
+  const backend = captureShortcutBackend(platform);
   const owned = new Map<string, { action: CaptureMenuAction; active: boolean }>();
   let disposed = false;
   const isActive = () => !disposed && !target.isDestroyed() && app.isReady();
@@ -59,17 +62,17 @@ export function bindCaptureShortcuts(
     entry.active = false;
     owned.delete(shortcut);
     ownedShortcuts.delete(shortcut);
-    globalShortcut.unregister(shortcut);
+    backend.unregister(shortcut);
   };
   const release = () => {
     for (const shortcut of owned.keys()) remove(shortcut);
     if (shortcutOwner === owner) shortcutOwner = undefined;
   };
   const acquire = (shortcut: string, action: CaptureMenuAction) => {
-    if (globalShortcut.isRegistered(shortcut)) return null;
+    if (backend.isRegistered(shortcut)) return null;
     const entry = { action, active: false };
     try {
-      if (globalShortcut.register(shortcut, () => {
+      if (backend.register(shortcut, () => {
         if (entry.active && isActive()) dispatch(entry.action);
       })) {
         owned.set(shortcut, entry);

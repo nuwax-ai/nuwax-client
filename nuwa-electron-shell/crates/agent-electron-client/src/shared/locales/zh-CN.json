@@ -1258,6 +1258,7 @@
   "Claw.Cua.pause": "暂停并接管",
   "Claw.Cua.resume": "重新观察后继续",
   "Claw.Cua.stop": "立即停止",
+  "Claw.Cua.stopCurrent": "停止当前操作",
   "Claw.Cua.recover": "恢复就绪",
   "Claw.Cua.dismiss": "收起",
   "Claw.Cua.steps": "已执行 {count} 步",

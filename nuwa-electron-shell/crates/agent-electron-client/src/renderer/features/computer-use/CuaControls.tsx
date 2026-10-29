@@ -47,7 +47,7 @@ export function CuaControls({ api, t }: { api?: ComputerUseAPI; t: T }) {
   return <><CuaTaskCenter api={api} runtime={runtime} accept={accept} t={t} />
     <CuaControlBar api={api} runtime={runtime ? cuaRuntimeForConversation(runtime, runtime.presentationConversationId ?? null) : null} accept={accept} t={t} /></>;
 }
-type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "close" | "power" | "confirm";
+type ControlIconName = "desktop" | "window" | "pause" | "resume" | "takeover" | "close" | "stop" | "confirm";
 function ControlIcon({ name }: { name: ControlIconName }) {
   const paths: Record<ControlIconName, React.ReactNode> = {
     desktop: <><rect x="3" y="3" width="18" height="13" rx="3" /><path d="M8 21h8M12 16v5" /></>,
@@ -56,7 +56,7 @@ function ControlIcon({ name }: { name: ControlIconName }) {
     resume: <path d="m8 5 11 7-11 7Z" />,
     takeover: <><path d="m5 3 14 9-7 1-3 7Z" /><path d="m13 13 5 7" /></>,
     close: <path d="m6 6 12 12M18 6 6 18" />,
-    power: <><path d="M12 3v9" /><path d="M6.3 5.7a8 8 0 1 0 11.4 0" /></>,
+    stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
     confirm: <path d="m5 12 4 4L19 6" />,
   };
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
@@ -136,9 +136,9 @@ function CuaControlBar({ api, runtime, accept, t }: { api?: ComputerUseAPI; runt
         <span className={styles.actionSlot}><Button size="small" icon={<ControlIcon name="confirm" />} aria-label={t("Claw.Cua.confirmAllow")}
           onClick={() => void run(async () => { const allowed = await api.confirmSensitive!(true); return allowed.success ? api.resume() : { success: false, error: "operationCancelled" }; })} /></span>
       </Tooltip>}
-      {api.setEnabled && <Tooltip title={t("Claw.Settings.computerUse.enableOff")} trigger={["hover", "focus"]} zIndex={10000}>
-        <span className={styles.actionSlot}><Button size="small" icon={<ControlIcon name="power" />} aria-label={t("Claw.Settings.computerUse.enableOff")}
-          onClick={() => void run(() => api.setEnabled!(false))} /></span>
+      {api.stopTask && <Tooltip title={t("Claw.Cua.stopCurrent")} trigger={["hover", "focus"]} zIndex={10000}>
+        <span className={styles.actionSlot}><Button size="small" icon={<ControlIcon name="stop" />} aria-label={t("Claw.Cua.stopCurrent")} disabled={controlLocked}
+          onClick={() => void run(() => api.stopTask(runtime.taskId!))} /></span>
       </Tooltip>}
     </div>
   </aside>;

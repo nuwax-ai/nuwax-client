@@ -74,6 +74,7 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   result.asarUnpack = [...new Set([
     ...(Array.isArray(result.asarUnpack) ? result.asarUnpack : result.asarUnpack ? [result.asarUnpack] : []),
     'dist/main/mac-notification-permission.node',
+    'dist/main/mac-capture-shortcuts.node',
   ])];
   result.files = [...(Array.isArray(result.files) ? result.files : result.files ? [result.files] : ['**/*']), '!node_modules/agent-gui-server/**/*', '!node_modules/@nut-tree-fork/**/*'];
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, ...(version ? { version } : {}) };

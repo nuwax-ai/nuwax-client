@@ -1370,6 +1370,52 @@ export async function resumeCuaTask(): Promise<CuaControlResult> {
   } finally { preparingRuntime = false; }
 }
 
+/** End this turn without removing the MCP endpoint or changing the enabled preference. */
+async function stopSingleCuaTask(id: string): Promise<CuaControlResult> {
+  const state = cuaTasks.snapshot();
+  if (state.taskId !== id || !(["running", "paused"].includes(state.phase) ||
+      state.phase === "failed" && state.reason === "helperStillRunning"))
+    return taskResult(false, "taskUnavailable");
+  if (preparingRuntime || pendingControls) return taskResult(false, "handoffPending");
+
+  pendingControls++;
+  const epoch = ++cuaDisableEpoch;
+  cancelCuaPermissionRequest();
+  runtimeSuspended = true;
+  cuaTasks.setAvailable(false);
+  // stop blocks this owner until its turn ends; the next turn receives a new owner.
+  cuaTasks.stop("userStopped");
+  cuaBindings.clear();
+  const gateway = cuaGateway;
+  gateway?.cancelPending("userStopped");
+  gateway?.pauseTransports();
+  try {
+    await serializeCua(async () => {
+      if (epoch !== cuaDisableEpoch) return;
+      await stopDaemon();
+      if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+    });
+    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
+    // Keep existing agent-facing connections. Only the drained driver is restarted.
+    await ensureCuaOnBoot();
+    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
+    if (runtimeSuspended || !gateway || gateway !== cuaGateway || !gateway.ready)
+      return taskResult(false, lastCuaError ?? "daemonNotReady");
+    await gateway.resumeTransports();
+    if (epoch !== cuaDisableEpoch || runtimeSuspended) return taskResult(false, "operationCancelled");
+    return { success: true, runtime: { ...getCuaRuntime(), controlPending: pendingControls > 1 } };
+  } catch (error) {
+    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
+    runtimeSuspended = true;
+    cuaTasks.setAvailable(false);
+    gateway?.pauseTransports();
+    lastCuaError = error instanceof Error && error.message === "helperStillRunning" ? "helperStillRunning" : "gatewayFailed";
+    cuaTasks.fail(lastCuaError);
+    return taskResult(false, lastCuaError);
+  } finally { pendingControls--; cuaTasks.notify(); }
+}
+
+/** Emergency stop remains available to the task center, tray and global shortcut. */
 export async function stopCuaTask(): Promise<CuaControlResult> {
   try {
     await suspendCua("userStopped");
@@ -1511,8 +1557,10 @@ export async function resumeWindowTask(id: string): Promise<CuaControlResult> {
   return taskResult(success, success ? undefined : "cannotResume");
 }
 export async function stopWindowTask(id: string): Promise<CuaControlResult> {
+  // The task-scoped host API also serves the single desktop/window control bar.
+  if (!multiwindow) return stopSingleCuaTask(id);
   const task = windowTasks.byId(id);
-  if (!multiwindow || !task) return taskResult(false, "taskUnavailable");
+  if (!task) return taskResult(false, "taskUnavailable");
   windowTasks.pending(id, true); windowTasks.stopTask(id);
   cuaGateway?.holdOwner(task.owner, "userStopped");
   return serializeTask(id, async () => {

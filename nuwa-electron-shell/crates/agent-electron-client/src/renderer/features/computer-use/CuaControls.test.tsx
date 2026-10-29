@@ -19,11 +19,11 @@ vi.mock("antd", async () => {
 });
 vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
 import { CuaControls, CuaSettingsRows, clampCuaControlPosition } from "./CuaControls";
-const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
+const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), stopTask: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
 beforeEach(() => {
   vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
   harness.states = [{ conversationId: "A", presentationConversationId: "A", phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];
-  api.getRuntime.mockResolvedValue(harness.states[0]); api.stop.mockResolvedValue({ success: true });
+  api.getRuntime.mockResolvedValue(harness.states[0]); api.stop.mockResolvedValue({ success: true }); api.stopTask.mockResolvedValue({ success: true });
   vi.stubGlobal("window", Object.assign(new EventTarget(), { electronAPI: { on: vi.fn(), off: vi.fn() } }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -108,7 +108,7 @@ describe("Computer Use controls", () => {
     harness.states[0] = { ...harness.states[0], phase: "idle", taskId: null };
     expect(render()).toBe("");
   });
-  it("keeps takeover, pause and Computer Use off on the compact card without stop", async () => {
+  it("keeps takeover and pause and replaces feature disable with a stop for the displayed task", async () => {
     Object.assign(api, { takeOver: vi.fn(async () => ({ success: true })), setEnabled: vi.fn(async () => ({ success: true })) });
     const html = render();
     expect(html).toContain('data-phase="running"');
@@ -118,10 +118,13 @@ describe("Computer Use controls", () => {
     await harness.buttons.find(b => b["aria-label"] === "Claw.Cua.pause").onClick();
     expect(api.pause).toHaveBeenCalledOnce();
     expect(api.stop).not.toHaveBeenCalled();
-    const off = harness.buttons.find(b => b["aria-label"] === "Claw.Settings.computerUse.enableOff");
-    expect(off.children).toBeUndefined(); expect(off.icon).toBeDefined();
+    const stop = harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stopCurrent");
+    expect(stop.children).toBeUndefined(); expect(stop.icon).toBeDefined();
+    await stop.onClick();
+    expect(api.stopTask).toHaveBeenCalledWith("id");
+    expect((api as any).setEnabled).not.toHaveBeenCalled();
     expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.stop")).toBeUndefined();
-    expect(html).toContain("Claw.Settings.computerUse.enableOff");
+    expect(html).not.toContain("Claw.Settings.computerUse.enableOff");
     expect(harness.buttons.find(b => b["aria-label"] === "Claw.Cua.preview.close")).toBeUndefined();
   });
   it("shows resume while paused and keeps user context", async () => {

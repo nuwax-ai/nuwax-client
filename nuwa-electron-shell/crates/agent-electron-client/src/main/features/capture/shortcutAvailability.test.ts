@@ -9,6 +9,10 @@ vi.mock('electron', () => ({
   app: { isReady: runtime.ready, on: runtime.on, removeListener: runtime.removeListener },
   globalShortcut: { isRegistered: runtime.registered, register: runtime.register, unregister: runtime.unregister },
 }));
+// Lifecycle assertions stay backend-independent; macOS owns a native registration now.
+vi.mock('./shortcutBackend', () => ({
+  captureShortcutBackend: () => ({ isRegistered: runtime.registered, register: runtime.register, unregister: runtime.unregister }),
+}));
 import { bindCaptureShortcuts, notifyCapturePreferencesChanged, saveCaptureShortcutPreference } from './preferences';
 
 const shortcut = 'CmdOrCtrl+Shift+A';

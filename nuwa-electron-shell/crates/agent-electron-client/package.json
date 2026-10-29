@@ -446,7 +446,8 @@
     },
     "asar": true,
     "asarUnpack": [
-      "node_modules/better-sqlite3/build/Release/*.node"
+      "node_modules/better-sqlite3/build/Release/*.node",
+      "dist/main/*.node"
     ]
   }
 }

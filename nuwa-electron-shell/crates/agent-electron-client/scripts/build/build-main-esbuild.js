@@ -20,6 +20,7 @@ const path = require('path');
 const isDev = process.env.NODE_ENV !== 'production';
 const root = path.resolve(__dirname, '..', '..');
 require('./build-mac-notification-permission.cjs').buildMacNotificationPermission(root);
+require('./build-mac-capture-shortcuts.cjs').buildMacCaptureShortcuts(root);
 
 const ALIASES = [
   ['@main/', 'src/main/'],
