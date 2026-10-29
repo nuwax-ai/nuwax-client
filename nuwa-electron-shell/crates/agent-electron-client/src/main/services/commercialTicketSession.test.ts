@@ -39,7 +39,7 @@ vi.mock("./commercialSessionScope", () => ({
   },
   NUWAX_TICKET_KEY_PREFIX: "nuwax.ticket.",
 }));
-vi.mock("electron-log", () => ({ default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() } }));
+vi.mock("electron-log", () => ({ default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
 vi.mock("electron", () => ({
   session: { defaultSession: { cookies: {
     get: vi.fn(async ({ url }: { url: string }) => {

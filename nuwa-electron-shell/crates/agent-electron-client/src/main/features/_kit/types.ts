@@ -17,6 +17,8 @@ export interface FeatureLogger {
   info(...args: unknown[]): void;
   warn(...args: unknown[]): void;
   error(...args: unknown[]): void;
+  /** 可选：宿主注入 electron-log 时可用；dev/beta 记录，stable（fileLevel=info）静默。 */
+  debug?(...args: unknown[]): void;
 }
 
 export interface FeatureHandle {

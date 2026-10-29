@@ -18,6 +18,23 @@ export interface FileOperation {
   valid(): boolean;
 }
 
+/**
+ * 导出过程的可观测回调（宿主注入，纯函数不依赖 electron-log）。
+ * detail 只含路径与计数/字节统计，不含文件内容。
+ */
+export type ExportObserver = (
+  event: "start" | "done" | "failed",
+  detail: Record<string, unknown>,
+) => void;
+
+/** 目录/文件/符号链接计数与原始字节，用于判断压缩是否真的发生。 */
+interface ExportStats {
+  directories: number;
+  files: number;
+  symlinks: number;
+  bytes: number;
+}
+
 function check(operation: FileOperation): void {
   operation.controller.signal.throwIfAborted();
   if (!operation.valid()) throw new LocalFilesFailure("expired");
@@ -75,13 +92,18 @@ export async function copyFileAtomic(
   }
 }
 
-/** Stream every filesystem entry; symlinks are entries, hardlinks are regular files. */
+/**
+ * Stream every filesystem entry; symlinks are entries, hardlinks are regular files.
+ */
 export async function exportWorkspaceAtomic(
   root: string,
   destination: string,
-  operation: FileOperation
+  operation: FileOperation,
+  observe?: ExportObserver,
 ): Promise<void> {
   check(operation);
+  observe?.("start", { root, destination });
+  const stats: ExportStats = { directories: 0, files: 0, symlinks: 0, bytes: 0 };
   // Resolve directory aliases on both sides before excluding our own output.
   // Preserve the final basename: replacing a destination symlink must not
   // overwrite the file it points to.
@@ -111,6 +133,7 @@ export async function exportWorkspaceAtomic(
   const visit = async (directory: string, relative: string): Promise<void> => {
     check(operation);
     const dirInfo = await lstat(directory);
+    stats.directories += 1;
     archive.append(Buffer.alloc(0), {
       name: `${relative}/`,
       mode: dirInfo.mode,
@@ -123,11 +146,15 @@ export async function exportWorkspaceAtomic(
       if (excluded.has(absolute)) continue;
       const name = `${relative}/${entry.name}`;
       const info = await lstat(absolute);
-      if (info.isSymbolicLink())
+      if (info.isSymbolicLink()) {
+        stats.symlinks += 1;
         archive.symlink(name, await readlink(absolute), info.mode);
-      else if (info.isDirectory()) await visit(absolute, name);
-      else if (info.isFile())
+      } else if (info.isDirectory()) await visit(absolute, name);
+      else if (info.isFile()) {
+        stats.files += 1;
+        stats.bytes += info.size;
         archive.file(absolute, { name, mode: info.mode, date: info.mtime });
+      }
       // Sockets/FIFOs/device nodes are not readable files and have no ZIP representation.
     }
   };
@@ -137,7 +164,19 @@ export async function exportWorkspaceAtomic(
     await Promise.all([archive.finalize(), completion]);
     check(operation);
     await rename(temporary, destination);
+    // 产物字节与原始字节的比值直接反映 archiver 的 zlib 压缩是否生效：
+    // store 模式下两者几乎相等，压缩模式下产物应显著更小。
+    observe?.("done", {
+      destination,
+      ...stats,
+      archiveBytes: (await lstat(destination)).size,
+    });
   } catch (error) {
+    observe?.("failed", {
+      destination,
+      ...stats,
+      reason: error instanceof Error ? error.message : String(error),
+    });
     archive.destroy(
       error instanceof Error ? error : new Error("Archive failed")
     );

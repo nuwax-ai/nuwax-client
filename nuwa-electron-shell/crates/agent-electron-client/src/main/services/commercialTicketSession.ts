@@ -165,11 +165,11 @@ async function applySyncTicketFromJar(source: string, requestEpoch: number, even
   if (requestEpoch !== epoch || origin !== currentBusinessOrigin() ||
       (eventVersion !== undefined && eventVersion !== directEventVersion) || !found) {
     // [AuthDebug] 登录链路诊断：jar 里根本没有 ticket cookie（重试循环最多打 12 条）
-    if (!found) log.info("[AuthDebug] syncTicketFromJar: no ticket cookie in jar", { source });
+    if (!found) log.debug("[AuthDebug] syncTicketFromJar: no ticket cookie in jar", { source });
     return false;
   }
   // [AuthDebug] 登录链路诊断：jar 里 cookie 的形态（空值/过期即走清理分支）
-  log.info("[AuthDebug] syncTicketFromJar: inspecting ticket cookie", {
+  log.debug("[AuthDebug] syncTicketFromJar: inspecting ticket cookie", {
     source,
     valueLength: found.value?.length ?? 0,
     expirationDate: found.expirationDate,
@@ -208,7 +208,7 @@ async function applySyncTicketFromJar(source: string, requestEpoch: number, even
         sameSite: ticket.sameSite === "no_restriction" ? "lax" : ticket.sameSite }, requestEpoch);
     }
   // [AuthDebug] 登录链路诊断：成功捕获（正常登录应出现此行）
-  log.info("[AuthDebug] syncTicketFromJar: ticket captured", {
+  log.debug("[AuthDebug] syncTicketFromJar: ticket captured", {
     source,
     valueLength: ticket.value.length,
     expirationDate: ticket.expirationDate,
@@ -240,7 +240,7 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
     if (cookie.name !== "ticket" ||
         (business.hostname !== domain && !business.hostname.endsWith(`.${domain}`))) return;
     // [AuthDebug] 登录链路诊断：ticket 域 cookie 的每一次变更（只记长度/过期，不记值）
-    log.info("[AuthDebug] ticket cookie changed", {
+    log.debug("[AuthDebug] ticket cookie changed", {
       domain,
       removed,
       cause: String(cause),

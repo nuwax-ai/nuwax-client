@@ -68,6 +68,7 @@ import {
 import { createFeatureAgentHost } from "../services/featureHost";
 import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
 import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
+import { redactStringForLog } from "../services/utils/logRedact";
 import { getConfiguredPorts } from "../services/startupPorts";
 
 import {
@@ -577,8 +578,9 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
 
   ipcMain.handle("auth:getContext", (event) => {
-    // [AuthDebug] 登录链路诊断：入口可见性（被拒时原为静默 return null）
-    log.info("[AuthDebug] auth:getContext called", {
+    // [AuthDebug] 登录链路诊断：入口可见性（被拒时原为静默 return null）。
+    // debug 级：dev/beta 可见，stable（fileLevel=info）不产生噪音。
+    log.debug("[AuthDebug] auth:getContext called", {
       origin: resolveSenderOrigin(event),
       trusted: isTrustedSender(event),
     });
@@ -601,7 +603,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("auth:beginLogin", async (event) => {
     const scope = resolveSenderOrigin(event);
     // [AuthDebug] 登录链路诊断：beginLogin 入口可见性
-    log.info("[AuthDebug] auth:beginLogin called", {
+    log.debug("[AuthDebug] auth:beginLogin called", {
       origin: scope,
       trusted: isTrustedSender(event),
     });
@@ -628,7 +630,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   ipcMain.handle("auth:syncSession", async (event) => {
     const scope = resolveSenderOrigin(event);
     // [AuthDebug] 登录链路诊断：syncSession 入口可见性
-    log.info("[AuthDebug] auth:syncSession called", {
+    log.debug("[AuthDebug] auth:syncSession called", {
       origin: scope,
       trusted: isTrustedSender(event),
     });
@@ -662,7 +664,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         emitRegistrationTrace({ stage: "sync-session-no-cookie", origin: businessOrigin });
       return false;
     }
-    log.info("[AuthDebug] syncSession: ticket captured", {
+    log.debug("[AuthDebug] syncSession: ticket captured", {
       origin: businessOrigin,
       source,
     });
@@ -1121,10 +1123,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       ]);
       let destination = target;
       let resp: Response | undefined;
+      // 提升声明：诊断日志在循环外读取最后一次跳转的凭据附着情况
+      let ticket: string | null = null;
       for (let redirects = 0; redirects <= 5; redirects++) {
         if (generation !== authGeneration || switching || !stillTrusted())
           throw new Error("Session changed");
-        const ticket =
+        ticket =
           allowBusinessCredentials && destination.origin === currentBusinessOrigin()
             ? currentTicket()
             : null;
@@ -1149,6 +1153,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       }
       if (generation !== authGeneration || switching || !stillTrusted())
         throw new Error("Session changed");
+      // [SaveDebug] 下载链路诊断：请求目标与凭据附着（query 内的 ak/ticket 脱敏）。
+      // debug 级：dev/beta 可见，stable（fileLevel=info）静默。
+      log.debug("[SaveDebug] download request", {
+        url: redactStringForLog(destination.toString()),
+        hadTicket: !!ticket,
+        fileDownload,
+      });
       // 文件树产物可为 HTML/JSON。只有源地址（含最终重定向）本身声明
       // 相应扩展时允许文档正文；用户改保存名不能把 ZIP/接口错误页放过。
       const sourceExtension = (source: URL): string => {
@@ -1156,6 +1167,19 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         catch { return ""; }
       };
       const contentType = resp!.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+      if (!resp!.ok) {
+        // [SaveDebug] 下载链路诊断：服务端非 2xx。saveResponse 只抛状态码，
+        // 这里补记正文片段——错误页通常是 JSON/HTML，能直接看出失败原因。
+        let body = "";
+        try { body = (await resp!.text()).slice(0, 600); } catch { /* body 已消耗或不可读 */ }
+        log.error("[SaveDebug] download failed response", {
+          url: redactStringForLog(destination.toString()),
+          status: resp!.status,
+          contentType,
+          contentLength: resp!.headers.get("content-length"),
+          body: redactStringForLog(body),
+        });
+      }
       const documentExtensions = contentType === "text/html" ? [".html", ".htm"]
         : ["application/json", "text/json"].includes(contentType || "") ? [".json"] : [];
       const documentFile = fileDownload && documentExtensions.includes(sourceExtension(target)) &&
