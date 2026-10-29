@@ -49,15 +49,13 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@v4
-      - name: Init pinned base
+      - name: Configure git
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh auth setup-git
           git config --global core.autocrlf false
-          git submodule update --init nuwa-electron-shell
-          node scripts/sync-overlay.js
       - name: Configure macOS compatibility target
         if: runner.os == 'macOS'
         shell: bash

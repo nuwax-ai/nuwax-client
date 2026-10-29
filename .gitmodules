@@ -1,7 +1,3 @@
-[submodule "nuwa-electron-shell"]
-	path = nuwa-electron-shell
-	url = https://github.com/nuwax-ai/nuwa-electron-shell.git
-	branch = main
 [submodule "nuwax"]
 	path = nuwax
 	url = https://github.com/nuwax-ai/nuwax.git

@@ -1,0 +1,1435 @@
+/**
+ * 自动更新服务 - 基于 electron-updater + latest.json
+ *
+ * 更新检查流程：
+ * 1. 从阿里云 OSS 拉取 latest.json 获取最新版本号
+ * 2. 比较版本号，如有更新则将 electron-updater 指向版本化 OSS 路径
+ * 3. electron-updater 从版本化路径读取 latest-*.yml 完成下载/安装
+ *
+ * - autoDownload = false: 用户控制下载时机
+ * - autoInstallOnAppQuit = true: 下载完成后退出时自动安装（Linux deb 除外）
+ * - Windows: NSIS 安装支持自动更新；MSI 安装（注册表 UninstallString 为
+ *   msiexec 的真 MSI，非「找不到卸载程序」的兜底误判）引导到官网下载安装页
+ * - Linux deb: 安装由 linuxDebInstaller 接管（不走 quitAndInstall，原因见该文件头注）
+ */
+
+import { app, BrowserWindow, shell, dialog, net, powerMonitor } from "electron";
+import * as path from "path";
+import * as fs from "fs";
+import { execFileSync } from "child_process";
+import log from "electron-log";
+import type {
+  UpdateState,
+  UpdateInfo,
+  UpdateProgress,
+  UpdateCheckOptions,
+} from "@shared/types/updateTypes";
+import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "@shared/constants";
+import { readSetting } from "../db";
+import { compareVersions } from "./system/dependencyUtils";
+import { t } from "./i18n";
+import { installLinuxDeb } from "./linuxDebInstaller";
+import {
+  getWindowsDownloadUrl,
+  getMacosDownloadUrl,
+  getLinuxDownloadUrl,
+  type Platforms,
+} from "./updatePlatformUtils";
+
+// ==================== OSS latest.json ====================
+
+// 更新通道根（nuwax-client 商业版构建时经 NUWAX_UPDATE_FEED_BASE 覆盖，构建期注入；见 constants.ts 品牌注入说明）
+const NUWAX_UPDATE_FEED_BASE_ENV =
+  typeof process !== "undefined"
+    ? process.env.NUWAX_UPDATE_FEED_BASE
+    : undefined;
+const OSS_BASE =
+  NUWAX_UPDATE_FEED_BASE_ENV?.trim() ||
+  "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwaclaw-electron";
+const OSS_STABLE_LATEST_JSON_URL = `${OSS_BASE}/latest/latest.json`;
+const OSS_BETA_LATEST_JSON_URL = `${OSS_BASE}/beta/latest.json`;
+// 官网下载安装页（MSI 等不支持自动更新的安装形态引导到此页）。商业版构建期经
+// NUWAX_DOWNLOAD_PAGE_URL 覆盖（机制同 NUWAX_UPDATE_FEED_BASE，见 constants.ts
+// 头注；⚠️ 不得加 typeof process 守卫，会丢弃 define 注入的字面量）。社区默认
+// 指向 NuwaClaw 桌面端下载页；商业版暂无独立产品页，先指官网首页，待上线后改正式值。
+const OFFICIAL_DOWNLOAD_PAGE_URL =
+  process.env.NUWAX_DOWNLOAD_PAGE_URL?.trim() ||
+  "https://nuwax.com/nuwaclaw.html";
+type UpdateChannel = "stable" | "beta";
+const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
+
+/** Squirrel.Mac 在只读卷（如从「下载」直接打开）上无法就地更新时的错误信息特征 */
+const READ_ONLY_VOLUME_ERROR_SUBSTR = "read-only volume";
+
+function isReadOnlyVolumeError(err: Error): boolean {
+  return err?.message?.includes(READ_ONLY_VOLUME_ERROR_SUBSTR) ?? false;
+}
+
+interface LatestJson {
+  version: string;
+  notes?: string;
+  pub_date?: string;
+  platforms?: Record<
+    string,
+    { url: string; signature?: string; size?: number }
+  >;
+  /** yml 文件的完整 OSS URL（新增字段，CI 生成；旧版 CI 无此字段则降级到老逻辑） */
+  yml?: Record<string, string>;
+}
+
+function getUpdateChannel(): UpdateChannel {
+  const raw = readSetting(UPDATE_CHANNEL_SETTING_KEY);
+  return raw === "beta" ? "beta" : "stable";
+}
+
+function getLatestJsonUrlByChannel(channel: UpdateChannel): string {
+  return channel === "beta"
+    ? OSS_BETA_LATEST_JSON_URL
+    : OSS_STABLE_LATEST_JSON_URL;
+}
+
+/**
+ * 从 OSS 拉取 latest.json
+ */
+function fetchLatestJson(url: string, timeoutMs = 15_000): Promise<LatestJson> {
+  return new Promise((resolve, reject) => {
+    // 添加时间戳参数绕过 CDN/浏览器缓存，确保每次都获取最新版本信息
+    const cacheBustUrl = url.includes("?")
+      ? `${url}&_t=${Date.now()}`
+      : `${url}?_t=${Date.now()}`;
+    const request = net.request(cacheBustUrl);
+    const chunks: Buffer[] = [];
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        request.abort();
+        reject(new Error(`Timeout after ${timeoutMs}ms fetching ${url}`));
+      }
+    }, timeoutMs);
+
+    request.on("response", (response) => {
+      if (response.statusCode !== 200) {
+        clearTimeout(timer);
+        settled = true;
+        reject(new Error(`HTTP ${response.statusCode} fetching ${url}`));
+        return;
+      }
+      response.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+      });
+      response.on("end", () => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        try {
+          // A UTF-8 code point can span response chunks; decode the complete byte stream.
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (e) {
+          reject(new Error(`Invalid JSON from ${url}`));
+        }
+      });
+    });
+    request.on("error", (err) => {
+      clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+    request.end();
+  });
+}
+
+// ==================== 安装类型检测 ====================
+
+type InstallerType = "nsis" | "msi" | "mac" | "linux" | "dev";
+
+/**
+ * Windows 注册表探测（经 reg.exe；注入缝供单测替换）。
+ *
+ * MSI 安装由 Windows Installer 管理：app 目录不放卸载程序文件，注册表
+ * Uninstall 键的 UninstallString 形如 `MsiExec.exe /I{ProductCode}`——这是
+ * 区分「真 MSI」与「tar 解压/绿色目录部署」的唯一可靠证据。
+ */
+interface WindowsRegistryAdapter {
+  /**
+   * 在 Uninstall 根键下按 DisplayName 数据搜索，返回命中的键路径列表（无匹配返回空数组）。
+   * reg 超时 / 无法启动等瞬时故障抛 RegistryProbeError。
+   */
+  searchUninstallKeysByDisplayName(displayName: string): string[];
+  /**
+   * 读取指定键的字符串值（REG_SZ），键或值不存在返回 null。
+   * reg 超时 / 无法启动等瞬时故障抛 RegistryProbeError。
+   */
+  queryValue(key: string, valueName: string): string | null;
+}
+
+const WINDOWS_UNINSTALL_REGISTRY_ROOTS = [
+  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+  "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+  "HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+];
+
+/** reg.exe 没能给出答案（超时 / 无法启动 / 被信号终止），区别于「值不存在」。 */
+export class RegistryProbeError extends Error {}
+
+/**
+ * reg 自己以退出码返回的（键或值不存在、无匹配、拒绝访问）是明确的「查不到」；
+ * 没有退出码的（execFileSync 超时、spawn 失败、被信号终止）才是无法下结论的瞬时故障。
+ */
+export function isTransientRegFailure(error: unknown): boolean {
+  return typeof (error as { status?: unknown } | null)?.status !== "number";
+}
+
+function runReg(args: string[]): string | null {
+  try {
+    return execFileSync("reg", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+      windowsHide: true,
+    });
+  } catch (error) {
+    if (isTransientRegFailure(error)) {
+      const code = (error as { code?: unknown } | null)?.code;
+      throw new RegistryProbeError(
+        `reg ${args[0]} did not complete (${String(code ?? error)})`,
+      );
+    }
+    return null;
+  }
+}
+
+const defaultRegistryAdapter: WindowsRegistryAdapter = {
+  searchUninstallKeysByDisplayName(displayName: string): string[] {
+    const keys: string[] = [];
+    for (const root of WINDOWS_UNINSTALL_REGISTRY_ROOTS) {
+      const out = runReg(["query", root, "/s", "/f", displayName, "/d"]);
+      if (!out) continue;
+      for (const line of out.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (/^HKEY_\S+\\Uninstall\\/i.test(trimmed)) keys.push(trimmed);
+      }
+    }
+    return keys;
+  },
+  queryValue(key: string, valueName: string): string | null {
+    const out = runReg(["query", key, "/v", valueName]);
+    if (!out) return null;
+    const line = out
+      .split(/\r?\n/)
+      .find((l) => l.includes("REG_SZ") && l.includes(valueName));
+    if (!line) return null;
+    const idx = line.indexOf("REG_SZ");
+    return line.slice(idx + "REG_SZ".length).trim() || null;
+  },
+};
+
+let registryAdapter: WindowsRegistryAdapter = defaultRegistryAdapter;
+
+/** 仅测试使用：注入 fake 注册表探测；传 null 恢复真实 reg.exe 实现 */
+export function _setRegistryAdapterForTest(
+  adapter: WindowsRegistryAdapter | null,
+): void {
+  registryAdapter = adapter ?? defaultRegistryAdapter;
+}
+
+/**
+ * 在 Windows 注册表中寻找本产品的真 MSI 卸载项：
+ * DisplayName 为 productName 或「productName + 空格 + 版本」（electron-builder
+ * NSIS/MSI 的 uninstallDisplayName 模板带版本后缀，win-pc 真机实证
+ * "Nuwax 1.0.24"）且 UninstallString 含 msiexec。返回命中的键路径,无则 null。
+ *
+ * 搜索按数据匹配，候选键里可能有 DisplayName 并不存在的残留键，读到 null 就是
+ * 「这个键不是」，直接跳过；reg 瞬时故障以 RegistryProbeError 抛出，由调用方处理。
+ */
+function findMsiUninstallKey(productName: string): string | null {
+  const candidates =
+    registryAdapter.searchUninstallKeysByDisplayName(productName);
+  for (const key of candidates) {
+    const display = registryAdapter.queryValue(key, "DisplayName");
+    if (
+      display === null ||
+      (display !== productName && !display.startsWith(productName + " "))
+    ) {
+      continue;
+    }
+    const uninstall = registryAdapter.queryValue(key, "UninstallString");
+    if (uninstall && /msiexec/i.test(uninstall)) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * 检测 Windows 安装类型（NSIS vs MSI）
+ *
+ * NSIS 安装会在应用目录下创建卸载程序文件，按优先级检测：
+ * 1. 标准命名：Uninstall {productName}.exe
+ * 2. NSIS 通用命名：unins000.exe, unins001.exe 等
+ * 3. 匹配 Uninstall*.exe 或 unins*.exe（避免误判其他文件）
+ *
+ * MSI 安装由 Windows Installer 管理，通常不含卸载程序文件——但「目录里没有
+ * 卸载程序」不再直接判 MSI（2026-09-22 修）：真 MSI 以注册表 UninstallString
+ * 为 msiexec 为准；注册表也无 MSI 证据时按 NSIS 兜底（tar 解压 / 绿色目录
+ * 部署等形态，electron-updater 下载后运行 NSIS 安装器可全新落装，此前被
+ * 误判 MSI 导致点「更新」跳下载页而非直更）。
+ */
+function detectInstallerType(): InstallerType | "inconclusive" {
+  if (!app.isPackaged) return "dev";
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "linux") return "linux";
+
+  if (process.platform === "win32") {
+    const appDir = path.dirname(app.getPath("exe"));
+
+    // 方式1: 标准的 electron-builder NSIS 卸载程序
+    // 文件名格式: "Uninstall {productName}.exe"
+    const productName = app.getName();
+    const standardNsisUninstaller = path.join(
+      appDir,
+      `Uninstall ${productName}.exe`,
+    );
+    if (fs.existsSync(standardNsisUninstaller)) {
+      log.info(
+        `[AutoUpdater] Windows installer type: NSIS (found standard uninstaller: ${standardNsisUninstaller})`,
+      );
+      return "nsis";
+    }
+
+    // 方式2和3: 读取目录一次，检查多种 NSIS 卸载程序模式
+    // 避免重复调用 readdirSync，提高性能
+    let appFiles: string[] | undefined;
+    try {
+      appFiles = fs.readdirSync(appDir);
+    } catch (e) {
+      log.warn("[AutoUpdater] Failed to read app directory:", e);
+    }
+
+    if (appFiles && appFiles.length > 0) {
+      // 方式2: NSIS 通用卸载程序模式 (unins000.exe, unins001.exe 等)
+      const genericNsisUninstaller = appFiles.find((f) =>
+        /^unins\d{3}\.exe$/i.test(f),
+      );
+      if (genericNsisUninstaller) {
+        log.info(
+          `[AutoUpdater] Windows installer type: NSIS (found generic NSIS uninstaller: ${genericNsisUninstaller})`,
+        );
+        return "nsis";
+      }
+
+      // 方式3: 匹配 Uninstall*.exe 或 unins*.exe 开头的文件
+      // 严格模式：避免误判如 "uninstaller_helper.exe" 等非卸载程序文件
+      const anyUninstaller = appFiles.find((f) => {
+        const lowerName = f.toLowerCase();
+        return (
+          // Uninstall 开头 + .exe 结尾（如 Uninstall.exe, Uninstall-1.0.0.exe）
+          (lowerName.startsWith("uninstall") && lowerName.endsWith(".exe")) ||
+          // unins 开头但不是 uninsNNN.exe 模式的（兼容其他 NSIS 变体）
+          (lowerName.startsWith("unins") &&
+            !/^unins\d{3}\.exe$/i.test(f) &&
+            lowerName.endsWith(".exe"))
+        );
+      });
+      if (anyUninstaller) {
+        log.info(
+          `[AutoUpdater] Windows installer type: NSIS (found uninstaller: ${anyUninstaller})`,
+        );
+        return "nsis";
+      }
+    }
+
+    // 无卸载程序文件 ≠ MSI：按注册表证据判定真 MSI，否则按 NSIS 兜底
+    // （解压/绿色部署形态，见函数头注）
+    let msiKey: string | null;
+    try {
+      msiKey = findMsiUninstallKey(productName);
+    } catch (error) {
+      if (!(error instanceof RegistryProbeError)) throw error;
+      log.warn(
+        `[AutoUpdater] Windows installer type undetermined: ${error.message}`,
+      );
+      return "inconclusive";
+    }
+    if (msiKey) {
+      log.info(
+        `[AutoUpdater] Windows installer type: MSI (registry uninstall key: ${msiKey})`,
+      );
+      return "msi";
+    }
+    log.info(
+      "[AutoUpdater] Windows installer type: NSIS assumed (no uninstaller file in app directory, no MSI registry evidence — unpacked/portable deploy tolerated)",
+    );
+    return "nsis";
+  }
+
+  return "nsis"; // 非预期平台 fallback（实际 win32/mac/linux 已覆盖）
+}
+
+let cachedInstallerType: InstallerType | undefined;
+
+/** 证据不全（reg 瞬时故障）的保守结果在此期间内直接复用，避免每次查询都同步重跑 reg.exe */
+const INCONCLUSIVE_RETRY_MS = 60_000;
+let inconclusiveUntil = 0;
+
+export function getInstallerType(): InstallerType {
+  if (cachedInstallerType) return cachedInstallerType;
+  if (Date.now() < inconclusiveUntil) return "msi";
+  const detected = detectInstallerType();
+  if (detected === "inconclusive") {
+    // 保守按 MSI 处理（不自动更新），不永久缓存：退避期过后重新探测
+    inconclusiveUntil = Date.now() + INCONCLUSIVE_RETRY_MS;
+    return "msi";
+  }
+  cachedInstallerType = detected;
+  return detected;
+}
+
+/**
+ * 当前安装方式是否支持自动更新
+ * - NSIS / mac / linux / dev: electron-updater 原生支持（dev 模式下载有单独 guard）
+ * - MSI: 不支持，引导到官网下载安装页
+ */
+export function canAutoUpdate(): boolean {
+  const type = getInstallerType();
+  return type !== "msi";
+}
+
+let cachedIsLinuxDebInstall: boolean | null = null;
+
+/**
+ * Linux deb 安装形态：resources/package-type 由 electron-builder 写入，判定口径与
+ * electron-updater 选择 DebUpdater 一致。
+ */
+export function isLinuxDebInstall(): boolean {
+  if (cachedIsLinuxDebInstall === null) {
+    let packageType: string | null = null;
+    try {
+      packageType = fs
+        .readFileSync(path.join(process.resourcesPath, "package-type"), "utf8")
+        .trim();
+    } catch {
+      packageType = null;
+    }
+    cachedIsLinuxDebInstall =
+      process.platform === "linux" && packageType === "deb";
+  }
+  return cachedIsLinuxDebInstall;
+}
+
+/**
+ * Windows NSIS 是否关闭差分下载（默认关闭，MinIO 多段 Range 未就绪）。
+ * 设 NUWAX_DISABLE_DIFF_UPDATE=0 可临时开启以验证差分。
+ */
+export function shouldDisableDifferentialDownload(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // "0" = 不禁用 = 开启差分；其他值或未设置 = 禁用（双重否定）
+  return platform === "win32" && env.NUWAX_DISABLE_DIFF_UPDATE !== "0";
+}
+
+// ==================== 更新状态管理 ====================
+
+/**
+ * electron-updater 的加载入口：主进程为 CJS 环境，必须走 require 直加载；
+ * 单独拆成变量是给单测留注入缝（vitest 的 vi.mock 拦不住 require 路径）。
+ */
+let loadAutoUpdaterModule: () => { autoUpdater: any } =
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  () => require("electron-updater");
+
+/** 仅测试使用：注入 mock 的 electron-updater 模块；传 null 恢复真实 require */
+export function _setAutoUpdaterModuleLoaderForTest(
+  loader: (() => { autoUpdater: any }) | null,
+): void {
+  loadAutoUpdaterModule =
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    loader ?? (() => require("electron-updater"));
+}
+
+/** Validate update metadata before the tolerant dependency version comparator. */
+export function isValidUpdateVersion(version: unknown): version is string {
+  if (typeof version !== "string") return false;
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      version,
+    );
+  return (
+    !!match &&
+    match[0] === version &&
+    (!match[4] ||
+      match[4]
+        .split(".")
+        .every(
+          (part) =>
+            !/^\d+$/.test(part) || part === "0" || !part.startsWith("0"),
+        ))
+  );
+}
+
+let currentState: UpdateState = { status: "idle" };
+let getMainWindow: (() => BrowserWindow | null) | null = null;
+let cleanupBeforeInstall: (() => void | Promise<void>) | null = null;
+/** 后台检查时屏蔽 electron-updater 的瞬时状态，结束后由检查逻辑一次性发布结果。 */
+let suppressUpdaterStatusEvents = false;
+/** 安装前清理的等待上限：quitAndInstall 紧随其后，清理被卡死时不能拖死安装流程。 */
+const INSTALL_CLEANUP_TIMEOUT_MS = 10_000;
+/**
+ * 在 quitAndInstall 前调用，通知主进程：
+ * 1. 设置 isQuitting = true，防止窗口 close 事件被拦截到托盘
+ * 2. 设置 isInstallingUpdate = true，让 before-quit 跳过 e.preventDefault()，
+ *    允许 Squirrel.Mac 正常接管退出流程完成安装
+ */
+let markQuitting: (() => void) | null = null;
+/** electron-updater 下载完成的安装包路径（Linux deb 自行安装时使用） */
+let downloadedUpdateFile: string | null = null;
+let linuxDebInstallInFlight = false;
+/** 可选宿主策略，默认仍由用户在下载后选择安装时机。 */
+let installAfterDownload = false;
+type UpdateResult = { success: boolean; error?: string };
+let updateTask: Promise<UpdateResult> | null = null;
+
+function usesOneClickUpdate(): boolean {
+  return (
+    installAfterDownload &&
+    (process.platform === "win32" || process.platform === "darwin") &&
+    canAutoUpdate()
+  );
+}
+
+function sendStatusToRenderer(): void {
+  const win = getMainWindow?.();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("update:status", currentState);
+  }
+}
+
+/**
+ * 显示模态对话框（挂载到主窗口，避免 Linux 标题栏图标显示异常）
+ */
+function showModal(
+  options: Electron.MessageBoxOptions,
+): Promise<Electron.MessageBoxReturnValue> {
+  const win = getMainWindow?.();
+  if (win && !win.isDestroyed()) {
+    return dialog.showMessageBox(win, options);
+  }
+  return dialog.showMessageBox(options);
+}
+
+function setState(patch: Partial<UpdateState>): void {
+  currentState = { ...currentState, ...patch };
+  sendStatusToRenderer();
+}
+
+// ==================== latest.json 更新检查 ====================
+
+let checkInProgress = false;
+
+export type CheckOptions = UpdateCheckOptions;
+
+/**
+ * 通过 OSS latest.json 检查更新
+ *
+ * 流程：
+ * 1. 拉取 latest.json 获取最新版本号和 signature
+ * 2. 与本地版本比较
+ * 3. 如果有更新，设置 electron-updater feedURL 指向版本化 OSS 路径，
+ *    并调用 autoUpdater.checkForUpdates() 初始化 electron-updater 下载状态
+ * 4. OSS 不可达时直接报错，不 fallback 到 GitHub
+ */
+async function checkForUpdatesViaLatestJson(
+  options: CheckOptions = {},
+): Promise<UpdateInfo> {
+  if (checkInProgress) {
+    log.info("[AutoUpdater] Check already in progress, skipping");
+    // 返回 alreadyChecking: true，让调用方知道检查正在进行，避免误报"当前已是最新版本"
+    return { hasUpdate: false, alreadyChecking: true };
+  }
+  checkInProgress = true;
+  suppressUpdaterStatusEvents = options.background === true;
+
+  try {
+    return await doCheckViaLatestJson(options);
+  } finally {
+    checkInProgress = false;
+    suppressUpdaterStatusEvents = false;
+  }
+}
+
+async function doCheckViaLatestJson(
+  options: CheckOptions = {},
+): Promise<UpdateInfo> {
+  const { autoUpdater } = loadAutoUpdaterModule();
+  const updateChannel = getUpdateChannel();
+  autoUpdater.allowPrerelease = updateChannel === "beta";
+  // Versioned generic feeds always expose latest-*.yml. Setting channel enables
+  // downgrades in electron-updater, so reset it explicitly after the setter.
+  autoUpdater.channel = "latest";
+  autoUpdater.allowDowngrade = false;
+  const latestJsonUrl = getLatestJsonUrlByChannel(updateChannel);
+  log.info(
+    `[AutoUpdater] Check updates via channel=${updateChannel}, url=${latestJsonUrl}, background=${options.background === true}`,
+  );
+  if (!options.background) {
+    setState({
+      status: "checking",
+      error: undefined,
+      isReadOnlyVolumeError: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  }
+
+  let latestJson: LatestJson;
+
+  try {
+    latestJson = await fetchLatestJson(latestJsonUrl);
+  } catch (e: any) {
+    // 日志保留完整错误信息（含 URL），用户提示仅显示 HTTP 状态码
+    log.error(
+      `[AutoUpdater] Failed to fetch latest.json from OSS(channel=${updateChannel}): ${e.message}`,
+    );
+    if (options.background) {
+      // 后台轮询静默失败：不置 error 态、保住先前状态（如已 available），下一轮再试
+      return { hasUpdate: false, error: e.message };
+    }
+    const statusMatch = e.message.match(/^HTTP (\d+)/);
+    const userMsg = statusMatch
+      ? `HTTP ${statusMatch[1]}`
+      : t("Claw.AutoUpdater.networkFailed");
+    setState({
+      status: "error",
+      error: `${t("Claw.AutoUpdater.getUpdateInfoFailed", updateChannel)}: ${userMsg}`,
+      canAutoUpdate: canAutoUpdate(),
+    });
+    return {
+      hasUpdate: false,
+      error: `${t("Claw.AutoUpdater.getUpdateInfoFailed", updateChannel)}: ${userMsg}`,
+    };
+  }
+
+  if (
+    !isValidUpdateVersion(latestJson.version) ||
+    (updateChannel === "stable" &&
+      latestJson.version.split("+")[0].includes("-"))
+  ) {
+    const msg = t(
+      "Claw.AutoUpdater.invalidMetadataVersion",
+      latestJson.version,
+    );
+    log.error(
+      `[AutoUpdater] Invalid latest.json version for channel=${updateChannel}: ${latestJson.version}`,
+    );
+    if (options.background) {
+      return { hasUpdate: false, error: msg };
+    }
+    setState({
+      status: "error",
+      error: msg,
+      canAutoUpdate: canAutoUpdate(),
+    });
+    return { hasUpdate: false, error: msg };
+  }
+
+  const hasUpdate = compareVersions(latestJson.version, app.getVersion()) > 0;
+
+  if (hasUpdate) {
+    // 优先从 latest.json 的 yml 字段读取完整 yml URL（CI 生成，支持任意 OSS 路径结构）
+    // 降级老逻辑：客户端自己拼接 electron-v{version} 或 beta-build/prerelease-v{version} 路径
+    // 注意：ymlUrl 是文件 URL（.../latest.yml），但 setFeedURL 期望目录路径，它会自动拼接 {channel}.yml
+    const platformKey = process.platform === "win32" ? "win" : process.platform;
+    const ymlUrl = latestJson.yml?.[platformKey];
+    // 去掉文件名得到目录路径，供 electron-updater generic provider 自动拼接 {channel}.yml
+    const ymlDir = ymlUrl ? ymlUrl.replace(/\/[^/]+\.yml$/, "/") : null;
+    const versionedUrl = ymlDir
+      ? ymlDir
+      : updateChannel === "beta"
+        ? `${OSS_BASE}/beta-build/prerelease-v${latestJson.version}`
+        : `${OSS_BASE}/electron-v${latestJson.version}`;
+    log.info(
+      `[AutoUpdater] New version ${latestJson.version} found via channel=${updateChannel}, ymlUrl=${ymlUrl ?? "none (using fallback)"}, feedUrl=${versionedUrl}`,
+    );
+    autoUpdater.setFeedURL({ provider: "generic", url: versionedUrl });
+    // 初始化 electron-updater 内部状态，为后续 downloadUpdate() 做准备
+    await autoUpdater.checkForUpdates();
+    // electron-updater 的 update-available 事件只保证 version；latest.json 才是
+    // 商业发布说明/日期的事实源，因此在检查完成后补回完整元数据。
+    setState({
+      status: "available",
+      version: latestJson.version,
+      releaseDate: latestJson.pub_date,
+      releaseNotes: latestJson.notes,
+      error: undefined,
+      isReadOnlyVolumeError: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  } else {
+    setState({
+      status: "not-available",
+      version: undefined,
+      releaseDate: undefined,
+      releaseNotes: undefined,
+      error: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  }
+
+  return {
+    hasUpdate,
+    version: latestJson.version,
+    releaseDate: latestJson.pub_date,
+    releaseNotes: latestJson.notes,
+  };
+}
+
+// ==================== 初始化 ====================
+
+/**
+ * 初始化自动更新（应在 app.whenReady 后调用）
+ * @param getWindow 获取主窗口
+ * @param cleanup 安装更新前的清理回调（停止服务、关闭数据库等）；可返回 Promise，
+ *                quitAndInstall 前会 await（上限 INSTALL_CLEANUP_TIMEOUT_MS）
+ * @param onMarkQuitting 在调用 quitAndInstall 前调用，用于设置主进程的 isQuitting/isInstallingUpdate 标志，
+ *                       防止窗口 close 被拦截，并让 before-quit 不阻止退出
+ * @param options installAfterDownload：Windows NSIS / macOS 下载校验后直接安装，默认关闭
+ */
+export function initAutoUpdater(
+  getWindow: () => BrowserWindow | null,
+  cleanup?: () => void | Promise<void>,
+  onMarkQuitting?: () => void,
+  options: { installAfterDownload?: boolean } = {},
+): void {
+  getMainWindow = getWindow;
+  cleanupBeforeInstall = cleanup || null;
+  markQuitting = onMarkQuitting || null;
+  installAfterDownload = options.installAfterDownload === true;
+  currentState = {
+    ...currentState,
+    installAfterDownload: usesOneClickUpdate(),
+  };
+
+  const installerType = getInstallerType();
+  log.info(
+    `[AutoUpdater] Installer type: ${installerType}, canAutoUpdate: ${canAutoUpdate()}`,
+  );
+
+  // MSI 安装只支持检查更新，不支持自动下载/安装
+  if (installerType === "msi") {
+    log.info(
+      "[AutoUpdater] MSI installation detected: auto-download disabled, will redirect to official download page",
+    );
+  }
+
+  // CJS 具名导入 electron-updater（经加载缝，见 loadAutoUpdaterModule）
+  const { autoUpdater } = loadAutoUpdaterModule();
+
+  autoUpdater.logger = log;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = canAutoUpdate();
+  // deb 退出时安装会走 electron-updater 的同步 pkexec，授权框不可见时退出流程被冻结
+  if (isLinuxDebInstall()) {
+    autoUpdater.autoInstallOnAppQuit = false;
+  }
+
+  // MinIO 暂不支持 multipart Range；默认关闭差分，避免失败重试。设 NUWAX_DISABLE_DIFF_UPDATE=0 可临时开启验证。
+  const disableDiff = shouldDisableDifferentialDownload();
+  autoUpdater.disableDifferentialDownload = disableDiff;
+  if (disableDiff) {
+    log.info(
+      "[AutoUpdater] Differential download disabled (full download only)",
+    );
+  } else if (process.platform === "win32") {
+    log.info(
+      "[AutoUpdater] Differential download enabled (NUWAX_DISABLE_DIFF_UPDATE=0)",
+    );
+  } else {
+    log.info(
+      "[AutoUpdater] Differential download: using electron-updater default",
+    );
+  }
+
+  // 开发模式：使用 dev-app-update.yml 配置，禁用自动安装（Squirrel.Mac 无法匹配 dev bundle ID）
+  if (!app.isPackaged) {
+    autoUpdater.forceDevUpdateConfig = true;
+    autoUpdater.autoInstallOnAppQuit = false;
+    log.info(
+      "[AutoUpdater] Dev mode: using dev-app-update.yml (autoInstall disabled)",
+    );
+  }
+
+  // 自定义更新源覆盖（本地测试），直接走 electron-updater 的 generic provider
+  const customServer = process.env.NUWAX_UPDATE_SERVER;
+  if (customServer) {
+    log.info(`[AutoUpdater] Using custom update server: ${customServer}`);
+    autoUpdater.setFeedURL({ provider: "generic", url: customServer });
+  }
+
+  // -------- 事件监听 --------
+
+  autoUpdater.on("checking-for-update", () => {
+    log.info("[AutoUpdater] Checking for update...");
+    if (suppressUpdaterStatusEvents) return;
+    setState({
+      status: "checking",
+      isReadOnlyVolumeError: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  });
+
+  autoUpdater.on("update-available", (info: any) => {
+    log.info("[AutoUpdater] Update available:", info.version);
+    if (suppressUpdaterStatusEvents) return;
+    setState({
+      status: "available",
+      version: info.version,
+      isReadOnlyVolumeError: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  });
+
+  autoUpdater.on("update-not-available", (_info: any) => {
+    log.info("[AutoUpdater] Already up to date");
+    if (suppressUpdaterStatusEvents) return;
+    setState({
+      status: "not-available",
+      isReadOnlyVolumeError: undefined,
+      canAutoUpdate: canAutoUpdate(),
+    });
+  });
+
+  autoUpdater.on("download-progress", (progress: UpdateProgress) => {
+    log.info(
+      `[AutoUpdater] Download progress: ${progress.percent.toFixed(1)}%`,
+    );
+    setState({
+      status: "downloading",
+      progress,
+      canAutoUpdate: true,
+    });
+  });
+
+  autoUpdater.on("update-downloaded", (info: any) => {
+    log.info("[AutoUpdater] Update downloaded:", info.version);
+    downloadedUpdateFile = info.downloadedFile ?? null;
+    setState({
+      status: updateTask ? "installing" : "downloaded",
+      version: info.version,
+      progress: undefined,
+      canAutoUpdate: true,
+    });
+  });
+
+  autoUpdater.on("error", (err: Error) => {
+    log.error("[AutoUpdater] Error:", err.message);
+    if (suppressUpdaterStatusEvents) return;
+    if (currentState.status === "installing") updateTask = null;
+    setState({
+      status: "error",
+      error: err.message,
+      progress: undefined,
+      canAutoUpdate: canAutoUpdate(),
+      isReadOnlyVolumeError: isReadOnlyVolumeError(err),
+    });
+  });
+
+  // 后台定时复检：启动 10s 首查（静默失败），此后按固定间隔轮询，托盘常驻/长会话
+  // 也能发现新版本；发现新版只推状态亮徽标（available），下载仍由用户手动触发。
+  scheduleBackgroundCheck(STARTUP_CHECK_DELAY_MS);
+
+  // 系统睡眠期间 Node 定时器不走，唤醒后补查一轮让发现更及时
+  powerMonitor.on("resume", () => {
+    log.info("[AutoUpdater] System resumed, scheduling background check soon");
+    scheduleBackgroundCheck(RESUME_RECHECK_DELAY_MS);
+  });
+
+  app.once("before-quit", () => {
+    clearBackgroundCheckTimer();
+  });
+}
+
+// ==================== 后台定时复检调度器 ====================
+
+/** 启动后首查延迟：留 1s 给应用初始化，同时尽早更新版本状态。 */
+const STARTUP_CHECK_DELAY_MS = 1_000;
+/** 默认复检间隔 1h */
+const DEFAULT_RECHECK_INTERVAL_MS = 60 * 60 * 1000;
+/** 复检间隔下限：env 误配成极小值时防打爆 OSS */
+const MIN_RECHECK_INTERVAL_MS = 60_000;
+/** 系统唤醒后的补查延迟 */
+const RESUME_RECHECK_DELAY_MS = 30_000;
+
+/**
+ * 解析复检间隔：env NUWAX_UPDATE_CHECK_INTERVAL_MS 可覆盖（QA/dev 短间隔验证），
+ * 非法/未设置回默认 1h，低于下限按下限。
+ */
+export function resolveRecheckIntervalMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = Number.parseInt(env.NUWAX_UPDATE_CHECK_INTERVAL_MS ?? "", 10);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_RECHECK_INTERVAL_MS;
+  }
+  return Math.max(raw, MIN_RECHECK_INTERVAL_MS);
+}
+
+/**
+ * 后台复检的跳过判定：
+ * - checking：已有检查在跑（含手动触发）；
+ * - downloading/downloaded：下载中或已待安装，无需再查。
+ * available 不跳——允许把版本徽标的元数据刷新到更新的版本。
+ */
+export function shouldSkipBackgroundCheck(
+  status: UpdateState["status"],
+): boolean {
+  return (
+    status === "checking" ||
+    status === "downloading" ||
+    status === "downloaded" ||
+    status === "installing"
+  );
+}
+
+let backgroundCheckTimerId: NodeJS.Timeout | null = null;
+let lastBackgroundCheckAt: number | null = null;
+let nextBackgroundCheckAt: number | null = null;
+
+function clearBackgroundCheckTimer(): void {
+  if (backgroundCheckTimerId) {
+    clearTimeout(backgroundCheckTimerId);
+    backgroundCheckTimerId = null;
+  }
+  nextBackgroundCheckAt = null;
+}
+
+function scheduleBackgroundCheck(delayMs: number): void {
+  clearBackgroundCheckTimer();
+  backgroundCheckTimerId = setTimeout(runBackgroundCheck, delayMs);
+  nextBackgroundCheckAt = Date.now() + delayMs;
+}
+
+async function runBackgroundCheck(): Promise<void> {
+  backgroundCheckTimerId = null;
+  nextBackgroundCheckAt = null;
+
+  if (shouldSkipBackgroundCheck(currentState.status)) {
+    log.info(
+      "[AutoUpdater] Background check skipped (status=%s), next in %dms",
+      currentState.status,
+      resolveRecheckIntervalMs(),
+    );
+    scheduleBackgroundCheck(resolveRecheckIntervalMs());
+    return;
+  }
+
+  lastBackgroundCheckAt = Date.now();
+  try {
+    const result = await checkForUpdates({ background: true });
+    log.info(
+      "[AutoUpdater] Background check done: hasUpdate=%s, version=%s",
+      result.hasUpdate,
+      result.version ?? "n/a",
+    );
+  } catch (e: any) {
+    // checkForUpdatesViaLatestJson 正常不抛；兜底防止调度链断裂
+    log.warn("[AutoUpdater] Background check failed:", e?.message ?? e);
+  } finally {
+    scheduleBackgroundCheck(resolveRecheckIntervalMs());
+  }
+}
+
+/**
+ * 调度器调试信息：关于页调试面板/QA 验证调度器是否活着，不必等 1h
+ */
+export function getBackgroundCheckDebugInfo(): {
+  recheckIntervalMs: number;
+  lastBackgroundCheckAt: number | null;
+  nextBackgroundCheckAt: number | null;
+} {
+  return {
+    recheckIntervalMs: resolveRecheckIntervalMs(),
+    lastBackgroundCheckAt,
+    nextBackgroundCheckAt,
+  };
+}
+
+/**
+ * 通用更新对话框流程（供托盘菜单等外部调用）
+ * 检查更新 → 有更新则确认 → 下载；一键策略直接安装，其他宿主保留二次确认
+ */
+export async function showUpdateDialogFlow(): Promise<void> {
+  if (updateTask) {
+    getMainWindow?.()?.show();
+    return;
+  }
+  try {
+    const result = await checkForUpdates();
+    if (!result.hasUpdate) {
+      showModal({
+        type: "info",
+        title: t("Claw.AutoUpdater.checking"),
+        message: t("Claw.AutoUpdater.alreadyLatest"),
+      });
+      return;
+    }
+
+    const version = result.version ?? "unknown";
+    const state = getUpdateState();
+
+    if (state.canAutoUpdate === false) {
+      const { response } = await showModal({
+        type: "info",
+        title: t("Claw.AutoUpdater.newVersionFound"),
+        message: t("Claw.AutoUpdater.versionFound", version),
+        detail: t("Claw.AutoUpdater.unsupportedInstall"),
+        buttons: [
+          t("Claw.AutoUpdater.downloadPage"),
+          t("Claw.AutoUpdater.later"),
+        ],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        openReleasesPage();
+      }
+      return;
+    }
+
+    const { response } = await showModal({
+      type: "info",
+      title: t("Claw.AutoUpdater.newVersionFound"),
+      message: t("Claw.AutoUpdater.versionFound", version),
+      detail: t("Claw.AutoUpdater.downloadInstallNow"),
+      buttons: [t("Claw.AutoUpdater.downloadNow"), t("Claw.AutoUpdater.later")],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+
+    if (usesOneClickUpdate()) {
+      const win = getMainWindow?.();
+      if (win && !win.isDestroyed()) {
+        win.show();
+        win.webContents.send("menu:about");
+      }
+    }
+    const dlResult = await downloadUpdate();
+    if (!dlResult.success) {
+      if (dlResult.error)
+        showModal({
+          type: "error",
+          title: t("Claw.AutoUpdater.downloadFailed"),
+          message: dlResult.error,
+        });
+      return;
+    }
+
+    if (usesOneClickUpdate()) return;
+
+    const { response: installResponse } = await showModal({
+      type: "info",
+      title: t("Claw.AutoUpdater.updateDownloaded"),
+      message: t("Claw.AutoUpdater.updateReady"),
+      detail: t("Claw.AutoUpdater.installNow"),
+      buttons: [
+        t("Claw.AutoUpdater.installNow"),
+        t("Claw.AutoUpdater.installOnExit"),
+      ],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (installResponse === 0) {
+      installUpdate();
+    }
+  } catch (e: any) {
+    log.error("[AutoUpdater] Update dialog flow error:", e.message);
+    showModal({
+      type: "error",
+      title: t("Claw.AutoUpdater.checkFailed"),
+      message: e.message || t("Claw.AutoUpdater.later"),
+    });
+  }
+}
+
+// ==================== 公开 API ====================
+
+/**
+ * 手动检查更新（通过 latest.json）；background 选项仅供后台调度器复用，
+ * IPC 手动入口不传，行为不变（失败置 error 态供关于页/徽标展示重试）
+ */
+export async function checkForUpdates(
+  options: CheckOptions = {},
+): Promise<UpdateInfo> {
+  if (updateTask) {
+    return {
+      hasUpdate: !!currentState.version,
+      version: currentState.version,
+      alreadyChecking: true,
+    };
+  }
+  if (options.background && shouldSkipBackgroundCheck(currentState.status)) {
+    log.info(
+      "[AutoUpdater] Background check skipped (status=%s)",
+      currentState.status,
+    );
+    return {
+      hasUpdate: false,
+      alreadyChecking: currentState.status === "checking",
+    };
+  }
+
+  // 自定义更新源（本地测试用）直接走 electron-updater，适用于 stable 通道
+  // beta 通道始终走 doCheckViaLatestJson，确保 feedURL 指向 beta-build 路径
+  if (process.env.NUWAX_UPDATE_SERVER && getUpdateChannel() === "stable") {
+    if (options.background) suppressUpdaterStatusEvents = true;
+    try {
+      const { autoUpdater } = loadAutoUpdaterModule();
+      if (!options.background) {
+        setState({
+          status: "checking",
+          error: undefined,
+          isReadOnlyVolumeError: undefined,
+          canAutoUpdate: canAutoUpdate(),
+        });
+      }
+      const result = await autoUpdater.checkForUpdates();
+      if (result?.updateInfo) {
+        const hasUpdate =
+          compareVersions(result.updateInfo.version, app.getVersion()) > 0;
+        if (options.background) {
+          setState({
+            status: hasUpdate ? "available" : "not-available",
+            version: hasUpdate ? result.updateInfo.version : undefined,
+            releaseDate: hasUpdate ? result.updateInfo.releaseDate : undefined,
+            releaseNotes:
+              hasUpdate && typeof result.updateInfo.releaseNotes === "string"
+                ? result.updateInfo.releaseNotes
+                : undefined,
+            error: undefined,
+            canAutoUpdate: canAutoUpdate(),
+          });
+        }
+        return {
+          hasUpdate,
+          version: result.updateInfo.version,
+          releaseDate: result.updateInfo.releaseDate,
+          releaseNotes:
+            typeof result.updateInfo.releaseNotes === "string"
+              ? result.updateInfo.releaseNotes
+              : undefined,
+        };
+      }
+      if (options.background) {
+        setState({
+          status: "not-available",
+          version: undefined,
+          releaseDate: undefined,
+          releaseNotes: undefined,
+          error: undefined,
+          canAutoUpdate: canAutoUpdate(),
+        });
+      }
+      return { hasUpdate: false };
+    } catch (err: any) {
+      log.error("[AutoUpdater] checkForUpdates error:", err.message);
+      if (!options.background) {
+        setState({
+          status: "error",
+          error: err.message,
+          canAutoUpdate: canAutoUpdate(),
+        });
+      }
+      return { hasUpdate: false, error: err.message };
+    } finally {
+      if (options.background) suppressUpdaterStatusEvents = false;
+    }
+  }
+
+  return checkForUpdatesViaLatestJson(options);
+}
+
+/**
+ * 下载更新
+ */
+export function downloadUpdate(): Promise<UpdateResult> {
+  return usesOneClickUpdate() ? runOneClickUpdate() : downloadOnlyUpdate();
+}
+
+/** 下载完成的事件已经经过 electron-updater 的完整性及签名校验。 */
+function runOneClickUpdate(): Promise<UpdateResult> {
+  if (updateTask) return updateTask;
+  updateTask = Promise.resolve()
+    .then(async (): Promise<UpdateResult> => {
+      try {
+        if (currentState.status !== "downloaded") {
+          const result = await downloadOnlyUpdate();
+          if (!result.success) return result;
+        }
+        setState({
+          status: "installing",
+          progress: undefined,
+          error: undefined,
+        });
+        return await installDownloadedUpdate();
+      } catch (error: any) {
+        log.error("[AutoUpdater] One-click update failed:", error.message);
+        setState({
+          status: "error",
+          error: error.message,
+          progress: undefined,
+        });
+        return { success: false, error: error.message };
+      }
+    })
+    .then((result) => {
+      // 成功后保持占用直到退出，防止清理结束至 app.quit 之间重复安装。
+      if (!result.success) {
+        updateTask = null;
+        if (currentState.status !== "error")
+          setState({ status: "error", error: result.error });
+      }
+      return result;
+    });
+  return updateTask;
+}
+
+async function downloadOnlyUpdate(): Promise<UpdateResult> {
+  // Dev 模式下 Squirrel.Mac 无法处理更新包（bundle ID 不匹配），只允许检查更新
+  if (!app.isPackaged) {
+    const errMsg = t("Claw.AutoUpdater.devModeUnsupported");
+    log.info(
+      "[AutoUpdater] downloadUpdate skipped: dev/unpackaged build cannot apply auto-update",
+    );
+    return {
+      success: false,
+      error: errMsg,
+    };
+  }
+
+  // MSI 安装不支持自动更新，引导到官网下载安装页
+  if (getInstallerType() === "msi") {
+    log.info(
+      "[AutoUpdater] MSI installation: redirecting to official download page for manual download",
+    );
+    openReleasesPage();
+    return {
+      success: false,
+      error: t("Claw.AutoUpdater.unsupportedInstall"),
+    };
+  }
+
+  try {
+    // 立即设置 downloading 状态，让渲染进程马上显示 loading
+    setState({
+      status: "downloading",
+      progress: undefined,
+      error: undefined,
+      canAutoUpdate: true,
+    });
+    const { autoUpdater } = loadAutoUpdaterModule();
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err: any) {
+    log.error("[AutoUpdater] downloadUpdate error:", err.message);
+    setState({
+      status: "error",
+      error: err.message,
+      canAutoUpdate: canAutoUpdate(),
+      isReadOnlyVolumeError: isReadOnlyVolumeError(err),
+    });
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 退出并安装更新
+ */
+export function installUpdate(): Promise<UpdateResult> {
+  return usesOneClickUpdate() ? runOneClickUpdate() : installDownloadedUpdate();
+}
+
+async function installDownloadedUpdate(): Promise<UpdateResult> {
+  if (!app.isPackaged) {
+    const errMsg = t("Claw.AutoUpdater.installDevUnsupported");
+    log.info(
+      "[AutoUpdater] installUpdate skipped: dev/unpackaged build cannot install update",
+    );
+    return {
+      success: false,
+      error: errMsg,
+    };
+  }
+
+  if (getInstallerType() === "msi") {
+    openReleasesPage();
+    return {
+      success: false,
+      error: t("Claw.AutoUpdater.unsupportedInstall"),
+    };
+  }
+
+  if (isLinuxDebInstall()) {
+    return installLinuxDebUpdate();
+  }
+
+  try {
+    await prepareForInstall();
+    const { autoUpdater } = loadAutoUpdaterModule();
+    if (usesOneClickUpdate()) {
+      autoUpdater.autoRunAppAfterInstall = true;
+      if (process.platform === "win32") {
+        // NSIS 升级正在使用的副本；macOS 由 Squirrel.Mac 管理 bundle 路径。
+        autoUpdater.installDirectory = path.win32.dirname(app.getPath("exe"));
+      }
+    }
+    autoUpdater.quitAndInstall(false, true);
+    return { success: true };
+  } catch (err: any) {
+    log.error("[AutoUpdater] installUpdate error:", err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+async function prepareForInstall(): Promise<void> {
+  // 关键：在安装前设置退出标志（所有平台通用）
+  // 原因1：quitAndInstall 会触发 app.quit()，进而触发窗口 close 事件；
+  //   若 isQuitting 未设置，close 会被拦截到托盘，app 无法正常退出
+  // 原因2：通知 before-quit handler 跳过 e.preventDefault()，
+  //   让各平台的安装器（macOS Squirrel.Mac / Windows NSIS / Linux AppImage）
+  //   正常接管退出流程完成安装；否则 e.preventDefault() 会阻止安装器触发
+  if (markQuitting) {
+    log.info("[AutoUpdater] Marking app as quitting for update install...");
+    markQuitting();
+  }
+
+  // 先停止所有服务再退出：await（带上限）——fire-and-forget 会与秒级退出
+  // 竞速，树杀（每引擎最长 5s）大概率被 app 退出截断而残留进程
+  if (cleanupBeforeInstall) {
+    log.info("[AutoUpdater] Running cleanup before install...");
+    await Promise.race([
+      Promise.resolve(cleanupBeforeInstall()).catch((e) =>
+        log.error("[AutoUpdater] cleanup before install failed:", e),
+      ),
+      new Promise<void>((resolve) =>
+        setTimeout(resolve, INSTALL_CLEANUP_TIMEOUT_MS),
+      ),
+    ]);
+  }
+}
+
+async function installLinuxDebUpdate(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  if (!downloadedUpdateFile) {
+    return { success: false, error: "No downloaded update to install" };
+  }
+  if (linuxDebInstallInFlight) {
+    return { success: false, error: "Update installation already in progress" };
+  }
+  linuxDebInstallInFlight = true;
+  const debPath = downloadedUpdateFile;
+  const logPath = path.join(
+    app.getPath("home"),
+    APP_DATA_DIR_NAME,
+    LOGS_DIR_NAME,
+    "update-install.log",
+  );
+  try {
+    log.info(`[AutoUpdater] Installing deb via sudo askpass: ${debPath}`);
+    const result = await installLinuxDeb({
+      debPath,
+      logPath,
+      askpassTitle: t("Claw.AutoUpdater.linuxAuthTitle"),
+      beforeInstall: prepareForInstall,
+    });
+    if (result.ok) {
+      log.info("[AutoUpdater] deb installed, relaunching");
+      app.relaunch();
+      app.quit();
+      return { success: true };
+    }
+    log.warn(`[AutoUpdater] deb install not completed: ${result.reason}`);
+    const error =
+      result.reason === "auth-failed"
+        ? t("Claw.AutoUpdater.linuxAuthFailed")
+        : result.reason === "no-askpass"
+          ? t("Claw.AutoUpdater.linuxManualInstall", debPath)
+          : t("Claw.AutoUpdater.linuxInstallFailed", logPath);
+    return { success: false, error };
+  } catch (err: any) {
+    log.error("[AutoUpdater] deb install error:", err.message);
+    return { success: false, error: err.message };
+  } finally {
+    linuxDebInstallInFlight = false;
+  }
+}
+
+/**
+ * 获取当前更新状态
+ */
+export function getUpdateState(): UpdateState {
+  return { ...currentState, canAutoUpdate: canAutoUpdate() };
+}
+
+/**
+ * 打开下载页：
+ * - Windows: 统一打开官网下载安装页（避免 MSI/EXE 安装路径不一致带来的升级问题）
+ * - macOS/Linux: 从 OSS latest.json 获取当前平台对应下载链接
+ * - macOS: 根据架构选择 arm64/x64 .zip
+ * - Linux: 根据架构选择 arm64/x64 AppImage
+ * OSS 不可达时弹窗提示错误，不 fallback 到 GitHub
+ */
+export async function openReleasesPage(): Promise<void> {
+  if (process.platform === "win32") {
+    log.info(
+      `[AutoUpdater] Opening official download page on Windows: ${OFFICIAL_DOWNLOAD_PAGE_URL}`,
+    );
+    await shell.openExternal(OFFICIAL_DOWNLOAD_PAGE_URL);
+    return;
+  }
+
+  let url: string;
+  let platformName: string;
+  const updateChannel = getUpdateChannel();
+  const latestJsonUrl = getLatestJsonUrlByChannel(updateChannel);
+
+  try {
+    log.info(
+      `[AutoUpdater] Resolve download URL via channel=${updateChannel}, url=${latestJsonUrl}`,
+    );
+    const latest = await fetchLatestJson(latestJsonUrl);
+    const platforms: Platforms | undefined = latest.platforms;
+
+    if (process.platform === "darwin") {
+      url = getMacosDownloadUrl(platforms);
+      platformName = `macOS (${process.arch})`;
+    } else {
+      url = getLinuxDownloadUrl(platforms);
+      platformName = `Linux (${process.arch})`;
+    }
+
+    if (!url) {
+      throw new Error(`No download package found for ${platformName}`);
+    }
+
+    log.info(
+      `[AutoUpdater] Opening ${platformName} download URL from OSS(channel=${updateChannel}): ${url}`,
+    );
+    await shell.openExternal(url);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error(
+      `[AutoUpdater] Failed to get download URL from OSS(channel=${updateChannel}): ${msg}`,
+    );
+    // 弹窗提示用户，不 fallback 到 GitHub
+    await showModal({
+      type: "error",
+      title: t("Claw.AutoUpdater.getDownloadLinkFailed"),
+      message: t("Claw.AutoUpdater.getDownloadLinkFailedDetail", msg),
+    });
+  }
+}

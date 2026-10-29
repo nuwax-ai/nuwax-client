@@ -2,7 +2,7 @@
 import { fileURLToPath } from 'node:url';
 import { withLock } from './core.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const valueFlags = new Set(['frontend', 'port', 'version', 'tag', 'channel', 'nuwax', 'shell', 'output', 'stage']);
+const valueFlags = new Set(['frontend', 'port', 'version', 'tag', 'channel', 'nuwax', 'output', 'stage']);
 const booleanFlags = new Set(['json', 'dry-run', 'refresh-resources', 'dir', 'no-build', 'force-build',
   'with-test', 'no-commit', 'no-push-dist', 'push', 'force', 'notes', 'help']);
 const camel = value => value.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
@@ -12,7 +12,7 @@ const commandFlags = {
   dev: ['frontend', 'port', 'refresh-resources', 'dry-run'],
   setup: ['frontend', 'refresh-resources', 'dry-run'],
   pack: ['frontend', 'refresh-resources', 'version', 'output', 'dir', 'dry-run'],
-  'sub:update': ['nuwax', 'shell', 'no-build', 'force-build', 'with-test', 'no-commit', 'no-push-dist', 'push', 'force', 'dry-run'],
+  'sub:update': ['nuwax', 'no-build', 'force-build', 'with-test', 'no-commit', 'no-push-dist', 'push', 'force', 'dry-run'],
   release: ['channel', 'version', 'tag', 'notes', 'stage', 'dry-run'],
 };
 export function parseArgs(argv) {
@@ -43,7 +43,7 @@ export async function main(argv = process.argv.slice(2)) {
   const { command, options } = parseArgs(argv);
   if (command === 'help' || options.help) {
     console.log('Nuwax: dev [--frontend source], frontend:build, pack [--frontend source] [--dir],');
-    console.log('       sub:update [--nuwax ref] [--shell ref] [--push],');
+    console.log('       sub:update [--nuwax ref] [--push],');
     console.log('       release --version X.Y.Z[-beta.N] [--channel stable|beta] [--tag existing-tag] [--stage sign|sync] [--dry-run], doctor [--json]');
     return;
   }

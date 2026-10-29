@@ -35,9 +35,9 @@ if (!/^3\.0\.\d+-qa\.recovery\.\d+$/.test(version)) throw Error('An isolated rec
 const source = path.join(root, 'build'), app = path.join(root, 'app');
 fs.mkdirSync(source, { recursive: true });
 fs.mkdirSync(path.join(app, 'resources'), { recursive: true });
-for (const file of fs.readdirSync(path.join(client, 'overlay/crates/agent-electron-client/build'))) {
+for (const file of fs.readdirSync(path.join(client, 'nuwa-electron-shell/crates/agent-electron-client/build'))) {
   if (!/\.(nsh|ps1)$/.test(file)) continue;
-  let data = fs.readFileSync(path.join(client, 'overlay/crates/agent-electron-client/build', file), 'utf8');
+  let data = fs.readFileSync(path.join(client, 'nuwa-electron-shell/crates/agent-electron-client/build', file), 'utf8');
   if (file === 'normalize-old-install.ps1') {
     for (const [from, to] of [["$uninstallerName = 'Uninstall Nuwax.exe'", `$uninstallerName = 'Uninstall ${identity}.exe'`], ["  'Nuwax.exe',", `  '${identity}.exe',`]]) {
       if (data.split(from).length !== 2) throw Error('Unexpected normalizer identity');
@@ -55,7 +55,7 @@ for (const [file, exitCode] of [[path.join(app, identity + '.exe'), 0], [path.jo
 }
 fs.writeFileSync(path.join(app, 'resources/app.asar'), 'Synthetic archive: no Electron application is launched.');
 fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name, version, author: 'Nuwax', description: 'Isolated Windows recovery acceptance', main: 'index.js' }));
-const inventory = require('../../overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs').writeUninstallPayload({
+const inventory = require('../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/uninstall-payload.cjs').writeUninstallPayload({
   appOutDir: app, arch: 1, packager: { projectDir: root, appInfo: { name, productFilename: identity } },
 });
 fs.writeFileSync(path.join(source, 'qa-include.nsh'), `!define NUWAX_UNINSTALL_MANIFEST "${inventory}"\n!include "${path.join(source, 'installer.nsh')}"\n`);

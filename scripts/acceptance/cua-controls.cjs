@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const base = path.resolve(__dirname, '../../nuwa-electron-shell/crates/agent-electron-client');
-const source = path.resolve(__dirname, '../../overlay/crates/agent-electron-client');
+const source = path.resolve(__dirname, '../../nuwa-electron-shell/crates/agent-electron-client');
 const out = path.resolve(process.argv[2] || '.cache/cua-ui-fixture');
 fs.mkdirSync(out, { recursive: true });
 const esbuild = require(path.join(base, 'node_modules/esbuild'));

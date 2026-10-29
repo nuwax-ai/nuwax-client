@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
 import { builderConfig, pack, prepareComputerUse, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { packagedResources } from './prepare-release-updater.mjs';
 
 test('pack resource selection excludes tool download caches without changing their source or runtime payload', async (t) => {

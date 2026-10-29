@@ -89,7 +89,7 @@ node scripts/computer-use/bench/daemon.cjs stop
 
 - `--bench-allow-attach`：整个桌面模式会拒绝接管已有浏览器配置（规格 R4）。加上这个参数，测试脚本会放行对独立测试实例的接管，以便和改造前的结果同口径对比。只存在于测试脚本里。
 - `--window <pid>:<window_id>`：按窗口模式运行 WS 任务。生成策略文件时也要带上同一个参数，让守护进程使用窗口模式的策略。
-- 对比旧版本：用 `git archive <旧提交> overlay/crates/agent-electron-client/src` 导出旧控制层，把当前的 `scripts/computer-use/bench` 复制到导出目录的同一位置，再用环境变量 `CU_ESBUILD` 指向本仓的 esbuild 运行。
+- 对比旧版本：用 `git archive <旧提交> nuwa-electron-shell/crates/agent-electron-client/src` 导出旧控制层，把当前的 `scripts/computer-use/bench` 复制到导出目录的同一位置，再用环境变量 `CU_ESBUILD` 指向本仓的 esbuild 运行。
 
 ## 任务
 

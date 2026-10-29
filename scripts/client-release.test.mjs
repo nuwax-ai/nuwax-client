@@ -252,7 +252,7 @@ test('historical tag preflight uses target gitmodules URL and consumption branch
   assert.equal(result.source.client, target);
   assert.equal(result.source.frontend, source.frontend);
   const configReads = f.calls.filter(call => call[0] === 'git' && call[1] === 'config');
-  assert.equal(configReads.length, 6);
+  assert.equal(configReads.length, 4);  // nuwax + nuwax-dist 各读 url/branch；壳已并入本仓无需读取
   assert.ok(configReads.every(call => call[2] === '--blob' && call[3] === `${target}:.gitmodules`));
   assert.ok(f.calls.some(call => call[0] === 'gh' && call[2] === `repos/example/old-frontend/compare/${source.frontend}...${tip}`));
 });
@@ -422,7 +422,8 @@ test('signing tools use committed automation pin independently of historical tar
   const bundle = await committedSigningTools(tools, '/automation', source.dist);
   assert.equal(bundle.pin, source.shell);
   assert.deepEqual(calls[0].args, ['rev-parse', `${source.dist}:nuwa-electron-shell`]);
-  assert.ok(calls.slice(1).every(call => call.directory === '/automation/nuwa-electron-shell' && call.args[1].startsWith(`${source.shell}:`)));
+  // 壳已并入本仓：签名工具直接从自动化提交的 nuwa-electron-shell/ 目录读取
+  assert.ok(calls.slice(1).every(call => call.directory === '/automation' && call.args[1].startsWith(`${source.dist}:nuwa-electron-shell/`)));
   assert.throws(() => remoteScript({ tag: 'v1.2.3', sha: source.client, version: '1.2.3' }, settings, bundle), /清单 SHA256/);
 });
 

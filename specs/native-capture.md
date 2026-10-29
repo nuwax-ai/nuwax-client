@@ -10,7 +10,7 @@
 
 ## 特性模块边界
 
-- 目录：`overlay/crates/agent-electron-client/src/main/features/capture/`，另有 `preload/features/capture.ts`、`renderer/features/capture/`、`shared/features/capture/`；全部为新增文件。
+- 目录：`nuwa-electron-shell/crates/agent-electron-client/src/main/features/capture/`，另有 `preload/features/capture.ts`、`renderer/features/capture/`、`shared/features/capture/`；全部为新增文件。
 - 静态注册表与运行时在 `main/features/index.ts`（公开入口），不做动态插件加载；`_kit` 现含：特性清单类型、注册（按产品与开关过滤、单个失败隔离）、受信 IPC、生命周期事件、临时目录；托盘贡献与 i18n 语言包等到 Phase 3 / 有实际需求时再增补。特性上下文提供两条 IPC：`ipc`（受信顶层业务页，复用 `isIMSender`）与 `hostIpc`（宿主壳渲染进程，复用 `isHostSender`，供「关于」页使用）。
 - 边界规则由 `scripts/check-feature-boundaries.test.mjs` 强制：特性只能引用自身、`_kit`、`shared/types/hostBridge`、第三方与 Node/Electron；外部只能经 `main/features/index`、`preload/features/index`、`renderer/features/<id>`、`shared/features/<id>/contract` 引用特性；`_kit` 不依赖特性；特性内不出现 `APP_NAME_IDENTIFIER`。
 - 开启：特性清单的 `enabledByDefault` 为默认，运行期可由设置项 `features.<id>.enabled` 覆盖，无需发版。关闭时：主进程不注册 IPC、不建窗口、不占托盘、不创建临时目录；桥上 `capture` 命名空间仍在，但 `getCapabilities().available === false`，其余调用返回 `unsupported`（preload 把「No handler registered」映射为此结果，真实处理函数报错则返回 `failed` 并带信息）。

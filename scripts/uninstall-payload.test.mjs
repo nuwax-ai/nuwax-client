@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import payload from '../overlay/crates/agent-electron-client/scripts/build/uninstall-payload.cjs';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import payload from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/uninstall-payload.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 
 function temporaryDirectory(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-uninstall-payload-test-'));

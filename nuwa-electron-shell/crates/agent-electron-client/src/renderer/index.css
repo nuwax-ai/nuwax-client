@@ -1,0 +1,1288 @@
+/*
+ * NuwaClaw - 现代简洁全局样式
+ * 基于 Ant Design, 风格参考 shadcn/ui
+ * 支持亮色/暗色主题
+ */
+
+/* ========== CSS 变量 - 亮色主题 ========== */
+:root,
+[data-theme="light"] {
+  --color-primary: #18181b;
+  --color-primary-hover: #27272a;
+  --color-primary-active: #3f3f46;
+  --color-success: #16a34a;
+  --color-error: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+  --color-success-bg: #f0fdf4;
+  --color-error-bg: #fef2f2;
+  --color-warning-bg: #fffbeb;
+
+  --color-bg-layout: #f8f9fa;
+  --color-bg-container: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-header: #ffffff;
+  --color-bg-sider: #ffffff;
+  --color-bg-section: #ffffff;
+  --color-bg-section-header: #f9fafb;
+
+  --color-border: #e5e7eb;
+  --color-border-secondary: #f3f4f6;
+
+  --color-text: #18181b;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-text-quaternary: #d1d5db;
+
+  --color-icon: #6b7280;
+  --color-divider: #f3f4f6;
+  --color-bg-hover: #f3f4f6;
+
+  --border-radius: 8px;
+  --border-radius-lg: 10px;
+  --border-radius-sm: 6px;
+}
+
+/* ========== CSS 变量 - 暗色主题 ========== */
+[data-theme="dark"] {
+  --color-primary: #fafafa;
+  --color-primary-hover: #e4e4e7;
+  --color-primary-active: #d4d4d8;
+  --color-success: #22c55e;
+  --color-error: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+  --color-success-bg: #052e16;
+  --color-error-bg: #450a0a;
+  --color-warning-bg: #422006;
+
+  --color-bg-layout: #09090b;
+  --color-bg-container: #18181b;
+  --color-bg-elevated: #27272a;
+  --color-bg-header: #18181b;
+  --color-bg-sider: #18181b;
+  --color-bg-section: #18181b;
+  --color-bg-section-header: #27272a;
+
+  --color-border: #27272a;
+  --color-border-secondary: #3f3f46;
+
+  --color-text: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-text-quaternary: #52525b;
+
+  --color-icon: #a1a1aa;
+  --color-divider: #27272a;
+  --color-bg-hover: #27272a;
+
+  --border-radius: 8px;
+  --border-radius-lg: 10px;
+  --border-radius-sm: 6px;
+}
+
+/* ========== 基础重置 ========== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--color-text);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--color-bg-layout);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+/* ========== 布局 ========== */
+.app-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg-layout);
+}
+
+.app-header {
+  height: 48px;
+  background: var(--color-bg-header);
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  z-index: 100;
+  border-bottom: 1px solid var(--color-border);
+  /* 顶栏常驻后作为窗口主拖拽区（空白处可移窗）；交互元素在下方规则里 no-drag 恢复点击 */
+  -webkit-app-region: drag;
+}
+
+/* 顶栏内交互元素恢复 no-drag，避免切换/刷新/账号等点击被拖拽吞掉 */
+.app-header button,
+.app-header [role="button"],
+.app-header .ant-segmented,
+.app-header .ant-segmented-item,
+.app-header a {
+  -webkit-app-region: no-drag;
+}
+
+.app-header-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-header-title {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 !important;
+  letter-spacing: -0.01em;
+}
+
+.app-header-update-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+  transition:
+    opacity 0.2s,
+    transform 0.15s;
+}
+
+.app-header-update-tag[role="button"] {
+  cursor: pointer;
+}
+
+.app-header-update-tag[role="button"]:hover {
+  opacity: 0.85;
+  transform: scale(1.03);
+}
+
+.app-header-update-tag[role="button"]:active {
+  transform: scale(0.97);
+}
+
+.app-header-update-tag--available {
+  background: rgba(22, 119, 255, 0.1);
+  color: #1677ff;
+  border: 1px solid rgba(22, 119, 255, 0.2);
+}
+
+.app-header-update-tag--downloading {
+  background: rgba(22, 119, 255, 0.1);
+  color: #1677ff;
+  border: 1px solid rgba(22, 119, 255, 0.2);
+}
+
+.app-header-update-tag--install {
+  background: rgba(250, 173, 20, 0.12);
+  color: #faad14;
+  border: 1px solid rgba(250, 173, 20, 0.25);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ========== 设置弹窗左栏（自绘导航：caption + 图标项 + 关于钉底） ==========
+   与内容区之间不放竖线：参考图侧栏无边界、融入弹窗底色，白卡片负责分层。
+   侧栏右内边距收窄到 6px：导航胶囊与内容区之间只留一条窄缝，省出的宽度归内容区 */
+.app-sider {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 6px 12px;
+  overflow-y: auto;
+}
+
+/* 英文菜单文案更长，单独加宽侧边栏，避免文本被截断 */
+.app-sider.app-sider-en {
+  width: 200px;
+}
+
+.app-sider-caption {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  padding: 0 10px;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-sider-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-sider-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--border-radius);
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease;
+}
+
+.app-sider-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.app-sider-item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.app-sider-item-active {
+  background: var(--color-bg-hover);
+  font-weight: 500;
+}
+
+.app-sider-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 15px;
+  color: var(--color-icon);
+}
+
+.app-sider-item-active .app-sider-item-icon {
+  color: var(--color-text);
+}
+
+.app-sider-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 关于钉底：弹性占位把分隔线 + 关于项推到栏底 */
+.app-sider-spacer {
+  flex: 1;
+  min-height: 16px;
+}
+
+.app-sider-divider {
+  border-top: 1px solid var(--color-border);
+  margin: 8px 4px;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-layout);
+  transition: background-color 0.2s ease;
+}
+
+/* Full-width mode (webview 常驻层)：不留内边距、不滚动 */
+.app-content.app-content-fullwidth {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 右栏顶部行：页标题 + 右上角关闭钮 */
+.app-content-titlebar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 16px;
+}
+
+.app-content-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* 标题行以下的内容区：独立滚动 */
+.app-content-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 2px 16px 20px;
+}
+
+/* ========== 沉浸式工具栏窗口控制（TrafficLightToolbar，Win/Linux 自绘三键） ========== */
+/* Windows 标题栏样式：贴死右上角、方角实底，不做悬浮装饰 */
+.toolbar-ctrl-group {
+  /* 背景走变量：女娲主题推送（nuwax:theme-changed）时随米白调色板，暗色回落壳自身色 */
+  /* background: var(--color-bg-container, #ffffff); */
+  /* border-radius: 0 0 0 8px ; */
+  overflow: hidden; /* 裁切子键 hover 底色，贴合方角 */
+}
+
+.toolbar-ctrl-btn {
+  /* 默认透明底（组容器提供整体底色）。必须写在类里而非组件 inline style——
+     inline 优先级高于 :hover 类规则，会把 hover 底色整个压掉 */
+  background: transparent;
+  /* 文字色走变量：暗色主题/女娲米白下均随壳主题 */
+  color: var(--color-text-secondary, #555);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+/* 关闭键默认与其他两键同色（不标红），仅 hover 时换 Windows 惯例红底白字 */
+
+.toolbar-ctrl-btn:hover {
+  /* 固定深色叠层而非主题 hover token：女娲菜单 hover 色在米白底上差异过小
+     （#F3F4F6 vs #F0F1F5）不可见；窗口三键按 Windows 惯例需清晰可见的加深 hover */
+  background: rgba(0, 0, 0, 0.09);
+}
+
+[data-theme="dark"] .toolbar-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 关闭键 hover 沿用 Windows 惯例红底白字（亮/暗主题一致；
+   暗色选择器一并列出以盖过上方 [data-theme='dark'] 叠层规则） */
+.toolbar-ctrl-btn--danger:hover,
+[data-theme="dark"] .toolbar-ctrl-btn--danger:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* ========== 一体化顶行自绘菜单栏（TrafficLightToolbar，仅 Win/Linux） ========== */
+/* 参考产品顶行菜单触发项：透明底融入顶行，hover 浅色叠层（同三键的加深策略，
+   不用主题 hover token——米白底上差异过小不可见） */
+.topbar-menu-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--color-text, rgba(0, 0, 0, 0.78));
+  transition: background-color 0.15s ease;
+}
+
+.topbar-menu-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="dark"] .topbar-menu-btn {
+  color: var(--color-text, rgba(255, 255, 255, 0.85));
+}
+
+[data-theme="dark"] .topbar-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- 顶行菜单下拉面板（.topbar-app-menu，Win11 原生菜单观感） ----
+   antd Dropdown 默认弹层偏网页组件观感；此处按桌面原生菜单规范覆盖：
+   面板细边框+柔和阴影+8px 圆角+4px 内边距，菜单项 32px 高/13px 字/项内圆角，
+   右侧快捷键提示列（.topbar-menu-shortcut）。 */
+.topbar-app-menu .ant-dropdown-menu,
+.topbar-app-menu.ant-dropdown .ant-dropdown-menu {
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 6px 16px rgba(0, 0, 0, 0.12);
+  min-width: 200px;
+}
+
+.topbar-app-menu .ant-dropdown-menu-item {
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.topbar-app-menu .ant-dropdown-menu-item:hover:not(.ant-dropdown-menu-item-disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.topbar-app-menu .ant-dropdown-menu-item-divider {
+  margin: 4px 8px;
+  border-block-start: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.topbar-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  width: 100%;
+}
+
+.topbar-menu-shortcut {
+  color: rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .topbar-app-menu .ant-dropdown-menu,
+[data-theme="dark"] .topbar-app-menu.ant-dropdown .ant-dropdown-menu {
+  background: #2b2b2b;
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.24),
+    0 6px 16px rgba(0, 0, 0, 0.36);
+}
+
+[data-theme="dark"] .topbar-app-menu .ant-dropdown-menu-item:hover:not(.ant-dropdown-menu-item-disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .topbar-app-menu .ant-dropdown-menu-item-divider {
+  border-block-start-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .topbar-menu-shortcut {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* ========== 滚动条 ========== */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-text-quaternary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* ========== 侧边栏菜单 ========== */
+/* Note: Selected colors handled by ConfigProvider in theme.ts */
+.app-sider .ant-menu-light {
+  background: transparent;
+  border-inline-end: none;
+}
+
+.app-sider .ant-menu-light .ant-menu-item {
+  height: 32px;
+  line-height: 32px;
+  margin: 1px 6px;
+  padding: 0 10px !important;
+  font-size: 13px;
+  font-weight: 400;
+  transition: all 0.15s ease;
+}
+
+.app-sider .ant-menu-light .ant-menu-item:hover {
+  /* 悬停底色走变量：女娲主题同步（nuwax:theme-changed）时可被米白调色板覆盖 */
+  background: var(--color-bg-hover, #f3f4f6);
+  color: var(--color-text);
+}
+
+.app-sider .ant-menu-light .ant-menu-item .anticon {
+  font-size: 14px;
+}
+
+/* ========== 按钮 ========== */
+/* Note: Primary button colors handled by ConfigProvider in theme.ts */
+.ant-btn {
+  transition: all 0.15s ease;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.ant-btn-default {
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-container);
+}
+
+.ant-btn-default:not(:disabled):hover {
+  border-color: var(--color-border-secondary);
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+}
+
+.ant-btn-text:not(:disabled):hover {
+  background: var(--color-bg-elevated);
+}
+
+/* 小号按钮更紧凑 */
+.ant-btn-sm {
+  font-size: 12px;
+  padding: 0 8px;
+  height: 26px;
+}
+
+/* ========== 卡片 ========== */
+.ant-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.ant-card-head {
+  min-height: auto;
+  padding: 10px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+}
+
+.ant-card-head-title {
+  font-weight: 500;
+  font-size: 13px;
+  color: #18181b;
+}
+
+.ant-card-body {
+  padding: 16px;
+}
+
+.ant-card-small .ant-card-head {
+  padding: 8px 12px;
+}
+
+.ant-card-small .ant-card-body {
+  padding: 12px;
+}
+
+/* ========== 标签 - 极简 ========== */
+.ant-tag {
+  margin-right: 0;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 20px;
+  border: 1px solid transparent;
+}
+
+.ant-tag-success,
+.ant-tag-green {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: #dcfce7;
+}
+
+.ant-tag-error,
+.ant-tag-red {
+  background: #fef2f2;
+  color: #ef4444;
+  border-color: #fee2e2;
+}
+
+.ant-tag-warning,
+.ant-tag-orange {
+  background: #fffbeb;
+  color: #d97706;
+  border-color: #fef3c7;
+}
+
+.ant-tag-processing {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #e5e7eb;
+}
+
+.ant-tag-default {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #e5e7eb;
+}
+
+.ant-tag-blue {
+  background: #eff6ff;
+  color: #2563eb;
+  border-color: #dbeafe;
+}
+
+.ant-tag-purple {
+  background: #f5f3ff;
+  color: #7c3aed;
+  border-color: #ede9fe;
+}
+
+.ant-tag-cyan {
+  background: #ecfeff;
+  color: #0891b2;
+  border-color: #cffafe;
+}
+
+/* ========== 输入框 ========== */
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-input-number {
+  border-radius: 8px;
+  border-color: #e5e7eb;
+}
+
+.ant-input:focus,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused,
+.ant-input-number:focus,
+.ant-input-number-focused {
+  border-color: #a1a1aa;
+  box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.05);
+}
+
+.ant-input:hover,
+.ant-input-affix-wrapper:hover,
+.ant-input-number:hover {
+  border-color: #d1d5db;
+}
+
+.ant-input::placeholder {
+  color: #9ca3af;
+}
+
+/* ========== 表单 ========== */
+.ant-form-item-label > label {
+  font-weight: 500;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.ant-form-item {
+  margin-bottom: 16px;
+}
+
+/* ========== 列表 ========== */
+.ant-list-item {
+  transition: background-color 0.15s ease;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.ant-list-item-meta-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #18181b;
+}
+
+.ant-list-item-meta-description {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* ========== 警告框 - 更柔和 ========== */
+.ant-alert {
+  border-radius: 8px;
+  border-width: 1px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.ant-alert-success {
+  background: #f0fdf4;
+  border-color: #dcfce7;
+}
+
+.ant-alert-warning {
+  background: #fffbeb;
+  border-color: #fef3c7;
+}
+
+.ant-alert-error {
+  background: #fef2f2;
+  border-color: #fee2e2;
+}
+
+.ant-alert-info {
+  background: #f9fafb;
+  border-color: #e5e7eb;
+}
+
+.ant-alert-message {
+  font-weight: 500;
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.ant-alert-description {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* ========== 描述列表 ========== */
+.ant-descriptions-item-label {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.ant-descriptions-item-content {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* ========== 开关 ========== */
+/* Note: Switch colors handled by ConfigProvider in theme.ts */
+
+/* ========== 选择器 ========== */
+.ant-select-selector {
+  border-radius: 8px;
+  border-color: var(--color-border);
+}
+
+/* ========== 步骤条 ========== */
+/* Note: Step colors handled by ConfigProvider in theme.ts */
+
+/* ========== 进度条 ========== */
+.ant-progress-text {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* ========== Tabs ========== */
+/* Note: Tab colors handled by ConfigProvider in theme.ts */
+.ant-tabs .ant-tabs-tab {
+  font-size: 13px;
+  padding: 8px 0;
+  transition: color 0.15s ease;
+}
+
+/* ========== Modal ========== */
+.ant-modal-content {
+  border-radius: 10px;
+  padding: 0;
+}
+
+.ant-modal-header {
+  padding: 16px 20px 12px;
+}
+
+.ant-modal-title {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.ant-modal-body {
+  padding: 0 20px 16px;
+  font-size: 13px;
+  color: #52525b;
+}
+
+.ant-modal-footer {
+  padding: 12px 20px 16px;
+  border-top: 1px solid #f3f4f6;
+}
+
+/* ========== 徽章 ========== */
+.ant-badge-status-text {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* ========== Divider ========== */
+.ant-divider {
+  border-color: #f3f4f6;
+  margin: 12px 0;
+}
+
+/* ========== Avatar ========== */
+.ant-avatar {
+  border: none;
+}
+
+/* ========== Result ========== */
+.ant-result-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #18181b;
+}
+
+.ant-result-subtitle {
+  font-size: 13px;
+  color: #71717a;
+}
+
+/* ========== 加载页面（初始化/启动全屏大 loading）==========
+ * 图标框绝对定位钉在全窗口正中（flex 整组居中会把图标顶到中心上方），
+ * 错误重试作为独立层放在图标正下方。 */
+.app-loading {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background: #f8f9fa;
+}
+
+/* 覆盖模式：fixed 全窗盖在主界面（webview z-1000 / 工具栏 z-1100）之上，
+ * webview 首载期间保持图标动效，不让位于 guest 白屏/页内 loading。 */
+.app-loading--overlay {
+  position: fixed;
+  inset: 0;
+  height: auto;
+  width: auto;
+  z-index: 2000;
+}
+
+/* 图标框：圆角裁剪承载扫光高光带；投影落在框上（overflow:hidden 裁剪内部）。 */
+.app-loading-icon-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 88px;
+  height: 88px;
+  border-radius: 20px;
+  overflow: hidden;
+  /* macOS 风格柔和投影，衬托图标悬浮感 */
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.12));
+  user-select: none;
+}
+
+.app-loading-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+
+/* 扫光动效：白色高光带自左向右斜扫过整个图标（单次约 0.9s，周期 2.6s 含停顿），
+ * 替代旧呼吸缩放（app-loading-breathe）。 */
+@keyframes app-loading-sheen {
+  0% {
+    transform: translateX(-120%);
+  }
+  35% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.app-loading-icon-sheen {
+  position: absolute;
+  inset: 0;
+  /* 第一版扫光：白色高光带扫过整个图标；光条加宽（42%→58% 加宽为 34%→66%，
+     约 2 倍宽）。 */
+  background: linear-gradient(
+    105deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.35) 50%,
+    transparent 66%
+  );
+  transform: translateX(-120%);
+  animation: app-loading-sheen 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 图标下方辅助层：top = 中心 + 图标半高(44) + 间距(24) */
+.app-loading-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% + 68px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.app-loading-text {
+  margin-top: 16px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.app-loading .ant-spin-dot-item {
+  background-color: #18181b;
+}
+
+/* ========== 页面通用 ========== */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.page-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #18181b;
+  margin: 0;
+}
+
+.page-subtitle {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+/* 简洁的状态行 */
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.status-row:last-child {
+  border-bottom: none;
+}
+
+.status-row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #3f3f46;
+}
+
+.status-row-value {
+  font-size: 13px;
+  color: #18181b;
+}
+
+/* 简洁信息网格 */
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 24px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.info-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.info-value {
+  font-size: 13px;
+  color: #18181b;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* section 分隔 */
+.section {
+  margin-bottom: 20px;
+  background: #ffffff;
+  border-radius: 10px;
+}
+
+.section-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+/* ========== 消息气泡 ========== */
+.message-user {
+  background: #18181b;
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 12px;
+  max-width: 70%;
+  margin-left: auto;
+}
+
+.message-assistant {
+  background: #f3f4f6;
+  color: #18181b;
+  padding: 12px 16px;
+  border-radius: 12px;
+  max-width: 70%;
+}
+
+/* ============================================
+   暗色主题覆盖 (Dark Theme Overrides)
+   ============================================ */
+[data-theme="dark"] {
+  /* 侧边栏菜单 */
+  .app-sider .ant-menu-light .ant-menu-item:hover {
+    background: var(--color-bg-elevated);
+    color: var(--color-text);
+  }
+
+  /* 按钮 */
+  .ant-btn-default {
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+    background: var(--color-bg-container);
+  }
+
+  .ant-btn-default:not(:disabled):hover {
+    border-color: var(--color-border-secondary);
+    color: var(--color-text);
+    background: var(--color-bg-elevated);
+  }
+
+  .ant-btn-text:not(:disabled):hover {
+    background: var(--color-bg-elevated);
+  }
+
+  .ant-btn:disabled {
+    border-color: var(--color-border);
+    color: var(--color-text-quaternary);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* 卡片 */
+  .ant-card {
+    border-color: var(--color-border);
+  }
+
+  .ant-card-head {
+    border-bottom-color: var(--color-border);
+  }
+
+  .ant-card-head-title {
+    color: var(--color-text);
+  }
+
+  /* 标签 */
+  .ant-tag-processing,
+  .ant-tag-default {
+    background: var(--color-bg-elevated);
+    color: var(--color-text-secondary);
+    border-color: var(--color-border);
+  }
+
+  /* 输入框 */
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-input-number {
+    border-color: var(--color-border);
+    background: var(--color-bg-container);
+  }
+
+  .ant-input:focus,
+  .ant-input-affix-wrapper:focus,
+  .ant-input-affix-wrapper-focused,
+  .ant-input-number:focus,
+  .ant-input-number-focused {
+    border-color: var(--color-text-tertiary);
+  }
+
+  .ant-input:hover,
+  .ant-input-affix-wrapper:hover,
+  .ant-input-number:hover {
+    border-color: var(--color-border-secondary);
+  }
+
+  .ant-input::placeholder {
+    color: var(--color-text-quaternary);
+  }
+
+  /* 表单 */
+  .ant-form-item-label > label {
+    color: var(--color-text-secondary);
+  }
+
+  /* 列表 */
+  .ant-list-item-meta-title {
+    color: var(--color-text);
+  }
+
+  .ant-list-item-meta-description {
+    color: var(--color-text-tertiary);
+  }
+
+  /* 警告框 */
+  .ant-alert-info,
+  .ant-alert-success,
+  .ant-alert-warning,
+  .ant-alert-error {
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border);
+  }
+
+  .ant-alert-message {
+    color: var(--color-text);
+  }
+
+  .ant-alert-description {
+    color: var(--color-text-secondary);
+  }
+
+  /* 描述列表 */
+  .ant-descriptions-item-label {
+    color: var(--color-text-tertiary);
+  }
+
+  .ant-descriptions-item-content {
+    color: var(--color-text);
+  }
+
+  /* 选择器 */
+  .ant-select-selector {
+    border-color: var(--color-border) !important;
+    background: var(--color-bg-container) !important;
+  }
+
+  .ant-select-dropdown {
+    background: var(--color-bg-elevated) !important;
+  }
+
+  .ant-select-item {
+    color: var(--color-text) !important;
+  }
+
+  .ant-select-item-option-active {
+    background: var(--color-bg-elevated) !important;
+  }
+
+  .ant-select-item-option-selected {
+    background: var(--color-bg-elevated) !important;
+    color: var(--color-text) !important;
+  }
+
+  .ant-select-item:hover {
+    background: var(--color-primary-hover) !important;
+    color: var(--color-text) !important;
+  }
+
+  /* 进度条 */
+  .ant-progress-text {
+    color: var(--color-text-secondary);
+  }
+
+  /* 开关 — darkAlgorithm + ConfigProvider token 已处理，无需额外覆盖 */
+
+  /* Modal */
+  .ant-modal-body {
+    color: var(--color-text-secondary);
+  }
+
+  .ant-modal-footer {
+    border-top-color: var(--color-border);
+  }
+
+  /* 徽章 */
+  .ant-badge-status-text {
+    color: var(--color-text-secondary);
+  }
+
+  /* Divider */
+  .ant-divider {
+    border-color: var(--color-border);
+  }
+
+  /* Result */
+  .ant-result-title {
+    color: var(--color-text);
+  }
+
+  .ant-result-subtitle {
+    color: var(--color-text-secondary);
+  }
+
+  /* 加载页面 */
+  .app-loading {
+    background: var(--color-bg-layout);
+  }
+
+  .app-loading-text {
+    color: var(--color-text-secondary);
+  }
+
+  .app-loading .ant-spin-dot-item {
+    background-color: var(--color-text);
+  }
+
+  /* 页面通用 */
+  .page-subtitle {
+    color: var(--color-text-secondary);
+  }
+
+  /* 状态行 */
+  .status-row {
+    border-bottom-color: var(--color-border);
+  }
+
+  .status-row-label {
+    color: var(--color-text-secondary);
+  }
+
+  .status-row-value {
+    color: var(--color-text);
+  }
+
+  /* 信息网格 */
+  .info-label {
+    color: var(--color-text-tertiary);
+  }
+
+  .info-value {
+    color: var(--color-text);
+  }
+
+  /* section */
+  .section {
+    background: var(--color-bg-section);
+  }
+
+  .section-title {
+    color: var(--color-text-tertiary);
+  }
+
+  /* 消息气泡 */
+  .message-user {
+    background: var(--color-primary);
+    color: var(--color-bg-container);
+  }
+
+  .message-assistant {
+    background: var(--color-bg-elevated);
+    color: var(--color-text);
+  }
+}

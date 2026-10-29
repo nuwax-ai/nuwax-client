@@ -31,7 +31,7 @@ test('file-server install and build consume the disposable source outside the wo
   write(path.join(source, 'input.txt'), 'original source');
   write(path.join(source, 'node_modules', 'keep.txt'), 'existing source dependency');
   fs.mkdirSync(path.join(source, '.git'));
-  const script = fileURLToPath(new URL('../overlay/crates/agent-electron-client/scripts/prepare/prepare-nuwax-file-server.js', import.meta.url));
+  const script = fileURLToPath(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-nuwax-file-server.js', import.meta.url));
   const realRequire = createRequire(script);
   const npmCalls = [];
   let disposed = false;

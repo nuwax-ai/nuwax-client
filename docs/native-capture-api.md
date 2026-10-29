@@ -1,7 +1,7 @@
 # 原生截屏 / 录屏 API（供 IM 等业务页接入）
 
 适用：Nuwax 商业桌面客户端内的受信业务页（IM 以微应用形态运行在其中）。普通浏览器没有这套能力，需自行降级。
-契约版本：`apiVersion = 1`（只增不改）。当前 IPC 类型定义见 `overlay/crates/agent-electron-client/src/shared/features/capture/contract.ts`；公共类型事实源在前端仓 `src/types/interfaces/hostBridge.ts` 的 `capture` 命名空间。
+契约版本：`apiVersion = 1`（只增不改）。当前 IPC 类型定义见 `nuwa-electron-shell/crates/agent-electron-client/src/shared/features/capture/contract.ts`；公共类型事实源在前端仓 `src/types/interfaces/hostBridge.ts` 的 `capture` 命名空间。
 
 IM 项目负责人请先看[接入交接指南](nuwax-im-native-capture-integration.md)，其中包含当前 IM 接线位置、独立项目边界、分块读取示例与多屏联调清单。
 

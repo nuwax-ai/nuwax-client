@@ -44,7 +44,7 @@ async function loadRuntime(opts) {
     const require = createRequire(import.meta.url);
     const esbuild = require(path.join(repo, 'nuwa-electron-shell/crates/agent-electron-client/node_modules/esbuild'));
     await esbuild.build({ entryPoints: [path.join(here, 'real-runtime.ts')], bundle: true, platform: 'node', format: 'cjs', outfile: file,
-      alias: { '@shared': path.join(repo, 'overlay/crates/agent-electron-client/src/shared') }, logLevel: 'silent' });
+      alias: { '@shared': path.join(repo, 'nuwa-electron-shell/crates/agent-electron-client/src/shared') }, logLevel: 'silent' });
     buildSource = provenance();
     fs.writeFileSync(file + '.source.json', JSON.stringify({ sha256: shaFile(file), source: buildSource }) + '\n');
   } else if (fs.existsSync(file + '.source.json')) {

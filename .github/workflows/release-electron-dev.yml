@@ -298,10 +298,9 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_sha }}
 
       # 显式 submodule init（不依赖 checkout action 内部递归 sync）：
-      # nuwa-electron-shell submodule → 基座仓 nuwax-ai/nuwa-electron-shell 的 main 分支（公开，
-      #   github.token 注入凭据）；nuwax → 壳根前端 pin（公开可匿名拉取，gitlink 须在
+      # nuwa-electron-shell 已并入本仓（随 checkout 即得）；nuwax → 壳根前端 pin（公开可匿名拉取，gitlink 须在
       #   声明远端上可获取；前端 dist 来自本次 workflow 的共享源码构建产物）
-      - name: Init submodules (nuwa-electron-shell + nuwax)
+      - name: Init submodules (nuwax)
         shell: bash
         env:
           GH_SUBMODULE_TOKEN: ${{ github.token }}
@@ -311,20 +310,11 @@ jobs:
           export GH_TOKEN="${GH_SUBMODULE_TOKEN}"
           gh auth setup-git
           git config --global core.autocrlf false
-          git submodule update --init nuwa-electron-shell
           git submodule update --init nuwax
           git submodule status
           # 强校验：submodule update 内部重试失败时可能以 0 退出（第三次 CI 实测假绿）
-          test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell submodule not checked out"; exit 1; }
+          test -d nuwa-electron-shell/crates/agent-electron-client || { echo "::error::nuwa-electron-shell missing from checkout"; exit 1; }
           test -f nuwax/package.json || { echo "::error::nuwax source submodule not checked out"; exit 1; }
-
-      # 商业自有代码整文件覆写进基座工作树（overlay/ 机制见 scripts/sync-overlay.js）
-      - name: Sync overlay into base worktree
-        shell: bash
-        run: |
-          node scripts/sync-overlay.js
-          node scripts/sync-overlay.js --check
-          git -C nuwa-electron-shell status --short | head -40 || true
 
       - name: Exercise Windows installer recovery with isolated fixtures
         if: runner.os == 'Windows'

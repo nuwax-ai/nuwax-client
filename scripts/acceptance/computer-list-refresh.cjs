@@ -18,7 +18,7 @@ const fixtureEnvironment = 'NUWAX_COMPUTER_LIST_FIXTURE';
 async function launch() {
   const root = path.resolve(__dirname, '../..');
   const shell = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
-  const overlay = path.join(root, 'overlay/crates/agent-electron-client/src');
+  const overlay = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src');
   const frontend = path.join(root, 'nuwax');
   const fromShell = createRequire(path.join(shell, 'package.json'));
   const esbuild = fromShell('esbuild');

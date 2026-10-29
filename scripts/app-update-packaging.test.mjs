@@ -6,7 +6,7 @@ import os from 'node:os';
 import { createRequire } from 'node:module';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { prepareReleaseUpdater, verifyUpdaterApp, verifyUpdaterOutput, packagedResources } from './prepare-release-updater.mjs';
 
 const feed = config.product.feedBase;
@@ -55,7 +55,7 @@ test('real builder afterPack runs commercial hook last even when --dir supplies 
   builderRequire('app-builder-lib');
   const { Packager } = builderRequire('app-builder-lib/out/packager.js');
   const build = updater.configureUpdater({}, { feedBase: feed,
-    hook: path.resolve(import.meta.dirname, '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs') });
+    hook: path.resolve(import.meta.dirname, '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs') });
   let builtInRan = false;
   const packager = { config: build, appInfo: { updaterCacheDirName: updater.CACHE_NAME }, getResourcesDir: () => resources };
   const context = { packager, appOutDir: output, targets: [], electronPlatformName: 'darwin' };

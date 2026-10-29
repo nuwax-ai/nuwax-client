@@ -13,7 +13,7 @@ const { spawn, execFileSync } = require('node:child_process');
 const { createServer } = require('node:http');
 
 const fixtureEnvironment = 'NUWAX_POPUP_LOGIN_FIXTURE';
-const policyRelative = 'overlay/crates/agent-electron-client/src/main/services/system/webviewPolicy.ts';
+const policyRelative = 'nuwa-electron-shell/crates/agent-electron-client/src/main/services/system/webviewPolicy.ts';
 const bundlePath = temp => path.join(temp, 'main/services/policy.cjs');
 
 async function launch() {
@@ -22,7 +22,7 @@ async function launch() {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'nuwax-popup-login-'));
   let child, watchdog;
   try {
-    const services = path.join(root, 'overlay/crates/agent-electron-client/src/main/services');
+    const services = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     const baseServices = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     const stubs = new Map([
       ['electron-log', 'export default {info(){},warn(){},error(){},debug(){}};'],
@@ -35,7 +35,7 @@ async function launch() {
     ]);
     await fs.mkdir(path.join(temp, 'main/preload'), { recursive: true });
     await fromShell('esbuild').build({
-      entryPoints: [path.join(root, 'overlay/crates/agent-electron-client/src/preload/webviewPerfBridge.ts')],
+      entryPoints: [path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/preload/webviewPerfBridge.ts')],
       bundle: true, platform: 'node', format: 'cjs',
       outfile: path.join(temp, 'main/preload/webviewPerfBridge.js'), external: ['electron'],
       alias: { '@shared': path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/shared') },

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/package.json'));
 const sharp = require('sharp');
-const publicDir = path.join(root, 'overlay/crates/agent-electron-client/public');
+const publicDir = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/public');
 const sizes = [16, 20, 24, 32, 40, 48, 64, 72, 96, 128, 256];
 const frames = [];
 

@@ -116,7 +116,7 @@ for (const [name, sourceCRLF, snapshotCRLF] of [
 const baseClient = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
 const requireFromBase = createRequire(path.join(baseClient, 'package.json'));
 const ts = requireFromBase('typescript');
-const overlaySource = path.join(root, 'overlay/crates/agent-electron-client/src');
+const overlaySource = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src');
 
 function compile(entry, source, { provider = false, overrides = new Map() } = {}) {
   const options = {

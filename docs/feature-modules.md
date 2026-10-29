@@ -7,7 +7,7 @@
 - **是**：静态注册的、按产品与开关过滤的功能单元；有自己的目录、清单、测试与边界守卫。
 - **不是**：插件平台。不做动态加载，注册表是一个写死的数组（见 `specs/feature-extensibility.md` 的取舍）。
 
-## 目录约定（均在 `overlay/crates/agent-electron-client/src/` 下，全部为新增文件）
+## 目录约定（均在 `nuwa-electron-shell/crates/agent-electron-client/src/` 下，全部为新增文件）
 
 ```
 main/features/

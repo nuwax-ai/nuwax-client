@@ -19,7 +19,7 @@ async function launch() {
   const fromShell = createRequire(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/package.json'));
   const fromFrontend = createRequire(path.join(root, 'nuwax/package.json'));
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'nuwax-loopback-fixture-'));
-  const services = path.join(root, 'overlay/crates/agent-electron-client/src/main/services');
+  const services = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
   const bundle = path.join(temp, 'implementation.cjs');
   await fromShell('esbuild').build({
     stdin: {

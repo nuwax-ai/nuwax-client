@@ -15,7 +15,7 @@ async function launch() {
   const shell = path.join(root, "nuwa-electron-shell/crates/agent-electron-client");
   const fromShell = createRequire(path.join(shell, "package.json"));
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "nuwax-direct-route-"));
-  const source = path.join(root, "overlay/crates/agent-electron-client/src");
+  const source = path.join(root, "nuwa-electron-shell/crates/agent-electron-client/src");
   const build = fromShell("esbuild").build;
   const common = { bundle: true, platform: "node", format: "cjs", external: ["electron"], alias: { "@shared": path.join(source, "shared") }, nodePaths: [path.join(shell, "node_modules")] };
   await build({ ...common, entryPoints: [path.join(source, "main/services/businessRequestRouting.ts")], outfile: path.join(temp, "routing.cjs") });

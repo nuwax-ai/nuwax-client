@@ -63,7 +63,7 @@ async function launch() {
     parent.postMessage({fixtureMarker:window.fixtureMarker},'*');
     </script><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" onerror="parent.postMessage({cspImageBlocked:window.fixtureMarker},'*')"></body></html>`;
   try {
-    const services = path.join(root, 'overlay/crates/agent-electron-client/src/main/services');
+    const services = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     const baseServices = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/services');
     await fromShell('esbuild').build({
       stdin: {

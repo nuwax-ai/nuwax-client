@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config from '../client.config.mjs';
 import * as core from './client/core.mjs';
-import updater from '../overlay/crates/agent-electron-client/scripts/build/app-update-config.cjs';
+import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 export function prepareReleaseUpdater(client, feedBase = config.product.feedBase) {
