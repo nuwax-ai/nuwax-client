@@ -41,7 +41,11 @@ import dependencies from "../system/dependencies";
 import { processRegistry } from "../system/processRegistry";
 import { probeWorkspaceAccessWithPrompt } from "../system/workspaceAccessProbe";
 import type { DetailedSession } from "@shared/types/sessions";
-import { ENGINE_DESTROY_TIMEOUT } from "@shared/constants";
+import {
+  DEV_FORCE_ENGINE_SETTING_KEY,
+  ENGINE_DESTROY_TIMEOUT,
+} from "@shared/constants";
+import { readSetting } from "../../db";
 
 // Re-export computer types
 export type {
@@ -715,25 +719,28 @@ export class UnifiedAgentService extends EventEmitter {
     );
     t1 = Date.now();
 
-    // Dev mode: force engine type for testing, bypasses agent_server.command
-    if (
-      process.env.NUWACLAW_FORCE_ENGINE &&
-      process.env.NODE_ENV === "development"
-    ) {
+    // Dev mode: force engine type for testing, bypasses agent_server.command.
+    // Two sources, env wins: NUWACLAW_FORCE_ENGINE (per-run) or the
+    // dev.force_engine setting (DevToolsPanel switch). Dev builds only.
+    const forcedEngineSource =
+      process.env.NUWACLAW_FORCE_ENGINE ||
+      (typeof readSetting(DEV_FORCE_ENGINE_SETTING_KEY) === "string"
+        ? (readSetting(DEV_FORCE_ENGINE_SETTING_KEY) as string).trim()
+        : "");
+    if (forcedEngineSource && process.env.NODE_ENV === "development") {
       if (!request.agent_config) {
         request.agent_config = {
-          agent_server: { command: process.env.NUWACLAW_FORCE_ENGINE },
+          agent_server: { command: forcedEngineSource },
         };
       } else if (!request.agent_config.agent_server) {
         request.agent_config.agent_server = {
-          command: process.env.NUWACLAW_FORCE_ENGINE,
+          command: forcedEngineSource,
         };
       } else {
-        request.agent_config.agent_server.command =
-          process.env.NUWACLAW_FORCE_ENGINE;
+        request.agent_config.agent_server.command = forcedEngineSource;
       }
       log.info(
-        `[UnifiedAgent] Dev mode: forcing engine to "${process.env.NUWACLAW_FORCE_ENGINE}"`,
+        `[UnifiedAgent] Dev mode: forcing engine to "${forcedEngineSource}"`,
       );
     }
 
