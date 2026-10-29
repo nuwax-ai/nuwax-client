@@ -943,11 +943,13 @@ export async function createAcpConnection(
       env.NUWAX_API_PROTOCOL = "anthropic";
       // 适配器对网关自定义模型（不在引擎内置表里的，如 GLM-5.3-Flash）兜底
       // effort=medium（CodexAcpClient.createModelId 的 `?? "medium"`），桥把它作为
-      // output_config.effort 发给上游。抓包实证：该档位在本环境的 GLM anthropic
-      // 端点返回 400 / 1210，只接受 low/high/max。这里播种契约内的 low。
-      // 后端显式下发 NUWAX_MODEL_REASONING_EFFORT 时优先用它——不同端点/套餐
-      // 接受的档位只有后端知道；后端要求关闭思考时（上方已映射
-      // CODEX_DISABLE_THINKING）不设，让 none 生效。
+      // output_config.effort 发给上游。GLM-5.3 / 5.3-Flash / 5.3-FlashX 官方只接受
+      // max/high/low（docs.bigmodel.cn 的 reasoning_effort 说明），medium 会拿到
+      // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，
+      // 这也是不同环境结论不同的原因。这里播种两代都接受的 low。
+      // 后端显式下发 NUWAX_MODEL_REASONING_EFFORT 时优先用它——哪个模型/版本该用
+      // 哪档只有后端知道；后端要求关闭思考时（上方已映射 CODEX_DISABLE_THINKING）
+      // 不设，让 none 生效。
       if (!env.CODEX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
         env.NUWAX_MODEL_REASONING_EFFORT = "low";
       }
