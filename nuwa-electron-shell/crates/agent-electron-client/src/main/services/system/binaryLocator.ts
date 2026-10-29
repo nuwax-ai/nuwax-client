@@ -11,7 +11,12 @@ import * as os from "os";
 import { createHash } from "crypto";
 import { execFileSync, execSync } from "child_process";
 import log from "electron-log";
-import { getAppDataDir, getAppBinDir, getResourcesPath } from "./appPaths";
+import {
+  getAppDataDir,
+  getAppBinDir,
+  getAppNodeModules,
+  getResourcesPath,
+} from "./appPaths";
 import { isWindows } from "./shellEnv";
 import { resolveTtydBinary } from "./ttydPlatform";
 
@@ -457,13 +462,83 @@ export function getClaudeCodeAcpBundledDir(): string | null {
 }
 
 /**
- * @nuwax-ai/nuwax-codex-acp-ts（TS adapter）bundled dir。codex 引擎经 adapter
- * （dist/index.js）spawn，adapter 内部 require.resolve("nuwax-codex/package.json")
- * 定位 node_modules/.cache/nuwax-codex/<ver>/ 下的原生二进制。
+ * @nuwax-ai/nuwax-harness-acp-ts（TS adapter）bundled dir。codex 引擎经 adapter
+ * （dist/index.js）spawn，引擎二进制在 vendor/nuwax-harness/<ver>/ 下，运行时由
+ * resolveBundledHarnessEnginePath 定位并经 NUWAX_PATH 注入（adapter 不再按包相对
+ * 路径找引擎，homedir 缓存兜底在隔离 HOME 下落空）。
  */
 export function getCodexAcpTsBundledDir(): string | null {
-  const bundledDir = path.join(getResourcesPath(), "nuwax-codex-acp-ts");
+  const bundledDir = path.join(getResourcesPath(), "nuwax-harness-acp-ts");
   return fs.existsSync(path.join(bundledDir, "package.json"))
     ? bundledDir
     : null;
+}
+
+/** 引擎缓存平台三元组，与引擎包 bin/runtime.js 对齐；linux-x64 musl 优先。 */
+function harnessTargetTriples(): string[] {
+  const { platform, arch } = process;
+  if (platform === "darwin") {
+    if (arch === "arm64") return ["aarch64-apple-darwin"];
+    if (arch === "x64") return ["x86_64-apple-darwin"];
+  } else if (platform === "linux") {
+    if (arch === "arm64") return ["aarch64-unknown-linux-musl"];
+    if (arch === "x64") {
+      return ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu"];
+    }
+  } else if (platform === "win32") {
+    if (arch === "arm64") return ["aarch64-pc-windows-msvc"];
+    if (arch === "x64") return ["x86_64-pc-windows-msvc"];
+  }
+  return [];
+}
+
+/**
+ * codex 引擎（nuwax-harness）二进制的绝对路径，作为 spawn env NUWAX_PATH 的值。
+ *
+ * adapter 只认 NUWAX_PATH/CODEX_PATH；其 homedir() 缓存兜底在 ACP 子进程的隔离
+ * HOME 下必然落空，因此必须显式注入。bundled vendor 优先；npm 兜底安装的 adapter
+ * 依赖真实 HOME 下由引擎包 postinstall 填充的 ~/.nuwax-harness-cache。
+ */
+export function resolveBundledHarnessEnginePath(): string | null {
+  const binaryName =
+    process.platform === "win32" ? "nuwax-harness.exe" : "nuwax-harness";
+  const bundledDir = getCodexAcpTsBundledDir();
+  if (bundledDir) {
+    const vendorRoot = path.join(bundledDir, "vendor", "nuwax-harness");
+    try {
+      const hit = fs
+        .readdirSync(vendorRoot)
+        .map((ver) => path.join(vendorRoot, ver, binaryName))
+        .find((candidate) => fs.existsSync(candidate));
+      if (hit) return hit;
+    } catch {
+      log.warn(
+        "[BinaryLocator] harness vendor dir unreadable, falling back to npm cache",
+      );
+    }
+  }
+  try {
+    const enginePkgPath = path.join(
+      getAppNodeModules(),
+      "@nuwax-ai",
+      "nuwax-harness",
+      "package.json",
+    );
+    const version = JSON.parse(
+      fs.readFileSync(enginePkgPath, "utf-8"),
+    ).version as string;
+    for (const triple of harnessTargetTriples()) {
+      const candidate = path.join(
+        os.homedir(),
+        ".nuwax-harness-cache",
+        version,
+        triple,
+        binaryName,
+      );
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // npm 兜底未安装引擎包：保持 null，由调用方 warn
+  }
+  return null;
 }

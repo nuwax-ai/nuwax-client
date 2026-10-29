@@ -163,7 +163,18 @@ async function applySyncTicketFromJar(source: string, requestEpoch: number, even
   if (readSetting(incompatibleKey(origin))) return false;
   const found = (await session.defaultSession.cookies.get({ url: source, name: "ticket" }))[0];
   if (requestEpoch !== epoch || origin !== currentBusinessOrigin() ||
-      (eventVersion !== undefined && eventVersion !== directEventVersion) || !found) return false;
+      (eventVersion !== undefined && eventVersion !== directEventVersion) || !found) {
+    // [AuthDebug] 登录链路诊断：jar 里根本没有 ticket cookie（重试循环最多打 12 条）
+    if (!found) log.debug("[AuthDebug] syncTicketFromJar: no ticket cookie in jar", { source });
+    return false;
+  }
+  // [AuthDebug] 登录链路诊断：jar 里 cookie 的形态（空值/过期即走清理分支）
+  log.debug("[AuthDebug] syncTicketFromJar: inspecting ticket cookie", {
+    source,
+    valueLength: found.value?.length ?? 0,
+    expirationDate: found.expirationDate,
+    expired: !!(found.expirationDate && found.expirationDate <= Date.now() / 1000),
+  });
   // 127.0.0.1 cookies are shared by every port. Trust only a value previously
   // observed in a capability-authorized gateway Set-Cookie response.
   if (source === loopbackOrigin && found.value !== currentTicket()) return false;
@@ -171,7 +182,13 @@ async function applySyncTicketFromJar(source: string, requestEpoch: number, even
     const origins = [origin, ...(loopbackOrigin ? [loopbackOrigin] : [])];
     invalidateTicketSession(origins);
     await clearTicketCookies(origins);
-    log.info("[TicketSession] empty business cookie cleared mirror", { origin });
+    // [AuthDebug] 附带空值/过期细节，区分「值为空」与「已过期」两种清理原因
+    log.info("[TicketSession] empty business cookie cleared mirror", {
+      origin,
+      valueLength: found.value?.length ?? 0,
+      expirationDate: found.expirationDate,
+      expired: !!(found.expirationDate && found.expirationDate <= Date.now() / 1000),
+    });
     return false;
   }
   const persisted = readSetting(metaKey(origin)) as Ticket | null;
@@ -190,6 +207,12 @@ async function applySyncTicketFromJar(source: string, requestEpoch: number, even
       if (existing?.value !== ticket.value) await put(session.defaultSession.cookies, loopbackOrigin, { ...ticket, secure: false,
         sameSite: ticket.sameSite === "no_restriction" ? "lax" : ticket.sameSite }, requestEpoch);
     }
+  // [AuthDebug] 登录链路诊断：成功捕获（正常登录应出现此行）
+  log.debug("[AuthDebug] syncTicketFromJar: ticket captured", {
+    source,
+    valueLength: ticket.value.length,
+    expirationDate: ticket.expirationDate,
+  });
   return requestEpoch === epoch && (eventVersion === undefined || eventVersion === directEventVersion);
 }
 
@@ -216,6 +239,14 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
     const domain = (cookie.domain ?? "").replace(/^\./, "");
     if (cookie.name !== "ticket" ||
         (business.hostname !== domain && !business.hostname.endsWith(`.${domain}`))) return;
+    // [AuthDebug] 登录链路诊断：ticket 域 cookie 的每一次变更（只记长度/过期，不记值）
+    log.debug("[AuthDebug] ticket cookie changed", {
+      domain,
+      removed,
+      cause: String(cause),
+      valueLength: cookie.value?.length ?? 0,
+      expirationDate: cookie.expirationDate,
+    });
     const observedVersion = ++directEventVersion;
     if (removed) {
       // A replacement emits an overwrite removal followed by an insertion.

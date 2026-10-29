@@ -41,7 +41,30 @@ import dependencies from "../system/dependencies";
 import { processRegistry } from "../system/processRegistry";
 import { probeWorkspaceAccessWithPrompt } from "../system/workspaceAccessProbe";
 import type { DetailedSession } from "@shared/types/sessions";
-import { ENGINE_DESTROY_TIMEOUT } from "@shared/constants";
+import {
+  DEV_FORCE_ENGINE_SETTING_KEY,
+  ENGINE_DESTROY_TIMEOUT,
+} from "@shared/constants";
+import { readSetting } from "../../db";
+
+/**
+ * 引擎强制覆盖是否放行：本地开发构建，或 beta 通道包。
+ *
+ * 打包构建的 NODE_ENV 恒为 production（pack.mjs 注入），beta 必须按通道放行，
+ * 否则 beta 用户拨了开关也不生效。stable 两个条件都不满足，一律不放行——即使
+ * dev.force_engine 里留着值（用户在 beta 下开启后切到 stable）。
+ */
+export function isEngineOverrideAllowed(input: {
+  nodeEnv: string | undefined;
+  updateChannel: unknown;
+}): boolean {
+  return (
+    input.nodeEnv === "development" || input.updateChannel === "beta"
+  );
+}
+
+/** 更新通道设置键（与 services/autoUpdater.ts、renderer AboutPage 同一键） */
+const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
 
 // Re-export computer types
 export type {
@@ -715,25 +738,38 @@ export class UnifiedAgentService extends EventEmitter {
     );
     t1 = Date.now();
 
-    // Dev mode: force engine type for testing, bypasses agent_server.command
-    if (
-      process.env.NUWACLAW_FORCE_ENGINE &&
-      process.env.NODE_ENV === "development"
-    ) {
+    // Force the engine for testing, bypassing agent_server.command.
+    // Two sources, env wins: NUWACLAW_FORCE_ENGINE (per-run) or the
+    // dev.force_engine setting (DevToolsPanel switch).
+    const forcedEngineSetting = readSetting(DEV_FORCE_ENGINE_SETTING_KEY);
+    const forcedEngineSource =
+      process.env.NUWACLAW_FORCE_ENGINE ||
+      (typeof forcedEngineSetting === "string"
+        ? forcedEngineSetting.trim()
+        : "");
+    // 生效范围：本地开发构建，或 beta 通道包。打包构建的 NODE_ENV 恒为
+    // production（pack.mjs 注入），所以 beta 必须按通道放行，否则 beta 用户
+    // 拨了开关也不生效。stable 两个条件都不满足，一律不强制——即使设置里留着
+    // 值（用户在 beta 下开启后切到 stable），也不会接管 agent 启动。
+    const updateChannel = readSetting(UPDATE_CHANNEL_SETTING_KEY);
+    const engineOverrideAllowed = isEngineOverrideAllowed({
+      nodeEnv: process.env.NODE_ENV,
+      updateChannel,
+    });
+    if (forcedEngineSource && engineOverrideAllowed) {
       if (!request.agent_config) {
         request.agent_config = {
-          agent_server: { command: process.env.NUWACLAW_FORCE_ENGINE },
+          agent_server: { command: forcedEngineSource },
         };
       } else if (!request.agent_config.agent_server) {
         request.agent_config.agent_server = {
-          command: process.env.NUWACLAW_FORCE_ENGINE,
+          command: forcedEngineSource,
         };
       } else {
-        request.agent_config.agent_server.command =
-          process.env.NUWACLAW_FORCE_ENGINE;
+        request.agent_config.agent_server.command = forcedEngineSource;
       }
       log.info(
-        `[UnifiedAgent] Dev mode: forcing engine to "${process.env.NUWACLAW_FORCE_ENGINE}"`,
+        `[UnifiedAgent] Engine forced to "${forcedEngineSource}" (NODE_ENV=${process.env.NODE_ENV}, channel=${updateChannel ?? "stable"})`,
       );
     }
 

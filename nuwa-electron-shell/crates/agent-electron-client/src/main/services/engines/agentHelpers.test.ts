@@ -52,6 +52,10 @@ describe("agentHelpers", () => {
       expect(mapAgentCommand("nuwax-codex-acp-ts")).toBe("codex-cli");
     });
 
+    it('should map "nuwax-harness-acp-ts" to codex-cli engine', () => {
+      expect(mapAgentCommand("nuwax-harness-acp-ts")).toBe("codex-cli");
+    });
+
     it("should return null for unknown commands", () => {
       expect(mapAgentCommand("unknown-engine")).toBeNull();
       expect(mapAgentCommand("opencode")).toBeNull();

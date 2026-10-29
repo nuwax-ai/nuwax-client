@@ -46,11 +46,11 @@ import { t } from "../../services/core/i18n";
 import styles from "../../styles/components/SettingsPage.module.css";
 import { useTheme, type ThemeMode } from "../../App";
 
-// Dev tools: 仅开发模式加载
-const IS_DEV = import.meta.env.DEV;
-const DevToolsPanel = IS_DEV
-  ? React.lazy(() => import("../dev/DevToolsPanel"))
-  : null;
+// Dev tools: 开发模式或 beta 通道展示（stable 正式版不展示）。
+// 必须无条件 lazy import：打包后 import.meta.env.DEV 恒为 false，按它条件加载
+// 会让 beta 包的 bundle 里没有这个组件，运行时再判定也加载不到。
+const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
+const DevToolsPanel = React.lazy(() => import("../dev/DevToolsPanel"));
 
 /** 「允许锁屏运行」档位（与 shared/types/electron.d.ts PowerPolicyMode 对齐） */
 type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
@@ -98,6 +98,11 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
   const [autolaunchEnabled, setAutolaunchEnabled] = useState(false);
   const [autolaunchLoading, setAutolaunchLoading] = useState(false);
   const [logDir, setLogDir] = useState("");
+  // 开发工具区可见性：开发构建立即可见；beta 通道包需读 update_channel 后置 true，
+  // stable 正式包保持 false（读取失败也按 stable 处理，避免误暴露）。
+  const [devToolsVisible, setDevToolsVisible] = useState(
+    () => import.meta.env.DEV,
+  );
 
   // 本地化加速（即点即存）：映射 nuwaxLoadMode → 保存后重启生效
   const [loopbackEnabled, setLoopbackEnabled] = useState(false);
@@ -193,6 +198,21 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       ?.registered?.()
       .then((ids) => setRegisteredFeatures(ids ?? []))
       .catch(() => setRegisteredFeatures([]));
+  }, []);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) return; // 开发模式已默认可见
+    let active = true;
+    void window.electronAPI?.settings
+      ?.get(UPDATE_CHANNEL_SETTING_KEY)
+      .then((saved) => {
+        // 旧版本未写过该键，按 stable 处理（与 AboutPage 一致）
+        if (active && saved === "beta") setDevToolsVisible(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -630,8 +650,8 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
         </div>
       </div>
 
-      {/* 开发工具 - 仅开发模式 */}
-      {IS_DEV && DevToolsPanel && (
+      {/* 开发工具 - 开发模式或 beta 通道 */}
+      {devToolsVisible && (
         <div className={styles.group}>
           <div className={styles.groupCard}>
             <Suspense fallback={<Spin size="small" />}>

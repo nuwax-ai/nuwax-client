@@ -1,7 +1,7 @@
 // @nuwax-ai/agent-kit — shared agent/ACP logic for nuwa-cli & nuwaclaw.
 //
 // First slice: engine (binary) resolution. The codex ACP adapter is resolved
-// via require.resolve against the @nuwax-ai/nuwax-codex-acp-ts package, so both
+// via require.resolve against the @nuwax-ai/nuwax-harness-acp-ts package, so both
 // hosts converge on one strategy instead of one bundling it and the other
 // npm-resolving it.
 
@@ -22,7 +22,7 @@ const runtimeRequire = createRequire(
 
 /**
  * Resolve an installed package's entry specifier (e.g.
- * "@nuwax-ai/nuwax-codex-acp-ts/dist/index.js") to an absolute path via
+ * "@nuwax-ai/nuwax-harness-acp-ts/dist/index.js") to an absolute path via
  * `require.resolve`. Safe under both ESM (createRequire) and CJS (esbuild
  * rewrites import.meta.url for the cjs build). Throws a friendly error if the
  * dependency is missing — callers should hint `npm install`.
@@ -69,14 +69,14 @@ export function resolveNodePackage(
   return { command: process.execPath, args: [entry] };
 }
 
-export const CODEX_ACP_PACKAGE = "@nuwax-ai/nuwax-codex-acp-ts";
+export const CODEX_ACP_PACKAGE = "@nuwax-ai/nuwax-harness-acp-ts";
 export const CODEX_ACP_ENTRY = `${CODEX_ACP_PACKAGE}/dist/index.js`;
 export const CLAUDE_ACP_PACKAGE = "claude-code-acp-ts";
 export const CLAUDE_ACP_ENTRY = `${CLAUDE_ACP_PACKAGE}/dist/index.js`;
 
 /**
  * Resolve the codex ACP adapter to a spawn target: `node <entry>`, where entry
- * is require.resolve'd from @nuwax-ai/nuwax-codex-acp-ts. Host-specific env
+ * is require.resolve'd from @nuwax-ai/nuwax-harness-acp-ts. Host-specific env
  * (e.g. nuwa-cli's CODEX_LOG_DIR) is left for the caller to overlay on
  * `envOverlay`.
  *

@@ -11,8 +11,8 @@
  * 注意：本组件为纯调试工具，不接入 i18n，所有 UI 文案硬编码英文。
  */
 
-import { useState } from "react";
-import { Button, Modal, Tag, message } from "antd";
+import { useEffect, useState } from "react";
+import { Button, Modal, Switch, Tag, message } from "antd";
 import {
   ReloadOutlined,
   DeleteOutlined,
@@ -20,6 +20,10 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
 } from "@ant-design/icons";
+import {
+  DEV_FORCE_ENGINE_HARNESS,
+  DEV_FORCE_ENGINE_SETTING_KEY,
+} from "@shared/constants";
 import { setupService } from "../../services/core/setup";
 import SetupDependenciesTest from "./SetupDependenciesTest";
 
@@ -29,6 +33,33 @@ export default function DevToolsPanel() {
   );
   const [storeModalVisible, setStoreModalVisible] = useState(false);
   const [setupDepsTestVisible, setSetupDepsTestVisible] = useState(false);
+  const [forceHarnessEngine, setForceHarnessEngine] = useState(false);
+
+  // 引擎强制开关现状（写入 dev.force_engine，由主进程 unifiedAgent 的
+  // force-engine 钩子消费；仅开发构建生效）
+  useEffect(() => {
+    window.electronAPI?.settings
+      .get(DEV_FORCE_ENGINE_SETTING_KEY)
+      .then((value) => setForceHarnessEngine(value === DEV_FORCE_ENGINE_HARNESS))
+      .catch(() => {});
+  }, []);
+
+  const handleForceHarnessEngine = async (checked: boolean) => {
+    try {
+      await window.electronAPI?.settings.set(
+        DEV_FORCE_ENGINE_SETTING_KEY,
+        checked ? DEV_FORCE_ENGINE_HARNESS : null,
+      );
+      setForceHarnessEngine(checked);
+      message.success(
+        checked
+          ? "Agent engine forced to nuwax-harness-acp-ts (new sessions)"
+          : "Engine force override disabled",
+      );
+    } catch {
+      message.error("Failed to set engine force override");
+    }
+  };
 
   // 重置初始化
   const handleResetSetup = async () => {
@@ -222,6 +253,51 @@ export default function DevToolsPanel() {
           >
             {"View"}
           </Button>
+        </div>
+      </div>
+
+      {/* Agent Engine Testing：与上面的维护操作性质不同，独立成卡 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 10,
+          marginTop: 18,
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 500, color: "#18181b" }}>
+          {"Agent Engine Testing"}
+        </span>
+        <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>
+          DEV
+        </Tag>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #e4e4e7",
+          borderRadius: 8,
+          background: "#fff",
+        }}
+      >
+        {/* 引擎强制：全部 agent 走 nuwax-harness-acp-ts 适配器 */}
+        <div style={rowStyle}>
+          <div>
+            <div style={{ fontSize: 13, color: "#18181b" }}>
+              {"Force nuwax-harness-acp-ts Engine"}
+            </div>
+            <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 1 }}>
+              {
+                "Spawn all agents via the bundled nuwax-harness-acp-ts adapter (model config from each request). Applies to new sessions; dev and beta builds only."
+              }
+            </div>
+          </div>
+          <Switch
+            size="small"
+            checked={forceHarnessEngine}
+            onChange={handleForceHarnessEngine}
+          />
         </div>
       </div>
 

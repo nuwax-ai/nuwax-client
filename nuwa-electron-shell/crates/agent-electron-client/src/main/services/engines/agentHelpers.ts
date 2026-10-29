@@ -12,7 +12,8 @@ export function mapAgentCommand(command: string): AgentEngineType | null {
     command === "codex-cli" ||
     command === "codex-acp" ||
     command === "nuwax-codex-acp" ||
-    command === "nuwax-codex-acp-ts"
+    command === "nuwax-codex-acp-ts" ||
+    command === "nuwax-harness-acp-ts"
   ) {
     return "codex-cli";
   }

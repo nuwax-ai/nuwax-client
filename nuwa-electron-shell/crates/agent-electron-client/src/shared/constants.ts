@@ -893,3 +893,9 @@ export const CUA_I18N_KEYS = {
   "CHECK_FAILED": "Claw.Cua.check.failed",
   "CHECK_MANUAL": "Claw.Cua.check.manual"
 } as const;
+
+// Dev-only engine force override (DevToolsPanel switch ↔ unifiedAgent
+// NUWACLAW_FORCE_ENGINE hook). Value is an agent_server.command that
+// mapAgentCommand recognizes; null/absent = no override.
+export const DEV_FORCE_ENGINE_SETTING_KEY = "dev.force_engine";
+export const DEV_FORCE_ENGINE_HARNESS = "nuwax-harness-acp-ts";

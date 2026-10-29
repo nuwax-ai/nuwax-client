@@ -133,16 +133,16 @@ export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
       binName: "rg",
     },
     {
-      name: "nuwax-codex-acp-ts",
+      name: "nuwax-harness-acp-ts",
       displayName: t(I18N_KEYS.Pages.Dependencies.DEP_CODEX_ACP),
       type: "bundled",
       description: t(I18N_KEYS.Pages.Dependencies.DESC_CODEX_ACP),
       required: true,
-      binName: "nuwax-codex-acp-ts",
-      installVersion: "1.2.8",
+      binName: "nuwax-harness-acp-ts",
+      installVersion: "1.2.21",
       npmFallback: {
-        packageName: "@nuwax-ai/nuwax-codex-acp-ts",
-        version: "1.2.8",
+        packageName: "@nuwax-ai/nuwax-harness-acp-ts",
+        version: "1.2.21",
       },
     },
   ];
@@ -432,7 +432,7 @@ export async function checkClaudeCodeAcpBundled(): Promise<{
 
 import { getCodexAcpTsBundledDir } from "./binaryLocator";
 
-// codex 经 @nuwax-ai/nuwax-codex-acp-ts TS adapter；检测 resources 里的 adapter 包
+// codex 经 @nuwax-ai/nuwax-harness-acp-ts TS adapter；检测 resources 里的 adapter 包
 // （函数名保留 checkCodexAcpBundled 以兼容现有 IPC handler + UI 调用）
 export async function checkCodexAcpBundled(): Promise<{
   available: boolean;

@@ -6,6 +6,7 @@ import {
   writeFile,
   readFile,
   rm,
+  stat,
   symlink,
   link,
   open,
@@ -142,5 +143,26 @@ describe("complete workspace ZIP", () => {
     expect((await readdir(root)).some((name) => name.includes(".nuwax-"))).toBe(
       false
     );
+  });
+
+  it("compresses with the configured zlib level instead of storing entries", async () => {
+    // archiver 8 takes options in the constructor where v7 took a factory
+    // argument. A regression that drops or misplaces them still produces a
+    // readable archive — the entries just come back stored (method 0) instead
+    // of deflated, so assert the entry's compression method rather than size.
+    const workspace = path.join(root, "workspace");
+    await mkdir(workspace);
+    const payload = Buffer.alloc(512 * 1024, "nuwax");
+    await writeFile(path.join(workspace, "payload.bin"), payload);
+    const output = path.join(workspace, "all.zip");
+    await exportWorkspaceAtomic(workspace, output, operation());
+    const zip = new AdmZip(output);
+    expect(zip.readAsText("workspace/payload.bin")).toBe(payload.toString());
+    expect(zip.getEntry("workspace/payload.bin")!.header.method).toBe(8);
+    // Method 8 alone cannot tell level 1 from level 6: archiver defaults to
+    // level 1, which still deflates this payload to ~2.9KB, while the
+    // configured level 6 reaches ~0.9KB and a stored entry stays at ~512KB.
+    // The threshold sits between those two compressed sizes.
+    expect((await stat(output)).size).toBeLessThan(payload.length / 256);
   });
 });

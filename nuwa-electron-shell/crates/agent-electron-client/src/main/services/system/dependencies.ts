@@ -274,8 +274,8 @@ export async function checkAllDependencies(options?: {
           }
           break;
         }
-        case "nuwax-codex-acp-ts": {
-          // codex 经 @nuwax-ai/nuwax-codex-acp-ts TS adapter；检测 resources 里的 adapter 包
+        case "nuwax-harness-acp-ts": {
+          // codex 经 @nuwax-ai/nuwax-harness-acp-ts TS adapter；检测 resources 里的 adapter 包
           const bundledDir = getCodexAcpTsBundledDir();
           if (bundledDir) {
             try {
@@ -295,7 +295,7 @@ export async function checkAllDependencies(options?: {
           const codexNpmDir = path.join(
             getAppNodeModules(),
             "@nuwax-ai",
-            "nuwax-codex-acp-ts",
+            "nuwax-harness-acp-ts",
           );
           if (fs.existsSync(path.join(codexNpmDir, "package.json"))) {
             try {
@@ -538,5 +538,9 @@ export default {
 };
 
 // codex TS adapter bundled dir（binaryLocator 新增；import 供本地 case 用 + re-export 给 acpClient）
-import { getCodexAcpTsBundledDir } from "./binaryLocator";
-export { getCodexAcpTsBundledDir };
+// resolveBundledHarnessEnginePath：NUWAX_PATH 注入用的引擎二进制定位（acpClient codex 分支）
+import {
+  getCodexAcpTsBundledDir,
+  resolveBundledHarnessEnginePath,
+} from "./binaryLocator";
+export { getCodexAcpTsBundledDir, resolveBundledHarnessEnginePath };

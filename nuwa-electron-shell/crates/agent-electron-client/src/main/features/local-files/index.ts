@@ -43,6 +43,7 @@ import {
 import {
   copyFileAtomic,
   exportWorkspaceAtomic,
+  type ExportObserver,
   type FileOperation,
 } from "./operations";
 import { applyFileChanges } from "./mutations";
@@ -664,9 +665,31 @@ export class LocalFilesRuntime {
         operation.controller.signal.aborted
       )
         return { canceled: true };
+      // 本地打包链此前零日志：导出走本地 archiver 还是回退下载服务端地址，
+      // 只能从产物反推。这里补上 [ExportDebug]，只记路径/计数/字节。
+      // 过程类用 debug：dev/beta 可见，stable（fileLevel=info）不产生噪音；
+      // 失败保持 warn，任何环境都需可排查。
+      const observeExport: ExportObserver = (event, detail) => {
+        const payload = {
+          event,
+          cId: context.cId,
+          contextId: context.contextId,
+          ...detail,
+        };
+        if (event === "failed") {
+          this.ctx.log.warn("[ExportDebug] workspace archive failed", payload);
+        } else {
+          this.ctx.log.debug?.(`[ExportDebug] workspace archive ${event}`, payload);
+        }
+      };
       const work = source
         ? copyFileAtomic(source, chosen.filePath, operation)
-        : exportWorkspaceAtomic(context.root, chosen.filePath, operation);
+        : exportWorkspaceAtomic(
+            context.root,
+            chosen.filePath,
+            operation,
+            observeExport,
+          );
       this.pendingIO.add(work);
       try {
         await work;

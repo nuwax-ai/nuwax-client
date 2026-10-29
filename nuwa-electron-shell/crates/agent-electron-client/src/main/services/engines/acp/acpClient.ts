@@ -27,6 +27,7 @@ import {
   getNuwaxcodeBundledBinPath,
   getCodexAcpBundledBinPath,
   getCodexAcpTsBundledDir,
+  resolveBundledHarnessEnginePath,
   getNodeBinPathWithFallback,
   getClaudeCodeAcpBundledDir,
 } from "../../system/dependencies";
@@ -626,7 +627,7 @@ export function resolveAcpBinary(
       return { binPath: overridePath, binArgs: [], isNative: true };
     }
 
-    // 优先：@nuwax-ai/nuwax-codex-acp-ts TS adapter（codex resolve 共享自 @nuwax-ai/agent-kit：
+    // 优先：@nuwax-ai/nuwax-harness-acp-ts TS adapter（codex resolve 共享自 @nuwax-ai/agent-kit：
     // resources 模式传 entryOverride；否则 agent-kit 用 require.resolve node_modules）
     const bundledDir = getCodexAcpTsBundledDir();
     const entryOverride = bundledDir
@@ -923,9 +924,17 @@ export async function createAcpConnection(
       env.CODEX_BASE_URL = finalBaseUrl;
     }
     env.CODEX_PROVIDER_ID = "zhipu-glm-5";
-    // codex-acp uses Responses API by default; domestic providers often only support Chat API.
-    // Setting CODEX_WIRE_API=chat forces codex-acp to translate Chat API → Responses upstream.
-    env.CODEX_WIRE_API = "chat";
+    // OpenAI 族：codex-acp 默认走 Responses，国内平台多只支持 Chat，
+    // CODEX_WIRE_API=chat 强制 Chat→Responses 翻译。
+    // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
+    // NUWAX_API_PROTOCOL 选择，且不得携带 WIRE_API（适配器启动即拒绝）。
+    const isAnthropicProtocol =
+      (config.apiProtocol || "").trim().toLowerCase() === "anthropic";
+    if (isAnthropicProtocol) {
+      env.NUWAX_API_PROTOCOL = "anthropic";
+    } else {
+      env.CODEX_WIRE_API = "chat";
+    }
     env.CODEX_MODEL_CONTEXT_WINDOW = "200000";
     env.CODEX_LOG_DIR = path.join(
       app.getPath("home"),
@@ -934,6 +943,19 @@ export async function createAcpConnection(
       "codex",
     );
     env.RUST_LOG = "debug";
+    // 适配器（nuwax-harness-acp-ts）只认 NUWAX_PATH/CODEX_PATH 定位引擎二进制，
+    // 其 homedir() 缓存兜底在下方隔离 HOME 下必然落空，必须显式指向 bundled
+    // vendor 或 npm 兜底安装填充的真实 HOME 缓存（见 binaryLocator）。
+    const harnessEnginePath = resolveBundledHarnessEnginePath();
+    if (harnessEnginePath) {
+      env.NUWAX_PATH = harnessEnginePath;
+    } else {
+      log.warn(
+        "[AcpClient] codex: nuwax-harness engine binary not found; adapter app-server spawn will fail",
+      );
+    }
+    // 适配器自身日志目录（文档保证不含 Key 与原始协议内容）
+    env.APP_SERVER_LOGS = env.CODEX_LOG_DIR;
 
     // Windows 上 codex-rs 经 Known Folder API 解析真实 ~/.codex（不吃 HOME/USERPROFILE
     // 重定向），用户本机 .codex 状态（损坏 sqlite 库/并发 WAL 锁）会直接杀掉引擎。
