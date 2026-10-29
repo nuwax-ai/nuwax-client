@@ -343,7 +343,7 @@ export function buildEffectiveConfig(args: {
     mcpServers: freshMcpServers,
   };
 
-  // codex 经 @nuwax-ai/nuwax-codex-acp-ts adapter 时，adapter spawn codex 二进制
+  // codex 经 @nuwax-ai/nuwax-harness-acp-ts adapter 时，adapter spawn nuwax-harness 二进制
   // 不传 cwd（继承 adapter 进程 cwd），故仍需在 nuwaclaw 侧把 spawn workspaceDir
   // 定到 project workspace，确保 codex 工作目录正确
   const workDirId = request.agent_work_dir || request.project_id;

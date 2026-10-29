@@ -590,7 +590,7 @@ export class AcpEngine extends EventEmitter {
   ): "api-key" | null {
     if (this.engineName !== "codex-cli") return null;
 
-    // adapter (@nuwax-ai/nuwax-codex-acp-ts) 的 authenticate() 第一步就无条件清空
+    // adapter (@nuwax-ai/nuwax-harness-acp-ts) 的 authenticate() 第一步就无条件清空
     // env 自动装配的自定义网关配置（this.gatewayConfig = null），而网关模式本就
     // 无需登录（authRequired() 在 gatewayConfig 非空时返回 false）。配了自定义
     // 网关时必须跳过 authenticate，否则 thread/start 不带 model_providers，
