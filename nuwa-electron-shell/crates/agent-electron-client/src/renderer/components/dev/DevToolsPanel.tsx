@@ -178,25 +178,6 @@ export default function DevToolsPanel() {
           background: "#fff",
         }}
       >
-        {/* 引擎强制：全部 agent 走 nuwax-harness-acp-ts 适配器 */}
-        <div style={rowStyle}>
-          <div>
-            <div style={{ fontSize: 13, color: "#18181b" }}>
-              {"Force nuwax-harness-acp-ts Engine"}
-            </div>
-            <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 1 }}>
-              {
-                "Spawn all agents via the bundled nuwax-harness-acp-ts adapter (model config from each request). Applies to new sessions; dev builds only."
-              }
-            </div>
-          </div>
-          <Switch
-            size="small"
-            checked={forceHarnessEngine}
-            onChange={handleForceHarnessEngine}
-          />
-        </div>
-
         {/* 重置初始化 */}
         <div style={rowStyle}>
           <div>
@@ -272,6 +253,51 @@ export default function DevToolsPanel() {
           >
             {"View"}
           </Button>
+        </div>
+      </div>
+
+      {/* Agent Engine Testing：与上面的维护操作性质不同，独立成卡 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 10,
+          marginTop: 18,
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 500, color: "#18181b" }}>
+          {"Agent Engine Testing"}
+        </span>
+        <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>
+          DEV
+        </Tag>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid #e4e4e7",
+          borderRadius: 8,
+          background: "#fff",
+        }}
+      >
+        {/* 引擎强制：全部 agent 走 nuwax-harness-acp-ts 适配器 */}
+        <div style={rowStyle}>
+          <div>
+            <div style={{ fontSize: 13, color: "#18181b" }}>
+              {"Force nuwax-harness-acp-ts Engine"}
+            </div>
+            <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 1 }}>
+              {
+                "Spawn all agents via the bundled nuwax-harness-acp-ts adapter (model config from each request). Applies to new sessions; dev and beta builds only."
+              }
+            </div>
+          </div>
+          <Switch
+            size="small"
+            checked={forceHarnessEngine}
+            onChange={handleForceHarnessEngine}
+          />
         </div>
       </div>
 
