@@ -1,5 +1,7 @@
 # 客户端工具链实施与验证记录
 
+> 历史记录：本文描述迁移前的工程与验证状态，不作为当前操作指南。当前客户端由本仓独立维护，开发入口见 [npm 脚本参考](./npm-scripts.md)，工程边界见 [architecture.md](./architecture.md)。
+
 ## 源码与产物
 
 - 隔离实现分支：`codex/nuwax-toolchain`，基于 `release/v1.0.x` 的 `951aa597`。

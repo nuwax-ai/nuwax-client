@@ -2,13 +2,13 @@ name: Warm trusted build resource caches
 
 # Release tags cannot read one another's actions/cache entries. This workflow
 # produces provenance-checked cross-run artifacts on a real maintenance push,
-# even while main does not contain this workflow. It has no signing credentials.
+# for the configured maintenance branches. It has no signing credentials.
 on:
   workflow_dispatch:
   push:
     branches: [main, fix/stable-3.0.22]
     paths:
-      - nuwa-electron-shell
+      - nuwa-electron-shell/**
       - scripts/computer-use/build-helper.sh
       - scripts/client/**
       - scripts/prepare-release-capture.mjs

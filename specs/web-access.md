@@ -42,7 +42,7 @@ Cookie 按主机/父域记录，无法区分端口。网关同主机的其他 or
 
 - 修改导航、弹窗、native.openWindow、sessionAuthInjection 与 preload 的相关测试。
 - 真实 Electron 临时 profile：站内 noreferrer 链接含第三方 iframe、业务镜像 iframe、新窗口/原窗口跨域往返、第三方 Cookie 保留、外域请求无 ticket/bridge、POST 和附件行为。
-- 商业完整质量门；社区在隔离副本执行 base:test；前端冻结候选构建。
+- 本仓商业与工具链质量门；前端冻结候选构建。
 
 ## 备选方案
 

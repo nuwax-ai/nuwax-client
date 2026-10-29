@@ -61,7 +61,7 @@ node scripts/computer-use/bench/real-run.mjs \
 
 - macOS，已安装 `/Applications/Nuwax Computer Use.app`（正式签名，已获得辅助功能和屏幕录制授权）。
 - 安装了 Google Chrome。测试会另起一个独立的 Chrome 实例（临时用户目录 `/tmp/cu-bench/chrome-profile`，打开调试端口），**不会碰你自己在用的浏览器**。
-- 已执行过 `npm run overlay:sync`（基座依赖里需要有 esbuild）。
+- 在仓库根执行 `npm run setup` 准备客户端依赖与资源（基准脚本使用本仓客户端安装的 esbuild）。
 
 ## 运行
 

@@ -5,8 +5,8 @@
 | 项目 | 记录 |
 |---|---|
 | tag / 根仓 SHA | |
-| 基座 / 前端 SHA | |
-| CI 双轨、前端、脚本与静态门禁 run URL | |
+| 壳目录 tree / 前端源码与产物 SHA | |
+| CI 商业、前端、脚本与静态门禁 run URL | |
 | 五平台 `build-manifest-*.json` 来源一致 | |
 | `release-provenance.json` 与安装包 SHA256 | |
 | macOS 签名、公证和 Gatekeeper 结果 | |

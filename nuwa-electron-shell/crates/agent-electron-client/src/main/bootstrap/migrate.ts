@@ -7,13 +7,8 @@
  * 1. 新目录不存在 → 整体 rename 旧目录
  * 2. 新目录已存在但 DB 为空（依赖安装等先创建了目录）→ 从旧目录复制 DB
  *
- * overlay 商业版（Nuwax）：**从迁移链移除 .nuwaclaw**（2026-09-11 改名
- * nuwawork→nuwax 决策：不迁移老 nuwaclaw 应用数据及登录状态，阻断基座默认
- * 的「identifier≠nuwaclaw 时整体 rename ~/.nuwaclaw」劫持同机社区版数据；
- * .nuwawork beta 数据同样不在链中、弃置）。.nuwax-agent/.nuwaxbot 远古产品
- * 目录沿用基座迁移链，保持与基座社区测试（migrate.test.ts）同步态自洽。
- * 此文件是对基座的有意行为性覆写（非严格超集），bump 基座 pin 后必须
- * overlay:check 核对本文件与基座侧演进差异。
+ * 当前产品身份为 nuwax 时跳过整个历史目录迁移，不导入其他产品的数据或登录态。
+ * 下方 LEGACY_SOURCES 仅供保留的兼容身份使用；产品隔离由入口身份判断与专项测试约束。
  */
 
 import * as fs from "fs";
@@ -30,9 +25,7 @@ interface LegacySource {
   configName: string | null;
 }
 
-// 商业版仅从迁移链移除 .nuwaclaw（不动同机社区版数据、不迁移老登录态）；
-// .nuwawork 不在链中（beta 数据弃置，~/.nuwax 全新开始）；
-// .nuwax-agent/.nuwaxbot 远古目录沿用基座迁移链（同步态社区测试自洽）。
+// 兼容身份的历史来源；当前 nuwax 身份在迁移入口直接返回。
 const LEGACY_SOURCES: LegacySource[] = [
   { dirName: ".nuwax-agent", dbName: "nuwax-agent.db", configName: null },
   { dirName: ".nuwaxbot", dbName: "nuwaxbot.db", configName: "nuwaxbot.json" },
@@ -229,7 +222,7 @@ function importLegacyDb(home: string, newDb: string): void {
  */
 /**
  * 商业版（v1.0.4 起）移除实验功能：Sandbox / GUI MCP（设置页入口已随
- * overlay SettingsPage 删除）。历史版本（v1.0.0–v1.0.3）若用户开启过，
+ * 客户端设置页删除）。历史版本（v1.0.0–v1.0.3）若用户开启过，
  * 状态会残留在 DB 且删除 UI 后无从关闭——此处每次启动兜底强制归位关闭。
  * 幂等：仅在发现开启时改写。mcp_local_config 的 gui-agent 残留条目无需
  * 此处处理：flag 归 false 后，guiServerHandlers 注册时的

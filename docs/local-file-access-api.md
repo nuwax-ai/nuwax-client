@@ -60,5 +60,5 @@ ZIP 在遍历前解析工作区与目标父目录的真实路径，保存目录�
 
 - `node scripts/acceptance/local-files-electron.mjs`：真实 Electron runtime smoke，隔离 profile、本机 metadata fixture、读写 IPC、H.264 播放/seek 和完整 ZIP。需要已安装的 ffmpeg（可用 `NUWAX_QA_FFMPEG` 指定路径）；Electron 可用 `NUWAX_QA_ELECTRON` 指定。保存、系统打开、回收站适配器均使用夹具，报告写 `.cache/acceptance/local-files-electron.json`，不代表系统回收站或实包验收。
 - Windows 无仓库检出时：开发机运行 `--bundle-only <dir>`，将目录及 `scripts/acceptance/local-files-electron-windows.ps1` 复制到 Windows，用 `-BundleDir <dir> -ElectronExe <electron.exe>` 执行；报告与日志位于其 WorkDir。
-- `npm run test:commercial` / 独立社区副本 `npm run base:test`；`npm run check:pin`、`npm run host-bridge:check`、feature boundaries。
+- `npm run test:commercial`、`npm run test:scripts`、`npm run host-bridge:check` 和 feature boundaries；真实安装包验证另列。
 - 本工作分支的开发/打包使用 `--frontend source`。真实账户、签名安装包与 Windows 真机验收须分别记录。

@@ -1,5 +1,7 @@
 # 标准应用菜单规范 v1（2026-09-18）
 
+> 历史记录：本文保留迁移前的设计或验证事实，其中旧基座/覆写层命令不适用于当前工作树。当前入口见 [npm 脚本参考](./npm-scripts.md)与[工程边界](./architecture.md)。
+
 > 批次：标准应用菜单重设计 + 编辑菜单不可用修复 + 快捷键功能菜单化。
 > 三仓落点：基座 [6502dc9b](https://github.com/nuwax-ai/nuwa-electron-shell/commit/6502dc9b)（main）·
 > 前端 [b2aedab7d](https://github.com/nuwax-ai/nuwax/commit/b2aedab7d)（feat-dong.0930，dist 随 0871e065a）·

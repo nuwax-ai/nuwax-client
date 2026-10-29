@@ -1,5 +1,7 @@
 # Nuwax 客户端与 PC Web 常驻性能审计及修复记录
 
+> 历史记录：本文保留迁移前的设计或验证事实，其中旧基座/覆写层命令不适用于当前工作树。当前入口见 [npm 脚本参考](./npm-scripts.md)与[工程边界](./architecture.md)。
+
 日期：2026-09-28。范围包含商业 Electron 壳、主进程/后台服务、主窗口与二级业务窗口、webview，以及 nuwax PC Web（含 AppDev 与 AppDevPro）。
 
 ## 当前结论

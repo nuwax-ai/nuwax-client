@@ -23,28 +23,17 @@ help:
 dev:
 	@$(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
 
-# Product identity for the lightweight dev-direct entry, read from the single
-# source of truth (client.config.mjs) instead of being duplicated here.
-PRODUCT_ENV := $(shell node --input-type=module -e "import c from './client.config.mjs';const p=c.product;process.stdout.write([p.identifier,p.displayName,p.feedBase,String(p.portOffset)].join('\t'))")
-PRODUCT_IDENTIFIER := $(word 1,$(PRODUCT_ENV))
-PRODUCT_DISPLAY_NAME := $(word 2,$(PRODUCT_ENV))
-PRODUCT_FEED_BASE := $(word 3,$(PRODUCT_ENV))
-PRODUCT_PORT_OFFSET := $(word 4,$(PRODUCT_ENV))
-
-# Lightweight commercial dev: shell in commercial identity against the production
+# Lightweight commercial dev: the shell in commercial identity against the production
 # webview (direct https://agent.nuwax.com). Unlike `make dev` (loopback dist with
 # pinned frontend submodules), this skips frontend preparation entirely.
+# Identity env comes from scripts/run-shell.cjs (single source of truth), which also
+# runs the crate's own dev entry (resources check + vite + electron).
 # Caveats: shares the real commercial data dir (~/.nuwax) and its single-instance
 # lock — quit the installed Nuwax.app first. First-run nuwaxcode release download
 # may need GH_TOKEN (GitHub API rate-limits unauthenticated requests).
 dev-direct:
-	@echo ">>> Commercial direct dev ($(PRODUCT_IDENTIFIER)): production webview + local shell"
-	@NUWAX_APP_IDENTIFIER="$(PRODUCT_IDENTIFIER)" \
-	 NUWAX_APP_DISPLAY_NAME="$(PRODUCT_DISPLAY_NAME)" \
-	 NUWAX_UPDATE_FEED_BASE="$(PRODUCT_FEED_BASE)" \
-	 NUWAX_PORT_OFFSET="$(PRODUCT_PORT_OFFSET)" \
-	 NUWAX_LOCAL_PORT_MODE=auto \
-	 $(MAKE) -C nuwa-electron-shell electron-dev
+	@echo ">>> Commercial direct dev: production webview + local shell"
+	@npm run --silent shell:exec -- npm run dev
 
 setup:
 	@$(CLIENT_CLI) setup $(ARGS)

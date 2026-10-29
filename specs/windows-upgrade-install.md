@@ -18,7 +18,7 @@
 ## 3. 范围
 
 - 改动：外层仓库 `nuwa-electron-shell/crates/agent-electron-client/build/` 的商业 NSIS 编排、恢复/卸载 PowerShell，以及对应夹具。
-- 不改：基座 submodule、前端、应用服务生命周期、NSIS 安装类型与 UAC 策略。
+- 不改：客户端无关模块、前端、应用服务生命周期、NSIS 安装类型与 UAC 策略。
 
 ## 4. 验收
 

@@ -1,61 +1,35 @@
-# 基座功能模块地图（接入指南）
+# 客户端模块地图
 
-基座以"功能模块"为粒度对外提供接入。当前分三个接入层级：**A 独立包**（外部产品直接
-依赖）、**B 客户端功能域**（随客户端整体接入，内部边界受强制约束）、**C 平台 helper**；
-产品差异经 **D 注入开关** 而非代码分叉实现。
+下列模块直接由 `nuwax-client` 维护，路径相对于 `nuwa-electron-shell/`。当前代码修改随同一仓库提交、评审和发布。
 
-## A. 独立可接入包（products can depend directly）
+## 客户端与 SDK
 
-| 模块 | 位置 | 形态 | 能力 | 接入方式 |
-|---|---|---|---|---|
-| **@nuwax-ai/agent-kit** | `crates/agent-kit` | npm 包（已发布 v0.4.0，tsup ESM+CJS） | ACP/agent 原语：引擎解析（codex/claude）、file-server/lanproxy 健康轮询、PersistentMcpBridge 生命周期、MCP npx 缓存预热、ACP 权限决策原语、启动重试 | `npm install @nuwax-ai/agent-kit`（nuwa-cli 即此模式）；基座内部经 `pnpm.overrides file:` 本地联调（**须先构建 dist 再 install**，见 README） |
-| **agent-gui-server** | `crates/agent-gui-server` | workspace 包（bin + prepublishOnly，具备发布条件） | GUI Agent MCP server：截屏 + 键鼠模拟自动化 | workspace:*；需要跨仓接入时可发布 npm（低垂果实） |
-
-agent-kit 边界原则（见其 README）：不依赖任何宿主运行时包；codex adapter 为
-peerDependency；MCP bridge 由宿主注入。
-
-## B. 客户端功能域（crates/agent-electron-client/src/main/services/）
-
-内部按域划分，`scripts/tools/check-import-boundaries.js` + 测试强制 renderer/main
-跨层禁连（30+ 桥接文件白名单），新增功能请落位对应域并遵守边界：
-
-| 域 | 职责 |
+| 位置 | 职责 |
 |---|---|
-| `engines/` | 多引擎 ACP：engineManager、unifiedAgent、acpClient、权限体系 |
-| `sandbox/` | 命令/Docker 沙箱：策略矩阵、macOS seatbelt、Linux bwrap |
-| `system/` | 依赖安装、shellEnv、进程注册表（ProcessRegistry sweep）、平台适配 |
-| `packages/` | MCP 管理（mcp-proxy 集成）、ttyd、GUI agent server、持久 MCP 桥 |
-| `computer/` | admin server、chat dispatch、SSE 流 |
-| `intervention/` | 干预/审批协议 |
-| `memory/` | 会话记忆 |
-| `loopbackGateway/` | nuwax 前端本地承载**插槽**（基座=no-op 桩；商业实现由 Nuwax 壳 overlay 覆写注入，导出面/设置键/事件契约见模块头注） |
-| `autoUpdater` | 更新通道（feed base 可注入） |
+| `crates/agent-kit/` | 引擎解析、ACP、MCP 桥、权限决策和启动重试原语；保持无 Electron 宿主依赖 |
+| `crates/agent-electron-client/src/main/` | 桌面能力、窗口、服务、SQLite、IPC 和生命周期 |
+| `crates/agent-electron-client/src/preload/` | 受来源及权限限制的宿主桥 |
+| `crates/agent-electron-client/src/renderer/` | 客户端界面，通过桥调用主进程 |
+| `crates/agent-electron-client/src/shared/` | 共享契约、常量与构建身份 |
 
-渲染层 `renderer/`、共享层 `shared/`（注入契约单点 `constants.ts`）。
+## 主进程功能域
 
-## C. 平台 helper
+| 位置（相对客户端 src/main） | 职责 |
+|---|---|
+| `features/capture/` | 截图、录屏、系统快捷键及捕获会话 |
+| `features/computer-use/` | Computer Use 任务、控制权限与 driver 生命周期 |
+| `services/engines/` | 引擎管理、统一 Agent 与 ACP 适配 |
+| `services/system/` | 系统环境、依赖和进程管理 |
+| `services/packages/` | MCP、终端等资源集成 |
+| `services/computer/` | 设备服务、请求分派与会话通信 |
+| `services/loopbackGateway/` | 前端本地承载、认证路由、代理和文件访问 |
+| `services/autoUpdater.ts` | 产品更新通道 |
 
-| 模块 | 位置 | 说明 |
-|---|---|---|
-| windows-sandbox-helper | `crates/windows-sandbox-helper`（Rust） | Windows Restricted Token 沙箱；由 prepare:all 在 Windows 宿主构建 |
+平台 CUA helper、截图编码资源和终端兼容组件由仓库根 `scripts/computer-use/`、`scripts/client/`、`native/` 及来源锁管理；准备脚本只消费指定版本，开发者源码与生成资源保持隔离。
 
-## D. 产品差异化接入点（开关，不是分叉）
+## 扩展与验证
 
-- **4 个 NUWAX_* 构建期 env**（见 README「注入契约」）：identifier / 显示名 / 端口偏移 / 更新通道。不注入=社区版。
-- **通信桥宿主身份**：`x-client-type` 头与桥 `host.getProduct()` 随 identifier 派生（nuwaclaw/nuwax；nuwawork 为 2026-09 前历史值），nuwax 后端/前端可凭此区分宿主产品。
-- **产品前端 pin**：产品壳自持 nuwax 前端子模块并 pin 版本（基座不嵌前端）；dev 经 `NUWAX_FRONTEND_DIST` env 注入 dist 目录，打包经产品壳 electron-builder extraResources 注入 `nuwax-dist`。
-- **壳层 `overlay/`**：产品自有代码落位（整文件覆写；如 Nuwax 壳的 loopbackGateway 商业实现、桥 auth 登录同步、设置商业区块）。
-
-## 扩展落位指引
-
-1. 新增**独立能力**（无 Electron 依赖）→ 优先下沉 `agent-kit`，或新建 crate 作为
-   workspace 包（`crates/*`，agent-kit 除外——它走 npm 独立发布）。
-2. 客户端**新功能域** → `services/<domain>/`，遵守 import 边界检查与对应测试。
-3. 产品**专属功能** → 壳仓 `overlay/`，勿进基座。
-
-## 分模块粒度深化（Roadmap，按收益排序）
-
-1. `agent-gui-server` 发布 npm（几乎零成本，第二个独立接入单元）
-2. services 域中纯逻辑（权限决策、沙箱策略矩阵等）逐步下沉 agent-kit
-3. electron 客户端整体 npm 包化（electron-builder 配置与 extraResources 路径参数化）——
-   工程量大，待真有第三方产品需要"只装客户端包"时再做
+- 与 Electron 无关的引擎原语优先落在 agent-kit；新桌面能力落在客户端已有功能域，页面不直接调用系统能力。
+- 商业登录、域名、服务生命周期与本地文件授权在主进程统一管理，具体约束以[根 AGENTS.md](../AGENTS.md)和[工程边界](../docs/architecture.md)为准。
+- 宿主桥类型事实源在 `nuwax/` 前端仓，本仓生成类型快照并用 `npm run host-bridge:check` 核对。
+- 根目录 `npm run test:commercial` 执行完整商业测试；`npm run test:scripts` 检查工具链。构建、签名和安装包实机验收分别记录。

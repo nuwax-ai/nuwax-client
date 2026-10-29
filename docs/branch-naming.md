@@ -1,126 +1,40 @@
-# 分支命名规范（三仓）
+# 客户端分支规范
 
-> **适用范围**：外层仓 `nuwax-client` 与基座 submodule `nuwa-electron-shell` 的分支创建与生命周期；前端 submodule `nuwax` 为外部协作仓，本文只约束我方消费行为（§4）。
-> **事实源声明**：本文件是分支命名的权威规范；README「分支模型与双轨门禁」一节仅保留摘要并指向此处。规范定档日：2026-09-15。
+本文约束 `nuwax-client` 的源码、工具链和发布维护。`nuwa-electron-shell/` 是本仓源码目录，不拥有独立分支或 pin；前端仓命名由对应团队维护，本仓只约束消费方式。
 
-## 1. 总则
+## 工作分支
 
-- 语法：`<type>/<slug>`，全小写，slug 用连字符 `-` 分词；禁用空格、下划线、中文、大写字母。
-- slug 描述「做什么」，不描述「谁在做」：`feat/webview-keep-alive` ✅，`feat/dong-0930` ❌（人名线只在前端仓按对方惯例使用，见 §4）。
-- 一个分支一个意图；多主题混合的改动拆成多个分支。
-- type 词表收口如下，不再新增同义词（`bugfix` 并入 `fix`，`hotfix` 并入 `fix`）：
+采用 `<type>/<slug>`，slug 用小写英文和连字符，描述改动意图。一个分支聚焦一个主题。
 
-| type | 用途 | 示例 |
+| 类型 | 用途 | 示例 |
 |---|---|---|
-| `feat` | 新功能、含行为变更的改动 | `feat/agent-work-dir-absolute` |
-| `fix` | 缺陷修复 | `fix/gethostname-handler` |
-| `refactor` | 不改行为的等价重构 | `refactor/qa-optimization-0912` |
-| `chore` | 构建 / 依赖 / 脚本杂务 | `chore/bump-base-pin` |
-| `docs` | 纯文档改动 | `docs/branch-naming` |
-| `release` | 版本线，格式固定（§2.3） | `release/v3.0` |
-| `codex` | agent 自治工作分支（会话隔离用） | `codex/download-redirect-closeout` |
-| `archive` | 完结分支的归档去向，冻结不进提交 | `archive/electron-client-1.0-full` |
-| `dependabot` | bot 专用前缀，人工不使用 | `dependabot/github_actions/…` |
+| `feat` | 新功能 | `feat/workspace-preview` |
+| `fix` | 缺陷修复 | `fix/capture-shortcut` |
+| `refactor` | 等价重构 | `refactor/client-tooling` |
+| `chore` | 构建、依赖、脚本 | `chore/update-frontend-pins` |
+| `docs` | 文档 | `docs/client-maintenance` |
+| `codex` | 隔离任务工作分支 | `codex/release-review` |
 
-## 2. 外层仓 nuwax-client
+从明确的目标主干或维护线创建工作分支，PR 回同一目标线。main 是集成主干，经 PR 合入；跨版本回补另建明确范围的 PR 或 cherry-pick，不整批混入其他版本功能。`dependabot/*` 保留给 bot。
 
-### 2.1 main（主干）
+## 当前维护与历史分支
 
-- 集成主干，只经 PR 合入，不直接 push；维护中的版本线按 §2.3 接收定向 PR。
-- 发布不由 main 驱动，由 tag 驱动（§2.5）。
+- 当前 3.1.0 目标线为 `release/v3.1.0`，沿用用户指定的完整版本分支名。
+- 原 `release/v3.1` 保留作历史参考，不整分支合并；需要的单项功能按明确范围 cherry-pick，并以当前实现重新验证。
+- 新版本线从明确验证过的提交创建，名称按该次发布决定，不为整理命名改写现有分支。
+- 合入后的工作分支可清理，但仍被发布、pin 或 QA 引用的分支/提交保留。归档只冻结历史，不改写已发布来源。
 
-### 2.2 工作分支（feat / fix / refactor / chore / docs / codex）
+## 前端消费
 
-- 从目标主干或版本线切出，PR 回同一目标线；合并后按 §5 清理。
-- CI 按 `.github/workflows/ci.yml`：`main` 与 `release/**` 的 push、定向 PR 均运行完整门禁；仅修改 `release-notes/*.md` 时跳过分支/PR 门禁，tag 发布仍完整验证；普通工作分支 push 不重复运行。
+仅 `nuwax/`、`nuwax-dist/` 是子模块，URL 和消费分支以 `.gitmodules` 为准。当前前端源码消费 `feat-2026.9.30`，产物消费 `main`。被引用提交须在声明分支历史中可达，不要求 pin 等于远端最新。
 
-### 2.3 release/vX.Y（版本线）
+更新前端走根 `npm run sub:update`，保护无关 WIP，提交源码与产物双 pin；不改写仍被历史 tag 引用的提交，也不擅自改前端团队的分支命名。
 
-- 格式固定：`release/v<major>.<minor>`，patch 由不可变 tag 递进，分支名不随 patch 变化。
-- 从目标版本已验证的提交创建；工作分支从该线切出，经 PR 回流该线。功能回补须明确范围和来源，不整体混入其他版本。
-- 当前 3.0 稳定线为 `release/v3.0`，按用户决定从已验证的 3.0.17 收尾提交 `6c3a2c0a` 建线；`fix/stable-3.0.18` 仅提交本次名称与升级改动。
-- 旧 `release/v3.0.x` 含其他 beta 功能，保留历史，不作为本次 3.0.18 的合并目标；不重写旧分支或 3.0.17 标签。
-- 3.1 线为 `release/v3.1`。跨线回补保留来源；需要回流主干时另开 PR，不要求用 fast-forward 混并整条版本线。
+## 测试与发布
 
-### 2.4 archive/*
+- 根 `npm run test:commercial` 为完整客户端测试入口，`npm run test:scripts` 为工具链检查。壳与工具链同仓修改，不存在跨仓同步或社区测试轨。
+- `ci.yml` 对 main/release 分支 push、目标 PR 和发布调用运行门禁；仅发布说明 Markdown 的分支变更不重复触发整组门禁，tag 发布仍完整验证。
+- `vX.Y.Z` 触发 stable，`vX.Y.Z-beta.N` 触发 beta。Beta 序号取最大已占用值加一，Draft 和失败 tag 也占用版本。
+- 历史 tag 不删除、不移动、不重打；同 tag/SHA 可续跑失败步骤，源码修复需要下一个版本。stable 必须完成签名与安装验收后显式同步，beta 五平台成功后按规范自动同步。
 
-- 完结但需留名的历史线统一挪 `archive/` 前缀；归档分支冻结，不再接受提交。
-
-### 2.5 tag（发布驱动）
-
-| tag 格式 | 触发 workflow | 用途 |
-|---|---|---|
-| `vX.Y.Z` | `release-electron.yml` | 正式版 |
-| `vX.Y.Z-beta.N` | `release-electron-dev.yml` | 预发（验证通过后转正） |
-
-- 版本使用 X.Y.Z / X.Y.Z-beta.N，beta 从 1 开始并按最大已占用序号加一；可多轮 beta 同号转正、直接或连续 stable。正式 tag 创建后关闭同号 beta；Draft 占版本，失败只续跑原 tag/SHA，源码变更升号。详见 [更新通道规范](./release-channels.md)。
-- 历史 tag 不删除、不移动、不重打。同一 tag、同一 SHA 可续跑构建和签名；同步不得降低任一存储的当前通道版本。需要改源码时使用新的版本。`npm run release` 在预检与新 tag 创建前校验两通道远端标签；直接推送 tag 前也须遵守同一规则。
-
-### 2.6 本地验证边界
-
-- `base:test` 会清除 overlay，须在隔离副本运行；商业测试在已同步 overlay 的基座中单独运行。发布调用完整社区、商业及前端门禁。
-
-## 3. 基座仓 nuwa-electron-shell
-
-- **单主干**：`feat/* → PR → main`；外层基座 pin 跟随基座 main（`.gitmodules` branch=main）。
-- **产品中立铁律**：分支名与提交内容均不得含 nuwax / 商业专有信息——该仓是多消费方共享的中立基座（nuwax-client、nuwa-cli、社区版）；历史 `pin/nuwawork` 线即因污染商业语义而退役。
-- **勿 rebase 已 pin SHA**：基座提交一旦被外层 gitlink 引用，改写等于断 pin；feat 线过时用新提交追赶，不改写历史。
-- `dependabot/*` 由 bot 管理，人工不建同前缀分支。
-
-## 4. 前端仓 nuwax（外部协作仓 · 仅消费侧规则）
-
-- 该仓默认主干为 `dev`，分支规范归对方团队；我方**不定义**其命名规范。
-- 当前消费线按用户指定为 `feat-2026.9.30`；前端仓分支规范归对方团队，勿擅自改成 `feat/` 斜杠格式。
-- **硬约束**：外层 bump `nuwax/` gitlink 时，被引提交必须位于 `.gitmodules` 声明分支（当前 `feat-2026.9.30`）上可达，否则 release/smoke 流程的 submodule 拉取失败。实证口径：gitlink 只须在声明分支可达，不须在默认分支。
-- 遗留 `pin/nuwawork` / `pin/nuwa-work` 为改名遗留分支：保留勿动、勿快进（历史 gitlink 的可达性保险）。
-
-## 5. 生命周期与清理
-
-| 阶段 | 规则 |
-|---|---|
-| 工作分支合入目标线 | 合并后清理；保留仍被 pin 或 QA 使用的分支 |
-| 版本线 | 维护期间保留；停止维护且完成必要回流后再归档 |
-| 有考古价值的完结线 | 挪 `archive/<slug>` 归档，冻结 |
-| 长期挂着的本地实验分支 | 定期清理；不推远端的不受本规范约束 |
-
-## 6. 作废口径（与本规范冲突的历史规则）
-
-| 作废规则 | 替代 |
-|---|---|
-| 基座改动 push `origin/pin/nuwawork` | 基座一律 feat/* → PR → main（pin 线已退役删除） |
-| `pin/nuwawork` 须快进（基座推送前） | 已实证推翻：gitlink 只须在 `.gitmodules` 声明分支可达；基座单主干后无快进对象 |
-| 外层仓使用 `feat-<date>` / `feat-<user>.<date>` 人名日期线 | 外层仓工作分支一律 `<type>/<slug>`；人名日期线仅存于前端仓（对方惯例） |
-| `bugfix/*` 前缀 | 并入 `fix/*` |
-
-## 7. 存量分支处置清单（定档日盘点）
-
-| 仓 | 分支 | 状态 | 处置 |
-|---|---|---|---|
-| 外层 | `main` | 主干 | 保留 |
-| 外层 | `release/v1.0.x` | 版本线，领先 main 19 提交；v1.0.4 已转正 | 回流 main 后删除 |
-| 外层 | `codex/download-redirect-closeout` | release 线基点；提交已在 release 线内可达 | 随 release 回流后一并删除 |
-| 外层 | `archive/electron-client-1.0-full`、`archive/codex-agent-workbench-0.11` | 归档 | 保留 |
-| 基座 | `main` | 主干 | 保留 |
-| 基座 | `feat/agent-work-dir-absolute` 等历史 feat 线 | 逐条 `git branch --merged origin/main` 核实后删除 | 待清理 |
-| 前端 | `feat-2026.9.30` | 我方消费线（.gitmodules 声明分支） | 保留至换线，换线须同步改 `.gitmodules` |
-| 前端 | `pin/nuwawork`、`pin/nuwa-work` | 改名遗留 | 保留勿动 |
-
-## 8. 速查
-
-```bash
-# 从目标版本线新建工作分支，PR 回同一版本线
-git checkout -b fix/<slug> origin/release/v3.0
-
-# 新版本线从明确验证过的提交创建
-git checkout -b release/vX.Y <verified-commit>
-
-# beta 可连续发布，也可同号转正；正式 tag 创建后关闭同号 beta
-npm run release -- --version 3.0.11-beta.6 --dry-run
-npm run release -- --version 3.0.11-beta.6
-# 提交对应正式发布说明，签名/验收后续跑同步；也允许直接 stable
-npm run release -- --version 3.0.11 --stage sign
-npm run release -- --tag v3.0.11 --stage sync
-
-# 修复经 PR 回目标线；跨版本回流另建 PR
-gh pr create --base release/v3.0 --head fix/<slug>
-```
+具体入口见[npm 脚本](./npm-scripts.md)与[发布规范](./release-channels.md)。本文不用于重新处置旧文档中的历史分支清单。

@@ -42,10 +42,16 @@
 - 注册、启停、登出失效与换域统一由主进程 commercialAuth + AuthLifecycle 编排；renderer 不另起自动注册或启动链。迟到注册响应必须在写库前校验会话代次。
 - 企业登录和设置页修改域名必须共用 configureServerHost；不得直接写域名后继续使用旧 cookie 会话或代理配置。
 - 未登录只运行页面所需的 loopback gateway。商业版不按端口杀未知进程，避免干扰 NuwaClaw/CLI。
-- **壳（`nuwa-electron-shell/`）已并入本仓直接维护**，不再是子模块、不再有 overlay 覆写层与社区基线轨：商业改动直接改 `nuwa-electron-shell/`，与社区版 NuwaClaw 的差异不再同步/回流。上游历史止于子模块 pin `d12d001a`。
-- 门禁命令：`npm run test:commercial`（`--no-env`：不注入商业 env，测试断言缺省身份）；CI（ci.yml）单 commercial job。提测还须验证真实安装包。分支模型为单主干（feat 线 PR 进 main）；仅 `nuwax/`、`nuwax-dist/` 仍为 submodule pin，勿 rebase 改写已 pin 的 SHA。
+- **壳（`nuwa-electron-shell/`）是本仓直接维护的源码目录**。客户端能力、产品行为和构建实现都随 nuwax-client 提交与评审，开发和发布入口统一从仓库根执行。
+- 门禁命令：`npm run test:commercial`（不注入构建身份，保留缺省值与专项身份断言）；CI（ci.yml）单 commercial job。提测还须验证真实安装包。分支模型为单主干（feat 线 PR 进 main）；仅 `nuwax/`、`nuwax-dist/` 仍为 submodule pin，勿 rebase 改写已 pin 的 SHA。
 
 ## 文件面板回归边界
 
 - 文件入口按 `specs/local-file-management.md` 分工；文件树面板功能与会话附件发送是两条链路，会话框此次仅含目录选择。
 - 修改本机来源或恢复逻辑时，须覆盖“同电脑新会话服务未就绪”和“首次工作区解析失败后主动重试”；仅测已成功解析的会话，不能证明失败不回云端或重试可恢复。
+
+## 当前入口与历史资料
+
+- 当前开发流程以根 README、`docs/architecture.md`、`docs/npm-scripts.md`、`docs/release-channels.md` 为准。
+- 带日期的设计、计划、验收和历史发布记录保留当时事实；其中独立基座、覆写层及旧命令不作为当前操作指令。第三方来源与许可证信息保留。
+- 日常使用根 `setup / dev / pack / release / test:commercial`；定向壳命令使用 `shell:exec`。内部包名、协议字段和兼容标识不随文档清理改名。

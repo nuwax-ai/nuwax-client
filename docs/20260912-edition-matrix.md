@@ -1,5 +1,7 @@
 # 三版横向对比：社区版 NuwaClaw · 基座 nuwa-electron-shell · 商业版 Nuwax
 
+> 历史记录：本文描述迁移前的工程与验证状态，不作为当前操作指南。当前客户端由本仓独立维护，开发入口见 [npm 脚本参考](./npm-scripts.md)，工程边界见 [architecture.md](./architecture.md)。
+
 - 记录日期：2026-09-12
 - 口径：**基座** = 共享 Electron 壳仓 `nuwax-ai/nuwa-electron-shell`；**社区版** = 外层仓 `nuwaclaw` 以子模块消费基座所得产品 NuwaClaw；**商业版** = 本仓 `nuwax-client` 以子模块消费基座 + `overlay/` 覆写所得产品 Nuwax。
 - 核实方式：本文数据取自本轮实际执行的仓库检查（子模块 pin、`git show` 提交树、package.json、测试与打包运行结果）。**社区版本轮未做运行态验证**，其状态为代码与仓库事实，非运行实测。

@@ -6,7 +6,7 @@
 
 ## 需求基线
 
-提供商业客户端原生截屏、录屏（视频 mp4/webm、GIF）能力，经 `NuwaClawBridge.capture` 供受信顶层业务页（IM）调用；交互界面全部为客户端原生窗口。全部实现位于 nuwax-client，**不修改基座仓**（`nuwa-electron-shell`）。
+提供商业客户端原生截屏、录屏（视频 mp4/webm、GIF）能力，经 `NuwaClawBridge.capture` 供受信顶层业务页（IM）调用；交互界面全部为客户端原生窗口。全部实现位于本仓 `nuwa-electron-shell/` 客户端源码及根目录资源准备工具中。
 
 ## 特性模块边界
 
@@ -14,8 +14,8 @@
 - 静态注册表与运行时在 `main/features/index.ts`（公开入口），不做动态插件加载；`_kit` 现含：特性清单类型、注册（按产品与开关过滤、单个失败隔离）、受信 IPC、生命周期事件、临时目录；托盘贡献与 i18n 语言包等到 Phase 3 / 有实际需求时再增补。特性上下文提供两条 IPC：`ipc`（受信顶层业务页，复用 `isIMSender`）与 `hostIpc`（宿主壳渲染进程，复用 `isHostSender`，供「关于」页使用）。
 - 边界规则由 `scripts/check-feature-boundaries.test.mjs` 强制：特性只能引用自身、`_kit`、`shared/types/hostBridge`、第三方与 Node/Electron；外部只能经 `main/features/index`、`preload/features/index`、`renderer/features/<id>`、`shared/features/<id>/contract` 引用特性；`_kit` 不依赖特性；特性内不出现 `APP_NAME_IDENTIFIER`。
 - 开启：特性清单的 `enabledByDefault` 为默认，运行期可由设置项 `features.<id>.enabled` 覆盖，无需发版。关闭时：主进程不注册 IPC、不建窗口、不占托盘、不创建临时目录；桥上 `capture` 命名空间仍在，但 `getCapabilities().available === false`，其余调用返回 `unsupported`（preload 把「No handler registered」映射为此结果，真实处理函数报错则返回 `failed` 并带信息）。
-- 既有代码的接缝（均为 overlay 里已有的整文件覆写版本，改动落在 overlay 副本，须小且通过 `overlay:compat`，并在 `overlay/README.md` 清单登记）：`nuwaxBridgeHandlers.ts`（一次 `startDesktopFeatures`；`cancelTransfers` 在每个会话边界通知特性 `sessionEnd`，登出/换域带原因）、`main.ts`（退出清理一步 `disposeDesktopFeatures`）、`webviewPerfBridge.ts`（受信顶层页展开 `featureNamespaces`）、`preload/index.ts`（壳渲染进程展开 `hostFeatureNamespaces`）、`renderer/App.tsx`（`AboutPage` 的 import 指向 `CommercialAboutPage`）、四语言 locale JSON（新增键）。`hostBridge.ts` 快照与 `trayManager.ts` 待契约落地 / Phase 3 再改。
-- 文案：渲染进程特性不得 import 客户端 i18n，翻译函数由调用方传入；文案键加在 overlay 四语言 JSON（严格超集，`i18nLocales.test.ts` 守卫键集与占位符一致）。
+- 既有代码的接缝（直接修改本仓客户端源码，保持受信来源、会话生命周期及特性边界）：`nuwaxBridgeHandlers.ts`（一次 `startDesktopFeatures`；`cancelTransfers` 在每个会话边界通知特性 `sessionEnd`，登出/换域带原因）、`main.ts`（退出清理一步 `disposeDesktopFeatures`）、`webviewPerfBridge.ts`（受信顶层页展开 `featureNamespaces`）、`preload/index.ts`（壳渲染进程展开 `hostFeatureNamespaces`）、`renderer/App.tsx`（`AboutPage` 的 import 指向 `CommercialAboutPage`）、四语言 locale JSON（新增键）。`hostBridge.ts` 快照与 `trayManager.ts` 待契约落地 / Phase 3 再改。
+- 文案：渲染进程特性不得 import 客户端 i18n，翻译函数由调用方传入；文案键加在 客户端四语言 JSON（严格超集，`i18nLocales.test.ts` 守卫键集与占位符一致）。
 
 ## 对外契约
 
@@ -74,7 +74,7 @@ CaptureResult = { success: true; resultId; mime; bytes; width; height; durationM
 
 ## 开源组件声明
 
-「关于」页新增「开源组件声明」链接与页面：表格五列（名称、版本号、许可证、是否经过修改、源代码地址）加页首声明与许可证全文，应用内渲染安装包内的 `third-party-notices.json`，`licenses/` 目录随包分发；源码包自托管于 OSS `third-party-source/`。守卫测试要求每个 `resources/*` 与每个特性资源有声明，GPL/未知许可证判红，ffmpeg 的 `configuration` 含 `--enable-gpl` 或 `--enable-nonfree` 判红。实现全部在 nuwax-client 内，**不修改基座仓**：overlay 新增 `renderer/features/open-source-notices/`，其中 `CommercialAboutPage` 组合基座 `AboutPage` 并追加「开源组件声明」一行与页面；`overlay/.../renderer/App.tsx`（已是 overlay 覆写文件，第 77、2247 行引用 `AboutPage`）只改 import 与渲染两处，不分叉 790 行的 `AboutPage.tsx`。仅商业版有此入口，社区 NuwaClaw 不含。manifest、`licenses/` 在商业仓 `third-party/`，生成脚本与守卫在 `scripts/`；基座自带的 `resources/*` 组件也登记在商业仓 manifest 里；`extraResources` 经商业打包配置追加（具体文件开工时定位）。用户协议「第三方软件或技术」条款文本交产品/法务定稿。
+「关于」页新增「开源组件声明」链接与页面：表格五列（名称、版本号、许可证、是否经过修改、源代码地址）加页首声明与许可证全文，应用内渲染安装包内的 `third-party-notices.json`，`licenses/` 目录随包分发；源码包自托管于 OSS `third-party-source/`。守卫测试要求每个 `resources/*` 与每个特性资源有声明，GPL/未知许可证判红，ffmpeg 的 `configuration` 含 `--enable-gpl` 或 `--enable-nonfree` 判红。实现位于本仓客户端目录：`renderer/features/open-source-notices/` 提供声明展示；`CommercialAboutPage` 组合 `AboutPage` 并追加入口，由 `renderer/App.tsx` 接入。许可证、来源锁和打包守卫按本仓配置共同验证。
 
 ## 平台矩阵
 
@@ -93,7 +93,7 @@ CaptureResult = { success: true; resultId; mime; bytes; width; height; durationM
 ## 测试计划
 
 - 单测：档位映射、`maxBytes` 下探、全档×全格式的尺寸不变性属性测试、DIP 与物理像素换算（含混合 DPI）、标注叠加顺序、HDR 判定、信任/越权/`busy`、特性关闭零痕迹。
-- 守卫：`check-feature-boundaries`、`third-party-notices`（构造违规须判红）、`host-bridge:check`、`overlay:check`、`check:pin`；社区 `base:test` 在隔离副本确认不受影响。
+- 守卫：`check-feature-boundaries`、`third-party-notices`（构造违规须判红）、`host-bridge:check`、商业测试与工具链测试；安装包/物理按键验收另列。
 - 真实 Electron 临时 profile 冒烟；真实安装包实机验收：Win11 HDR 开/关与双屏混合 DPI、macOS Retina/HDR，整屏/窗口/区域×截图/mp4/webm/gif×四档，授权拒绝、录制中登出/锁屏/拔屏、控制条未入镜。
 
 ## 备选方案

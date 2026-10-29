@@ -1,5 +1,7 @@
 # 2026-09-24 交付日复盘（nuwax-client + nuwax 前端）
 
+> 历史记录：本文保留迁移前的设计或验证事实，其中旧基座/覆写层命令不适用于当前工作树。当前入口见 [npm 脚本参考](./npm-scripts.md)与[工程边界](./architecture.md)。
+
 > 快照时间：2026-09-24 11:52（CST）；P0-1、P0-3、P0-5 与第 6 节已于 14:15 复核更新。本文只基于只读排查：未改代码、未推送、未触发 workflow（仅 `git fetch` 刷新远端跟踪引用）。标「推断」处为未经实测的判断。
 > 覆盖范围：`nuwax-client`（含基座 submodule `nuwa-electron-shell`）与 `~/workspace/nuwax`（前端，客户端 `nuwax/` submodule 的源仓）。
 

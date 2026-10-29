@@ -8,14 +8,14 @@
 - 引擎统一入口为 `services/engines/unifiedAgent.ts`，ACP 实现在 `services/engines/acp`。服务、包管理与系统适配保持现有分层。
 - 外部输入、页面来源、会话及权限在主进程验证；网页不能因持有 bridge 对象而获得授权。
 - 子进程环境经 `system/dependencies.ts` 的 `getAppEnv()` 创建，清理仅针对本实例拥有的进程。数据路径使用共享 constants/appPaths。
-- 本目录现为 nuwax-client 的商业壳源码，ticket 生命周期与产品身份由外层规则约束；直接修改本目录，不再维护 overlay 或向原中立基座回流商业代码。
+- 本目录现为 nuwax-client 的商业壳源码，ticket 生命周期与产品身份由外层规则约束；直接修改本目录，随当前仓库提交与评审。
 
 ## 命令
 
 - `npm run dev`：开发；`npm run build`：主进程及 renderer 构建。
 - `npm run test:run -- <相关测试文件>`：日常验证；`npm run test:run`：集成全量。
 - `npm run test:scripts`：构建脚本测试；`npm run check:boundaries`、`npm run check:appdir`：相关静态检查。
-- 沙箱集成测试依赖真实平台环境，不以通用 CI 通过代替实机验收。发布和签名由产品壳编排。
+- 沙箱集成测试依赖真实平台环境，不以通用 CI 通过代替实机验收。发布和签名由仓库根 CLI 编排。
 
 ## 国际化
 

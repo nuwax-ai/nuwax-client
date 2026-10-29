@@ -1,5 +1,7 @@
 # Nuwax 客户端与 Nuwax Computer Use 权限矩阵（多平台）
 
+> 历史记录：本文保留迁移前的设计或验证事实，其中旧基座/覆写层命令不适用于当前工作树。当前入口见 [npm 脚本参考](./npm-scripts.md)与[工程边界](./architecture.md)。
+
 > 2026-09-18 定稿；适用 v1.0.16+（Computer Use Linux 支持自 v1.0.18）。
 > 双视角：**Nuwax 客户端**（Electron 壳）与 **Nuwax Computer Use**（独立 helper）。
 > 事实来源：mac 实证（spike+v1.0.16 载荷验证+mac-mini 真机）、win 实证（win-pc 真机链路）、

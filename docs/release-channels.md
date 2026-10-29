@@ -24,20 +24,20 @@ npm run release -- --tag electron-v3.0.9 --stage sync
 
 CLI 按预检时捕获的消费分支 SHA 核对历史关系，允许远端比 pin 更新，不把分支尖端替换成构建输入。`--tag` 续跑从目标发布提交的 `.gitmodules` 读取 URL 与消费分支，工具工作区换线不会改变历史目标。doctor/prepare 继续核对本地 HEAD 与已提交 pin、工作树及产物戳；这些检查不要求远端最新。
 
-stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-beta.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名显式传入 `SIGN_RELEASE_TAG`，基座默认保持社区的 electron-v 格式。
+stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-beta.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名由发布入口显式传入 `SIGN_RELEASE_TAG`，历史 tag 格式仅在续跑指定目标时解析。
 
 ## CI 路由与脚本责任
 
 | 入口 | 正式发布触发 | 成功后的行为 |
 | --- | --- | --- |
-| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 三轨门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
-| `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 三轨门禁 → 五平台 → 自动调用同步，公开 prerelease |
+| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
+| `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台 → 自动调用同步，公开 prerelease |
 | `sync-electron-to-oss.yml` | beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
 | `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
 
 仅修改 `release-notes/*.md` 的分支 push/PR 不触发 `ci.yml`，避免发布说明在 PR、合并、tag 三个入口重复占用 runner。改动包含源码、workflow、pin 或 `.channel.json` 时仍执行完整分支/PR 门禁；tag 发布调用 `ci.yml` 不受路径过滤影响，始终运行全部检查。
 
-门禁以 depth 1 检出固定的基座/前端 gitlink；商业纯净检查另取 `origin/main` 快照，基座兼容检查按需获取上一 pin。三者仍比较实际提交的文件树，不依赖下载完整历史；前端嵌套子模块保持原有检出方式。
+客户端和壳源码随本仓 tag 检出；仅前端源码与产物以固定 gitlink 检出，前端源码测试按需初始化其嵌套子模块。`source.shell` 记录本仓壳目录的 tree 哈希，不是外部仓库提交；工具链不取旧基座或执行覆写层同步。
 
 Actions 的 `Queued` 先检查组织的 [GitHub-hosted runner 用量](https://github.com/organizations/nuwax-ai/settings/actions/hosted-runners)：并发额度跨仓库共享，macOS 还有单独上限。2026-10-26 排查 Beta.5 时组织为 20/20、macOS 为 5/5，其中 `nuwax-ai/codex` 三条工作流占用 14 个槽位。应清理已经被新运行覆盖的重复门禁，并由对应仓库负责人协调长构建；增加 job 超时时间不会解决分配 runner 前的排队。保留当前 tag/SHA 继续执行，勿为排队另起版本或重打整套包。
 
@@ -47,7 +47,7 @@ CLI 的 `--version` 是完整应用版本。`--channel beta --version 3.0.11` �
 
 Windows 的 stable、beta 与 QA 打包共用 `configure-windows-output.mjs`，将 builder 输出放到 `RUNNER_TEMP/nw-<run>-<attempt>-<arch>`。来源记录、Release 上传和 QA staging 必须读取同一个 `NUWAX_WINDOWS_OUTPUT_DIR`，缺失时提前失败。完整版本仍注入应用与资产文件名，资源载荷保持完整。修改输出目录时须同时验证这些消费者；只设置 Git longpaths 不能保证 WiX 的原生文件访问支持长路径。
 
-macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆盖基座构建命令的 maximum。保留完整 DMG/ZIP、签名、公证和来源检查；较低压缩级别会增加包体。实际 SDK 25.1.8 的 ZIP/7z 参数回归防止再次遗漏。
+macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆盖客户端构建命令的 maximum。保留完整 DMG/ZIP、签名、公证和来源检查；较低压缩级别会增加包体。实际 SDK 25.1.8 的 ZIP/7z 参数回归防止再次遗漏。
 
 公证后的安装包统一由 `release-mac-notarization.mjs` 生成。该入口在单次打包进程的 PATH 中提供临时 hdiutil 包装器，将 Intel 的 UDRW 中间镜像从 HFS+ 改为 APFS，保留现有 UDZO 压缩和完整应用。ARM 的 APFS 路径保持不变。包装器只透传系统工具的标准输出，分段耗时单独收集，结束后打印 create / resize / attach / detach / convert 耗时并清理临时文件；Intel 成功路径须确认真实执行过 APFS 中间镜像创建。打包前后继续检查应用签名与公证票据。stable、Beta 及私有验包共用该实现，已冻结的旧 tag 不变。
 
@@ -75,18 +75,18 @@ v3.0.10 同步 run 37741910045 的 28 个资产共 7,766,653,598 字节：GitHub
 
 依据：[AWS CLI 校验说明](https://docs.aws.amazon.com/cli/latest/topic/s3-faq.html)、[S3 SHA256 分片与校验类型](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)。固定分片配置见同步 workflow，不要单独修改其中一处。
 
-## 首次上线
+## 历史首次上线与迁移（2026-10）
 
-旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后进入 `v3.0.11-beta.N` 新序列，当前发布候选为 `v3.0.11-beta.6`，包含 source 4dfea90cd2 / dist 4a497a055。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
+旧客户端只接受纯数字更新元数据。先发布包含更新器兼容修复的 `v3.0.10` 正式版，并提升 stable、beta 两个订阅入口，旧用户即可自动升级。之后进入 `v3.0.11-beta.N` 新序列，当时的发布候选为 `v3.0.11-beta.6`，包含 source 4dfea90cd2 / dist 4a497a055。发布前重新检查远端占用；历史 `electron-v*` / `prerelease-v*` 标签、资产路径和来源记录保留，续跑时用 `--tag` 传入原值。
 
 单元测试不能替代安装包验收：正式上线前验证真实包版本、签名、旧版升级、beta 连续升级和同号转正，记录平台与实际结果。
 
 依据：[electron-builder 通道包含模型](https://www.electron.build/v26/docs/tutorials/release-using-channels/)、[GitHub tag 过滤规则](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushbranchestagsbranches-ignoretags-ignore)。
 
-Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、验签、上传；当前已提交签名工具由外层通过 SSH stdin 提供。应用来源校验留在外层，签名机无需源码、子模块、overlay 或 npm 安装，并保留 tag/SHA 缓存供失败续跑。
+Windows 签名机职责收敛为下载、缓存/下载哈希验证、签名、验签、上传；当前已提交签名工具由外层通过 SSH stdin 提供。应用来源校验留在外层，签名机无需客户端源码检出或 npm 安装，并保留 tag/SHA 缓存供失败续跑。
 
 旧 beta 客户端首次接入新序列应先升级兼容正式版 3.0.10。若尚未升级而 beta 入口已进入 beta.N，可临时订阅 stable 获得 3.0.10，再按用户选择订阅 beta；已有用户选择不会被安装包覆盖。
 
 2026-10-08：beta.1、beta.2 因补充分支整合取消；beta.3 的 Windows MSI 遇到 260 字符文件路径，修复需要变更 workflow，取消原 run。三个 tag/SHA 和 Draft 均保留，未公开且继续占用序号。beta.4 已在 21f4500f 完成五平台构建、公开 prerelease 与双镜像同步。beta.5 固定在 d3aca75a，曾因准备更新前端双 pin 取消构建；用户随后要求先完成本轮打包，已在同 tag/SHA 重跑 run 37772988364。后续前端更新独立交付，不移动 beta.5。示例版本以发布前远端占用检查为准。
 
-2026-10-08 后续：用户指出 beta.5 仍在 d3aca75a，要求先合并 codex/frontend-beta5-pins 再重打。已补齐 frontend-beta5-pins 与 frontend-pin-policy 的完整合并历史；beta.5 构建取消、旧 tag/SHA/Draft 保留，新源码使用下一可用 beta.6。合并后应用与校验代码树与 PR #20 三轨门禁通过的 021d6ec3 一致，本次仅补合并关系和下一版发布说明。
+2026-10-08 后续：用户指出 beta.5 仍在 d3aca75a，要求先合并 codex/frontend-beta5-pins 再重打。已补齐 frontend-beta5-pins 与 frontend-pin-policy 的完整合并历史；beta.5 构建取消、旧 tag/SHA/Draft 保留，新源码使用下一可用 beta.6。合并后应用与校验代码树与 PR #20 商业/前端/脚本门禁通过的 021d6ec3 一致，本次仅补合并关系和下一版发布说明。
