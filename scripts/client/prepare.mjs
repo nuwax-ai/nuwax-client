@@ -105,10 +105,32 @@ export function electronBinary(client, platform = process.platform) {
 async function ensureSubmodules(root, options, tools) {
   const declared = await tools.git(root, ['config', '-f', '.gitmodules', '--get-regexp', '^submodule\\..*\\.path$']);
   const names = declared.split('\n').map((line) => line.trim().split(/\s+/).slice(1).join(' ')).filter(Boolean);
-  const missing = names.filter((name) => !fs.existsSync(path.join(root, name, '.git')));
-  if (missing.length) {
-    console.log(`[prepare] 初始化缺失子模块: ${missing.join(', ')}`);
-    if (!options.dryRun) await tools.run('git', ['submodule', 'update', '--init', '--depth', '1', '--', ...missing], { cwd: root });
+  if (!names.length) return;
+  // 已检出但 HEAD 与 pin 不一致时，后面的双 pin 校验会让 dev 直接失败，而用户看到
+  // 的提示是跑整条 sub:update（拉源码+构建+推送产物仓）。这里先把检出对齐到 pin，
+  // 让 dev 能继续。`-`=未初始化，`+`=检出落后于 pin。
+  let status = "";
+  try {
+    status = await tools.git(root, ["submodule", "status"]);
+  } catch {
+    status = ""; // 该命令失败不阻断：下方仍会按缺失项初始化
+  }
+  const behind = new Set();
+  for (const line of status.split("\n")) {
+    // 每行形如 `+<sha> <路径> <描述>`：第一列是检出的 commit，第二列才是子模块路径
+    const match = /^[-+]\s*\S+\s+(\S+)/.exec(line.trim());
+    if (match) behind.add(match[1]);
+  }
+  const outdated = names.filter(
+    (name) => behind.has(name) || !fs.existsSync(path.join(root, name, '.git')),
+  );
+  if (!outdated.length) return;
+  const missing = outdated.filter((name) => !fs.existsSync(path.join(root, name, '.git')));
+  const stale = outdated.filter((name) => !missing.includes(name));
+  if (missing.length) console.log(`[prepare] 初始化缺失子模块: ${missing.join(', ')}`);
+  if (stale.length) console.log(`[prepare] 子模块检出落后于 pin，对齐: ${stale.join(', ')}`);
+  if (!options.dryRun) {
+    await tools.run('git', ['submodule', 'update', '--init', '--depth', '1', '--', ...outdated], { cwd: root });
   }
 }
 
