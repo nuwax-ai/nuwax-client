@@ -92,6 +92,7 @@ vi.mock("./acp/acpEngine", () => {
 
 import {
   UnifiedAgentService,
+  isEngineOverrideAllowed,
   resolveRequiredAgentEngine,
 } from "./unifiedAgent";
 import {
@@ -719,5 +720,38 @@ describe("UnifiedAgentService — 引擎空闲驱逐（idle eviction）", () => 
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 引擎强制覆盖的生效范围（dev.force_engine 开关 / NUWACLAW_FORCE_ENGINE）
+
+describe("isEngineOverrideAllowed", () => {
+  it("开发构建放行", () => {
+    expect(
+      isEngineOverrideAllowed({ nodeEnv: "development", updateChannel: null }),
+    ).toBe(true);
+  });
+
+  it("beta 通道包放行（打包构建 NODE_ENV 为 production，靠通道放行）", () => {
+    expect(
+      isEngineOverrideAllowed({ nodeEnv: "production", updateChannel: "beta" }),
+    ).toBe(true);
+  });
+
+  it("stable 一律不放行，即使设置里留着值", () => {
+    // 用户在 beta 下开启后切到 stable：设置仍在，但不得接管 agent 启动
+    expect(
+      isEngineOverrideAllowed({ nodeEnv: "production", updateChannel: "stable" }),
+    ).toBe(false);
+    expect(
+      isEngineOverrideAllowed({ nodeEnv: "production", updateChannel: null }),
+    ).toBe(false);
+  });
+
+  it("stable 下即使是 development 构建也放行（本地开发优先）", () => {
+    expect(
+      isEngineOverrideAllowed({ nodeEnv: "development", updateChannel: "stable" }),
+    ).toBe(true);
   });
 });
