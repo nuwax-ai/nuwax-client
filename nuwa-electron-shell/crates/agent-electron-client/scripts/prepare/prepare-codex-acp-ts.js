@@ -178,10 +178,13 @@ async function main() {
     `  vendor/nuwax-harness/${engineVer}/ (${(engineSize / 1024 / 1024).toFixed(0)} MB 主二进制, ${engineFiles.length} 个可执行)`,
   );
 
-  // 精简 package.json（bin 与发布包保持一致，旧命令名保留兼容别名）
+  // 精简 package.json（bin 与发布包保持一致，旧命令名保留兼容别名）。
+  // type 必须保留：dist/index.js 是 esbuild 的 ESM 产物，缺了它 Node 每次 spawn
+  // 都打 MODULE_TYPELESS_PACKAGE_JSON 警告（靠宽容解析才跑起来）。
   const slimPkg = {
     name: srcPkg.name,
     version: srcPkg.version,
+    type: 'module',
     bin: {
       'nuwax-harness-acp-ts': './dist/index.js',
       'nuwax-codex-acp-ts': './dist/index.js',
