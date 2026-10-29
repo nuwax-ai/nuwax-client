@@ -1,7 +1,7 @@
 {
   "name": "nuwax-client",
   "srcPaths": [
-    "overlay/"
+    "nuwa-electron-shell/"
   ],
   "plansDirs": [
     "plans",
@@ -9,6 +9,6 @@
   ],
   "protectedWrite": [],
   "envPrefix": "NUWACLAW",
-  "test": "npm run base:test",
+  "test": "npm run test:commercial",
   "grillExtra": []
 }

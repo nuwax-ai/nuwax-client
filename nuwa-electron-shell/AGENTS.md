@@ -1,12 +1,12 @@
-# nuwa-electron-shell 开发指南
+# nuwa-electron-shell 商业壳开发指南
 
 默认使用中文回复。
 
 ## 仓库边界
 
-- 本仓提供产品中立的 Electron 基座，源码位于 `crates/agent-electron-client`；引擎 SDK 位于 `crates/agent-kit`。
-- 商业身份、登录差异和发布编排由消费方维护。产品壳同步进来的 overlay 不是基座改动，不得提交回本仓。
-- 中立改动经工作分支 PR 进入 main；不 rebase 改写已被产品 pin 引用的提交。
+- 本目录已作为商业壳源码并入 nuwax-client，客户端位于 `crates/agent-electron-client`，引擎 SDK 位于 `crates/agent-kit`；以外层根目录 `AGENTS.md` 为准。
+- 商业改动直接在本目录维护，不再经过 overlay，也不提交回原中立基座。原基座快照身份保留在 Git 历史中。
+- 本目录随外层仓库提交和评审，不再单独更新基座 pin。
 
 ## 开发与验证
 
@@ -19,6 +19,6 @@
 
 ## 产品隔离
 
-- 社区默认数据目录为 `~/.nuwaclaw`，产品覆盖来自共享 constants 与运行配置；不要硬编码其他产品目录。
-- 商业覆写工作树与社区验证分开。消费方的 `base:test` 会清 overlay，只能在隔离副本运行。
-- 提交前检查 diff，仅包含本次中立改动；产品壳另有 `check:pin` 防止覆写泄漏。
+- 产品数据路径来自共享 constants 与构建身份，不硬编码其他产品目录；商业身份为 nuwax，数据目录为 `~/.nuwax`。
+- 外层 `npm run test:commercial` 为完整商业测试入口；不再有社区基线轨、overlay 清理或 `check:pin`。
+- 提交前检查 diff，保留无关 WIP；源码测试不代替真实安装包和平台验收。

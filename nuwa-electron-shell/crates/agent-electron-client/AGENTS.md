@@ -8,7 +8,7 @@
 - 引擎统一入口为 `services/engines/unifiedAgent.ts`，ACP 实现在 `services/engines/acp`。服务、包管理与系统适配保持现有分层。
 - 外部输入、页面来源、会话及权限在主进程验证；网页不能因持有 bridge 对象而获得授权。
 - 子进程环境经 `system/dependencies.ts` 的 `getAppEnv()` 创建，清理仅针对本实例拥有的进程。数据路径使用共享 constants/appPaths。
-- 社区登录逻辑与商业消费方不同；不要把消费方的 overlay、ticket 生命周期或产品标识提交进中立基座。
+- 本目录现为 nuwax-client 的商业壳源码，ticket 生命周期与产品身份由外层规则约束；直接修改本目录，不再维护 overlay 或向原中立基座回流商业代码。
 
 ## 命令
 
