@@ -722,10 +722,11 @@ export class UnifiedAgentService extends EventEmitter {
     // Dev mode: force engine type for testing, bypasses agent_server.command.
     // Two sources, env wins: NUWACLAW_FORCE_ENGINE (per-run) or the
     // dev.force_engine setting (DevToolsPanel switch). Dev builds only.
+    const forcedEngineSetting = readSetting(DEV_FORCE_ENGINE_SETTING_KEY);
     const forcedEngineSource =
       process.env.NUWACLAW_FORCE_ENGINE ||
-      (typeof readSetting(DEV_FORCE_ENGINE_SETTING_KEY) === "string"
-        ? (readSetting(DEV_FORCE_ENGINE_SETTING_KEY) as string).trim()
+      (typeof forcedEngineSetting === "string"
+        ? forcedEngineSetting.trim()
         : "");
     if (forcedEngineSource && process.env.NODE_ENV === "development") {
       if (!request.agent_config) {

@@ -33,7 +33,7 @@ dev:
 # may need GH_TOKEN (GitHub API rate-limits unauthenticated requests).
 dev-direct:
 	@echo ">>> Commercial direct dev: production webview + local shell"
-	@npm run --silent shell:exec -- npm run dev
+	@node scripts/run-shell.cjs -- npm run dev --prefix crates/agent-electron-client
 
 setup:
 	@$(CLIENT_CLI) setup $(ARGS)
