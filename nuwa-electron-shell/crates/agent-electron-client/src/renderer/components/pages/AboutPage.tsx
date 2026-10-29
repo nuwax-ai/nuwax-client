@@ -306,7 +306,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
   /** 在系统默认浏览器中打开官网 */
   const handleOpenOfficialWebsite = useCallback(async () => {
     try {
-      await window.electronAPI?.shell?.openExternal(OFFICIAL_WEBSITE_URL);
+      await window.electronAPI?.shell?.openLink(OFFICIAL_WEBSITE_URL);
     } catch (e) {
       console.error("[AboutPage] openExternal failed:", e);
     }

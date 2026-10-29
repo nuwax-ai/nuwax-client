@@ -90,6 +90,7 @@ export default defineConfig(({ mode }) => {
     emptyOutDir: false,
     sourcemap: false,
     rollupOptions: {
+      input: { main: path.resolve(__dirname, 'src/renderer/index.html'), browser: path.resolve(__dirname, 'src/renderer/browser.html') },
       output: {
         // 优化代码分割，将第三方库分离
         manualChunks: {

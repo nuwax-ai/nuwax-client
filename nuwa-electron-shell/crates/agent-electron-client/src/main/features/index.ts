@@ -39,6 +39,7 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
+import { browserFeature } from "./browser";
 import { localFilesFeature } from "./local-files";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
@@ -50,6 +51,7 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   openSourceNoticesFeature,
   localFilesFeature,
+  browserFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */
@@ -316,3 +318,5 @@ export { notifyCapturePreferencesChanged, onCapturePreferencesChanged, saveCaptu
 export { routeCaptureShortcut } from "./capture/shortcutRouting";
 /** ACP 引擎只经公开入口消费同会话 CU 开关短指令，不得直达特性内部文件。 */
 export { applyCuaCapabilityNotice } from "./computer-use/cuaSessionNotice";
+
+export { createDesktopBrowserPage, isDesktopBrowserAvailable, refreshDesktopBrowserWindows } from "./browser";

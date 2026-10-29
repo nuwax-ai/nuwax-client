@@ -1,0 +1,161 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #252525;
+  background: #f8f8f8;
+  color-scheme: light;
+  --surface: #f8f8f8;
+  --hover: #e8e8e8;
+  --line: #e4e4e4;
+  --muted: #777;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+[hidden] {
+  display: none !important;
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  min-width: 32px;
+  height: 32px;
+}
+button:hover {
+  background: var(--hover);
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #5276ca;
+  outline-offset: 1px;
+}
+button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+#toolbar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+nav {
+  display: flex;
+  gap: 2px;
+}
+nav button {
+  font-size: 21px;
+}
+#location {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 0 10px;
+}
+#title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#domain {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 35%;
+}
+#menu {
+  font-size: 24px;
+}
+#pin[aria-pressed="true"] {
+  color: #3272c7;
+  background: var(--hover);
+}
+#findbar {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  gap: 5px;
+  border-bottom: 1px solid var(--line);
+}
+#query {
+  width: 260px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  padding: 4px 7px;
+}
+#matches {
+  min-width: 48px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#error {
+  text-align: center;
+  padding: 90px 24px;
+}
+#error button,
+dialog button {
+  border: 1px solid var(--line);
+  padding: 0 12px;
+  margin: 4px;
+}
+dialog {
+  width: min(650px, 85vw);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 35px #0002;
+  background: var(--surface);
+  color: inherit;
+}
+dialog label {
+  display: block;
+  margin-bottom: 12px;
+}
+dialog input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+body.dark {
+  color: #e5e5e5;
+  background: #242424;
+  color-scheme: dark;
+  --surface: #242424;
+  --hover: #383838;
+  --line: #414141;
+  --muted: #aaa;
+}
+
+button svg {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

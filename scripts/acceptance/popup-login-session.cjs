@@ -32,6 +32,20 @@ async function launch() {
       ['@fixture/newTaskAvailability', 'export const isGuestNewTaskAvailable=()=>false;'],
       ['@fixture/commercialTicketSession', 'export const currentTicket=()=>"fixture-ticket";'],
       ['@fixture/i18n', 'export const t=key=>key;'],
+      ['@fixture/features', `
+        import { createBrowserWindows } from ${JSON.stringify(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/features/browser/windows.ts'))};
+        import { pathToFileURL } from 'node:url';
+        export const browserFixturePages = new Map();
+        let runtime;
+        export const isDesktopBrowserAvailable=()=>true;
+        export const isDesktopFeatureRequestSource=()=>false;
+        export function createDesktopBrowserPage(options) {
+          runtime ??= createBrowserWindows({settings:{read:()=>undefined},windows:{getMain:()=>null},translate:key=>key,log:console});
+          const page=runtime.open({...options,toolbarUrl:${JSON.stringify(require('node:url').pathToFileURL(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/dist/browser.html')).href)},preloadPath:${JSON.stringify(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/dist/preload/browserWindow.js'))}});
+          browserFixturePages.set(page.window.id,page.contents);
+          return page;
+        }
+      `],
     ]);
     await fs.mkdir(path.join(temp, 'main/preload'), { recursive: true });
     await fromShell('esbuild').build({
@@ -48,12 +62,13 @@ async function launch() {
       ? execFileSync('git', ['show', `${baselineRef}:${policyRelative}`], { cwd: root, encoding: 'utf8' }) : null;
     await fromShell('esbuild').build({
       stdin: {
-        contents: `export * from ${JSON.stringify(path.join(services, 'system/webviewPolicy.ts'))}; export * from ${JSON.stringify(path.join(services, 'sessionAuthInjection.ts'))}; export { settings } from '@fixture/db';`,
+        contents: `export * from ${JSON.stringify(path.join(services, 'system/webviewPolicy.ts'))}; export * from ${JSON.stringify(path.join(services, 'sessionAuthInjection.ts'))}; export { settings } from '@fixture/db'; export { browserFixturePages } from '@fixture/features';`,
         resolveDir: root,
       },
       bundle: true, platform: 'node', format: 'cjs', outfile: bundlePath(temp), external: ['electron'],
       plugins: [{ name: 'popup-login-fixture', setup(build) {
-        build.onResolve({ filter: /^(electron-log|@shared\/constants|@fixture\/db)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
+        build.onResolve({ filter: /^(electron-log|@shared\/constants|@fixture\/db|@fixture\/features)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
+        build.onResolve({ filter: /^(?:\.\.\/)+features$/ }, () => ({ path: '@fixture/features', namespace: 'fixture' }));
         build.onResolve({ filter: /^(?:\.\.\/)+db$/ }, () => ({ path: '@fixture/db', namespace: 'fixture' }));
         for (const name of ['hostActivity', 'newTaskAvailability', 'commercialTicketSession', 'i18n']) {
           build.onResolve({ filter: new RegExp(`^(?:\\.\\./|\\./)${name}$`) }, () => ({ path: `@fixture/${name}`, namespace: 'fixture' }));
@@ -66,7 +81,7 @@ async function launch() {
           const found = ['', '.ts', '.js', '/index.ts'].map(suffix => base + suffix).find(file => fsSync.existsSync(file));
           if (found) return { path: found };
         });
-        build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({ contents: stubs.get(args.path), loader: 'js' }));
+        build.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({ contents: stubs.get(args.path), loader: 'js', resolveDir: root }));
         if (baseline) build.onLoad({ filter: /system\/webviewPolicy\.ts$/ }, () => ({ contents: baseline, loader: 'ts', resolveDir: path.join(services, 'system') }));
       } }],
     });
@@ -94,7 +109,8 @@ async function run() {
   app.setPath('sessionData', path.join(temp, 'profile'));
   app.on('window-all-closed', () => {});
   await app.whenReady();
-  const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings } = require(bundlePath(temp));
+  const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings, browserFixturePages } = require(bundlePath(temp));
+  const pageContents = win => browserFixturePages.get(win.id) ?? win.webContents;
   const requests = [];
   let gatewayOrigin;
   const serve = role => createServer((req, res) => {
@@ -143,8 +159,9 @@ async function run() {
       ? `(() => { const a=document.createElement('a'); a.href=${JSON.stringify(target)}; a.target='_blank'; a.rel='noopener noreferrer'; document.body.append(a); a.click(); a.remove(); })();`
       : `window.open(${JSON.stringify(target)}, '_blank', 'noopener,noreferrer'); void 0;`;
     await contents.executeJavaScript(code, true);
-    return waitFor(() => BrowserWindow.getAllWindows().find(win => !ids.has(win.id) &&
-      !win.webContents.isLoading() && win.webContents.getURL() === target), `loaded popup: ${kind}`);
+    const win = await waitFor(() => BrowserWindow.getAllWindows().find(win => !ids.has(win.id) &&
+      !pageContents(win).isLoading() && pageContents(win).getURL() === target), `loaded popup: ${kind}`);
+    return { webContents: pageContents(win), destroy: () => win.destroy() };
   };
   try {
     for (const mode of ['direct', 'gateway']) {

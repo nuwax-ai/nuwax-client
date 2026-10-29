@@ -250,8 +250,8 @@ const native = {
    * 新窗口带系统标题栏（无沉浸式工具栏浮层，页面零遮挡），注入同一 webview
    * 桥 preload（isNuwaClaw/主题/避让等桥能力一致）。path 为 nuwax 站内相对路径。
    */
-  openWindow(path: string): Promise<{ success: boolean; error?: string }> {
-    return ipcRenderer.invoke("native:openWindow", { path });
+  openWindow(path: string, options?: { purpose?: 'page' | 'payment' }): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke("native:openWindow", { path, ...(options?.purpose && { purpose: options.purpose }) });
   },
   /**
    * 打开宿主壳的「客户端配置」设置弹窗（设置 UI 由壳 renderer 承载，webview

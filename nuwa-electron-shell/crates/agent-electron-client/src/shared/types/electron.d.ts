@@ -630,6 +630,7 @@ export interface FullDiskAccessAPI {
 }
 
 export interface ShellAPI {
+  openLink: (url: string) => Promise<{ success: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   openPath: (
     targetPath: string,
@@ -764,6 +765,7 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;
   notices: NoticesBridge;
   /** 已注册的桌面特性 id（用于显示/隐藏宿主壳入口）。 */

@@ -468,6 +468,14 @@ export function registerAppHandlers(ctx: HandlerContext): void {
     rendererEntry,
     (url) => shell.openExternal(url),
   ));
+  ipcMain.handle("shell:openLink", createExternalOpenHandler(
+    () => ctx.getMainWindow()?.webContents, rendererEntry,
+    async (url) => {
+      const { openOrdinaryWebLink } = await import('../services/system/webviewPolicy');
+      const result = await openOrdinaryWebLink(url, ctx.getMainWindow()?.webContents);
+      if (!result.success) throw new Error('Unable to open webpage');
+    },
+  ));
 
   ipcMain.handle("shell:openPath", async (_, targetPath: string) => {
     try {

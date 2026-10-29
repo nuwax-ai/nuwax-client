@@ -2,7 +2,8 @@
  * 真实 Electron 下载窗口验收：仅使用临时 profile、随机端口和虚构 ticket。
  * 从壳根运行：node scripts/acceptance/download-popup.cjs
  * frame 来源取证：追加 --frame-provenance（仍仅使用虚构页面）。
- * 验证 overlay 源码；不代表安装包或真实后端已经验收。
+ * 验证专用业务/支付下载窗口；普通浏览器 WebContentsView 另由 popup-login-session 覆盖。
+ * 验证源码；不代表安装包或真实后端已经验收。
  */
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
@@ -48,9 +49,11 @@ async function launch() {
             ['@fixture/db', 'export const fixtureSettings=new Map(); export const readSetting=key=>fixtureSettings.get(key)??null; export const writeSetting=(key,value)=>fixtureSettings.set(key,value);'],
             ['@fixture/hostActivity', 'export const attachHostActivityBusinessWindow=()=>{};'],
             ['@fixture/newTaskAvailability', 'export const isGuestNewTaskAvailable=()=>false;'],
+            ['@fixture/features', 'export const isDesktopBrowserAvailable=()=>false; export const createDesktopBrowserPage=()=>null; export const isDesktopFeatureRequestSource=()=>false;'],
           ]);
           build.onResolve({ filter: /^(electron-log|@shared\/constants|@fixture\/db)$/ }, args => ({ path: args.path, namespace: 'fixture' }));
           build.onResolve({ filter: /^(?:\.\.\/)+db$/ }, () => ({ path: '@fixture/db', namespace: 'fixture' }));
+          build.onResolve({ filter: /^(?:\.\.\/)+features$/ }, () => ({ path: '@fixture/features', namespace: 'fixture' }));
           build.onResolve({ filter: /^\.\.\/hostActivity$/ }, () => ({ path: '@fixture/hostActivity', namespace: 'fixture' }));
           build.onResolve({ filter: /^\.\.\/newTaskAvailability$/ }, () => ({ path: '@fixture/newTaskAvailability', namespace: 'fixture' }));
           // overlay 仅包含覆写文件；缺省模块沿用同一 pin 下的真实基座源。
@@ -98,7 +101,8 @@ async function run() {
   await app.whenReady();
   assert.equal(Number(process.versions.electron.split('.')[0]), 40, 'fixture requires Electron 40');
 
-  const { initWebviewPolicy, initSessionAuthInjection, trustInitialBusinessNavigation, fixtureSettings } = require(bundlePath(temp));
+  const { initWebviewPolicy, initSessionAuthInjection, trustInitialBusinessNavigation, fixtureSettings, markDedicatedPage } = require(bundlePath(temp));
+  app.on('web-contents-created', (_event, contents) => markDedicatedPage(contents));
   const unhandledErrors = [];
   process.on('unhandledRejection', error => unhandledErrors.push(error));
   const payload = Buffer.from('PK\u0003\u0004 fixture download bytes\n'.repeat(1024));
@@ -320,7 +324,7 @@ async function run() {
       assert.equal(windowPreferences.get(win.id).hasHostBridgeArguments, false, `${label}: no host bridge arguments on a noreferrer file window`);
     }
     if (endpoint.endsWith('/direct')) assert.equal(download.session, session.defaultSession, `${label}: business download uses default session`);
-    else assert.notEqual(download.session, session.defaultSession, `${label}: external download uses an isolated session`);
+    else assert.equal(download.session, session.defaultSession, `${label}: external download shares browser storage with credential filtering`);
     assertMainSurvives();
     const ownRequests = requests.filter(req => req.label === label);
     if (endpoint.startsWith(businessOrigin)) {
@@ -379,7 +383,7 @@ async function run() {
         assert(requests.filter(req => req.label === activeCase.label && req.side === 'business').every(req => !req.hasTicket), 'external iframe business requests have no ticket');
         const deniedPopup = BrowserWindow.getAllWindows().find(win => win !== main && win.webContents.getURL() === url);
         assert(deniedPopup, 'external iframe gets a diagnostic document');
-        assert.notEqual(deniedPopup.webContents.session, session.defaultSession, 'external iframe noreferrer popup uses isolated session');
+        assert.equal(deniedPopup.webContents.session, session.defaultSession, 'external iframe noreferrer popup shares browser storage');
         assert.equal(windowPreferences.get(deniedPopup.id).hasPreload, false, 'external iframe gets no preload');
         assert.equal(windowPreferences.get(deniedPopup.id).hasHostBridgeArguments, false, 'external iframe gets no host bridge');
         for (const win of BrowserWindow.getAllWindows()) if (win !== main) win.destroy();
@@ -412,7 +416,7 @@ async function run() {
     console.log('PASS trusted-html');
 
     const html = await openPopup('external-html', `${externalOrigin}/page`, 'EXTERNAL HTML PAGE');
-    assert.notEqual(html.webContents.session, session.defaultSession, 'ordinary external HTML uses isolated session');
+    assert.equal(html.webContents.session, session.defaultSession, 'external HTML shares browser storage');
     activeCase = { label: 'existing-html-download' };
     const start = downloads.length;
     await click(html, `${externalOrigin}/attachment.bin?case=existing-html-download`, '_self');
@@ -436,7 +440,7 @@ async function run() {
     assert.equal(pendingHtml.webContents.getURL(), `${externalOrigin}/committed-pending?case=${activeCase.label}`);
     await waitFor(() => pendingHtml.isVisible() && shownWindowIds.has(pendingHtml.id), 'committed HTML is visible while its resource is pending');
     assert.deepEqual(await fs.readFile(pendingDownload.savePath), payload);
-    assert.notEqual(pendingDownload.session, session.defaultSession, 'committed external HTML remains in its isolated session');
+    assert.equal(pendingDownload.session, session.defaultSession, 'committed external HTML retains shared browser storage');
     assert.equal(downloads.length, pendingDownloadStart + 1, 'committed HTML starts exactly one download');
     assertMainSurvives();
     pendingHtml.destroy();

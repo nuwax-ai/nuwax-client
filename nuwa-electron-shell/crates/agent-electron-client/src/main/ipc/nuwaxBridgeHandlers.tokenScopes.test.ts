@@ -23,6 +23,7 @@ const mainWindowContents = {
 
 // vi.mock 工厂被提升，共享 mock 需经 vi.hoisted 提前创建
 const mocks = vi.hoisted(() => ({
+  openExternal: vi.fn(async () => undefined),
   hostActivitySnapshot: vi.fn(() => ({ visible: false })),
   syncHostActivityGuest: vi.fn(),
   attachHostActivityBusinessWindow: vi.fn(),
@@ -103,6 +104,7 @@ vi.mock("../window/trayManager", () => ({
 vi.mock("electron", () => ({
   // app.on：registerCuaQuitCleanup（will-quit 停 daemon）与 fullDiskAccess
   // boot 钩子（browser-window-created/focus）在注册期挂监听
+  shell: { openExternal: mocks.openExternal },
   app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
   ipcMain: {
@@ -969,8 +971,28 @@ describe("trusted runtime auth context and window navigation", () => {
     for (const [, callback] of callbacks) callback(...args);
   }
 
+  it('falls back to the system browser when the browser feature is not registered', async () => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    try {
+    settings.set('features.browser.enabled', false);
+    mocks.openExternal.mockClear();
+    const result = await handlers.get('native:openWindow')!(windowEvent(), { path: 'https://external.example/fallback', purpose: 'page' });
+    expect(result).toEqual({ success: true });
+    expect(mocks.openExternal).toHaveBeenCalledWith('https://external.example/fallback');
+    expect(mocks.windowOptions).not.toHaveBeenCalled();
+    } finally { product.mockRestore(); }
+  });
+
+  it('keeps unmarked legacy windows dedicated and rejects invalid purposes before navigation', () => {
+    settings.set('nuwax.linkOpenMode', 'system'); mocks.openExternal.mockClear();
+    expect(handlers.get('native:openWindow')!(windowEvent(), { path: 'https://external.example/legacy-cashier' })).toEqual({ success: true });
+    expect(mocks.loadURL).toHaveBeenCalledWith('https://external.example/legacy-cashier');
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(handlers.get('native:openWindow')!(windowEvent(), { path: '/home', purpose: 'invalid' })).toEqual({ success: false, error: 'invalid window purpose' });
+  });
+
   it("keeps native windows hidden until a real document is ready, then shows and focuses once", () => {
-    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/docs" });
+    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/docs", purpose: "payment" });
     const win = mocks.windows.at(-1)!;
     expect(mocks.windowOptions.mock.lastCall?.[0]).toMatchObject({ show: false });
     expect(win.show).not.toHaveBeenCalled();
@@ -999,7 +1021,7 @@ describe("trusted runtime auth context and window navigation", () => {
   });
 
   it("closes a native window after its initial document fails", () => {
-    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable" });
+    handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable", purpose: "payment" });
     const win = mocks.windows.at(-1)!;
     fire(win.webContents, "did-fail-load", {}, -105, "ERR_NAME_NOT_RESOLVED", "", true);
     expect(win.isDestroyed()).toBe(true);
@@ -1008,7 +1030,7 @@ describe("trusted runtime auth context and window navigation", () => {
 
   it("handles native loadURL rejection and closes the empty window", async () => {
     mocks.loadURL.mockRejectedValueOnce({ code: "ERR_NAME_NOT_RESOLVED" });
-    expect(handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable" }))
+    expect(handlers.get("native:openWindow")!(windowEvent(), { path: "https://external.example/unavailable", purpose: "payment" }))
       .toEqual({ success: true });
     await Promise.resolve();
     expect(mocks.windows.at(-1)!.isDestroyed()).toBe(true);
@@ -1029,7 +1051,7 @@ describe("trusted runtime auth context and window navigation", () => {
 
   it("closes native child windows with their opener and removes the opener listener", () => {
     const event = windowEvent();
-    handlers.get("native:openWindow")!(event, { path: "https://external.example/docs" });
+    handlers.get("native:openWindow")!(event, { path: "https://external.example/docs", purpose: "payment" });
     const win = mocks.windows.at(-1)!;
     const listener = event.sender.once.mock.calls.find(([name]) => name === "destroyed")![1];
     listener();
@@ -1080,7 +1102,7 @@ describe("trusted runtime auth context and window navigation", () => {
   });
 
   it.each(["https://external.example/path", "http://testagent.xspaceagi.com/path", "https://username:password@testagent.xspaceagi.com/path"])("does not rewrite non-business or credentialed URLs: %s", (url) => {
-    handlers.get("native:openWindow")!(windowEvent(), { path: url });
+    handlers.get("native:openWindow")!(windowEvent(), { path: url, purpose: "payment" });
     expect(mocks.loadURL).toHaveBeenCalledWith(url);
     const preferences = (mocks.windowOptions.mock.lastCall?.[0] as { webPreferences: Record<string, unknown> }).webPreferences;
     expect(preferences.preload).toMatch(/webviewPerfBridge\.js$/);

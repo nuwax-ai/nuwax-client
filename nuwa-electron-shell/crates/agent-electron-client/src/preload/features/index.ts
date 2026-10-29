@@ -14,13 +14,16 @@ import { createCaptureBridge, captureCapabilityProbe } from "./capture";
 import { createNoticesBridge } from "./open-source-notices";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
+import { createBrowserBridge } from './browser';
 
 export interface FeatureNamespaces {
+  browser: ReturnType<typeof createBrowserBridge>;
   capture: CaptureBridge;
   localFiles: ReturnType<typeof createLocalFilesBridge>;
 }
 
 export interface HostFeatureNamespaces {
+  browser: ReturnType<typeof createBrowserBridge>;
   notices: NoticesBridge;
   capture: HostCaptureBridge;
   computerUse: ComputerUseAPI;
@@ -30,13 +33,14 @@ export interface HostFeatureNamespaces {
 export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
-  return { capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
+  return { browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
 }
 
 export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
+    browser: createBrowserBridge(ipc, true),
     notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
     features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },

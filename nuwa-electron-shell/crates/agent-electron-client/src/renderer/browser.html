@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'self'"
+    />
+    <title>Nuwax</title>
+  </head>
+  <body>
+    <header id="toolbar">
+      <nav>
+        <button id="back">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5m7-7-7 7 7 7" />
+          </svg></button
+        ><button id="forward">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12h14m-7-7 7 7-7 7" />
+          </svg></button
+        ><button id="reload">↻</button>
+      </nav>
+      <button id="location">
+        <strong id="title"></strong><span id="domain"></span></button
+      ><button id="pin">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 3h8l-2 5v3l3 3v2H7v-2l3-3V8zm4 13v6" />
+        </svg></button
+      ><button id="menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="12" r="1" />
+          <circle cx="12" cy="12" r="1" />
+          <circle cx="19" cy="12" r="1" />
+        </svg>
+      </button>
+    </header>
+    <div id="findbar" hidden>
+      <input id="query" type="search" /><span id="matches" role="status"></span
+      ><button id="previous">↑</button><button id="next">↓</button
+      ><button id="closefind">×</button>
+    </div>
+    <section id="error" hidden role="alert">
+      <p id="errorMessage"></p>
+      <button id="retry"></button><button id="external"></button
+      ><button id="copy"></button>
+    </section>
+    <dialog id="address">
+      <label id="urlLabel" for="url"></label><input id="url" readonly /><button
+        id="copyUrl"
+      ></button
+      ><button id="closeAddress">×</button>
+    </dialog>
+    <script type="module" src="/features/browser/toolbar.ts"></script>
+  </body>
+</html>

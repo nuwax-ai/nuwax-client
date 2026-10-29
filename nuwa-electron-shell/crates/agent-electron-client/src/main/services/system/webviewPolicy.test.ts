@@ -32,13 +32,15 @@ const mocks = vi.hoisted(() => {
     partitionSessions.set(partition, ses);
     return ses;
   });
-  return { appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
+  return { browserAvailable: true, createBrowserPage: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
     attachHostActivityBusinessWindow: vi.fn(), trustInitialBusinessNavigation: vi.fn() };
 });
 const settings = new Map<string, unknown>();
+vi.mock("../../features", () => ({ isDesktopBrowserAvailable: () => mocks.browserAvailable, createDesktopBrowserPage: mocks.createBrowserPage }));
 
 vi.mock("electron", () => ({
   app: { on: mocks.appOn },
+  shell: { openExternal: mocks.openExternal },
   dialog: { showMessageBoxSync: mocks.showMessageBoxSync },
   session: { defaultSession: mocks.defaultSession, fromPartition: mocks.fromPartition },
   BrowserWindow: class {
@@ -130,7 +132,12 @@ function webviewPopupHandler(created: Awaited<ReturnType<typeof setup>>, source:
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  mocks.browserAvailable = true;
+  mocks.createBrowserPage.mockClear();
+  mocks.openExternal.mockClear();
+  const { BrowserWindow } = await import("electron");
+  mocks.createBrowserPage.mockImplementation(({ windowOptions }) => { const window = new BrowserWindow(windowOptions); return { window, contents: window.webContents }; });
   settings.clear();
   settings.set("step1_config", { serverHost: business });
   mocks.appOn.mockClear();
@@ -221,6 +228,46 @@ describe("standalone page unload confirmation", () => {
 });
 
 describe("window.open session boundary", () => {
+  it.each(['system', 'disabled'])("ordinary external links use the system browser when %s", async (mode) => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`);
+    if (mode === 'disabled') mocks.browserAvailable = false;
+    else settings.set('nuwax.linkOpenMode', 'system');
+    expect(handler(popup(`${external}/docs`, `${business}/home`)).action).toBe('deny');
+    await Promise.resolve();
+    expect(mocks.openExternal).toHaveBeenCalledWith(`${external}/docs`);
+    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+  });
+
+  it('rejects credentials and non-web protocols before handing a URL to the OS', async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`);
+    settings.set('nuwax.linkOpenMode', 'system');
+    for (const url of ['https://user:password@external.example/', 'file:///tmp/private', 'javascript:alert(1)']) expect(handler(popup(url, business)).action).toBe('deny');
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('falls back without leaving a visible window when browser construction fails after the popup decision', async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
+    mocks.createBrowserPage.mockImplementationOnce(() => { throw new Error('view unavailable'); });
+    const result = handler(popup(`${external}/docs`, business));
+    expect(() => result.createWindow!(result.overrideBrowserWindowOptions!)).not.toThrow();
+    await Promise.resolve();
+    expect(mocks.openExternal).toHaveBeenCalledWith(`${external}/docs`);
+    expect(mocks.popupWindows.at(-1)!.isDestroyed()).toBe(true);
+    expect(mocks.popupWindows.at(-1)!.show).not.toHaveBeenCalled();
+  });
+
+  it('keeps POST and payment descendants in dedicated windows even with system-browser preference', async () => {
+    const created = await setup();
+    settings.set('nuwax.linkOpenMode', 'system');
+    const opener = fakeContents('window', `${external}/cashier`);
+    const { markDedicatedPage } = await import('./webviewPolicy');
+    markDedicatedPage(opener as never); created({}, opener);
+    const handler = opener.setWindowOpenHandler.mock.lastCall![0];
+    expect(handler(popup(`${external}/payment`, external)).action).toBe('allow');
+    const ordinary = webviewPopupHandler(created, `${business}/home`);
+    expect(ordinary({ ...(popup(`${external}/post`, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } }).action).toBe('allow');
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+  });
   it.each([
     ["webview", business],
     ["webview", external],
@@ -296,7 +343,6 @@ describe("window.open session boundary", () => {
     { source: business, referrer: business, target: external },
     { source: external, referrer: external, target: business },
     { source: business, referrer: external, target: business },
-    { source: business, referrer: business, target: "https://user:pass@business.example" },
   ])("all HTTP popups share browser storage, with runtime document gating: $source -> $target", async ({ source, referrer, target }) => {
     const handler = webviewPopupHandler(await setup(), `${source}/home`);
     const result = handler(popup(`${target}/docs`, `${referrer}/home`));

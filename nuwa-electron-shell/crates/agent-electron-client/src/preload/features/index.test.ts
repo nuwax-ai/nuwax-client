@@ -13,11 +13,11 @@ describe("命名空间汇总", () => {
   const ipc = { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() } as never;
 
   it("业务页命名空间包含 capture 与 localFiles", () => {
-    expect(Object.keys(featureNamespaces(ipc))).toEqual(["capture", "localFiles"]);
+    expect(Object.keys(featureNamespaces(ipc))).toEqual(["browser", "capture", "localFiles"]);
   });
 
   it("宿主壳通过独立通道提供 notices/computerUse/features/capture", () => {
-    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["notices", "computerUse", "features", "capture"]);
+    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["browser", "notices", "computerUse", "features", "capture"]);
   });
 
   it("canUse 特性侧探测按命名空间归属派发，非特性命名空间返回 null", async () => {

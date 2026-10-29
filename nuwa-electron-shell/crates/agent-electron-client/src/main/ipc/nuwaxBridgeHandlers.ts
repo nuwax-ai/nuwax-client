@@ -54,7 +54,7 @@ import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../ser
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
-import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument } from "../services/system/webviewPolicy";
+import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
@@ -219,7 +219,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       businessBridgeOrigins().includes(httpOrigin(contents.getURL()) ?? ""),
   });
   const attachComputerStateGuest = (contents: Electron.WebContents) => {
-    if (!contents.isDestroyed() && ["webview", "window"].includes(contents.getType()))
+    if (!contents.isDestroyed() && ["webview", "window", "browserView"].includes(contents.getType()))
       computerServiceState.attach(contents);
   };
   app.on("web-contents-created", (_event, contents) => attachComputerStateGuest(contents));
@@ -873,7 +873,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 智能体详情/工作流/网页应用开发/我的电脑等全屏页在主窗口会被沉浸式工具栏遮挡
   //（fixed 头部/画布类布局也无法内嵌避让），改为独立窗口承载：带系统标题栏零遮挡，
   // 网页共用浏览器会话；轻量 preload 只向实际业务文档暴露桥。
-  ipcMain.handle("native:openWindow", (event, opts: { path?: unknown }) => {
+  ipcMain.handle("native:openWindow", (event, opts: { path?: unknown; purpose?: unknown }) => {
     try {
       if (!isTrustedSender(event)) {
         return { success: false, error: "untrusted sender" };
@@ -882,6 +882,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       if (typeof raw !== "string" || !raw) {
         return { success: false, error: "invalid path" };
       }
+      if (opts.purpose != null && opts.purpose !== 'page' && opts.purpose !== 'payment') return { success: false, error: 'invalid window purpose' };
       const base = event.senderFrame?.url || event.sender?.getURL?.() || "";
       if (!base) return { success: false, error: "sender url missing" };
       let target: URL;
@@ -900,7 +901,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         const step1 = readSetting("step1_config") as {
           secondaryPages?: "same-window" | "new-window";
         } | null;
-        if (step1?.secondaryPages !== "new-window") {
+        if (step1?.secondaryPages !== "new-window" && opts.purpose !== 'payment') {
           ctx.getMainWindow()?.webContents.send("nuwax:open-same-window", {
             url: target.href,
           });
@@ -918,6 +919,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
       const businessWindow = !target.username && !target.password &&
         trustedOrigins().includes(target.origin);
+      // Unmarked calls from older frontends keep native.openWindow's dedicated-window contract.
+      if (APP_NAME_IDENTIFIER === 'nuwax' && !businessWindow && opts.purpose === 'page') return openOrdinaryWebLink(target.href, event.sender);
       // Absolute same-origin links also open a standalone window. Its frontend
       // must use the standalone layout, regardless of the secondary-page setting.
       if (businessWindow) target.searchParams.set("_shell", "1");
@@ -948,6 +951,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         },
       });
       trackPopupWindow(win, event.sender);
+      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(win.webContents);
       shellWindows.add(win);
       businessShellWindows.add(win);
       win.on("closed", () => {

@@ -24,6 +24,9 @@ import { attachHostActivityBusinessWindow } from "../hostActivity";
 import { isGuestNewTaskAvailable } from "../newTaskAvailability";
 import { t } from "../i18n";
 import { trustInitialBusinessNavigation } from "../sessionAuthInjection";
+import { createDesktopBrowserPage } from '../../features';
+import { prefersDesktopBrowser, openSystemPopupLink, openSystemWebLink } from './webLinkRouting';
+import { externalWebUrl } from '../../ipc/openExternal';
 
 // ---------- 权限白名单 ----------
 
@@ -51,9 +54,13 @@ type PopupWindowState = {
   opener?: WebContents;
   hasDocument: boolean;
   downloads: number;
+  keepFailedDocument?: boolean;
 };
 const popupWindows = new WeakMap<WebContents, PopupWindowState>();
 let downloadMainWindow: () => BrowserWindow | null = () => null;
+const dedicatedContents = new WeakSet<WebContents>();
+const unloadContents = new WeakSet<WebContents>();
+export function markDedicatedPage(contents: WebContents): void { dedicatedContents.add(contents); }
 
 /** Close popups whose preload captured the previous business-origin allowlist. */
 export function destroyTrustedBusinessPopups(): void {
@@ -243,19 +250,37 @@ function buildPopupWindowOptions(
   };
 }
 
-function registerTrustedPopup(win: BrowserWindow): void {
+function registerTrustedPopup(win: BrowserWindow, contents: WebContents = win.webContents): void {
   if (APP_NAME_IDENTIFIER !== "nuwax" ||
-      win.webContents.session !== electronSession.defaultSession ||
+      contents.session !== electronSession.defaultSession ||
       trustedBusinessPopups.has(win)) return;
   trustedBusinessPopups.add(win);
   win.on("closed", () => trustedBusinessPopups.delete(win));
-  attachHostActivityBusinessWindow(win);
+  if (contents === win.webContents) attachHostActivityBusinessWindow(win);
+  else attachHostActivityBusinessWindow(win, contents);
+}
+
+/** Shared ordinary-link entry; dedicated business/payment windows do not use it. */
+export function openOrdinaryWebLink(value: string, opener?: WebContents): { success: boolean; error?: string } | Promise<{ success: boolean; error?: string }> {
+  const url = externalWebUrl(value);
+  if (!url) return { success: false, error: 'Invalid webpage URL' };
+  if (!prefersDesktopBrowser()) return openSystemWebLink(url);
+  try {
+    const page = createDesktopBrowserPage({ windowOptions: buildPopupWindowOptions(''), initialUrl: url });
+    if (!page) return openSystemWebLink(url);
+    trackPopupWindow(page.window, opener, page.contents);
+    registerTrustedPopup(page.window, page.contents);
+    loadPopupDocument(page.window, url, undefined, page.contents);
+    return { success: true };
+  } catch {
+    return openSystemWebLink(url);
+  }
 }
 
 /** 附件不提交页面；等待真实文档后显示，并只清理下载专用窗口。 */
-export function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void {
-  const contents = win.webContents;
-  const state: PopupWindowState = { window: win, opener, hasDocument: false, downloads: 0 };
+export function trackPopupWindow(win: BrowserWindow, opener?: WebContents, contents: WebContents = win.webContents): void {
+  const state: PopupWindowState = { window: win, opener, hasDocument: false, downloads: 0, keepFailedDocument: contents !== win.webContents };
+  configurePopupUnloadConfirmation(win, contents);
   popupWindows.set(contents, state);
   configureDownloads(contents.session);
   const destroy = () => { if (!win.isDestroyed()) win.destroy(); };
@@ -279,7 +304,7 @@ export function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void
     showDocument();
   });
   contents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
-    if (!isMainFrame || state.hasDocument || state.downloads > 0) return;
+    if (!isMainFrame || state.hasDocument || state.downloads > 0 || state.keepFailedDocument) return;
     // 下载触发 ERR_ABORTED；已存在 DownloadItem 时由其终态负责清理。
     if (code !== -3) log.warn("[WebviewPolicy] Popup document failed", { code });
     destroy();
@@ -292,10 +317,12 @@ export function trackPopupWindow(win: BrowserWindow, opener?: WebContents): void
   });
 }
 
-export function loadPopupDocument(win: BrowserWindow, url: string, details?: HandlerDetails): void {
-  const contents = win.webContents;
+export function loadPopupDocument(win: BrowserWindow, url: string, details?: HandlerDetails, contents: WebContents = win.webContents): void {
   const postBody = details?.postBody;
-  const loading = details ? win.loadURL(url, {
+  const load = (target: string, options?: Electron.LoadURLOptions) => contents === win.webContents
+    ? (options ? win.loadURL(target, options) : win.loadURL(target))
+    : (options ? contents.loadURL(target, options) : contents.loadURL(target));
+  const loading = details ? load(url, {
     httpReferrer: details.referrer,
     ...(postBody && {
       postData: postBody.data,
@@ -303,11 +330,11 @@ export function loadPopupDocument(win: BrowserWindow, url: string, details?: Han
         postBody.boundary != null ? `; boundary=${postBody.boundary}` : ""
       }`,
     }),
-  }) : win.loadURL(url);
+  }) : load(url);
   void loading.catch((error: { code?: string }) => {
     // loadURL 对下载与中止也会 reject，不能留下未处理的 Promise。
     const state = popupWindows.get(contents);
-    if (!win.isDestroyed() && state && !state.hasDocument && state.downloads === 0) win.destroy();
+    if (!win.isDestroyed() && state && !state.keepFailedDocument && !state.hasDocument && state.downloads === 0) win.destroy();
     if (error.code !== "ERR_ABORTED")
       log.warn("[WebviewPolicy] Popup navigation failed", { code: error.code });
   });
@@ -319,6 +346,7 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   if (!target) {
     return { action: "deny" };
   }
+  if (APP_NAME_IDENTIFIER === 'nuwax' && (target.username || target.password)) return { action: 'deny' };
 
   const openerUrl = parseHttpUrl(opener.getURL());
   const referrerUrl = parseHttpUrl(details.referrer?.url);
@@ -339,6 +367,9 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   // 附件首请求仍校验来源；页面桥按实际文档 origin 决定，其它 API 的范围不变。
   const authenticatedDownload = noReferrerBusinessNavigation &&
     target.pathname.startsWith("/api/f/s3/") && hasOnlyBusinessFrames(opener);
+  const ordinaryLink = APP_NAME_IDENTIFIER === 'nuwax' && !isTrustedBusinessUrl(url) && !details.postBody && !dedicatedContents.has(opener);
+  const browser = ordinaryLink && prefersDesktopBrowser();
+  if (ordinaryLink && !browser) { openSystemPopupLink(target.href); return { action: 'deny' }; }
   const options = buildPopupWindowOptions(features ?? "");
   log.debug(
     `[WebviewPolicy] Opening in-app popup: ${target.origin} (${options.width}x${options.height})`,
@@ -349,19 +380,36 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     action: "allow",
     overrideBrowserWindowOptions: options,
     createWindow: (windowOptions) => {
-      const win = new BrowserWindow(windowOptions);
-      trackPopupWindow(win, opener);
-      registerTrustedPopup(win);
+      const guest = (windowOptions as BrowserWindowConstructorOptions & { webContents?: WebContents }).webContents;
+      let managed: ReturnType<typeof createDesktopBrowserPage> = null;
+      if (browser) {
+        try { managed = createDesktopBrowserPage({ windowOptions, guest, initialUrl: target.href }); }
+        catch { log.warn('[WebviewPolicy] Browser creation failed, using system browser'); }
+      }
+      if (browser && !managed) {
+        openSystemPopupLink(target.href);
+        // Electron requires a real WebContents return even if the feature was revoked
+        // after the open decision. Abort this hidden native guest after that handoff.
+        const abortedWindow = guest ? null : new BrowserWindow({ ...windowOptions, show: false });
+        const abortedContents = guest ?? abortedWindow!.webContents;
+        queueMicrotask(() => {
+          if (abortedWindow && !abortedWindow.isDestroyed()) abortedWindow.destroy();
+          else if (guest && !guest.isDestroyed()) guest.close({ waitForBeforeUnload: false });
+        });
+        return abortedContents;
+      }
+      const win = managed?.window ?? new BrowserWindow(windowOptions);
+      const contents = managed?.contents ?? win.webContents;
+      if (dedicatedContents.has(opener) || details.postBody) markDedicatedPage(contents);
+      trackPopupWindow(win, opener, contents);
+      registerTrustedPopup(win, contents);
       if (trustedBusiness || authenticatedDownload) {
         // 必须早于首个请求；自定义 createWindow 不会触发 did-create-window。
-        trustInitialBusinessNavigation(win.webContents, target.href);
+        trustInitialBusinessNavigation(contents, target.href);
       }
       // 有 Chromium guest 时由它导航；普通链接路径需要显式加载。
-      const guest = (windowOptions as BrowserWindowConstructorOptions & {
-        webContents?: WebContents;
-      }).webContents;
-      if (!guest) loadPopupDocument(win, target.href, details);
-      return win.webContents;
+      if (!guest) loadPopupDocument(win, target.href, details, contents);
+      return contents;
     },
   };
 }
@@ -391,7 +439,7 @@ function setupWindowOpen(): void {
   app.on("web-contents-created", (_event, contents) => {
     // A guest can start loading its initial src before did-attach-webview.
     // Install the redirect guard at creation, then let attach be a fallback.
-    if (contents.getType() === "webview") guardBusinessNavigation(contents);
+    if (["webview", "browserView"].includes(contents.getType())) guardBusinessNavigation(contents);
     contents.on("did-create-window", (win) => registerTrustedPopup(win));
     // <webview> tag 内部的 window.open
     contents.on("did-attach-webview", (_event, webContents) => {
@@ -432,7 +480,7 @@ function setupWindowOpen(): void {
     });
 
     // BrowserWindow 内部的 window.open（独立 webview 窗口等）
-    if (contents.getType() === "window") {
+    if (["window", "browserView"].includes(contents.getType())) {
       contents.setWindowOpenHandler((details) => handleHttpPopupOpen(details, contents));
       guardBusinessNavigation(contents);
     }
@@ -445,9 +493,14 @@ function setupPopupUnloadConfirmation(getMainWindow: () => BrowserWindow | null)
   // 同时覆盖 native.openWindow、window.open 和跨域导航创建的独立窗口。
   // beforeunload 不会自动弹出浏览器确认框；不处理会让收银台的关闭按钮无响应。
   app.on("browser-window-created", (_event, win) => {
-    win.webContents.on("will-prevent-unload", (event) => {
-      if (win.isDestroyed() || win === getMainWindow() ||
-          !parseHttpUrl(win.webContents.getURL())) return;
+    configurePopupUnloadConfirmation(win, win.webContents);
+  });
+}
+function configurePopupUnloadConfirmation(win: BrowserWindow, contents: WebContents): void {
+  if (APP_NAME_IDENTIFIER !== 'nuwax' || unloadContents.has(contents)) return;
+  unloadContents.add(contents);
+    contents.on("will-prevent-unload", (event) => {
+      if (win.isDestroyed() || win === downloadMainWindow() || !parseHttpUrl(contents.getURL())) return;
       try {
         const choice = dialog.showMessageBoxSync(win, {
           type: "question",
@@ -464,7 +517,6 @@ function setupPopupUnloadConfirmation(getMainWindow: () => BrowserWindow | null)
         log.warn("[WebviewPolicy] Failed to confirm page unload", error);
       }
     });
-  });
 }
 
 // ---------- 文件下载 ----------
