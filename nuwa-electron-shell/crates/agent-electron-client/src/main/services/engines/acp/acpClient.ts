@@ -924,6 +924,15 @@ export async function createAcpConnection(
       env.CODEX_BASE_URL = finalBaseUrl;
     }
     env.CODEX_PROVIDER_ID = "zhipu-glm-5";
+    // 后端 agent_config.env 用 claude-code 的拼写下发「关闭思考」
+    // （CLAUDE_CODE_DISABLE_THINKING），而适配器只认 NUWAX_/CODEX_ 前缀
+    // （isThinkingDisabled 读 CODEX_DISABLE_THINKING/NUWAX_DISABLE_THINKING）。
+    // 不映射的话这个意图直接丢失，适配器按自己的默认力度请求——模型平台
+    // 会拒绝不匹配的组合（如「该模型始终思考，不支持关闭思考」）。
+    // 后端未要求关闭时不下发，适配器便不 pin none，走模型默认力度。
+    if (env.CLAUDE_CODE_DISABLE_THINKING && !env.CODEX_DISABLE_THINKING) {
+      env.CODEX_DISABLE_THINKING = env.CLAUDE_CODE_DISABLE_THINKING;
+    }
     // OpenAI 族：codex-acp 默认走 Responses，国内平台多只支持 Chat，
     // CODEX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
