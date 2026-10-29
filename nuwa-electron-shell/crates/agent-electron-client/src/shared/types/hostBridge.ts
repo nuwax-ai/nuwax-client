@@ -449,7 +449,10 @@ export interface HostBridgeContract {
       canceled?: boolean;
       error?: string;
     }>;
-    openWindow(path: string, options?: { purpose?: 'page' | 'payment' }): Promise<{ success: boolean; error?: string }>;
+    openWindow(
+      path: string,
+      options?: { purpose?: 'page' | 'payment' },
+    ): Promise<{ success: boolean; error?: string }>;
     openClientSettings(): Promise<{ success: boolean; error?: string }>;
   };
   localFiles: HostLocalFilesBridge;
