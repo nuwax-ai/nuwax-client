@@ -387,6 +387,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Shell utilities
   shell: {
+    openLink: (url: string) => ipcRenderer.invoke('shell:openLink', url),
     openExternal: (url: string) =>
       ipcRenderer.invoke("shell:openExternal", url),
     // 打开本地目录/文件到系统文件管理器，供设置页“打开工作空间目录”等功能复用。

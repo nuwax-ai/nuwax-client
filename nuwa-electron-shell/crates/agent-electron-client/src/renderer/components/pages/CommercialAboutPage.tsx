@@ -15,7 +15,7 @@ import { useDistHandshake } from "../../hooks/useDistHandshake";
 
 interface ElectronApiWithNotices {
   notices?: NoticesBridge;
-  shell?: { openExternal?: (url: string) => Promise<unknown> };
+  shell?: { openLink?: (url: string) => Promise<unknown> };
   app?: { getDistHandshake?: (force?: boolean) => Promise<unknown> };
 }
 
@@ -31,7 +31,7 @@ export default function CommercialAboutPage(props: AboutPageProps = {}) {
 
   const openExternal = (url: string) => {
     electronApi()
-      ?.shell?.openExternal?.(url)
+      ?.shell?.openLink?.(url)
       ?.catch((error: unknown) => console.error("[CommercialAboutPage] openExternal failed:", error));
   };
 

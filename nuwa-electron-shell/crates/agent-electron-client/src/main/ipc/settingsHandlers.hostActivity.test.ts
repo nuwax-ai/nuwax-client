@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   warn: vi.fn(),
   notifyCapture: vi.fn(),
+  refreshBrowser: vi.fn(),
   shortcutAvailable: vi.fn(),
 }));
 
@@ -26,7 +27,7 @@ vi.mock("../services/hostActivity", () => ({
 }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
-vi.mock("../features", () => ({ notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
+vi.mock("../features", () => ({ refreshDesktopBrowserWindows: mocks.refreshBrowser, notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/contract';
 
 beforeEach(() => {
@@ -37,11 +38,29 @@ beforeEach(() => {
   mocks.refresh.mockReset();
   mocks.warn.mockClear();
   mocks.notifyCapture.mockReset();
+  mocks.refreshBrowser.mockReset();
   mocks.shortcutAvailable.mockReset().mockImplementation((_shortcut, _action, persist) => { persist(); return true; });
   registerSettingsHandlers();
 });
 
 describe("settings:set host activity refresh", () => {
+  it('validates browser preference and feature switch before persisting independently', () => {
+    const set = mocks.handlers.get('settings:set')!;
+    for (const value of [true, {}, 'external', 1]) expect(set({}, 'nuwax.linkOpenMode', value)).toBe(false);
+    expect(set({}, 'features.browser.enabled', 'false')).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(set({}, 'nuwax.linkOpenMode', 'system')).toBe(true);
+    expect(mocks.run).toHaveBeenLastCalledWith('nuwax.linkOpenMode', '"system"');
+    expect(set({}, 'features.browser.enabled', false)).toBe(true);
+    expect(mocks.run).toHaveBeenLastCalledWith('features.browser.enabled', 'false');
+    expect(set({}, 'nuwax.linkOpenMode', null)).toBe(true);
+    expect(mocks.run).toHaveBeenLastCalledWith('nuwax.linkOpenMode');
+  });
+  it('refreshes browser appearance only after the theme preference has been saved', () => {
+    expect(mocks.handlers.get('settings:set')!({}, 'theme_mode', 'dark')).toBe(true);
+    expect(mocks.refreshBrowser).toHaveBeenCalledOnce();
+    expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(mocks.refreshBrowser.mock.invocationCallOrder[0]);
+  });
   it("消息提示音只保存布尔值，重置时恢复默认，不改变其它设置", () => {
     const set = mocks.handlers.get("settings:set")!;
     const key = "nuwax.im.messageSound.enabled";

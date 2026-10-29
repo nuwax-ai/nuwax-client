@@ -230,8 +230,7 @@ export function attachHostActivityWindow(win: BrowserWindow): void {
  * 受信二级业务窗口直接承载 PC web，独立跟随自身可见性。
  * 创建方须完成业务域分类后、loadURL 前调用；外链窗口不登记。
  */
-export function attachHostActivityBusinessWindow(win: BrowserWindow): void {
-  const contents = win.webContents;
+export function attachHostActivityBusinessWindow(win: BrowserWindow, contents: WebContents = win.webContents): void {
   if (businessWindows.has(contents) || contents.isDestroyed()) return;
   const activity: BusinessWindowActivity = {
     windowVisible: win.isVisible(),

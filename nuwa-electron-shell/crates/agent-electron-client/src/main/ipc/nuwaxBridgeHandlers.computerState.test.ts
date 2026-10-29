@@ -148,7 +148,7 @@ describe("生命周期电脑状态 IPC 集成", () => {
     businessWindow.webContents.emit("dom-ready");
     expect(businessWindow.webContents.send).toHaveBeenCalledWith("nuwax:host-command", { type: "computer-service-state", phase: "ready", sandboxId: "31" });
     expect(businessWindow.webContents.listenerCount("dom-ready")).toBe(2);
-    expect(await h.handlers.get("native:openWindow")!(event, { path: "https://external.example/home" })).toEqual({ success: true });
+    expect(await h.handlers.get("native:openWindow")!(event, { path: "https://external.example/home", purpose: 'payment' })).toEqual({ success: true });
     const externalWindow = h.windows.at(-1);
     externalWindow.webContents.emit("dom-ready");
     expect(externalWindow.webContents.listenerCount("dom-ready")).toBe(2);

@@ -16,6 +16,7 @@ import {
   shippedResourcePaths,
   generateThirdPartyNotices,
 } from './client/third-party-notices.mjs';
+import { generateThirdPartyNotices as generatePackagedNotices } from './client/source-notices.mjs';
 
 function tmp(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'third-party-'));
@@ -31,6 +32,32 @@ const MIT = 'MIT License\n\nPermission is hereby granted, free of charge, to any
 const APACHE = 'Apache License\n Version 2.0, January 2004';
 const LGPL21 = 'GNU LESSER GENERAL PUBLIC LICENSE\nVersion 2.1, February 1999';
 const GPL3 = 'GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007';
+
+test('vendored browser source and full license survive package resource filtering', (t) => {
+  const root = tmp(t);
+  write(path.join(root, 'third-party/vendor.txt'), MIT);
+  write(path.join(root, 'third-party/manifest.json'), { schema: 1, npmRoots: [], resources: {} });
+  write(path.join(root, 'third-party/source-components.json'), { schema: 1, components: {
+    browser: { id: 'browser', name: 'Browser', version: 'fixed-sha', license: 'MIT', licenseFile: 'third-party/vendor.txt', sourceUrl: 'https://example.test/fixed-sha', modified: true, checkIntegrity: true },
+  } });
+  const result = generatePackagedNotices(root, { outDir: path.join(root, 'out'), resourcePaths: {}, strict: true });
+  assert.equal(result.document.components[0].id, 'browser');
+  assert.equal(result.document.components[0].modified, true);
+  assert.equal(fs.readFileSync(path.join(root, 'out/licenses/browser.txt'), 'utf8'), MIT);
+});
+
+test('browser source notices do not alter native capture-only artifact bytes or admission', (t) => {
+  const root = tmp(t);
+  write(path.join(root, 'license.txt'), MIT);
+  write(path.join(root, 'third-party/manifest.json'), { schema: 1, npmRoots: [], resources: { capture: {
+    id: 'native-capture', name: 'Native capture', version: '1.0', license: 'MIT', licenseFile: 'license.txt', sourceUrl: 'https://example.test/capture',
+  } } });
+  write(path.join(root, 'third-party/source-components.json'), { intentionallyInvalid: true });
+  const baseline = generateThirdPartyNotices(root, { outDir: path.join(root, 'native'), captureOnly: true, strict: true });
+  const packaged = generatePackagedNotices(root, { outDir: path.join(root, 'packaged'), captureOnly: true, strict: true });
+  assert.deepEqual(packaged.document, baseline.document);
+  for (const file of ['third-party-notices.json', 'licenses/native-capture.txt']) assert.deepEqual(fs.readFileSync(path.join(root, 'native', file)), fs.readFileSync(path.join(root, 'packaged', file)));
+});
 
 test('detectLicense recognises common license texts and refuses to guess', () => {
   assert.equal(detectLicense(MIT), 'MIT');

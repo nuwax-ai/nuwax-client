@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "components": {
+    "electron-browser-shell": {
+      "id": "electron-browser-shell",
+      "name": "Electron Browser Shell (adapted page view)",
+      "version": "3817c4236f8511156086eb4541f364679b277b40",
+      "usedBy": "browser",
+      "license": "MIT",
+      "licenseFile": "nuwa-electron-shell/crates/agent-electron-client/src/main/features/browser/vendor/LICENSE",
+      "sourceUrl": "https://github.com/samuelmaddock/electron-browser-shell/tree/3817c4236f8511156086eb4541f364679b277b40",
+      "modified": true,
+      "checkIntegrity": true,
+      "notes": "Single-page WebContentsView adapted from packages/shell/browser/tabs.js; no Chrome extension emulation is bundled."
+    }
+  }
+}

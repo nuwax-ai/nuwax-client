@@ -25,6 +25,7 @@ import {
 } from "antd";
 import {
   APP_DISPLAY_NAME,
+  APP_NAME_IDENTIFIER,
   APP_DATA_DIR_NAME,
   DEFAULT_SERVER_HOST,
   I18N_KEYS,
@@ -34,6 +35,7 @@ import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
+import { BrowserSettings } from '../../features/browser';
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -492,6 +494,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
         </div>
         <div className={styles.groupCard}>
           <MessageSoundSettings t={t} Row={SettingsRow} />
+          {APP_NAME_IDENTIFIER === 'nuwax' && <BrowserSettings t={t} Row={SettingsRow} bridge={window.electronAPI?.browser} settings={window.electronAPI?.settings} />}
           <SettingsRow
             label={t("Claw.Settings.system.autoLaunch")}
             desc={t("Claw.Settings.system.autoLaunchDesc", {

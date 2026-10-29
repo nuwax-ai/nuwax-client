@@ -2,6 +2,8 @@
 
 客户端里一类相对独立的能力（截屏/录屏、开源组件声明……）按「特性模块」组织：自成一体、通过少数显式接缝接入、可开可关、关闭零痕迹，方便单独维护和后续扩展。本文说明怎么新增一个特性。
 
+`browser` 是内置网页浏览能力，默认启用，开关为 `features.browser.enabled`，按启动注册周期生效；打开网页才创建窗口。`nuwax.linkOpenMode` 选择 `in-app`（默认）或 `system`，保存后下一次打开立即使用。能力未注册、关闭或初始化失败时，普通外链回退系统浏览器。支付、站内业务与受保护附件保持专用流程。浏览器仅通过注册表公开入口接收宿主适配，后续终端直连可独立遵循同一机制。
+
 ## 它是什么、不是什么
 
 - **是**：静态注册的、按产品与开关过滤的功能单元；有自己的目录、清单、测试与边界守卫。
@@ -67,3 +69,5 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
 ## 开源声明
 
 随包的非 npm 组件（`resources/*`）必须在 `third-party/manifest.json` 登记；`scripts/generate-third-party-notices.mjs` 从文件与包元数据读取许可证并生成声明，严格模式（`--strict`，pack / 发版必开）下，未登记、读不出许可证、缺源码地址、强 copyleft 许可证、GPL 构建的 ffmpeg 都会让构建失败。
+
+编译进应用 JavaScript 的第三方源码登记在 `third-party/source-components.json`，由打包阶段合并声明并携带许可证全文；不进入原生 helper/capture 的清单与缓存配方。`--capture-only` 的产物保持原有字节和准入规则。
