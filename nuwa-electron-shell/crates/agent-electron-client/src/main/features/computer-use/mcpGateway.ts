@@ -10,6 +10,9 @@ import { CUA_TASK_GUIDANCE } from "./taskPolicy";
 
 /** Errors `transformCall` may throw that are reported to the model as-is. */
 const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope", "blacklisted", "confirmationRequired", "sensitiveTarget"]);
+// The model's MCP request expires after 300s. Even a prior native call timeout
+// (120s) followed by human handoff must settle before that outer deadline.
+const HUMAN_WAIT_TIMEOUT_MS = 60_000;
 
 /** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
 export const CUA_STDIO_RELAY = `
@@ -26,7 +29,7 @@ type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string;
     tools?: Array<{ name: string; description?: string; [key: string]: unknown }> };
   error?: unknown };
 type Pending = { method?: string; permit?: CuaPermit; call?: { tool: string; args: unknown }; timer: ReturnType<typeof setTimeout>;
-  release?: () => void; aborted?: boolean; held?: boolean };
+  release?: () => void; aborted?: boolean; held?: boolean; replied?: boolean };
 type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
   grant?: unknown; owner?: string;
   initialization?: Rpc; initialized: boolean;
@@ -72,6 +75,7 @@ export class CuaMcpGateway {
     allowedTools: readonly string[];
     onFailure: (reason: string, owner?: string) => void;
     timeoutMs?: number;
+    humanWaitTimeoutMs?: number;
     authorize?: (grant: unknown) => string | null;
     visibleTools?: (owner?: string) => readonly string[];
     transformCall?: (tool: string, args: unknown, owner?: string) => { tool: string; args: unknown };
@@ -95,6 +99,7 @@ export class CuaMcpGateway {
     beforeCall?: (owner: string, call: { tool: string; args: unknown }) => Promise<{ tool: string; args: unknown }>;
   }) {}
   private scope(owner?: string): CuaScope { return this.options.scope?.(owner) ?? { kind: "desktop" }; }
+  private get humanWaitTimeoutMs() { return Math.min(this.options.humanWaitTimeoutMs ?? HUMAN_WAIT_TIMEOUT_MS, HUMAN_WAIT_TIMEOUT_MS); }
   private fail(reason: string, owner?: string) {
     if (this.options.tasks) this.options.onFailure(reason, owner);
     else this.options.onFailure(reason);
@@ -399,10 +404,7 @@ export class CuaMcpGateway {
         && id !== undefined && owner && this.options.controller.owns(owner) && state.phase === "paused"
         && !CUA_FINAL_REASONS.includes(state.reason ?? "") && typeof message.params?.name === "string"
         && this.options.allowedTools.includes(message.params.name)) {
-        // Pausing while the model thinks must also retain its next tool call.
-        // Do not retain arguments or execute this stale call after human resume.
-        const pending: Pending = { method: "tools/call", timer: undefined as unknown as ReturnType<typeof setTimeout> };
-        this.holdReply(connection, keyOf(id), pending, owner); return;
+        this.reject(connection.socket, id, state.reason ?? "operationPaused"); return;
       }
       this.reject(connection.socket, id, this.options.controller.snapshot().reason ?? "paused", message.method); return;
     }
@@ -432,11 +434,17 @@ export class CuaMcpGateway {
         } catch { this.refuse(connection, owner, id, "targetClosed"); }
         return;
       }
+      const taskState = this.options.tasks?.stateForOwner(owner);
+      if (taskState?.phase === "paused" && !taskState.queued && taskState.reason !== "targetRequired") {
+        // A new call cannot wait on, rebind or work around a task that the human
+        // has already paused. In particular, a different pid must not hang here.
+        this.reject(connection.socket, id, taskState.reason ?? "operationPaused"); return;
+      }
       try { await this.options.prepareTarget?.(owner, tool, message.params?.arguments ?? {}); }
       catch (error) { this.refuse(connection, owner, id, error instanceof Error ? error.message : "targetClosed"); return; }
       if (this.options.tasks) {
         connection.reservations.add(keyOf(id));
-        try { await this.options.tasks.waitReady(owner, connection.lifetime.signal); }
+        try { await this.options.tasks.waitReady(owner, connection.lifetime.signal, this.humanWaitTimeoutMs); }
         catch (error) {
           this.reject(connection.socket, id, error instanceof Error ? error.message : "taskStopped");
           return;
@@ -455,9 +463,9 @@ export class CuaMcpGateway {
           this.fail(reason, owner);
           connection.reservations.add(keyOf(id));
           try {
-            await this.options.tasks.waitReady(owner, connection.lifetime.signal);
+            await this.options.tasks.waitReady(owner, connection.lifetime.signal, this.humanWaitTimeoutMs);
             this.reject(connection.socket, id, "operationPaused");
-          } catch { this.reject(connection.socket, id, "taskStopped"); }
+          } catch (error) { this.reject(connection.socket, id, error instanceof Error && error.message === "operationPaused" ? "operationPaused" : "taskStopped"); }
           finally { connection.reservations.delete(keyOf(id)); }
           return;
         }
@@ -573,7 +581,7 @@ export class CuaMcpGateway {
   }
 
   private waitOwnerReady(connection: Connection, owner: string): Promise<void> {
-    if (this.options.tasks) return this.options.tasks.waitReady(owner, connection.lifetime.signal);
+    if (this.options.tasks) return this.options.tasks.waitReady(owner, connection.lifetime.signal, this.humanWaitTimeoutMs);
     const controller = this.options.controller;
     return new Promise((resolve, reject) => {
       let off = () => {};
@@ -588,7 +596,7 @@ export class CuaMcpGateway {
           || CUA_FINAL_REASONS.includes(state.reason ?? "")) finish(new Error("taskStopped"));
         else if (state.phase === "running" && !this.holding) finish();
       };
-      const timer = setTimeout(() => finish(new Error("timeLimit")), 15 * 60_000);
+      const timer = setTimeout(() => finish(new Error("operationPaused")), this.humanWaitTimeoutMs);
       timer.unref(); off = controller.subscribe(check);
       connection.lifetime.signal.addEventListener("abort", aborted, { once: true });
       if (connection.lifetime.signal.aborted) aborted(); else check();
@@ -597,19 +605,22 @@ export class CuaMcpGateway {
 
   /** Pause the tool's response as well as its actuator, so the ACP turn survives human handoff. */
   private holdReply(connection: Connection, key: string, pending: Pending, owner = pending.permit?.owner) {
-    if (!owner || pending.held) return;
+    if (!owner || pending.held || pending.replied) return;
     clearTimeout(pending.timer);
     pending.held = true; pending.aborted = true; pending.call = undefined;
     connection.pending.set(key, pending);
     const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
-    void this.waitOwnerReady(connection, owner).then(() => {
+    const settle = (reason: string) => {
       if (connection.pending.get(key) !== pending || !pending.held) return;
-      connection.pending.delete(key);
-      this.reject(connection.socket, id, "operationPaused");
-    }, () => {
-      if (connection.pending.get(key) !== pending || !pending.held) return;
-      connection.pending.delete(key);
-      this.reject(connection.socket, id, "taskStopped");
+      pending.held = false;
+      pending.replied = true;
+      // The reply may finish before native drain. Keep its lease record until
+      // ownerDrained or the late native reply confirms execution has stopped.
+      if (!pending.release) connection.pending.delete(key);
+      this.reject(connection.socket, id, reason);
+    };
+    void this.waitOwnerReady(connection, owner).then(() => settle("operationPaused"), error => {
+      settle(error instanceof Error && error.message === "operationPaused" ? "operationPaused" : "taskStopped");
     });
   }
 
@@ -620,7 +631,10 @@ export class CuaMcpGateway {
         if (!["userStopped", "sessionEnded", "violationLimit", "disabled"].includes(reason)) this.holdReply(connection, key, pending);
         else {
           clearTimeout(pending.timer); pending.aborted = true; pending.held = false;
-          this.reject(connection.socket, key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7), reason);
+          if (!pending.replied) {
+            pending.replied = true;
+            this.reject(connection.socket, key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7), reason);
+          }
         }
       }
     }
@@ -639,6 +653,11 @@ export class CuaMcpGateway {
   cancelPending(reason: string) {
     for (const c of this.clients) for (const [key, pending] of c.pending) {
       if (!pending.permit) continue;
+      if (pending.replied) {
+        clearTimeout(pending.timer); pending.held = false;
+        if (!pending.release) c.pending.delete(key);
+        continue;
+      }
       const state = this.options.tasks?.stateForOwner(pending.permit.owner) ?? this.options.controller.snapshot();
       // Keep the ACP call open during a resumable desktop handoff. The helper
       // transport is still killed below; resuming returns only operationPaused.

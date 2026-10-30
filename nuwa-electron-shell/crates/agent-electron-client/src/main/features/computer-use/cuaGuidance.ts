@@ -64,6 +64,9 @@ export function cuaMergeInstructions(scope: CuaScope, existing: unknown): string
 }
 
 const REJECTIONS: Record<string, string> = {
+  userTakingControl: "The user is controlling the bound window. This task is paused. Do not switch windows or retry through another tool. Tell the user to switch away and resume the task; if this turn ends, ask them to send a new continue request. Observe the window again after explicit resume.",
+  userPaused: "The user paused this task. Do not switch windows or retry automatically. Explain that it is waiting for the user; after this turn ends they can send a new continue request. After explicit resume, observe again before acting.",
+  operationPaused: "This request ended while waiting for human input; it was not replayed. Do not switch windows or retry automatically. Explain what the user needs to resolve and ask them to send a new continue request. After explicit resume, observe again and verify the previous action before acting.",
   observationRequired: `Observe the target first (get_window_state, get_browser_state or get_desktop_state), then act on what you saw. Each observation allows up to ${N} actions on that target.`,
   scopeViolation: "Window-only mode allows the selected window and, if it is a browser, its bound tabs. Keyboard shortcuts, pixel coordinates, the clipboard and other apps are unavailable. Repeated violations end the task.",
   profileAttachRequiresWindowScope: "Attaching to the user's own browser profile is not allowed in desktop mode. Ask the user to select that browser window in Computer Use (window mode).",

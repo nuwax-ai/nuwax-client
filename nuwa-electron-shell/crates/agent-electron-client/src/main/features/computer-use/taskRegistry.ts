@@ -24,7 +24,7 @@ export class CuaTaskRegistry {
   constructor(private maxActive = 4, private conversationForOwner?: (owner: string) => string | null) {}
   onDeadline(handler: (id: string, reason: string) => void) { this.deadlineHandler = handler; }
   /** Keep the ACP tool call alive while the human chooses a target or holds control. */
-  waitReady(owner: string, signal: AbortSignal): Promise<void> {
+  waitReady(owner: string, signal: AbortSignal, waitMs = 15 * 60_000): Promise<void> {
     const task = this.ensure(owner);
     return new Promise((resolve, reject) => {
       let done = false;
@@ -40,7 +40,13 @@ export class CuaTaskRegistry {
         else if (state.phase === "running" && task.target && !task.pending && !task.queued) finish();
       };
       const remaining = 15 * 60_000 - (Date.now() - (task.controller.snapshot().startedAt ?? Date.now()));
-      const timer = setTimeout(() => { this.pauseTask(task.id, "timeLimit"); finish(new Error("timeLimit")); }, Math.max(1, remaining));
+      // Human waiting has a shorter transport budget than the task itself. Ending
+      // this request must not consume the task's limit or resume stale input.
+      const deadline = remaining <= waitMs;
+      const timer = setTimeout(() => {
+        if (deadline) this.pauseTask(task.id, "timeLimit");
+        finish(new Error(deadline ? "timeLimit" : "operationPaused"));
+      }, Math.max(1, Math.min(remaining, waitMs)));
       timer.unref();
       off = this.subscribe(check);
       signal.addEventListener("abort", aborted, { once: true });

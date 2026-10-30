@@ -117,6 +117,9 @@ function draw(state, force = false) {
   document.body.classList.toggle('is-paused', current?.phase === 'paused');
   document.body.classList.toggle('is-running', current?.phase === 'running');
   document.body.classList.toggle('is-pending', !!current?.controlPending);
+  el('pauseHint').hidden = current?.phase !== 'paused' || !!current.controlPending;
+  el('pauseHint').textContent = labels['phase.paused'];
+  el('pauseHint').title = current?.reason ? labels['reason.' + current.reason] || '' : '';
   el('title').textContent = current?.scope?.label || labels.title;
   el('title').title = labels['preview.takeover'];
   el('title').setAttribute('aria-label', labels['preview.takeover']);
@@ -202,26 +205,29 @@ export function taskPreviewWindowHtml(t: (key: string) => string) {
   const notices = JSON.stringify([...CUA_OVERLAY_NOTICE_REASONS]).replace(/</g, '\\u003c');
   const nonce = randomBytes(16).toString('hex');
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>
-:root{color-scheme:light dark;--text:#25252d;--muted:#868692;--glass:#fffffff7;--line:#e8e8ed;--hover:#25252d08;--accent:#6558f5;--danger:#cf4b55;--danger-bg:#e05a6317;--stack-space:0px}
+:root{color-scheme:light dark;--text:#25252d;--muted:#868692;--glass:#fffffff7;--line:#e8e8ed;--hover:#25252d08;--accent:#6558f5;--danger:#cf4b55;--danger-bg:#e05a6317;--preview-inset:10px;--stack-space:0px}
 *{box-sizing:border-box}body{margin:0;overflow:hidden;background:transparent;color:var(--text);font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
 button{font:inherit;color:inherit;cursor:pointer;-webkit-app-region:no-drag}button:disabled{opacity:.4;cursor:default}[hidden]{display:none!important}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.shell{position:absolute;z-index:4;inset:4px 4px calc(4px + var(--stack-space)) calc(4px + var(--stack-space));border:1px solid var(--line);border-radius:15px;background:var(--glass);overflow:hidden;box-shadow:0 5px 14px #17172b18}
+.shell{position:absolute;z-index:4;inset:var(--preview-inset) var(--preview-inset) calc(var(--preview-inset) + var(--stack-space)) calc(var(--preview-inset) + var(--stack-space));border:1px solid var(--line);border-radius:10px;background:var(--glass);overflow:hidden;box-shadow:0 2px 6px #17172b12}
 header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--glass);backdrop-filter:blur(12px);display:flex;align-items:center;gap:6px;padding:0 6px 0 9px;cursor:grab;touch-action:none;opacity:0;pointer-events:none;transition:opacity .12s ease}header:active{cursor:grabbing}
 #dragHandle{font-size:14px;color:var(--muted);opacity:.6;flex:none}#dot{width:5px;height:5px;border-radius:50%;flex:none}
 #title{flex:1;min-width:0;text-align:left;padding:0;border:0;background:transparent;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #phase{color:var(--muted);font-size:10px;white-space:nowrap}.icon{display:flex;align-items:center;justify-content:center;width:24px;height:25px;padding:0;border:0;border-radius:7px;background:transparent;flex:none}.icon:hover{background:var(--hover)}#close svg{width:13px;height:13px}
-#viewport{touch-action:none;position:absolute;inset:0;display:grid;place-items:center;padding:0;border:0;overflow:hidden;border-radius:8px;background:var(--hover)}
+#viewport{touch-action:none;position:absolute;inset:0;display:grid;place-items:center;padding:0;border:0;overflow:hidden;border-radius:inherit;background:var(--hover)}
 #viewport:not(:disabled):hover{outline:1px solid var(--accent);outline-offset:-1px}#image{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;pointer-events:none;border-radius:6px}
 #status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;color:var(--muted);font-size:11px;line-height:1.6;background:var(--glass)}#status:empty{display:none}
-#toolbar{position:absolute;z-index:2;bottom:9px;opacity:1;pointer-events:auto;left:10px;right:10px;display:flex;align-items:center;gap:8px;height:30px}#toolbar button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:30px;padding:0 8px;border:0;border-radius:8px;background:var(--glass);backdrop-filter:blur(12px);box-shadow:0 1px 6px #17172b12;font-size:11px;white-space:nowrap}#toolbar #stop{color:var(--danger);background:var(--danger-bg)}
-#stack{position:absolute;inset:0;pointer-events:none}#stack button{position:absolute;inset:calc(4px + var(--offset)) calc(4px + var(--offset)) calc(4px + var(--remaining)) calc(4px + var(--remaining));padding:0;border:1px solid var(--line);border-left:3px solid var(--task-color);box-shadow:0 4px 12px #17172b15;border-radius:13px;background:var(--glass);overflow:hidden;pointer-events:auto}#stack img{width:100%;height:100%;object-fit:contain;opacity:.9}#stack span{position:absolute;right:2px;bottom:2px;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
+#toolbar{position:absolute;z-index:2;bottom:8px;opacity:0;pointer-events:none;left:8px;right:8px;display:flex;align-items:center;gap:6px;height:26px;transform:translateY(3px);transition:opacity .12s ease,transform .12s ease}#toolbar button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:var(--glass);backdrop-filter:blur(8px);font-size:11px;white-space:nowrap}#toolbar #stop{color:var(--danger)}#toolbar #stop:hover{background:var(--danger-bg)}
+#stack{position:absolute;inset:0;pointer-events:none}#stack button{position:absolute;inset:calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--remaining)) calc(var(--preview-inset) + var(--remaining));padding:0;border:1px solid var(--line);border-left:3px solid var(--task-color);box-shadow:0 2px 6px #17172b12;border-radius:8px;background:var(--glass);overflow:hidden;pointer-events:auto}#stack img{width:100%;height:100%;object-fit:contain;opacity:.9}#stack span{position:absolute;right:2px;bottom:2px;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
 #error{position:absolute;z-index:8;bottom:47px;left:9px;right:9px;max-height:72px;overflow:auto;margin:0;padding:7px 9px;font-size:11px;line-height:1.5;color:var(--danger);background:var(--glass);border:1px solid var(--danger-bg);border-radius:8px}#error:empty{display:none}
 .shell:hover header,.shell:focus-within header{opacity:1;pointer-events:auto}
+.shell:hover #toolbar,.shell:has(:focus-visible) #toolbar{opacity:1;pointer-events:auto;transform:translateY(0)}
+#pauseHint{position:absolute;z-index:1;top:7px;left:7px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--glass);color:var(--muted);font-size:10px;pointer-events:none}.shell:hover #pauseHint,.shell:has(:focus-visible) #pauseHint{opacity:0}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 @media(prefers-color-scheme:dark){:root{--text:#eeeef2;--muted:#a0a0ad;--glass:#25252cf7;--line:#ffffff15;--hover:#ffffff0a;--accent:#8175ff;--danger:#f08c94;--danger-bg:#e05a6324}}
   </style></head><body><div id="stack"></div><main class="shell">
   <button id="viewport"><img id="image" hidden alt=""><span id="status" role="status"></span></button>
+  <span id="pauseHint" hidden role="status"></span>
   <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="confirm" hidden></button><button id="stop"></button></div>
   <header><span id="dragHandle" aria-hidden="true">⠿</span><span id="dot"></span><button id="title"></button><span id="phase"></span><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
   <p id="error" role="alert"></p></main><script nonce="${nonce}">

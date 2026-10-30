@@ -74,6 +74,8 @@ describe("small native window preview", () => {
     await p.nodes.get("stop")!.onclick!(); expect(p.api.taskAction).toHaveBeenCalledWith("A", "stop");
     p.update([{ ...task("A"), phase: "paused" }]);
     expect(p.nodes.get("pause")!.hidden).toBe(true); expect(p.nodes.get("resume")!.hidden).toBe(false);
+    expect(p.nodes.get("pauseHint")!.hidden).toBe(false);
+    expect(p.nodes.get("pauseHint")!.textContent).toBe("Claw.Cua.phase.paused");
   });
   it("keeps stop on a draining task and shows a compact permission failure", async () => {
     const p = await page();
