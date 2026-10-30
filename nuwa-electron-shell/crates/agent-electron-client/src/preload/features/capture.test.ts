@@ -29,6 +29,35 @@ function fakeIpc(invoke: (channel: string, ...args: unknown[]) => Promise<unknow
 const noHandler = (channel: string) =>
   Promise.reject(new Error(`Error invoking remote method '${channel}': Error: No handler registered for '${channel}'`));
 
+it('保活的 IM 和多个 Agent 输入框只由聚焦者认领，未聚焦者不抢先拒绝', async () => {
+  const ipc = fakeIpc(async (_channel, raw) => (raw as { handled: boolean }).handled);
+  const bridge = createCaptureBridge(ipc as never);
+  const inactive = vi.fn(); const active = vi.fn();
+  const offInactive = bridge.onShortcut!({ canHandle: () => false, run: inactive });
+  const offActive = bridge.onShortcut!({ canHandle: () => true, run: active });
+  ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'active-agent', action: 'screenshot' });
+  await Promise.resolve(); await Promise.resolve();
+  expect(ipc.invoke).toHaveBeenCalledTimes(1);
+  expect(ipc.invoke).toHaveBeenCalledWith(CAPTURE_SHORTCUT_ACK_IPC, { id: 'active-agent', handled: true });
+  expect(active).toHaveBeenCalledWith('screenshot');
+  expect(inactive).not.toHaveBeenCalled();
+  offInactive();
+  expect(ipc.removeListener).not.toHaveBeenCalled();
+  offActive();
+  expect(ipc.removeListener).toHaveBeenCalledTimes(1);
+});
+
+it('认领授权等待期间输入框卸载，不执行迟到采集', async () => {
+  let grant!: (value: boolean) => void;
+  const ipc = fakeIpc(() => new Promise<boolean>(resolve => { grant = resolve; }));
+  const run = vi.fn();
+  const off = createCaptureBridge(ipc as never).onShortcut!({ canHandle: () => true, run });
+  ipc.emit(CAPTURE_SHORTCUT_REQUEST_IPC, { id: 'unmounted', action: 'screenshot' });
+  off(); grant(true);
+  await Promise.resolve(); await Promise.resolve();
+  expect(run).not.toHaveBeenCalled();
+});
+
 describe("特性关闭（主进程未注册 IPC）", () => {
   it("getCapabilities 返回 available:false，其余调用返回 unsupported", async () => {
     const bridge = createCaptureBridge(fakeIpc((c) => noHandler(c)) as never);

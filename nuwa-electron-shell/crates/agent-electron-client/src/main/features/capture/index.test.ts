@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, HOST_CAPTURE_INTERACTIVE_IPC, type CaptureResult } from '@shared/features/capture/contract';
+import { CAPTURE_IPC, HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, CAPTURE_INTERACTIVE_IPC, HOST_CAPTURE_INTERACTIVE_IPC, CAPTURE_SHORTCUT_ACK_IPC, CAPTURE_SHORTCUT_REQUEST_IPC, type CaptureResult } from '@shared/features/capture/contract';
 import { createTrustedIpc } from '../_kit/trustedIpc';
 import { createFeatureLifecycle } from '../_kit/lifecycle';
 import type { FeatureContext, FeatureHandle } from '../_kit/types';
@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => {
     captureStill: vi.fn(), record: vi.fn(), resolveFfmpeg: vi.fn(), showSaveDialog: vi.fn(), setActions: vi.fn(),
     windowDispose: vi.fn(), recorderDispose: vi.fn(), recorderStop: vi.fn(),
     copyTo: vi.fn(() => true), release: vi.fn((id: string) => { data.delete(id); }),
-    copy: vi.fn(), fromWebContents: vi.fn(),
+    copy: vi.fn(), fromWebContents: vi.fn(), focusedContents: vi.fn(), allContents: vi.fn(),
     releaseAll: vi.fn(() => { data.clear(); }),
     put: vi.fn((bytes: Buffer, mime: string) => { const resultId = `capture-${++sequence}`; data.set(resultId, bytes); return { resultId, bytes: bytes.length, mime }; }),
     readChunk: vi.fn((id: string, offset: number, length: number) => data.get(id)?.subarray(offset, offset + length) ?? null),
@@ -35,6 +35,7 @@ vi.mock('electron', () => ({
   app: { commandLine: { getSwitchValue: () => '' } },
   BrowserWindow: { fromWebContents: mocks.fromWebContents }, dialog: { showSaveDialog: mocks.showSaveDialog },
   powerMonitor: mocks.power, screen: mocks.screen,
+  webContents: { getFocusedWebContents: mocks.focusedContents, getAllWebContents: mocks.allContents },
 }));
 vi.mock('./electronDeps', () => ({ getScreenPermission: () => 'granted', getAllDisplays: () => [{ id: 1, scaleFactor: 2 }] }));
 vi.mock('./encodingResources', () => ({ resolveCaptureFfmpeg: mocks.resolveFfmpeg }));
@@ -77,6 +78,53 @@ async function capture(sender: Sender, hostChannel = false) {
   if (!result.success) throw new Error(JSON.stringify(result));
   return result;
 }
+
+describe('宿主菜单沿用输入框截图认领', () => {
+  function setup(focused = true) {
+    const shell = host();
+    const guest = Object.assign(business(), { hostWebContents: shell });
+    ctx.windows.getMain = () => ({ webContents: shell, isDestroyed: () => false, isFocused: () => focused }) as never;
+    mocks.allContents.mockReturnValue([shell, guest]);
+    return { shell, guest };
+  }
+
+  it.each(['screenshot', 'mp4', 'gif'] as const)('%s 被业务输入框认领时，宿主不再启动第二次采集', async action => {
+    const { shell, guest } = setup();
+    const pending = invoke(HOST_CAPTURE_INTERACTIVE_IPC, shell, { action });
+    const [channel, request] = guest.send.mock.calls[0];
+    expect(channel).toBe(CAPTURE_SHORTCUT_REQUEST_IPC);
+    expect(request.action).toBe(action);
+    expect(await invoke(CAPTURE_SHORTCUT_ACK_IPC, guest, { id: request.id, handled: true })).toBe(true);
+    expect(await pending).toEqual({ success: false, code: 'canceled' });
+    expect(mocks.captureStill).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it('没有聚焦的业务编辑器时继续宿主截图', async () => {
+    const { shell, guest } = setup();
+    const pending = invoke<CaptureResult>(HOST_CAPTURE_INTERACTIVE_IPC, shell, { action: 'screenshot' });
+    const [, { id }] = guest.send.mock.calls[0];
+    await invoke(CAPTURE_SHORTCUT_ACK_IPC, guest, { id, handled: false });
+    expect(await pending).toMatchObject({ success: true });
+    expect(mocks.captureStill).toHaveBeenCalledOnce();
+  });
+
+  it('后台全局截图不询问客户端的旧编辑器', async () => {
+    const { shell, guest } = setup(false);
+    expect(await invoke(HOST_CAPTURE_INTERACTIVE_IPC, shell, { action: 'screenshot' })).toMatchObject({ success: true });
+    expect(guest.send).not.toHaveBeenCalled();
+  });
+
+  it('等待认领时宿主文档已导航，不继续采集', async () => {
+    const { shell, guest } = setup();
+    const pending = invoke(HOST_CAPTURE_INTERACTIVE_IPC, shell, { action: 'screenshot' });
+    const [, { id }] = guest.send.mock.calls[0];
+    shell.navigate();
+    await invoke(CAPTURE_SHORTCUT_ACK_IPC, guest, { id, handled: false });
+    expect(await pending).toEqual({ success: false, code: 'canceled' });
+    expect(mocks.captureStill).not.toHaveBeenCalled();
+  });
+});
 // 能力门以 process.platform 判定（darwin/win32 才可用）；CI runner 为 linux，须统一钉 darwin
 beforeEach(() => {
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
@@ -87,6 +135,7 @@ beforeEach(() => {
   mocks.showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/fixture/saved.png' });
   mocks.copy.mockResolvedValue({ success: true, kind: 'image' });
   mocks.fromWebContents.mockReturnValue(null);
+  mocks.focusedContents.mockReturnValue(null); mocks.allContents.mockReturnValue([]);
   channels = new Map(); lifecycle = createFeatureLifecycle();
   const ipcMain = { handle(channel: string, handler: (event: never, ...args: never[]) => unknown) { channels.set(channel, handler); }, removeHandler(channel: string) { channels.delete(channel); } };
   const trust = (role: Sender['role']) => (event: ReturnType<typeof frameEvent>) => event.sender.role === role && !event.sender.isDestroyed() && event.senderFrame === event.sender.mainFrame;

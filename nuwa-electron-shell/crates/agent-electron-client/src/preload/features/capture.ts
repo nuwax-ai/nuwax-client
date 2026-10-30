@@ -55,6 +55,24 @@ export async function captureCapabilityProbe(
 }
 
 export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CAPTURE_IPC): Omit<HostCaptureBridge, 'save'> {
+  type ShortcutListener = Parameters<NonNullable<CaptureBridge['onShortcut']>>[0];
+  const shortcutListeners = new Set<ShortcutListener>();
+  const onShortcutRequest = async (_event: unknown, request: { id?: unknown; action?: unknown }) => {
+    if (!request || typeof request.id !== 'string' || !['screenshot', 'mp4', 'gif'].includes(String(request.action))) return;
+    // 同一业务 document 可以同时保活多个 Agent 输入框和 IM。只发送一次认领答复，
+    // 否则未聚焦的订阅者会先拒绝，抢掉真正聚焦输入框的截图。
+    let selected: ShortcutListener | undefined;
+    for (const listener of shortcutListeners) {
+      try { if (listener.canHandle() === true) { selected = listener; break; } }
+      catch { /* A stale consumer must not block the currently focused composer. */ }
+    }
+    try {
+      const granted = await ipc.invoke(CAPTURE_SHORTCUT_ACK_IPC, { id: request.id, handled: !!selected });
+      if (granted === true && selected && shortcutListeners.has(selected)) {
+        selected.run(request.action as 'screenshot' | 'mp4' | 'gif');
+      }
+    } catch { /* A reloaded, detached or untrusted document cannot claim a capture. */ }
+  };
   return {
     async interactive(options) {
       try {
@@ -63,17 +81,12 @@ export function createCaptureBridge(ipc: IpcLike, channels: CaptureChannels = CA
       catch (error) { return toFailure(error); }
     },
     onShortcut(listener) {
-      let subscribed = true;
-      const handler = async (_event: unknown, request: { id?: unknown; action?: unknown }) => {
-        if (!subscribed || !request || typeof request.id !== 'string' || !['screenshot', 'mp4', 'gif'].includes(String(request.action))) return;
-        try {
-          const handled = listener.canHandle() === true;
-          const granted = await ipc.invoke(CAPTURE_SHORTCUT_ACK_IPC, { id: request.id, handled });
-          if (granted === true && subscribed) listener.run(request.action as 'screenshot' | 'mp4' | 'gif');
-        } catch { /* A reloaded, detached or untrusted document cannot claim a shortcut. */ }
+      if (!shortcutListeners.size) ipc.on(CAPTURE_SHORTCUT_REQUEST_IPC, onShortcutRequest);
+      shortcutListeners.add(listener);
+      return () => {
+        shortcutListeners.delete(listener);
+        if (!shortcutListeners.size) ipc.removeListener(CAPTURE_SHORTCUT_REQUEST_IPC, onShortcutRequest);
       };
-      ipc.on(CAPTURE_SHORTCUT_REQUEST_IPC, handler);
-      return () => { subscribed = false; ipc.removeListener(CAPTURE_SHORTCUT_REQUEST_IPC, handler); };
     },
     async getCapabilities(options) {
       try {

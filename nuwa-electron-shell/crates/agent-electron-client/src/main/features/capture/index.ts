@@ -1,5 +1,5 @@
 /** Native capture owns its windows, file results and both narrowly trusted entry points. */
-import { app, BrowserWindow, dialog, powerMonitor, screen } from "electron";
+import { app, BrowserWindow, dialog, powerMonitor, screen, webContents } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import path from "node:path";
 import {
@@ -16,7 +16,7 @@ import { createCaptureService, type CaptureService } from "./captureService";
 import { getAllDisplays, getScreenPermission } from "./electronDeps";
 import { createScreenPermissionPrompt } from "./permissionPrompt";
 import { createCaptureWindowVisibility } from "./windowVisibility";
-import { registerCaptureShortcutRouting } from './shortcutRouting';
+import { registerCaptureShortcutRouting, routeCaptureShortcut } from './shortcutRouting';
 import { createResultStore, type ResultStore } from "./results";
 import { createNativeImageEncoder } from "./stillEncoder";
 import { createCaptureWindows } from "./selectionWindows";
@@ -245,10 +245,29 @@ export const captureFeature: DesktopFeature = {
         } finally { pendingCopies.delete(controller); }
       }, { success: false, code: 'untrusted' });
       ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(
-        channels === HOST_CAPTURE_IPC ? HOST_CAPTURE_INTERACTIVE_IPC : CAPTURE_INTERACTIVE_IPC, (event, raw) => {
+        channels === HOST_CAPTURE_IPC ? HOST_CAPTURE_INTERACTIVE_IPC : CAPTURE_INTERACTIVE_IPC, async (event, raw) => {
           if (!raw || typeof raw !== 'object') return { success: false, code: 'invalid-argument' };
           const { action, compression, maxDurationMs } = raw as { action?: unknown; compression?: unknown; maxDurationMs?: unknown };
           if (!['screenshot', 'mp4', 'gif'].includes(String(action))) return { success: false, code: 'invalid-argument' };
+          if (channels === HOST_CAPTURE_IPC) {
+            const parent = ctx.windows.getMain();
+            // 自绘菜单会将原生焦点转到宿主；业务输入框仍负责确认自己的编辑焦点。
+            // 后台热键不询问旧输入框，避免把其他应用的截图带进客户端草稿。
+            if (parent && !parent.isDestroyed() && parent.webContents === event.sender && parent.isFocused()) {
+              const focused = webContents.getFocusedWebContents();
+              const guests = webContents.getAllWebContents().filter(guest =>
+                !guest.isDestroyed() && guest.hostWebContents === event.sender);
+              const target = focused && guests.includes(focused) ? focused : guests.length === 1 ? guests[0] : null;
+              const epoch = generation;
+              const frame = event.senderFrame;
+              if (target && await routeCaptureShortcut(target, action as 'screenshot' | 'mp4' | 'gif')) {
+                return { success: false, code: 'canceled' };
+              }
+              if (disposed || epoch !== generation || event.sender.isDestroyed() || frame !== event.sender.mainFrame) {
+                return { success: false, code: 'canceled' };
+              }
+            }
+          }
           return action === 'screenshot' ? invokeCapture(event, channels, 'screenshot', { compression }, true, maxDurationMs)
             : invokeCapture(event, channels, 'record', { output: action, compression, maxDurationMs }, true);
         }, UNTRUSTED);
