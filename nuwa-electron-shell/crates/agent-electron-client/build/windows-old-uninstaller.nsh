@@ -24,6 +24,7 @@
     StrCpy $R4 "$PLUGINSDIR\nuwax-old-current.txt"
   !endif
   ${if} ${FileExists} "$R4"
+    !insertmacro nuwaxApplyPreparedShortcutState
     ; Prepare has already preserved this exact registered installation. New
     ; installers own the fallback, so a damaged old executable cannot lock all
     ; future installs into the vendor's app-running retry loop.

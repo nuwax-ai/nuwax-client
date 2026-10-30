@@ -121,6 +121,8 @@
 !ifndef BUILD_UNINSTALLER
 Var nuwaxPendingInstallPath
 Var nuwaxRequireRecoverySnapshot
+Var nuwaxShortcutStatePath
+Var nuwaxKeepShortcutsBeforePrepare
 
 !macro nuwaxInspectRecovery TARGET
   StrCpy $nuwaxPendingInstallPath "${TARGET}"
@@ -242,6 +244,33 @@ Var nuwaxRequireRecoverySnapshot
 ; uninstallOldVersion. The old uninstaller deletes its entire install directory,
 ; including user workspaces when they were placed there. Preserve every entry
 ; outside that directory before invoking it.
+!macro nuwaxCaptureShortcutState ROOT_KEY INSTALL_PATH
+  ; Prepare moves the old executable away before builder checks FileExists.
+  ; Keep the first observation across retries, bound to this exact directory.
+  ${if} $nuwaxShortcutStatePath != "${INSTALL_PATH}"
+    StrCpy $nuwaxShortcutStatePath "${INSTALL_PATH}"
+    StrCpy $nuwaxKeepShortcutsBeforePrepare "false"
+    Push $R8
+    ReadRegStr $R8 ${ROOT_KEY} "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+    ClearErrors
+    ${if} $R8 == "true"
+    ${andif} ${FileExists} "${INSTALL_PATH}\${APP_EXECUTABLE_FILENAME}"
+      StrCpy $nuwaxKeepShortcutsBeforePrepare "true"
+    ${endif}
+    Pop $R8
+  ${endif}
+!macroend
+
+!macro nuwaxApplyPreparedShortcutState
+  ; Builder has now computed its policy: manual repair/fresh installs retain
+  ; their default link creation. Only restore a prepared update's lost evidence.
+  ${if} $isTryToKeepShortcuts == "true"
+  ${andif} $nuwaxKeepShortcutsBeforePrepare == "true"
+  ${andif} $nuwaxShortcutStatePath == $INSTDIR
+    StrCpy $keepShortcuts "true"
+  ${endif}
+!macroend
+
 !macro nuwaxPrepareOldInstall ROOT_KEY STATE_FILE
   StrCpy $R5 "$windowsRegisteredCurrentPath"
   StrCpy $R6 "CurrentUser"
@@ -252,6 +281,7 @@ Var nuwaxRequireRecoverySnapshot
     !endif
   ${endif}
   ${if} $R5 != ""
+    !insertmacro nuwaxCaptureShortcutState ${ROOT_KEY} $R5
     DetailPrint "正在保全原安装并检查恢复状态，请稍候；所有个人文件将保留..."
     !insertmacro nuwaxRecoveryScripts
     SectionGetSize 0 $R7
