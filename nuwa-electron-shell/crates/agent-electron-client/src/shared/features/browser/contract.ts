@@ -1,5 +1,7 @@
 export const BROWSER_SETTING = "nuwax.linkOpenMode";
 export const BROWSER_FEATURE_SETTING = "features.browser.enabled";
+export const BROWSER_TOOLBAR_HEIGHT = 52;
+export const BROWSER_AUXILIARY_BAR_HEIGHT = 42;
 export type LinkOpenMode = "in-app" | "system";
 export const linkOpenMode = (value: unknown): LinkOpenMode =>
   value === "system" ? "system" : "in-app";
@@ -22,6 +24,10 @@ export interface BrowserState {
   canGoForward: boolean;
   zoom: number;
   pinned: boolean;
+  platform: "darwin" | "win32" | "linux";
+  maximized: boolean;
+  fullscreen: boolean;
+  addressOpen: boolean;
   error: string | null;
   finding: boolean;
   matches: number;
@@ -45,7 +51,12 @@ export type BrowserCommand =
         | "zoom-out"
         | "zoom-reset"
         | "find-open"
-        | "find-close";
+        | "find-close"
+        | "address-open"
+        | "address-close"
+        | "window-minimize"
+        | "window-maximize"
+        | "window-close";
     }
   | { type: "find"; text: string; forward?: boolean; next?: boolean };
 export interface BrowserWindowBridge {

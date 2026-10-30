@@ -13,6 +13,8 @@ import {
 import path from "node:path";
 import {
   BROWSER_IPC,
+  BROWSER_TOOLBAR_HEIGHT,
+  BROWSER_AUXILIARY_BAR_HEIGHT,
   type BrowserCommand,
   type BrowserState,
 } from "@shared/features/browser/contract";
@@ -68,6 +70,22 @@ const LABELS = [
   "url",
 ] as const;
 
+/** Match the host's immersive chrome without changing dedicated payment windows. */
+export function browserWindowChrome(
+  platform: NodeJS.Platform = process.platform,
+): BrowserWindowConstructorOptions {
+  return {
+    frame: platform === "darwin",
+    titleBarStyle: platform === "darwin" ? "hidden" : "default",
+    titleBarOverlay: false,
+    ...(platform === "darwin"
+      ? { trafficLightPosition: { x: 16, y: 18 } }
+      : {}),
+    hasShadow: true,
+    autoHideMenuBar: true,
+  };
+}
+
 function webUrl(value: string): string | null {
   try {
     const url = new URL(value);
@@ -84,7 +102,7 @@ function webUrl(value: string): string | null {
 /** Only the locally owned toolbar main frame can control its associated page. */
 export function isBrowserToolbar(
   event: IpcMainInvokeEvent,
-  entry: BrowserPage & { toolbarUrl: string }
+  entry: BrowserPage & { toolbarUrl: string },
 ): boolean {
   try {
     const toolbar = entry.window.webContents;
@@ -104,10 +122,17 @@ export function isBrowserToolbar(
 export function createBrowserWindows(ctx: FeatureContext) {
   const entries = new Map<number, Entry>();
   let disposed = false;
-  const labels = () =>
-    Object.fromEntries(
-      LABELS.map((key) => [key, ctx.translate?.(`Claw.Browser.${key}`) ?? key])
-    );
+  const labels = () => ({
+    ...Object.fromEntries(
+      LABELS.map((key) => [key, ctx.translate?.(`Claw.Browser.${key}`) ?? key]),
+    ),
+    ...Object.fromEntries(
+      ["minimize", "maximize", "restore"].map((key) => [
+        key,
+        ctx.translate?.(`Claw.Toolbar.${key}`) ?? key,
+      ]),
+    ),
+  });
   const push = (entry: Entry) => {
     if (entry.window.isDestroyed() || entry.contents.isDestroyed()) return;
     const wc = entry.contents;
@@ -126,6 +151,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
     entry.state.loading = wc.isLoading();
     entry.state.zoom = Math.round(wc.getZoomFactor() * 100);
     entry.state.pinned = entry.window.isAlwaysOnTop();
+    entry.state.maximized = entry.window.isMaximized();
+    entry.state.fullscreen = entry.window.isFullScreen();
     entry.state.labels = labels();
     const theme = ctx.settings.read("theme_mode") ?? "system";
     entry.state.dark =
@@ -146,10 +173,16 @@ export function createBrowserWindows(ctx: FeatureContext) {
       entry.window.focus();
     }
   };
+  const layout = (entry: Entry) => {
+    entry.page.toolbarHeight =
+      BROWSER_TOOLBAR_HEIGHT +
+      BROWSER_AUXILIARY_BAR_HEIGHT *
+        (Number(entry.state.finding) + Number(entry.state.addressOpen));
+    entry.page.invalidateLayout();
+  };
   const findOpen = (entry: Entry, enabled: boolean) => {
     entry.state.finding = enabled;
-    entry.page.toolbarHeight = enabled ? 94 : 52;
-    entry.page.invalidateLayout();
+    layout(entry);
     if (!enabled) {
       entry.query = "";
       entry.findRequest = -1;
@@ -177,7 +210,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
   };
   const execute = async (
     entry: Entry,
-    command: BrowserCommand
+    command: BrowserCommand,
   ): Promise<boolean> => {
     if (
       disposed ||
@@ -246,6 +279,26 @@ export function createBrowserWindows(ctx: FeatureContext) {
       case "find-close":
         findOpen(entry, false);
         break;
+      case "address-open":
+      case "address-close":
+        entry.state.addressOpen = command.type === "address-open";
+        layout(entry);
+        break;
+      case "window-minimize":
+        if (!entry.window.isMinimizable()) return false;
+        entry.window.minimize();
+        break;
+      case "window-maximize":
+        if (entry.window.isFullScreen()) entry.window.setFullScreen(false);
+        else if (!entry.window.isMaximizable()) return false;
+        else if (entry.window.isMaximized()) entry.window.unmaximize();
+        else entry.window.maximize();
+        break;
+      case "window-close":
+        if (!entry.window.isClosable()) return false;
+        // Keep the host's remote-page beforeunload/download cleanup path.
+        entry.window.close();
+        return true;
       case "find": {
         if (typeof command.text !== "string" || command.text.length > 4096)
           return false;
@@ -266,7 +319,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       case "menu": {
         const action = (type: BrowserCommand["type"]) => () => {
           void execute(entry, { type } as BrowserCommand).catch(() =>
-            ctx.log.warn("[Browser] Menu action failed")
+            ctx.log.warn("[Browser] Menu action failed"),
           );
         };
         const l = entry.state.labels;
@@ -276,7 +329,6 @@ export function createBrowserWindows(ctx: FeatureContext) {
             accelerator: "CmdOrCtrl+R",
             click: action("reload"),
           },
-          { label: l.copy, click: action("copy") },
           { label: l.external, click: action("external") },
           { type: "separator" },
           {
@@ -319,7 +371,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         ]).popup({
           window: entry.window,
           x: Math.max(0, entry.window.getContentSize()[0] - 240),
-          y: 52,
+          y: BROWSER_TOOLBAR_HEIGHT,
         });
         break;
       }
@@ -333,7 +385,9 @@ export function createBrowserWindows(ctx: FeatureContext) {
     const entry = entries.get(event.sender.id);
     return entry && isBrowserToolbar(event, entry) ? entry : null;
   };
-  const refresh = () => { for (const entry of entries.values()) push(entry); };
+  const refresh = () => {
+    for (const entry of entries.values()) push(entry);
+  };
   try {
     ipcMain.handle(BROWSER_IPC.state, (event) => {
       const entry = owned(event);
@@ -352,9 +406,9 @@ export function createBrowserWindows(ctx: FeatureContext) {
           ctx.log.warn("[Browser] Window action failed");
           return false;
         }
-      }
+      },
     );
-    nativeTheme.on('updated', refresh);
+    nativeTheme.on("updated", refresh);
   } catch (error) {
     ipcMain.removeHandler(BROWSER_IPC.state);
     ipcMain.removeHandler(BROWSER_IPC.command);
@@ -378,10 +432,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     const win = new BrowserWindow({
       ...windowOptions,
       show: false,
-      frame: true,
-      titleBarStyle: "default",
-      titleBarOverlay: false,
-      autoHideMenuBar: true,
+      ...browserWindowChrome(),
       webPreferences: {
         partition: "nuwax-browser-ui",
         sandbox: true,
@@ -419,6 +470,15 @@ export function createBrowserWindows(ctx: FeatureContext) {
         canGoForward: false,
         zoom: 100,
         pinned: false,
+        platform:
+          process.platform === "darwin"
+            ? "darwin"
+            : process.platform === "win32"
+              ? "win32"
+              : "linux",
+        maximized: false,
+        fullscreen: false,
+        addressOpen: false,
         error: null,
         finding: false,
         matches: 0,
@@ -454,6 +514,10 @@ export function createBrowserWindows(ctx: FeatureContext) {
       push(entry);
     });
     const update = () => push(entry);
+    win.on("maximize", update);
+    win.on("unmaximize", update);
+    win.on("enter-full-screen", update);
+    win.on("leave-full-screen", update);
     wc.on("did-start-loading", update);
     wc.on("did-stop-loading", update);
     wc.on("page-title-updated", update);
@@ -508,11 +572,13 @@ export function createBrowserWindows(ctx: FeatureContext) {
       else if (key === "f5") type = "reload";
       else if (input.alt && key === "arrowleft") type = "back";
       else if (input.alt && key === "arrowright") type = "forward";
+      else if (key === "escape" && entry.state.addressOpen)
+        type = "address-close";
       else if (key === "escape" && entry.state.finding) type = "find-close";
       if (type) {
         event.preventDefault();
         void execute(entry, { type } as BrowserCommand).catch(() =>
-          ctx.log.warn("[Browser] Shortcut failed")
+          ctx.log.warn("[Browser] Shortcut failed"),
         );
       }
     };
@@ -539,7 +605,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         void shell
           .openExternal(url)
           .catch(() =>
-            ctx.log.warn("[Browser] System-browser fallback failed")
+            ctx.log.warn("[Browser] System-browser fallback failed"),
           );
       cleanup();
     });

@@ -7,16 +7,17 @@ import {
   type WebContents,
   type WebPreferences,
 } from "electron";
+import { BROWSER_TOOLBAR_HEIGHT } from "@shared/features/browser/contract";
 
 /** Upstream Tab's view ownership/layout, reduced to one page per window. */
 export class PageView {
   readonly view: WebContentsView;
   readonly webContents: WebContents;
-  toolbarHeight = 52;
+  toolbarHeight = BROWSER_TOOLBAR_HEIGHT;
   private destroyed = false;
   constructor(
     readonly window: BrowserWindow,
-    options: { webContents?: WebContents; webPreferences?: WebPreferences }
+    options: { webContents?: WebContents; webPreferences?: WebPreferences },
   ) {
     const cleaned = { ...options };
     if (!cleaned.webContents) delete cleaned.webContents;

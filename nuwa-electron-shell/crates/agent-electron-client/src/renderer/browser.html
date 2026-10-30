@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -22,8 +22,13 @@
           </svg></button
         ><button id="reload">↻</button>
       </nav>
-      <button id="location">
+      <button id="location" aria-controls="address" aria-expanded="false">
         <strong id="title"></strong><span id="domain"></span></button
+      ><button id="copyLink">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="8" y="8" width="12" height="13" rx="2" />
+          <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+        </svg></button
       ><button id="pin">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M8 3h8l-2 5v3l3 3v2H7v-2l3-3V8zm4 13v6" />
@@ -35,7 +40,32 @@
           <circle cx="19" cy="12" r="1" />
         </svg>
       </button>
+      <div id="windowControls" hidden>
+        <button id="minimize">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 12h12" />
+          </svg>
+        </button>
+        <button id="maximize">
+          <svg id="maximizeIcon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" />
+          </svg>
+          <svg id="restoreIcon" viewBox="0 0 24 24" aria-hidden="true" hidden>
+            <path d="M9 9V5h10v10h-4" />
+            <rect x="5" y="9" width="10" height="10" />
+          </svg>
+        </button>
+        <button id="closeWindow">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M6 18 18 6" />
+          </svg>
+        </button>
+      </div>
     </header>
+    <div id="address" hidden>
+      <label id="urlLabel" class="sr-only" for="url"></label>
+      <input id="url" readonly /><button id="closeAddress">×</button>
+    </div>
     <div id="findbar" hidden>
       <input id="query" type="search" /><span id="matches" role="status"></span
       ><button id="previous">↑</button><button id="next">↓</button
@@ -46,12 +76,6 @@
       <button id="retry"></button><button id="external"></button
       ><button id="copy"></button>
     </section>
-    <dialog id="address">
-      <label id="urlLabel" for="url"></label><input id="url" readonly /><button
-        id="copyUrl"
-      ></button
-      ><button id="closeAddress">×</button>
-    </dialog>
     <script type="module" src="/features/browser/toolbar.ts"></script>
   </body>
 </html>

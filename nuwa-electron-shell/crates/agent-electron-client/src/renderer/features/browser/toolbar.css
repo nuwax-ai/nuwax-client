@@ -21,8 +21,10 @@ button,
 input {
   font: inherit;
   color: inherit;
+  -webkit-app-region: no-drag;
 }
 button {
+  flex-shrink: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -43,13 +45,42 @@ button:disabled {
   cursor: default;
 }
 #toolbar {
-  height: 52px;
+  height: var(--toolbar-height, 52px);
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+body[data-platform="darwin"] #toolbar {
+  padding-left: 96px;
+}
+body[data-platform="win32"] #toolbar,
+body[data-platform="linux"] #toolbar {
+  padding-right: 0;
+}
+#windowControls {
+  display: flex;
+  margin: -8px 0 -8px 5px;
+  align-self: stretch;
+  height: var(--toolbar-height, 52px);
+}
+#windowControls button {
+  width: 46px;
+  height: 100%;
+  border-radius: 0;
+  padding: 0;
+}
+#windowControls svg {
+  width: 16px;
+  height: 16px;
+}
+#closeWindow:hover {
+  background: #c42b1c;
+  color: white;
 }
 nav {
   display: flex;
@@ -63,6 +94,8 @@ nav button {
   align-items: center;
   gap: 12px;
   flex: 1;
+  max-width: 560px;
+  margin-right: auto;
   min-width: 0;
   text-align: left;
   padding: 0 10px;
@@ -89,14 +122,34 @@ nav button {
   color: #3272c7;
   background: var(--hover);
 }
-#findbar {
-  height: 42px;
+#findbar,
+#address {
+  height: var(--auxiliary-bar-height, 42px);
   display: flex;
   align-items: center;
   justify-content: flex-end;
   padding: 4px 12px;
   gap: 5px;
   border-bottom: 1px solid var(--line);
+}
+#url {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 #query {
   width: 260px;
@@ -114,30 +167,10 @@ nav button {
   text-align: center;
   padding: 90px 24px;
 }
-#error button,
-dialog button {
+#error button {
   border: 1px solid var(--line);
   padding: 0 12px;
   margin: 4px;
-}
-dialog {
-  width: min(650px, 85vw);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 8px 35px #0002;
-  background: var(--surface);
-  color: inherit;
-}
-dialog label {
-  display: block;
-  margin-bottom: 12px;
-}
-dialog input {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
 }
 body.dark {
   color: #e5e5e5;

@@ -1,9 +1,19 @@
-import type {
-  BrowserCommand,
-  BrowserState,
-  BrowserWindowBridge,
+import {
+  BROWSER_TOOLBAR_HEIGHT,
+  BROWSER_AUXILIARY_BAR_HEIGHT,
+  type BrowserCommand,
+  type BrowserState,
+  type BrowserWindowBridge,
 } from "@shared/features/browser/contract";
 import "./toolbar.css";
+document.documentElement.style.setProperty(
+  "--toolbar-height",
+  `${BROWSER_TOOLBAR_HEIGHT}px`,
+);
+document.documentElement.style.setProperty(
+  "--auxiliary-bar-height",
+  `${BROWSER_AUXILIARY_BAR_HEIGHT}px`,
+);
 const bridge = (window as unknown as { browserWindow: BrowserWindowBridge })
   .browserWindow;
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -21,12 +31,20 @@ const label = (id: string, value: string) => {
 };
 function render(state: BrowserState) {
   const wasFinding = current?.finding;
+  const wasAddressOpen = current?.addressOpen;
   current = state;
   document.title = state.title || "Nuwax";
   document.body.classList.toggle("dark", state.dark);
+  document.body.dataset.platform = state.platform;
+  element("windowControls").hidden = state.platform === "darwin";
+  const restored = state.maximized || state.fullscreen;
+  element("maximizeIcon").toggleAttribute("hidden", restored);
+  element("restoreIcon").toggleAttribute("hidden", !restored);
   element("title").textContent = state.title;
   element("domain").textContent = state.domain;
-  element("location").title = state.url;
+  element("location").setAttribute("aria-expanded", String(state.addressOpen));
+  element("address").hidden = !state.addressOpen;
+  element<HTMLInputElement>("url").value = state.url;
   element<HTMLButtonElement>("back").disabled = !state.canGoBack;
   element<HTMLButtonElement>("forward").disabled = !state.canGoForward;
   element("reload").textContent = state.loading ? "×" : "↻";
@@ -44,8 +62,13 @@ function render(state: BrowserState) {
     next: "findNext",
     closefind: "close",
     location: "url",
+    copyLink: "copy",
+    minimize: "minimize",
+    closeWindow: "close",
   }))
     label(id, l[key]);
+  element("location").title = `${l.url}: ${state.url}`;
+  label("maximize", l[restored ? "restore" : "maximize"]);
   label("reload", l[state.loading ? "stop" : "reload"]);
   label("pin", l[state.pinned ? "unpin" : "pin"]);
   element<HTMLInputElement>("query").placeholder = l.find;
@@ -53,11 +76,20 @@ function render(state: BrowserState) {
   element("urlLabel").textContent = l.url;
   for (const id of ["retry", "external", "copy"])
     element(id).textContent = l[id];
-  element("copyUrl").textContent = l.copy;
   label("closeAddress", l.close);
   if (state.finding && !wasFinding) {
     element<HTMLInputElement>("query").focus();
     element<HTMLInputElement>("query").select();
+  }
+  if (state.addressOpen && !wasAddressOpen) {
+    element<HTMLInputElement>("url").focus();
+    element<HTMLInputElement>("url").select();
+  } else if (
+    !state.addressOpen &&
+    wasAddressOpen &&
+    document.activeElement?.closest("#address")
+  ) {
+    element("location").focus();
   }
 }
 button("back", () => run({ type: "back" }));
@@ -68,13 +100,14 @@ button("pin", () => run({ type: "pin" }));
 button("retry", () => run({ type: "reload" }));
 button("external", () => run({ type: "external" }));
 button("copy", () => run({ type: "copy" }));
-button("copyUrl", () => run({ type: "copy" }));
-button("location", () => {
-  element<HTMLInputElement>("url").value = current?.url ?? "";
-  element<HTMLDialogElement>("address").showModal();
-  element<HTMLInputElement>("url").select();
-});
-button("closeAddress", () => element<HTMLDialogElement>("address").close());
+button("copyLink", () => run({ type: "copy" }));
+button("location", () =>
+  run({ type: current?.addressOpen ? "address-close" : "address-open" }),
+);
+button("closeAddress", () => run({ type: "address-close" }));
+button("minimize", () => run({ type: "window-minimize" }));
+button("maximize", () => run({ type: "window-maximize" }));
+button("closeWindow", () => run({ type: "window-close" }));
 const find = (forward = true, next = false) =>
   run({
     type: "find",
