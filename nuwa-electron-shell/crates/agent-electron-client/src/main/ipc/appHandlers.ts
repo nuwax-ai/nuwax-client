@@ -249,7 +249,7 @@ export function registerAppHandlers(ctx: HandlerContext): void {
     if (!canUseUpdater(event))
       return { hasUpdate: false, error: "untrusted sender" };
     try {
-      return await checkForUpdates();
+      return await checkForUpdates({ background: true });
     } catch (error) {
       log.error("[IPC] updater:check failed:", error);
       return { hasUpdate: false, error: String(error) };

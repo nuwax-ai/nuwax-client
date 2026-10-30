@@ -31,6 +31,9 @@ const mockAppRelaunch = vi.fn();
 const mockAppQuit = vi.fn();
 const mockShowMessageBox = vi.fn();
 const mockInstallLinuxDeb = vi.fn();
+const mockPushGuestState = vi.fn();
+
+vi.mock("./hostActivity", () => ({ sendToMainWindowGuests: (...args: unknown[]) => mockPushGuestState(...args) }));
 
 vi.mock("fs", () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
@@ -134,6 +137,30 @@ async function importFreshWithUpdaterMock() {
   const mod = await importFresh();
   mod._setAutoUpdaterModuleLoaderForTest(fakeElectronUpdaterModule);
   return mod;
+}
+
+/** net.request 回放一份 latest.json 响应 */
+function respondLatestJson(latest: Record<string, unknown>, chunks = [Buffer.from(JSON.stringify(latest))]) {
+  mockNetRequest.mockImplementation((() => {
+    const listeners: Record<string, (arg?: unknown) => void> = {};
+    return {
+      on: (event: string, cb: (arg?: unknown) => void) => {
+        listeners[event] = cb;
+      },
+      abort: vi.fn(),
+      end: () => {
+        queueMicrotask(() => {
+          listeners.response?.({
+            statusCode: 200,
+            on: (event: string, cb: (arg?: unknown) => void) => {
+              if (event === "data") chunks.forEach((chunk) => cb(chunk));
+              if (event === "end") cb();
+            },
+          });
+        });
+      },
+    };
+  }) as any);
 }
 
 /** 让 process.platform 模拟为 win32 */
@@ -834,29 +861,6 @@ describe("后台静默检查（checkForUpdates({background:true})）", () => {
     });
   }
 
-  /** net.request 回放一份 latest.json 响应 */
-  function respondLatestJson(latest: Record<string, unknown>, chunks = [Buffer.from(JSON.stringify(latest))]) {
-    mockNetRequest.mockImplementation((() => {
-      const listeners: Record<string, (arg?: unknown) => void> = {};
-      return {
-        on: (event: string, cb: (arg?: unknown) => void) => {
-          listeners[event] = cb;
-        },
-        abort: vi.fn(),
-        end: () => {
-          queueMicrotask(() => {
-            listeners.response?.({
-              statusCode: 200,
-              on: (event: string, cb: (arg?: unknown) => void) => {
-                if (event === "data") chunks.forEach((chunk) => cb(chunk));
-                if (event === "end") cb();
-              },
-            });
-          });
-        },
-      };
-    }) as any);
-  }
 
   it.each([1, 2, 3, 4, 7])("preserves UTF-8 release notes across %d-byte chunks", async (chunkSize) => {
     const latest = {
@@ -960,6 +964,9 @@ describe("后台静默检查（checkForUpdates({background:true})）", () => {
     expect(state.status).toBe("available");
     expect(state.version).toBe("0.9.5");
     expect(state.releaseNotes).toBe("release notes");
+    expect(mockPushGuestState).toHaveBeenLastCalledWith("update:status", {
+      ...state, hostVersion: mockAppVersion(),
+    });
   });
 
   it("成功路径推 available 并携带全量元数据", async () => {
@@ -1048,8 +1055,10 @@ describe("后台复检调度器（initAutoUpdater）", () => {
     const mod = await importFreshWithUpdaterMock();
     mod.initAutoUpdater(() => null);
 
-    // 进入 downloading 态（electron-updater mock 不发事件，状态停在 downloading）
+    // 进入 downloading 态后，不再改写当前下载目标。
+    respondLatestJson({ version: "0.9.5" });
     await mod.downloadUpdate();
+    mockNetRequest.mockClear();
     expect(mod.getUpdateState().status).toBe("downloading");
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -1324,7 +1333,7 @@ describe("Windows / macOS 可选一键更新策略", () => {
     handler(info);
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     mockWin32();
     mockExistsSync.mockImplementation((file) =>
@@ -1334,6 +1343,9 @@ describe("Windows / macOS 可选一键更新策略", () => {
     mockUpdaterDownloadUpdate.mockReset();
     mockUpdaterQuitAndInstall.mockReset();
     mockUpdaterCheckForUpdates.mockReset();
+    const { readSetting } = await import("../db");
+    vi.mocked(readSetting).mockReturnValue("stable");
+    respondLatestJson({ version: "0.9.5" });
     mockShowMessageBox.mockReset().mockResolvedValue({ response: 0 });
     mockUpdaterDownloadUpdate.mockImplementation(async () => {
       emit("update-downloaded", {
@@ -1372,6 +1384,68 @@ describe("Windows / macOS 可选一键更新策略", () => {
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
   });
 
+  it("已发现旧版本后再发布多个版本，下载前改用最新 feed 和发布说明", async () => {
+    const { mod } = await setup(false);
+    await mod.checkForUpdates({ background: true });
+    respondLatestJson({
+      version: "0.9.8",
+      notes: "latest notes",
+      pub_date: "2026-10-30T00:00:00Z",
+      yml: { win: "https://example.invalid/v0.9.8/latest.yml" },
+    });
+    mockUpdaterDownloadUpdate.mockImplementation(async () => {
+      expect(mockUpdaterSetFeedURL).toHaveBeenLastCalledWith({
+        provider: "generic", url: "https://example.invalid/v0.9.8/",
+      });
+      emit("update-downloaded", { version: "0.9.8", downloadedFile: "C:/cache/update.exe" });
+    });
+    expect(await mod.downloadUpdate()).toEqual({ success: true });
+    expect(mod.getUpdateState()).toMatchObject({
+      status: "downloaded", version: "0.9.8", releaseNotes: "latest notes",
+      releaseDate: "2026-10-30T00:00:00Z",
+    });
+  });
+
+  it("下载等待在途检查，两个下载入口只下载一次且检查期间不提前下载", async () => {
+    const { mod } = await setup(false);
+    let finishCheck!: () => void;
+    mockUpdaterCheckForUpdates.mockImplementationOnce(() => new Promise<void>((resolve) => { finishCheck = resolve; }));
+    const firstCheck = mod.checkForUpdates({ background: true });
+    const secondCheck = mod.checkForUpdates({ background: true });
+    await vi.waitFor(() => expect(finishCheck).toBeTypeOf("function"));
+    const firstDownload = mod.downloadUpdate();
+    const secondDownload = mod.downloadUpdate();
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    finishCheck();
+    const results = await Promise.all([firstCheck, secondCheck, firstDownload, secondDownload]);
+    expect(results[0]).toMatchObject({ hasUpdate: true, version: "0.9.5" });
+    expect(results[1]).toEqual(results[0]);
+    expect(mockUpdaterCheckForUpdates).toHaveBeenCalledTimes(1);
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("核对最新目标失败时不下载、不安装，网络恢复后可重试", async () => {
+    const { mod, cleanup } = await setup();
+    mockNetRequest.mockImplementationOnce(() => { throw new Error("offline"); });
+    expect(await mod.downloadUpdate()).toMatchObject({ success: false, error: "offline" });
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(mod.getUpdateState()).toMatchObject({ status: "error", version: "0.9.5" });
+    expect(await mod.downloadUpdate()).toEqual({ success: true });
+  });
+
+  it("正在下载和已下载时手动检查也不能改写目标", async () => {
+    const { mod } = await setup(false);
+    mockUpdaterDownloadUpdate.mockImplementationOnce(async () => {});
+    await mod.downloadUpdate();
+    mockUpdaterCheckForUpdates.mockClear();
+    expect(await mod.checkForUpdates()).toMatchObject({ alreadyChecking: true });
+    emit("update-downloaded", { version: "0.9.5" });
+    expect(await mod.checkForUpdates()).toMatchObject({ alreadyChecking: true });
+    expect(mockUpdaterCheckForUpdates).not.toHaveBeenCalled();
+  });
+
   it("一次下载操作串起校验、清理、可见安装，并保留当前目录", async () => {
     const { mod, cleanup } = await setup();
     expect(await mod.downloadUpdate()).toEqual({ success: true });
@@ -1402,7 +1476,7 @@ describe("Windows / macOS 可选一键更新策略", () => {
     expect(await mod.checkForUpdates()).toMatchObject({
       alreadyChecking: true,
     });
-    expect(mockUpdaterCheckForUpdates).not.toHaveBeenCalled();
+    expect(mockUpdaterCheckForUpdates).toHaveBeenCalledTimes(1);
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
     finish();
     await Promise.all([first, second]);

@@ -29,6 +29,7 @@ import { readSetting } from "../db";
 import { compareVersions } from "./system/dependencyUtils";
 import { t } from "./i18n";
 import { installLinuxDeb } from "./linuxDebInstaller";
+import { sendToMainWindowGuests } from "./hostActivity";
 import {
   getWindowsDownloadUrl,
   getMacosDownloadUrl,
@@ -492,6 +493,7 @@ let linuxDebInstallInFlight = false;
 let installAfterDownload = false;
 type UpdateResult = { success: boolean; error?: string };
 let updateTask: Promise<UpdateResult> | null = null;
+let downloadTask: Promise<UpdateResult> | null = null;
 
 function usesOneClickUpdate(): boolean {
   return (
@@ -506,6 +508,10 @@ function sendStatusToRenderer(): void {
   if (win && !win.isDestroyed()) {
     win.webContents.send("update:status", currentState);
   }
+  sendToMainWindowGuests("update:status", {
+    ...currentState,
+    hostVersion: app.getVersion(),
+  });
 }
 
 /**
@@ -528,37 +534,35 @@ function setState(patch: Partial<UpdateState>): void {
 
 // ==================== latest.json 更新检查 ====================
 
-let checkInProgress = false;
+let checkTask: Promise<UpdateInfo> | null = null;
 
 export type CheckOptions = UpdateCheckOptions;
 
 /**
- * 通过 OSS latest.json 检查更新
- *
- * 流程：
- * 1. 拉取 latest.json 获取最新版本号和 signature
- * 2. 与本地版本比较
- * 3. 如果有更新，设置 electron-updater feedURL 指向版本化 OSS 路径，
- *    并调用 autoUpdater.checkForUpdates() 初始化 electron-updater 下载状态
- * 4. OSS 不可达时直接报错，不 fallback 到 GitHub
+ * 所有检查入口共用在途任务，避免不同 feed 与元数据交错。
+ * 下载前也通过此处核对，绕过公开入口的下载任务互斥保护。
  */
-async function checkForUpdatesViaLatestJson(
-  options: CheckOptions = {},
-): Promise<UpdateInfo> {
-  if (checkInProgress) {
-    log.info("[AutoUpdater] Check already in progress, skipping");
-    // 返回 alreadyChecking: true，让调用方知道检查正在进行，避免误报"当前已是最新版本"
-    return { hasUpdate: false, alreadyChecking: true };
-  }
-  checkInProgress = true;
+function runUpdateCheck(options: CheckOptions = {}): Promise<UpdateInfo> {
+  if (checkTask) return checkTask;
   suppressUpdaterStatusEvents = options.background === true;
-
-  try {
-    return await doCheckViaLatestJson(options);
-  } finally {
-    checkInProgress = false;
-    suppressUpdaterStatusEvents = false;
-  }
+  checkTask = Promise.resolve()
+    .then(() => doCheckForUpdates(options))
+    .catch((err: Error) => {
+      log.error("[AutoUpdater] Check failed:", err.message);
+      if (!options.background) {
+        setState({
+          status: "error",
+          error: err.message,
+          canAutoUpdate: canAutoUpdate(),
+        });
+      }
+      return { hasUpdate: false, error: err.message };
+    })
+    .finally(() => {
+      checkTask = null;
+      suppressUpdaterStatusEvents = false;
+    });
+  return checkTask;
 }
 
 async function doCheckViaLatestJson(
@@ -663,6 +667,7 @@ async function doCheckViaLatestJson(
       version: latestJson.version,
       releaseDate: latestJson.pub_date,
       releaseNotes: latestJson.notes,
+      progress: undefined,
       error: undefined,
       isReadOnlyVolumeError: undefined,
       canAutoUpdate: canAutoUpdate(),
@@ -836,7 +841,7 @@ export function initAutoUpdater(
     });
   });
 
-  // 后台定时复检：启动 10s 首查（静默失败），此后按固定间隔轮询，托盘常驻/长会话
+  // 后台定时复检：启动 1s 首查（静默失败），此后按固定间隔轮询，托盘常驻/长会话
   // 也能发现新版本；发现新版只推状态亮徽标（available），下载仍由用户手动触发。
   scheduleBackgroundCheck(STARTUP_CHECK_DELAY_MS);
 
@@ -855,7 +860,7 @@ export function initAutoUpdater(
 
 /** 启动后首查延迟：留 1s 给应用初始化，同时尽早更新版本状态。 */
 const STARTUP_CHECK_DELAY_MS = 1_000;
-/** 默认复检间隔 1h */
+/** 默认复检间隔 1h；使用过程中的额外补查由前台触发。 */
 const DEFAULT_RECHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** 复检间隔下限：env 误配成极小值时防打爆 OSS */
 const MIN_RECHECK_INTERVAL_MS = 60_000;
@@ -1057,19 +1062,23 @@ export async function showUpdateDialogFlow(): Promise<void> {
 // ==================== 公开 API ====================
 
 /**
- * 手动检查更新（通过 latest.json）；background 选项仅供后台调度器复用，
- * IPC 手动入口不传，行为不变（失败置 error 态供关于页/徽标展示重试）
+ * 检查更新；后台、关于页和主页复用在途请求，下载/安装期间固定当前目标。
  */
 export async function checkForUpdates(
   options: CheckOptions = {},
 ): Promise<UpdateInfo> {
-  if (updateTask) {
+  if (
+    updateTask ||
+    downloadTask ||
+    ["downloading", "downloaded", "installing"].includes(currentState.status)
+  ) {
     return {
       hasUpdate: !!currentState.version,
       version: currentState.version,
       alreadyChecking: true,
     };
   }
+  if (checkTask) return checkTask;
   if (options.background && shouldSkipBackgroundCheck(currentState.status)) {
     log.info(
       "[AutoUpdater] Background check skipped (status=%s)",
@@ -1081,6 +1090,10 @@ export async function checkForUpdates(
     };
   }
 
+  return runUpdateCheck(options);
+}
+
+async function doCheckForUpdates(options: CheckOptions): Promise<UpdateInfo> {
   // 自定义更新源（本地测试用）直接走 electron-updater，适用于 stable 通道
   // beta 通道始终走 doCheckViaLatestJson，确保 feedURL 指向 beta-build 路径
   if (process.env.NUWAX_UPDATE_SERVER && getUpdateChannel() === "stable") {
@@ -1148,7 +1161,7 @@ export async function checkForUpdates(
     }
   }
 
-  return checkForUpdatesViaLatestJson(options);
+  return doCheckViaLatestJson(options);
 }
 
 /**
@@ -1196,7 +1209,17 @@ function runOneClickUpdate(): Promise<UpdateResult> {
   return updateTask;
 }
 
-async function downloadOnlyUpdate(): Promise<UpdateResult> {
+function downloadOnlyUpdate(): Promise<UpdateResult> {
+  if (downloadTask) return downloadTask;
+  downloadTask = Promise.resolve()
+    .then(() => doDownloadOnlyUpdate())
+    .finally(() => {
+      downloadTask = null;
+    });
+  return downloadTask;
+}
+
+async function doDownloadOnlyUpdate(): Promise<UpdateResult> {
   // Dev 模式下 Squirrel.Mac 无法处理更新包（bundle ID 不匹配），只允许检查更新
   if (!app.isPackaged) {
     const errMsg = t("Claw.AutoUpdater.devModeUnsupported");
@@ -1222,6 +1245,18 @@ async function downloadOnlyUpdate(): Promise<UpdateResult> {
   }
 
   try {
+    // 用户查看日志后仍可能继续发布。重新解析通道指针并准备最新 feed，
+    // 若已有检查则等待它完成；无法确认目标时不沿用旧下载信息。
+    const latest = await runUpdateCheck({ background: true });
+    if (!latest.hasUpdate || latest.error) {
+      if (latest.error) {
+        setState({ status: "error", error: latest.error, progress: undefined });
+      }
+      return {
+        success: false,
+        error: latest.error ?? t("Claw.AutoUpdater.alreadyLatest"),
+      };
+    }
     // 立即设置 downloading 状态，让渲染进程马上显示 loading
     setState({
       status: "downloading",

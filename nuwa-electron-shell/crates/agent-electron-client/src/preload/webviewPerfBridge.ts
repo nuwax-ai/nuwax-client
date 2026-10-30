@@ -273,6 +273,14 @@ const updater = {
   getState(): Promise<ClientUpdateState | null> {
     return ipcRenderer.invoke("updater:get-state");
   },
+  onStateChange(listener: (state: ClientUpdateState) => void): () => void {
+    const receive = (
+      _event: Electron.IpcRendererEvent,
+      state: ClientUpdateState,
+    ) => listener(state);
+    ipcRenderer.on("update:status", receive);
+    return () => ipcRenderer.removeListener("update:status", receive);
+  },
   /** 触发一次更新检查（与关于页「检查更新」同源）。 */
   check(): Promise<ClientUpdateCheckResult | null> {
     return ipcRenderer.invoke("updater:check");

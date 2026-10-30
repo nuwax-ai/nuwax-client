@@ -139,12 +139,17 @@ function emitToGuests(visible: boolean, only?: WebContents): void {
  * 的 guest——菜单动作语义即"作用于主界面"，二级窗口的 guest 不在此列。
  */
 export function sendHostCommandToMainWindowGuests(payload: unknown): void {
+  sendToMainWindowGuests(HOST_COMMAND_CHANNEL, payload);
+}
+
+/** 主窗口业务 guest 的状态通知；仅主进程内部调用，通道不由页面输入。 */
+export function sendToMainWindowGuests(channel: string, payload: unknown): void {
   for (const guest of [...guests]) {
     if (guest.isDestroyed()) {
       detachGuest(guest);
       continue;
     }
-    guest.send(HOST_COMMAND_CHANNEL, payload);
+    guest.send(channel, payload);
   }
 }
 

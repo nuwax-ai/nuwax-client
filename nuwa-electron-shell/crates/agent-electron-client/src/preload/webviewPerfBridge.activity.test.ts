@@ -9,6 +9,9 @@ vi.mock("electron", () => ({
   contextBridge: { exposeInMainWorld: (name: string, api: unknown) => exposed.set(name, api) },
   ipcRenderer: {
     on: (channel: string, handler: (event: unknown, payload: unknown) => void) => listeners.set(channel, handler),
+    removeListener: (channel: string, handler: unknown) => {
+      if (listeners.get(channel) === handler) listeners.delete(channel);
+    },
     send,
     invoke: vi.fn(),
   },
@@ -30,6 +33,16 @@ beforeEach(() => send.mockClear());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("host activity state synchronization", () => {
+  it("更新状态推送交给 updater 订阅者，注销后停止接收", async () => {
+    await loadDocument();
+    const callback = vi.fn();
+    const unsubscribe = exposed.get("NuwaClawBridge").updater.onStateChange(callback);
+    const state = { status: "available", hostVersion: "3.1.0", version: "3.1.1" };
+    listeners.get("update:status")!({}, state);
+    expect(callback).toHaveBeenCalledWith(state);
+    unsubscribe();
+    expect(listeners.has("update:status")).toBe(false);
+  });
   it("订阅前只保存最新可见状态，新建任务动作不会重放", async () => {
     const events = await loadDocument();
     emit({ type: "new-task" });
