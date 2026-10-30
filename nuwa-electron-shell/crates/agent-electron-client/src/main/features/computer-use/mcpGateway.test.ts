@@ -57,18 +57,20 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
     socket.write(JSON.stringify({ token, grant }) + "\n");
     cleanups.push(() => { socket.destroy(); });
     const replies = new Map<number, (value: any) => void>();
+    const received: any[] = [];
     let buffer = "", counter = 0;
     socket.on("data", (chunk) => {
       buffer += chunk;
       while (buffer.includes("\n")) {
         const end = buffer.indexOf("\n");
         const reply = JSON.parse(buffer.slice(0, end));
+        received.push(reply);
         buffer = buffer.slice(end + 1);
         replies.get(reply.id)?.(reply);
         replies.delete(reply.id);
       }
     });
-    const peer = { socket, request(method: string, params?: any): Promise<any> {
+    const peer = { socket, received, request(method: string, params?: any): Promise<any> {
       const id = ++counter;
       return new Promise((resolve) => {
         replies.set(id, resolve);
@@ -82,6 +84,83 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("returns an actionable refusal for a paused task instead of waiting on a different window", async () => {
+    const { tasks: registry, a } = tasks();
+    const f = await fixture(3000, grant => typeof grant === "string" ? grant : null, undefined, registry);
+    const peer = await f.client("test-token", true, "A");
+    registry.pauseTask(a.id, "userTakingControl");
+    const response = await Promise.race([
+      peer.request("tools/call", { name: "get_window_state", arguments: { pid: 99, window_id: 999 } }),
+      new Promise(resolve => setTimeout(() => resolve(null), 500)),
+    ]);
+    expect(response).toMatchObject({ result: { isError: true, structuredContent: { code: "userTakingControl", retryable: false } } });
+    expect(JSON.stringify(response)).toContain("Do not switch windows");
+    expect(f.dispatches).not.toHaveBeenCalled();
+    expect(registry.stateForOwner("A")?.scope?.windowId).toBe(100);
+    expect(registry.stateForOwner("B")?.phase).toBe("running");
+  });
+
+  it("bounds target-selection waiting without consuming the task budget or dispatching stale work", async () => {
+    const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+    const f = await fixture(3000, () => "A", undefined, registry, { humanWaitTimeoutMs: 30 });
+    const peer = await f.client("test-token", true, "A");
+    const response = await Promise.race([
+      peer.request("tools/call", { name: "get_window_state" }),
+      new Promise(resolve => setTimeout(() => resolve(null), 500)),
+    ]);
+    expect(response).toMatchObject({ result: { structuredContent: { code: "operationPaused" } } });
+    expect(registry.stateForOwner("A")).toMatchObject({ phase: "paused", reason: "targetRequired", stepCount: 0 });
+    expect(f.dispatches).not.toHaveBeenCalled();
+    const task = registry.ensure("A");
+    registry.bind(task.id, { pid: 10, windowId: 100, label: "A" }); registry.resumeTask(task.id);
+    expect((await peer.request("tools/call", { name: "get_window_state" })).result.isError).toBe(false);
+    expect(f.dispatches).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("bounds an in-flight human pause before the model's MCP timeout (multiwindow=%s)", async multiwindow => {
+    const registry = multiwindow ? tasks().tasks : undefined;
+    const f = await fixture(3000, multiwindow ? () => "A" : undefined, undefined, registry, { humanWaitTimeoutMs: 30 });
+    const peer = await f.client("test-token", true, "A");
+    await peer.request("tools/call", { name: "get_window_state" });
+    const pending = peer.request("tools/call", { name: "click", arguments: { element_index: 0, hang: true } });
+    await vi.waitFor(() => expect(f.controller.snapshot().steps.at(-1)?.tool).toBe("click"));
+    if (registry) {
+      registry.pauseTask(registry.ensure("A").id); f.gateway.holdOwner("A", "userPaused");
+    } else {
+      f.controller.pause(); f.gateway.cancelPending("userPaused"); f.gateway.pauseTransports();
+    }
+    const response = await Promise.race([pending, new Promise(resolve => setTimeout(() => resolve(null), 500))]);
+    expect(response).toMatchObject({ result: { structuredContent: { code: "operationPaused" } } });
+    expect(registry ? registry.stateForOwner("A")?.phase : f.controller.snapshot().phase).toBe("paused");
+    expect(f.results).toHaveBeenCalledTimes(1);
+    if (registry) await f.gateway.ownerDrained("A");
+  });
+
+  it("keeps the native lease after the waiting reply ends until drain is confirmed", async () => {
+    const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+    const a = registry.ensure("A"), b = registry.ensure("B");
+    registry.bind(a.id, { pid: 10, windowId: 100, label: "A" }); registry.resumeTask(a.id);
+    registry.bind(b.id, { pid: 10, windowId: 200, label: "B" }); registry.resumeTask(b.id);
+    const f = await fixture(3000, grant => typeof grant === "string" ? grant : null, undefined, registry, { humanWaitTimeoutMs: 30 });
+    const ca = await f.client("test-token", true, "A"), cb = await f.client("test-token", true, "B");
+    await ca.request("tools/call", { name: "get_window_state" });
+    const hanging = ca.request("tools/call", { name: "click", arguments: { element_index: 0, hang: true } });
+    await vi.waitFor(() => expect(f.dispatches).toHaveBeenCalledTimes(2));
+    registry.pauseTask(a.id); f.gateway.holdOwner("A", "userPaused");
+    expect((await hanging).result.structuredContent.code).toBe("operationPaused");
+    const finishedId = ca.received.at(-1).id;
+    registry.stopTask(a.id); f.gateway.holdOwner("A", "userStopped");
+    f.gateway.cancelPending("sessionEnded");
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(ca.received.filter(reply => reply.id === finishedId)).toHaveLength(1);
+    const other = cb.request("tools/call", { name: "get_window_state" });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(f.dispatches).toHaveBeenCalledTimes(2);
+    await f.gateway.ownerDrained("A");
+    expect((await other).result.isError).toBe(false);
+    expect(f.dispatches).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps host element metadata out of the native token-only protocol", async () => {
     const f = await fixture(); const peer = await f.client();
     await peer.request("tools/list");
@@ -143,17 +222,14 @@ describe("multi-window MCP transport", () => {
     expect(f.results).toHaveBeenCalledTimes(1);
     expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
   });
-  it("keeps the next desktop call waiting when the user paused while the model was thinking", async () => {
+  it("returns the pause reason to a new desktop call without dispatching or waiting", async () => {
     const f = await fixture();
     const peer = await f.client();
     await peer.request("tools/call", { name: "get_desktop_state" });
     f.controller.pause("userPaused"); f.gateway.pauseTransports();
     const pending = peer.request("tools/call", { name: "click" });
-    let answered = false; void pending.then(() => { answered = true; });
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(answered).toBe(false);
+    expect((await pending).result.structuredContent.code).toBe("userPaused");
     await f.gateway.resumeTransports(); (f.controller as CuaTaskController).resume();
-    expect((await pending).result.structuredContent.code).toBe("operationPaused");
     expect(f.results).toHaveBeenCalledTimes(1);
     expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
   });
@@ -359,10 +435,10 @@ describe("CUA MCP gateway over real local sockets", () => {
     await a.request("tools/call", { name: "get_desktop_state" });
     f.controller.pause(); f.gateway.pauseTransports();
     const paused = a.request("tools/call", { name: "click" });
+    expect((await paused).result.structuredContent.code).toBe("userPaused");
     expect((await a.request("ping")).error.message).toContain("userPaused");
     await f.gateway.resumeTransports();
     expect(f.controller.resume()).toBe(true);
-    expect((await paused).result.structuredContent.code).toBe("operationPaused");
     expect((await a.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("observationRequired");
     await a.request("tools/call", { name: "get_desktop_state" });
     expect((await a.request("tools/call", { name: "click" })).result.isError).toBe(false);
