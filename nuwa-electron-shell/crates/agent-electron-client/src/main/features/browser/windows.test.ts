@@ -7,7 +7,7 @@ describe("browser window chrome", () => {
       frame: true,
       titleBarStyle: "hidden",
       titleBarOverlay: false,
-      trafficLightPosition: { x: 16, y: 18 },
+      trafficLightPosition: { x: 16, y: 11 },
     });
   });
   it.each(["win32", "linux"] as const)(

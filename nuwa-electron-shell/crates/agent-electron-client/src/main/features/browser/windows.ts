@@ -79,7 +79,9 @@ export function browserWindowChrome(
     titleBarStyle: platform === "darwin" ? "hidden" : "default",
     titleBarOverlay: false,
     ...(platform === "darwin"
-      ? { trafficLightPosition: { x: 16, y: 18 } }
+      ? {
+          trafficLightPosition: { x: 16, y: (BROWSER_TOOLBAR_HEIGHT - 14) / 2 },
+        }
       : {}),
     hasShadow: true,
     autoHideMenuBar: true,
@@ -123,6 +125,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
   const entries = new Map<number, Entry>();
   let disposed = false;
   const labels = () => ({
+    loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
     ...Object.fromEntries(
       LABELS.map((key) => [key, ctx.translate?.(`Claw.Browser.${key}`) ?? key]),
     ),
@@ -149,6 +152,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
     entry.state.canGoBack = wc.navigationHistory.canGoBack();
     entry.state.canGoForward = wc.navigationHistory.canGoForward();
     entry.state.loading = wc.isLoading();
+    entry.state.initialLoading =
+      entry.state.loading && !entry.hasDocument && !entry.state.error;
     entry.state.zoom = Math.round(wc.getZoomFactor() * 100);
     entry.state.pinned = entry.window.isAlwaysOnTop();
     entry.state.maximized = entry.window.isMaximized();
@@ -165,8 +170,11 @@ export function createBrowserWindows(ctx: FeatureContext) {
     if (
       !entry.showing &&
       entry.toolbarReady &&
-      (entry.hasDocument || entry.state.error) &&
-      !entry.window.isDestroyed()
+      !entry.window.isDestroyed() &&
+      !entry.contents.isDestroyed() &&
+      (entry.hasDocument ||
+        entry.state.error ||
+        (entry.state.loading && webUrl(entry.state.url)))
     ) {
       entry.showing = true;
       entry.window.show();
@@ -230,10 +238,11 @@ export function createBrowserWindows(ctx: FeatureContext) {
           wc.navigationHistory.goForward();
         break;
       case "reload": {
-        const failedUrl = entry.state.error && webUrl(entry.state.url);
+        const pendingUrl =
+          (entry.state.error || !entry.hasDocument) && webUrl(entry.state.url);
         entry.state.error = null;
-        entry.page.view.setVisible(true);
-        if (failedUrl) void wc.loadURL(failedUrl).catch(() => {});
+        entry.page.view.setVisible(entry.hasDocument);
+        if (pendingUrl) void wc.loadURL(pendingUrl).catch(() => {});
         else wc.reload();
         break;
       }
@@ -458,7 +467,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       toolbarUrl,
       toolbarReady: false,
       showing: false,
-      hasDocument: false,
+      hasDocument: !!webUrl(wc.getURL()),
       query: "",
       findRequest: -1,
       state: {
@@ -466,6 +475,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         url: options.initialUrl ?? "",
         domain: "",
         loading: true,
+        initialLoading: true,
         canGoBack: false,
         canGoForward: false,
         zoom: 100,
@@ -487,6 +497,9 @@ export function createBrowserWindows(ctx: FeatureContext) {
         dark: false,
       },
     };
+    // The native page sits above the toolbar renderer. Keep about:blank hidden
+    // so the local loading UI can paint while the server has not responded.
+    page.view.setVisible(entry.hasDocument);
     const toolbarId = win.webContents.id;
     entries.set(toolbarId, entry);
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -505,15 +518,22 @@ export function createBrowserWindows(ctx: FeatureContext) {
         entry.query = "";
         entry.findRequest = -1;
         entry.state.matches = entry.state.activeMatch = 0;
-        page.view.setVisible(true);
+        page.view.setVisible(entry.hasDocument);
       }
       push(entry);
+      show(entry);
     });
     wc.on("did-navigate", () => {
+      if (!webUrl(wc.getURL())) return;
       entry.hasDocument = true;
+      page.view.setVisible(true);
       push(entry);
+      show(entry);
     });
-    const update = () => push(entry);
+    const update = () => {
+      push(entry);
+      show(entry);
+    };
     win.on("maximize", update);
     win.on("unmaximize", update);
     win.on("enter-full-screen", update);
@@ -527,7 +547,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
       show(entry);
     });
     wc.on("did-finish-load", () => {
-      entry.hasDocument = true;
+      entry.hasDocument ||= !!webUrl(wc.getURL());
+      page.view.setVisible(entry.hasDocument && !entry.state.error);
       push(entry);
       show(entry);
     });

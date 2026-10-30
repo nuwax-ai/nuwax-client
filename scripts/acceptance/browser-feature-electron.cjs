@@ -49,8 +49,29 @@ if (!process.versions.electron) {
     .whenReady()
     .then(async () => {
       const { PageView } = require(path.join(dir, "pageView.cjs"));
+      let releaseFirstDocument;
+      let firstDocumentHeld = false;
+      let firstDocumentRequested;
+      let pendingRetryRequests = 0;
+      const firstRequest = new Promise((resolve) => {
+        firstDocumentRequested = resolve;
+      });
       const server = http.createServer((req, res) => {
         res.setHeader("content-type", "text/html");
+        if (req.url === "/pending-retry" && ++pendingRetryRequests === 1)
+          return;
+        if (req.url === "/pending-close") return;
+        if (req.url === "/toolbar-page" && !releaseFirstDocument) {
+          firstDocumentHeld = true;
+          releaseFirstDocument = () => {
+            firstDocumentHeld = false;
+            res.end(
+              `<title>${req.url}</title><p>Browser compatibility ${req.url}</p>`,
+            );
+          };
+          firstDocumentRequested();
+          return;
+        }
         res.end(
           `<title>${req.url}</title><p>Browser compatibility ${req.url}</p>`,
         );
@@ -131,28 +152,84 @@ if (!process.versions.electron) {
           translate: (key) => messages[key],
           log: console,
         });
-        const managed = controller.open({
-          windowOptions: {
-            width: 1100,
-            height: 740,
-            webPreferences: {
-              session: session.defaultSession,
-              contextIsolation: true,
-              sandbox: true,
-              nodeIntegration: false,
+        const openManaged = () =>
+          controller.open({
+            windowOptions: {
+              width: 1100,
+              height: 740,
+              webPreferences: {
+                session: session.defaultSession,
+                contextIsolation: true,
+                sandbox: true,
+                nodeIntegration: false,
+              },
             },
-          },
-          toolbarUrl: pathToFileURL(path.join(client, "dist/browser.html"))
-            .href,
-          preloadPath: path.join(client, "dist/preload/browserWindow.js"),
-        });
-        if (!process.env.NUWAX_BROWSER_SHOW) managed.window.show = () => {};
+            toolbarUrl: pathToFileURL(path.join(client, "dist/browser.html"))
+              .href,
+            preloadPath: path.join(client, "dist/preload/browserWindow.js"),
+          });
+        const openedAt = performance.now();
+        const managed = openManaged();
+        let shownAt;
+        const nativeShow = managed.window.show.bind(managed.window);
+        managed.window.show = () => {
+          shownAt ??= performance.now();
+          if (process.env.NUWAX_BROWSER_SHOW) nativeShow();
+        };
+        const waitFor = async (condition, timeoutMs = 5000) => {
+          const deadline = Date.now() + timeoutMs;
+          while (!(await condition())) {
+            assert.ok(Date.now() < deadline, "browser state did not settle");
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+        };
         const toolbarReady = once(
           managed.window.webContents,
           "did-finish-load",
         );
-        await managed.contents.loadURL(origin + "/toolbar-page");
-        await toolbarReady;
+        const documentLoaded = managed.contents.loadURL(
+          origin + "/toolbar-page",
+        );
+        await Promise.all([toolbarReady, firstRequest]);
+        const toolbarReadyAt = performance.now();
+        await waitFor(() => shownAt !== undefined, 1500);
+        assert.equal(
+          firstDocumentHeld,
+          true,
+          "window must show before the server sends its first response",
+        );
+        const pending = await managed.window.webContents.executeJavaScript(
+          "window.browserWindow.getState()",
+        );
+        assert.equal(pending.initialLoading, true);
+        assert.equal(
+          managed.window.contentView.children
+            .find((view) => view.webContents === managed.contents)
+            .getVisible(),
+          false,
+        );
+        assert.equal(
+          await managed.window.webContents.executeJavaScript(
+            "!document.getElementById('loadingState').hidden",
+          ),
+          true,
+        );
+        console.log(
+          JSON.stringify({
+            firstWindowMs: Math.round(shownAt - openedAt),
+            toolbarReadyMs: Math.round(toolbarReadyAt - openedAt),
+            shownBeforeResponse: true,
+          }),
+        );
+        if (process.env.NUWAX_BROWSER_SHOW)
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              process.env.NUWAX_BROWSER_SHOW === "opening" ? 30000 : 8000,
+            ),
+          );
+        releaseFirstDocument();
+        await documentLoaded;
         const command = (cmd) =>
           managed.window.webContents.executeJavaScript(
             `window.browserWindow.command(${JSON.stringify(cmd)})`,
@@ -161,13 +238,6 @@ if (!process.versions.electron) {
           managed.window.webContents.executeJavaScript(
             "window.browserWindow.getState()",
           );
-        const waitFor = async (condition) => {
-          const deadline = Date.now() + 5000;
-          while (!(await condition())) {
-            assert.ok(Date.now() < deadline, "browser state did not settle");
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
-        };
         const click = async (id) => {
           const point = await managed.window.webContents
             .executeJavaScript(`(() => {
@@ -189,18 +259,68 @@ if (!process.versions.electron) {
             .find((view) => view.webContents === managed.contents)
             .getBounds();
         assert.equal((await getState()).url, origin + "/toolbar-page");
+        assert.equal((await getState()).initialLoading, false);
+        assert.equal(
+          managed.window.contentView.children
+            .find((view) => view.webContents === managed.contents)
+            .getVisible(),
+          true,
+        );
         assert.equal(
           await managed.contents.executeJavaScript(
             "typeof window.browserWindow",
           ),
           "undefined",
         );
+        // The new early window must support stop/retry and close even before
+        // its first document exists. reload() alone would reload about:blank.
+        const pendingPage = openManaged();
+        pendingPage.window.show = () => {};
+        const pendingToolbar = once(
+          pendingPage.window.webContents,
+          "did-finish-load",
+        );
+        const pendingLoad = pendingPage.contents
+          .loadURL(origin + "/pending-retry")
+          .catch(() => {});
+        await pendingToolbar;
+        await waitFor(() => pendingRetryRequests === 1);
+        const pendingCommand = (cmd) =>
+          pendingPage.window.webContents.executeJavaScript(
+            `window.browserWindow.command(${JSON.stringify(cmd)})`,
+          );
+        await pendingCommand({ type: "stop" });
+        await pendingLoad;
+        await waitFor(() => !pendingPage.contents.isLoading());
+        await pendingCommand({ type: "reload" });
+        await waitFor(
+          () =>
+            pendingPage.contents.getURL() === origin + "/pending-retry" &&
+            !pendingPage.contents.isLoading(),
+        );
+        assert.equal(pendingRetryRequests, 2);
+        pendingPage.window.destroy();
+        const closingPage = openManaged();
+        closingPage.window.show = () => {};
+        const closingToolbar = once(
+          closingPage.window.webContents,
+          "did-finish-load",
+        );
+        const closingLoad = closingPage.contents
+          .loadURL(origin + "/pending-close")
+          .catch(() => {});
+        await closingToolbar;
+        const closedWhileLoading = once(closingPage.contents, "destroyed");
+        closingPage.window.close();
+        await closedWhileLoading;
+        await closingLoad;
+        assert.equal(closingPage.window.isDestroyed(), true);
         // Native page views sit above the local renderer: URL UI must reserve
         // real view bounds instead of opening an obscured modal/backdrop.
         await managed.contents.loadURL(origin + "/toolbar-next");
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
-        assert.equal(bounds().y, 94);
+        assert.equal(bounds().y, 78);
         assert.equal(
           await managed.window.webContents.executeJavaScript(
             "document.querySelector(':modal') === null",
@@ -245,7 +365,7 @@ if (!process.versions.electron) {
         }
         await click("closeAddress");
         await waitFor(async () => !(await getState()).addressOpen);
-        assert.equal(bounds().y, 52);
+        assert.equal(bounds().y, 36);
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
         managed.window.webContents.sendInputEvent({
@@ -271,7 +391,7 @@ if (!process.versions.electron) {
             await managed.window.webContents.executeJavaScript(`(() => {
             const controls = document.getElementById('windowControls').getBoundingClientRect();
             const menu = document.getElementById('menu').getBoundingClientRect();
-            return controls.width === 138 && controls.right === innerWidth && menu.right <= controls.left;
+            return controls.width === 120 && controls.height === 36 && controls.right === innerWidth && menu.right <= controls.left;
           })()`),
             true,
           );
@@ -288,22 +408,25 @@ if (!process.versions.electron) {
         assert.equal(managed.window.isAlwaysOnTop(), false);
         await command({ type: "find-open" });
         await command({ type: "address-open" });
-        assert.equal(bounds().y, 136);
+        assert.equal(bounds().y, 120);
         await command({ type: "address-close" });
-        assert.equal(bounds().y, 94);
+        assert.equal(bounds().y, 78);
         const found = once(managed.contents, "found-in-page");
         await command({ type: "find", text: "Browser" });
         await found;
         assert.equal((await getState()).matches, 1);
         await command({ type: "find-close" });
-        assert.equal(bounds().y, 52);
+        assert.equal(bounds().y, 36);
         assert.equal(await command({ type: "unknown" }), false);
         if (process.env.NUWAX_BROWSER_SCREENSHOT)
           fs.writeFileSync(
             process.env.NUWAX_BROWSER_SCREENSHOT,
             (await managed.window.capturePage()).toPNG(),
           );
-        if (process.env.NUWAX_BROWSER_SHOW) {
+        if (
+          process.env.NUWAX_BROWSER_SHOW &&
+          process.env.NUWAX_BROWSER_SHOW !== "opening"
+        ) {
           managed.window.show();
           managed.window.focus();
           console.log(
@@ -335,6 +458,8 @@ if (!process.versions.electron) {
             electron: process.versions.electron,
             checks: [
               "load",
+              "show toolbar before delayed first response",
+              "stop/retry and close before first response",
               "history",
               "reload",
               "popup guest adoption/opener",
@@ -354,6 +479,7 @@ if (!process.versions.electron) {
       } finally {
         win.destroy();
         server.close();
+        server.closeAllConnections();
         app.quit();
       }
     })

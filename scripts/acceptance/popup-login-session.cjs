@@ -112,6 +112,9 @@ async function run() {
   const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings, browserFixturePages } = require(bundlePath(temp));
   const pageContents = win => browserFixturePages.get(win.id) ?? win.webContents;
   const requests = [];
+  const downloadBytes = Buffer.from('early browser window download fixture\n'.repeat(128));
+  let releaseDownload;
+  let finishDownload;
   let gatewayOrigin;
   const serve = role => createServer((req, res) => {
     const authenticated = /(?:^|;\s*)ticket=fixture-ticket(?:;|$)/.test(req.headers.cookie || '');
@@ -119,7 +122,15 @@ async function run() {
     const capability = req.headers['x-nuwax-gateway-request'] === 'fixture-gateway-secret';
     const url = new URL(req.url, 'http://fixture');
     requests.push({ role, path: url.pathname, search: url.search, authenticated, thirdPartyAuthenticated, capability, referrer: req.headers.referer || '' });
-    if (url.pathname === '/api/me') {
+    if (role === 'external' && url.pathname === '/browser-download') {
+      releaseDownload = () => {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': downloadBytes.length, 'Content-Disposition': 'attachment; filename="browser-download.bin"' });
+        // Feed Chromium's initial sniff buffer, then hold the remainder so the
+        // visibility assertion runs while a real DownloadItem is in progress.
+        res.write(downloadBytes.subarray(0, 2048));
+        finishDownload = () => res.end(downloadBytes.subarray(2048));
+      };
+    } else if (url.pathname === '/api/me') {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ authenticated, thirdPartyAuthenticated, capability }));
     } else if (url.pathname === '/redirect') {
@@ -222,6 +233,36 @@ async function run() {
         assert((await secondOutside.webContents.executeJavaScript('document.cookie')).includes('external-preference=kept'), 'third-party cookie survives another window');
         secondOutside.destroy();
         console.log(`PASS ${mode}/${type}: external link has its own cookies, no business credentials or bridge`);
+
+        // An ordinary URL can turn out to be a download after the browser has
+        // already appeared. The host must still remove that documentless window.
+        releaseDownload = undefined;
+        const oldIds = new Set(BrowserWindow.getAllWindows().map(win => win.id));
+        const savePath = path.join(temp, `browser-download-${mode}-${type}.bin`);
+        let downloadState;
+        let downloadStarted = false;
+        const onDownload = (_event, item) => {
+          item.setSavePath(savePath);
+          downloadStarted = true;
+          item.once('done', (_done, state) => { downloadState = state; });
+        };
+        session.defaultSession.once('will-download', onDownload);
+        try {
+          await opener.executeJavaScript(`window.open(${JSON.stringify(externalOrigin + '/browser-download')}, '_blank', 'noopener,noreferrer'); void 0;`, true);
+          await waitFor(() => releaseDownload, 'download response is held');
+          const downloadWindow = await waitFor(() => BrowserWindow.getAllWindows().find(win => !oldIds.has(win.id) && win.isVisible()), 'browser appears before download response');
+          releaseDownload();
+          await waitFor(() => downloadStarted, 'download starts');
+          assert.equal(downloadWindow.isVisible(), false, 'a confirmed download hides the loading window');
+          finishDownload();
+          await waitFor(() => downloadState, 'download completes');
+          assert.equal(downloadState, 'completed');
+          assert.deepEqual(await fs.readFile(savePath), downloadBytes);
+          await waitFor(() => downloadWindow.isDestroyed(), 'documentless browser is cleaned up');
+          console.log(`PASS ${mode}/${type}: early browser window cleans up after download`);
+        } finally {
+          session.defaultSession.removeListener('will-download', onDownload);
+        }
 
         // 页面里已有第三方 iframe，不应让无 referrer 的站内 GET 链接失去登录。
         await opener.executeJavaScript(`new Promise(resolve=>{const f=document.createElement('iframe');f.src=${JSON.stringify(externalOrigin + '/embed')};f.onload=()=>resolve(true);document.body.append(f);})`);

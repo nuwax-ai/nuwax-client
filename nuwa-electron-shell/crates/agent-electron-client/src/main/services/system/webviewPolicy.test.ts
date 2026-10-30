@@ -292,6 +292,24 @@ describe("window.open session boundary", () => {
     });
   });
 
+  it.each([false, true])("only the window owner displays and focuses a loaded popup (browser toolbar: %s)", async (withToolbar) => {
+    await setup();
+    const { trackPopupWindow } = await import("./webviewPolicy");
+    const contents = fakeContents("window", `${external}/slow`);
+    const win = {
+      webContents: withToolbar ? fakeContents("window", "file:///app/browser.html") : contents,
+      isDestroyed: () => false,
+      show: vi.fn(), focus: vi.fn(), destroy: vi.fn(), on: vi.fn(),
+    };
+    trackPopupWindow(win as never, undefined, contents as never);
+    for (const event of ["did-navigate", "dom-ready", "did-finish-load"]) {
+      for (const [name, listener] of contents.on.mock.calls)
+        if (name === event) listener({}, `${external}/slow`);
+    }
+    expect(win.show).toHaveBeenCalledTimes(withToolbar ? 0 : 1);
+    expect(win.focus).toHaveBeenCalledTimes(withToolbar ? 0 : 1);
+  });
+
   it.each([business, external])("registers shared-session popup lifecycle for later business navigation: %s", async (target) => {
     const created = await setup();
     const opener = attachedWebview(created, `${business}/home`);

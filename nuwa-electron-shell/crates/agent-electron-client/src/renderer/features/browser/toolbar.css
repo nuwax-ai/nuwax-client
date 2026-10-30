@@ -13,6 +13,10 @@
 }
 body {
   margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 [hidden] {
   display: none !important;
@@ -45,15 +49,23 @@ button:disabled {
   cursor: default;
 }
 #toolbar {
-  height: var(--toolbar-height, 52px);
+  flex-shrink: 0;
+  height: var(--toolbar-height, 36px);
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 12px;
+  box-shadow: inset 0 -1px var(--line);
   background: var(--surface);
   -webkit-app-region: drag;
   user-select: none;
+}
+#toolbar button {
+  height: 28px;
+}
+#toolbar svg {
+  width: 16px;
+  height: 16px;
 }
 body[data-platform="darwin"] #toolbar {
   padding-left: 96px;
@@ -64,12 +76,12 @@ body[data-platform="linux"] #toolbar {
 }
 #windowControls {
   display: flex;
-  margin: -8px 0 -8px 5px;
+  margin-left: 5px;
   align-self: stretch;
-  height: var(--toolbar-height, 52px);
+  height: var(--toolbar-height, 36px);
 }
 #windowControls button {
-  width: 46px;
+  width: 40px;
   height: 100%;
   border-radius: 0;
   padding: 0;
@@ -124,6 +136,7 @@ nav button {
 }
 #findbar,
 #address {
+  flex-shrink: 0;
   height: var(--auxiliary-bar-height, 42px);
   display: flex;
   align-items: center;
@@ -166,6 +179,34 @@ nav button {
 #error {
   text-align: center;
   padding: 90px 24px;
+}
+#loadingState {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+#loadingState::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line);
+  border-top-color: var(--muted);
+  border-radius: 50%;
+  animation: loading-spin 0.9s linear infinite;
+}
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #loadingState::before {
+    animation: none;
+  }
 }
 #error button {
   border: 1px solid var(--line);

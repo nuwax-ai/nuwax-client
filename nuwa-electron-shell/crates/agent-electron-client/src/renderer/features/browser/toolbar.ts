@@ -42,6 +42,7 @@ function render(state: BrowserState) {
   element("restoreIcon").toggleAttribute("hidden", !restored);
   element("title").textContent = state.title;
   element("domain").textContent = state.domain;
+  element("domain").hidden = state.initialLoading;
   element("location").setAttribute("aria-expanded", String(state.addressOpen));
   element("address").hidden = !state.addressOpen;
   element<HTMLInputElement>("url").value = state.url;
@@ -50,6 +51,8 @@ function render(state: BrowserState) {
   element("reload").textContent = state.loading ? "×" : "↻";
   element("pin").setAttribute("aria-pressed", String(state.pinned));
   element("error").hidden = !state.error;
+  element("loadingState").hidden = !state.initialLoading;
+  element("loadingText").textContent = state.labels.loading;
   element("errorMessage").textContent = state.error;
   element("findbar").hidden = !state.finding;
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;

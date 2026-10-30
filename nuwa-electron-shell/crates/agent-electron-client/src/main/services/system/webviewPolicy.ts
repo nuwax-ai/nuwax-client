@@ -290,6 +290,9 @@ export function trackPopupWindow(win: BrowserWindow, opener?: WebContents, conte
     if (parseHttpUrl(url)) state.hasDocument = true;
   });
   const showDocument = () => {
+    // Browser pages own local-toolbar readiness and show immediately while
+    // loading. Do not steal focus again when their remote DOM arrives later.
+    if (contents !== win.webContents) return;
     if (shown || win.isDestroyed() || !parseHttpUrl(contents.getURL())) return;
     shown = true;
     win.show();
@@ -526,7 +529,13 @@ function configureDownloads(ses: Session): void {
   configuredDownloadSessions.add(ses);
   ses.on("will-download", (_event, item, contents) => {
     const popup = contents ? popupWindows.get(contents) : undefined;
-    if (popup) popup.downloads++;
+    if (popup) {
+      popup.downloads++;
+      // A slow ordinary URL may have displayed its loading toolbar before the
+      // response proved to be a download. Hide it until terminal cleanup.
+      if (!popup.hasDocument && contents !== popup.window.webContents && !popup.window.isDestroyed())
+        popup.window.hide();
+    }
     const filename = item.getFilename();
     log.info(
       `[WebviewPolicy] Download started: ${filename} (${item.getTotalBytes()} bytes)`,
