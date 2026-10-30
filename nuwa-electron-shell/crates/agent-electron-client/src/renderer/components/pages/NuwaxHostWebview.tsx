@@ -406,15 +406,17 @@ const NuwaxHostWebview = forwardRef<
     [url, failure],
   );
 
+  // 已打开页面的常规刷新由 guest 展示加载态，避免壳卡片结束后又切到前端启动页。
+  // 首次加载、失败后重建及慢等待仍由壳提供本地恢复入口。
   const recoveryMode = failure
     ? "failed"
     : waiting
       ? "waiting"
-      : reloading
-        ? "reloading"
-        : !url || !hasLoaded
-          ? "loading"
-          : null;
+      : !url || !hasLoaded
+        ? reloading
+          ? "reloading"
+          : "loading"
+        : null;
   return (
     <div
       style={{

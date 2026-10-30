@@ -166,6 +166,64 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("guest recovery lifecycle", () => {
+  it("leaves routine refresh loading to the guest without a second shell card", async () => {
+    await paint();
+    expect(find(tree, PageLoadRecovery).props.mode).toBe("loading");
+    guest.emit("did-stop-loading");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+
+    const live = guest;
+    handle.current!.reload();
+    handle.current!.reload();
+    await paint();
+    expect(guest.reload).toHaveBeenCalledTimes(1);
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    guest.emit("did-start-navigation", {
+      isMainFrame: true,
+      url: "https://test.example/home",
+    });
+    guest.emit("did-start-loading");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    guest.emit("did-stop-loading");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    expect(guest).toBe(live);
+
+    handle.current!.reload();
+    await paint();
+    expect(guest.reload).toHaveBeenCalledTimes(2);
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+  });
+  it("still offers shell recovery when a routine refresh is slow or fails", async () => {
+    await paint();
+    guest.emit("did-stop-loading");
+    await paint();
+    handle.current!.reload();
+    await paint();
+    vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
+    await paint();
+    expect(find(tree, PageLoadRecovery).props.mode).toBe("waiting");
+    expect(phases).toHaveBeenLastCalledWith("waiting");
+    guest.emit("did-fail-load", {
+      isMainFrame: true,
+      errorCode: -105,
+      validatedURL: "https://test.example/home",
+    });
+    await paint();
+    expect(find(tree, PageLoadRecovery).props.mode).toBe("failed");
+    expect(phases).toHaveBeenLastCalledWith("failed");
+
+    const failedGuest = guest;
+    find(tree, PageLoadRecovery).props.onReload();
+    await paint();
+    expect(guest).not.toBe(failedGuest);
+    expect(find(tree, PageLoadRecovery).props.mode).toBe("reloading");
+    guest.emit("did-stop-loading");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+  });
   it("uncovers main failures immediately and ignores subframes/aborted navigation", async () => {
     await paint();
     guest.emit("did-fail-load", { isMainFrame: false, errorCode: -105 });
