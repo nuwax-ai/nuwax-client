@@ -21,6 +21,7 @@ import type {
 import { featureNamespaces } from "./features";
 import { CAN_USE_IPC } from "@shared/hostCapabilities";
 import { createCanUse } from "./canUse";
+import { installWindowInteraction } from "./windowInteraction";
 
 /** 跨域导航会重新执行 preload，只有当前受信文档才获得业务桥对象。 */
 function mayExposeBusinessBridge(): boolean {
@@ -88,6 +89,12 @@ if (bridgeAllowed && typeof window !== "undefined") {
     () => ipcRenderer.send("nuwax:guest-pointer-down"),
     true,
   );
+  if (typeof document !== "undefined") {
+    const updateWindowFocus = installWindowInteraction(document, window);
+    ipcRenderer.on("nuwax:window-focus-changed", (_event, focused: unknown) => {
+      if (typeof focused === "boolean") updateWindowFocus(focused);
+    });
+  }
 }
 
 type PerfPayload = Record<string, unknown>;

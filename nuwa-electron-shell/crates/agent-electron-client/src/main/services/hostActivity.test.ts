@@ -72,6 +72,7 @@ function createMockGuest(): MockGuest {
   };
   const guest = {
     isDestroyed: () => destroyed,
+    sendInputEvent: vi.fn(),
     send: (channel: string, payload: { type: string; visible: boolean }) => {
       sent.push({ channel, payload });
     },
@@ -210,6 +211,33 @@ describe("shouldPushHostActivity", () => {
 // ── 窗口沿 ──
 
 describe("attachHostActivityWindow", () => {
+  it("切窗清除鼠标状态并发送焦点沿，不改变可见性且不受休眠开关影响", () => {
+    mockSettingValue = { enabled: false };
+    const main = createMockWindow();
+    attachHostActivityWindow(main.win);
+    const guest = createMockGuest();
+    const dead = createMockGuest();
+    main.fireAttach(guest.guest);
+    main.fireAttach(dead.guest);
+    dead.destroy();
+    const secondary = createMockBusinessWindow();
+    attachHostActivityBusinessWindow(secondary.win);
+
+    main.fireWin("blur");
+    main.fireWin("focus");
+    expect(vi.mocked(guest.guest.sendInputEvent).mock.calls).toEqual([[{ type: "mouseLeave", x: -1, y: -1 }]]);
+    expect(guest.sent).toEqual([
+      { channel: "nuwax:window-focus-changed", payload: false },
+      { channel: "nuwax:window-focus-changed", payload: true },
+    ]);
+    expect(secondary.sent).toEqual([]);
+    expect(dead.guest.sendInputEvent).not.toHaveBeenCalled();
+    expect(getHostActivitySnapshot()).toEqual({ visible: true });
+    main.fireWin("closed");
+    main.fireWin("blur");
+    expect(guest.sent).toHaveLength(2);
+  });
+
   it("隐藏文档重载与迟订阅均能取回初态，恢复后重载取回 visible", () => {
     const mock = createMockWindow(false);
     attachHostActivityWindow(mock.win);
@@ -493,6 +521,23 @@ describe("sendHostCommandToMainWindowGuests", () => {
 });
 
 describe("attachHostActivityBusinessWindow", () => {
+  it("二级业务窗口只清理自身文档，销毁后移除焦点监听", () => {
+    const first = createMockBusinessWindow();
+    const second = createMockBusinessWindow();
+    attachHostActivityBusinessWindow(first.win);
+    attachHostActivityBusinessWindow(second.win);
+    first.fireWin("blur");
+    first.fireWin("focus");
+    expect(vi.mocked(first.guest.sendInputEvent).mock.calls).toEqual([[{ type: "mouseLeave", x: -1, y: -1 }]]);
+    expect(first.sent.map((message) => message.payload)).toEqual([false, true]);
+    expect(second.sent).toEqual([]);
+    first.destroy();
+    expect(first.winListeners("blur")).toBe(0);
+    expect(first.winListeners("focus")).toBe(0);
+    first.fireWin("blur");
+    expect(first.sent).toHaveLength(2);
+  });
+
   it("关休眠立即激活所有隐藏窗口，重开按各窗口状态恢复且不复活已关闭窗口", () => {
     const main = createMockWindow(false);
     attachHostActivityWindow(main.win);

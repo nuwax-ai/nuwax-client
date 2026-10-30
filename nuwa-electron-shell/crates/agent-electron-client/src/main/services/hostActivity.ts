@@ -23,6 +23,13 @@ import { readSetting } from "../db";
 const HOST_COMMAND_CHANNEL = "nuwax:host-command";
 const SHELL_ACTIVITY_CHANNEL = "nuwax:host-activity-changed";
 
+/** 交互清理独立于休眠开关；失焦窗口可能仍然可见。 */
+function pushWindowFocus(contents: WebContents, focused: boolean): void {
+  if (contents.isDestroyed()) return;
+  if (!focused) contents.sendInputEvent({ type: "mouseLeave", x: -1, y: -1 });
+  contents.send("nuwax:window-focus-changed", focused);
+}
+
 /** 设置表键（settings 表统一 JSON 编码存储，见 settingsHandlers） */
 export const DORMANCY_SETTING_KEY = "nuwax.dormancy";
 
@@ -219,6 +226,12 @@ export function attachHostActivityWindow(win: BrowserWindow): void {
   win.on("show", () => setWindowVisible(true, "show"));
   // close 被拦截为 hide()（托盘模式），hide 沿即托盘隐藏
   win.on("hide", () => setWindowVisible(false, "hide"));
+  win.on("blur", () => {
+    for (const guest of guests) pushWindowFocus(guest, false);
+  });
+  win.on("focus", () => {
+    for (const guest of guests) pushWindowFocus(guest, true);
+  });
   contents.on("did-attach-webview", (_event, guest) => {
     attachGuest(guest);
   });
@@ -250,12 +263,16 @@ export function attachHostActivityBusinessWindow(win: BrowserWindow, contents: W
   const syncDocument = () => syncHostActivityGuest(contents);
   const hidden = () => setVisible(false);
   const shown = () => setVisible(true);
+  const blurred = () => pushWindowFocus(contents, false);
+  const focused = () => pushWindowFocus(contents, true);
   const cleanup = () => {
     businessWindows.delete(contents);
     win.removeListener("hide", hidden);
     win.removeListener("minimize", hidden);
     win.removeListener("show", shown);
     win.removeListener("restore", shown);
+    win.removeListener("blur", blurred);
+    win.removeListener("focus", focused);
     win.removeListener("closed", cleanup);
     contents.removeListener("did-finish-load", syncDocument);
     contents.removeListener("destroyed", cleanup);
@@ -266,6 +283,8 @@ export function attachHostActivityBusinessWindow(win: BrowserWindow, contents: W
   win.on("minimize", hidden);
   win.on("show", shown);
   win.on("restore", shown);
+  win.on("blur", blurred);
+  win.on("focus", focused);
   win.on("closed", cleanup);
   contents.on("did-finish-load", syncDocument);
   contents.once("destroyed", cleanup);
