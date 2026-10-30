@@ -34,6 +34,7 @@ export const computerUseFeature: DesktopFeature = {
       changed: () => cua.notifyCuaPresentation(),
     });
     configureComputerUseHost({
+      developmentProfile: ctx.developmentProfile,
       getConversationId: () => conversation.get(),
       dataHome: ctx.dataDir,
       readSetting: (key) => ctx.settings.read(key),
@@ -197,8 +198,11 @@ export const computerUseFeature: DesktopFeature = {
     const unsubscribe = cua.onCuaRuntime(publish);
     publish(cua.getCuaRuntime());
 
+    let ownsStopShortcut = false;
     const registerShortcut = () => {
-      try { cua.setCuaShortcutAvailable(globalShortcut.register(CUA_STOP_SHORTCUT, stop)); }
+      // A development client must not claim the installed client's emergency shortcut.
+      if (ctx.developmentProfile) { cua.setCuaShortcutAvailable(false); return; }
+      try { cua.setCuaShortcutAvailable(ownsStopShortcut = globalShortcut.register(CUA_STOP_SHORTCUT, stop)); }
       catch { cua.setCuaShortcutAvailable(false); }
     };
     if (app.isReady()) registerShortcut();
@@ -245,7 +249,7 @@ export const computerUseFeature: DesktopFeature = {
       disposeControlWindow();
       unsubscribe();
       ctx.activities.set(null);
-      globalShortcut.unregister(CUA_STOP_SHORTCUT);
+      if (ownsStopShortcut) globalShortcut.unregister(CUA_STOP_SHORTCUT);
       powerMonitor.removeListener("lock-screen", lock);
       powerMonitor.removeListener("unlock-screen", unlock); powerMonitor.removeListener("resume", wake);
       powerMonitor.removeListener("suspend", suspend);

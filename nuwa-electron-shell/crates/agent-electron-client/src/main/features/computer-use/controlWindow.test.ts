@@ -5,6 +5,7 @@ import type { CuaRuntime } from "@shared/features/computer-use/contract";
 const mocks = vi.hoisted(() => ({
   views: [] as any[], handlers: new Map<string, (...args: any[]) => any>(),
   select: vi.fn(), disposePreview: vi.fn(), deferred: false, loads: [] as (() => void)[],
+  previewOptions: null as any,
 }));
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -28,7 +29,10 @@ vi.mock("electron", async () => {
     },
   };
 });
-vi.mock("./previewController", () => ({ createCuaPreviewController: () => ({ select: mocks.select, sync() {}, dispose: mocks.disposePreview }) }));
+vi.mock("./previewController", () => ({ createCuaPreviewController: (options: any) => {
+  mocks.previewOptions = options;
+  return { select: mocks.select, sync() {}, dispose: mocks.disposePreview };
+} }));
 import { app } from "electron";
 import { createCuaControlWindow } from "./controlWindow";
 class MainWindow extends EventEmitter {
@@ -43,16 +47,17 @@ class MainWindow extends EventEmitter {
   getContentBounds() { return { x: 100, y: 200, width: this.width, height: this.height }; }
 }
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
-function setup(multiwindow = true) {
+function setup(multiwindow = true, preference?: unknown) {
   let main = new MainWindow();
-  let runtime = { presentationConversationId: "A", taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 }, conversationId: "A" }] } as CuaRuntime;
+  let runtime = { presentationConversationId: "A", taskId: "task", revision: 1, phase: "paused", multiwindow, tasks: [{ taskId: "task", bindingId: "binding", epoch: 1, phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 }, conversationId: "A" }] } as CuaRuntime;
   let listener: (s: CuaRuntime) => void = () => {};
-  const action = vi.fn();
+  const action = vi.fn(), writePreference = vi.fn();
   const dispose = createCuaControlWindow({
     getMainWindow: () => main as unknown as BrowserWindow, getRuntime: () => runtime,
     subscribe: fn => { listener = fn; return vi.fn(); }, authenticated: () => true, t: key => key, taskAction: action,
+    readPreference: () => preference, writePreference,
   });
-  return { dispose, action, get main() { return main; }, replaceMain(next: MainWindow) { main = next; },
+  return { dispose, action, writePreference, get main() { return main; }, replaceMain(next: MainWindow) { main = next; },
     setConversation(id: string | null) { runtime = { ...runtime, presentationConversationId: id, revision: runtime.revision + 1 }; listener(runtime); },
     setRuntime(value: CuaRuntime) { runtime = { presentationConversationId: runtime.presentationConversationId, ...value, tasks: value.tasks?.map(task => ({ conversationId: "A", ...task })) }; listener(runtime); },
     update() { runtime = { ...runtime, revision: runtime.revision + 1 }; listener(runtime); } };
@@ -72,7 +77,7 @@ describe("Computer Use control surface follows the main client window", () => {
     s.main.width = 300; s.main.height = 180; s.main.emit("resize");
     expect(v.bounds.x).toBeGreaterThanOrEqual(0); expect(v.bounds.y).toBeGreaterThanOrEqual(0);
     expect(v.bounds.x + v.bounds.width).toBeLessThanOrEqual(300); expect(v.bounds.y + v.bounds.height).toBeLessThanOrEqual(180);
-    expect(v.webContents.send).toHaveBeenCalledWith("cua:control:presentation", { taskId: "task", position: v.bounds });
+    expect(v.webContents.send).toHaveBeenCalledWith("cua:control:presentation", expect.objectContaining({ taskId: "task", position: v.bounds }));
     s.dispose();
   });
   it("hides preview work with the main window and shows it again without stopping the task", async () => {
@@ -83,6 +88,34 @@ describe("Computer Use control surface follows the main client window", () => {
     s.dispose.showTask("task"); expect(s.main.minimized).toBe(false); expect(v.visible).toBe(true);
     s.main.visible = false; s.main.emit("hide"); s.dispose.showTask("task");
     expect(s.main.visible).toBe(true); expect(v.visible).toBe(true); expect(s.action).not.toHaveBeenCalled(); s.dispose();
+  });
+  it("fits portrait frames, remembers their shape through pause and ignores stale binding frames", async () => {
+    const s = setup(); await flush(); const v = mocks.views[0];
+    const publish = (bindingId: string, width = 320, height = 570) => mocks.previewOptions.publish({ taskId: "task", status: "ready", frame: { bindingId, epoch: 1, width, height } });
+    publish("binding"); expect(v.bounds.height).toBe(240); expect(v.bounds.width).toBe(144);
+    s.update(); expect(v.bounds.height).toBe(240);
+    const before = { ...v.bounds }; publish("old-binding", 1600, 900); expect(v.bounds).toEqual(before);
+    s.setRuntime({ revision: 3, multiwindow: true, tasks: [{ taskId: "task", bindingId: "binding", epoch: 2, phase: "paused", scope: { kind: "window", pid: 1, windowId: 2 } }] } as CuaRuntime);
+    expect(v.bounds).toEqual(before);
+    expect(s.action).not.toHaveBeenCalled(); s.dispose();
+  });
+  it("resizes only from the private frame, clamps geometry and persists the display preference", async () => {
+    const s = setup(true, { extent: 300 }); await flush(); const v = mocks.views[0];
+    const event = { sender: v.webContents, senderFrame: v.webContents.mainFrame };
+    const resize = mocks.handlers.get("cua:control:resize")!;
+    expect(v.bounds.width).toBe(320);
+    for (const size of [{ width: NaN, height: 10 }, { width: -1, height: 10 }, { width: 1, height: Infinity }, null]) expect(resize(event, size)).toBeNull();
+    expect(resize({ ...event, senderFrame: {} }, { width: 400, height: 240 })).toBeNull();
+    vi.useFakeTimers();
+    try {
+      resize(event, { width: 400, height: 240 }); expect(v.bounds.width).toBe(420); expect(v.bounds.height).toBe(260);
+      vi.advanceTimersByTime(200); expect(s.writePreference).toHaveBeenLastCalledWith(expect.objectContaining({ extent: 400 }));
+      resize(event, { width: 1, height: 1 }); expect(v.bounds.width).toBe(180);
+      resize(event, { width: 1e9, height: 1e9 });
+      expect(v.bounds.x + v.bounds.width).toBeLessThanOrEqual(s.main.width);
+      expect(v.bounds.y + v.bounds.height).toBeLessThanOrEqual(s.main.height);
+      expect(s.action).not.toHaveBeenCalled();
+    } finally { s.dispose(); vi.useRealTimers(); }
   });
   it("stops preview work when hide/minimize arrives before native visibility changes", async () => {
     const s = setup(); await flush(); s.dispose.showTask("task"); const v = mocks.views[0];

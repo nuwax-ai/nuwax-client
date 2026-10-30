@@ -1,7 +1,7 @@
 /** 开机自启动：系统状态为展示依据，本地选择用于防止默认值覆盖用户关闭。 */
 import { app } from "electron";
 import log from "electron-log";
-import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
+import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 
 const PREFERENCE_KEY = "nuwax.autoLaunch.enabled";
@@ -20,7 +20,7 @@ export interface AutoLaunchStatus {
 }
 
 export class AutoLaunchManager {
-  private supported = true;
+  private supported = !IS_DEV_PROFILE;
   /** Windows 的读写参数必须一致才能匹配同一注册表项。 */
   private readonly loginItemArgs = ["--hidden"];
 
@@ -30,7 +30,7 @@ export class AutoLaunchManager {
 
   /** 数据库就绪后调用一次；开发运行不注册开发用 Electron。 */
   async initializeDefault(): Promise<void> {
-    if (!app.isPackaged) return;
+    if (!app.isPackaged || !this.supported) return;
     try {
       const savedPreference = readSetting(PREFERENCE_KEY);
       if (typeof savedPreference === "boolean") {
@@ -91,6 +91,7 @@ export class AutoLaunchManager {
   }
 
   async isEnabled(): Promise<boolean> {
+    if (!this.supported) return false;
     try {
       return await this.readSystemEnabled();
     } catch (error) {
@@ -100,6 +101,7 @@ export class AutoLaunchManager {
   }
 
   async setEnabled(enabled: boolean): Promise<boolean> {
+    if (!this.supported) return false;
     try {
       if (process.platform === "linux") {
         const launcher = this.createLinuxLauncher();

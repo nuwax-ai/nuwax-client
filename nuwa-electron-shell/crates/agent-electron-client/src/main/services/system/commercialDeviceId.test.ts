@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   platform: "darwin" as NodeJS.Platform,
   execFileSync: vi.fn(),
   hostname: vi.fn(),
+  development: false,
 }));
 vi.mock("child_process", () => ({ execFileSync: mocks.execFileSync }));
 vi.mock("os", async (importOriginal) => ({
@@ -21,7 +22,10 @@ vi.mock("fs", async (importOriginal) => {
   return { ...actual, readFileSync: vi.fn(actual.readFileSync), writeFileSync: vi.fn(actual.writeFileSync) };
 });
 vi.mock("electron-log", () => ({ default: { info: vi.fn(), warn: vi.fn() } }));
-vi.mock("@shared/constants", () => ({ APP_DATA_DIR_NAME: ".nuwax" }));
+vi.mock("@shared/constants", () => ({
+  get APP_DATA_DIR_NAME() { return mocks.development ? ".nuwax-dev" : ".nuwax"; },
+  get IS_DEV_PROFILE() { return mocks.development; },
+}));
 
 const actualFs = await vi.importActual<typeof import("fs")>("fs");
 const actualOs = await vi.importActual<typeof import("os")>("os");
@@ -34,6 +38,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.home = actualFs.mkdtempSync(path.join(actualOs.tmpdir(), "nuwax-device-id-"));
   mocks.platform = "darwin";
+  mocks.development = false;
   mocks.execFileSync.mockReset().mockReturnValue(`"IOPlatformUUID" = "${UUID.toUpperCase()}"\n`);
   mocks.hostname.mockReturnValue("same-computer-name");
   vi.mocked(fs.readFileSync).mockReset().mockImplementation(actualFs.readFileSync);
@@ -42,6 +47,19 @@ beforeEach(() => {
 afterEach(() => actualFs.rmSync(mocks.home, { recursive: true, force: true }));
 
 describe("commercial hardware device identity", () => {
+  it("development has a stable separate registration identity even on the same hardware", async () => {
+    const installed = getCommercialDeviceId();
+    mocks.development = true;
+    vi.resetModules();
+    try {
+      const { getCommercialDeviceId: getDevelopmentId } = await import("./commercialDeviceId");
+      const development = getDevelopmentId();
+      expect(development).not.toBe(installed);
+      expect(getDevelopmentId()).toBe(development);
+      expect(actualFs.readFileSync(identityFile(), "utf8").trim()).toBe(installed);
+      expect(actualFs.readFileSync(path.join(mocks.home, ".nuwax-dev", "device-id"), "utf8").trim()).toBe(development);
+    } finally { mocks.development = false; vi.resetModules(); }
+  });
   it("keeps the existing macOS hardware hash and stores only the hash", () => {
     expect(getCommercialDeviceId()).toBe(hash(UUID));
     expect(actualFs.readFileSync(identityFile(), "utf8")).toBe(hash(UUID) + "\n");

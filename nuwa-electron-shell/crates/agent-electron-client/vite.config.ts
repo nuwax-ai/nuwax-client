@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import * as path from 'path';
 import { readFileSync } from 'fs';
+import branding from './scripts/build/branding-defines.cjs';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
 
@@ -27,16 +28,11 @@ function getFeatureFlags(mode: string) {
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // 品牌注入（nuwax-client 商业版）：renderer 无 process 运行时，靠 define 注入；
   // 未设置时替换为空串，constants.ts 里回落默认值（社区版）。loadEnv 同时读 .env 文件与 shell env
   const brandingEnv = loadEnv(mode, __dirname, 'NUWAX_');
-  const brandingDefines = {
-    'process.env.NUWAX_APP_IDENTIFIER': JSON.stringify(brandingEnv.NUWAX_APP_IDENTIFIER ?? ''),
-    'process.env.NUWAX_APP_DISPLAY_NAME': JSON.stringify(brandingEnv.NUWAX_APP_DISPLAY_NAME ?? ''),
-    'process.env.NUWAX_UPDATE_FEED_BASE': JSON.stringify(brandingEnv.NUWAX_UPDATE_FEED_BASE ?? ''),
-    'process.env.NUWAX_PORT_OFFSET': JSON.stringify(brandingEnv.NUWAX_PORT_OFFSET ?? '0'),
-  };
+  const brandingDefines = branding.brandingDefines(brandingEnv, command === 'serve');
 
   return {
   plugins: [

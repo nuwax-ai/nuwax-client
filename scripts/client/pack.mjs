@@ -110,11 +110,12 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   }), { env, platform, builderVersions });
 }
 
-export async function prepareComputerUse(root, { tools = core, platform = process.platform, arch = process.arch, refreshResources = false } = {}) {
+export async function prepareComputerUse(root, { tools = core, platform = process.platform, arch = process.arch, refreshResources = false, development = false } = {}) {
   const p = tools.paths(root);
-  const helperDir = path.join(p.client, 'resources/computer-use');
-  const helper = path.join(helperDir, platform === 'darwin' ? 'Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use' : platform === 'win32' ? 'NuwaxComputerUse.exe' : 'NuwaxComputerUse');
-  const stateFile = path.join(p.cache, 'computer-use.json');
+  const helperDir = development ? path.join(p.cache, 'dev/computer-use') : path.join(p.client, 'resources/computer-use');
+  const appName = development ? 'Nuwax Computer Use Dev.app' : 'Nuwax Computer Use.app';
+  const helper = path.join(helperDir, platform === 'darwin' ? `${appName}/Contents/MacOS/Nuwax Computer Use` : platform === 'win32' ? 'NuwaxComputerUse.exe' : 'NuwaxComputerUse');
+  const stateFile = path.join(p.cache, development ? 'computer-use-dev.json' : 'computer-use.json');
   const inputs = [path.join(root, 'scripts/computer-use'), path.join(root, 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'), path.join(p.client, 'public/icon.icns')];
   if (process.env.NUWAX_CUA_SOURCE_DIR) {
     for (const input of ['libs/cua-driver/rust', 'libs/cua/Cargo.toml', 'libs/cua/crates/cua-telemetry',
@@ -122,7 +123,8 @@ export async function prepareComputerUse(root, { tools = core, platform = proces
       inputs.push(path.join(process.env.NUWAX_CUA_SOURCE_DIR, input));
     }
   }
-  const key = tools.fingerprint([platform, arch, process.env.CUA_COMMIT ?? '85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19', process.env.CUA_VERSION ?? '0.38.0', inputDigest(inputs)]);
+  const key = tools.fingerprint([platform, arch, process.env.CUA_COMMIT ?? '85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19', process.env.CUA_VERSION ?? '0.38.0', inputDigest(inputs),
+    ...(development ? ['development-profile', platform === 'darwin' ? 'strip-none' : 'default'] : [])]);
   let state;
   try { state = tools.readJson(stateFile); } catch { state = null; }
   if (!refreshResources && state?.key === key && state?.artifact === inputDigest([helperDir]) && fileReady(helper)) return helperDir;
@@ -135,7 +137,10 @@ export async function prepareComputerUse(root, { tools = core, platform = proces
   if (platform === 'win32' && !fileReady(bash)) throw new Error('[pack] 缺少已准备的 Git Bash');
   await tools.run(bash, [path.join(root, 'scripts/computer-use/build-helper.sh')], {
     cwd: root,
-    env: { ...unsignedEnv(root), TARGET_TRIPLE: triple, OUT_DIR: helperDir, RUNNER_TEMP: p.cache, ICON_ICNS: path.join(p.client, 'public/icon.icns') },
+    env: { ...unsignedEnv(root), ...(development ? { NUWAX_CUA_TARGET_DIR: path.join(p.cache, 'dev/cargo-target'), CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '2' } : {}),
+      // Local Apple linker/strip combinations can produce unloadable Rust proc-macro dylibs.
+      ...(development && platform === 'darwin' ? { CARGO_PROFILE_RELEASE_STRIP: 'none' } : {}),
+      NUWAX_CUA_DEV_PROFILE: development ? '1' : '', TARGET_TRIPLE: triple, OUT_DIR: helperDir, RUNNER_TEMP: p.cache, ICON_ICNS: path.join(p.client, 'public/icon.icns') },
   });
   if (!fileReady(helper)) throw new Error(`[pack] Computer Use helper 构建完成但缺少 ${helper}`);
   tools.atomicJson(stateFile, { key, artifact: inputDigest([helperDir]), triple });

@@ -23,10 +23,16 @@ import type { AgentEngineType } from "@shared/types/electron";
  */
 const NUWAX_APP_IDENTIFIER_ENV = process.env.NUWAX_APP_IDENTIFIER;
 const NUWAX_APP_DISPLAY_NAME_ENV = process.env.NUWAX_APP_DISPLAY_NAME;
+const NUWAX_DEV_PROFILE_ENV = process.env.NUWAX_DEV_PROFILE;
+
+/** Keep the commercial product identity while isolating local development state. */
+export const IS_DEV_PROFILE = NUWAX_APP_IDENTIFIER_ENV?.trim() === "nuwax" && NUWAX_DEV_PROFILE_ENV === "1";
+/** ASCII profile name is shared by Chromium storage and the default business workspace. */
+export const COMMERCIAL_PROFILE_NAME = IS_DEV_PROFILE ? "Nuwax Dev" : "Nuwax";
 
 /** 应用对外显示名称（窗口标题、关于、安装包名称等），与 package.json build.productName 保持一致 */
 export const APP_DISPLAY_NAME =
-  NUWAX_APP_DISPLAY_NAME_ENV?.trim() || "女娲 Nuwax";
+  (NUWAX_APP_DISPLAY_NAME_ENV?.trim() || "女娲 Nuwax") + (IS_DEV_PROFILE ? " Dev" : "");
 
 /** 应用技术标识（进程名、目录名等，小写字母），与 appId 等保持一致 */
 export const APP_NAME_IDENTIFIER =
@@ -305,7 +311,7 @@ export const DEFAULT_MIRROR_CONFIG = {
 // ==================== 应用目录 ====================
 
 /** 应用数据目录名称（与 APP_NAME_IDENTIFIER 对应，带点号前缀） */
-export const APP_DATA_DIR_NAME = `.${APP_NAME_IDENTIFIER}`;
+export const APP_DATA_DIR_NAME = `.${APP_NAME_IDENTIFIER}${IS_DEV_PROFILE ? "-dev" : ""}`;
 
 /** 日志目录名称 */
 export const LOGS_DIR_NAME = "logs";
@@ -768,6 +774,7 @@ export const I18N_KEYS = {
 
 /** Computer Use product controls and diagnostics. */
 export const CUA_I18N_KEYS = {
+  PREVIEW_RESIZE: "Claw.Cua.preview.resize",
   MW_MULTIWINDOW_TITLE: "Claw.Cua.multiwindow.title",
   MW_MULTIWINDOW_DESCRIPTION: "Claw.Cua.multiwindow.description",
   MW_MULTIWINDOW_ENABLE: "Claw.Cua.multiwindow.enable",

@@ -9,7 +9,8 @@ import {
 } from "./fullDiskAccess";
 import { checkMacNotificationPermission } from "./system/macNotificationPermission";
 import { openMacPrivacySettings } from "./system/macPermissions";
-import { APP_DISPLAY_NAME } from "@shared/constants";
+import { APP_DISPLAY_NAME, IS_DEV_PROFILE, COMMERCIAL_PROFILE_NAME } from "@shared/constants";
+import { permissionHelperName } from "@shared/utils/permissionIdentityText";
 import {
   PermissionRestartTracker,
   isDragAddPermissionKey,
@@ -62,7 +63,7 @@ export function openPermissionGuide(
 function appIdentity() {
   const exe = app.getPath("exe");
   return {
-    appName: app.isPackaged ? APP_DISPLAY_NAME : path.basename(exe),
+    appName: IS_DEV_PROFILE ? COMMERCIAL_PROFILE_NAME : app.isPackaged ? APP_DISPLAY_NAME : path.basename(exe),
     appPath: exe.match(/^.*?\.app(?=\/|$)/)?.[0] ?? exe,
   };
 }
@@ -181,7 +182,7 @@ export function getPermissionDragIdentity(
   if (key === "helper_accessibility" || key === "helper_screen_recording") {
     const appPath = helper?.appPath?.();
     return appPath
-      ? { key, appName: "Nuwax Computer Use", appPath }
+      ? { key, appName: permissionHelperName(IS_DEV_PROFILE), appPath }
       : null;
   }
   return { key, ...appIdentity() };

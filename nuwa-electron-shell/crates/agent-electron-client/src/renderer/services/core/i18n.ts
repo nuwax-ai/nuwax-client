@@ -9,7 +9,8 @@
  */
 
 import { apiRequest } from "./api";
-import { APP_NAME_IDENTIFIER } from "@shared/constants";
+import { APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
+import { permissionIdentityText } from "@shared/utils/permissionIdentityText";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import i18n from "../i18n";
 
@@ -501,7 +502,7 @@ export const dict = (key: string, ...values: I18nValues): string => {
     return normalizedKey;
   }
 
-  return formatText(template, values);
+  return formatText(permissionIdentityText(template, IS_DEV_PROFILE), values);
 };
 
 /**

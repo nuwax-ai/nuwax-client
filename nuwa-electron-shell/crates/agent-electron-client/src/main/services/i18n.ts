@@ -11,6 +11,8 @@ import { app } from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import log from "electron-log";
+import { IS_DEV_PROFILE } from "@shared/constants";
+import { permissionIdentityText } from "@shared/utils/permissionIdentityText";
 
 /** 产品默认语言（与渲染进程 i18n.ts 的 DEFAULT_I18N_LANG 保持一致）。 */
 export const DEFAULT_MAIN_LANG = "zh-cn";
@@ -138,7 +140,7 @@ export function t(key: string, ...values: I18nValues): string {
     return normalizedKey;
   }
 
-  return formatText(template, values);
+  return formatText(permissionIdentityText(template, IS_DEV_PROFILE), values);
 }
 
 /**

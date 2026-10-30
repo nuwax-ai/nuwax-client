@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-const harness = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], error: vi.fn() }));
+const harness = vi.hoisted(() => ({ states: [] as any[], cursor: 0, effects: [] as any[], buttons: [] as any[], switches: [] as any[], error: vi.fn() }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useState: () => {
@@ -14,6 +14,7 @@ vi.mock("antd", async () => {
   const { default: R } = await import("react");
   const Container = ({ children }: any) => <span>{children}</span>;
   return { Select: Container, Space: Container, Tag: Container, Tooltip: ({ title, children }: any) => <span title={title}>{children}</span>, Alert: ({ message }: any) => <div>{message}</div>, message: { error: harness.error }, theme: { useToken: () => ({ token: {} }) },
+    Switch: (props: any) => { harness.switches.push(props); return <input type="checkbox" checked={props.checked} disabled={props.disabled} readOnly />; },
     Button: (props: any) => { harness.buttons.push(props); return <button disabled={props.disabled} aria-label={props["aria-label"]}>{props.icon}{props.children}</button>; },
   };
 });
@@ -21,16 +22,36 @@ vi.mock("./CuaTaskCenter", () => ({ CuaTaskCenter: () => null }));
 import { CuaControls, CuaSettingsRows, clampCuaControlPosition } from "./CuaControls";
 const api = { getRuntime: vi.fn(), pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), stopTask: vi.fn(), recover: vi.fn(), setMultiwindowEnabled: vi.fn() };
 beforeEach(() => {
-  vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = [];
+  vi.resetAllMocks(); harness.cursor = 0; harness.effects = []; harness.buttons = []; harness.switches = [];
   harness.states = [{ conversationId: "A", presentationConversationId: "A", phase: "running", taskId: "id", revision: 2, stepCount: 2, steps: [], needsObservation: true, shortcutAvailable: false }, false, null, false];
   api.getRuntime.mockResolvedValue(harness.states[0]); api.stop.mockResolvedValue({ success: true }); api.stopTask.mockResolvedValue({ success: true });
   vi.stubGlobal("window", Object.assign(new EventTarget(), { electronAPI: { on: vi.fn(), off: vi.fn() } }));
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
 });
 afterEach(() => vi.unstubAllGlobals());
 const render = () => renderToStaticMarkup(<CuaControls api={api as any} t={(key) => key} />);
 const Row = ({ label, desc, control }: any) => <section><h4>{label}</h4><p>{desc}</p>{control}</section>;
 const renderRows = () => renderToStaticMarkup(<CuaSettingsRows api={api as any} t={(key) => key} Row={Row} />);
 describe("Computer Use controls", () => {
+  it("lets a fresh profile explicitly enable multiwindow through the host without changing its default", async () => {
+    harness.states = [{ ...harness.states[0], phase: "idle", multiwindow: false }, false];
+    api.setMultiwindowEnabled.mockResolvedValue({ success: true, runtime: { ...harness.states[0], multiwindow: true } });
+    expect(renderRows()).toContain("Claw.Cua.multiwindow.enable");
+    expect(harness.switches[0].checked).toBe(false);
+    expect(api.setMultiwindowEnabled).not.toHaveBeenCalled();
+    await harness.switches[0].onChange(true);
+    expect(api.setMultiwindowEnabled).toHaveBeenCalledWith(true);
+    expect(harness.states[0].multiwindow).toBe(true);
+  });
+  it("does not offer unsupported Linux multiwindow and disables mode changes while controls are pending", () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    expect(renderRows()).not.toContain("Claw.Cua.multiwindow.enable");
+    harness.cursor = 0;
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    harness.states[0].controlPending = true;
+    renderRows();
+    expect(harness.switches[0].disabled).toBe(true);
+  });
   it("does not display another conversation's ordinary floating controls", () => {
     harness.states[0] = { ...harness.states[0], presentationConversationId: "B" };
     expect(render()).toBe("");

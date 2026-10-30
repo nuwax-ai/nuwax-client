@@ -11,7 +11,7 @@ class Element {
   onclick?: () => unknown;
   constructor(public tag = "div") {}
   append(child: Element) { this.children.push(child); }
-  replaceChildren() { this.children = []; }
+  replaceChildren(...children: Element[]) { this.children = children; }
   setAttribute() {}
   removeAttribute(name: string) { if (name === "src") this.src = ""; }
   addEventListener(name: string, fn: (event: any) => unknown) { this.handlers[name] = fn; }
@@ -28,8 +28,11 @@ async function page() {
   let runtime!: (state: any) => void, preview!: (frame: any) => void;
   const api = {
     close: vi.fn(), move: vi.fn(async (position: any) => ({ position })), reorder: vi.fn(async () => {}),
+    resize: vi.fn(async (size: any) => ({ taskId: "A", layers: [{ taskId: "A", x: 18, y: 10, ...size }] })),
     taskAction: vi.fn(async () => ({ success: true })), getRuntime: vi.fn(async () => state),
-    getPresentation: vi.fn(async () => ({ taskId: "A", position: { x: 600, y: 72 } })),
+    getPresentation: vi.fn(async () => ({ taskId: "A", position: { x: 600, y: 72 }, layers: [
+      { taskId: "A", x: 18, y: 10, width: 220, height: 132 }, { taskId: "B", x: 10, y: 18, width: 124, height: 220 },
+    ] })),
     setPresentation: vi.fn(async (taskId: string) => ({ taskId })),
     onRuntime: (fn: typeof runtime) => { runtime = fn; }, onPreview: (fn: typeof preview) => { preview = fn; }, onPresentation: vi.fn(),
   };
@@ -40,6 +43,7 @@ async function page() {
     document: { body: new Element(), getElementById: (id: string) => nodes.get(id),
       querySelector: () => header, createElement: (tag: string) => new Element(tag) },
     URL: urls, Blob, atob, Uint8Array, setInterval: vi.fn(),
+    requestAnimationFrame: (fn: () => void) => { void Promise.resolve().then(fn); return 1; },
   });
   await flush();
   return { html, api, urls, nodes, preview, update: (tasks: any[]) => { state = { revision: state.revision + 1, tasks }; runtime(state); } };
@@ -77,6 +81,21 @@ describe("small native window preview", () => {
     expect(p.nodes.get("pauseHint")!.hidden).toBe(false);
     expect(p.nodes.get("pauseHint")!.textContent).toBe("Claw.Cua.phase.paused");
   });
+  it("coalesces proportional resizing and never turns a resize into takeover", async () => {
+    const p = await page(), handle = p.nodes.get("resize-right")!;
+    handle.handlers.pointerdown({ button: 0, pointerId: 2, screenX: 100, screenY: 100 });
+    handle.handlers.pointermove({ pointerId: 2, screenX: 150, screenY: 110 });
+    handle.handlers.pointermove({ pointerId: 2, screenX: 200, screenY: 160 });
+    handle.handlers.pointerup({ pointerId: 2 }); await flush();
+    expect(p.api.resize).toHaveBeenCalledOnce();
+    expect(p.api.resize).toHaveBeenCalledWith({ width: 320, height: 192 });
+    expect(p.api.taskAction).not.toHaveBeenCalled(); expect(p.api.move).not.toHaveBeenCalled();
+    expect(p.html).toContain("width:100%;height:100%;object-fit:contain");
+    const preventDefault = vi.fn();
+    p.nodes.get("resize-corner")!.handlers.keydown({ key: "ArrowLeft", preventDefault }); await flush();
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(p.api.resize).toHaveBeenLastCalledWith({ width: 308, height: 184.8 });
+  });
   it("keeps stop on a draining task and shows a compact permission failure", async () => {
     const p = await page();
     p.update([{ ...task("A"), phase: "stopped", controlPending: true, reason: "userStopped" }]);
@@ -94,6 +113,14 @@ describe("small native window preview", () => {
     p.preview(frame("A")); expect(p.nodes.get("image")!.hidden).toBe(false);
     p.update([{ ...task("A"), controlPending: true }]);
     expect(p.nodes.get("image")!.hidden).toBe(true);
+  });
+  it("preserves back-window controls while preview frames refresh", async () => {
+    const p = await page(), button = p.nodes.get("stack")!.children[0];
+    p.preview(frame("B"));
+    p.preview({ ...frame("B"), frame: { ...frame("B").frame, sequence: 2 } });
+    expect(p.nodes.get("stack")!.children[0]).toBe(button);
+    expect(button.children[0].src).toBe("blob:2");
+    await button.onclick!(); expect(p.api.setPresentation).toHaveBeenCalledWith("B");
   });
   it("escapes translated text before embedding it in the nonce script", () => {
     const html = taskPreviewWindowHtml(() => '</script><img src="unsafe">');

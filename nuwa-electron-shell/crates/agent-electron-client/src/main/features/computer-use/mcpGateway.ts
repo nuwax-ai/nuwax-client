@@ -93,6 +93,8 @@ export class CuaMcpGateway {
     rejectTarget?: (tool: string, args: unknown, owner: string) => string | null | Promise<string | null>;
     prepareTarget?: (owner: string, tool: string, args: unknown) => Promise<void>;
     discoverWindows?: () => Promise<unknown[]>;
+    /** Host-owned status read; model arguments cannot prompt or select a native target. */
+    checkPermissions?: () => Promise<NonNullable<Rpc["result"]>>;
     /** 观察结果含密码框/锁屏时打码或跳过送模。 */
     sanitizeResult?: (tool: string, result: NonNullable<Rpc["result"]>) => void;
     tasks?: CuaTaskRegistry;
@@ -421,6 +423,18 @@ export class CuaMcpGateway {
       const tool = message.params?.name;
       if (typeof tool !== "string" || !this.options.allowedTools.includes(tool)) {
         this.refuse(connection, owner, id, "toolNotAllowed"); return;
+      }
+      if (tool === "check_permissions" && this.options.checkPermissions) {
+        connection.reservations.add(keyOf(id));
+        try {
+          const result = await this.options.checkPermissions();
+          if (this.options.authorize && this.options.authorize(connection.grant) !== owner) {
+            this.reject(connection.socket, id, "sessionRequired"); return;
+          }
+          if (!connection.lifetime.signal.aborted) connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+        } catch { this.reject(connection.socket, id, "daemonNotReady"); }
+        finally { connection.reservations.delete(keyOf(id)); }
+        return;
       }
       if (tool === "list_windows" && this.options.discoverWindows) {
         try {

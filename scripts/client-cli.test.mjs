@@ -8,10 +8,11 @@ test('CLI parses command-specific values and camelCase flags', () => {
   });
   assert.deepEqual(parseArgs(['dev', '--frontend', 'source', '--port', '3001']).options,
     { frontend: 'source', port: 3001 });
+  assert.deepEqual(parseArgs(['dev', '--frontend', 'remote']).options, { frontend: 'remote' });
 });
 test('CLI refuses ignored or malformed flags before a release can mutate Git', () => {
   for (const argv of [['release', '--no-commit'], ['pack', '--push'], ['doctor', '--force'],
-    ['dev', '--port', '0'], ['pack', '--frontend', 'other'], ['release', '--version'], ['dev', '--dry-run=true']]) {
+    ['dev', '--port', '0'], ['pack', '--frontend', 'other'], ['pack', '--frontend', 'remote'], ['setup', '--frontend', 'remote'], ['release', '--version'], ['dev', '--dry-run=true']]) {
     assert.throws(() => parseArgs(argv));
   }
 });

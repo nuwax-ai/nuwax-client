@@ -142,6 +142,28 @@ test('helper cache rebuilds when a shared upstream registry changes', async (t) 
   assert.equal(builds, 2, 'the shared registry is compiled into the helper');
 });
 
+test('development helper has independent resources and bounded local compilation', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-cua-dev-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const p = core.paths(root), calls = [];
+  const production = path.join(p.client, 'resources/computer-use/production-marker');
+  fs.mkdirSync(path.dirname(production), { recursive: true }); fs.writeFileSync(production, 'keep');
+  const tools = { ...core, run: async (command, args, options) => {
+    if (command === 'bash') {
+      calls.push(options.env);
+      const file = path.join(options.env.OUT_DIR, 'Nuwax Computer Use Dev.app/Contents/MacOS/Nuwax Computer Use');
+      fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'development helper');
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  } };
+  const result = await prepareComputerUse(root, { tools, development: true, platform: 'darwin', arch: 'arm64' });
+  assert.equal(result, path.join(p.cache, 'dev/computer-use'));
+  assert.equal(calls[0].NUWAX_CUA_DEV_PROFILE, '1');
+  assert.equal(calls[0].CARGO_PROFILE_RELEASE_STRIP, 'none');
+  assert.equal(calls[0].CARGO_BUILD_JOBS, process.env.CARGO_BUILD_JOBS || '2');
+  assert.equal(fs.readFileSync(production, 'utf8'), 'keep');
+});
+
 test('pack output protects source/module/cache paths and resolves symlink aliases', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-output-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
