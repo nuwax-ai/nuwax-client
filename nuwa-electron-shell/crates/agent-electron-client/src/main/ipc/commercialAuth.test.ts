@@ -4,6 +4,11 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   isPackaged: true,
   ticketUsable: true,
+  development: false,
+}));
+vi.mock("@shared/constants", async original => ({
+  ...await original<typeof import("@shared/constants")>(),
+  get IS_DEV_PROFILE() { return mocks.development; },
 }));
 vi.mock("electron", () => ({
   // getter 双向绑定：dev 种值分支测试可按用例切 isPackaged
@@ -124,7 +129,8 @@ describe("commercial registration protocol", () => {
       "commercial-device",
     );
   });
-  it("registers with cookie and product device after verifying the user", async () => {
+  it.each([false, true])("registers with cookie, product device and the matching profile name (development=%s)", async development => {
+    mocks.development = development;
     mocks.settings.set("step1_config", { serverHost: origin });
     mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
     mocks.fetch
@@ -143,12 +149,61 @@ describe("commercial registration protocol", () => {
     const body = JSON.parse(options.body);
     expect(body.username).toBe("alice");
     expect(body.deviceId).toBe("commercial-device");
-    expect(body.computerName).toBe("fengfei-mac-xx");
-    expect(getComputerName()).toBe("fengfei-mac-xx");
+    expect(body.computerName).toBe(development ? "fengfei-mac-xx Dev" : "fengfei-mac-xx");
+    expect(getComputerName()).toBe(body.computerName);
     expect(body.savedKey).toBeUndefined();
     expect(body.sandboxConfigValue.fileServerPort).toBe(61005);
     expect(mocks.settings.get("auth.config_key")).toBe("new");
     expect(start).toHaveBeenCalledTimes(1);
+  });
+  it.each(["fengfei-mac-xx", "My custom workstation"])("syncs only this development device's default label (%s)", async existingName => {
+    mocks.development = true;
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    const session = () => new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } }));
+    const registration = () => new Response(JSON.stringify({ code: "0000", data: {
+      id: 436, configKey: "new", serverHost: "tunnel.example.com", serverPort: 443,
+    } }));
+    mocks.fetch.mockResolvedValueOnce(session()).mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: [
+        { id: 999, name: "fengfei-mac-xx" },
+        { id: 436, name: existingName, description: "keep description", maxAgentCount: 2 },
+      ] })));
+    if (existingName === "fengfei-mac-xx") mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: null })));
+    expect((await fixture().flow.start()).success).toBe(true);
+    const updates = mocks.fetch.mock.calls.filter(([url]) => url.endsWith("/api/sandbox/config/update"));
+    expect(updates).toHaveLength(existingName === "fengfei-mac-xx" ? 1 : 0);
+    if (updates.length) expect(JSON.parse(updates[0][1].body)).toEqual({ id: 436, name: "fengfei-mac-xx Dev", description: "keep description", maxAgentCount: 2 });
+    expect(mocks.settings.get(`nuwax.devComputerNameSynced.${origin}/436`)).toBe(true);
+    const count = mocks.fetch.mock.calls.length;
+    mocks.fetch.mockResolvedValueOnce(session()).mockResolvedValueOnce(registration());
+    expect((await fixture().flow.start()).success).toBe(true);
+    expect(mocks.fetch.mock.calls.length - count).toBe(2);
+  });
+  it("a failed development label sync keeps login available and retries on a later registration", async () => {
+    mocks.development = true;
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { id: 436, configKey: "new", serverHost: "tunnel.example.com", serverPort: 443 } })))
+      .mockRejectedValueOnce(new Error("temporary network failure"));
+    expect((await fixture().flow.start()).success).toBe(true);
+    expect(mocks.settings.has(`nuwax.devComputerNameSynced.${origin}/436`)).toBe(false);
+  });
+  it("never updates a computer label or stores its migration after the login changes", async () => {
+    mocks.development = true;
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "ticket-1");
+    mocks.fetch.mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { userName: "alice" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: "0000", data: { id: 436, configKey: "new", serverHost: "tunnel.example.com", serverPort: 443 } })))
+      .mockImplementationOnce(async () => {
+        mocks.ticketUsable = false;
+        return new Response(JSON.stringify({ code: "0000", data: [{ id: 436, name: "fengfei-mac-xx" }] }));
+      });
+    expect((await fixture().flow.start()).success).toBe(false);
+    expect(mocks.fetch.mock.calls.some(([url]) => url.endsWith("/api/sandbox/config/update"))).toBe(false);
+    expect(mocks.settings.has(`nuwax.devComputerNameSynced.${origin}/436`)).toBe(false);
+    expect(mocks.settings.get("auth.config_key")).toBeFalsy();
   });
   it("does not register a token-only upgraded session", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
@@ -377,6 +432,7 @@ describe("serverHost backfill（真实时序：ensureDefaultWorkspaceDir 先写 
 
 describe("clearRegistration 注册凭据语义（2026-09-14 收口）", () => {
   beforeEach(() => {
+  mocks.development = false;
     mocks.settings.clear();
     mocks.settings.set("auth.saved_key", "sk-1");
     mocks.settings.set("auth.config_key", "sk-1");

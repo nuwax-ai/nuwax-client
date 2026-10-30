@@ -79,7 +79,7 @@ import { getDeviceId, logSystemInfo } from "./services/system/deviceId";
 import { initWebviewPolicy, configureSharedWebview } from "./services/system/webviewPolicy";
 import { stopAllEngines } from "./services/engines/engineManager";
 import { processRegistry } from "./services/system/processRegistry";
-import { APP_DATA_DIR_NAME } from "@shared/constants";
+import { APP_DATA_DIR_NAME, IS_DEV_PROFILE, COMMERCIAL_PROFILE_NAME } from "@shared/constants";
 import { initFrameEmbeddingPolicy } from "./services/frameEmbeddingPolicy";
 import { attachRendererRecovery } from "./services/rendererRecovery";
 import { initBusinessRequestRouting } from "./services/businessRequestRouting";
@@ -92,12 +92,12 @@ import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpD
 const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
 
-// 商业开发态与安装态均使用独立浏览器存储；不能沿用基座 package name 的 userData。
+// Separate development and installed profiles before Chromium storage and instance locking.
 let cdpDiagnosticsDecision: ReturnType<typeof configureCdpDiagnostics> | null = null;
 if (APP_NAME_IDENTIFIER === "nuwax") {
-  configureCommercialAppIdentity(app, APP_DISPLAY_NAME);
+  configureCommercialAppIdentity(app, APP_DISPLAY_NAME, process.platform, COMMERCIAL_PROFILE_NAME);
   // Keep the Windows updater/taskbar identity under the commercial product guard.
-  if (process.platform === "win32") app.setAppUserModelId("com.nuwax-ai.nuwax");
+  if (process.platform === "win32") app.setAppUserModelId(IS_DEV_PROFILE ? "com.nuwax-ai.nuwax.dev" : "com.nuwax-ai.nuwax");
   // 商业版诊断通道：userData/diagnostics.json 显式开启本机 CDP（默认关闭、仅 127.0.0.1、
   // 剥离外部 remote-debugging* 命令行、坏配置 fail closed）。commandLine 开关仅在
   // app.ready 前生效，此处应用、改动下次启动生效；此处早于 initLogging，先不落日志。
@@ -492,6 +492,7 @@ function createWindow() {
       [captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING)), 'screenshot'],
       [recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)), 'mp4'],
     ], action => { void dispatchCaptureMenuAction(action, 'shortcut'); }, {
+      enabled: !IS_DEV_PROFILE,
       onUnavailable: shortcut => log.warn('[Capture] Shortcut unavailable', shortcut),
     });
   }

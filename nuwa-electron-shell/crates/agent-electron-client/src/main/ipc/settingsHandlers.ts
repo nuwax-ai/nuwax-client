@@ -3,7 +3,7 @@ import { getDb, readSetting } from '../db';
 import log from 'electron-log';
 import { readQuickInitConfig } from '../bootstrap/quickInit';
 import { DORMANCY_SETTING_KEY, refreshHostActivity } from '../services/hostActivity';
-import { APP_NAME_IDENTIFIER } from '@shared/constants';
+import { APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from '@shared/constants';
 import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, CAPTURE_SHORTCUT_UNAVAILABLE_ERROR, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/contract';
 import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refreshDesktopBrowserWindows } from '../features';
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
@@ -41,7 +41,8 @@ export function registerSettingsHandlers(): void {
       const other = key === CAPTURE_SHORTCUT_SETTING ? recordShortcut(readSetting(CAPTURE_RECORD_SHORTCUT_SETTING)) : captureShortcut(readSetting(CAPTURE_SHORTCUT_SETTING));
       if (shortcut === other) return false;
       const action = key === CAPTURE_SHORTCUT_SETTING ? 'screenshot' : 'mp4';
-      if (!saveCaptureShortcutPreference(shortcut, action, () => persist(shortcut))) throw new Error(CAPTURE_SHORTCUT_UNAVAILABLE_ERROR);
+      if (IS_DEV_PROFILE) persist(shortcut);
+      else if (!saveCaptureShortcutPreference(shortcut, action, () => persist(shortcut))) throw new Error(CAPTURE_SHORTCUT_UNAVAILABLE_ERROR);
       notifyCapturePreferencesChanged();
       return true;
     }

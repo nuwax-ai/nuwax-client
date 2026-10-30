@@ -9,6 +9,8 @@ const livePhase = task => ['running', 'paused'].includes(task.phase)
   || (task.phase === 'failed' && task.reason === 'helperStillRunning');
 let runtime = null, selected = null, revision = -1, lastFrame = 0;
 const frames = new Map();
+const stackLayers = new Map();
+let stackOrder = '';
 const icons = { pause: '<path d="M7 5v10M13 5v10"/>', resume: '<path d="m7 4 9 6-9 6Z"/>', stop: '<rect x="5" y="5" width="10" height="10" rx="1.5"/>' };
 const icon = name => '<svg viewBox="0 0 20 20">' + icons[name] + '</svg>';
 const el = id => document.getElementById(id);
@@ -25,7 +27,52 @@ el('close').setAttribute('aria-label', labels['preview.close']);
 el('close').onclick = () => api.close();
 el('viewport').title = labels['preview.takeover'];
 el('viewport').setAttribute('aria-label', labels['preview.takeover']);
-let drag = null, presentationPosition = null, suppressClickUntil = 0;
+let drag = null, presentationPosition = null, presentationLayers = [], suppressClickUntil = 0;
+const place = (node, layer) => {
+  if (!layer) return;
+  for (const key of ['x', 'y', 'width', 'height']) node.style.setProperty(({x:'left',y:'top'})[key] || key, layer[key] + 'px');
+  node.style.setProperty('right', 'auto'); node.style.setProperty('bottom', 'auto');
+};
+let resizing = null, resizeFrame = 0, resizeBusy = false, pendingSize = null;
+const queueResize = size => {
+  pendingSize = size;
+  if (resizeFrame || resizeBusy) return;
+  resizeFrame = requestAnimationFrame(() => {
+    resizeFrame = 0;
+    const next = pendingSize; pendingSize = null; resizeBusy = true;
+    void api.resize(next).then(present).catch(() => {}).finally(() => {
+      resizeBusy = false; if (pendingSize) queueResize(pendingSize);
+    });
+  });
+};
+for (const edge of ['right', 'bottom', 'corner']) {
+  const handle = el('resize-' + edge);
+  handle.title = labels['preview.resize']; handle.setAttribute('aria-label', handle.title);
+  handle.addEventListener('pointerdown', event => {
+    const layer = presentationLayers.find(layer => layer.taskId === selected);
+    if (event.button !== 0 || !layer) return;
+    resizing = { id: event.pointerId, x: event.screenX, y: event.screenY, layer };
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!resizing || event.pointerId !== resizing.id) return;
+    const { layer } = resizing;
+    const dx = (event.screenX - resizing.x) / layer.width, dy = (event.screenY - resizing.y) / layer.height;
+    const delta = edge === 'right' ? dx : edge === 'bottom' ? dy : Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    const scale = Math.max(.1, 1 + delta);
+    queueResize({ width: layer.width * scale, height: layer.height * scale });
+  });
+  const end = () => { resizing = null; suppressClickUntil = Date.now() + 250; };
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(event, end);
+  handle.addEventListener('keydown', event => {
+    const layer = presentationLayers.find(layer => layer.taskId === selected);
+    const direction = { ArrowRight:1, ArrowDown:1, ArrowLeft:-1, ArrowUp:-1 }[event.key];
+    if (!layer || !direction) return;
+    event.preventDefault();
+    const scale = 1 + direction * 12 / Math.max(layer.width, layer.height);
+    queueResize({ width: layer.width * scale, height: layer.height * scale });
+  });
+}
 for (const dragHandle of [document.querySelector('header'), el('viewport')]) {
   dragHandle.addEventListener('pointerdown', event => {
     if (event.button !== 0 || dragHandle !== el('viewport') && event.target.closest('button') || !presentationPosition) return;
@@ -56,7 +103,9 @@ function present(p) {
     clearFrame(); el('status').textContent = labels['preview.loading'];
   }
   if (p.position) presentationPosition = p.position;
+  if (p.layers) presentationLayers = p.layers;
   selected = p.taskId;
+  place(document.querySelector('.shell'), presentationLayers.find(layer => layer.taskId === selected));
   if (runtime) draw(runtime, true);
 }
 async function run(id, action) {
@@ -81,24 +130,36 @@ async function activate(id) {
   } catch { el('error').textContent = labels['reason.generic']; }
 }
 function drawStack() {
-  const stack = el('stack'); stack.replaceChildren();
+  const stack = el('stack');
   const live = (runtime?.tasks || []).filter(livePhase);
   const others = live.filter(task => task.taskId !== selected).slice(0, 3);
   document.body.style.setProperty('--stack-space', others.length * 8 + 'px');
   document.body.classList.toggle('stacked', others.length > 0);
+  for (const id of stackLayers.keys()) if (!others.some(task => task.taskId === id)) stackLayers.delete(id);
   for (const [index, task] of others.entries()) {
-    const back = document.createElement('button');
+    let layer = stackLayers.get(task.taskId);
+    if (!layer) {
+      const back = document.createElement('button'), image = document.createElement('img'), label = text('span', '');
+      image.alt = ''; image.hidden = true; back.append(image); back.append(label);
+      back.onclick = () => activate(task.taskId);
+      layer = { back, image, label }; stackLayers.set(task.taskId, layer);
+    }
+    const { back, image, label } = layer;
     back.title = task.scope?.label || labels['scope.choose'];
     back.setAttribute('aria-label', back.title);
     back.style.setProperty('--task-color', task.color);
     back.style.setProperty('--offset', (index + 1) * 8 + 'px');
     back.style.setProperty('--remaining', (others.length - index - 1) * 8 + 'px');
     back.style.zIndex = String(3 - index);
+    place(back, presentationLayers.find(layer => layer.taskId === task.taskId));
     const cached = frames.get(task.taskId);
-    if (cached) { const image = document.createElement('img'); image.src = cached.url; image.alt = ''; back.append(image); }
-    back.append(text('span', task.scope?.label || labels['scope.choose']));
-    back.onclick = () => activate(task.taskId);
-    stack.append(back);
+    image.hidden = !cached;
+    if (cached) { if (image.src !== cached.url) image.src = cached.url; } else image.removeAttribute('src');
+    label.textContent = task.scope?.label || labels['scope.choose'];
+  }
+  const order = JSON.stringify(others.map(task => task.taskId));
+  if (order !== stackOrder) {
+    stack.replaceChildren(...others.map(task => stackLayers.get(task.taskId).back)); stackOrder = order;
   }
 }
 function draw(state, force = false) {
@@ -193,12 +254,12 @@ for (const action of ['pause', 'resume', 'stop', 'confirm']) el(action).onclick 
 api.onRuntime(draw); api.onPresentation(present);
 api.getRuntime().then(state => draw(state, true));
 api.getPresentation().then(present);
-window.addEventListener('unload', () => { clearFrame(); for (const frame of frames.values()) URL.revokeObjectURL(frame.url); frames.clear(); });
+window.addEventListener('unload', () => { if (resizeFrame) cancelAnimationFrame(resizeFrame); pendingSize = null; clearFrame(); for (const frame of frames.values()) URL.revokeObjectURL(frame.url); frames.clear(); });
 `;
 
 export function taskPreviewWindowHtml(t: (key: string) => string) {
   const keys = ['title', 'confirmAllow', 'scope.choose', 'reason.generic', 'phase.running', 'phase.paused', 'phase.stopped', 'phase.failed',
-    'preview.close', 'preview.pause', 'preview.resume', 'preview.stop', 'preview.takeover',
+    'preview.close', 'preview.pause', 'preview.resume', 'preview.stop', 'preview.takeover', 'preview.resize',
     'preview.loading', 'preview.unavailable', 'preview.minimized', 'preview.permissionsRequired', 'preview.helperUpgradeRequired',
     'preview.delayed', 'preview.ended', 'preview.handoff', ...CUA_REASON_KEYS.map(key => 'reason.' + key)];
   const labels = JSON.stringify(Object.fromEntries(keys.map(key => [key, t('Claw.Cua.' + key)]))).replace(/</g, '\\u003c');
@@ -209,20 +270,23 @@ export function taskPreviewWindowHtml(t: (key: string) => string) {
 *{box-sizing:border-box}body{margin:0;overflow:hidden;background:transparent;color:var(--text);font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;user-select:none}
 button{font:inherit;color:inherit;cursor:pointer;-webkit-app-region:no-drag}button:disabled{opacity:.4;cursor:default}[hidden]{display:none!important}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.shell{position:absolute;z-index:4;inset:var(--preview-inset) var(--preview-inset) calc(var(--preview-inset) + var(--stack-space)) calc(var(--preview-inset) + var(--stack-space));border:1px solid var(--line);border-radius:10px;background:var(--glass);overflow:hidden;box-shadow:0 2px 6px #17172b12}
+.shell{position:absolute;z-index:4;inset:var(--preview-inset) var(--preview-inset) calc(var(--preview-inset) + var(--stack-space)) calc(var(--preview-inset) + var(--stack-space));background:transparent;overflow:visible;container-type:inline-size}
 header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--glass);backdrop-filter:blur(12px);display:flex;align-items:center;gap:6px;padding:0 6px 0 9px;cursor:grab;touch-action:none;opacity:0;pointer-events:none;transition:opacity .12s ease}header:active{cursor:grabbing}
 #dragHandle{font-size:14px;color:var(--muted);opacity:.6;flex:none}#dot{width:5px;height:5px;border-radius:50%;flex:none}
 #title{flex:1;min-width:0;text-align:left;padding:0;border:0;background:transparent;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #phase{color:var(--muted);font-size:10px;white-space:nowrap}.icon{display:flex;align-items:center;justify-content:center;width:24px;height:25px;padding:0;border:0;border-radius:7px;background:transparent;flex:none}.icon:hover{background:var(--hover)}#close svg{width:13px;height:13px}
-#viewport{touch-action:none;position:absolute;inset:0;display:grid;place-items:center;padding:0;border:0;overflow:hidden;border-radius:inherit;background:var(--hover)}
-#viewport:not(:disabled):hover{outline:1px solid var(--accent);outline-offset:-1px}#image{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;pointer-events:none;border-radius:6px}
+#viewport{touch-action:none;position:absolute;inset:0;display:grid;place-items:center;padding:0;border:0;overflow:visible;background:transparent}
+#viewport:not(:disabled):hover{outline:1px solid var(--accent);outline-offset:-1px}#image{display:block;min-width:0;min-height:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 #status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;color:var(--muted);font-size:11px;line-height:1.6;background:var(--glass)}#status:empty{display:none}
 #toolbar{position:absolute;z-index:2;bottom:8px;opacity:0;pointer-events:none;left:8px;right:8px;display:flex;align-items:center;gap:6px;height:26px;transform:translateY(3px);transition:opacity .12s ease,transform .12s ease}#toolbar button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:var(--glass);backdrop-filter:blur(8px);font-size:11px;white-space:nowrap}#toolbar #stop{color:var(--danger)}#toolbar #stop:hover{background:var(--danger-bg)}
-#stack{position:absolute;inset:0;pointer-events:none}#stack button{position:absolute;inset:calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--remaining)) calc(var(--preview-inset) + var(--remaining));padding:0;border:1px solid var(--line);border-left:3px solid var(--task-color);box-shadow:0 2px 6px #17172b12;border-radius:8px;background:var(--glass);overflow:hidden;pointer-events:auto}#stack img{width:100%;height:100%;object-fit:contain;opacity:.9}#stack span{position:absolute;right:2px;bottom:2px;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
+#stack{position:absolute;inset:0;pointer-events:none}#stack button{position:absolute;inset:calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--offset)) calc(var(--preview-inset) + var(--remaining)) calc(var(--preview-inset) + var(--remaining));padding:0;border:0;background:transparent;overflow:visible;pointer-events:auto}#stack img{width:100%;height:100%;object-fit:contain}#stack span{position:absolute;right:2px;bottom:2px;max-width:95%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:var(--muted)}
 #error{position:absolute;z-index:8;bottom:47px;left:9px;right:9px;max-height:72px;overflow:auto;margin:0;padding:7px 9px;font-size:11px;line-height:1.5;color:var(--danger);background:var(--glass);border:1px solid var(--danger-bg);border-radius:8px}#error:empty{display:none}
 .shell:hover header,.shell:focus-within header{opacity:1;pointer-events:auto}
 .shell:hover #toolbar,.shell:has(:focus-visible) #toolbar{opacity:1;pointer-events:auto;transform:translateY(0)}
 #pauseHint{position:absolute;z-index:1;top:7px;left:7px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:var(--glass);color:var(--muted);font-size:10px;pointer-events:none}.shell:hover #pauseHint,.shell:has(:focus-visible) #pauseHint{opacity:0}
+.resize{position:absolute;z-index:9;border:0;padding:0;background:transparent;opacity:0;pointer-events:none;touch-action:none}.shell:hover .resize,.shell:has(:focus-visible) .resize{opacity:1;pointer-events:auto}
+#resize-right{right:0;top:32px;bottom:20px;width:7px;cursor:ew-resize}#resize-bottom{bottom:0;left:12px;right:20px;height:7px;cursor:ns-resize}#resize-corner{right:1px;bottom:1px;width:16px;height:16px;cursor:nwse-resize;color:var(--muted)}#resize-corner svg{width:12px;height:12px}
+@container(max-width:170px){#toolbar span,#phase{display:none}#toolbar button{padding:0 5px}header{gap:4px;padding-left:5px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 @media(prefers-color-scheme:dark){:root{--text:#eeeef2;--muted:#a0a0ad;--glass:#25252cf7;--line:#ffffff15;--hover:#ffffff0a;--accent:#8175ff;--danger:#f08c94;--danger-bg:#e05a6324}}
   </style></head><body><div id="stack"></div><main class="shell">
@@ -230,7 +294,7 @@ header{position:absolute;inset:0 0 auto;height:32px;z-index:2;background:var(--g
   <span id="pauseHint" hidden role="status"></span>
   <div id="toolbar"><button id="pause"></button><button id="resume"></button><button id="confirm" hidden></button><button id="stop"></button></div>
   <header><span id="dragHandle" aria-hidden="true">⠿</span><span id="dot"></span><button id="title"></button><span id="phase"></span><button id="close" class="icon"><svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15"/></svg></button></header>
-  <p id="error" role="alert"></p></main><script nonce="${nonce}">
+  <p id="error" role="alert"></p><button class="resize" id="resize-right"></button><button class="resize" id="resize-bottom"></button><button class="resize" id="resize-corner"><svg viewBox="0 0 12 12"><path d="m4 10 6-6M8 10l2-2"/></svg></button></main><script nonce="${nonce}">
 ${previewClientSource.replace('__CUA_LABELS__', labels).replace('__CUA_NOTICES__', notices)}
   </script></body></html>`;
 }

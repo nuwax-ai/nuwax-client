@@ -39,8 +39,10 @@ const mocks = vi.hoisted(() => ({
   windowProbeStarted: vi.fn(),
   beforeRawSocketError: undefined as (() => void) | undefined,
   rejectImplicitHostSession: false,
-  hostRequests: [] as Array<{ method: string; name?: string; session_id?: string }>,
+  hostRequests: [] as Array<{ method: string; name?: string; session_id?: string; args?: unknown }>,
   closedHostSessions: [] as string[],
+  development: false,
+  signatureId: undefined as string | undefined,
 }));
 
 function policyHash(policyPath: string): string {
@@ -96,7 +98,7 @@ vi.mock("node:child_process", () => ({
     if (args.includes("stop")) mocks.daemonReady = false;
     const stderr =
       cmd === "codesign"
-        ? "Identifier=com.nuwax-ai.nuwax-computer-use\nTeamIdentifier=89GQ2RJVW7\n"
+        ? `Identifier=${mocks.signatureId ?? "com.nuwax-ai.nuwax-computer-use" + (mocks.development ? ".dev" : "")}\nTeamIdentifier=89GQ2RJVW7\n`
         : "";
     const gate = cmd === "codesign" ? mocks.installGate
       : cmd === "pkill" && args.some(arg => arg.includes("__permissions-host-request")) ? mocks.permissionCleanupGate : undefined;
@@ -145,7 +147,7 @@ vi.mock("node:net", async (importOriginal) => {
           },
           write: (payload: string) => {
             const request = JSON.parse(payload) as { method: string; name?: string; session_id?: string; args?: { nuwax_nonce?: string } };
-            mocks.hostRequests.push({ method: request.method, name: request.name, session_id: request.session_id });
+            mocks.hostRequests.push({ method: request.method, name: request.name, session_id: request.session_id, args: request.args });
             let reply: unknown = { ok: false };
             if (request.method === "metadata") {
               if (request.args?.nuwax_nonce) {
@@ -213,6 +215,7 @@ vi.mock("node:net", async (importOriginal) => {
 /** 测试宿主双实现：与原 db/mcp mock 同一 Map 后端，断言形态不变。 */
 function testHostPorts() {
   return {
+    get developmentProfile() { return mocks.development; },
     get dataHome() { return path.join(mocks.userDataURL, "computer-use"); },
     readSetting: (k: string) => mocks.settings.get(k) ?? null,
     writeSetting: (k: string, v: unknown) => {
@@ -273,8 +276,8 @@ afterAll(() => {
 
 const HELPER_APP = "Nuwax Computer Use.app";
 
-function makeHelperApp(root: string) {
-  const app = path.join(root, HELPER_APP);
+function makeHelperApp(root: string, name = HELPER_APP) {
+  const app = path.join(root, name);
   fs.mkdirSync(path.join(app, "Contents", "MacOS"), { recursive: true });
   fs.mkdirSync(path.join(app, "Contents", "Resources"), { recursive: true });
   fs.writeFileSync(path.join(app, "Contents", "MacOS", "Nuwax Computer Use"), "#!/bin/sh\n");
@@ -316,6 +319,8 @@ async function createEndpointSocket(stale: boolean) {
 }
 
 beforeEach(() => {
+  mocks.development = false;
+  mocks.signatureId = undefined;
   mocks.settings.clear();
   mocks.settingFailure = false;
   mocks.proxySync.mockReset().mockResolvedValue(undefined);
@@ -517,7 +522,7 @@ describe("cua 开关与启动收敛", () => {
     expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseEnabled).toBe(false);
   });
 
-  it("关闭时清理旧固定端点与丢失 manifest 的随机端点孤儿进程", async () => {
+  it("关闭时清理旧固定端点，保留无法证明属于本实例的随机端点", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     await syncCuaMcpConfig(true);
     fs.rmSync(path.join(mocks.userDataURL, "computer-use", "endpoint.json"));
@@ -531,7 +536,7 @@ describe("cua 开关与启动收敛", () => {
     expect(kills.every(call => call.args.some(arg => arg.startsWith("^") && arg.includes(" serve --socket ")))).toBe(true);
     const pattern = kills[kills.length - 1].args[kills[kills.length - 1].args.length - 1];
     const command = path.join(stableHelperPath(), "Contents", "MacOS", "Nuwax Computer Use") + " serve --socket /owned-endpoint";
-    expect(new RegExp(pattern).test(command)).toBe(true);
+    expect(new RegExp(pattern).test(command)).toBe(false);
     expect(new RegExp(pattern).test("node -e '" + command + "'")).toBe(false);
   });
 
@@ -1010,6 +1015,15 @@ describe("permission request ownership", () => {
 });
 
 describe("首用安装流（Resources → userData 稳定路径）", () => {
+  it("development installs its own signed helper and rejects a production identity under the dev name", async () => {
+    mocks.development = true;
+    makeHelperApp(path.join(process.resourcesPath, "computer-use"), "Nuwax Computer Use Dev.app");
+    mocks.signatureId = "com.nuwax-ai.nuwax-computer-use";
+    expect(await installCuaHelper()).toMatchObject({ success: false, error: expect.stringContaining("bundle-id-mismatch") });
+    mocks.signatureId = undefined;
+    expect(await installCuaHelper()).toMatchObject({ success: true, installedPath: path.join(mocks.userDataURL, "computer-use", "Nuwax Computer Use Dev.app") });
+    expect(fs.existsSync(stableHelperPath())).toBe(false);
+  });
   it("bundled helper→签名/bundle id 校验+拷贝+安装锁", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     const r = await installCuaHelper();
@@ -1074,52 +1088,49 @@ describe("首用安装流（Resources → userData 稳定路径）", () => {
   });
 });
 
-describe("Windows 语义回归（stopDaemon 兜底通配须匹配命名管道路径）", () => {
-  // 真 bug：兜底 PowerShell 的 CommandLine -like 模式曾为单段
-  // `*serve --socket nuwax-computer-use*`，而 win 实际命令行是
-  // `serve --socket \\.\pipe\nuwax-computer-use`（pipe 前缀打断连续子串），
-  // 协议停失败时兜底恒杀不到。此处锁定两段通配的新模式。
-  const WIN_CMDLINE = "NuwaxComputerUse.exe serve --socket \\\\.\\pipe\\nuwax-computer-use";
-  const likeToRegex = (p: string) =>
-    new RegExp("^" + p.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+describe("Unix daemon cleanup stays within the current profile", () => {
+  it.each([false, true])("fallback never sweeps other random endpoints (development=%s)", async (development) => {
+    mocks.development = development;
+    await cuaModule.stopDaemon();
+    const selected = JSON.parse(fs.readFileSync(path.join(mocks.userDataURL, "computer-use", "endpoint.json"), "utf8")).socketPath;
+    const patterns = mocks.execCalls.filter(call => call.cmd === "pkill").map(call => new RegExp(call.args.at(-1)!));
+    expect(patterns).toHaveLength(development ? 1 : 2);
+    expect(patterns.some(pattern => pattern.test(`/owned/Nuwax Computer Use serve --socket ${selected} --policy managed`))).toBe(true);
+    expect(patterns.some(pattern => pattern.test('/other/Nuwax Computer Use serve --socket /tmp/c-ffffffffffffffffffffffffffffffff/s'))).toBe(false);
+    const legacy = path.join(os.tmpdir(), "nuwax-computer-use.sock");
+    expect(patterns.some(pattern => pattern.test(`/owned/Nuwax Computer Use serve --socket ${legacy}`))).toBe(!development);
+  });
+});
 
+describe("Windows daemon cleanup owns only its selected pipes", () => {
   beforeAll(() => {
-    Object.defineProperty(process, "platform", {
-      value: "win32",
-      configurable: true,
-    });
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
     vi.resetModules();
   });
   afterAll(() => {
-    Object.defineProperty(process, "platform", {
-      value: "darwin",
-      configurable: true,
-    });
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
     vi.resetModules();
   });
 
-  it("无 helper（协议停跳过）→ PowerShell 兜底，通配模式与实际命令行匹配", async () => {
-    mocks.userDataURL = fs.mkdtempSync(path.join(os.tmpdir(), "cua-test-win-"));
-    Object.defineProperty(process, "resourcesPath", {
-      value: path.join(mocks.userDataURL, "resources"),
-      configurable: true,
-    });
-
+  it.each([false, true])("missing helper uses exact endpoint fallback (development=%s)", async (development) => {
+    mocks.development = development;
     const mod = await loadCua();
     await mod.stopDaemon();
-
-    const psCall = mocks.execCalls.find((c) => c.cmd === "powershell");
-    expect(psCall).toBeTruthy();
-    const likeMatch = psCall!.args[2].match(/-like '([^']+)'/);
-    expect(likeMatch).toBeTruthy();
-    const pattern = likeMatch![1];
-    // 两段通配（吸收 \\.\pipe\ 前缀）匹配实际命令行；旧单段模式不匹配
-    expect(likeToRegex(pattern).test(WIN_CMDLINE)).toBe(true);
-    expect(
-      likeToRegex("*serve --socket nuwax-computer-use*").test(WIN_CMDLINE),
-    ).toBe(false);
-    // win 不走 pkill
-    expect(mocks.execCalls.some((c) => c.cmd === "pkill")).toBe(false);
+    const selected = JSON.parse(fs.readFileSync(path.join(mocks.userDataURL, "computer-use", "endpoint.json"), "utf8")).socketPath;
+    const psCalls = mocks.execCalls.filter(c => c.cmd === "powershell");
+    expect(psCalls).toHaveLength(development ? 1 : 2);
+    const patterns = psCalls.map(call => {
+      const match = call.args[2].match(/-match '([^']+)'/);
+      expect(match).toBeTruthy();
+      return new RegExp(match![1]);
+    });
+    expect(patterns.some(pattern => pattern.test(`NuwaxComputerUse.exe serve --socket "${selected}" --policy managed`))).toBe(true);
+    const legacy = String.raw`\\.\pipe\nuwax-computer-use`;
+    expect(patterns.some(pattern => pattern.test(`NuwaxComputerUse.exe serve --socket ${legacy}`))).toBe(!development);
+    // Another client's random pipe and a prefix collision must both survive cleanup.
+    expect(patterns.some(pattern => pattern.test(`NuwaxComputerUse.exe serve --socket ${legacy}-ffffffffffffffffffffffffffffffff`))).toBe(false);
+    expect(patterns.some(pattern => pattern.test(`NuwaxComputerUse.exe serve --socket ${selected}-other`))).toBe(false);
+    expect(mocks.execCalls.some(c => c.cmd === "pkill")).toBe(false);
   });
 });
 
@@ -1248,6 +1259,20 @@ describe("cua window selection lifecycle", () => {
     expect(task.scope).toEqual({ kind: "window", pid: 25, windowId: 50, label: "Fixture — Document" });
     expect(task.phase).toBe("running");
     expect((await getCuaStatus()).enabled).toBe(true);
+    await setCuaEnabled(false);
+  });
+  it("probes permissions without prompting or allocating a window task", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await loadCua();
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    mocks.settings.set("step1_config", { computerUseEnabled: true, computerUseScopeKind: "window" });
+    await ensureCuaOnBoot();
+    expect(cuaModule.getCuaTasks()).toEqual([]);
+    const result = await mocks.gatewayOptions.checkPermissions();
+    expect(result).toMatchObject({ isError: false, structuredContent: { accessibility: true, screen_recording: true } });
+    expect(mocks.hostRequests.filter(request => request.name === "check_permissions").at(-1)?.args).toEqual({ prompt: false });
+    expect(cuaModule.getCuaTasks()).toEqual([]);
     await setCuaEnabled(false);
   });
 });

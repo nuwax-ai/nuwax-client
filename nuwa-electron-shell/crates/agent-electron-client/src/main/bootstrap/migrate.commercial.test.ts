@@ -174,6 +174,21 @@ describe("commercial branding (overlay, identifier=nuwax)", () => {
     expect(mockWriteSetting).not.toHaveBeenCalled();
   });
 
+  it("development creates its own workspace without reading installed data", async () => {
+    process.env.NUWAX_DEV_PROFILE = "1";
+    vi.resetModules();
+    mockReadSetting.mockReturnValue(null);
+    try {
+      const { migrateDataDir, migrateSettingsPaths } = await import("./migrate");
+      migrateDataDir();
+      migrateSettingsPaths();
+      expect(mockRenameSync).not.toHaveBeenCalled();
+      expect(mockCopyFileSync).not.toHaveBeenCalled();
+      expect(mockMkdirSync).toHaveBeenCalledWith(path.join("/mock/home", "Nuwax Dev"), { recursive: true });
+      expect(mockWriteSetting).toHaveBeenCalledWith("step1_config", { workspaceDir: path.join("/mock/home", "Nuwax Dev") });
+    } finally { delete process.env.NUWAX_DEV_PROFILE; vi.resetModules(); }
+  });
+
   it("does not persist default when workspace dir creation fails", async () => {
     mockReadSetting.mockReturnValue({ serverHost: "https://t.example" });
     mockMkdirSync.mockImplementationOnce(() => {

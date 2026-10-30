@@ -6,6 +6,11 @@ const state = vi.hoisted(() => ({
   allowed: true,
   apply: true,
   preference: null as unknown,
+  development: false,
+}));
+vi.mock('@shared/constants', async (original) => ({
+  ...await original<typeof import('@shared/constants')>(),
+  get IS_DEV_PROFILE() { return state.development; },
 }));
 
 vi.mock("electron", () => ({
@@ -57,6 +62,7 @@ beforeEach(() => {
     allowed: true,
     apply: true,
     preference: null,
+    development: false,
   });
   Object.defineProperty(process, "platform", { value: "win32" });
 });
@@ -68,6 +74,18 @@ afterEach(() => {
 });
 
 describe("开机自启动默认值与用户选择", () => {
+  it("开发档案不查询或修改安装版的系统自启动项", async () => {
+    state.development = true;
+    state.packaged = false;
+    const manager = new AutoLaunchManager();
+    expect(manager.isSupported()).toBe(false);
+    expect(await manager.isEnabled()).toBe(false);
+    expect(await manager.setEnabled(true)).toBe(false);
+    await manager.initializeDefault();
+    expect(app.getLoginItemSettings).not.toHaveBeenCalled();
+    expect(app.setLoginItemSettings).not.toHaveBeenCalled();
+    expect(writeSetting).not.toHaveBeenCalled();
+  });
   it("安装包首次运行默认开启，读写匹配同一启动参数", async () => {
     await new AutoLaunchManager().initializeDefault();
     expect(app.setLoginItemSettings).toHaveBeenCalledWith(

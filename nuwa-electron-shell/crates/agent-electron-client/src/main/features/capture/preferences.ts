@@ -48,8 +48,10 @@ export function bindCaptureShortcuts(
   target: Pick<BrowserWindow, 'on' | 'removeListener' | 'isDestroyed'>,
   bindings: () => ReadonlyArray<readonly [string, CaptureMenuAction]>,
   dispatch: (action: CaptureMenuAction) => void,
-  options: { platform?: NodeJS.Platform; onUnavailable?: (shortcut: string) => void } = {},
+  options: { enabled?: boolean; platform?: NodeJS.Platform; onUnavailable?: (shortcut: string) => void } = {},
 ): () => void {
+  // Keep global hotkeys available to the installed app; menus and buttons still work in dev.
+  if (options.enabled === false) return () => {};
   const platform = options.platform ?? process.platform;
   if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') return () => {};
   const backend = captureShortcutBackend(platform);

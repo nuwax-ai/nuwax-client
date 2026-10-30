@@ -18,6 +18,8 @@
 #   NUWAX_CUA_SOURCE_DIR  本地 dev 直用已有 cua 检出（跳过 clone/patch，须已含补丁）
 #   NUWAX_CUA_CACHE_DIR   未签名二进制缓存（默认 .cache/client-toolchain/cua-helper）
 #   NUWAX_CUA_NO_CACHE=1  强制重编；本地源码检出始终不读写共享缓存
+#   NUWAX_CUA_DEV_PROFILE=1  组装独立 Dev.app / bundle id（默认正式助手）
+#   NUWAX_CUA_TARGET_DIR  本地开发的增量编译目录；不改变默认 CI 输出路径
 set -euo pipefail
 
 CUA_COMMIT="${CUA_COMMIT:-85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19}"
@@ -88,6 +90,7 @@ grep -q 'nuwax_window_preview' \
 }
 
 # ---------- 构建 ----------
+TARGET_DIR="${NUWAX_CUA_TARGET_DIR:-$SRC_DIR/libs/cua-driver/rust/target}"
 # Git Bash puts /usr/bin before the inherited Visual Studio PATH. Its link.exe
 # is the Unix hard-link utility, so rustc's MSVC host build scripts must resolve
 # the linker from the active vcvars environment first.
@@ -133,10 +136,10 @@ else
     # "no input backend" 无兜底）——上游官方 Linux 发行同款开启；纯 Rust 栈（reis）
     # +libxkbcommon-dev，mac/win 为 target-gated 无影响。portal-capture 不开：
     # 截屏主瀑布走免 feature 的 portal.Screenshot，逐窗 PipeWire 仅备用 API 未接线
-    cargo build --locked --release -p cua-driver --features portal-input --target "$TARGET_TRIPLE" --target-dir "$SRC_DIR/libs/cua-driver/rust/target"
+    cargo build --locked --release -p cua-driver --features portal-input --target "$TARGET_TRIPLE" --target-dir "$TARGET_DIR"
   )
 
-  BIN="$SRC_DIR/libs/cua-driver/rust/target/$TARGET_TRIPLE/release/cua-driver"
+  BIN="$TARGET_DIR/$TARGET_TRIPLE/release/cua-driver"
   [ "$PLATFORM" = "win" ] && BIN="${BIN}.exe"
   if [ "$CACHE_ENABLED" = true ]; then
     if ! node "$REPO_ROOT/scripts/client/native-build-cache.mjs" save-helper "$SRC_DIR" "$TARGET_TRIPLE" "$BIN"; then
@@ -158,7 +161,13 @@ mkdir -p "$OUT_DIR"
 
 # ---------- 组装 ----------
 if [ "$PLATFORM" = "mac" ]; then
-  APP="$OUT_DIR/Nuwax Computer Use.app"
+  HELPER_NAME="Nuwax Computer Use"
+  HELPER_ID="com.nuwax-ai.nuwax-computer-use"
+  if [ "${NUWAX_CUA_DEV_PROFILE:-0}" = 1 ]; then
+    HELPER_NAME="Nuwax Computer Use Dev"
+    HELPER_ID="com.nuwax-ai.nuwax-computer-use.dev"
+  fi
+  APP="$OUT_DIR/$HELPER_NAME.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
   cp "$BIN" "$APP/Contents/MacOS/Nuwax Computer Use"
   chmod +x "$APP/Contents/MacOS/Nuwax Computer Use"
@@ -168,6 +177,9 @@ if [ "$PLATFORM" = "mac" ]; then
   [ -f "$ICON_ICNS" ] || { echo "::error::main application icon.icns not found: $ICON_ICNS"; exit 1; }
   cp "$ICON_ICNS" "$APP/Contents/Resources/AppIcon.icns"
   sed -e "s/@@CUA_VERSION@@/$CUA_VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName $HELPER_NAME" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $HELPER_NAME" "$APP/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $HELPER_ID" "$APP/Contents/Info.plist"
   printf 'APPL????' > "$APP/Contents/PkgInfo"
   # cp/xattr 残留会让 codesign verify 报 resource fork（spike 实测），统一清一遍
   xattr -cr "$APP" 2>/dev/null || true

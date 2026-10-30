@@ -40,6 +40,7 @@ export function commercialEnv(root, overrides = {}) {
     ...process.env,
     NUWAX_APP_IDENTIFIER: config.product.identifier,
     NUWAX_APP_DISPLAY_NAME: config.product.displayName,
+    NUWAX_DEV_PROFILE: '',
     NUWAX_UPDATE_FEED_BASE: config.product.feedBase,
     NUWAX_DOWNLOAD_PAGE_URL: config.product.downloadUrl,
     NUWAX_PORT_OFFSET: String(config.product.portOffset),
@@ -243,7 +244,7 @@ export async function prepare(root, options = {}) {
   const tools = options.tools ?? core;
   const p = tools.paths(root);
   const opt = { frontend: config.frontend.mode, platform: process.platform, arch: process.arch, ...options };
-  if (!['dist', 'source'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist 或 source');
+  if (!['dist', 'source', 'remote'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist、source 或 remote');
   await ensureSubmodules(root, opt, tools);
   const plan = ['commercial-dependencies', 'agent-kit', 'workspace', 'native', 'resources'];
   if (opt.dryRun) {

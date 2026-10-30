@@ -27,7 +27,7 @@
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
-import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
+import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -328,6 +328,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 桌面特性（截屏/录屏、开源组件声明等）：静态注册，按产品与开关加载，关闭即零痕迹。
   // isHostSender 在下方才声明，这里用闭包延迟取值（IPC 到达时早已初始化）。
   startDesktopFeatures({
+    developmentProfile: IS_DEV_PROFILE,
     product: APP_NAME_IDENTIFIER,
     ipcMain,
     isBusinessSender: isIMSender,

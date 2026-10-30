@@ -4,9 +4,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 import log from "electron-log";
-import { APP_DATA_DIR_NAME } from "@shared/constants";
+import { APP_DATA_DIR_NAME, IS_DEV_PROFILE } from "@shared/constants";
 
-const DEVICE_SALT = "nuwax:device:v1";
+const DEVICE_SALT = IS_DEV_PROFILE ? "nuwax:device:dev:v1" : "nuwax:device:v1";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COMMAND_OPTIONS = {
   encoding: "utf8" as const,

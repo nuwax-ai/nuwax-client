@@ -1,11 +1,11 @@
 import { app, net } from "electron";
-import * as os from "os";
 import log from "electron-log";
 import { readSetting, writeSetting, getDb } from "../db";
 import {
   LOCAL_HOST_URL,
   DEFAULT_GUI_MCP_PORT,
   DEFAULT_SERVER_HOST,
+  IS_DEV_PROFILE,
 } from "@shared/constants";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { initializeCommercialLocalPorts } from "../services/commercialLocalPorts";
@@ -14,6 +14,8 @@ import { currentTicket } from "../services/commercialTicketSession";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 export { currentBusinessOrigin, readTicketCookieValue } from "../services/commercialSessionScope";
 import { getDeviceId } from "../services/system/deviceId";
+import { getComputerName } from "../services/system/computerName";
+export { getComputerName } from "../services/system/computerName";
 import { emitFeatureSessionInvalidated, runFeatureServicesStopping, settleDesktopFeaturesForQuit } from "../features";
 import {
   AuthLifecycle,
@@ -22,6 +24,45 @@ import {
 } from "../services/auth/lifecycle";
 
 const FEATURE_STOP_TIMEOUT_MS = 1500;
+
+/** Existing registration keeps its old label; migrate only this dev device's default name once. */
+async function syncDevelopmentComputerName(origin: string, ticket: string, id: unknown, signal: AbortSignal): Promise<void> {
+  if (!IS_DEV_PROFILE || typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) return;
+  const key = `nuwax.devComputerNameSynced.${origin}/${id}`;
+  if (readSetting(key) === true) return;
+  const current = () => !signal.aborted && origin === currentBusinessOrigin() && ticket === currentTicket();
+  const request = async (endpoint: string, body?: object) => {
+    if (!current()) throw new Error("Session changed during computer name sync");
+    const response = await net.fetch(origin + endpoint, {
+      method: body ? "POST" : "GET", redirect: "error", credentials: "omit",
+      headers: { "Content-Type": "application/json", "x-client-type": "nuwax", ...nativeTicketHeaders(ticket) },
+      signal: AbortSignal.any([signal, timeout]),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!response.ok || !current()) throw new Error("Computer name sync unavailable");
+    const result = await response.json();
+    if (result.code !== "0000" || !current()) throw new Error("Computer name sync unavailable");
+    return result.data;
+  };
+  const timeout = AbortSignal.timeout(3_000);
+  try {
+    const computers = await request("/api/sandbox/config/list");
+    const computer = Array.isArray(computers) ? computers.find(item => item?.id === id) : undefined;
+    if (!computer || typeof computer.name !== "string") return;
+    if (computer.name === getComputerName(false)) {
+      await request("/api/sandbox/config/update", {
+        id, name: getComputerName(),
+        ...(typeof computer.description === "string" ? { description: computer.description } : {}),
+        ...(typeof computer.maxAgentCount === "number" ? { maxAgentCount: computer.maxAgentCount } : {}),
+      });
+    }
+    // Keep a user-chosen name; domain/device scoping also preserves it across environment changes.
+    if (current()) writeSetting(key, true);
+  } catch {
+    // Optional display metadata cannot fail login; retry at the next registration.
+    log.warn("[CommercialAuth] Development computer name sync deferred");
+  }
+}
 
 /** Revocation is synchronous; a stalled optional feature must not hold the service queue. */
 async function stopFeaturesForServiceChange(): Promise<void> {
@@ -38,12 +79,6 @@ async function stopFeaturesForServiceChange(): Promise<void> {
     })]);
   } finally { if (timer) clearTimeout(timer); }
   // Never schedule a fresh stop after restart: it could revoke a new task/session.
-}
-
-/** 注册上报的电脑名（三平台）：os.hostname 通吃 macOS/Windows/Linux，
- * 仅剥 macOS Bonjour 的 .local 尾巴（DONG-MBP128.local → DONG-MBP128）。 */
-export function getComputerName(): string {
-  return os.hostname().replace(/\.local$/i, "").trim();
 }
 
 /** 账号身份与展示名称分离：老账号可以没有用户名，昵称不用于判定换账号。 */
@@ -367,6 +402,10 @@ export function initializeCommercialAuth(
         value.serverPort > 65535
       )
         throw new Error("Incomplete registration response");
+      await syncDevelopmentComputerName(origin, ticket, value.id, signal);
+      signal.throwIfAborted();
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
+        throw new Error("Session changed during registration");
       return { ...value, origin, account, portsGeneration };
     },
     registrationCurrent: (value) => !localPorts || value.portsGeneration === localPorts.generation,

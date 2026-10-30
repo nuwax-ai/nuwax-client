@@ -13,6 +13,7 @@ const mock = vi.hoisted(() => ({
   quit: vi.fn(),
   showItemInFolder: vi.fn(),
   packaged: false,
+  development: false,
   exePath: "/Applications/Electron.app/Contents/MacOS/Electron",
 }));
 vi.mock("electron", () => ({
@@ -31,7 +32,9 @@ vi.mock("electron", () => ({
   },
 }));
 vi.mock("electron-log", () => ({ default: { warn: vi.fn() } }));
-vi.mock("@shared/constants", () => ({ APP_DISPLAY_NAME: "女娲Nuwax" }));
+vi.mock("@shared/constants", () => ({ APP_DISPLAY_NAME: "女娲Nuwax", COMMERCIAL_PROFILE_NAME: "Nuwax Dev",
+  get IS_DEV_PROFILE() { return mock.development; },
+}));
 vi.mock("../db", () => ({ readSetting: mock.read, writeSetting: mock.write }));
 vi.mock("./fullDiskAccess", () => ({
   probeFullDiskAccess: mock.fda,
@@ -49,6 +52,7 @@ beforeEach(async () => {
   vi.resetAllMocks();
   vi.resetModules();
   mock.packaged = false;
+  mock.development = false;
   mock.exePath = "/Applications/Electron.app/Contents/MacOS/Electron";
   Object.defineProperty(process, "platform", {
     value: "darwin",
@@ -64,6 +68,12 @@ beforeEach(async () => {
 });
 afterEach(() => Object.defineProperty(process, "platform", platform));
 describe("permission onboarding snapshot", () => {
+  it("names the development client and helper as their separate system permission subjects", async () => {
+    mock.development = true;
+    mock.exePath = "/dev/Nuwax Dev.app/Contents/MacOS/Electron";
+    expect(await service.getPermissionSnapshot()).toMatchObject({ appName: "Nuwax Dev", appPath: "/dev/Nuwax Dev.app" });
+    expect(service.getPermissionDragIdentity("file_access")).toMatchObject({ appName: "Nuwax Dev" });
+  });
   it("is read-only, names the actual bundle, and distinguishes unknown", async () => {
     expect(await service.getPermissionSnapshot()).toMatchObject({
       platform: "darwin",

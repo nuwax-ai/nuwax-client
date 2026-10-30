@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Button, Tooltip, message, theme } from "antd";
+import { Button, Switch, Tooltip, message, theme } from "antd";
 import type { ComputerUseAPI, CuaRuntime } from "@shared/features/computer-use/contract";
 
 import { CUA_CONTROL_INITIAL_POSITION, canShowCuaOverlay, cuaRuntimeForConversation, cuaOverlayNotice, cuaReasonKey } from "@shared/features/computer-use/presentation";
@@ -150,8 +150,14 @@ type Row = (props: { label: React.ReactNode; desc?: React.ReactNode; control?: R
 export function CuaSettingsRows({ api, t, Row }: { api?: ComputerUseAPI; t: T; Row: Row }) {
   const [runtime, accept] = useCuaRuntime(api);
   const { busy, run } = useCuaAction(t, accept);
-  if (!api?.getRuntime || !runtime?.recoverable) return null;
-  return <Row label={t("Claw.Cua.recover")} desc={t("Claw.Cua.recoverHint")}
+  if (!api?.getRuntime || !runtime) return null;
+  // Keep an explicit entry for fresh profiles, which retain the legacy mode until selected.
+  const supportsMultiwindow = typeof navigator !== "undefined" && /mac|win/i.test(navigator.platform);
+  return <>{supportsMultiwindow && api.setMultiwindowEnabled && <Row label={t("Claw.Cua.multiwindow.enable")}
+    desc={t("Claw.Cua.multiwindow.description")}
+    control={<Switch checked={runtime.multiwindow === true} loading={busy} disabled={!!runtime.controlPending}
+      onChange={enabled => void run(() => api.setMultiwindowEnabled(enabled))} />} />}
+    {runtime.recoverable && <Row label={t("Claw.Cua.recover")} desc={t("Claw.Cua.recoverHint")}
     control={<Button size="small" loading={busy} disabled={!!runtime.controlPending}
-      onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>} />;
+      onClick={() => void run(() => api.recover())}>{t("Claw.Cua.recover")}</Button>} />}</>;
 }

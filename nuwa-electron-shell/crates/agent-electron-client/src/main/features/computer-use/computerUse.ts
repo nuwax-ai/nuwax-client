@@ -148,6 +148,13 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       controller: multiwindow ? windowTasks : cuaTasks,
       tasks: multiwindow ? windowTasks : undefined,
       discoverWindows: listAllowedNativeCuaWindows,
+      checkPermissions: async () => {
+        const reply = await requestDaemon("call", "check_permissions", { prompt: false });
+        if (!reply?.ok || !reply.result) throw new Error("daemonNotReady");
+        const { structuredContent, isError } = reply.result;
+        return { isError: isError === true, structuredContent,
+          content: [{ type: "text", text: JSON.stringify(structuredContent ?? {}) }] };
+      },
       prepareTarget: async (owner, tool, raw) => {
         if (!["get_window_state", "get_accessibility_tree", "get_desktop_state"].includes(tool)) return;
         if (!multiwindow) {
@@ -281,7 +288,7 @@ const CUA_ALLOWED_TOOLS = [
 
 /** 平台对应的 helper 产物名（mac=.app bundle；win=exe；linux=裸二进制）。 */
 function helperArtifactName(): string {
-  if (IS_MAC) return HELPER_APP_NAME;
+  if (IS_MAC) return computerUseHost().developmentProfile ? "Nuwax Computer Use Dev.app" : HELPER_APP_NAME;
   return IS_WIN ? HELPER_EXE_NAME : HELPER_BIN_NAME;
 }
 
@@ -379,14 +386,11 @@ function helperCandidates(): Array<{ kind: "installed" | "bundled"; root: string
   if (fs.existsSync(stable)) list.push({ kind: "installed", root: stable });
   // 打包版只认稳定安装位与随包 Resources；/Applications 探测仅服务 dev 检出
   // （开发机 helper 手工装在 /Applications），避免用户目录同名物的误配风险
-  if (IS_MAC && !app.isPackaged && fs.existsSync(path.join("/Applications", HELPER_APP_NAME))) {
+  if (IS_MAC && !app.isPackaged && !computerUseHost().developmentProfile && fs.existsSync(path.join("/Applications", HELPER_APP_NAME))) {
     list.push({ kind: "installed", root: path.join("/Applications", HELPER_APP_NAME) });
   }
-  const bundled = path.join(
-    process.resourcesPath,
-    "computer-use",
-    helperArtifactName(),
-  );
+  const developmentRoot = !app.isPackaged && computerUseHost().developmentProfile ? process.env.NUWAX_DEV_COMPUTER_USE_ROOT : undefined;
+  const bundled = path.join(developmentRoot || path.join(process.resourcesPath, "computer-use"), helperArtifactName());
   if (fs.existsSync(bundled)) list.push({ kind: "bundled", root: bundled });
   return list;
 }
@@ -496,7 +500,7 @@ async function probeDaemonPermissions(): Promise<{
   const sc = reply?.result?.structuredContent as Record<string, unknown> | undefined;
   const source = sc?.source as { attribution?: unknown } | undefined;
   if (!reply?.ok || source?.attribution !== "driver-daemon" ||
-      (source as { bundle_id?: unknown }).bundle_id !== HELPER_BUNDLE_ID) return unknown;
+      (source as { bundle_id?: unknown }).bundle_id !== helperBundleId()) return unknown;
   return {
     accessibility: typeof sc?.accessibility === "boolean" ? sc.accessibility : null,
     screenRecording: typeof sc?.screen_recording === "boolean" ? sc.screen_recording : null,
@@ -716,6 +720,7 @@ async function launchDaemon(helperRoot: string): Promise<string> {
  * 导出供退出清理链消费（commercialAuth.stopExtras 与 will-quit 钩子双触发，幂等）。
  */
 export async function stopDaemon(preservePermissionLinger = false): Promise<void> {
+  const development = computerUseHost().developmentProfile === true;
   if (!preservePermissionLinger) cancelCuaPermissionRequest();
   const helperPath = findHelperApp();
   const literal = (value: string) => value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
@@ -744,7 +749,7 @@ export async function stopDaemon(preservePermissionLinger = false): Promise<void
     // 未在运行，无需清理
   } finally {
     // 升级前固定端点上的旧 unrestricted daemon 也必须收掉。
-    if (helperPath) {
+    if (helperPath && !development) {
       const legacyEnv: NodeJS.ProcessEnv = { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false" };
       delete legacyEnv[ENDPOINT_TOKEN_ENV];
       await pexec(helperExecutable(helperPath), ["stop", "--socket", LEGACY_SOCKET_PATH], {
@@ -752,15 +757,17 @@ export async function stopDaemon(preservePermissionLinger = false): Promise<void
       }).catch(() => undefined);
     }
     if (IS_WIN) {
-      // 包含升级前固定 pipe 与新的随机 pipe；按同产品 serve 命令线兜底清理。
-      await pexec("powershell", [
-        "-NoProfile", "-Command",
-        "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'NuwaxComputerUse.exe' -and $_.CommandLine -like '*serve --socket *nuwax-computer-use*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
-      ], { timeout: 1500 }).catch(() => undefined);
-    } else {
+      // Private pipes belong to one profile; a process-name sweep would stop other clients.
+      const sockets = [endpoint().socketPath, ...(!development ? [LEGACY_SOCKET_PATH] : [])];
+      for (const socket of sockets) {
+        const pattern = `(^|\\s)--socket\\s+"?${literal(socket)}"?(\\s|$)`.replace(/'/g, "''");
+        await pexec("powershell", [
+          "-NoProfile", "-Command",
+          `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'NuwaxComputerUse.exe' -and $_.CommandLine -match '${pattern}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`,
+        ], { timeout: 1500 }).catch(() => undefined);
+      }
+    } else if (!development) {
       await pexec("pkill", ["-KILL", "-f", `${servingPrefix}${literal(LEGACY_SOCKET_PATH)}( |$)`], { timeout: 1500 }).catch(() => undefined);
-      // token/manifest 丢失时无法恢复旧随机端点；按产品 helper 名清理孤儿 daemon。
-      await pexec("pkill", ["-KILL", "-f", servingPrefix + ".*"], { timeout: 1500 }).catch(() => undefined);
     }
   }
 }
@@ -1133,6 +1140,7 @@ async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
 // ========== 首用安装流（Resources → userData 稳定路径；学 ZCode：签名/bundle id 校验+安装锁） ==========
 
 const HELPER_BUNDLE_ID = "com.nuwax-ai.nuwax-computer-use";
+const helperBundleId = () => HELPER_BUNDLE_ID + (computerUseHost().developmentProfile ? ".dev" : "");
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
@@ -1154,7 +1162,7 @@ async function verifyHelperSignature(
     const out = `${r.stderr ?? ""}\n${r.stdout ?? ""}`;
     const id = /^Identifier=(.+)$/m.exec(out)?.[1]?.trim();
     const team = /^TeamIdentifier=(.+)$/m.exec(out)?.[1]?.trim();
-    if (id !== HELPER_BUNDLE_ID) {
+    if (id !== helperBundleId()) {
       return { ok: false, error: `bundle-id-mismatch:${id ?? "none"}` };
     }
     if (app.isPackaged && team !== HELPER_TEAM_ID) {
@@ -1892,10 +1900,10 @@ async function runPermissionRequest(attempt: PermissionAttempt): Promise<CuaPerm
       lastPermissionHint = parsed.hint;
       const sc = parsed.sc;
       if (sc.accessibility && sc.screen_recording &&
-          (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== HELPER_BUNDLE_ID))
+          (sc.source?.attribution !== "driver-daemon" || sc.source.bundle_id !== helperBundleId()))
         return { success: false, error: "helperIdentityUnverified", ...parsed.hint };
       if (!sc.accessibility || !sc.screen_recording || sc.screen_recording_capturable !== true ||
-          sc.direct_capture_verification_error != null || sc.direct_capture_verification?.bundle_id !== HELPER_BUNDLE_ID)
+          sc.direct_capture_verification_error != null || sc.direct_capture_verification?.bundle_id !== helperBundleId())
         return { success: false, error: "permissionsRequired", ...parsed.hint };
       return { success: true, ...parsed.hint };
     }

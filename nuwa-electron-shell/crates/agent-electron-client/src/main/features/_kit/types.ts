@@ -83,6 +83,8 @@ export interface FeaturePermissionServices {
 }
 
 export interface FeatureContext {
+  /** Host-owned development profile; features do not read application build globals. */
+  developmentProfile?: boolean;
   /** 宿主产品标识（如 `nuwax`）。特性不应自行判断产品，门控看清单的 `products`。 */
   product: string;
   /** 面向业务页（受信顶层文档）的 IPC：sender 必须是当前受信的顶层业务文档。 */

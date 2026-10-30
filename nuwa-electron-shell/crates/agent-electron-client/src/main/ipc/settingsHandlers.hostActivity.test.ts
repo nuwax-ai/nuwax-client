@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
   notifyCapture: vi.fn(),
   refreshBrowser: vi.fn(),
   shortcutAvailable: vi.fn(),
+  development: false,
+}));
+vi.mock('@shared/constants', async (original) => ({
+  ...await original<typeof import('@shared/constants')>(),
+  get IS_DEV_PROFILE() { return mocks.development; },
 }));
 
 vi.mock("electron", () => ({
@@ -31,6 +36,7 @@ vi.mock("../features", () => ({ refreshDesktopBrowserWindows: mocks.refreshBrows
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/contract';
 
 beforeEach(() => {
+  mocks.development = false;
   mocks.available = true;
   mocks.handlers.clear();
   mocks.run.mockReset();
@@ -44,6 +50,13 @@ beforeEach(() => {
 });
 
 describe("settings:set host activity refresh", () => {
+  it('development saves its own shortcut preference without reserving a system hotkey', () => {
+    mocks.development = true;
+    expect(mocks.handlers.get('settings:set')!({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(true);
+    expect(mocks.run).toHaveBeenCalledWith(CAPTURE_SHORTCUT_SETTING, '"CmdOrCtrl+Alt+G"');
+    expect(mocks.shortcutAvailable).not.toHaveBeenCalled();
+    expect(mocks.notifyCapture).toHaveBeenCalledOnce();
+  });
   it('validates browser preference and feature switch before persisting independently', () => {
     const set = mocks.handlers.get('settings:set')!;
     for (const value of [true, {}, 'external', 1]) expect(set({}, 'nuwax.linkOpenMode', value)).toBe(false);

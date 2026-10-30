@@ -16,7 +16,7 @@ import * as path from "path";
 import { app } from "electron";
 import log from "electron-log";
 import Database from "better-sqlite3";
-import { APP_NAME_IDENTIFIER, NUWAX_PORT_OFFSET } from "@shared/constants";
+import { APP_NAME_IDENTIFIER, NUWAX_PORT_OFFSET, COMMERCIAL_PROFILE_NAME } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 
 interface LegacySource {
@@ -259,7 +259,7 @@ function disableLegacyExperimentalFeatures(): void {
 
 /**
  * 商业版默认工作空间目录：step1_config.workspaceDir 未配置时，在用户目录
- * 创建 Nuwax 并落为默认值——空值时 serviceManager 兜底的是隐藏目录
+ * 创建当前档案工作目录并落为默认值——空值时 serviceManager 兜底的是隐藏目录
  * ~/.nuwax/workspace，用户在 Finder/资源管理器不可见。幂等：已配置
  * （用户自选目录、或旧前缀修补后的值）不覆盖；建目录失败不落值，维持空值兜底。
  */
@@ -274,7 +274,7 @@ function ensureDefaultWorkspaceDir(): void {
   ) {
     return;
   }
-  const dir = path.join(app.getPath("home"), "Nuwax");
+  const dir = path.join(app.getPath("home"), COMMERCIAL_PROFILE_NAME);
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (e) {
