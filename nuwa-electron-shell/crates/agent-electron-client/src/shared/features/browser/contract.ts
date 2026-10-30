@@ -31,6 +31,8 @@ export interface BrowserState {
   addressOpen: boolean;
   error: string | null;
   finding: boolean;
+  /** An explicit Find command must focus the query even if the bar is already open. */
+  findFocusRequest: number;
   matches: number;
   activeMatch: number;
   labels: Record<string, string>;

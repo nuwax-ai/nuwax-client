@@ -283,6 +283,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         break;
       case "find-open":
         findOpen(entry, true);
+        entry.state.findFocusRequest++;
         entry.window.webContents.focus();
         break;
       case "find-close":
@@ -491,6 +492,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         addressOpen: false,
         error: null,
         finding: false,
+        findFocusRequest: 0,
         matches: 0,
         activeMatch: 0,
         labels: labels(),

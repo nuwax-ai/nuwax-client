@@ -172,7 +172,7 @@ async function run() {
     await contents.executeJavaScript(code, true);
     const win = await waitFor(() => BrowserWindow.getAllWindows().find(win => !ids.has(win.id) &&
       !pageContents(win).isLoading() && pageContents(win).getURL() === target), `loaded popup: ${kind}`);
-    return { webContents: pageContents(win), destroy: () => win.destroy() };
+    return { window: win, webContents: pageContents(win), destroy: () => win.destroy() };
   };
   try {
     for (const mode of ['direct', 'gateway']) {
@@ -208,6 +208,15 @@ async function run() {
           const route = kind === 'anchor' ? '/' : '/repo/doc/fixture';
           const target = `${origin}${route}?case=${mode}-${type}-${kind}`;
           const child = await openFrom(opener, target, kind);
+          if (kind === 'window.open') {
+            assert(browserFixturePages.has(child.window.id), 'original repo link must enter the browser toolbar container');
+            const command = cmd => child.window.webContents.executeJavaScript(`window.browserWindow.command(${JSON.stringify(cmd)})`);
+            child.window.show();
+            await command({ type: 'window-maximize' });
+            await waitFor(() => child.window.isMaximized(), 'library browser maximized');
+            await command({ type: 'window-maximize' });
+            await waitFor(() => !child.window.isMaximized(), 'library browser restored');
+          }
           assert.equal(child.webContents.session, session.defaultSession, `${mode}/${type}/${kind}: shared business session`);
           const request = requests.find(entry => entry.role === 'business' && entry.search === new URL(target).search);
           assert(request && request.authenticated, `${mode}/${type}/${kind}: first document request has ticket`);

@@ -370,7 +370,10 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   // 附件首请求仍校验来源；页面桥按实际文档 origin 决定，其它 API 的范围不变。
   const authenticatedDownload = noReferrerBusinessNavigation &&
     target.pathname.startsWith("/api/f/s3/") && hasOnlyBusinessFrames(opener);
-  const ordinaryLink = APP_NAME_IDENTIFIER === 'nuwax' && !isTrustedBusinessUrl(url) && !details.postBody && !dedicatedContents.has(opener);
+  // Library documents need the same reading controls as external webpages.
+  // Keep business authentication admission above and dedicated POST/payment flows.
+  const readingPage = !isTrustedBusinessUrl(url) || target.pathname.startsWith('/repo/');
+  const ordinaryLink = APP_NAME_IDENTIFIER === 'nuwax' && readingPage && !details.postBody && !dedicatedContents.has(opener);
   const browser = ordinaryLink && prefersDesktopBrowser();
   if (ordinaryLink && !browser) { openSystemPopupLink(target.href); return { action: 'deny' }; }
   const options = buildPopupWindowOptions(features ?? "");

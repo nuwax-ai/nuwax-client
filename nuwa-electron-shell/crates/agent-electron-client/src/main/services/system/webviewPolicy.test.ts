@@ -228,6 +228,29 @@ describe("standalone page unload confirmation", () => {
 });
 
 describe("window.open session boundary", () => {
+  it.each(['/repo/doc/saved-fixture', '/repo/share/saved-fixture'])("library reading links use the browser with admitted session: %s", async (route) => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
+    const result = handler(popup(`${business}${route}`, ''));
+    expect(result.action).toBe('allow');
+    const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
+    expect(mocks.createBrowserPage).toHaveBeenCalledOnce();
+    expect(contents.session).toBe(mocks.defaultSession);
+    expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, `${business}${route}`);
+  });
+
+  it('library GET links respect browser preference while POST remains dedicated', async () => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
+    settings.set('nuwax.linkOpenMode', 'system');
+    const target = `${business}/repo/doc/saved-fixture`;
+    expect(handler(popup(target, business)).action).toBe('deny');
+    await Promise.resolve();
+    expect(mocks.openExternal).toHaveBeenCalledWith(target);
+    const post = handler({ ...(popup(target, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } });
+    expect(post.action).toBe('allow');
+    post.createWindow!(post.overrideBrowserWindowOptions!);
+    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+  });
+
   it.each(['system', 'disabled'])("ordinary external links use the system browser when %s", async (mode) => {
     const handler = webviewPopupHandler(await setup(), `${business}/home`);
     if (mode === 'disabled') mocks.browserAvailable = false;
@@ -264,6 +287,7 @@ describe("window.open session boundary", () => {
     markDedicatedPage(opener as never); created({}, opener);
     const handler = opener.setWindowOpenHandler.mock.lastCall![0];
     expect(handler(popup(`${external}/payment`, external)).action).toBe('allow');
+    expect(handler(popup(`${business}/repo/doc/payment-result`, external)).action).toBe('allow');
     const ordinary = webviewPopupHandler(created, `${business}/home`);
     expect(ordinary({ ...(popup(`${external}/post`, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } }).action).toBe('allow');
     expect(mocks.openExternal).not.toHaveBeenCalled();

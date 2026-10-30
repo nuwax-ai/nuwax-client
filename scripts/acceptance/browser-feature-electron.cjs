@@ -58,6 +58,27 @@ if (!process.versions.electron) {
       });
       const server = http.createServer((req, res) => {
         res.setHeader("content-type", "text/html");
+        if (req.url === "/find-fixture") {
+          res.end('<title>Find fixture</title><input id="pageInput" value="editable"><p>needle one</p><p>needle two</p><p>needle three</p><iframe src="/find-frame"></iframe>');
+          return;
+        }
+        if (req.url === "/find-frame") {
+          res.end('<input id="frameInput" value="nested editable"><p>needle four</p>');
+          return;
+        }
+        if (req.url === "/company/") {
+          res.end('<title>Company fixture</title><a id="relative" href="about">About</a>');
+          return;
+        }
+        if (req.url === "/company/about") {
+          res.end('<title>About fixture</title><a id="missing" href="missing">Missing page</a>');
+          return;
+        }
+        if (req.url === "/company/missing") {
+          res.statusCode = 404;
+          res.end('<title>404 fixture</title><p>Missing page fixture</p>');
+          return;
+        }
         if (req.url === "/pending-retry" && ++pendingRetryRequests === 1)
           return;
         if (req.url === "/pending-close") return;
@@ -417,6 +438,59 @@ if (!process.versions.electron) {
         assert.equal((await getState()).matches, 1);
         await command({ type: "find-close" });
         assert.equal(bounds().y, 36);
+        // Exercise actual Chromium keyboard/input behavior, including iframe
+        // focus. IPC-only find commands cannot establish shortcut usability.
+        await managed.contents.loadURL(origin + "/find-fixture");
+        const shortcut = (contents, keyCode, modifiers = []) => {
+          contents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+          contents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+        };
+        for (const modifier of ["meta", "control"]) {
+          await managed.contents.executeJavaScript("document.querySelector('iframe').contentDocument.getElementById('frameInput').focus()");
+          managed.contents.focus();
+          shortcut(managed.contents, "f", [modifier]);
+          await waitFor(async () => (await getState()).finding);
+          await waitFor(() => managed.window.webContents.executeJavaScript("document.hasFocus() && document.activeElement.id === 'query'"));
+          await managed.window.webContents.insertText("needle");
+          await waitFor(async () => (await getState()).matches === 4);
+          const initialMatch = (await getState()).activeMatch;
+          assert.ok(initialMatch >= 1 && initialMatch <= 4);
+          const nextMatch = initialMatch % 4 + 1;
+          await click("next");
+          await waitFor(async () => (await getState()).activeMatch === nextMatch);
+          await click("previous");
+          await waitFor(async () => (await getState()).activeMatch === initialMatch);
+          await managed.window.webContents.executeJavaScript("document.getElementById('query').focus()");
+          shortcut(managed.window.webContents, "Enter");
+          await waitFor(async () => (await getState()).activeMatch === nextMatch);
+          shortcut(managed.window.webContents, "Enter", ["shift"]);
+          await waitFor(async () => (await getState()).activeMatch === initialMatch);
+          await command({ type: "address-open" });
+          await waitFor(() => managed.window.webContents.executeJavaScript("document.activeElement.id === 'url'"));
+          shortcut(managed.window.webContents, "f", [modifier]);
+          await waitFor(() => managed.window.webContents.executeJavaScript("document.activeElement.id === 'query'"));
+          assert.equal((await getState()).matches, 4, 'refocusing find must preserve results');
+          await command({ type: "address-close" });
+          shortcut(managed.window.webContents, "Escape");
+          await waitFor(async () => !(await getState()).finding);
+          assert.equal((await getState()).matches, 0);
+          assert.equal(bounds().y, 36);
+          console.log(`PASS ${modifier}+F: iframe input focus, 4 matches, next/previous, Enter/Shift+Enter, repeated shortcut from address input, Esc`);
+        }
+        await managed.contents.loadURL(origin + "/company/");
+        await managed.contents.executeJavaScript("document.getElementById('relative').click()", true);
+        await waitFor(() => managed.contents.getURL() === origin + "/company/about" && !managed.contents.isLoading());
+        await managed.contents.executeJavaScript("document.getElementById('missing').click()", true);
+        await waitFor(() => managed.contents.getTitle() === "404 fixture" && !managed.contents.isLoading());
+        assert.equal((await getState()).url, origin + "/company/missing");
+        assert.equal((await getState()).canGoBack, true);
+        await click("back");
+        await waitFor(() => managed.contents.getURL() === origin + "/company/about" && !managed.contents.isLoading());
+        await click("back");
+        await waitFor(() => managed.contents.getURL() === origin + "/company/" && !managed.contents.isLoading());
+        await click("forward");
+        await waitFor(() => managed.contents.getURL() === origin + "/company/about" && !managed.contents.isLoading());
+        console.log("PASS relative navigation: /company/ → about → missing (HTTP 404) → back twice → forward");
         assert.equal(await command({ type: "unknown" }), false);
         if (process.env.NUWAX_BROWSER_SCREENSHOT)
           fs.writeFileSync(
@@ -477,7 +551,7 @@ if (!process.versions.electron) {
           }),
         );
       } finally {
-        win.destroy();
+        for (const owned of BrowserWindow.getAllWindows()) owned.destroy();
         server.close();
         server.closeAllConnections();
         app.quit();
