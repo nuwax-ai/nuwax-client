@@ -139,10 +139,10 @@ export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
       description: t(I18N_KEYS.Pages.Dependencies.DESC_CODEX_ACP),
       required: true,
       binName: "nuwax-harness-acp-ts",
-      installVersion: "1.2.22",
+      installVersion: "1.2.24",
       npmFallback: {
         packageName: "@nuwax-ai/nuwax-harness-acp-ts",
-        version: "1.2.22",
+        version: "1.2.24",
       },
     },
   ];
