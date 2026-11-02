@@ -49,7 +49,8 @@ function render(state: BrowserState) {
   element<HTMLInputElement>("url").value = state.url;
   element<HTMLButtonElement>("back").disabled = !state.canGoBack;
   element<HTMLButtonElement>("forward").disabled = !state.canGoForward;
-  element("reload").textContent = state.loading ? "×" : "↻";
+  element("reloadIcon").toggleAttribute("hidden", state.loading);
+  element("stopIcon").toggleAttribute("hidden", !state.loading);
   element("pin").setAttribute("aria-pressed", String(state.pinned));
   element("error").hidden = !state.error;
   element("loadingState").hidden = !state.initialLoading;
