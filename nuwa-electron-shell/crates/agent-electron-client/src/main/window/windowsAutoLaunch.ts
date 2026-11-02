@@ -16,6 +16,7 @@ export interface StartupEntry {
   hive?: "CurrentUser" | "LocalMachine";
   view?: "Registry32" | "Registry64";
   command?: string;
+  unreadable?: boolean;
 }
 
 export interface WindowsStartupStore {
@@ -61,14 +62,35 @@ export async function removeOwnedWindowsStartup(
   store: WindowsStartupStore,
   knownExecutables: string[],
 ): Promise<void> {
+  let failed = false;
+  let firstFailure: unknown;
+  const remember = (error: unknown) => {
+    if (!failed) firstFailure = error;
+    failed = true;
+  };
   for (const entry of await store.list()) {
-    if (isOwnedStartupEntry(entry, knownExecutables)) await store.remove(entry);
+    if (entry.unreadable) {
+      remember(
+        new Error(
+          "Cannot inspect a suspected product startup entry or Startup folder",
+        ),
+      );
+    } else if (isOwnedStartupEntry(entry, knownExecutables)) {
+      try {
+        await store.remove(entry);
+      } catch (error) {
+        remember(error);
+      }
+    }
   }
-  if (
-    (await store.list()).some((entry) =>
-      isOwnedStartupEntry(entry, knownExecutables),
-    )
-  ) {
+  const remaining = await store.list();
+  if (failed) throw firstFailure;
+  if (remaining.some((entry) => entry.unreadable)) {
+    throw new Error(
+      "Cannot inspect a suspected product startup entry or Startup folder",
+    );
+  }
+  if (remaining.some((entry) => isOwnedStartupEntry(entry, knownExecutables))) {
     throw new Error("Owned Windows startup entries remain");
   }
 }
@@ -115,6 +137,11 @@ export function createWindowsStartupStore(
   startupFolders: string[],
   runPowerShell = powershell,
 ): WindowsStartupStore {
+  const observedProductLinks = new Set<string>();
+  const suspectedProductLink = (name: string, file: string) =>
+    ["nuwax", "女娲nuwax", APP_ID].includes(
+      name.replace(/\.lnk$/i, "").toLowerCase(),
+    ) || observedProductLinks.has(file.toLowerCase());
   return {
     async list() {
       const raw =
@@ -147,19 +174,55 @@ export function createWindowsStartupStore(
           names = await fs.readdir(folder);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw error;
+          // Preserve partial inventory so readable Run/link entries can still be removed.
+          entries.push({
+            kind: "shortcut",
+            name: folder,
+            target: "",
+            unreadable: true,
+          });
+          continue;
         }
         for (const name of names.filter((name) => /\.lnk$/i.test(name))) {
           const file = path.win32.join(folder, name);
-          if (!(await fs.lstat(file)).isFile()) continue;
-          const link = shell.readShortcutLink(file);
-          entries.push({
-            kind: "shortcut",
-            name,
-            target: link.target,
-            appId: link.appUserModelId,
-            command: file,
-          });
+          try {
+            const stat = await fs.lstat(file);
+            if (!stat.isFile()) {
+              if (stat.isSymbolicLink() && suspectedProductLink(name, file)) {
+                entries.push({
+                  kind: "shortcut",
+                  name,
+                  target: "",
+                  command: file,
+                  unreadable: true,
+                });
+              }
+              continue;
+            }
+            const link = shell.readShortcutLink(file);
+            if (link.appUserModelId?.toLowerCase() === APP_ID)
+              observedProductLinks.add(file.toLowerCase());
+            entries.push({
+              kind: "shortcut",
+              name,
+              target: link.target,
+              appId: link.appUserModelId,
+              command: file,
+            });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+            // Unknown broken aliases are not ours to alter. Product-named or previously
+            // identified links remain an explicit verification failure, never a silent opt-out.
+            if (suspectedProductLink(name, file)) {
+              entries.push({
+                kind: "shortcut",
+                name,
+                target: "",
+                command: file,
+                unreadable: true,
+              });
+            }
+          }
         }
       }
       return entries;

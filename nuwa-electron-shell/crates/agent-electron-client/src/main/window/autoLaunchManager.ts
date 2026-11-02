@@ -22,6 +22,8 @@ export interface AutoLaunchStatus {
 
 export class AutoLaunchManager {
   private supported = !IS_DEV_PROFILE;
+  private writeQueue: Promise<unknown> = Promise.resolve();
+  private preferenceVersion = 0;
   /** Windows 的读写参数必须一致才能匹配同一注册表项。 */
   private readonly loginItemArgs = ["--hidden"];
 
@@ -32,6 +34,7 @@ export class AutoLaunchManager {
   /** 数据库就绪后调用一次；开发运行不注册开发用 Electron。 */
   async initializeDefault(): Promise<void> {
     if (!app.isPackaged || !this.supported) return;
+    const version = this.preferenceVersion;
     try {
       const savedPreference = readSetting(PREFERENCE_KEY);
       if (typeof savedPreference === "boolean") {
@@ -48,6 +51,7 @@ export class AutoLaunchManager {
       }
       // 已有自启动项只记下初始化结果，不重复修改系统设置。
       const systemEnabled = await this.readSystemEnabled();
+      if (version !== this.preferenceVersion) return;
       // A settings click can arrive while the asynchronous system read is pending.
       if (readSetting(PREFERENCE_KEY) === false) {
         if (this.cleanWindowsStartup()) await this.setEnabled(false);
@@ -110,7 +114,17 @@ export class AutoLaunchManager {
     }
   }
 
-  async setEnabled(enabled: boolean): Promise<boolean> {
+  setEnabled(enabled: boolean): Promise<boolean> {
+    if (!this.supported) return Promise.resolve(false);
+    this.preferenceVersion++;
+    // Settings and tray share this manager. A later enable must not overtake
+    // cleanup and then have its newly registered entry deleted by the old disable.
+    const result = this.writeQueue.then(() => this.applyEnabled(enabled));
+    this.writeQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async applyEnabled(enabled: boolean): Promise<boolean> {
     if (!this.supported) return false;
     try {
       // Keep the opt-out when a machine-wide entry cannot be removed; retry on startup.

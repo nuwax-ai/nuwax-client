@@ -82,6 +82,23 @@ afterEach(() => {
 });
 
 describe("开机自启动默认值与用户选择", () => {
+  it.each([false, true])("关闭清理在途时再次开启，清理失败=%s 也会串行完成并最终开启", async (cleanupFails) => {
+    state.commercial = true;
+    state.registered = true;
+    let finish!: () => void;
+    state.cleanup.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { finish = () => { state.registered = false; if (cleanupFails) reject(new Error("cleanup denied")); else resolve(); }; }));
+    const manager = new AutoLaunchManager();
+    const disable = manager.setEnabled(false);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const enable = manager.setEnabled(true);
+    expect(app.setLoginItemSettings).not.toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true }));
+    finish();
+    expect(await disable).toBe(!cleanupFails);
+    expect(await enable).toBe(true);
+    expect(state.registered).toBe(true);
+    expect(state.preference).toBe(true);
+  });
+
   it("Windows 不因参数不匹配而隐藏仍会运行的启动项", async () => {
     state.registered = false;
     state.otherArgs = true;
