@@ -24,7 +24,7 @@
 ## 术语速记：Nuwax 客户端 vs nuwax 前端（同名不同物）
 
 - **Nuwax 客户端**（文档/对话中也称**商业版**，相对社区版 NuwaClaw）= 本仓（nuwax-client）产出的 Electron 桌面壳产品：productName=Nuwax、identifier=nuwax、数据目录 `~/.nuwax`、通道 nuwax-electron。
-- **nuwax 前端** = 仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)（包名 `nuwax-frontend`）：线上 PC web 与客户端 webview 内嵌 UI **同源**；本仓以壳根 `nuwax/` submodule 引用源码（feat-2026.9.30 线 pin），`nuwax-dist/` submodule 固定对应产物仓 `main`。`nuwax/dist` 仅作本地构建暂存，永不提交源码仓；mac dev 另有独立检出 `~/workspace/nuwax`。
+- **nuwax 前端** = 仓库 [nuwax-ai/nuwax](https://github.com/nuwax-ai/nuwax)（包名 `nuwax-frontend`）：线上 PC web 与客户端 webview 内嵌 UI **同源**；本仓以壳根 `nuwax/` submodule 引用源码（当前 feat-2026.11 线 pin），`nuwax-dist/` submodule 固定对应产物仓 `main`。`nuwax/dist` 仅作本地构建暂存，永不提交源码仓；mac dev 另有独立检出 `~/workspace/nuwax`。
 - 判别口径：代码/请求里作为**宿主标识**出现的 `nuwax`（`x-client-type` 头、桥 `getProduct()`/HostProductId）指「Nuwax 客户端宿主」，与前端仓名同字不同义；作为仓库名/包名/路径/分支出现则指前端项目。详见 README「术语区分」一节。
 
 ## Agent / 开发者脚本入口
@@ -35,6 +35,10 @@
 - 非敏感配置集中在 `client.config.mjs`；缓存按输入与 ABI/平台/架构校验，自有源码资源缓存不覆盖开发者 `sources/`。`--refresh-resources` 显式刷新资源，开发保留 Vite 缓存。
 - `npm run release -- --version X.Y.Z[-beta.N] --dry-run` 先预检；新 tag 统一 v，通道由完整版本推导（--channel 仅校验），--tag 续跑历史发布。stable 默认停在签名阶段，安装包验收后 --stage sync 公开；SimplySign 手机认证保留人工操作。stable CI 消费 nuwax-dist pin，beta CI 从源码 pin 构建；产物仓不得重写仍被引用的提交历史。
 - 正式打包仅 Beta / Stable。构建验证走独立 `package-validation.yml`，应用版本沿用已存在的 Beta/Stable 基线，产物用 SHA/run id 区分；不占用新版本，不创建 tag/Release，不改更新指针。同一问题跨 commit、run、rerun 最多启动 4 次，达到上限停止并报告；不得换版本或系列绕过。停止后保留证据，须用户明确重新启动验收，不能自行继续出包。
+
+## 当前发布排除项（2026-11-02）
+
+- 按用户决定，终端持久化、跨会话终端保活、多终端及运行实例管理暂不进入 `release/v3.1.0`。更新 `nuwax/` 源码与 `nuwax-dist/` 产物 pin 时须同时核对排除项，不能从 `feat-2026.11` / `dev` / `test` 间接带入。候选保留在独立历史/分支，重新纳入须用户明确授权；任务终态恢复修复（NW-081）继续保留。
 
 ## 商业版登录与服务边界
 
