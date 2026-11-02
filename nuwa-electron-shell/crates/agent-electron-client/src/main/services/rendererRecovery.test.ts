@@ -47,6 +47,20 @@ describe("renderer recovery", () => {
     expect(onGiveUp).not.toHaveBeenCalled();
   });
 
+  it("coalesces pending crash recovery and cancels it when navigation already recovers the page", () => {
+    const pending = setup();
+    pending.gone();
+    pending.gone();
+    pending.settle();
+    expect(pending.contents.reload).toHaveBeenCalledTimes(1);
+
+    const navigated = setup();
+    navigated.gone();
+    navigated.emitter.emit("did-start-navigation", {}, "https://app.example", false, true);
+    navigated.settle();
+    expect(navigated.contents.reload).not.toHaveBeenCalled();
+  });
+
   it("ignores clean exits, quitting apps and destroyed contents", () => {
     const clean = setup();
     clean.gone("clean-exit");

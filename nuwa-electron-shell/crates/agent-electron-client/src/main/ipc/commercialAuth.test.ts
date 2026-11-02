@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   isPackaged: true,
   ticketUsable: true,
   development: false,
+  epoch: 0,
 }));
 vi.mock("@shared/constants", async original => ({
   ...await original<typeof import("@shared/constants")>(),
@@ -39,7 +40,7 @@ vi.mock("../services/commercialTicketSession", () => ({
     const config = mocks.settings.get("step1_config") as { serverHost?: string } | undefined;
     return mocks.settings.get(`nuwax.ticket.${config?.serverHost || "https://agent.nuwax.com"}`) ?? null;
   },
-  ticketEpoch: () => 0,
+  ticketEpoch: () => mocks.epoch,
   mirrorNativeResponseTicket: vi.fn(async () => undefined),
 }));
 vi.mock("../services/startupPorts", () => ({
@@ -90,6 +91,7 @@ beforeEach(() => {
   mocks.fetch.mockReset();
   mocks.isPackaged = true;
   mocks.ticketUsable = true;
+  mocks.epoch = 0;
   delete process.env.NUWAX_SERVER_HOST;
   delete process.env.NUWAX_RELEASE_CHANNEL;
 });
@@ -519,6 +521,28 @@ describe("NW-173 feature cleanup isolation", () => {
 });
 
 describe("registration cookie consistency", () => {
+  it.each(["identity", "registration"])("rejects a late %s JSON body after the session epoch changes even when its cookie text stays equal", async (stage) => {
+    mocks.settings.set("step1_config", { serverHost: origin });
+    mocks.settings.set(`nuwax.ticket.${origin}`, "same-cookie");
+    let finish!: (value: unknown) => void;
+    const slowBody = new Promise(resolve => { finish = resolve; });
+    const identity = { code: "0000", data: { uid: "old-account", userName: "alice" } };
+    const registration = { code: "0000", data: { configKey: "old-device-key", serverHost: "tunnel.example.com", serverPort: 443 } };
+    const slowResponse = { ok: true, status: 200, headers: new Headers(), json: vi.fn(() => slowBody) };
+    mocks.fetch.mockResolvedValueOnce(stage === "identity" ? slowResponse : new Response(JSON.stringify(identity)))
+      .mockResolvedValueOnce(stage === "identity" ? new Response(JSON.stringify(registration)) : slowResponse);
+    const { flow, start } = fixture();
+    const pending = flow.start();
+    await vi.waitFor(() => expect(slowResponse.json).toHaveBeenCalled());
+    mocks.epoch++;
+    finish(stage === "identity" ? identity : registration);
+    expect(await pending).toMatchObject({ success: false });
+    expect(mocks.settings.get("auth.account_id")).toBeFalsy();
+    expect(mocks.settings.get("auth.config_key")).toBeFalsy();
+    expect(start).not.toHaveBeenCalled();
+    expect(mocks.fetch).toHaveBeenCalledTimes(stage === "identity" ? 1 : 2);
+  });
+
   it("rejects a late response when the cookie rotates before user verification completes", async () => {
     mocks.settings.set("step1_config", { serverHost: origin });
     mocks.settings.set(`nuwax.ticket.${origin}`, "old-ticket");

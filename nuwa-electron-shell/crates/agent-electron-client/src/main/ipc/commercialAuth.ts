@@ -315,7 +315,7 @@ export function initializeCommercialAuth(
       const account = resolveCommercialAccount(sessionPayload?.data);
       if (sessionPayload?.code !== "0000" || !account)
         throw new Error("Cookie session is not authenticated");
-      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       report("session-check-ok");
       const savedKey = readSetting("auth.saved_key");
@@ -378,7 +378,7 @@ export function initializeCommercialAuth(
       ticket = currentTicket();
       if (!ticket) throw new Error("Session expired during registration");
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       if (!response.ok) throw new Error(`Registration HTTP ${response.status}`);
       const payload = await response.json();
@@ -388,7 +388,7 @@ export function initializeCommercialAuth(
         elapsedMs: Date.now() - regStartedAt,
       });
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       if (["4010", "4011"].includes(payload.code)) expired?.();
       if (payload.code !== "0000")
@@ -404,7 +404,7 @@ export function initializeCommercialAuth(
         throw new Error("Incomplete registration response");
       await syncDevelopmentComputerName(origin, ticket, value.id, signal);
       signal.throwIfAborted();
-      if (origin !== currentBusinessOrigin() || ticket !== currentTicket())
+      if (origin !== currentBusinessOrigin() || ticket !== currentTicket() || requestEpoch !== ticketSession.ticketEpoch())
         throw new Error("Session changed during registration");
       return { ...value, origin, account, portsGeneration };
     },

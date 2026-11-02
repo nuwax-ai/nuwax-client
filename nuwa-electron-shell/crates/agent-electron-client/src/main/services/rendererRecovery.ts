@@ -40,6 +40,7 @@ export function attachRendererRecovery(
 
   const crashes: number[] = [];
   let hangTimer: ReturnType<typeof setTimeout> | null = null;
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
   let gaveUp = false;
 
   const inactive = () =>
@@ -51,16 +52,23 @@ export function attachRendererRecovery(
     hangTimer = null;
   };
 
+  const clearReloadTimer = () => {
+    if (reloadTimer !== null) clearTimeout(reloadTimer);
+    reloadTimer = null;
+  };
+
   const giveUp = (reason: string) => {
     if (gaveUp) return;
     gaveUp = true;
     clearHangTimer();
+    clearReloadTimer();
     log.error(`[RendererRecovery] Giving up automatic recovery: ${reason}`);
     options.onGiveUp(reason);
   };
 
   contents.on("render-process-gone", (_event, details) => {
     clearHangTimer();
+    clearReloadTimer();
     if (details.reason === "clean-exit" || inactive()) return;
 
     const at = now();
@@ -76,7 +84,8 @@ export function attachRendererRecovery(
     }
     // 不可在 render-process-gone 回调内同步 reload：Chromium 仍在拆除旧 RenderFrameHost，
     // 真实 Electron 40 实测会触发 NOTREACHED 并带崩整个主进程。
-    setTimeout(() => {
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
       if (inactive()) return;
       try {
         contents.reload();
@@ -102,5 +111,11 @@ export function attachRendererRecovery(
   });
 
   contents.on("responsive", clearHangTimer);
-  contents.once("destroyed", clearHangTimer);
+  contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) clearReloadTimer();
+  });
+  contents.once("destroyed", () => {
+    clearHangTimer();
+    clearReloadTimer();
+  });
 }
