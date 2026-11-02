@@ -936,9 +936,9 @@ describe("AcpEngine.init", () => {
     } as any;
 
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,
@@ -969,7 +969,7 @@ describe("AcpEngine.init", () => {
     const mockConnection = {
       initialize: vi.fn().mockResolvedValue({
         protocolVersion: 1,
-        agentInfo: { name: "codex-acp" },
+        agentInfo: { name: "nuwax-harness" },
         agentCapabilities: {},
       }),
       authenticate,
@@ -984,9 +984,9 @@ describe("AcpEngine.init", () => {
     } as any;
     const engine = new AcpEngine("codex-cli");
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,
@@ -1015,7 +1015,7 @@ describe("AcpEngine.init", () => {
     const mockConnection = {
       initialize: vi.fn().mockResolvedValue({
         protocolVersion: 1,
-        agentInfo: { name: "codex-acp" },
+        agentInfo: { name: "nuwax-harness" },
         agentCapabilities: {},
       }),
       authenticate,
@@ -1030,9 +1030,9 @@ describe("AcpEngine.init", () => {
     } as any;
     const engine = new AcpEngine("codex-cli");
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,

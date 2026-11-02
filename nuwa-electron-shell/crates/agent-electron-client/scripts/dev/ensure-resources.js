@@ -52,7 +52,7 @@ const RESOURCES = [
     required: true,
   },
   {
-    script: 'prepare:codex-acp-ts',
+    script: 'prepare:harness',
     dir: 'nuwax-harness-acp-ts',
     marker: ['package.json'],
     required: true,

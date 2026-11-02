@@ -28,7 +28,7 @@ Shared slices, dual-format (ESM + CJS) build:
 ### Engine resolution (`src/index.ts`)
 - `resolvePackageEntry(packageName, entrySpecifier)` — `require.resolve` a dependency entry (ESM+CJS safe via `createRequire(import.meta.url)` + tsup shims).
 - `resolveNodePackage({ packageName, entrySpecifier, entryOverride? })` — turn either a bundled override or installed package entry into the canonical `node <entry>` spawn target.
-- `resolveCodexAcp({ entryOverride? })` — resolve the codex ACP adapter (`@nuwax-ai/nuwax-codex-acp-ts`) to a spawn target `{ command, args }`. `entryOverride` is for hosts that bundle the adapter by a non-`require.resolve` mechanism (e.g. nuwaclaw's Electron `resources/`); defaults to `require.resolve` for npm-installed hosts (nuwa-cli).
+- `resolveHarnessAcp({ entryOverride? })` — resolve the Nuwax Harness adapter (`@nuwax-ai/nuwax-harness-acp-ts`) to a spawn target `{ command, args }`. `entryOverride` is for hosts that bundle the adapter by a non-`require.resolve` mechanism (e.g. nuwaclaw's Electron `resources/`); defaults to `require.resolve` for npm-installed hosts (nuwa-cli).
 - `resolveClaudeAcp({ entryOverride? })` — the same spawn-target contract for `claude-code-acp-ts`; hosts should supply their installed or bundled entry so the package stays an optional integration.
 - `EngineResolution` — type (`{ command; args; envOverlay? }`), structurally compatible with nuwa-cli's `ResolvedEngine`.
 

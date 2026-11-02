@@ -35,7 +35,7 @@ import {
   getResourcesPath,
 } from "./appPaths";
 import {
-  getCodexAcpBundledDir,
+  getHarnessAcpBundledDir,
   getNuwaxFileServerBundledDir,
   getClaudeCodeAcpBundledDir,
   getRipgrepBinPath,
@@ -70,7 +70,7 @@ export {
   checkNuwaxcodeBundled,
   checkNuwaxFileServerBundled,
   checkClaudeCodeAcpBundled,
-  checkCodexAcpBundled,
+  checkHarnessBundled,
   detectNpmPackage,
   detectShellCommand,
 } from "./dependencyChecker";
@@ -95,8 +95,8 @@ export {
   getLanproxyEntryPath,
   getTtydBinPath,
   getNuwaxcodeBundledBinPath,
-  getCodexAcpBundledBinPath,
-  getCodexAcpBundledDir,
+  getHarnessAcpBundledDir,
+  resolveBundledHarnessEnginePath,
   getWindowsMcpBinPath,
   getBundledGitBashPath,
   resolveGitBashExecutable,
@@ -276,7 +276,7 @@ export async function checkAllDependencies(options?: {
         }
         case "nuwax-harness-acp-ts": {
           // codex 经 @nuwax-ai/nuwax-harness-acp-ts TS adapter；检测 resources 里的 adapter 包
-          const bundledDir = getCodexAcpTsBundledDir();
+          const bundledDir = getHarnessAcpBundledDir();
           if (bundledDir) {
             try {
               const pkg = JSON.parse(
@@ -290,27 +290,26 @@ export async function checkAllDependencies(options?: {
             }
             break;
           }
-          // npm 兜底：agent-kit resolveCodexAcp 在无 entryOverride 时按包名
-          // require.resolve（应用 node_modules 内即可用）
-          const codexNpmDir = path.join(
+          // npm 兜底：运行时从应用数据目录解析相同适配器入口。
+          const harnessNpmDir = path.join(
             getAppNodeModules(),
             "@nuwax-ai",
             "nuwax-harness-acp-ts",
           );
-          if (fs.existsSync(path.join(codexNpmDir, "package.json"))) {
+          if (fs.existsSync(path.join(harnessNpmDir, "package.json"))) {
             try {
               const pkg = JSON.parse(
                 fs.readFileSync(
-                  path.join(codexNpmDir, "package.json"),
+                  path.join(harnessNpmDir, "package.json"),
                   "utf-8",
                 ),
               );
               item.status = "bundled";
               item.version = pkg.version;
-              item.binPath = codexNpmDir;
+              item.binPath = harnessNpmDir;
             } catch {
               item.status = "bundled";
-              item.binPath = codexNpmDir;
+              item.binPath = harnessNpmDir;
             }
           } else {
             item.status = "missing";
@@ -534,13 +533,5 @@ export default {
   MIRROR_PRESETS,
   getNuwaxFileServerBundledDir,
   getClaudeCodeAcpBundledDir,
-  getCodexAcpBundledDir,
+  getHarnessAcpBundledDir,
 };
-
-// codex TS adapter bundled dir（binaryLocator 新增；import 供本地 case 用 + re-export 给 acpClient）
-// resolveBundledHarnessEnginePath：NUWAX_PATH 注入用的引擎二进制定位（acpClient codex 分支）
-import {
-  getCodexAcpTsBundledDir,
-  resolveBundledHarnessEnginePath,
-} from "./binaryLocator";
-export { getCodexAcpTsBundledDir, resolveBundledHarnessEnginePath };

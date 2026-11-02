@@ -270,8 +270,8 @@ export interface DependenciesAPI {
     version?: string;
     error?: string;
   }>;
-  /** 应用包内集成的 nuwax-codex-acp */
-  checkCodexAcpBundled: () => Promise<{
+  /** 应用包内集成的 Nuwax Harness */
+  checkHarnessBundled: () => Promise<{
     success: boolean;
     available?: boolean;
     version?: string;

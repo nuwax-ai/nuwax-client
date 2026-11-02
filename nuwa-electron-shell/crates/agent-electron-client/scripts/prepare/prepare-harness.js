@@ -50,7 +50,7 @@ function targetTriples() {
     if (arch === 'arm64') return ['aarch64-pc-windows-msvc'];
     if (arch === 'x64') return ['x86_64-pc-windows-msvc'];
   }
-  console.error(`[prepare-codex-acp-ts] 不支持的平台/架构: ${platform}/${arch}`);
+  console.error(`[prepare-harness] 不支持的平台/架构: ${platform}/${arch}`);
   process.exit(1);
 }
 
@@ -59,7 +59,7 @@ function engineBinaryName() {
 }
 
 function fail(msg) {
-  console.error(`[prepare-codex-acp-ts] ${msg}`);
+  console.error(`[prepare-harness] ${msg}`);
   process.exit(1);
 }
 
@@ -74,7 +74,7 @@ async function main() {
   }
   const srcDir = path.dirname(adapterPkgPath);
   const srcPkg = JSON.parse(fs.readFileSync(adapterPkgPath, 'utf-8'));
-  console.log(`[prepare-codex-acp-ts] 源: ${srcPkg.name}@${srcPkg.version}`);
+  console.log(`[prepare-harness] 源: ${srcPkg.name}@${srcPkg.version}`);
 
   const srcIndexJs = path.join(srcDir, 'dist', 'index.js');
   if (!fs.existsSync(srcIndexJs)) {
@@ -102,7 +102,7 @@ async function main() {
   );
   if (!cacheDir) {
     console.log(
-      `[prepare-codex-acp-ts] 引擎缓存缺失（${engineVer}），尝试自动下载…`,
+      `[prepare-harness] 引擎缓存缺失（${engineVer}），尝试自动下载…`,
     );
     const launcher = path.join(enginePkgDir, 'bin', 'nuwax-harness.js');
     const result = spawnSync(process.execPath, [launcher, '--version'], {
@@ -168,7 +168,7 @@ async function main() {
       try {
         spawnSync('codesign', ['--force', '--sign', '-', file], { stdio: 'pipe' });
       } catch (err) {
-        console.warn(`[prepare-codex-acp-ts] codesign failed: ${err instanceof Error ? err.message : err}`);
+        console.warn(`[prepare-harness] codesign failed: ${err instanceof Error ? err.message : err}`);
       }
     }
     console.log(`  codesign (ad-hoc): ${engineFiles.length} 个可执行文件`);
@@ -178,7 +178,7 @@ async function main() {
     `  vendor/nuwax-harness/${engineVer}/ (${(engineSize / 1024 / 1024).toFixed(0)} MB 主二进制, ${engineFiles.length} 个可执行)`,
   );
 
-  // 精简 package.json（bin 与发布包保持一致，旧命令名保留兼容别名）。
+  // 精简 package.json，仅暴露 harness 适配器入口。
   // type 必须保留：dist/index.js 是 esbuild 的 ESM 产物，缺了它 Node 每次 spawn
   // 都打 MODULE_TYPELESS_PACKAGE_JSON 警告（靠宽容解析才跑起来）。
   const slimPkg = {
@@ -187,13 +187,12 @@ async function main() {
     type: 'module',
     bin: {
       'nuwax-harness-acp-ts': './dist/index.js',
-      'nuwax-codex-acp-ts': './dist/index.js',
     },
     main: './dist/index.js',
   };
   fs.writeFileSync(path.join(destDir, 'package.json'), JSON.stringify(slimPkg, null, 2) + '\n');
 
-  console.log(`[prepare-codex-acp-ts] ✓ resources/${BUNDLED_DIR_NAME}/ (${srcPkg.version}, 引擎 ${engineVer})`);
+  console.log(`[prepare-harness] ✓ resources/${BUNDLED_DIR_NAME}/ (${srcPkg.version}, 引擎 ${engineVer})`);
 }
 
 main();

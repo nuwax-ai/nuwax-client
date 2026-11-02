@@ -10,6 +10,13 @@ const mockGetNodeBinPathWithFallback = vi.fn(
     "/Applications/NuwaClaw.app/Contents/Resources/node/darwin-arm64/bin/node",
 );
 const mockResolveCustomAgentBinary = vi.fn(() => null);
+const mockHarnessBundledDir = vi.fn<() => string | null>(() => null);
+const mockResolveHarnessAcp = vi.fn();
+
+vi.mock("@nuwax-ai/agent-kit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@nuwax-ai/agent-kit")>()),
+  resolveHarnessAcp: (...args: unknown[]) => mockResolveHarnessAcp(...args),
+}));
 
 vi.mock("electron-log", () => ({
   default: {
@@ -33,7 +40,8 @@ vi.mock("../../system/dependencies", () => ({
     (env: Record<string, string>) => env,
   ),
   getNuwaxcodeBundledBinPath: vi.fn(() => null),
-  getCodexAcpBundledBinPath: vi.fn(() => null),
+  getHarnessAcpBundledDir: () => mockHarnessBundledDir(),
+  resolveBundledHarnessEnginePath: vi.fn(() => null),
   getNodeBinPathWithFallback: () => mockGetNodeBinPathWithFallback(),
   getClaudeCodeAcpBundledDir: vi.fn(() => null),
 }));
@@ -134,6 +142,47 @@ describe("applyOpenAICompatibleEnv", () => {
     expect(result.isOpenAICompatible).toBe(false);
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.OPENAI_BASE_URL).toBeUndefined();
+  });
+});
+
+describe("resolveAcpBinary — Nuwax Harness", () => {
+  beforeEach(() => {
+    mockHarnessBundledDir.mockReset();
+    mockHarnessBundledDir.mockReturnValue("/resources/nuwax-harness-acp-ts");
+    mockResolveHarnessAcp.mockReset();
+    mockResolveHarnessAcp.mockImplementation((options) => ({
+      command: process.execPath,
+      args: [
+        options?.entryOverride || "/npm/nuwax-harness-acp-ts/dist/index.js",
+      ],
+    }));
+  });
+
+  it.each(["codex", "codex-cli"])(
+    "starts %s via the bundled harness adapter",
+    async (engine) => {
+      const { resolveAcpBinary } = await import("./acpClient");
+      expect(resolveAcpBinary(engine)).toEqual({
+        binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
+        binArgs: [],
+        isNative: false,
+      });
+      expect(mockResolveHarnessAcp).toHaveBeenCalledWith({
+        entryOverride: "/resources/nuwax-harness-acp-ts/dist/index.js",
+      });
+    },
+  );
+
+  it("reports adapter resolution failure without starting a different engine", async () => {
+    mockHarnessBundledDir.mockReturnValue(null);
+    mockResolveHarnessAcp.mockImplementation(() => {
+      throw new Error("Nuwax Harness adapter missing");
+    });
+    const { resolveAcpBinary } = await import("./acpClient");
+    expect(() => resolveAcpBinary("codex-cli")).toThrow(
+      "Nuwax Harness adapter missing",
+    );
+    expect(mockResolveCustomAgentBinary).not.toHaveBeenCalled();
   });
 });
 

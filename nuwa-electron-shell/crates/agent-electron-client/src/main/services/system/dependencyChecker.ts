@@ -13,7 +13,7 @@ import {
   getNodeBinPath,
   getUvBinPath,
   getNuwaxcodeBundledBinPath,
-  getCodexAcpBundledDir,
+  getHarnessAcpBundledDir,
   getNuwaxFileServerBundledDir,
   getClaudeCodeAcpBundledDir,
   getRipgrepBinPath,
@@ -134,9 +134,9 @@ export function getSetupRequiredDependencies(): LocalDependencyConfig[] {
     },
     {
       name: "nuwax-harness-acp-ts",
-      displayName: t(I18N_KEYS.Pages.Dependencies.DEP_CODEX_ACP),
+      displayName: t(I18N_KEYS.Pages.Dependencies.DEP_HARNESS),
       type: "bundled",
-      description: t(I18N_KEYS.Pages.Dependencies.DESC_CODEX_ACP),
+      description: t(I18N_KEYS.Pages.Dependencies.DESC_HARNESS),
       required: true,
       binName: "nuwax-harness-acp-ts",
       installVersion: "1.2.24",
@@ -430,17 +430,14 @@ export async function checkClaudeCodeAcpBundled(): Promise<{
   }
 }
 
-import { getCodexAcpTsBundledDir } from "./binaryLocator";
-
 // codex 经 @nuwax-ai/nuwax-harness-acp-ts TS adapter；检测 resources 里的 adapter 包
-// （函数名保留 checkCodexAcpBundled 以兼容现有 IPC handler + UI 调用）
-export async function checkCodexAcpBundled(): Promise<{
+export async function checkHarnessBundled(): Promise<{
   available: boolean;
   version?: string;
 }> {
-  const bundledDir = getCodexAcpTsBundledDir();
+  const bundledDir = getHarnessAcpBundledDir();
   if (!bundledDir) {
-    log.info("[checkCodexAcpBundled] TS adapter not found");
+    log.info("[checkHarnessBundled] TS adapter not found");
     return { available: false };
   }
   try {
@@ -448,11 +445,11 @@ export async function checkCodexAcpBundled(): Promise<{
       fs.readFileSync(path.join(bundledDir, "package.json"), "utf-8"),
     );
     log.info(
-      `[checkCodexAcpBundled] TS adapter available: ${bundledDir}, version=${pkg.version ?? "unknown"}`,
+      `[checkHarnessBundled] TS adapter available: ${bundledDir}, version=${pkg.version ?? "unknown"}`,
     );
     return { available: true, version: pkg.version };
   } catch (e) {
-    log.warn("[checkCodexAcpBundled] Failed to read adapter package.json:", e);
+    log.warn("[checkHarnessBundled] Failed to read adapter package.json:", e);
     return { available: true };
   }
 }

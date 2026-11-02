@@ -1,6 +1,6 @@
 // @nuwax-ai/agent-kit — shared agent/ACP logic for nuwa-cli & nuwaclaw.
 //
-// First slice: engine (binary) resolution. The codex ACP adapter is resolved
+// First slice: engine (binary) resolution. The Nuwax Harness adapter is resolved
 // via require.resolve against the @nuwax-ai/nuwax-harness-acp-ts package, so both
 // hosts converge on one strategy instead of one bundling it and the other
 // npm-resolving it.
@@ -69,13 +69,13 @@ export function resolveNodePackage(
   return { command: process.execPath, args: [entry] };
 }
 
-export const CODEX_ACP_PACKAGE = "@nuwax-ai/nuwax-harness-acp-ts";
-export const CODEX_ACP_ENTRY = `${CODEX_ACP_PACKAGE}/dist/index.js`;
+export const HARNESS_ACP_PACKAGE = "@nuwax-ai/nuwax-harness-acp-ts";
+export const HARNESS_ACP_ENTRY = `${HARNESS_ACP_PACKAGE}/dist/index.js`;
 export const CLAUDE_ACP_PACKAGE = "claude-code-acp-ts";
 export const CLAUDE_ACP_ENTRY = `${CLAUDE_ACP_PACKAGE}/dist/index.js`;
 
 /**
- * Resolve the codex ACP adapter to a spawn target: `node <entry>`, where entry
+ * Resolve the Nuwax Harness adapter to a spawn target: `node <entry>`, where entry
  * is require.resolve'd from @nuwax-ai/nuwax-harness-acp-ts. Host-specific env
  * (e.g. nuwa-cli's CODEX_LOG_DIR) is left for the caller to overlay on
  * `envOverlay`.
@@ -84,12 +84,12 @@ export const CLAUDE_ACP_ENTRY = `${CLAUDE_ACP_PACKAGE}/dist/index.js`;
  * mechanism (e.g. nuwaclaw's Electron `resources/` bundling) pass the absolute
  * entry path; defaults to require.resolve for npm-installed hosts (nuwa-cli).
  */
-export function resolveCodexAcp(opts?: {
+export function resolveHarnessAcp(opts?: {
   entryOverride?: string;
 }): EngineResolution {
   return resolveNodePackage({
-    packageName: CODEX_ACP_PACKAGE,
-    entrySpecifier: CODEX_ACP_ENTRY,
+    packageName: HARNESS_ACP_PACKAGE,
+    entrySpecifier: HARNESS_ACP_ENTRY,
     entryOverride: opts?.entryOverride,
   });
 }

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAcpModeId, resolveEffectiveMode } from "./acpMode";
+import {
+  normalizeEngineId,
+  parseAcpModeId,
+  resolveEffectiveMode,
+} from "./acpMode";
+
+describe("Nuwax Harness engine IDs", () => {
+  it.each(["codex", "codex-cli", "nuwax-harness", "nuwax-harness-acp-ts"])(
+    "normalizes %s to the existing Codex session identity",
+    (id) => expect(normalizeEngineId(id)).toBe("codex"),
+  );
+});
 
 describe("parseAcpModeId", () => {
   it("parses ask/yolo and rejects unknown values", () => {

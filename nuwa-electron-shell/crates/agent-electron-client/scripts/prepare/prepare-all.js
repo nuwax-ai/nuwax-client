@@ -190,7 +190,7 @@ async function main() {
     'prepare:mcp-proxy',
     'prepare:sandboxed-mcp',
     'prepare:nuwaxcode',
-    'prepare:codex-acp-ts',
+    'prepare:harness',
     'prepare:sandbox-helper-win',
     'prepare:sandbox-runtime',
     'prepare:gui-server',

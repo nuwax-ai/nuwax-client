@@ -2,7 +2,7 @@
 //
 // Two discovery channels, in priority order:
 //  1. `modes` field on session/new|load|resume responses (claude-code-acp-ts,
-//     deepagents-flow-ts, codex-acp-ts — SDK 0.26+/1.x shape).
+//     deepagents-flow-ts, nuwax-harness-acp-ts — SDK 0.26+/1.x shape).
 //  2. the `mode` select config option (nuwaxcode/opencode exposes modes only
 //     this way; its session responses carry no `modes` field).
 //

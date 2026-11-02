@@ -25,14 +25,13 @@ import {
   getAppEnv,
   applySharedPackageManagerCacheEnv,
   getNuwaxcodeBundledBinPath,
-  getCodexAcpBundledBinPath,
-  getCodexAcpTsBundledDir,
+  getHarnessAcpBundledDir,
   resolveBundledHarnessEnginePath,
   getNodeBinPathWithFallback,
   getClaudeCodeAcpBundledDir,
 } from "../../system/dependencies";
 import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "../../constants";
-import { resolveCodexAcp } from "@nuwax-ai/agent-kit";
+import { resolveHarnessAcp } from "@nuwax-ai/agent-kit";
 import { getAppDataDir } from "../../system/appPaths";
 import {
   resolveIsolatedHomePath,
@@ -616,46 +615,20 @@ export function resolveAcpBinary(
   // -- codex / codex-cli (backward compat) --
 
   if (engine === "codex" || engine === "codex-cli") {
-    // env override：直接 spawn 指定的原生二进制（绕过 adapter，调试用）
-    const overridePath = (
-      process.env.NUWACLAW_CODEX_ACP_BIN ||
-      process.env.CODEX_ACP_BIN ||
-      ""
-    ).trim();
-    if (overridePath && fs.existsSync(overridePath)) {
-      log.info(`[AcpClient] codex: using env override binary: ${overridePath}`);
-      return { binPath: overridePath, binArgs: [], isNative: true };
-    }
-
-    // 优先：@nuwax-ai/nuwax-harness-acp-ts TS adapter（codex resolve 共享自 @nuwax-ai/agent-kit：
-    // resources 模式传 entryOverride；否则 agent-kit 用 require.resolve node_modules）
-    const bundledDir = getCodexAcpTsBundledDir();
-    const entryOverride = bundledDir
-      ? path.join(bundledDir, "dist", "index.js")
+    // Codex 统一经 harness adapter 启动；支持随包资源和应用内 npm 修复安装。
+    const adapterDir =
+      getHarnessAcpBundledDir() ||
+      getAcpPackageDir("@nuwax-ai/nuwax-harness-acp-ts");
+    const entryOverride = adapterDir
+      ? path.join(adapterDir, "dist", "index.js")
       : undefined;
-    try {
-      const resolved = resolveCodexAcp(
-        entryOverride ? { entryOverride } : undefined,
-      );
-      log.info(
-        `[AcpClient] codex: using TS adapter (agent-kit): ${resolved.args[0]}`,
-      );
-      return { binPath: resolved.args[0], binArgs: [], isNative: false };
-    } catch (e) {
-      log.warn(
-        `[AcpClient] codex: TS adapter resolve failed: ${e instanceof Error ? e.message : e}`,
-      );
-    }
-
-    // 回退：bundled 原生二进制（旧 codex-acp）
-    const bundledPath = getCodexAcpBundledBinPath();
-    if (bundledPath) {
-      log.warn(
-        `[AcpClient] codex: TS adapter not found, falling back to bundled native binary: ${bundledPath}`,
-      );
-      return { binPath: bundledPath, binArgs: [], isNative: true };
-    }
-    return { binPath: "nuwax-codex-acp", binArgs: [], isNative: true };
+    const resolved = resolveHarnessAcp(
+      entryOverride ? { entryOverride } : undefined,
+    );
+    log.info(
+      `[AcpClient] codex: using Nuwax Harness adapter: ${resolved.args[0]}`,
+    );
+    return { binPath: resolved.args[0], binArgs: [], isNative: false };
   }
 
   // Unknown engine type → try to resolve as custom agent
@@ -901,8 +874,7 @@ export async function createAcpConnection(
     }
   }
 
-  // codex-cli: inject CODEX_* env vars for nuwax-codex-acp binary
-  // nuwax-codex-acp reads these to override config.toml (CODEX_BASE_URL, CODEX_API_KEY, CODEX_MODEL)
+  // harness adapter 使用 CODEX_* 配置模型、端点与认证。
   const codexResolvedModel = resolveOpenAICompatModel({
     model: config.model,
     envModel: env.OPENCODE_MODEL || env.ANTHROPIC_MODEL || env.CODEX_MODEL,
@@ -933,7 +905,7 @@ export async function createAcpConnection(
     if (env.CLAUDE_CODE_DISABLE_THINKING && !env.CODEX_DISABLE_THINKING) {
       env.CODEX_DISABLE_THINKING = env.CLAUDE_CODE_DISABLE_THINKING;
     }
-    // OpenAI 族：codex-acp 默认走 Responses，国内平台多只支持 Chat，
+    // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
     // CODEX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
     // NUWAX_API_PROTOCOL 选择，且不得携带 WIRE_API（适配器启动即拒绝）。
@@ -942,7 +914,7 @@ export async function createAcpConnection(
     if (isAnthropicProtocol) {
       env.NUWAX_API_PROTOCOL = "anthropic";
       // 适配器对网关自定义模型（不在引擎内置表里的，如 GLM-5.3-Flash）兜底
-      // effort=medium（CodexAcpClient.createModelId 的 `?? "medium"`），桥把它作为
+      // effort=medium（适配器 createModelId 的 `?? "medium"`），桥把它作为
       // output_config.effort 发给上游。GLM-5.3 / 5.3-Flash / 5.3-FlashX 官方只接受
       // max/high/low（docs.bigmodel.cn 的 reasoning_effort 说明），medium 会拿到
       // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，

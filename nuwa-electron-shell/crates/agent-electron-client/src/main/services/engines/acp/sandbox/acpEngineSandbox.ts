@@ -29,7 +29,7 @@ export type AcpEngineSandboxFamily =
 /** Bundled resources folder name under `resources/` */
 const OPENCODE_ENGINE_RESOURCE_DIRS: Record<string, string> = {
   nuwaxcode: "nuwaxcode",
-  "codex-cli": "codex-acp",
+  "codex-cli": "nuwax-harness-acp-ts",
   opencode: "opencode",
 };
 

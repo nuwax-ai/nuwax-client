@@ -8,7 +8,7 @@ packages:
 confirmModulesPurge: false
 
 allowBuilds:
-  '@nuwax-ai/nuwax-codex-acp-ts': true
+  '@nuwax-ai/nuwax-harness': true
   better-sqlite3: true
   electron: true
   esbuild: true
