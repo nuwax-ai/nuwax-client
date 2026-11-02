@@ -43,3 +43,14 @@ test('annotated tags use peeled SHA and immutable recovery bypasses newer histor
   assert.match(releaseSequenceFindings(parseReleaseTag('v3.0.11'), other, history)[0], /禁止改 tag/);
   assert.match(releaseSequenceFindings(parseReleaseTag('electron-v3.0.9', { allowLegacy: true }), sha, '')[0], /只能续跑/);
 });
+
+test('each patch-version beta series advances independently while stable releases still close older versions', () => {
+  const history = Array.from({ length: 22 }, (_, index) => `v3.1.0-beta.${index + 1}`);
+  history.push('v3.1.1-beta.1', 'v3.1.1-beta.2');
+  assert.deepEqual(findings('v3.1.0-beta.23', history), []);
+  assert.deepEqual(findings('v3.1.1-beta.3', history), []);
+  assert.match(findings('v3.1.0-beta.24', history)[0], /序号须为 23/);
+  assert.match(findings('v3.1.1-beta.4', history)[0], /序号须为 3/);
+  assert.match(findings('v3.1.0-beta.23', [...history, 'v3.1.0'])[0], /关闭/);
+  assert.match(findings('v3.1.0-beta.23', [...history, 'v3.1.1'])[0], /关闭/);
+});
