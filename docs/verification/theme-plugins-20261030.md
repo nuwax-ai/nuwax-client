@@ -1,5 +1,7 @@
 # 第三方主题实施与验证记录
 
+前半部分保留 2026-10-30 的历史现场；最新代码基线和开发客户端状态见文末 2026-11-02 记录。
+
 ## 工作区和交付
 
 - 独立托管工作区：`/Users/apple/.codex/worktrees/theme-plugins/nuwax-client`。
@@ -70,3 +72,15 @@ macOS 实际 `fs.watch` 验证通过：连续写入取最后有效值、无效�
 视觉复核发现反色文字 Token 未映射到 Ant Design 实色按钮，补齐 `text.inverse → colorTextLightSolid`，共用核心同步到壳。新增明暗模式回归后 Web 9 文件／122 测试通过；重新运行 `npm run test:commercial`，317 文件、3845 测试通过。架构边界、桥契约、核心快照和 whitespace 检查通过。IM 与资料库上游子模块仍无修改。
 
 最终 ZIP 已通过实际主题管理界面的导入、重名覆盖确认和导出。生产 ZIP 读取器回读后，全部文件的 base64 字节与原包逐一一致。明暗切换时草稿保留，消息／资料库共享 store 模式同步，暗黑主按钮文字使用反色 Token。核心独立类型检查通过。预览页面保留给用户查看，未启动客户端验收打包。
+
+## 2026-11-02 最新基线集成与真实开发客户端
+
+- 壳提交 `dc5f1266` 合入 `release/v3.1.0` 的 `cc89a325`；前端提交 `3856ec8eec` 合入 `feat-2026.11` 的 `5e8e0508ef`。两边继续使用 `codex/theme-plugins`，保留主题实现，均为本地提交，未推送。
+- 产物 pin 更新为 `0fce1cd0`。IM pin 为 `9735677b`、资料库 pin 为 `85b4a562`；两处上游源码工作区干净，主题适配仍只修改主站 overlay。保留最新版发布排除项，未重新引入终端持久化与多终端管理。
+- 集成后 Web 主题与历史服务 9 文件、122 测试通过；`npm run test:commercial` 311 文件、3742 测试通过、1 测试跳过；架构边界与主题快照专项 14 测试通过；版本序号脚本专项 5 测试通过。更新 pin 后的 IM、资料库生产构建通过。桥契约、核心快照及 whitespace 检查通过。
+
+合入前按质量自查三问检查：主题逻辑由前端 `src/features/themes` 和壳 `main/features/themes/service.ts` 聚合；浏览器仅通过 feature 注册处注入主题快照读取／订阅，不直接依赖主题内部实现；共用核心由 `scripts/sync-theme-core.mjs` 单向生成，边界和漂移检查通过。上述结论限定于此次代码集成，不替代完整客户端与跨平台验收。
+
+实际启动根入口 `npm run dev -- --frontend source`，使用独立 `Nuwax Dev.app`、`~/.nuwax-dev` 档案。PC Web 源码热更新地址为 `http://localhost:3000`，壳开发地址为 `http://127.0.0.1:61173`。在真实客户端设置中经本地文件选择器导入 Blue Hour ZIP，已选中“澄蓝 · Blue Hour”并切为“深色”；原生窗口和 AX 状态均已确认，进程保留给用户操作。当前为登录页，登录后的业务页面及多窗口仍需实际账户验收。
+
+本轮只启动开发客户端，没有重新启动打包验收；既有 4/4 次上限继续有效。集成测试与构建日志保存在 `/Users/apple/Documents/Codex/2026-11-02/theme-plugins-dev/logs/`，开发运行日志为同目录上级 `dev-run.log`。
