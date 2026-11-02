@@ -3,8 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { app, shell } from "electron";
+import { APP_NAME_IDENTIFIER } from "@shared/constants";
 
-const APP_ID = "com.nuwax-ai.nuwax";
+const APP_ID = `com.nuwax-ai.${APP_NAME_IDENTIFIER}`;
 const RUN_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const runFile = promisify(execFile);
 

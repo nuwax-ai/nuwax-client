@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ app: {}, shell: { readShortcutLink: vi.fn() } }));
+vi.mock("@shared/constants", () => ({ APP_NAME_IDENTIFIER: "nuwax" }));
 import { shell } from "electron";
 import fs from "node:fs/promises";
 import {
