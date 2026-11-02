@@ -62,7 +62,7 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.5

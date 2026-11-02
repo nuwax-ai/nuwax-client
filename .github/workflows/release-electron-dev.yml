@@ -85,7 +85,7 @@ jobs:
           git -C nuwax submodule update --init --recursive
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
       - uses: pnpm/action-setup@v4
         with:
           version: 10.27.0
@@ -368,7 +368,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
 
       # 版本单一事实源=外层 package.json 的 packageManager（pnpm@10.27.0，
       # 此处不写 version input——双声明报 Multiple versions of pnpm specified；
