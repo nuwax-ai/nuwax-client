@@ -56,6 +56,7 @@ import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
 import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
+import { publicWebUrl } from "@shared/utils/publicWebUrl";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
@@ -343,7 +344,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     host: {
       settings: { read: readSetting, write: writeSetting },
       session: { isAuthenticated: () => !!currentTicket() },
-      windows: { getMain: () => ctx.getMainWindow() },
+      windows: {
+        getMain: () => ctx.getMainWindow(),
+        toExternalUrl: (value) => {
+          const config = readSetting("step1_config") as { serverHost?: string } | null;
+          const gateway = readSetting("nuwax.loopback") as { origin?: string } | null;
+          return publicWebUrl(value, { businessOrigin: config?.serverHost, gatewayOrigin: gateway?.origin });
+        },
+      },
       agent: createFeatureAgentHost(),
     },
     permissions: { openGuide: openPermissionGuide, onFileAccessError: guideForFileAccessError,

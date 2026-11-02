@@ -20,7 +20,6 @@ import {
 } from "@shared/features/browser/contract";
 import type { FeatureContext } from "../_kit/types";
 import { PageView } from "./vendor/pageView";
-import { publicWebUrl } from '@shared/utils/publicWebUrl';
 
 export interface BrowserPageOptions {
   windowOptions: BrowserWindowConstructorOptions;
@@ -125,11 +124,8 @@ export function isBrowserToolbar(
 export function createBrowserWindows(ctx: FeatureContext) {
   const entries = new Map<number, Entry>();
   let disposed = false;
-  const publicUrl = (value: string) => {
-    const config = ctx.settings.read('step1_config') as { serverHost?: string } | null;
-    const gateway = ctx.settings.read('nuwax.loopback') as { origin?: string } | null;
-    return publicWebUrl(value, { businessOrigin: config?.serverHost, gatewayOrigin: gateway?.origin });
-  };
+  const publicUrl = (value: string) => ctx.windows.toExternalUrl
+    ? ctx.windows.toExternalUrl(value) : webUrl(value);
   const labels = () => ({
     loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
     ...Object.fromEntries(

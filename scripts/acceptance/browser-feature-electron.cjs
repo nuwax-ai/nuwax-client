@@ -16,6 +16,7 @@ if (!process.versions.electron) {
           "src/main/features/browser/vendor/pageView.ts",
         ),
         windows: path.join(client, "src/main/features/browser/windows.ts"),
+        publicWebUrl: path.join(client, "src/shared/utils/publicWebUrl.ts"),
       },
       outdir: dir,
       outExtension: { ".js": ".cjs" },
@@ -160,6 +161,7 @@ if (!process.versions.electron) {
         page.destroy();
         await pageGone;
         const { createBrowserWindows } = require(path.join(dir, "windows.cjs"));
+        const { publicWebUrl } = require(path.join(dir, "publicWebUrl.cjs"));
         const { pathToFileURL } = require("node:url");
         const messages = JSON.parse(
           fs.readFileSync(
@@ -169,7 +171,10 @@ if (!process.versions.electron) {
         );
         const controller = createBrowserWindows({
           settings: { read: (key) => key === 'step1_config' ? {serverHost:'https://business.example'} : key === 'nuwax.loopback' ? {origin} : 'light' },
-          windows: { getMain: () => win },
+          windows: {
+            getMain: () => win,
+            toExternalUrl: (value) => publicWebUrl(value, { businessOrigin: 'https://business.example', gatewayOrigin: origin }),
+          },
           translate: (key) => messages[key],
           log: console,
         });
