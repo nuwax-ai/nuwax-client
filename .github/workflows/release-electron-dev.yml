@@ -390,7 +390,11 @@ jobs:
         shell: bash
         env:
           NUWAX_FRONTEND_MANIFEST_SHA256: ${{ needs.prepare.outputs.frontend_manifest_sha256 }}
-        run: node scripts/client/frontend-artifact.mjs consume "$RUNNER_TEMP/nuwax-frontend-artifact"
+        run: |
+          # feat-2026.11 起前端 dist 恢复随仓提交：checkout 带出 pin 内陈旧 dist，
+          # 而 consume 以 nuwax/dist 不存在为前提（防二次消费守卫）——先清提交版再装共享构建产物
+          rm -rf nuwax/dist
+          node scripts/client/frontend-artifact.mjs consume "$RUNNER_TEMP/nuwax-frontend-artifact"
 
       # Python 3.12+ 移除了 distutils，node-gyp（better-sqlite3 等 native 模块）依赖它；安装 setuptools 以提供 distutils
       - name: Install setuptools for node-gyp (Python 3.12+)
