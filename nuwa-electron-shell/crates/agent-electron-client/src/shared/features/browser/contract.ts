@@ -1,6 +1,6 @@
 export const BROWSER_SETTING = "nuwax.linkOpenMode";
 export const BROWSER_FEATURE_SETTING = "features.browser.enabled";
-export const BROWSER_TOOLBAR_HEIGHT = 36;
+export const BROWSER_TOOLBAR_HEIGHT = 44;
 export const BROWSER_AUXILIARY_BAR_HEIGHT = 42;
 export type LinkOpenMode = "in-app" | "system";
 export const linkOpenMode = (value: unknown): LinkOpenMode =>

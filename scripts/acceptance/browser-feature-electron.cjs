@@ -346,7 +346,7 @@ if (!process.versions.electron) {
         await managed.contents.loadURL(origin + "/toolbar-next");
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
-        assert.equal(bounds().y, 78);
+        assert.equal(bounds().y, 86);
         assert.equal(
           await managed.window.webContents.executeJavaScript(
             "document.querySelector(':modal') === null",
@@ -391,7 +391,7 @@ if (!process.versions.electron) {
         }
         await click("closeAddress");
         await waitFor(async () => !(await getState()).addressOpen);
-        assert.equal(bounds().y, 36);
+        assert.equal(bounds().y, 44);
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
         managed.window.webContents.sendInputEvent({
@@ -417,7 +417,7 @@ if (!process.versions.electron) {
             await managed.window.webContents.executeJavaScript(`(() => {
             const controls = document.getElementById('windowControls').getBoundingClientRect();
             const menu = document.getElementById('menu').getBoundingClientRect();
-            return controls.width === 120 && controls.height === 36 && controls.right === innerWidth && menu.right <= controls.left;
+            return controls.width === 120 && controls.height === 44 && controls.right === innerWidth && menu.right <= controls.left;
           })()`),
             true,
           );
@@ -434,15 +434,15 @@ if (!process.versions.electron) {
         assert.equal(managed.window.isAlwaysOnTop(), false);
         await command({ type: "find-open" });
         await command({ type: "address-open" });
-        assert.equal(bounds().y, 120);
+        assert.equal(bounds().y, 128);
         await command({ type: "address-close" });
-        assert.equal(bounds().y, 78);
+        assert.equal(bounds().y, 86);
         const found = once(managed.contents, "found-in-page");
         await command({ type: "find", text: "Browser" });
         await found;
         assert.equal((await getState()).matches, 1);
         await command({ type: "find-close" });
-        assert.equal(bounds().y, 36);
+        assert.equal(bounds().y, 44);
         // Exercise actual Chromium keyboard/input behavior, including iframe
         // focus. IPC-only find commands cannot establish shortcut usability.
         await managed.contents.loadURL(origin + "/find-fixture");
@@ -479,7 +479,7 @@ if (!process.versions.electron) {
           shortcut(managed.window.webContents, "Escape");
           await waitFor(async () => !(await getState()).finding);
           assert.equal((await getState()).matches, 0);
-          assert.equal(bounds().y, 36);
+          assert.equal(bounds().y, 44);
           console.log(`PASS ${modifier}+F: iframe input focus, 4 matches, next/previous, Enter/Shift+Enter, repeated shortcut from address input, Esc`);
         }
         await managed.contents.loadURL(origin + "/company/");
