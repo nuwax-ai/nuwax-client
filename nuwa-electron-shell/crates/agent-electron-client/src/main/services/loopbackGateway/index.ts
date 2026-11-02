@@ -100,6 +100,12 @@ export function syncWebviewOverrideFromEnv(): void {
   }
 }
 
+/** 本地前端与后端跨站；开发档案也必须经网关接收服务端 ticket。 */
+function usesSourceDevFrontend(): boolean {
+  return !app.isPackaged && process.env.NUWAX_DEV_PROFILE === "1" &&
+    httpOrigin(resolveWebviewOverrideFromEnv()) !== null;
+}
+
 interface Step1GatewayFields {
   nuwaxLoadMode?: "direct" | "gateway";
   gatewayPort?: number;
@@ -118,6 +124,7 @@ function enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
 
 /** 网关是否处于启用态（step1 配置或 env 强制）。 */
 export function isLoopbackGatewayEnabled(): boolean {
+  if (usesSourceDevFrontend()) return true;
   // 显式配置优先（设置里「本地化加速」开关落此键）；env 仅作未配置时的缺省
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   if (step1?.nuwaxLoadMode) return step1.nuwaxLoadMode === "gateway";
@@ -188,6 +195,7 @@ function distDirAvailable(): boolean {
 
 /** dist 模式开关：显式 env（dev 验收）或 nuwaxLoadMode='gateway' 且 dist 就绪。 */
 function isDistModeEnabled(): boolean {
+  if (usesSourceDevFrontend()) return true;
   if (process.env.NUWAX_LOOPBACK_DIST === "1") return true;
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   return step1?.nuwaxLoadMode === "gateway" && distDirAvailable();

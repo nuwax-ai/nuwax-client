@@ -363,6 +363,44 @@ describe("loopbackGateway runtime key carries backend", () => {
     }
   });
 
+  it.each([
+    { packaged: false, profile: "1", override: "http://localhost:3000", enabled: true },
+    { packaged: false, profile: "", override: "http://localhost:3000", enabled: false },
+    { packaged: true, profile: "1", override: "http://localhost:3000", enabled: false },
+    { packaged: false, profile: "1", override: "file:///app", enabled: false },
+  ])("source development owns a backend gateway without changing saved direct mode ($packaged, $profile, $override)", async ({ packaged, profile, override, enabled }) => {
+    const { session, webContents } = await import("electron");
+    mocks.app.isPackaged = packaged;
+    mocks.store.set("step1_config", { nuwaxLoadMode: "direct", serverHost: "https://a.example.com" });
+    vi.stubEnv("NUWAX_DEV_PROFILE", profile);
+    vi.stubEnv("NUWAX_WEBVIEW_ORIGIN", override);
+    vi.mocked(webContents.fromId).mockReturnValue({ getURL: () => "http://localhost:3000/login" } as Electron.WebContents);
+    const mod = await importFresh();
+    try {
+      expect(mod.isLoopbackGatewayEnabled()).toBe(enabled);
+      await mod.ensureLoopbackGateway();
+      if (enabled) {
+        expect(mocks.startGateway).toHaveBeenCalledWith(expect.objectContaining({
+          targetOrigin: "https://a.example.com", distDir: expect.any(String),
+        }));
+        const [, listener] = vi.mocked(session.defaultSession.webRequest.onBeforeRequest).mock.calls.at(-1)!;
+        if (typeof listener !== "function") throw new Error("normalizer missing");
+        const callback = vi.fn();
+        listener({ webContentsId: 1, resourceType: "xhr", url: "https://a.example.com/api/user/passwordLogin",
+          frame: { url: "http://localhost:3000/login" } } as Parameters<typeof listener>[0], callback);
+        expect(callback).toHaveBeenCalledWith({ redirectURL: "http://127.0.0.1:46800/__backend/a.example.com/api/user/passwordLogin" });
+      } else {
+        expect(mocks.startGateway).not.toHaveBeenCalled();
+      }
+      expect(mocks.store.get("step1_config")).toMatchObject({ nuwaxLoadMode: "direct" });
+    } finally {
+      await mod.stopLoopbackGateway();
+      mocks.app.isPackaged = true;
+      vi.unstubAllEnvs();
+      vi.mocked(webContents.fromId).mockReturnValue(null as unknown as Electron.WebContents);
+    }
+  });
+
   it("syncs NUWAX_WEBVIEW_ORIGIN env into the runtime override key on refresh", async () => {
     mocks.store.set("step1_config", {
       nuwaxLoadMode: "gateway",
