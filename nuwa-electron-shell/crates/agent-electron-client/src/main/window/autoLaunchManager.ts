@@ -3,6 +3,7 @@ import { app } from "electron";
 import log from "electron-log";
 import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
+import { cleanupWindowsAutoLaunch } from "./windowsAutoLaunch";
 
 const PREFERENCE_KEY = "nuwax.autoLaunch.enabled";
 
@@ -34,6 +35,7 @@ export class AutoLaunchManager {
     try {
       const savedPreference = readSetting(PREFERENCE_KEY);
       if (typeof savedPreference === "boolean") {
+        if (!savedPreference && this.cleanWindowsStartup()) await this.setEnabled(false);
         // macOS 迁移修正：如果系统自启动已开启，但之前被错误写入了 openAsHidden: true，重写为 openAsHidden: false
         if (process.platform === "darwin" && savedPreference) {
           const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
@@ -45,7 +47,13 @@ export class AutoLaunchManager {
         return;
       }
       // 已有自启动项只记下初始化结果，不重复修改系统设置。
-      if (await this.readSystemEnabled()) {
+      const systemEnabled = await this.readSystemEnabled();
+      // A settings click can arrive while the asynchronous system read is pending.
+      if (readSetting(PREFERENCE_KEY) === false) {
+        if (this.cleanWindowsStartup()) await this.setEnabled(false);
+        return;
+      }
+      if (systemEnabled) {
         writeSetting(PREFERENCE_KEY, true);
         if (process.platform === "darwin") {
           const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
@@ -61,6 +69,10 @@ export class AutoLaunchManager {
       // 读取失败不视为“关闭”，避免凭空覆盖系统设置。
       log.error("[AutoLaunchManager] Failed to initialize default:", error);
     }
+  }
+
+  private cleanWindowsStartup(): boolean {
+    return process.platform === "win32" && app.isPackaged && APP_NAME_IDENTIFIER === "nuwax";
   }
 
   private createLinuxLauncher() {
@@ -83,11 +95,9 @@ export class AutoLaunchManager {
     }
     const settings = app.getLoginItemSettings({ args: this.loginItemArgs });
     // Windows 任务管理器禁用的注册表项不能显示成开启。
-    return (
-      settings.openAtLogin &&
-      (process.platform !== "win32" ||
-        settings.executableWillLaunchAtLogin !== false)
-    );
+    return process.platform === "win32"
+      ? (settings.executableWillLaunchAtLogin ?? settings.openAtLogin)
+      : settings.openAtLogin;
   }
 
   async isEnabled(): Promise<boolean> {
@@ -103,6 +113,8 @@ export class AutoLaunchManager {
   async setEnabled(enabled: boolean): Promise<boolean> {
     if (!this.supported) return false;
     try {
+      // Keep the opt-out when a machine-wide entry cannot be removed; retry on startup.
+      if (!enabled && this.cleanWindowsStartup() && !writeSetting(PREFERENCE_KEY, false)) return false;
       if (process.platform === "linux") {
         const launcher = this.createLinuxLauncher();
         if (enabled) await launcher.enable();
@@ -114,6 +126,7 @@ export class AutoLaunchManager {
           args: this.loginItemArgs,
           ...(process.platform === "win32" ? { enabled } : {}),
         });
+        if (!enabled && this.cleanWindowsStartup()) await cleanupWindowsAutoLaunch();
       }
       if ((await this.readSystemEnabled()) !== enabled) {
         log.warn(
