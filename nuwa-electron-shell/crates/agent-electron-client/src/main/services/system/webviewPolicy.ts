@@ -27,6 +27,7 @@ import { trustInitialBusinessNavigation } from "../sessionAuthInjection";
 import { createDesktopBrowserPage } from '../../features';
 import { prefersDesktopBrowser, openSystemPopupLink, openSystemWebLink } from './webLinkRouting';
 import { externalWebUrl } from '../../ipc/openExternal';
+import { openWebviewFind } from './webviewFind';
 
 // ---------- 权限白名单 ----------
 
@@ -493,6 +494,17 @@ function setupWindowOpen(): void {
         ) {
           event.preventDefault();
           webContents.openDevTools();
+          return;
+        }
+        if (
+          input.type === "keyDown" &&
+          !input.shift &&
+          !input.alt &&
+          (input.control || input.meta) &&
+          input.key.toLowerCase() === "f"
+        ) {
+          event.preventDefault();
+          openWebviewFind(contents, webContents);
         }
       });
     });
