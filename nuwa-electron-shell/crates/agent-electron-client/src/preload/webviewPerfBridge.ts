@@ -454,6 +454,7 @@ if (bridgeAllowed) {
     perf,
     auth,
     native,
+    themes: businessFeatures.themes,
     localFiles: businessFeatures.localFiles,
     updater,
     events,

@@ -143,6 +143,9 @@ jobs:
       - name: Check host bridge contract snapshot
         run: npm run host-bridge:check
 
+      - name: Check shared theme core snapshot
+        run: npm run theme-core:check
+
       - name: Check Electron source boundaries and app directory literals
         run: |
           node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npm run check:boundaries"

@@ -39,7 +39,8 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
-import { browserFeature } from "./browser";
+import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot } from "./themes";
+import { createBrowserFeature } from "./browser";
 import { localFilesFeature } from "./local-files";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
@@ -51,7 +52,8 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   openSourceNoticesFeature,
   localFilesFeature,
-  browserFeature,
+  createBrowserFeature({getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot}),
+  themesFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */

@@ -1,3 +1,4 @@
+import { useDesktopThemes, ThemeManager } from '../../features/themes';
 /**
  * 设置页面（商业版行式重构：分组行列表 + 行内即点即存）
  *
@@ -91,6 +92,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
 
   // 服务配置（config 为已保存值；draft 为行内未提交输入）
   const [loading, setLoading] = useState(true);
+  const desktopThemes = useDesktopThemes();
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<Step1Config | null>(null);
   const [hostDraft, setHostDraft] = useState<string | null>(null);
@@ -580,7 +582,8 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
           )}
 
           {/* 主题设置（暗黑模式经环境变量关闭时恒浅色，外观项无意义随之隐藏） */}
-          {FEATURES.DARK_THEME && (
+          {desktopThemes && <ThemeManager state={desktopThemes} t={t} />}
+          {!desktopThemes && FEATURES.DARK_THEME && (
             <SettingsRow
               label={t("Claw.Settings.system.theme")}
               desc={t("Claw.Settings.system.themeDesc")}

@@ -233,3 +233,16 @@ button svg {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+:root[data-theme-surface="shell"],
+:root[data-theme-surface="shell"] body {
+  --surface: var(--color-bg-container);
+  --hover: var(--color-bg-hover);
+  --line: var(--color-border);
+  --muted: var(--color-text-secondary);
+}
+:root[data-theme-surface="shell"] body { background: var(--surface); color: var(--color-text); }
+
+:root[data-theme-surface="shell"] button:focus-visible,
+:root[data-theme-surface="shell"] input:focus-visible { outline-color: var(--nuwax-focus-ring); }
+:root[data-theme-surface="shell"] #pin[aria-pressed="true"] { color: var(--color-primary); }

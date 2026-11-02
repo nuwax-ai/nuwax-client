@@ -16,6 +16,7 @@ export interface BrowserCapabilities {
   available: boolean;
 }
 export interface BrowserState {
+  themeSnapshot?: import('../../types/hostBridge').HostThemeSnapshot | null;
   title: string;
   url: string;
   domain: string;
