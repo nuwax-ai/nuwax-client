@@ -261,9 +261,9 @@ function registerTrustedPopup(win: BrowserWindow, contents: WebContents = win.we
 }
 
 /** Caller must admit the business URL first. Reader failure keeps the shared-session window. */
-export function createBusinessReadingPage(windowOptions: BrowserWindowConstructorOptions, url: string): NonNullable<ReturnType<typeof createDesktopBrowserPage>> {
+export function createBusinessReadingPage(windowOptions: BrowserWindowConstructorOptions, url: string, guest?: WebContents): NonNullable<ReturnType<typeof createDesktopBrowserPage>> {
   try {
-    const page = createDesktopBrowserPage({ windowOptions, initialUrl: url });
+    const page = createDesktopBrowserPage({ windowOptions, guest, initialUrl: url });
     if (page) return page;
   } catch {
     log.warn('[WebviewPolicy] Reader unavailable, using native business window');
@@ -384,6 +384,7 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     target.pathname.startsWith("/api/f/s3/") && hasOnlyBusinessFrames(opener);
   // Authenticated business pages must stay in the app even with system preference.
   const ordinaryLink = APP_NAME_IDENTIFIER === 'nuwax' && !isTrustedBusinessUrl(url) && !details.postBody && !dedicatedContents.has(opener);
+  const businessReader = trustedBusiness && target.pathname.startsWith('/repo/') && !details.postBody && !dedicatedContents.has(opener);
   const browser = ordinaryLink && prefersDesktopBrowser();
   if (ordinaryLink && !browser) { openSystemPopupLink(target.href); return { action: 'deny' }; }
   const options = buildPopupWindowOptions(features ?? "");
@@ -398,7 +399,8 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     createWindow: (windowOptions) => {
       const guest = (windowOptions as BrowserWindowConstructorOptions & { webContents?: WebContents }).webContents;
       let managed: ReturnType<typeof createDesktopBrowserPage> = null;
-      if (browser) {
+      if (businessReader) managed = createBusinessReadingPage(windowOptions, target.href, guest);
+      else if (browser) {
         try { managed = createDesktopBrowserPage({ windowOptions, guest, initialUrl: target.href }); }
         catch { log.warn('[WebviewPolicy] Browser creation failed, using system browser'); }
       }

@@ -243,6 +243,38 @@ async function run() {
           page.window.destroy();
           console.log(`PASS ${mode}/${type}/reader-${readerMode}: authenticated in-app fallback with system preference`);
         }
+        for (const readerMode of ['available', 'disabled', 'failed']) {
+          setBrowserFixtureMode(readerMode);
+          settings.set('nuwax.linkOpenMode', 'system');
+          const target = `${source}/repo/doc/fixture?raw=${mode}-${type}-${readerMode}`;
+          const raw = await openFrom(opener, target, 'window');
+          assert.equal(browserFixturePages.has(raw.window.id), readerMode === 'available', 'raw business GET retains reader controls');
+          assert.equal(raw.webContents.session, session.defaultSession);
+          assert((await raw.webContents.executeJavaScript("fetch('/api/me').then(r=>r.json())")).authenticated);
+          if (readerMode === 'available') {
+            const command = cmd => raw.window.webContents.executeJavaScript(`window.browserWindow.command(${JSON.stringify(cmd)})`);
+            const until = async (predicate, label) => {
+              const deadline = Date.now() + 7000;
+              while (Date.now() < deadline) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
+              assert.fail(label);
+            };
+            raw.window.show(); raw.window.focus(); raw.webContents.focus();
+            raw.webContents.sendInputEvent({type:'keyDown',keyCode:'f',modifiers:['meta']});
+            raw.webContents.sendInputEvent({type:'keyUp',keyCode:'f',modifiers:['meta']});
+            await until(()=>raw.window.webContents.executeJavaScript("document.hasFocus() && document.activeElement.id === 'query'"), 'raw reader Find input focus');
+            await raw.window.webContents.insertText('LOGGED_IN');
+            await until(async ()=>(await raw.window.webContents.executeJavaScript('window.browserWindow.getState()')).matches === 1, 'raw reader finds authenticated document');
+            await command({type:'find-close'});
+            const next = target + '-next';
+            await raw.webContents.loadURL(next);
+            await command({type:'back'});
+            await until(()=>!raw.webContents.isLoading() && raw.webContents.getURL()===target, 'raw reader Back');
+            await command({type:'forward'});
+            await until(()=>!raw.webContents.isLoading() && raw.webContents.getURL()===next, 'raw reader Forward');
+          }
+          raw.destroy();
+          console.log(`PASS ${mode}/${type}/raw-${readerMode}: authenticated same-session reader; Find/Back/Forward when available`);
+        }
         setBrowserFixtureMode('available'); settings.delete('nuwax.linkOpenMode');
         const outside = await openFrom(opener, `${externalOrigin}/outside?case=${mode}-${type}`, 'anchor');
         assert.equal(outside.webContents.session, session.defaultSession, 'external popup uses the normal browser session');

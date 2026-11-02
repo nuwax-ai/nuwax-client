@@ -134,7 +134,7 @@ function webviewPopupHandler(created: Awaited<ReturnType<typeof setup>>, source:
 
 beforeEach(async () => {
   mocks.browserAvailable = true;
-  mocks.createBrowserPage.mockClear();
+  mocks.createBrowserPage.mockReset();
   mocks.openExternal.mockClear();
   const { BrowserWindow } = await import("electron");
   mocks.createBrowserPage.mockImplementation(({ windowOptions }) => { const window = new BrowserWindow(windowOptions); return { window, contents: window.webContents }; });
@@ -233,9 +233,23 @@ describe("window.open session boundary", () => {
     const result = handler(popup(`${business}${route}`, ''));
     expect(result.action).toBe('allow');
     const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
-    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+    expect(mocks.createBrowserPage).toHaveBeenCalledWith(expect.objectContaining({ initialUrl: `${business}${route}` }));
     expect(contents.session).toBe(mocks.defaultSession);
     expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, `${business}${route}`);
+  });
+
+  it.each(['available', 'disabled', 'failed'])('raw library GET uses a reader or authenticated fallback when %s', async (mode) => {
+    const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
+    settings.set('nuwax.linkOpenMode', 'system');
+    if (mode === 'disabled') mocks.createBrowserPage.mockReturnValueOnce(null);
+    if (mode === 'failed') mocks.createBrowserPage.mockImplementationOnce(() => { throw new Error('fixture'); });
+    const result = handler(popup(`${business}/repo/doc/raw`, business));
+    const guest = fakeContents('window', 'about:blank');
+    const contents = result.createWindow!({ ...result.overrideBrowserWindowOptions!, webContents: guest } as never);
+    expect(mocks.createBrowserPage).toHaveBeenCalledWith(expect.objectContaining({ guest, initialUrl: `${business}/repo/doc/raw` }));
+    expect(contents).toBe(guest);
+    expect(contents.session).toBe(mocks.defaultSession);
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 
   it('library GET and POST stay inside the client with system-browser preference', async () => {
