@@ -24,6 +24,7 @@
   "Claw.ContextMenu.cut": "剪切",
   "Claw.ContextMenu.copy": "复制",
   "Claw.ContextMenu.paste": "粘贴",
+  "Claw.ContextMenu.pasteAsText": "粘贴为纯文本",
   "Claw.ContextMenu.delete": "删除",
   "Claw.ContextMenu.selectAll": "全选",
   "Claw.ContextMenu.saveImageAs": "另存为…",

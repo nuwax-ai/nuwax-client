@@ -24,6 +24,7 @@
   "Claw.ContextMenu.cut": "Cut",
   "Claw.ContextMenu.copy": "Copy",
   "Claw.ContextMenu.paste": "Paste",
+  "Claw.ContextMenu.pasteAsText": "Paste as Plain Text",
   "Claw.ContextMenu.delete": "Delete",
   "Claw.ContextMenu.selectAll": "Select All",
   "Claw.ContextMenu.saveImageAs": "Save Image As…",

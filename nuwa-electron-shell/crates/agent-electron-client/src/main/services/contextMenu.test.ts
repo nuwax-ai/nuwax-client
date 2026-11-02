@@ -109,6 +109,7 @@ function fakeWC(opts: {
     cut: vi.fn(),
     copy: vi.fn(),
     paste: vi.fn(),
+    pasteAndMatchStyle: vi.fn(),
     delete: vi.fn(),
     selectAll: vi.fn(),
     reload: vi.fn(),
@@ -228,6 +229,19 @@ describe("安装钩子（bug 2473）", () => {
 });
 
 describe("弹出与动作（经安装钩子的集成路径）", () => {
+  it("纯文本粘贴只操作右键的可编辑 guest，不覆盖系统剪贴板或其他页面", () => {
+    const guest = fakeWC();
+    const other = fakeWC({ type: "window" });
+    allWebContents = [guest, other];
+    installContextMenuService({ saveImage: saveImageCoreMock });
+    guest.fire("context-menu", params({ isEditable: true, editFlags: { canPaste: true } }));
+    clickItem(lastTemplate(), "Claw.ContextMenu.pasteAsText");
+    expect(guest.pasteAndMatchStyle).toHaveBeenCalledOnce();
+    expect(guest.paste).not.toHaveBeenCalled();
+    expect(other.pasteAndMatchStyle).not.toHaveBeenCalled();
+    expect(writeTextSpy).not.toHaveBeenCalled();
+  });
+
   it("会话页选中文本右键 → 复制/全选，点击复制作用于发射事件的 guest", () => {
     const guest = fakeWC();
     allWebContents = [guest];
@@ -372,6 +386,7 @@ describe("模板构建器（纯函数）", () => {
       "Claw.ContextMenu.cut",
       "Claw.ContextMenu.copy",
       "Claw.ContextMenu.paste",
+      "Claw.ContextMenu.pasteAsText",
       "Claw.ContextMenu.delete",
       "Claw.ContextMenu.selectAll",
     ]);

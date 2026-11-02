@@ -487,6 +487,9 @@ export const I18N_KEYS = {
     MESSAGE_SOUND: "Claw.IM.messageSound",
     MESSAGE_SOUND_DESC: "Claw.IM.messageSoundDesc",
   },
+  ContextMenu: {
+    PASTE_AS_TEXT: "Claw.ContextMenu.pasteAsText",
+  },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",
     CHECKUPDATE: "Claw.NativeMenu.checkUpdate",
