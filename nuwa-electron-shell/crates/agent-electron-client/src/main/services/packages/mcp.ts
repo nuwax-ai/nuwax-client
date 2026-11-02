@@ -34,10 +34,6 @@ import { APP_DATA_DIR_NAME } from "../constants";
 import { isWindows } from "../system/shellEnv";
 import { persistentMcpBridge } from "./persistentMcpBridge";
 import { discoverRemoteMcpTools } from "./discoverRemoteMcpTools";
-import { isGuiMcpManagedServerId } from "@shared/guiMcp";
-import { getGuiMcpEnabled } from "./guiMcpLocalConfig";
-import { getGuiAgentServerUrl } from "./guiAgentServer";
-import { getWindowsMcpUrl } from "./windowsMcp";
 import { discoverStdioMcpTools } from "./discoverStdioMcpTools";
 import {
   filterEnabledMcpServers,
@@ -1078,18 +1074,7 @@ class McpProxyManager {
     }
 
     if (isRemoteEntry(entry)) {
-      if (isGuiMcpManagedServerId(serverId)) {
-        if (!getGuiMcpEnabled()) {
-          throw new Error(t("Claw.MCP.list.guiMcpDisabledForTest"));
-        }
-        const liveUrl = isWindows()
-          ? getWindowsMcpUrl()
-          : getGuiAgentServerUrl();
-        if (!liveUrl) {
-          throw new Error(t("Claw.MCP.list.guiMcpNotRunning"));
-        }
-        entry = { ...entry, url: liveUrl };
-      }
+
       try {
         return await discoverRemoteMcpTools(entry);
       } catch (e) {

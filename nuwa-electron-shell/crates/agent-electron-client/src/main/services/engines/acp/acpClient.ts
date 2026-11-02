@@ -14,10 +14,10 @@
  * - ACP protocol uses NDJSON (newline-delimited JSON) over stdin/stdout
  */
 
-import { spawn, ChildProcess } from "child_process";
+import type { ChildProcess } from "child_process";
+import { spawnAcpProcess } from "./acpProcess";
 import { Readable, Writable, Transform } from "stream";
 import * as path from "path";
-import * as os from "os";
 import * as fs from "fs";
 import { app } from "electron";
 import log from "electron-log";
@@ -41,7 +41,6 @@ import { prepareOpencodePluginShareForHome } from "./opencodePluginShare";
 import { isWindows } from "../../system/shellEnv";
 import { createPlatformAdapter } from "../../system/platformAdapter";
 import {
-  spawnJsFile,
   resolveNpmPackageEntry,
   resolveNpmBinShimSpawnTarget,
 } from "../../utils/spawnNoWindow";
@@ -51,8 +50,6 @@ import { writeBundledDevShellProfiles } from "../../utils/shellProfile";
 import { perfEmitter } from "../perf/perfEmitter";
 import { firstTokenTrace } from "../perf/firstTokenTrace";
 import { resolveCustomAgentBinary } from "../../agentInstaller";
-import { buildSandboxedSpawnArgs } from "../../sandbox/sandboxProcessWrapper";
-import type { SandboxProcessConfig } from "@shared/types/sandbox";
 import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
@@ -461,8 +458,6 @@ export interface AcpConnectionConfig {
   engineType?: "claude-code" | "nuwaxcode" | "codex" | "codex-cli";
   /** Purpose of this process (for process registry) */
   purpose?: "engine";
-  /** Sandbox wrapping configuration (omit to disable) */
-  sandbox?: SandboxProcessConfig;
   /** Isolated HOME scope (project / ephemeral) */
   isolatedHomeScope?: IsolatedHomeScope;
 }
@@ -480,8 +475,6 @@ export interface AcpConnectionResult {
    * IMPORTANT: Call this before destroying the process to release Windows handles!
    */
   cleanup: () => void;
-  /** Cleanup sandbox resources (temp profiles, etc.) */
-  sandboxCleanup?: () => void;
 }
 
 // ==================== SDK Loader ====================
@@ -1041,114 +1034,14 @@ export async function createAcpConnection(
   // enabling process.kill(-pid) to kill the entire tree on cleanup.
   const spawnTimer = perfEmitter.start();
   const useDetached = !isWindows;
-  let proc: ChildProcess;
-  let sandboxCleanup: (() => void) | undefined;
-
-  // --- Sandbox wrapping ---
-  // 沙箱启用时，将引擎二进制包装在 sandbox-exec / bwrap / nuwax sandbox helper 中
-  let spawnCommand = binPath;
-  let spawnArgs = effectiveBinArgs;
-  let sandboxed = false;
-
-  if (config.sandbox?.enabled) {
-    try {
-      // 对于 JS 引擎（非 native），使用 node 二进制作为底层 command。
-      // 避免沙箱内运行 Electron 主程序导致 IOKit/PNG 操作崩溃（SIGSEGV）。
-      // 对于原生引擎（nuwaxcode Go 二进制），直接使用 binPath。
-      const effectiveCommand = config.isNative
-        ? binPath
-        : (getNodeBinPathWithFallback() ?? "node");
-      const effectiveSpawnArgs = config.isNative
-        ? effectiveBinArgs
-        : [binPath, ...effectiveBinArgs];
-
-      // Extra writable paths for seatbelt profile:
-      // 1. isolatedHome — engine config/cache
-      // 2. App data directory (~/.nuwaclaw) — engine logs, npm packages, config
-      // 3. System temp directories — engines may create temp files here for tool
-      //    execution. Cross-platform: os.tmpdir() + realpath, plus macOS-specific
-      //    /tmp and /private/tmp (some engines hardcode these instead of os.tmpdir()).
-      const extraWritable: string[] = [isolatedHome, os.tmpdir()];
-
-      // App data directory (e.g. ~/.nuwaclaw) — engine writes logs, npm packages, etc.
-      const appDataDir = path.join(app.getPath("home"), APP_DATA_DIR_NAME);
-      extraWritable.push(appDataDir);
-
-      try {
-        extraWritable.push(fs.realpathSync(os.tmpdir()));
-      } catch {
-        /* realpath resolution failed, skip */
-      }
-      if (createPlatformAdapter().isMacOS) {
-        extraWritable.push("/tmp", "/private/tmp");
-      }
-
-      const wrapped = await buildSandboxedSpawnArgs(
-        effectiveCommand,
-        effectiveSpawnArgs,
-        config.workspaceDir,
-        config.sandbox,
-        extraWritable,
-      );
-      spawnCommand = wrapped.command;
-      spawnArgs = wrapped.args;
-      sandboxCleanup = wrapped.cleanupSandbox;
-      sandboxed = spawnCommand !== effectiveCommand;
-
-      log.info("[AcpClient] Sandbox wrapping applied:", {
-        type: config.sandbox.type,
-        originalCommand: binPath,
-        wrappedCommand: spawnCommand,
-        sandboxed,
-      });
-    } catch (sandboxError) {
-      log.error("[AcpClient] Sandbox wrapping failed:", sandboxError);
-      // fallback 当前由 acpEngine.ts 固定为 "degrade_to_off"，
-      // "fail_closed" 分支目前不可达，保留以备将来恢复配置项。
-      if (config.sandbox.fallback === "fail_closed") {
-        throw new Error(
-          `Sandbox setup failed: ${sandboxError instanceof Error ? sandboxError.message : String(sandboxError)}`,
-        );
-      }
-      // degrade_to_off: 继续无沙箱启动
-      log.warn("[AcpClient] Degrading to non-sandboxed execution");
-    }
-  }
-
-  if (sandboxed) {
-    // 沙箱已包装：直接 spawn（沙箱 wrapper 本身就是 command）
-    proc = spawn(spawnCommand, spawnArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      detached: useDetached,
-    });
-    log.info(
-      `[AcpClient] Spawned sandboxed process: ${spawnCommand} (detached=${useDetached})`,
-    );
-  } else if (config.isNative) {
-    // Native binary (e.g. nuwaxcode Go binary): spawn directly, no node wrapper
-    // This avoids Windows console popup and eliminates the intermediate process
-    proc = spawn(binPath, effectiveBinArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      detached: useDetached,
-    });
-    log.info(
-      `[AcpClient] Spawned native binary directly: ${binPath} (detached=${useDetached})`,
-    );
-  } else {
-    // JS file (e.g. claude-code-acp-ts): spawn via node using spawnJsFile
-    proc = spawnJsFile(binPath, effectiveBinArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: useDetached,
-    });
-  }
+  const proc = spawnAcpProcess({
+    binPath,
+    args: effectiveBinArgs,
+    isNative: config.isNative === true,
+    cwd: config.workspaceDir,
+    env,
+    detached: useDetached,
+  });
   // Unref so the parent process can exit without waiting for the child
   // (we manage cleanup explicitly via killProcessTree)
   if (useDetached) {
@@ -1366,6 +1259,5 @@ export async function createAcpConnection(
     process: proc,
     isolatedHome,
     cleanup,
-    sandboxCleanup,
   };
 }

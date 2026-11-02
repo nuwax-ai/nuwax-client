@@ -94,11 +94,8 @@ export const DEFAULT_FILE_SERVER_PORT = 60005 + NUWAX_PORT_OFFSET;
 /** Lanproxy 默认端口 */
 export const DEFAULT_LANPROXY_PORT = 60002 + NUWAX_PORT_OFFSET;
 
-/** GUI Agent MCP 默认端口 */
+/** Legacy registration protocol field; no local GUI service listens on this port. */
 export const DEFAULT_GUI_MCP_PORT = 60008 + NUWAX_PORT_OFFSET;
-
-/** 本地 MCP 管理中 GUI MCP 条目的固定 Server ID（与 ACP 注入名一致） */
-export const GUI_MCP_SERVER_ID = "gui-agent";
 
 /** 本地 MCP 管理中 Computer Use (cua) 条目的固定 Server ID */
 export const CUA_MCP_SERVER_ID = "cua";
@@ -647,7 +644,6 @@ export const I18N_KEYS = {
       PROXY: "Claw.Pages.Service.proxy",
       AGENT: "Claw.Pages.Service.agent",
       MCP_PROXY: "Claw.Pages.Service.mcpProxy",
-      GUI_MCP: "Claw.Pages.Service.guiMcp",
     },
     Agent: {
       STATUS: {

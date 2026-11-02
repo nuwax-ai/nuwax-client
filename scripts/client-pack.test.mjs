@@ -59,7 +59,7 @@ test('pack resource selection excludes tool download caches without changing the
 });
 
 test('independent builder config contains commercial identity/payload and leaves package unchanged', () => {
-  const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'resources/agent-gui-server', to: 'agent-gui-server' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }, { from: 'stale/dist', to: 'nuwax-dist' }, { from: 'resources/sandbox-runtime', to: 'sandbox-runtime' }, { from: 'resources/sandboxed-bash-mcp', to: 'sandboxed-bash-mcp' }, { from: 'resources/sandboxed-fs-mcp', to: 'sandboxed-fs-mcp' }], win: { extraResources: [{ from: 'resources/sandbox-helper', to: 'sandbox-helper' }, { from: 'resources/windows-mcp', to: 'windows-mcp' }] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
+  const pkg = { version: '1.0.0', build: { appId: 'community', productName: 'NuwaClaw', afterSign: 'sign.js', extraResources: [{ from: 'locales', to: 'locales' }, { from: 'stale/dist', to: 'nuwax-dist' }], win: { extraResources: [] }, mac: { extendInfo: { CFBundleIdentifier: 'legacy' } } } };
   const original = structuredClone(pkg);
   const result = builderConfig(pkg, { frontendDist: '/client/nuwax-dist', output: '/client/release/1.2.3', version: '1.2.3', helperDir: '/client/resources/computer-use',
     builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' } });
@@ -79,9 +79,6 @@ test('independent builder config contains commercial identity/payload and leaves
   assert.equal(result.extraResources.filter((entry) => entry.to === 'nuwax-dist').length, 1);
   assert.equal(result.extraResources.find((entry) => entry.to === 'nuwax-dist').from, '/client/nuwax-dist');
   assert.ok(result.extraResources.some((entry) => entry.to === 'computer-use'));
-  assert.ok(result.files.includes('!node_modules/agent-gui-server/**/*'));
-  assert.ok(result.files.includes('!node_modules/@nut-tree-fork/**/*'));
-  assert.ok(result.extraResources.every((entry) => !['sandbox-runtime', 'sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'agent-gui-server', 'windows-mcp'].includes(entry.to)));
   assert.deepEqual(result.win.extraResources, []);
   assert.equal(result.afterSign, undefined);
   assert.deepEqual(result.publish, [{ provider: 'generic', url: config.product.feedBase }]);

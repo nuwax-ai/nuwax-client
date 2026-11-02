@@ -1,5 +1,5 @@
 import type { McpServerEntry } from "@shared/types/electron";
-import { isComputerUseManagedServerId } from "@shared/guiMcp";
+import { isComputerUseManagedServerId } from "@shared/managedMcp";
 import { t } from "../../services/core/i18n";
 
 /**

@@ -1,12 +1,11 @@
 /**
  * AcpPermissionCoordinator — ACP 工具权限决策协调器
  *
- * 持有权限相关的会话级状态（生效模式、tool_approval_rules、strict 快照日志去重），
+ * 持有权限相关的会话级状态（生效模式、tool_approval_rules），
  * 并按固定顺序执行决策链（对齐 rcoder tool-approval-rules-spec §7；危险命令不在此处理）：
  * ① question 类型直接拒绝（客户端专有）
- * ② strict write guard（沙箱 strict 模式写路径校验，客户端专有）
- * ③ tool_approval_rules 匹配（deny / allow / ask）
- * ④ agent_mode 默认行为（yolo 自动放行；其余返回 "ask"）
+ * ② tool_approval_rules 匹配（deny / allow / ask）
+ * ③ agent_mode 默认行为（yolo 自动放行；其余返回 "ask"）
  *
  * 危险命令不单独拦截；如需对 rm 等强制审批，由 tool_approval_rules 配置（如 `rm -rf * → ask`）。
  *
@@ -26,10 +25,6 @@ import type {
 } from "@shared/types/computerTypes";
 import type { AcpMode } from "@shared/types/acpMode";
 import {
-  evaluateStrictWritePermission,
-  type StrictPermissionContext,
-} from "./strictPermissionGuard";
-import {
   matchToolApprovalRules,
   normalizeToolApprovalRules,
 } from "./toolApprovalRules";
@@ -39,9 +34,6 @@ export type PermissionDecision =
   | { kind: "cancel"; reason: string }
   | { kind: "select"; optionId: string; reason: string }
   | { kind: "ask" };
-
-/** evaluate() 所需的引擎侧环境（即 strict guard 的路径上下文） */
-export type PermissionEvaluateContext = StrictPermissionContext;
 
 export class AcpPermissionCoordinator {
   /**
@@ -65,10 +57,6 @@ export class AcpPermissionCoordinator {
   private effectiveModes = new Map<string, AcpMode>();
   /** tool_approval_rules 按 acpSessionId 存储，每次 chat 请求刷新 */
   private sessionToolApprovalRules = new Map<string, ToolApprovalRule[]>();
-  /** strict 模式 writable roots 快照日志去重（带上限的 FIFO；Set 保持插入顺序，驱逐最早插入的会话） */
-  private strictSnapshotLoggedSessions = new Set<string>();
-  private static readonly MAX_SNAPSHOT_LOGGED_SESSIONS = 500;
-
   constructor(private readonly logTag: string) {}
 
   // === 会话级状态维护 ===
@@ -102,10 +90,7 @@ export class AcpPermissionCoordinator {
 
   // === 决策链 ===
 
-  evaluate(
-    params: AcpPermissionRequest,
-    ctx: PermissionEvaluateContext,
-  ): PermissionDecision {
+  evaluate(params: AcpPermissionRequest): PermissionDecision {
     const acpSessionId = params.sessionId;
 
     // ① question 类型直接拒绝
@@ -116,60 +101,7 @@ export class AcpPermissionCoordinator {
       return { kind: "cancel", reason: "question_request" };
     }
 
-    // ② strict write guard
-    const strictEnabled = ctx.strictEnabled;
-    const strictCheck = evaluateStrictWritePermission(params, ctx);
-    if (strictEnabled) {
-      if (!this.strictSnapshotLoggedSessions.has(acpSessionId)) {
-        if (
-          this.strictSnapshotLoggedSessions.size >=
-          AcpPermissionCoordinator.MAX_SNAPSHOT_LOGGED_SESSIONS
-        ) {
-          const oldest = this.strictSnapshotLoggedSessions
-            .values()
-            .next().value;
-          if (oldest) this.strictSnapshotLoggedSessions.delete(oldest);
-        }
-        this.strictSnapshotLoggedSessions.add(acpSessionId);
-        log.debug(`${this.logTag} strict writable roots snapshot`, {
-          acpSessionId,
-          workspaceDir: ctx.workspaceDir,
-          projectWorkspaceDir: ctx.projectWorkspaceDir,
-          isolatedHome: ctx.isolatedHome,
-          writableRoots: strictCheck.writableRoots,
-        });
-      }
-      const strictTrace = {
-        reason: strictCheck.reason,
-        isWriteRequest: strictCheck.isWriteRequest,
-        toolKind: params.toolCall.kind,
-        toolTitle: params.toolCall.title,
-        candidatePaths: strictCheck.candidatePaths,
-        resolvedPaths: strictCheck.resolvedPaths,
-        writableRoots: strictCheck.writableRoots,
-      };
-      if (strictCheck.isWriteRequest) {
-        log.debug(`${this.logTag} strict permission evaluation`, strictTrace);
-      } else {
-        log.debug(
-          `${this.logTag} strict permission skipped (non-write request)`,
-          strictTrace,
-        );
-      }
-    }
-    if (strictCheck.blocked) {
-      log.warn(`${this.logTag} strict write permission blocked`, {
-        reason: strictCheck.reason,
-        toolKind: params.toolCall.kind,
-        toolTitle: params.toolCall.title,
-        candidatePaths: strictCheck.candidatePaths,
-        resolvedPaths: strictCheck.resolvedPaths,
-        writableRoots: strictCheck.writableRoots,
-      });
-      return { kind: "cancel", reason: strictCheck.reason };
-    }
-
-    // ③ tool_approval_rules 匹配（优先级高于 agent_mode 默认行为）
+    // ② tool_approval_rules 匹配（优先级高于 agent_mode 默认行为）
     const rules = this.sessionToolApprovalRules.get(acpSessionId);
     const ruleAction =
       rules && rules.length > 0 ? matchToolApprovalRules(params, rules) : null;
@@ -196,31 +128,18 @@ export class AcpPermissionCoordinator {
           reason: "tool_approval_rules_allow",
         };
       }
-      // 无可选项时与历史行为一致：继续走 ④ 的默认分支
+      // 无可选项时与历史行为一致：继续走 ③ 的默认分支
     }
 
-    // ④ agent_mode 默认行为
+    // ③ agent_mode 默认行为
     const effectiveMode = this.getEffectiveMode(acpSessionId);
 
     // ruleAction === "ask" 时强制走审批流程，忽略 yolo 默认放行
     if (effectiveMode === "yolo" && ruleAction !== "ask") {
-      const strictWriteMode = strictEnabled && strictCheck.isWriteRequest;
-      const selected = strictWriteMode
-        ? params.options.find((o) => o.kind === "allow_once")
-        : params.options.find((o) => o.kind === "allow_always") ||
-          params.options.find((o) => o.kind === "allow_once") ||
-          params.options[0];
-
-      if (strictWriteMode && !selected) {
-        log.debug(
-          `${this.logTag} strict write permission blocked (allow_once option missing)`,
-          {
-            toolKind: params.toolCall.kind,
-            toolTitle: params.toolCall.title,
-          },
-        );
-        return { kind: "cancel", reason: "strict_allow_once_missing" };
-      }
+      const selected =
+        params.options.find((o) => o.kind === "allow_always") ||
+        params.options.find((o) => o.kind === "allow_once") ||
+        params.options[0];
 
       if (selected) {
         if (
@@ -233,25 +152,13 @@ export class AcpPermissionCoordinator {
             toolTitle: params.toolCall.title,
           });
         }
-        if (strictWriteMode) {
-          log.debug(`${this.logTag} strict write permission allowed_once`, {
-            toolKind: params.toolCall.kind,
-            toolTitle: params.toolCall.title,
-            optionId: selected.optionId,
-            candidatePaths: strictCheck.candidatePaths,
-            resolvedPaths: strictCheck.resolvedPaths,
-          });
-        } else {
-          log.info(
-            `${this.logTag} 🔓 Permission auto-approved (yolo): tool=${params.toolCall.title}, kind=${selected.kind}, optionId=${selected.optionId}`,
-          );
-        }
+        log.info(
+          `${this.logTag} Permission auto-approved (yolo): tool=${params.toolCall.title}, kind=${selected.kind}, optionId=${selected.optionId}`,
+        );
         return {
           kind: "select",
           optionId: selected.optionId,
-          reason: strictWriteMode
-            ? "strict_write_allow_once"
-            : "yolo_auto_approve",
+          reason: "yolo_auto_approve",
         };
       }
 
@@ -313,6 +220,5 @@ export class AcpPermissionCoordinator {
     this.cancelAllPending();
     this.effectiveModes.clear();
     this.sessionToolApprovalRules.clear();
-    this.strictSnapshotLoggedSessions.clear();
   }
 }

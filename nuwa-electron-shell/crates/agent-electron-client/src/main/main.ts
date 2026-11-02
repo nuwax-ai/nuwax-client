@@ -29,9 +29,7 @@ import { runStartupTasks } from "./bootstrap/startup";
 import { agentService } from "./services/engines/unifiedAgent";
 import { stopComputerServer } from "./services/computerServer";
 import { mcpProxyManager } from "./services/packages/mcp";
-import { stopGuiAgentServer } from "./services/packages/guiAgentServer";
 import { FEATURES } from "@shared/featureFlags";
-import { stopWindowsMcp } from "./services/packages/windowsMcp";
 import { stopTtydGateway } from "./services/packages/ttydGateway";
 import type { HandlerContext } from "@shared/types/ipc";
 import { DEFAULT_DEV_SERVER_PORT } from "./services/constants";
@@ -300,7 +298,6 @@ const WEBVIEW_PERF_BRIDGE_PRELOAD = path.join(
 const lanproxy = new ManagedProcess("lanproxy");
 const fileServer = new ManagedProcess("fileServer");
 const agentRunner = new ManagedProcess("agentRunner");
-const guiServer = new ManagedProcess("gui-agent-server");
 const ttyd = new ManagedProcess("ttyd");
 let agentRunnerPorts: { backendPort: number; proxyPort: number } | null = null;
 
@@ -379,7 +376,7 @@ function createWindow() {
         void mainWindow?.loadURL(devUrl);
       });
     if (process.env.NUWAX_DEVTOOLS === "1") {
-      mainWindow.webContents.openDevTools({ activate: false });
+      mainWindow.webContents.openDevTools({ mode: "right", activate: false });
     }
   } else {
     // 生产环境：dist 目录被打包到 app.asar 中
@@ -455,9 +452,10 @@ function createWindow() {
   });
 
   // 隐藏/最小化不代表退出；恢复 Dock 与显示主窗各自独立，不抢用户焦点。
-  for (const event of ["show", "hide", "minimize", "restore"] as const) {
-    mainWindow.on(event, () => ensureDockVisible(`window-${event}`));
-  }
+  mainWindow.on("show", () => ensureDockVisible("window-show"));
+  mainWindow.on("hide", () => ensureDockVisible("window-hide"));
+  mainWindow.on("minimize", () => ensureDockVisible("window-minimize"));
+  mainWindow.on("restore", () => ensureDockVisible("window-restore"));
 
   // 所有平台：点击关闭按钮时隐藏到托盘，而不是退出应用
   // 只有从托盘菜单点击"退出"时才真正退出
@@ -726,18 +724,6 @@ async function cleanupAllProcesses(): Promise<void> {
     await mcpProxyManager.cleanup();
   });
 
-  // Windows：windows-mcp（uv/python）由独立 ManagedProcess 管理
-  await runCleanupStep("Windows MCP stop", async () => {
-    await stopWindowsMcp();
-  });
-
-  // 非 Windows：agent-gui-server 进程
-  if (FEATURES.ENABLE_GUI_AGENT_SERVER) {
-    await runCleanupStep("GUI Agent server stop", async () => {
-      await stopGuiAgentServer();
-    });
-  }
-
   // 先撤销文件授权、停止录制，再释放引擎，避免迟到回调沿用退出中的资源。
   // Both paths share the same feature shutdown promise, including daemon cleanup.
   await runCleanupStep("Desktop features stop", disposeDesktopFeatures, Math.max(stepTimeoutMs, 8000));
@@ -753,12 +739,10 @@ async function cleanupAllProcesses(): Promise<void> {
   });
 
   // Await owned process trees before app.exit; fire-and-forget kill loses escalation.
-  // NOTE: guiServer is a legacy placeholder and typically not started directly.
   await stopManagedProcesses([
     agentRunner,
     lanproxy,
     fileServer,
-    guiServer,
     ttyd,
   ]);
 
@@ -899,7 +883,6 @@ app.whenReady().then(async () => {
     lanproxy,
     fileServer,
     agentRunner,
-    guiServer,
     ttyd,
     get agentRunnerPorts() {
       return agentRunnerPorts;

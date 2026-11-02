@@ -29,9 +29,6 @@ vi.mock("../services/packages/fileServerHealth", () => ({ waitForFileServerHealt
 vi.mock("../services/packages/lanproxyHealth", () => ({ probeLanproxyAfterStart: async () => ({ healthy: true }) }));
 vi.mock("../services/engines/unifiedAgent", () => ({ agentService: { destroy: vi.fn(), init: async () => true } }));
 vi.mock("../services/packages/mcp", () => ({ mcpProxyManager: { start: vi.fn(), stop: vi.fn(), getAgentMcpConfig: () => null } }));
-vi.mock("../services/packages/guiAgentServer", () => ({ startGuiAgentServer: vi.fn(), stopGuiAgentServer: vi.fn() }));
-vi.mock("../services/packages/windowsMcp", () => ({ startWindowsMcp: vi.fn(), stopWindowsMcp: vi.fn() }));
-vi.mock("../services/packages/guiMcpLocalConfig", () => ({ shouldStartGuiMcpServices: () => false }));
 vi.mock("../services/engines/engineManager", () => ({ stopAllEngines: vi.fn() }));
 vi.mock("../services/computerServer", async () => {
   const { getLocalPortManager } = await import("../services/localPorts");

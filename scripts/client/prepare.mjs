@@ -260,8 +260,8 @@ export async function prepare(root, options = {}) {
   const env = commercialEnv(root, { TARGET_ARCH: opt.arch });
     await ensureCommercialDependencies(root, tools);
     const kit = path.join(p.base, 'crates/agent-kit');
-    // The inherited workspace postinstall can generate an ignored standalone
-    // lock. It is build output, rather than an authoritative dependency input.
+    // Only a tracked agent-kit lock participates in reproducible build inputs;
+    // an ignored local lock must not invalidate the prepared workspace cache.
     const kitLockTracked = Boolean(await tools.git(p.base, ['ls-files', '--error-unmatch', '--', 'crates/agent-kit/pnpm-lock.yaml'], { allowFailure: true }));
     const kitKey = tools.fingerprint([opt.platform, opt.arch, process.versions.node, inputDigest([kit], { excludeNames: kitLockTracked ? [] : ['pnpm-lock.yaml'] })]);
     if (state.kit !== kitKey || !['index.js', 'index.cjs', 'index.d.ts'].every((name) => fileReady(path.join(kit, 'dist', name)))) {
@@ -274,7 +274,7 @@ export async function prepare(root, options = {}) {
     const workspaceKey = tools.fingerprint([kitKey, opt.platform, opt.arch, process.versions.node, inputDigest([path.join(p.base, 'package.json'), path.join(p.base, 'pnpm-lock.yaml'), path.join(p.base, 'pnpm-workspace.yaml'), path.join(p.client, 'package.json')])]);
     const dependenciesReady = ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')));
     if (state.workspace !== workspaceKey || !dependenciesReady) {
-      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', '--filter', '!agent-gui-server', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
+      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
       if (!['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')))) throw new Error('[prepare] 工作区依赖入口缺失');
       state.workspace = workspaceKey;
       save();

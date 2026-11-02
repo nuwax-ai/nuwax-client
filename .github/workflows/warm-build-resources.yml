@@ -78,7 +78,7 @@ jobs:
           pnpm -C crates/agent-kit run build
       - name: Install resource preparation dependencies
         working-directory: nuwa-electron-shell
-        run: pnpm install --filter @nuwax-ai/nuwaclaw... --filter '!agent-gui-server'
+        run: pnpm install --filter @nuwax-ai/nuwaclaw...
       - name: Restore bundled resource caches
         uses: ./.github/actions/bundled-resource-cache
         with:

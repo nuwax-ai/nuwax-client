@@ -1,11 +1,6 @@
 # @nuwax-ai/agent-kit
 
-Canonical source lives in the nuwaclaw workspace. nuwa-cli consumes published
-versions; during the 0.3.0 migration its previous workspace copy remains only as
-a release bridge and must be removed after 0.3.0 is published.
-
-Shared logic for `@nuwax-ai/nuwa-cli` and `@nuwax-ai/nuwaclaw`. The single place
-to maintain the agent/ACP behaviour both hosts need, so they stay in lockstep.
+Internal ACP and engine primitives maintained in nuwax-client. This private package is built locally before the Electron workspace is installed; `file:` integration keeps the ASAR dependency graph self-contained. Development, testing and release use the repository root entrypoints.
 
 **Boundary principle.** agent-kit holds *isomorphic primitives + shared-package
 adapters*. Hosts keep *process model + env strategy + lifecycle + product

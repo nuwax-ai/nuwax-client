@@ -24,8 +24,7 @@ npm run release -- --version X.Y.Z-beta.N --dry-run
 |---|---|
 | `crates/agent-electron-client/` | 主进程、preload、renderer、IPC、桌面能力及打包实现 |
 | `crates/agent-kit/` | ACP、引擎和 MCP 桥原语；本仓通过本地 workspace 引用 |
-| `crates/agent-gui-server/` | 保留的 GUI 服务组件；当前 Computer Use 采用仓库根的 CUA helper 构建链 |
-| `scripts/` | 壳内构建和资源准备工具 |
+| `scripts/` | 本仓调用的内部构建工具 |
 
 前端源码与产物分别位于仓库根的 `nuwax/`、`nuwax-dist/` 子模块。它们是独立的前端输入，壳目录自身不是子模块。
 

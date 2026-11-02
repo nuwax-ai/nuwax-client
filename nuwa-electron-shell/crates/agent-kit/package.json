@@ -2,7 +2,7 @@
   "name": "@nuwax-ai/agent-kit",
   "version": "0.4.0",
   "packageManager": "pnpm@9.15.5",
-  "description": "Shared agent/ACP logic for nuwa-cli and nuwaclaw (engine resolution, agent install).",
+  "description": "Internal ACP, engine resolution and permission primitives for the Nuwax desktop client.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -43,7 +43,5 @@
       "esbuild"
     ]
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "private": true
 }

@@ -30,8 +30,8 @@ import { extractNormalProjectContainerPid } from "../computer/agentWorkDir";
 import { perfEmitter } from "./perf/perfEmitter";
 import { mapAgentCommand, resolveAgentEnv } from "./agentHelpers";
 import { resolveOpenAICompatModel } from "./acp/openAICompatRouting";
-import { isOpencodeAcpEngine } from "./acp/sandbox/acpEngineSandbox";
-import { resolveOpencodePermissionEnv } from "./acp/sandbox/opencodeAcpSpawnConfig";
+import { isOpencodeAcpEngine } from "./acp/config/engineProfile";
+import { resolveOpencodePermissionEnv } from "./acp/config/opencodeSpawnConfig";
 import type { AgentConfig, AgentEngineType } from "./types";
 
 export function resolveRequiredAgentEngine(args: {

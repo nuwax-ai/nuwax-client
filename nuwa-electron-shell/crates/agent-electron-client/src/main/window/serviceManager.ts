@@ -38,11 +38,6 @@ import * as ttydHelper from "../services/packages/ttydHelper";
 import { agentService } from "../services/engines/unifiedAgent";
 import type { AgentConfig } from "../services/engines/unifiedAgent";
 import { mcpProxyManager } from "../services/packages/mcp";
-import { FEATURES } from "@shared/featureFlags";
-import {
-  startGuiAgentServer,
-  stopGuiAgentServer,
-} from "../services/packages/guiAgentServer";
 import {
   allocateInternalTtydPort,
   checkTtydGatewayHealth,
@@ -50,14 +45,9 @@ import {
   startTtydGateway,
   stopTtydGateway,
 } from "../services/packages/ttydGateway";
-import {
-  startWindowsMcp,
-  stopWindowsMcp,
-} from "../services/packages/windowsMcp";
 import { stopAllEngines } from "../services/engines/engineManager";
 import { clearAllSseEventBuffers } from "../services/computerServer";
 import { killProcessTreesListeningOnTcpPort } from "../services/utils/processTree";
-import { shouldStartGuiMcpServices } from "../services/packages/guiMcpLocalConfig";
 import { isWindows } from "../services/system/shellEnv";
 
 /** 注入 electron-log，供 agent-kit withStartRetry 打英文启动重试日志 */
@@ -666,48 +656,6 @@ export function createServiceManager(ctx: ServiceManagerContext) {
     }
   };
 
-  /** 按设置页开关启动 GUI MCP（macOS/Linux agent-gui-server + Windows MCP） */
-  const startGuiMcpServicesOnRestart = async (
-    results: Record<string, ServiceResult>,
-  ): Promise<void> => {
-    if (!shouldStartGuiMcpServices()) {
-      if (FEATURES.ENABLE_GUI_AGENT_SERVER) {
-        log.info(
-          "[ServiceManager] GUI MCP skipped on restart (disabled in settings)",
-        );
-      }
-      return;
-    }
-
-    if (isWindows()) {
-      try {
-        const winResult = await startWindowsMcp();
-        results.windowsMcp = winResult;
-        if (!winResult.success) {
-          log.warn(
-            `[ServiceManager] Windows MCP start failed: ${winResult.error}`,
-          );
-        }
-      } catch (e) {
-        results.windowsMcp = { success: false, error: String(e) };
-        log.warn("[ServiceManager] Windows MCP start exception:", e);
-      }
-    } else {
-      try {
-        const guiResult = await startGuiAgentServer();
-        results.guiAgentServer = guiResult;
-        if (!guiResult.success) {
-          log.warn(
-            `[ServiceManager] GUI Agent Server start failed: ${guiResult.error}`,
-          );
-        }
-      } catch (e) {
-        results.guiAgentServer = { success: false, error: String(e) };
-        log.warn("[ServiceManager] GUI Agent Server start exception:", e);
-      }
-    }
-  };
-
   /**
    * 重启所有服务
    */
@@ -762,8 +710,6 @@ export function createServiceManager(ctx: ServiceManagerContext) {
       results.mcpProxy = { success: false, error: String(e) };
       log.error("[ServiceManager] MCP Proxy start failed:", e);
     }
-
-    await startGuiMcpServicesOnRestart(results);
 
     signal?.throwIfAborted();
     // 3. 启动 Agent（依赖 MCP Proxy 已就绪以便 getAgentMcpConfig 对应进程可连）
@@ -923,12 +869,7 @@ export function createServiceManager(ctx: ServiceManagerContext) {
     await ctx.fileServer.stopAsync();
     await killProcessTreesListeningOnTcpPort(getConfiguredPorts().fileServer);
     // 不停止 lanproxy: ctx.lanproxy.stop();
-    // 先停止 GUI agents（它们依赖 MCP Proxy，先停 MCP 再停 GUI）
     await mcpProxyManager.stop();
-    if (FEATURES.ENABLE_GUI_AGENT_SERVER) {
-      await stopGuiAgentServer();
-    }
-    await stopWindowsMcp();
 
     // 2. 启动 MCP Proxy（必须先于 Agent：Agent 初始化时会连 MCP Proxy 注入 mcpServers）
     try {
@@ -948,8 +889,6 @@ export function createServiceManager(ctx: ServiceManagerContext) {
       results.mcpProxy = { success: false, error: String(e) };
       log.error("[ServiceManager] MCP Proxy start failed:", e);
     }
-
-    await startGuiMcpServicesOnRestart(results);
 
     // 3. 启动 Agent（依赖 MCP Proxy 已就绪）
     try {
@@ -1073,25 +1012,6 @@ export function createServiceManager(ctx: ServiceManagerContext) {
       log.info("[ServiceManager] MCP Proxy stopped");
     } catch (e) {
       results.mcpProxy = { success: false, error: String(e) };
-    }
-
-    // 停止 GUI MCP：先 Windows（uv/python），再非 Windows 的 agent-gui-server，与 main cleanupAllProcesses 顺序一致
-    try {
-      await stopWindowsMcp();
-      results.windowsMcp = { success: true };
-      log.info("[ServiceManager] Windows MCP stopped");
-    } catch (e) {
-      results.windowsMcp = { success: false, error: String(e) };
-    }
-
-    if (FEATURES.ENABLE_GUI_AGENT_SERVER) {
-      try {
-        await stopGuiAgentServer();
-        results.guiAgentServer = { success: true };
-        log.info("[ServiceManager] GUI Agent Server stopped");
-      } catch (e) {
-        results.guiAgentServer = { success: false, error: String(e) };
-      }
     }
 
     // 停止所有引擎

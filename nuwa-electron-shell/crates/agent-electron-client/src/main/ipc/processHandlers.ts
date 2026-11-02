@@ -113,15 +113,12 @@ export async function stopAllServicesNow(): Promise<{
   }
 
   try {
-    const { stopSandboxService } =
-      await import("../services/sandbox/serviceBootstrap");
-    await stopSandboxService();
     const runner = await ctx.agentRunner.stopAsync();
     if (runner && !runner.success)
       throw new Error(runner.message || "Agent runner stop failed");
-    results.sandbox = { success: true };
+    results.agentRunner = { success: true };
   } catch (e) {
-    results.sandbox = { success: false, error: String(e) };
+    results.agentRunner = { success: false, error: String(e) };
   }
   syncTrayStatusFromContext(ctx);
   log.info("[Services] All services stopped:", results);

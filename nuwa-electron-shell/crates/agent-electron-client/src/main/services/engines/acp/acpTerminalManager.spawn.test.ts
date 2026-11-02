@@ -62,6 +62,33 @@ describe("AcpTerminalManager direct spawn (Windows)", () => {
     });
   });
 
+  it("retains output limits, exit status and session ownership without a helper process", async () => {
+    const child = mockChildProcess();
+    mockSpawn.mockReturnValue(child);
+    const manager = new AcpTerminalManager();
+    const id = await manager.createTerminal({
+      sessionId: "owner",
+      command: "echo",
+      outputByteLimit: 4,
+    });
+    child.stdout.emit("data", Buffer.from("abcdef"));
+    const output = await manager.terminalOutput(id, "owner");
+    expect(output).toMatchObject({ truncated: true });
+    expect(Buffer.byteLength(output.output)).toBeLessThanOrEqual(4);
+    await expect(manager.terminalOutput(id, "other-session")).rejects.toThrow(
+      /does not belong/,
+    );
+    child.emit("close", 7, null);
+    await expect(manager.waitForExit(id, "owner")).resolves.toEqual({
+      exitCode: 7,
+      signal: null,
+    });
+    await manager.release(id, "owner");
+    await expect(manager.terminalOutput(id, "owner")).rejects.toThrow(
+      /not found/,
+    );
+  });
+
   it("uses Git Bash -c when bundled bash is available", async () => {
     const bash = "C:\\app\\resources\\git\\bin\\bash.exe";
     mockGetBundledGitBashPath.mockReturnValue(bash);

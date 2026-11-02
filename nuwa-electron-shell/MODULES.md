@@ -18,7 +18,7 @@
 |---|---|
 | `features/capture/` | 截图、录屏、系统快捷键及捕获会话 |
 | `features/computer-use/` | Computer Use 任务、控制权限与 driver 生命周期 |
-| `services/engines/` | 引擎管理、统一 Agent 与 ACP 适配 |
+| `services/engines/` | 引擎管理、统一 Agent 与 ACP 适配；`acp/config/` 管引擎识别与启动配置，`acp/permission/` 管工具审批 |
 | `services/system/` | 系统环境、依赖和进程管理 |
 | `services/packages/` | MCP、终端等资源集成 |
 | `services/computer/` | 设备服务、请求分派与会话通信 |
@@ -33,3 +33,5 @@
 - 商业登录、域名、服务生命周期与本地文件授权在主进程统一管理，具体约束以[根 AGENTS.md](../AGENTS.md)和[工程边界](../docs/architecture.md)为准。
 - 宿主桥类型事实源在 `nuwax/` 前端仓，本仓生成类型快照并用 `npm run host-bridge:check` 核对。
 - 根目录 `npm run test:commercial` 执行完整商业测试；`npm run test:scripts` 检查工具链。构建、签名和安装包实机验收分别记录。
+
+旧本地沙箱、GUI MCP 及 Windows MCP 已退役。旧设置清理归 `bootstrap/migrate.ts`；设备注册的 `sandboxId`、`/api/sandbox/config/*` 是后端协议，继续保留。Electron 隔离与 SDK ripgrep 配置不属于退役范围。

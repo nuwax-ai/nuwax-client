@@ -8,7 +8,7 @@
  *   ~/.nuwaclaw/shared/opencode-plugin/{version}/node_modules  全局一份
  *   project/.config/opencode/node_modules → 链接到上述目录
  *
- * 跨平台链接策略（与 windowsMcp junction 一致）：
+ * 跨平台链接策略（Windows 使用 junction）：
  *   - Windows：directory junction（无需管理员 / Developer Mode）
  *   - macOS / Linux：symbolic link (type=dir)
  *   - 链接失败：记录警告并跳过（引擎仍可自行安装，不阻断启动）

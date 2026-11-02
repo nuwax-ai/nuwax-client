@@ -29,7 +29,6 @@ export interface Step1Config {
   agentPort: number;
   fileServerPort: number;
   guiMcpPort: number;
-  guiMcpEnabled: boolean;
   adminServerPort?: number;
   /** ttyd Web 终端端口（仅回环监听） */
   ttydPort: number;
@@ -78,7 +77,6 @@ export const DEFAULT_STEP1_CONFIG: Step1Config = {
   agentPort: DEFAULT_AGENT_RUNNER_PORT,
   fileServerPort: DEFAULT_FILE_SERVER_PORT,
   guiMcpPort: DEFAULT_GUI_MCP_PORT,
-  guiMcpEnabled: false,
   adminServerPort: DEFAULT_ADMIN_SERVER_PORT,
   ttydPort: DEFAULT_TTYD_PORT,
   workspaceDir: "",

@@ -201,18 +201,6 @@ async function afterSignMac(context) {
     }
   }
 
-  // 5. 签名 resources/sandbox-runtime（三端沙箱运行时）
-  const sandboxRuntimePath = path.join(resourcesPath, 'sandbox-runtime');
-  if (fs.existsSync(sandboxRuntimePath)) {
-    const sandboxRuntimeFiles = findExecutables(sandboxRuntimePath);
-    console.log(`[after-sign] 找到 sandbox-runtime 可执行文件: ${sandboxRuntimeFiles.length} 个`);
-    for (const file of sandboxRuntimeFiles) {
-      const relative = path.relative(sandboxRuntimePath, file);
-      console.log(`[after-sign] 签名 sandbox-runtime/${relative}`);
-      codesign(file, identity);
-    }
-  }
-
   // 5b. 签名 resources/nuwaxcode（内置引擎二进制）
   const nuwaxcodePath = path.join(resourcesPath, 'nuwaxcode');
   if (fs.existsSync(nuwaxcodePath)) {
@@ -287,7 +275,6 @@ async function afterSignMac(context) {
         path.join(resourcesPath, 'nuwax-harness-acp-ts', 'vendor', 'nuwax-harness'),
         path.join(resourcesPath, 'node'),
         path.join(resourcesPath, 'uv'),
-        path.join(resourcesPath, 'sandbox-runtime'),
         path.join(resourcesPath, 'nuwaxcode'),
       ];
       let stapled = 0;
@@ -432,24 +419,6 @@ async function afterSignWindows(context) {
   if (fs.existsSync(gitPath)) {
     console.log('[after-sign] Windows: 签名 git...');
     const result = signWin.signDirectory(gitPath);
-    totalSigned += result.success;
-    totalFailed += result.failed;
-  }
-
-  // 7. 签名 sandbox-runtime（如果存在）
-  const sandboxRuntimePath = path.join(resourcesPath, 'sandbox-runtime');
-  if (fs.existsSync(sandboxRuntimePath)) {
-    console.log('[after-sign] Windows: 签名 sandbox-runtime...');
-    const result = signWin.signDirectory(sandboxRuntimePath);
-    totalSigned += result.success;
-    totalFailed += result.failed;
-  }
-
-  // 8. 签名 sandbox-helper（nuwax-sandbox-helper.exe 等）
-  const sandboxHelperPath = path.join(resourcesPath, 'sandbox-helper');
-  if (fs.existsSync(sandboxHelperPath)) {
-    console.log('[after-sign] Windows: 签名 sandbox-helper...');
-    const result = signWin.signDirectory(sandboxHelperPath);
     totalSigned += result.success;
     totalFailed += result.failed;
   }

@@ -400,19 +400,6 @@ export function getNuwaxcodeBundledBinPath(): string | null {
   return null;
 }
 
-// ==================== windows-mcp ====================
-
-export function getWindowsMcpBinPath(): string | null {
-  if (os.platform() !== "win32") return null;
-  const bundledPath = path.join(
-    getResourcesPath(),
-    "windows-mcp",
-    "bin",
-    "windows-mcp.exe",
-  );
-  return fs.existsSync(bundledPath) ? bundledPath : null;
-}
-
 // ==================== bundled package dirs ====================
 
 export function getNuwaxFileServerBundledDir(): string | null {

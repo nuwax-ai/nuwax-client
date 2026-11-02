@@ -1,58 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { stripTypeScriptTypes } from 'node:module';
 
 const root = path.resolve(import.meta.dirname, '..');
-const overlay = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
+const client = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client');
+const retired = ['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp'];
 
-test('commercial prepare skips both legacy desktop automation resources; community retains them', () => {
-  const script = path.join(overlay, 'scripts/prepare/prepare-all.js');
+test('the internal shell resource plan contains current tools without retired automation in any identity', () => {
   for (const identifier of ['nuwax', 'nuwaclaw']) {
-    const result = spawnSync(process.execPath, [script, '--dry-run'], { encoding: 'utf8', env: { ...process.env, NUWAX_APP_IDENTIFIER: identifier } });
+    const result = spawnSync(process.execPath, [path.join(client, 'scripts/prepare/prepare-all.js'), '--dry-run'], {
+      encoding: 'utf8', env: { ...process.env, NUWAX_APP_IDENTIFIER: identifier },
+    });
     assert.equal(result.status, 0, result.stderr);
-    for (const name of ['gui-server', 'windows-mcp']) {
-      assert.equal(result.stdout.includes(`[prepare-all] (dry-run) prepare:${name}`), identifier === 'nuwaclaw');
+    for (const name of ['gui-server', 'windows-mcp', 'sandboxed-mcp', 'sandbox-helper-win', 'sandbox-runtime']) {
+      assert.ok(!result.stdout.includes(`prepare:${name}`), result.stdout);
+    }
+    for (const name of ['node', 'harness', 'nuwax-file-server', 'mcp-proxy', 'ttyd']) {
+      assert.ok(result.stdout.includes(`prepare:${name}`), result.stdout);
     }
   }
 });
 
-test('legacy calls stay inert even with stale settings/resources and cannot load old manager libraries', async (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-computer-use-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const [name, api] of [['guiAgentServer', 'GuiAgentServer'], ['windowsMcp', 'WindowsMcp']]) {
-    // Execute in isolation without Electron, uv or agent-gui-server dependencies.
-    const source = fs.readFileSync(path.join(overlay, 'src/main/services/packages', `${name}.ts`), 'utf8');
-    const file = path.join(directory, `${name}.mjs`);
-    fs.writeFileSync(file, stripTypeScriptTypes(source));
-    const module = await import(file);
-    assert.equal((await module[`start${api}`]()).success, false);
-    assert.deepEqual(await module[`stop${api}`](), { success: true });
-    assert.deepEqual(module[`get${api}Status`](), { running: false });
-    assert.equal(module[`get${api}Url`](), null);
-    assert.equal(module[`is${api}Available`](), false);
+test('the source packaging manifest does not depend on retired automation payloads or workspace crates', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(client, 'package.json'), 'utf8'));
+  const entries = [...pkg.build.extraResources, ...pkg.build.win.extraResources];
+  for (const name of retired) {
+    assert.ok(!entries.some(entry => entry.to === name));
+    assert.ok(!Object.hasOwn(pkg.dependencies, name));
+    assert.ok(!Object.hasOwn(pkg.devDependencies, name));
   }
-});
-
-test('both release workflows exclude legacy payloads while retaining the CUA helper', (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-ci-pack-'));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  for (const name of ['release-electron.yml', 'release-electron-dev.yml']) {
-    const workflow = fs.readFileSync(path.join(root, '.github/workflows', name), 'utf8');
-    assert.ok(workflow.includes("--filter '!agent-gui-server'"));
-    const command = workflow.split('\n').find(line => line.includes('const legacy=new Set'));
-    const code = command.slice(command.indexOf('node -e "') + 9, command.lastIndexOf('"'));
-    const payloads = ['agent-gui-server', 'windows-mcp', 'computer-use', 'node'];
-    const entries = payloads.map(to => ({ from: `resources/${to}`, to }));
-    fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ build: { extraResources: entries, win: { extraResources: entries } } }));
-    const result = spawnSync(process.execPath, ['-e', code], { cwd: directory, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
-    const { build } = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
-    assert.ok(build.files.includes('!node_modules/agent-gui-server/**/*'));
-    assert.ok(build.files.includes('!node_modules/@nut-tree-fork/**/*'));
-    for (const config of [build, build.win]) assert.deepEqual(config.extraResources.map(entry => entry.to), ['computer-use', 'node']);
+  for (const name of ['node', 'nuwax-file-server', 'nuwax-harness-acp-ts', 'ttyd']) {
+    assert.ok(entries.some(entry => entry.to === name));
   }
 });

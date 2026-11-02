@@ -238,10 +238,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       signal.throwIfAborted();
       if (deps.some((d) => d.status === "missing" || d.status === "error"))
         throw new Error("Required dependencies unavailable");
-      const { startSandboxService } =
-        await import("../services/sandbox/serviceBootstrap");
-      await startSandboxService();
-      signal.throwIfAborted();
       // 桌面特性就绪（清理未启用特性残留 MCP 条目）须先于任何引擎读取本地配置。
       await runFeatureServicesStarting(signal);
       signal.throwIfAborted();

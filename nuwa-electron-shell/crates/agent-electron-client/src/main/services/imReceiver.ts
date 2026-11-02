@@ -1,5 +1,8 @@
 import type { IMUnreadSnapshot } from "@shared/types/imReceiver";
 
+/** DND counts belong to receiver state; the public snapshot type remains the host contract alias. */
+type IMReceiverState = IMUnreadSnapshot & { dndTotal: number };
+
 /** 只收取通知的独立设备：不发 READ_REPORT/MSG_RECV_ACK，不获取消息历史。 */
 export interface IMReceiverSession {
   origin: string;
@@ -43,7 +46,7 @@ export class IMReceiver {
   private session: IMReceiverSession | null = null;
   private generation = 0;
   private revision = 0;
-  private snapshot: IMUnreadSnapshot | null = null;
+  private snapshot: IMReceiverState | null = null;
   private socket: IMReceiverSocket | null = null;
   private registered = false;
   private connecting = false;

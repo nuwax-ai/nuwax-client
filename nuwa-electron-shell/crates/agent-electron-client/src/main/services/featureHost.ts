@@ -1,6 +1,6 @@
 /**
  * 桌面特性宿主端口实现（registry 之外的宿主代码）：
- * - 本地 MCP 条目：读改写 `mcp_local_config`（形状与 guiMcpLocalConfig 先例一致），
+ * - 本地 MCP 条目：读改写 `mcp_local_config`，
  *   写后同步 MCP Proxy；Proxy 未起（如未登录态）时同步失败可容忍，条目已落库。
  * - 随包 Node 运行时定位。
  */

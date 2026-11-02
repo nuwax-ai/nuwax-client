@@ -4,7 +4,7 @@
  *  - helper = 独立 .app（TCC 自有身份），LaunchServices `open` 拉起 `serve --socket <私有路径>`；
  *    Windows 无 TCC，helper = 独立 exe 直接 spawn（照 sandbox-helper 模式）。
  *  - MCP 条目 = `cua` StdioMcpServerEntry（bundled Node stdio → 主进程网关 → helper mcp），
- *    写 db `mcp_local_config` 并 sync 到 MCP Proxy（照 guiMcpLocalConfig 先例，消费链在
+ *    写 db `mcp_local_config` 并 sync 到 MCP Proxy（消费链在
  *    unifiedAgent.loadLocalMcpConfig，引擎启动时自动合并，本地条目优先）。
  *  - 授权触发 = helper 权限宿主（`__permissions-host-request --result-file $TMPDIR/cua-driver-permissions-*.json`，
  *    文件名与目录均被上游白名单校验，勿改）——仅 mac（TCC 概念）。
@@ -834,7 +834,7 @@ export async function setCuaAgentCursorEnabled(enabled: boolean): Promise<{
   return { success: true, status: await getCuaStatus() };
 }
 
-// ========== MCP 条目注入（宿主代管 mcp_local_config + MCP Proxy 同步；照 guiMcpLocalConfig 先例） ==========
+// ========== MCP 条目注入（宿主代管 mcp_local_config + MCP Proxy 同步） ==========
 
 function isMcpInjected(): boolean {
   return computerUseHost().hasLocalMcpServer(MCP_SERVER_ID);

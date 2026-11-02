@@ -97,7 +97,6 @@ export {
   getNuwaxcodeBundledBinPath,
   getHarnessAcpBundledDir,
   resolveBundledHarnessEnginePath,
-  getWindowsMcpBinPath,
   getBundledGitBashPath,
   resolveGitBashExecutable,
   getNuwaxFileServerBundledDir,

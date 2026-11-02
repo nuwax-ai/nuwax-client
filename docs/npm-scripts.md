@@ -13,6 +13,7 @@
 | `npm run sub:update` | 更新前端源码、构建并推送产物仓，再提交前端双 pin；`--push` 才推外层分支 |
 | `npm run doctor -- --json` | 只读检查环境、依赖、资源及前端 pin |
 | `npm run test:commercial` | 完整客户端测试，准备依赖但不注入构建身份；专项 env 测试验证产品差异 |
+| `npm run typecheck` | 主进程、preload 与共享契约的严格 TypeScript 检查；CI 同步执行 |
 | `npm run test:scripts` | 外层工具链和发布脚本测试 |
 | `npm run host-bridge:check` | 核对前端事实源与本仓宿主桥类型快照 |
 | `npm run release -- --version X.Y.Z[-beta.N] --dry-run` | 发布预检，版本推导通道；去掉 `--dry-run` 启动正式流程 |
@@ -88,7 +89,7 @@ npm --prefix nuwa-electron-shell/crates/agent-electron-client run test:run -- <�
 | `check:boundaries` / `check:appdir` | 源码导入及应用数据目录检查 |
 | `clean:release` / `clean:electron-cache` | 清理相应生成物与缓存 |
 
-当前 Computer Use 使用 CUA helper。保留的旧 GUI/沙箱组件不属于商业资源准备及打包入口；不要通过旧 Makefile 或过往资源下载脚本另起准备链。资源覆盖和缓存规则见根 README。
+当前 Computer Use 使用 CUA helper。旧 GUI MCP、本地沙箱和壳目录独立 Makefile 已移除；开发、资源准备和打包统一使用仓库根入口。资源覆盖和缓存规则见根 README。
 
 ## 发布与签名
 

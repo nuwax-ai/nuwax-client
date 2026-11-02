@@ -351,7 +351,7 @@ beforeEach(() => {
   });
 });
 
-describe("cua MCP 条目注入（guiMcpLocalConfig 先例模式）", () => {
+describe("cua MCP 条目注入", () => {
   it("开关开→upsert cua stdio 条目并同步 Proxy", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));
     await syncCuaMcpConfig(true);

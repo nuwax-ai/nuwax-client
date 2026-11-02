@@ -78,7 +78,6 @@ vi.mock("./acp/acpEngine", () => {
     removeAllListeners: vi.fn(),
     destroy: vi.fn().mockResolvedValue(undefined),
     isReady: true,
-    sandboxMode: "compat",
     getActivePromptCount: vi.fn(() => 0),
     engineName: "nuwaxcode" as const,
     on: vi.fn(),

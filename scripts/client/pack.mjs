@@ -77,11 +77,9 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
     'dist/main/mac-notification-permission.node',
     'dist/main/mac-capture-shortcuts.node',
   ])];
-  result.files = [...(Array.isArray(result.files) ? result.files : result.files ? [result.files] : ['**/*']), '!node_modules/agent-gui-server/**/*', '!node_modules/@nut-tree-fork/**/*'];
   result.extraMetadata = { ...result.extraMetadata, name: product.identifier, ...(version ? { version } : {}) };
   result.directories = { ...result.directories, output };
-  const legacySandboxResources = new Set(['sandboxed-bash-mcp', 'sandboxed-fs-mcp', 'sandbox-runtime', 'sandbox-helper', 'agent-gui-server', 'windows-mcp']);
-  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use', 'capture', 'third-party'].includes(entry.to?.split('/')[0]) && !legacySandboxResources.has(entry.to));
+  result.extraResources = (result.extraResources ?? []).filter((entry) => typeof entry === 'string' || !['nuwax-dist', 'computer-use', 'capture', 'third-party'].includes(entry.to?.split('/')[0]));
   result.extraResources.push({ from: frontendDist, to: 'nuwax-dist', filter: ['**/*', '!.git', '!.git/**', '!README.md'] });
   if (platform !== 'win32') {
     for (const entry of result.extraResources) {
@@ -99,7 +97,6 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   // Keep rcedit metadata/icon updates for branding; certificate discovery is
   // disabled by unsignedEnv, so this does not enable code signing.
   result.win = { ...result.win, signAndEditExecutable: true, signDlls: false };
-  result.win.extraResources = (result.win.extraResources ?? []).filter((entry) => typeof entry === 'string' || !legacySandboxResources.has(entry.to));
   result.deb = { ...result.deb, packageName: product.identifier };
   result.rpm = { ...result.rpm, packageName: product.identifier };
   return applyInstallerArchivePolicy(updater.configureUpdater(configureSystemAppName(configurePackagePayload(result), { platform, arch, product,
