@@ -39,7 +39,7 @@ if (!process.versions.electron) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 } else {
-  const { app, BrowserWindow, session, clipboard, Menu } = require("electron");
+  const { app, BrowserWindow, session, clipboard, Menu, shell } = require("electron");
   const assert = require("node:assert/strict");
   const http = require("node:http");
   const { once } = require("node:events");
@@ -168,7 +168,7 @@ if (!process.versions.electron) {
           ),
         );
         const controller = createBrowserWindows({
-          settings: { read: () => "light" },
+          settings: { read: (key) => key === 'step1_config' ? {serverHost:'https://business.example'} : key === 'nuwax.loopback' ? {origin} : 'light' },
           windows: { getMain: () => win },
           translate: (key) => messages[key],
           log: console,
@@ -491,6 +491,14 @@ if (!process.versions.electron) {
         await click("forward");
         await waitFor(() => managed.contents.getURL() === origin + "/company/about" && !managed.contents.isLoading());
         console.log("PASS relative navigation: /company/ → about → missing (HTTP 404) → back twice → forward");
+        let handedOff;
+        const realOpenExternal = shell.openExternal;
+        shell.openExternal = async (url) => { handedOff = url; };
+        try {
+          assert.equal(await command({type:'external'}), true);
+          assert.equal(handedOff, 'https://business.example/company/about');
+          console.log('PASS external reader command maps private gateway to business origin without cookies or tokens');
+        } finally { shell.openExternal = realOpenExternal; }
         assert.equal(await command({ type: "unknown" }), false);
         if (process.env.NUWAX_BROWSER_SCREENSHOT)
           fs.writeFileSync(

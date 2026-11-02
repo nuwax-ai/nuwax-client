@@ -20,6 +20,7 @@ import {
 } from "@shared/features/browser/contract";
 import type { FeatureContext } from "../_kit/types";
 import { PageView } from "./vendor/pageView";
+import { publicWebUrl } from '@shared/utils/publicWebUrl';
 
 export interface BrowserPageOptions {
   windowOptions: BrowserWindowConstructorOptions;
@@ -124,6 +125,11 @@ export function isBrowserToolbar(
 export function createBrowserWindows(ctx: FeatureContext) {
   const entries = new Map<number, Entry>();
   let disposed = false;
+  const publicUrl = (value: string) => {
+    const config = ctx.settings.read('step1_config') as { serverHost?: string } | null;
+    const gateway = ctx.settings.read('nuwax.loopback') as { origin?: string } | null;
+    return publicWebUrl(value, { businessOrigin: config?.serverHost, gatewayOrigin: gateway?.origin });
+  };
   const labels = () => ({
     loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
     ...Object.fromEntries(
@@ -201,7 +207,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     push(entry);
   };
   const external = async (entry: Entry) => {
-    const target = webUrl(entry.state.url);
+    const target = publicUrl(entry.state.url);
     if (!target) return false;
     try {
       await shell.openExternal(target);
@@ -623,7 +629,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     void win.loadURL(toolbarUrl).catch(() => {
       if (win.isDestroyed() || wc.isDestroyed()) return;
       ctx.log.warn("[Browser] Toolbar failed to load");
-      const url = webUrl(entry.state.url);
+      const url = publicUrl(entry.state.url);
       if (url)
         void shell
           .openExternal(url)

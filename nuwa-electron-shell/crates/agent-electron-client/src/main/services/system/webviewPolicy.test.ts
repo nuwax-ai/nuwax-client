@@ -228,27 +228,37 @@ describe("standalone page unload confirmation", () => {
 });
 
 describe("window.open session boundary", () => {
-  it.each(['/repo/doc/saved-fixture', '/repo/share/saved-fixture'])("library reading links use the browser with admitted session: %s", async (route) => {
+  it.each(['/repo/doc/saved-fixture', '/repo/share/saved-fixture'])("ordinary library popups retain their business session: %s", async (route) => {
     const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
     const result = handler(popup(`${business}${route}`, ''));
     expect(result.action).toBe('allow');
     const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
-    expect(mocks.createBrowserPage).toHaveBeenCalledOnce();
+    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
     expect(contents.session).toBe(mocks.defaultSession);
     expect(mocks.trustInitialBusinessNavigation).toHaveBeenCalledWith(contents, `${business}${route}`);
   });
 
-  it('library GET links respect browser preference while POST remains dedicated', async () => {
+  it('library GET and POST stay inside the client with system-browser preference', async () => {
     const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
     settings.set('nuwax.linkOpenMode', 'system');
     const target = `${business}/repo/doc/saved-fixture`;
-    expect(handler(popup(target, business)).action).toBe('deny');
+    expect(handler(popup(target, business)).action).toBe('allow');
     await Promise.resolve();
-    expect(mocks.openExternal).toHaveBeenCalledWith(target);
+    expect(mocks.openExternal).not.toHaveBeenCalled();
     const post = handler({ ...(popup(target, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } });
     expect(post.action).toBe('allow');
     post.createWindow!(post.overrideBrowserWindowOptions!);
     expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+  });
+  it.each(['available', 'disabled', 'failed'])('explicit business readers stay readable when browser is %s', async (mode) => {
+    await setup();
+    settings.set('nuwax.linkOpenMode', 'system');
+    if (mode === 'disabled') mocks.createBrowserPage.mockReturnValueOnce(null);
+    if (mode === 'failed') mocks.createBrowserPage.mockImplementationOnce(() => { throw new Error('fixture'); });
+    const { createBusinessReadingPage } = await import('./webviewPolicy');
+    const result = createBusinessReadingPage({ webPreferences: { session: mocks.defaultSession as never } }, `${business}/repo/doc/fixture`);
+    expect(result.contents.session).toBe(mocks.defaultSession);
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 
   it.each(['system', 'disabled'])("ordinary external links use the system browser when %s", async (mode) => {

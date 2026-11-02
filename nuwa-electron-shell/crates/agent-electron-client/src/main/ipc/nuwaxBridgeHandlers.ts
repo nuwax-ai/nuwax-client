@@ -26,7 +26,7 @@
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
-import type { IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent, BrowserWindowConstructorOptions } from "electron";
 import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
 import * as fs from "fs";
 import * as os from "os";
@@ -54,7 +54,7 @@ import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../ser
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
-import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage } from "../services/system/webviewPolicy";
+import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
@@ -960,7 +960,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         target = new URL(`${loopback.origin}${target.pathname}${target.search}${target.hash}`);
         target.searchParams.set("_shell", "1");
       }
-      const win = new BrowserWindow({
+      const windowOptions: BrowserWindowConstructorOptions = {
         width: 1280,
         height: 832,
         // 承载同一 nuwax 前端，同受 768 移动端断点约束，与主窗口共用下限
@@ -979,9 +979,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           nodeIntegration: false,
           sandbox: true,
         },
-      });
-      trackPopupWindow(win, event.sender);
-      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(win.webContents);
+      };
+      const readingPage = APP_NAME_IDENTIFIER === 'nuwax' && businessWindow && opts.purpose === 'page'
+        ? createBusinessReadingPage(windowOptions, target.href) : null;
+      const win = readingPage?.window ?? new BrowserWindow(windowOptions);
+      const contents = readingPage?.contents ?? win.webContents;
+      trackPopupWindow(win, event.sender, contents);
+      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(contents);
       shellWindows.add(win);
       businessShellWindows.add(win);
       win.on("closed", () => {
@@ -989,11 +993,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         businessShellWindows.delete(win);
       });
       if (businessWindow) {
-        trustInitialBusinessNavigation(win.webContents, target.href);
+        trustInitialBusinessNavigation(contents, target.href);
       }
-      attachHostActivityBusinessWindow(win);
-      computerServiceState.attach(win.webContents);
-      loadPopupDocument(win, target.href);
+      if (readingPage) attachHostActivityBusinessWindow(win, contents);
+      else attachHostActivityBusinessWindow(win);
+      computerServiceState.attach(contents);
+      loadPopupDocument(win, target.href, undefined, contents);
       log.info("[NuwaxBridge] native:openWindow", { path: raw });
       return { success: true };
     } catch (error) {
