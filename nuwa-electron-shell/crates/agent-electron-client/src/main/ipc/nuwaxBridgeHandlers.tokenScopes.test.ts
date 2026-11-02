@@ -971,6 +971,18 @@ describe("trusted runtime auth context and window navigation", () => {
     for (const [, callback] of callbacks) callback(...args);
   }
 
+  it.each(['gateway', 'direct'])('internal reader keeps %s login even when browser is unavailable and system preferred', (mode) => {
+    settings.set('nuwax.linkOpenMode', 'system');
+    settings.set('features.browser.enabled', false);
+    if (mode === 'direct') settings.set('nuwax.loopback', { enabled: false, origin: null });
+    mocks.openExternal.mockClear();
+    const source = mode === 'gateway' ? GW_ORIGIN : HOST_ORIGIN;
+    expect(handlers.get('native:openWindow')!(windowEvent(source, source), { path: `${HOST_ORIGIN}/repo/doc/fixture`, purpose: 'page' })).toEqual({ success: true });
+    expect(mocks.loadURL).toHaveBeenCalledWith(`${source}/repo/doc/fixture?_shell=1`);
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(mocks.attachHostActivityBusinessWindow).toHaveBeenCalledOnce();
+  });
+
   it('falls back to the system browser when the browser feature is not registered', async () => {
     const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
     try {

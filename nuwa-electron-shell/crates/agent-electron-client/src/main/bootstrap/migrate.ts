@@ -16,7 +16,11 @@ import * as path from "path";
 import { app } from "electron";
 import log from "electron-log";
 import Database from "better-sqlite3";
-import { APP_NAME_IDENTIFIER, NUWAX_PORT_OFFSET } from "@shared/constants";
+import {
+  APP_NAME_IDENTIFIER,
+  NUWAX_PORT_OFFSET,
+  COMMERCIAL_PROFILE_NAME,
+} from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 
 interface LegacySource {
@@ -220,14 +224,7 @@ function importLegacyDb(home: string, newDb: string): void {
  * 当用户手动选择的工作空间目录包含旧数据目录前缀时，替换为新前缀。
  * 必须在 initDatabase() 之后调用。
  */
-/**
- * 商业版（v1.0.4 起）移除实验功能：Sandbox / GUI MCP（设置页入口已随
- * 客户端设置页删除）。历史版本（v1.0.0–v1.0.3）若用户开启过，
- * 状态会残留在 DB 且删除 UI 后无从关闭——此处每次启动兜底强制归位关闭。
- * 幂等：仅在发现开启时改写。mcp_local_config 的 gui-agent 残留条目无需
- * 此处处理：flag 归 false 后，guiServerHandlers 注册时的
- * syncGuiAgentLocalMcpConfig(getGuiMcpEnabled()) 会自动移除。
- */
+/** Retire old local experimental settings before loading user MCP configuration. */
 function disableLegacyExperimentalFeatures(): void {
   try {
     const step1Config = readSetting("step1_config") as {
@@ -255,11 +252,35 @@ function disableLegacyExperimentalFeatures(): void {
   } catch (e) {
     log.warn("[Migrate] Failed to reset sandbox policy:", e);
   }
+  try {
+    const config = readSetting("mcp_local_config") as {
+      mcpServers?: Record<string, unknown>;
+      [key: string]: unknown;
+    } | null;
+    if (
+      config?.mcpServers &&
+      typeof config.mcpServers === "object" &&
+      !Array.isArray(config.mcpServers)
+    ) {
+      const retained = Object.fromEntries(
+        Object.entries(config.mcpServers).filter(
+          ([id]) => id.trim().toLowerCase() !== "gui-agent",
+        ),
+      );
+      if (
+        Object.keys(retained).length !== Object.keys(config.mcpServers).length
+      ) {
+        writeSetting("mcp_local_config", { ...config, mcpServers: retained });
+      }
+    }
+  } catch (error) {
+    log.warn("[Migrate] Failed to retire legacy GUI MCP configuration:", error);
+  }
 }
 
 /**
  * 商业版默认工作空间目录：step1_config.workspaceDir 未配置时，在用户目录
- * 创建 Nuwax 并落为默认值——空值时 serviceManager 兜底的是隐藏目录
+ * 创建当前档案工作目录并落为默认值——空值时 serviceManager 兜底的是隐藏目录
  * ~/.nuwax/workspace，用户在 Finder/资源管理器不可见。幂等：已配置
  * （用户自选目录、或旧前缀修补后的值）不覆盖；建目录失败不落值，维持空值兜底。
  */
@@ -274,7 +295,7 @@ function ensureDefaultWorkspaceDir(): void {
   ) {
     return;
   }
-  const dir = path.join(app.getPath("home"), "Nuwax");
+  const dir = path.join(app.getPath("home"), COMMERCIAL_PROFILE_NAME);
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (e) {

@@ -1,7 +1,7 @@
 /**
  * Binary Locator — 各打包二进制文件的路径解析
  *
- * 提供 uv / ripgrep / node / lanproxy / ttyd / nuwaxcode / codex-acp
+ * 提供 uv / ripgrep / node / lanproxy / ttyd / nuwaxcode / Nuwax Harness
  * 等预置二进制的路径查找函数，以及 Electron 内置 Node.js 相关辅助。
  */
 
@@ -400,51 +400,6 @@ export function getNuwaxcodeBundledBinPath(): string | null {
   return null;
 }
 
-// ==================== codex-acp ====================
-
-export function getCodexAcpBundledBinPath(): string | null {
-  const platformMap: Record<string, string> = {
-    darwin: "darwin",
-    linux: "linux",
-    win32: "windows",
-  };
-  const archMap: Record<string, string> = {
-    x64: "x64",
-    arm64: "arm64",
-    arm: "arm",
-  };
-  const platform = platformMap[os.platform()] || os.platform();
-  const arch = archMap[os.arch()] || os.arch();
-  const binary =
-    platform === "windows" ? "nuwax-codex-acp.exe" : "nuwax-codex-acp";
-  const bundledPath = path.join(
-    getResourcesPath(),
-    "codex-acp",
-    `${platform}-${arch}`,
-    "bin",
-    binary,
-  );
-  return fs.existsSync(bundledPath) ? bundledPath : null;
-}
-
-export function getCodexAcpBundledDir(): string | null {
-  const bundledDir = path.join(getResourcesPath(), "codex-acp");
-  return fs.existsSync(path.join(bundledDir, ".version")) ? bundledDir : null;
-}
-
-// ==================== windows-mcp ====================
-
-export function getWindowsMcpBinPath(): string | null {
-  if (os.platform() !== "win32") return null;
-  const bundledPath = path.join(
-    getResourcesPath(),
-    "windows-mcp",
-    "bin",
-    "windows-mcp.exe",
-  );
-  return fs.existsSync(bundledPath) ? bundledPath : null;
-}
-
 // ==================== bundled package dirs ====================
 
 export function getNuwaxFileServerBundledDir(): string | null {
@@ -467,7 +422,7 @@ export function getClaudeCodeAcpBundledDir(): string | null {
  * resolveBundledHarnessEnginePath 定位并经 NUWAX_PATH 注入（adapter 不再按包相对
  * 路径找引擎，homedir 缓存兜底在隔离 HOME 下落空）。
  */
-export function getCodexAcpTsBundledDir(): string | null {
+export function getHarnessAcpBundledDir(): string | null {
   const bundledDir = path.join(getResourcesPath(), "nuwax-harness-acp-ts");
   return fs.existsSync(path.join(bundledDir, "package.json"))
     ? bundledDir
@@ -502,7 +457,7 @@ function harnessTargetTriples(): string[] {
 export function resolveBundledHarnessEnginePath(): string | null {
   const binaryName =
     process.platform === "win32" ? "nuwax-harness.exe" : "nuwax-harness";
-  const bundledDir = getCodexAcpTsBundledDir();
+  const bundledDir = getHarnessAcpBundledDir();
   if (bundledDir) {
     const vendorRoot = path.join(bundledDir, "vendor", "nuwax-harness");
     try {

@@ -30,8 +30,8 @@ import { extractNormalProjectContainerPid } from "../computer/agentWorkDir";
 import { perfEmitter } from "./perf/perfEmitter";
 import { mapAgentCommand, resolveAgentEnv } from "./agentHelpers";
 import { resolveOpenAICompatModel } from "./acp/openAICompatRouting";
-import { isOpencodeAcpEngine } from "./acp/sandbox/acpEngineSandbox";
-import { resolveOpencodePermissionEnv } from "./acp/sandbox/opencodeAcpSpawnConfig";
+import { isOpencodeAcpEngine } from "./acp/config/engineProfile";
+import { resolveOpencodePermissionEnv } from "./acp/config/opencodeSpawnConfig";
 import type { AgentConfig, AgentEngineType } from "./types";
 
 export function resolveRequiredAgentEngine(args: {
@@ -141,7 +141,7 @@ export function resolveRequestEngineParams(args: {
   const { request, fallbackEngine, baseModel } = args;
   const agentServer = request.agent_config?.agent_server;
   const mp = request.model_provider;
-  // 临时调试开关：NUWACLAW_FORCE_ENGINE=codex|claude-code|nuwaxcode 强制引擎（测 codex-acp 用）
+  // 临时调试开关：NUWACLAW_FORCE_ENGINE=codex|claude-code|nuwaxcode 强制引擎（引擎调试）
   const requiredEngine =
     (process.env.NUWACLAW_FORCE_ENGINE as AgentEngineType | undefined) ||
     resolveRequiredAgentEngine({

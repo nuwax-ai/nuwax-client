@@ -1,11 +1,6 @@
 # @nuwax-ai/agent-kit
 
-Canonical source lives in the nuwaclaw workspace. nuwa-cli consumes published
-versions; during the 0.3.0 migration its previous workspace copy remains only as
-a release bridge and must be removed after 0.3.0 is published.
-
-Shared logic for `@nuwax-ai/nuwa-cli` and `@nuwax-ai/nuwaclaw`. The single place
-to maintain the agent/ACP behaviour both hosts need, so they stay in lockstep.
+Internal ACP and engine primitives maintained in nuwax-client. This private package is built locally before the Electron workspace is installed; `file:` integration keeps the ASAR dependency graph self-contained. Development, testing and release use the repository root entrypoints.
 
 **Boundary principle.** agent-kit holds *isomorphic primitives + shared-package
 adapters*. Hosts keep *process model + env strategy + lifecycle + product
@@ -28,7 +23,7 @@ Shared slices, dual-format (ESM + CJS) build:
 ### Engine resolution (`src/index.ts`)
 - `resolvePackageEntry(packageName, entrySpecifier)` — `require.resolve` a dependency entry (ESM+CJS safe via `createRequire(import.meta.url)` + tsup shims).
 - `resolveNodePackage({ packageName, entrySpecifier, entryOverride? })` — turn either a bundled override or installed package entry into the canonical `node <entry>` spawn target.
-- `resolveCodexAcp({ entryOverride? })` — resolve the codex ACP adapter (`@nuwax-ai/nuwax-codex-acp-ts`) to a spawn target `{ command, args }`. `entryOverride` is for hosts that bundle the adapter by a non-`require.resolve` mechanism (e.g. nuwaclaw's Electron `resources/`); defaults to `require.resolve` for npm-installed hosts (nuwa-cli).
+- `resolveHarnessAcp({ entryOverride? })` — resolve the Nuwax Harness adapter (`@nuwax-ai/nuwax-harness-acp-ts`) to a spawn target `{ command, args }`. `entryOverride` is for hosts that bundle the adapter by a non-`require.resolve` mechanism (e.g. nuwaclaw's Electron `resources/`); defaults to `require.resolve` for npm-installed hosts (nuwa-cli).
 - `resolveClaudeAcp({ entryOverride? })` — the same spawn-target contract for `claude-code-acp-ts`; hosts should supply their installed or bundled entry so the package stays an optional integration.
 - `EngineResolution` — type (`{ command; args; envOverlay? }`), structurally compatible with nuwa-cli's `ResolvedEngine`.
 

@@ -5,7 +5,29 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { assertPortAvailable, waitForHttp, launch, stopProcess } from './client/dev.mjs';
+import { assertPortAvailable, waitForHttp, launch, stopProcess, developmentEnv } from './client/dev.mjs';
+import { unsignedEnv } from './client/pack.mjs';
+
+test('all development modes isolate the profile while keeping the commercial host and automatic ports', () => {
+  for (const mode of ['dist', 'source', 'remote']) {
+    const env = developmentEnv('/client', mode, 3000);
+    assert.equal(env.NUWAX_DEV_PROFILE, '1');
+    assert.equal(env.NUWAX_APP_IDENTIFIER, 'nuwax');
+    assert.equal(env.NUWAX_LOCAL_PORT_MODE, 'auto');
+    assert.equal(env.NUWAX_WEBVIEW_ORIGIN, mode === 'source' ? 'http://localhost:3000' : '');
+  }
+});
+
+test('packaging cannot inherit the local development profile', () => {
+  const previous = process.env.NUWAX_DEV_PROFILE;
+  try {
+    process.env.NUWAX_DEV_PROFILE = '1';
+    assert.equal(unsignedEnv('/client').NUWAX_DEV_PROFILE, '');
+  } finally {
+    if (previous === undefined) delete process.env.NUWAX_DEV_PROFILE;
+    else process.env.NUWAX_DEV_PROFILE = previous;
+  }
+});
 
 test('occupied ports are reported without killing existing service', async (t) => {
   const server = net.createServer();

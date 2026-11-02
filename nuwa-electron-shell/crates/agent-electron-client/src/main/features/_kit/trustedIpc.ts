@@ -16,10 +16,10 @@ export interface TrustedIpc {
    * 注册一个只对受信 sender 生效的 invoke 通道。
    * @param untrustedResult 不受信调用得到的结果（处理函数不会被执行）
    */
-  handle<E, A extends unknown[], R>(
+  handle<E, A extends unknown[], R, U = R>(
     channel: string,
     handler: (event: E, ...args: A) => R | Promise<R>,
-    untrustedResult: R,
+    untrustedResult: U,
   ): void;
   /** 移除本实例注册过的全部通道。 */
   dispose(): void;

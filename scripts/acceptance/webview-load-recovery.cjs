@@ -37,9 +37,15 @@ async function launch() {
     platform: "browser",
     outfile: path.join(temp, "host.js"),
     nodePaths: [path.join(shell, "node_modules")],
+    alias: { "@shared": path.join(shell, "src/shared") },
     define: {
       "import.meta.env.DEV": "true",
       "process.env.NODE_ENV": '"development"',
+      ...require(path.join(shell, "scripts/build/branding-defines.cjs")).brandingDefines({
+        NUWAX_APP_IDENTIFIER: "nuwax",
+        NUWAX_APP_DISPLAY_NAME: "Nuwax",
+        NUWAX_PORT_OFFSET: "1000",
+      }, true),
     },
     plugins: [
       {
@@ -48,18 +54,16 @@ async function launch() {
           build.onResolve(
             {
               filter:
-                /^(?:@shared\/constants|.*services\/(?:core\/(?:auth|i18n)|utils\/(?:sessionUrl|logService)))$/,
+                /^.*services\/(?:core\/(?:auth|i18n)|utils\/(?:sessionUrl|logService))$/,
             },
             (args) => ({ path: args.path, namespace: "fixture" })
           );
           build.onLoad({ filter: /.*/, namespace: "fixture" }, (args) => ({
             loader: "js",
-            contents: args.path.includes("constants")
-              ? 'export const APP_DISPLAY_NAME="Nuwax"; export const DEFAULT_SERVER_HOST="https://unused.example";'
-              : args.path.includes("auth")
+            contents: args.path.includes("auth")
               ? "export const normalizeServerHost = s => s;"
               : args.path.includes("i18n")
-              ? 'export const getCurrentLang = () => "zh-cn";'
+              ? 'export const getCurrentLang = () => "zh-cn"; export const t = key => key;'
               : args.path.includes("sessionUrl")
               ? "export const buildHomeUrl = s => s;"
               : "export const logger={info(){},error(...args){console.error(...args)}};",
@@ -70,8 +74,9 @@ async function launch() {
   });
   await fs.writeFile(
     path.join(temp, "host.html"),
-    '<!doctype html><meta charset="utf-8"><style>html,body,#root{height:100%;margin:0;font-family:system-ui}</style><div id="root"></div><script src="host.js"></script>'
+    '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="host.css"><style>html,body,#root{height:100%;margin:0;font-family:system-ui}</style><div id="root"></div><script src="host.js"></script>'
   );
+  await fs.copyFile(path.join(shell, "public/icon.png"), path.join(temp, "icon.png"));
   await fs.writeFile(
     path.join(temp, "preload.cjs"),
     `const {contextBridge,ipcRenderer}=require('electron'); contextBridge.exposeInMainWorld('electronAPI',{app:{getVersion:async()=>"fixture"},settings:{get:key=>ipcRenderer.invoke('fixture:settings',key)},on:(event,callback)=>ipcRenderer.on(event,callback),off:(event,callback)=>ipcRenderer.removeListener(event,callback)});`
@@ -100,6 +105,7 @@ async function run() {
   let win;
   let server;
   const evidence = [];
+  const rendererErrors = [];
   const waitFor = async (check, label) => {
     const end = Date.now() + 10000;
     while (Date.now() < end) {
@@ -135,6 +141,10 @@ async function run() {
         webviewTag: true,
       },
     });
+    win.webContents.on("console-message", (_event, level, message) => {
+      if (level >= 2) console.error("HOST_RENDERER", message);
+      if (/^Uncaught\b/.test(message)) rendererErrors.push(message);
+    });
     win.webContents.on("did-attach-webview", (_event, guest) => {
       guest.on("did-fail-load", (_event, code, _description, _url, main) =>
         evidence.push({ event: "did-fail-load", code, main })
@@ -147,9 +157,13 @@ async function run() {
     const host = (script) => win.webContents.executeJavaScript(script);
     const failed = () =>
       host(
-        'Boolean(document.querySelector("[data-testid=guest-load-failure]"))'
+        'Boolean(document.querySelector("[data-recovery-state=failed]"))'
       );
     await waitFor(failed, "main document failure panel");
+    await waitFor(
+      () => host('Boolean(document.querySelector("[data-recovery-state=failed] img")?.naturalWidth)'),
+      "recovery icon loaded"
+    );
     assert.ok(
       evidence.some(
         (e) => e.event === "did-fail-load" && e.main && e.code === -102
@@ -171,12 +185,12 @@ async function run() {
     await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
     const clickRetry = () =>
       host(
-        'document.querySelector("[data-testid=guest-load-failure] button").click()'
+        'document.querySelector("[data-recovery-state=failed] button").click()'
       );
-    const currentGuest = async () =>
-      webContents.fromId(
-        await host('document.querySelector("webview").getWebContentsId()')
-      );
+    const currentGuest = async () => {
+      const id = await host('document.querySelector("webview")?.getWebContentsId()');
+      return typeof id === "number" ? webContents.fromId(id) : null;
+    };
     await clickRetry();
     await waitFor(
       async () =>
@@ -238,6 +252,7 @@ async function run() {
       check: "configuration read failure + retry",
       passed: true,
     });
+    assert.deepEqual(rendererErrors, [], "Recovery must not leave uncaught renderer errors");
     await fs.writeFile(
       path.join(temp, "recovered.png"),
       (await win.webContents.capturePage()).toPNG()
@@ -258,9 +273,15 @@ async function run() {
     app.exit(0);
   } catch (error) {
     console.error(error);
+    if (win && !win.isDestroyed()) {
+      await fs.writeFile(
+        path.join(temp, "failure.png"),
+        (await win.webContents.capturePage()).toPNG()
+      );
+    }
     await fs.writeFile(
       path.join(temp, "evidence.json"),
-      JSON.stringify({ error: String(error), evidence }, null, 2)
+      JSON.stringify({ error: String(error), evidence, rendererErrors }, null, 2)
     );
     app.exit(1);
   } finally {

@@ -53,7 +53,7 @@ export default function DevToolsPanel() {
       setForceHarnessEngine(checked);
       message.success(
         checked
-          ? "Agent engine forced to nuwax-harness-acp-ts (new sessions)"
+          ? "Agent engine forced to Nuwax Harness (new sessions)"
           : "Engine force override disabled",
       );
     } catch {
@@ -285,11 +285,11 @@ export default function DevToolsPanel() {
         <div style={rowStyle}>
           <div>
             <div style={{ fontSize: 13, color: "#18181b" }}>
-              {"Force nuwax-harness-acp-ts Engine"}
+              {"Force Nuwax Harness Engine"}
             </div>
             <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 1 }}>
               {
-                "Spawn all agents via the bundled nuwax-harness-acp-ts adapter (model config from each request). Applies to new sessions; dev and beta builds only."
+                "Spawn all agents via Nuwax Harness (model config from each request). Applies to new sessions; dev and beta builds only."
               }
             </div>
           </div>

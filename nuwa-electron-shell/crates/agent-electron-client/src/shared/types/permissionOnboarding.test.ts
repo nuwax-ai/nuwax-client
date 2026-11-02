@@ -5,6 +5,7 @@ import {
   isPermissionGuideTarget,
   isPermissionKey,
 } from "./permissionOnboarding";
+import { permissionIdentityText } from "../utils/permissionIdentityText";
 import en from "../locales/en-US.json";
 import cn from "../locales/zh-CN.json";
 import tw from "../locales/zh-TW.json";
@@ -60,8 +61,8 @@ describe("permission guide contract", () => {
       for (const key of keys) {
         expect((locale as Record<string, string>)[key], key).toBeTruthy();
       }
-      expect((locale as Record<string, string>)["Claw.Cua.reason.operationFailed"]).toContain("Nuwax Computer Use");
-      expect((locale as Record<string, string>)["Claw.Cua.reason.permissionsRequired"]).toContain("Nuwax Computer Use");
+      expect(permissionIdentityText((locale as Record<string, string>)["Claw.Cua.reason.operationFailed"])).toContain("Nuwax Computer Use");
+      expect(permissionIdentityText((locale as Record<string, string>)["Claw.Cua.reason.permissionsRequired"])).toContain("Nuwax Computer Use");
     }
   });
   it("ships a short Computer Use consent that names Nuwax Computer Use", () => {
@@ -76,7 +77,7 @@ describe("permission guide contract", () => {
       "Claw.PermissionGuide.helperDisabled",
     ] as const;
     for (const locale of [en, cn, tw, hk]) {
-      const pack = locale as Record<string, string>;
+      const pack = Object.fromEntries(Object.entries(locale).map(([key, text]) => [key, permissionIdentityText(text)]));
       for (const key of keys) {
         expect(pack[key], key).toBeTruthy();
       }
@@ -117,7 +118,8 @@ describe("permission guide contract", () => {
         expect((locale as Record<string, string>)[key], key).toBeTruthy();
       }
       for (const key of helperNamed) {
-        expect((locale as Record<string, string>)[key]).toContain("Nuwax Computer Use");
+        expect(permissionIdentityText((locale as Record<string, string>)[key])).toContain("Nuwax Computer Use");
+        expect(permissionIdentityText((locale as Record<string, string>)[key], true)).toContain("Nuwax Computer Use Dev");
       }
     }
   });

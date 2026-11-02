@@ -41,7 +41,7 @@ import type {
   McpProxyStatus,
   McpServerEntry,
 } from "@shared/types/electron";
-import { isComputerUseManagedServerId, isGuiMcpManagedServerId } from "@shared/guiMcp";
+import { isComputerUseManagedServerId } from "@shared/managedMcp";
 import { t } from "../../services/core/i18n";
 import MCPServerEditor from "./MCPServerEditor";
 import { applyMcpServerDraft, formatMcpServerSummary, looseJsonParse } from "./mcpServerEditorUtils";
@@ -400,14 +400,6 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
     ([, entry]) => !!entry.enabled,
   ).length;
 
-  const warnIfGuiManaged = (serverId: string): boolean => {
-    if (isGuiMcpManagedServerId(serverId)) {
-      message.warning(t("Claw.MCP.list.guiAgentManaged"));
-      return true;
-    }
-    return false;
-  };
-
   // cua 条目跟随设置页「Computer Use」开关联动，此处一律拒绝手动改动。
   const warnIfCuaManaged = (serverId: string): boolean => {
     if (isComputerUseManagedServerId(serverId)) {
@@ -418,13 +410,9 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
   };
 
   const warnIfManaged = (serverId: string): boolean =>
-    warnIfGuiManaged(serverId) || warnIfCuaManaged(serverId);
+    warnIfCuaManaged(serverId);
 
   const handleToggleServerEnabled = (serverId: string, enabled: boolean) => {
-    if (isGuiMcpManagedServerId(serverId) && !enabled) {
-      message.warning(t("Claw.MCP.list.guiAgentManaged"));
-      return;
-    }
     if (isComputerUseManagedServerId(serverId)) {
       message.warning(t("Claw.MCP.list.computerUseManagedNotice"));
       return;
@@ -458,11 +446,6 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
     }
     const nextServers: Record<string, McpServerEntry> = {};
     for (const [serverId, entry] of Object.entries(latest.mcpServers)) {
-      // gui-agent 由设置页 GUI MCP 开关托管，不参与「全部停用」
-      if (isGuiMcpManagedServerId(serverId)) {
-        nextServers[serverId] = { ...entry, enabled: true };
-        continue;
-      }
       // cua 跟随设置页「Computer Use」开关联动，同样不参与「全部停用」
       if (isComputerUseManagedServerId(serverId)) {
         nextServers[serverId] = { ...entry, enabled: true };
@@ -746,7 +729,6 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                   <List
                     dataSource={serverEntries}
                     renderItem={([serverId, entry]) => {
-                      const isManagedGui = isGuiMcpManagedServerId(serverId);
                       const isManagedCua = isComputerUseManagedServerId(serverId);
                       const isStdio = "command" in entry;
                       const { display: summary, full: summaryFull } =
@@ -760,8 +742,8 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                             >
                               <span>
                                 <Switch
-                                  checked={isManagedGui || isManagedCua ? true : !!entry.enabled}
-                                  disabled={isManagedGui || isManagedCua}
+                                  checked={isManagedCua ? true : !!entry.enabled}
+                                  disabled={isManagedCua}
                                   checkedChildren={t("Claw.MCP.switch.enable")}
                                   unCheckedChildren={t("Claw.MCP.switch.disable")}
                                   onChange={(checked) =>
@@ -792,7 +774,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                     size="small"
                                     type="text"
                                     icon={<EditOutlined />}
-                                    disabled={isManagedGui || isManagedCua}
+                                    disabled={isManagedCua}
                                     onClick={() => handleOpenEditorEdit(serverId)}
                                   />
                                 </span>
@@ -806,7 +788,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                     danger
                                     type="text"
                                     loading={deletingServerId === serverId}
-                                    disabled={isManagedGui || isManagedCua}
+                                    disabled={isManagedCua}
                                     icon={<DeleteOutlined />}
                                     onClick={() => handleDeleteServer(serverId)}
                                   />
@@ -822,11 +804,6 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                 <Tag color={isStdio ? "blue" : "purple"}>
                                   {isStdio ? "stdio" : "remote"}
                                 </Tag>
-                                {isManagedGui ? (
-                                  <Tag color="gold">
-                                    {t("Claw.MCP.list.guiAgentManagedTag")}
-                                  </Tag>
-                                ) : null}
                                 {isManagedCua ? (
                                   <Tooltip title={t("Claw.MCP.list.computerUseManagedTagTooltip")}>
                                     <Tag color="gold">

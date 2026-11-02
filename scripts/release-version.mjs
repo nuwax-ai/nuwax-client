@@ -55,10 +55,10 @@ export function releaseSequenceFindings(identity, sha, refs) {
   if (completed.some((tag) => compareReleaseVersions(identity.baseVersion, tag.baseVersion) <= 0))
     return [`${identity.baseVersion} 已被正式版或历史版本占用；新版本必须大于已占用版本，同号 beta 已关闭`];
   if (identity.channel === 'beta') {
-    const previous = history.filter((tag) => tag.channel === 'beta' && !tag.legacy);
+    const previous = history.filter((tag) => tag.channel === 'beta' && !tag.legacy && tag.baseVersion === identity.baseVersion);
     if (previous.some((tag) => compareReleaseVersions(identity.version, tag.version) <= 0))
       return [`新 beta 版本 ${identity.version} 必须大于已占用的 beta 版本`];
-    const serials = previous.filter((tag) => tag.baseVersion === identity.baseVersion).map((tag) => BigInt(tag.beta));
+    const serials = previous.map((tag) => BigInt(tag.beta));
     const next = serials.reduce((max, value) => value > max ? value : max, 0n) + 1n;
     if (BigInt(identity.beta) !== next) return [`${identity.baseVersion} 下一 beta 序号须为 ${next}`];
   }

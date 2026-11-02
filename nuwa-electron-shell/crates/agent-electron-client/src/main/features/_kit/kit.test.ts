@@ -153,6 +153,15 @@ describe("createTrustedIpc", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  it("拒绝结果可省略业务状态，不读取或泄露受信 handler 的状态", async () => {
+    const { handlers, ipc } = setup(false);
+    const fn = vi.fn(async () => ({ success: true, status: { enabled: true } }));
+    const denied = { success: false, error: "untrustedSender" };
+    ipc.handle("cua:state", fn, denied);
+    expect(await handlers.get("cua:state")!({ id: 1 })).toEqual(denied);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
   it("同一实例重复注册同一通道报错", () => {
     const { ipc } = setup(true);
     ipc.handle("x:a", () => 1, 0);

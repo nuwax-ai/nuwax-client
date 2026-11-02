@@ -45,6 +45,7 @@ const mockChat = vi.fn();
 
 vi.mock("../engines/unifiedAgent", () => ({
   agentService: {
+    isReady: true,
     ensureEngineForRequest: (...args: unknown[]) => mockEnsureEngine(...args),
   },
 }));
@@ -70,7 +71,7 @@ vi.mock("fs", async (importOriginal) => {
 });
 
 import * as fs from "fs";
-import { handleComputerChat } from "./router";
+import { handleComputerChat, handleRequest } from "./router";
 import { chatDispatchCoordinator } from "./chatDispatchCoordinator";
 
 function mockResponse(): ServerResponse & { body?: string } {
@@ -90,6 +91,26 @@ const baseChatBody = {
   request_id: "rid-router-001",
   prompt: "hello",
 };
+
+describe("retired Computer routes", () => {
+  it.each([
+    "/computer/gui-agent/vision-model",
+    "/computer/gui-agent/displays",
+    "/computer/gui-agent/display",
+    "/unknown",
+  ])("completes %s with the standard 404 response", async (url) => {
+    const res = mockResponse();
+    await handleRequest(
+      { url, method: "GET", headers: {} } as IncomingMessage,
+      res,
+    );
+    expect(res.writeHead).toHaveBeenCalledWith(404, expect.any(Object));
+    expect(JSON.parse(res.body!)).toMatchObject({
+      code: "NOT_FOUND",
+      success: false,
+    });
+  });
+});
 
 describe("handleComputerChat promptDispatched", () => {
   beforeEach(() => {

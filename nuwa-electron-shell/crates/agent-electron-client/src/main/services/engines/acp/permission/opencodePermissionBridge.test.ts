@@ -4,7 +4,7 @@ import {
   computeOpencodePermissionBridgeKey,
   mergeAskToolApprovalRulesIntoOpencodePermission,
 } from "./opencodePermissionBridge";
-import { DEFAULT_OPENCODE_ACP_PERMISSION } from "../sandbox/opencodeAcpSpawnConfig";
+import { DEFAULT_OPENCODE_ACP_PERMISSION } from "../config/opencodeSpawnConfig";
 
 describe("opencodePermissionBridge", () => {
   it("computeOpencodePermissionBridgeKey 仅包含 ask 规则且稳定排序", () => {

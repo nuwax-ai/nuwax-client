@@ -662,8 +662,6 @@ export class UnifiedAgentService extends EventEmitter {
   private async loadLocalMcpConfig(): Promise<Record<string, McpServerEntry>> {
     try {
       const { getDb } = await import("../../db");
-      const { applyGuiMcpLocalConfigPolicy } =
-        await import("../packages/guiMcpLocalConfig");
       const db = getDb();
       const saved = db
         ?.prepare("SELECT value FROM settings WHERE key = ?")
@@ -671,9 +669,7 @@ export class UnifiedAgentService extends EventEmitter {
 
       if (saved) {
         const config = JSON.parse(saved.value) as McpServersConfig;
-        return applyGuiMcpLocalConfigPolicy({
-          mcpServers: config.mcpServers || {},
-        }).mcpServers;
+        return config.mcpServers || {};
       }
     } catch (e) {
       log.warn("[UnifiedAgent] Failed to load local MCP config:", e);

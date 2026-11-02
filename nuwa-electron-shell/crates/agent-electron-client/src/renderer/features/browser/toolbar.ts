@@ -50,6 +50,7 @@ function render(state: BrowserState) {
     try { themeApplicator.apply(state.themeSnapshot); } catch { /* keep chrome usable for recovery */ }
   }
   const wasFinding = current?.finding;
+  const findFocusRequested = current?.findFocusRequest !== state.findFocusRequest;
   const wasAddressOpen = current?.addressOpen;
   current = state;
   document.title = state.title || "Nuwax";
@@ -68,7 +69,8 @@ function render(state: BrowserState) {
   element<HTMLInputElement>("url").value = state.url;
   element<HTMLButtonElement>("back").disabled = !state.canGoBack;
   element<HTMLButtonElement>("forward").disabled = !state.canGoForward;
-  element("reload").textContent = state.loading ? "×" : "↻";
+  element("reloadIcon").toggleAttribute("hidden", state.loading);
+  element("stopIcon").toggleAttribute("hidden", !state.loading);
   element("pin").setAttribute("aria-pressed", String(state.pinned));
   element("error").hidden = !state.error;
   element("loadingState").hidden = !state.initialLoading;
@@ -100,7 +102,7 @@ function render(state: BrowserState) {
   for (const id of ["retry", "external", "copy"])
     element(id).textContent = l[id];
   label("closeAddress", l.close);
-  if (state.finding && !wasFinding) {
+  if (state.finding && (!wasFinding || findFocusRequested)) {
     element<HTMLInputElement>("query").focus();
     element<HTMLInputElement>("query").select();
   }

@@ -99,14 +99,34 @@ describe("切窗清理与编辑焦点恢复", () => {
     expect(f.outsideEvents.map((event) => event.type)).not.toContain("click");
   });
 
-  it("富文本编辑器恢复仍位于原编辑器内的 Range", () => {
+  it.each([false, true])("富文本编辑器恢复选区及扩选方向（反向=%s）", (backward) => {
     const f = fixture("DIV");
-    const range = { startContainer: { isConnected: true }, endContainer: { isConnected: true } };
-    const selection = { rangeCount: 1, anchorNode: {}, focusNode: {}, getRangeAt: () => ({ cloneRange: () => range }), removeAllRanges: vi.fn(), addRange: vi.fn() };
+    const range = {
+      startContainer: { isConnected: true }, startOffset: 2,
+      endContainer: { isConnected: true }, endOffset: 5,
+    };
+    const selection = {
+      rangeCount: 1,
+      anchorNode: backward ? range.endContainer : range.startContainer,
+      anchorOffset: backward ? range.endOffset : range.startOffset,
+      focusNode: backward ? range.startContainer : range.endContainer,
+      getRangeAt: () => ({ cloneRange: () => range }),
+      removeAllRanges: vi.fn(),
+      addRange: vi.fn(),
+      setBaseAndExtent: vi.fn(),
+    };
     f.doc.getSelection.mockReturnValue(selection);
     f.update(false);
     f.update(true);
     expect(f.editor.focus).toHaveBeenCalledOnce();
-    expect(selection.addRange).toHaveBeenCalledWith(range);
+    if (backward) {
+      expect(selection.setBaseAndExtent).toHaveBeenCalledWith(
+        range.endContainer, 5, range.startContainer, 2,
+      );
+      expect(selection.addRange).not.toHaveBeenCalled();
+    } else {
+      expect(selection.addRange).toHaveBeenCalledWith(range);
+      expect(selection.setBaseAndExtent).not.toHaveBeenCalled();
+    }
   });
 });

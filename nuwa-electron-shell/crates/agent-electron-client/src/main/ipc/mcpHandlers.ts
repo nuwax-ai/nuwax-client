@@ -7,10 +7,6 @@ import {
   syncMcpConfigToProxyAndReload,
 } from "../services/packages/mcp";
 import type { McpServersConfig } from "../services/packages/mcp";
-import {
-  applyGuiMcpLocalConfigPolicy,
-  getGuiMcpEnabled,
-} from "../services/packages/guiMcpLocalConfig";
 import log from "electron-log";
 import * as fs from "fs";
 import * as path from "path";
@@ -61,18 +57,14 @@ export function registerMcpHandlers(): void {
     async (_, config: McpServersConfig) => {
       try {
         const db = getDb();
-        const normalized = applyGuiMcpLocalConfigPolicy(
-          config,
-          getGuiMcpEnabled(),
-        );
-        const configJson = JSON.stringify(normalized);
+        const configJson = JSON.stringify(config);
         db?.prepare(
           "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
         ).run("mcp_local_config", configJson);
 
         // 主界面统一保存后同步到 MCP Proxy 内存，使改名/启用状态立即对 Agent 生效
         await syncMcpConfigToProxyAndReload(
-          filterEnabledMcpServers(normalized.mcpServers ?? {}),
+          filterEnabledMcpServers(config.mcpServers ?? {}),
         );
 
         log.info("[McpProxy] Local config saved and synced to proxy");

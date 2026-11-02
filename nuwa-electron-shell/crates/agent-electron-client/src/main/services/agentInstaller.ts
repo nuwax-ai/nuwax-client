@@ -58,8 +58,9 @@ const BUILTIN_AGENTS = new Set([
   "claude-code",
   "nuwaxcode",
   "codex-cli",
-  "codex-acp",
-  "nuwax-codex-acp",
+  "codex",
+  "nuwax-harness",
+  "nuwax-harness-acp-ts",
 ]);
 
 export function isBuiltinAgent(agentId: string): boolean {

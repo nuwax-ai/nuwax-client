@@ -79,7 +79,7 @@ const MAX_MESSAGE_KEYS = 2048;
 const MAX_NATIVE_NOTIFICATIONS = 20;
 export function createIMNativePresentation(options: IMNativePresentationOptions): IMNativePresentation {
   const platform = options.platform ?? process.platform;
-  const backend = options.notificationBackend ?? (platform === "darwin" ? {
+  const backend: NonNullable<IMNativePresentationOptions["notificationBackend"]> = options.notificationBackend ?? (platform === "darwin" ? {
     isSupported: () => true,
     create: (details: NotificationConstructorOptions) => new MacNativeNotification(details),
   } : {

@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("cuaControls", {
   close: () => ipcRenderer.invoke("cua:control:close"),
   move: (position: { x: number; y: number }) => ipcRenderer.invoke("cua:control:move", position),
+  resize: (size: { width: number; height: number }) => ipcRenderer.invoke("cua:control:resize", size),
   reorder: (ids: string[]) => ipcRenderer.invoke("cua:control:reorder", ids),
   getPresentation: () => ipcRenderer.invoke("cua:control:getPresentation"),
   setPresentation: (id: string | null) => ipcRenderer.invoke("cua:control:setPresentation", id),

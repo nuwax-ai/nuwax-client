@@ -16,7 +16,6 @@ export { aiService } from "./core/ai";
 export { fileServerService } from "./integrations/fileServer";
 export { lanproxyManager } from "./integrations/lanproxy";
 export { agentRunnerManager } from "./agents/agentRunner";
-export { sandboxManager } from "./agents/sandbox";
 export { permissionManager } from "./agents/permissions";
 export { skillManager as skillsService } from "./integrations/skills";
 export { imService } from "./integrations/im";

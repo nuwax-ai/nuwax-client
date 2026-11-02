@@ -14,10 +14,10 @@
  * - ACP protocol uses NDJSON (newline-delimited JSON) over stdin/stdout
  */
 
-import { spawn, ChildProcess } from "child_process";
+import type { ChildProcess } from "child_process";
+import { spawnAcpProcess } from "./acpProcess";
 import { Readable, Writable, Transform } from "stream";
 import * as path from "path";
-import * as os from "os";
 import * as fs from "fs";
 import { app } from "electron";
 import log from "electron-log";
@@ -25,14 +25,13 @@ import {
   getAppEnv,
   applySharedPackageManagerCacheEnv,
   getNuwaxcodeBundledBinPath,
-  getCodexAcpBundledBinPath,
-  getCodexAcpTsBundledDir,
+  getHarnessAcpBundledDir,
   resolveBundledHarnessEnginePath,
   getNodeBinPathWithFallback,
   getClaudeCodeAcpBundledDir,
 } from "../../system/dependencies";
 import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "../../constants";
-import { resolveCodexAcp } from "@nuwax-ai/agent-kit";
+import { resolveHarnessAcp } from "@nuwax-ai/agent-kit";
 import { getAppDataDir } from "../../system/appPaths";
 import {
   resolveIsolatedHomePath,
@@ -42,7 +41,6 @@ import { prepareOpencodePluginShareForHome } from "./opencodePluginShare";
 import { isWindows } from "../../system/shellEnv";
 import { createPlatformAdapter } from "../../system/platformAdapter";
 import {
-  spawnJsFile,
   resolveNpmPackageEntry,
   resolveNpmBinShimSpawnTarget,
 } from "../../utils/spawnNoWindow";
@@ -52,8 +50,6 @@ import { writeBundledDevShellProfiles } from "../../utils/shellProfile";
 import { perfEmitter } from "../perf/perfEmitter";
 import { firstTokenTrace } from "../perf/firstTokenTrace";
 import { resolveCustomAgentBinary } from "../../agentInstaller";
-import { buildSandboxedSpawnArgs } from "../../sandbox/sandboxProcessWrapper";
-import type { SandboxProcessConfig } from "@shared/types/sandbox";
 import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
@@ -462,8 +458,6 @@ export interface AcpConnectionConfig {
   engineType?: "claude-code" | "nuwaxcode" | "codex" | "codex-cli";
   /** Purpose of this process (for process registry) */
   purpose?: "engine";
-  /** Sandbox wrapping configuration (omit to disable) */
-  sandbox?: SandboxProcessConfig;
   /** Isolated HOME scope (project / ephemeral) */
   isolatedHomeScope?: IsolatedHomeScope;
 }
@@ -481,8 +475,6 @@ export interface AcpConnectionResult {
    * IMPORTANT: Call this before destroying the process to release Windows handles!
    */
   cleanup: () => void;
-  /** Cleanup sandbox resources (temp profiles, etc.) */
-  sandboxCleanup?: () => void;
 }
 
 // ==================== SDK Loader ====================
@@ -616,46 +608,20 @@ export function resolveAcpBinary(
   // -- codex / codex-cli (backward compat) --
 
   if (engine === "codex" || engine === "codex-cli") {
-    // env override：直接 spawn 指定的原生二进制（绕过 adapter，调试用）
-    const overridePath = (
-      process.env.NUWACLAW_CODEX_ACP_BIN ||
-      process.env.CODEX_ACP_BIN ||
-      ""
-    ).trim();
-    if (overridePath && fs.existsSync(overridePath)) {
-      log.info(`[AcpClient] codex: using env override binary: ${overridePath}`);
-      return { binPath: overridePath, binArgs: [], isNative: true };
-    }
-
-    // 优先：@nuwax-ai/nuwax-harness-acp-ts TS adapter（codex resolve 共享自 @nuwax-ai/agent-kit：
-    // resources 模式传 entryOverride；否则 agent-kit 用 require.resolve node_modules）
-    const bundledDir = getCodexAcpTsBundledDir();
-    const entryOverride = bundledDir
-      ? path.join(bundledDir, "dist", "index.js")
+    // Codex 统一经 harness adapter 启动；支持随包资源和应用内 npm 修复安装。
+    const adapterDir =
+      getHarnessAcpBundledDir() ||
+      getAcpPackageDir("@nuwax-ai/nuwax-harness-acp-ts");
+    const entryOverride = adapterDir
+      ? path.join(adapterDir, "dist", "index.js")
       : undefined;
-    try {
-      const resolved = resolveCodexAcp(
-        entryOverride ? { entryOverride } : undefined,
-      );
-      log.info(
-        `[AcpClient] codex: using TS adapter (agent-kit): ${resolved.args[0]}`,
-      );
-      return { binPath: resolved.args[0], binArgs: [], isNative: false };
-    } catch (e) {
-      log.warn(
-        `[AcpClient] codex: TS adapter resolve failed: ${e instanceof Error ? e.message : e}`,
-      );
-    }
-
-    // 回退：bundled 原生二进制（旧 codex-acp）
-    const bundledPath = getCodexAcpBundledBinPath();
-    if (bundledPath) {
-      log.warn(
-        `[AcpClient] codex: TS adapter not found, falling back to bundled native binary: ${bundledPath}`,
-      );
-      return { binPath: bundledPath, binArgs: [], isNative: true };
-    }
-    return { binPath: "nuwax-codex-acp", binArgs: [], isNative: true };
+    const resolved = resolveHarnessAcp(
+      entryOverride ? { entryOverride } : undefined,
+    );
+    log.info(
+      `[AcpClient] codex: using Nuwax Harness adapter: ${resolved.args[0]}`,
+    );
+    return { binPath: resolved.args[0], binArgs: [], isNative: false };
   }
 
   // Unknown engine type → try to resolve as custom agent
@@ -901,8 +867,7 @@ export async function createAcpConnection(
     }
   }
 
-  // codex-cli: inject CODEX_* env vars for nuwax-codex-acp binary
-  // nuwax-codex-acp reads these to override config.toml (CODEX_BASE_URL, CODEX_API_KEY, CODEX_MODEL)
+  // harness adapter 使用 CODEX_* 配置模型、端点与认证。
   const codexResolvedModel = resolveOpenAICompatModel({
     model: config.model,
     envModel: env.OPENCODE_MODEL || env.ANTHROPIC_MODEL || env.CODEX_MODEL,
@@ -933,7 +898,7 @@ export async function createAcpConnection(
     if (env.CLAUDE_CODE_DISABLE_THINKING && !env.CODEX_DISABLE_THINKING) {
       env.CODEX_DISABLE_THINKING = env.CLAUDE_CODE_DISABLE_THINKING;
     }
-    // OpenAI 族：codex-acp 默认走 Responses，国内平台多只支持 Chat，
+    // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
     // CODEX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
     // NUWAX_API_PROTOCOL 选择，且不得携带 WIRE_API（适配器启动即拒绝）。
@@ -942,7 +907,7 @@ export async function createAcpConnection(
     if (isAnthropicProtocol) {
       env.NUWAX_API_PROTOCOL = "anthropic";
       // 适配器对网关自定义模型（不在引擎内置表里的，如 GLM-5.3-Flash）兜底
-      // effort=medium（CodexAcpClient.createModelId 的 `?? "medium"`），桥把它作为
+      // effort=medium（适配器 createModelId 的 `?? "medium"`），桥把它作为
       // output_config.effort 发给上游。GLM-5.3 / 5.3-Flash / 5.3-FlashX 官方只接受
       // max/high/low（docs.bigmodel.cn 的 reasoning_effort 说明），medium 会拿到
       // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，
@@ -1069,114 +1034,14 @@ export async function createAcpConnection(
   // enabling process.kill(-pid) to kill the entire tree on cleanup.
   const spawnTimer = perfEmitter.start();
   const useDetached = !isWindows;
-  let proc: ChildProcess;
-  let sandboxCleanup: (() => void) | undefined;
-
-  // --- Sandbox wrapping ---
-  // 沙箱启用时，将引擎二进制包装在 sandbox-exec / bwrap / nuwax sandbox helper 中
-  let spawnCommand = binPath;
-  let spawnArgs = effectiveBinArgs;
-  let sandboxed = false;
-
-  if (config.sandbox?.enabled) {
-    try {
-      // 对于 JS 引擎（非 native），使用 node 二进制作为底层 command。
-      // 避免沙箱内运行 Electron 主程序导致 IOKit/PNG 操作崩溃（SIGSEGV）。
-      // 对于原生引擎（nuwaxcode Go 二进制），直接使用 binPath。
-      const effectiveCommand = config.isNative
-        ? binPath
-        : (getNodeBinPathWithFallback() ?? "node");
-      const effectiveSpawnArgs = config.isNative
-        ? effectiveBinArgs
-        : [binPath, ...effectiveBinArgs];
-
-      // Extra writable paths for seatbelt profile:
-      // 1. isolatedHome — engine config/cache
-      // 2. App data directory (~/.nuwaclaw) — engine logs, npm packages, config
-      // 3. System temp directories — engines may create temp files here for tool
-      //    execution. Cross-platform: os.tmpdir() + realpath, plus macOS-specific
-      //    /tmp and /private/tmp (some engines hardcode these instead of os.tmpdir()).
-      const extraWritable: string[] = [isolatedHome, os.tmpdir()];
-
-      // App data directory (e.g. ~/.nuwaclaw) — engine writes logs, npm packages, etc.
-      const appDataDir = path.join(app.getPath("home"), APP_DATA_DIR_NAME);
-      extraWritable.push(appDataDir);
-
-      try {
-        extraWritable.push(fs.realpathSync(os.tmpdir()));
-      } catch {
-        /* realpath resolution failed, skip */
-      }
-      if (createPlatformAdapter().isMacOS) {
-        extraWritable.push("/tmp", "/private/tmp");
-      }
-
-      const wrapped = await buildSandboxedSpawnArgs(
-        effectiveCommand,
-        effectiveSpawnArgs,
-        config.workspaceDir,
-        config.sandbox,
-        extraWritable,
-      );
-      spawnCommand = wrapped.command;
-      spawnArgs = wrapped.args;
-      sandboxCleanup = wrapped.cleanupSandbox;
-      sandboxed = spawnCommand !== effectiveCommand;
-
-      log.info("[AcpClient] Sandbox wrapping applied:", {
-        type: config.sandbox.type,
-        originalCommand: binPath,
-        wrappedCommand: spawnCommand,
-        sandboxed,
-      });
-    } catch (sandboxError) {
-      log.error("[AcpClient] Sandbox wrapping failed:", sandboxError);
-      // fallback 当前由 acpEngine.ts 固定为 "degrade_to_off"，
-      // "fail_closed" 分支目前不可达，保留以备将来恢复配置项。
-      if (config.sandbox.fallback === "fail_closed") {
-        throw new Error(
-          `Sandbox setup failed: ${sandboxError instanceof Error ? sandboxError.message : String(sandboxError)}`,
-        );
-      }
-      // degrade_to_off: 继续无沙箱启动
-      log.warn("[AcpClient] Degrading to non-sandboxed execution");
-    }
-  }
-
-  if (sandboxed) {
-    // 沙箱已包装：直接 spawn（沙箱 wrapper 本身就是 command）
-    proc = spawn(spawnCommand, spawnArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      detached: useDetached,
-    });
-    log.info(
-      `[AcpClient] Spawned sandboxed process: ${spawnCommand} (detached=${useDetached})`,
-    );
-  } else if (config.isNative) {
-    // Native binary (e.g. nuwaxcode Go binary): spawn directly, no node wrapper
-    // This avoids Windows console popup and eliminates the intermediate process
-    proc = spawn(binPath, effectiveBinArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      detached: useDetached,
-    });
-    log.info(
-      `[AcpClient] Spawned native binary directly: ${binPath} (detached=${useDetached})`,
-    );
-  } else {
-    // JS file (e.g. claude-code-acp-ts): spawn via node using spawnJsFile
-    proc = spawnJsFile(binPath, effectiveBinArgs, {
-      cwd: config.workspaceDir,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: useDetached,
-    });
-  }
+  const proc = spawnAcpProcess({
+    binPath,
+    args: effectiveBinArgs,
+    isNative: config.isNative === true,
+    cwd: config.workspaceDir,
+    env,
+    detached: useDetached,
+  });
   // Unref so the parent process can exit without waiting for the child
   // (we manage cleanup explicitly via killProcessTree)
   if (useDetached) {
@@ -1394,6 +1259,5 @@ export async function createAcpConnection(
     process: proc,
     isolatedHome,
     cleanup,
-    sandboxCleanup,
   };
 }

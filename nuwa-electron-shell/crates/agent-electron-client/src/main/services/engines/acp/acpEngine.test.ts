@@ -15,8 +15,6 @@ import * as path from "path";
 import { ACP_SESSION_CANCELLED_ERROR_CODE } from "@shared/constants";
 import type { AcpChatHttpResult } from "@shared/types/computerTypes";
 import * as dependencies from "@main/services/system/dependencies";
-import * as sandboxPolicy from "@main/services/sandbox/policy";
-import * as opencodeAcpSandbox from "./sandbox/opencodeAcpSandbox";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
 
 vi.mock("electron", () => ({
@@ -67,14 +65,6 @@ vi.mock("../../system/processRegistry", () => ({
   },
 }));
 
-vi.mock("@main/services/packages/guiAgentServer", () => ({
-  getGuiAgentServerUrl: vi.fn(() => null),
-}));
-
-vi.mock("@main/services/packages/windowsMcp", () => ({
-  getWindowsMcpUrl: vi.fn(() => null),
-}));
-
 vi.mock("@main/services/system/dependencies", () => ({
   getResourcesPath: vi.fn(() => "/mock/resources"),
   getAppEnv: vi.fn(() => ({ PATH: "/mock/path" })),
@@ -93,22 +83,6 @@ vi.mock("@main/services/system/binaryLocator", async (importOriginal) => {
     getBundledGitBashPath: () => mockGetBundledGitBashPath(),
   };
 });
-
-vi.mock("@main/services/sandbox/policy", () => ({
-  getSandboxPolicy: vi.fn(() => ({
-    enabled: false,
-    backend: "auto",
-    mode: "compat",
-    autoFallback: "startup-only",
-    windowsMode: "workspace-write",
-  })),
-  resolveSandboxType: vi.fn(async () => ({
-    type: "none",
-    degraded: false,
-  })),
-  getBundledLinuxBwrapPath: vi.fn(() => null),
-  getBundledWindowsSandboxHelperPath: vi.fn(() => null),
-}));
 
 import { AcpEngine } from "./acpEngine";
 import * as acpClient from "./acpClient";
@@ -168,7 +142,7 @@ function setupEngineForCreateSession(
     engine: engineType,
     workspaceDir: "/workspace/project",
     mcpServers: {
-      "gui-agent": {
+      "custom-tools": {
         url: "http://127.0.0.1:9876/mcp",
         type: "http",
       },
@@ -440,186 +414,17 @@ describe("AcpEngine.handleAcpSessionUpdate", () => {
 });
 
 describe("AcpEngine.createSession", () => {
-  it("nuwaxcode 1.2.0 原生 strict 沙箱仍注入 session-scoped sandboxed-bash/fs MCP", async () => {
-    const { engine, newSession } = setupEngineForCreateSession("nuwaxcode");
-    const resourcesSpy = vi
-      .spyOn(dependencies, "getResourcesPath")
-      .mockReturnValue(path.join(process.cwd(), "resources"));
-    vi.spyOn(
-      opencodeAcpSandbox,
-      "readBundledOpencodeEngineVersion",
-    ).mockReturnValue("1.2.0");
-
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      type: "windows-sandbox",
-      mode: "strict",
-      projectWorkspaceDir: "C:\\workspace\\project",
-      windowsSandboxHelperPath: "C:\\tools\\nuwax-sandbox-helper.exe",
-    };
-
-    try {
-      await engine.createSession({ cwd: "C:\\workspace\\project\\session-1" });
-    } finally {
-      resourcesSpy.mockRestore();
-    }
-
-    const sent = newSession.mock.calls[0][0] as {
-      mcpServers: Array<{
-        name: string;
-        env?: Array<{ name: string; value: string }>;
-      }>;
-    };
-    const names = sent.mcpServers.map((m) => m.name);
-    expect(names).toContain("sandboxed-bash");
-    expect(names).toContain("sandboxed-fs");
-    const bashServer = sent.mcpServers.find((m) => m.name === "sandboxed-bash");
-    expect(
-      bashServer?.env?.find((kv) => kv.name === "NUWAX_SANDBOX_MODE")?.value,
-    ).toBe("workspace-write");
-    expect(
-      bashServer?.env?.find((kv) => kv.name === "NUWAX_SANDBOX_POLICY_MODE")
-        ?.value,
-    ).toBe("strict");
-  });
-
-  it("沙箱启用时应移除 gui-agent MCP（互斥）", async () => {
-    const { engine, newSession } = setupEngineForCreateSession("nuwaxcode");
-
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      type: "windows-sandbox",
-      projectWorkspaceDir: "/workspace/project",
-    };
-
-    await engine.createSession({
-      mcpServers: {
-        "another-tool": {
-          command: "node",
-          args: ["another.js"],
-        },
-      },
-    });
-
-    expect(newSession).toHaveBeenCalledTimes(1);
-    const sent = newSession.mock.calls[0][0] as {
-      mcpServers: Array<{ name: string }>;
-    };
-
-    expect(sent.mcpServers.map((m) => m.name).sort()).toEqual([
-      "another-tool",
-      "safe-tool",
-    ]);
-  });
-
-  it("沙箱关闭时应保留 gui-agent MCP", async () => {
-    const { engine, newSession } = setupEngineForCreateSession("nuwaxcode");
-    (engine as any).storedSandboxConfig = null;
-
-    await engine.createSession();
-
-    expect(newSession).toHaveBeenCalledTimes(1);
-    const sent = newSession.mock.calls[0][0] as {
-      mcpServers: Array<{ name: string }>;
-    };
-
-    expect(sent.mcpServers.map((m) => m.name)).toContain("gui-agent");
-  });
-
-  it("compat 下若 sandboxed-fs 脚本缺失，不应阻断其他 MCP 加载", async () => {
+  it("preserves user MCP servers and normal tools after legacy integrations retire", async () => {
     const { engine, newSession } = setupEngineForCreateSession("claude-code");
-    const resourcesSpy = vi
-      .spyOn(dependencies, "getResourcesPath")
-      .mockReturnValue("/__missing_resources__");
-
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      type: "windows-sandbox",
-      mode: "compat",
-      projectWorkspaceDir: "/workspace/project",
-      windowsSandboxHelperPath: "C:\\tools\\nuwax-sandbox-helper.exe",
-    };
-
-    try {
-      await engine.createSession();
-    } finally {
-      resourcesSpy.mockRestore();
-    }
-
-    expect(newSession).toHaveBeenCalledTimes(1);
-    const sent = newSession.mock.calls[0][0] as {
-      mcpServers: Array<{ name: string }>;
-      _meta?: {
-        claudeCode?: { options?: { disallowedTools?: string[] } };
-      };
-    };
-    const names = sent.mcpServers.map((m) => m.name);
-    expect(names).not.toContain("sandboxed-bash");
-    expect(names).not.toContain("sandboxed-fs");
-    const disallowed = sent._meta?.claudeCode?.options?.disallowedTools || [];
-    expect(disallowed).not.toContain("Bash");
-    expect(disallowed).not.toContain("Write");
-    expect(disallowed).not.toContain("Edit");
-    expect(disallowed).not.toContain("NotebookEdit");
-  });
-
-  it("compat 模式下 sandboxed-fs 注入与工具禁用应生效", async () => {
-    const { engine, newSession } = setupEngineForCreateSession("nuwaxcode");
-    vi.spyOn(
-      opencodeAcpSandbox,
-      "readBundledOpencodeEngineVersion",
-    ).mockReturnValue("1.1.99");
-    const resourcesSpy = vi
-      .spyOn(dependencies, "getResourcesPath")
-      .mockReturnValue(path.join(process.cwd(), "resources"));
-
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      type: "windows-sandbox",
-      mode: "compat",
-      projectWorkspaceDir: "/workspace/project",
-      windowsSandboxHelperPath: "C:\\tools\\nuwax-sandbox-helper.exe",
-    };
-
-    try {
-      await engine.createSession();
-    } finally {
-      resourcesSpy.mockRestore();
-    }
-
-    expect(newSession).toHaveBeenCalledTimes(1);
-    const sent = newSession.mock.calls[0][0] as {
-      mcpServers: Array<{
-        name: string;
-        env?: Array<{ name: string; value: string }>;
-      }>;
-      _meta?: {
-        claudeCode?: { options?: { disallowedTools?: string[] } };
-      };
-    };
-    const fsServer = sent.mcpServers.find((m) => m.name === "sandboxed-fs");
-    expect(fsServer).toBeDefined();
-    const modeVar = fsServer?.env?.find(
-      (kv) => kv.name === "NUWAX_SANDBOX_MODE",
-    );
-    expect(modeVar?.value).toBe("compat");
-    const rootsVar = fsServer?.env?.find(
-      (kv) => kv.name === "NUWAX_SANDBOX_WRITABLE_ROOTS",
-    );
-    const parsedRoots = JSON.parse(rootsVar?.value ?? "[]") as string[];
-    expect(
-      parsedRoots.some((r) =>
-        r.replace(/\\/g, "/").includes("/workspace/project"),
-      ),
-    ).toBe(true);
-    const disallowed = sent._meta?.claudeCode?.options?.disallowedTools || [];
-    expect(disallowed).toContain("Write");
-    expect(disallowed).toContain("Edit");
-    expect(disallowed).toContain("NotebookEdit");
+    await engine.createSession({ cwd: "/workspace/project", systemPrompt: "Use project conventions" });
+    const request = newSession.mock.calls[0][0];
+    expect(request.mcpServers.map((server: { name: string }) => server.name)).toEqual(["custom-tools", "safe-tool"]);
+    expect(request._meta.systemPrompt).toEqual({ append: "Use project conventions" });
+    expect(request._meta.claudeCode?.options?.disallowedTools).toBeUndefined();
   });
 });
 
-describe("AcpEngine.handlePermissionRequest(strict)", () => {
+describe("AcpEngine.handlePermissionRequest", () => {
   it("ask 模式发出 RCoder request_permission SSE payload", async () => {
     const { engine, sessionId } = setupEngine("nuwaxcode");
     (engine as any).setEffectiveMode(sessionId, "ask");
@@ -716,78 +521,6 @@ describe("AcpEngine.handlePermissionRequest(strict)", () => {
     await expect(responsePromise).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "reject-once" },
     });
-  });
-
-  it("strict 下 workspace 内写入仅放行 allow_once", async () => {
-    const { engine, sessionId } = setupEngine("nuwaxcode");
-    (engine as any).config = { engine: "nuwaxcode", workspaceDir: "/tmp/ws" };
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      mode: "strict",
-      projectWorkspaceDir: "/tmp/ws",
-    };
-    (engine as any).isolatedHome = "/tmp/iso-home";
-
-    const result = await (engine as any).handlePermissionRequest({
-      sessionId,
-      toolCall: {
-        toolCallId: "tc-strict-1",
-        kind: "edit",
-        title: "Edit",
-        rawInput: { file_path: "/tmp/ws/a.txt" },
-      },
-      options: [
-        {
-          optionId: "allow-always",
-          kind: "allow_always",
-          name: "allow always",
-        },
-        {
-          optionId: "allow-once",
-          kind: "allow_once",
-          name: "allow once",
-        },
-      ],
-    });
-
-    expect(result).toEqual({
-      outcome: { outcome: "selected", optionId: "allow-once" },
-    });
-  });
-
-  it("strict 下 workspace/temp/appData 外写入应拒绝", async () => {
-    const { engine, sessionId } = setupEngine("nuwaxcode");
-    (engine as any).config = { engine: "nuwaxcode", workspaceDir: "/tmp/ws" };
-    (engine as any).storedSandboxConfig = {
-      enabled: true,
-      mode: "strict",
-      projectWorkspaceDir: "/tmp/ws",
-    };
-    (engine as any).isolatedHome = "/tmp/iso-home";
-
-    const result = await (engine as any).handlePermissionRequest({
-      sessionId,
-      toolCall: {
-        toolCallId: "tc-strict-2",
-        kind: "write",
-        title: "Write",
-        rawInput: { file_path: "/etc/passwd" },
-      },
-      options: [
-        {
-          optionId: "allow-always",
-          kind: "allow_always",
-          name: "allow always",
-        },
-        {
-          optionId: "allow-once",
-          kind: "allow_once",
-          name: "allow once",
-        },
-      ],
-    });
-
-    expect(result).toEqual({ outcome: { outcome: "cancelled" } });
   });
 });
 
@@ -936,9 +669,9 @@ describe("AcpEngine.init", () => {
     } as any;
 
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,
@@ -969,7 +702,7 @@ describe("AcpEngine.init", () => {
     const mockConnection = {
       initialize: vi.fn().mockResolvedValue({
         protocolVersion: 1,
-        agentInfo: { name: "codex-acp" },
+        agentInfo: { name: "nuwax-harness" },
         agentCapabilities: {},
       }),
       authenticate,
@@ -984,9 +717,9 @@ describe("AcpEngine.init", () => {
     } as any;
     const engine = new AcpEngine("codex-cli");
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,
@@ -1015,7 +748,7 @@ describe("AcpEngine.init", () => {
     const mockConnection = {
       initialize: vi.fn().mockResolvedValue({
         protocolVersion: 1,
-        agentInfo: { name: "codex-acp" },
+        agentInfo: { name: "nuwax-harness" },
         agentCapabilities: {},
       }),
       authenticate,
@@ -1030,9 +763,9 @@ describe("AcpEngine.init", () => {
     } as any;
     const engine = new AcpEngine("codex-cli");
     vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwax-codex-acp",
+      binPath: "/resources/nuwax-harness-acp-ts/dist/index.js",
       binArgs: [],
-      isNative: true,
+      isNative: false,
     });
     vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
       connection: mockConnection,
@@ -1055,94 +788,6 @@ describe("AcpEngine.init", () => {
     expect(authenticate).not.toHaveBeenCalled();
 
     await engine.destroy();
-  });
-
-  it("沙箱启用时 nuwaxcode 1.1.x 不注入 sandbox 键，并禁用内置 bash/edit", async () => {
-    const engine = new AcpEngine("nuwaxcode");
-    let capturedEnv: Record<string, string> | undefined;
-
-    vi.spyOn(sandboxPolicy, "getSandboxPolicy").mockReturnValue({
-      enabled: true,
-      backend: "auto",
-      mode: "compat",
-      autoFallback: "startup-only",
-      windowsMode: "workspace-write",
-    });
-    vi.spyOn(sandboxPolicy, "resolveSandboxType").mockResolvedValue({
-      type: "windows-sandbox",
-      degraded: false,
-    });
-    vi.spyOn(
-      sandboxPolicy,
-      "getBundledWindowsSandboxHelperPath",
-    ).mockReturnValue("C:\\tools\\nuwax-sandbox-helper.exe");
-    const applySpy = vi
-      .spyOn(opencodeAcpSandbox, "applyOpencodeSandboxToOpenCodeConfig")
-      .mockImplementation(({ configObj }) => {
-        configObj.permission = {
-          ...(configObj.permission as object),
-          bash: "deny",
-          edit: "deny",
-        };
-        return {
-          opencodeSandboxConfigInjected: false,
-          builtinBashDenied: true,
-          builtinEditDenied: true,
-          engineVersion: "1.1.99",
-          usesNativeSandbox: false,
-        };
-      });
-
-    const mockConnection = {
-      initialize: vi.fn().mockResolvedValue({ protocolVersion: "1.0.0" }),
-    } as any;
-    const mockProcess = {
-      pid: 12345,
-      on: vi.fn(),
-      stdout: { removeAllListeners: vi.fn() },
-      stderr: { removeAllListeners: vi.fn() },
-      stdin: { removeAllListeners: vi.fn() },
-      removeAllListeners: vi.fn(),
-      kill: vi.fn(),
-    } as any;
-
-    vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
-      binPath: "nuwaxcode",
-      binArgs: ["acp"],
-      isNative: false,
-    });
-    vi.spyOn(acpClient, "createAcpConnection").mockImplementation(
-      async (cfg: any) => {
-        capturedEnv = cfg.env as Record<string, string>;
-        return {
-          connection: mockConnection,
-          process: mockProcess,
-          isolatedHome: null,
-          cleanup: vi.fn(),
-        } as any;
-      },
-    );
-    vi.spyOn(acpClient, "loadAcpSdk").mockResolvedValue({
-      PROTOCOL_VERSION: "1.0.0",
-    } as any);
-
-    try {
-      const ok = await engine.init({
-        engine: "nuwaxcode",
-        workspaceDir: "/tmp/workspace",
-        apiKey: "test-key",
-        model: "openai-compatible/glm-5",
-      } as any);
-
-      expect(ok.ok).toBe(true);
-      const injected = JSON.parse(capturedEnv!.OPENCODE_CONFIG_CONTENT!);
-      expect(injected.sandbox).toBeUndefined();
-      expect(injected.permission.bash).toBe("deny");
-      expect(injected.permission.edit).toBe("deny");
-    } finally {
-      applySpy.mockRestore();
-      await engine.destroy();
-    }
   });
 });
 

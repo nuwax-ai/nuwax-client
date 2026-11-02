@@ -16,6 +16,7 @@
 const esbuild = require('esbuild');
 const fs = require('fs');
 const path = require('path');
+const { brandingDefines } = require('./branding-defines.cjs');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const root = path.resolve(__dirname, '..', '..');
@@ -109,13 +110,7 @@ esbuild
     external,
     define: {
       'process.env.NODE_ENV': JSON.stringify(isDev ? 'development' : 'production'),
-      // 品牌注入（nuwax-client 商业版）：未设置时替换为空串/0，运行时回落源码默认值（社区版）
-      'process.env.NUWAX_APP_IDENTIFIER': JSON.stringify(process.env.NUWAX_APP_IDENTIFIER ?? ''),
-      'process.env.NUWAX_APP_DISPLAY_NAME': JSON.stringify(process.env.NUWAX_APP_DISPLAY_NAME ?? ''),
-      'process.env.NUWAX_UPDATE_FEED_BASE': JSON.stringify(process.env.NUWAX_UPDATE_FEED_BASE ?? ''),
-      'process.env.NUWAX_DOWNLOAD_PAGE_URL': JSON.stringify(process.env.NUWAX_DOWNLOAD_PAGE_URL ?? ''),
-      'process.env.NUWAX_PORT_OFFSET': JSON.stringify(process.env.NUWAX_PORT_OFFSET ?? '0'),
-      'process.env.NUWAX_RELEASE_CHANNEL': JSON.stringify(process.env.NUWAX_RELEASE_CHANNEL ?? 'stable'),
+      ...brandingDefines(process.env, isDev),
     },
     plugins: [resolvePlugin],
   })

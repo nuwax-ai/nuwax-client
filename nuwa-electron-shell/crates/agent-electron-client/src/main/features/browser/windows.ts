@@ -132,6 +132,8 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
   const {getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot} = appearance;
   const entries = new Map<number, Entry>();
   let disposed = false;
+  const publicUrl = (value: string) => ctx.windows.toExternalUrl
+    ? ctx.windows.toExternalUrl(value) : webUrl(value);
   const labels = () => ({
     loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
     ...Object.fromEntries(
@@ -213,7 +215,7 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
     push(entry);
   };
   const external = async (entry: Entry) => {
-    const target = webUrl(entry.state.url);
+    const target = publicUrl(entry.state.url);
     if (!target) return false;
     try {
       await shell.openExternal(target);
@@ -295,6 +297,7 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
         break;
       case "find-open":
         findOpen(entry, true);
+        entry.state.findFocusRequest++;
         entry.window.webContents.focus();
         break;
       case "find-close":
@@ -506,6 +509,7 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
         addressOpen: false,
         error: null,
         finding: false,
+        findFocusRequest: 0,
         matches: 0,
         activeMatch: 0,
         labels: labels(),
@@ -636,7 +640,7 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
     void win.loadURL(toolbarUrl).catch(() => {
       if (win.isDestroyed() || wc.isDestroyed()) return;
       ctx.log.warn("[Browser] Toolbar failed to load");
-      const url = webUrl(entry.state.url);
+      const url = publicUrl(entry.state.url);
       if (url)
         void shell
           .openExternal(url)

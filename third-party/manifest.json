@@ -198,12 +198,12 @@
       "modified": false,
       "checkIntegrity": true
     },
-    "nuwax-codex-acp-ts": {
-      "id": "nuwax-codex-acp-ts",
-      "name": "Nuwax Codex ACP adapter",
-      "version": "1.2.8",
+    "nuwax-harness-acp-ts": {
+      "id": "nuwax-harness-acp-ts",
+      "name": "Nuwax Harness adapter",
+      "version": "1.2.24",
       "license": "Apache-2.0",
-      "licenseFile": "third-party/licenses/codex-acp-ts.txt",
+      "licenseFile": "third-party/licenses/nuwax-harness-adapter.txt",
       "sourceUrl": "https://github.com/agentclientprotocol/codex-acp",
       "modified": true,
       "checkIntegrity": true

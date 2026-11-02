@@ -39,6 +39,7 @@ import type {
   WebContents,
 } from "electron";
 import log from "electron-log";
+import { I18N_KEYS } from "@shared/constants";
 import { t } from "./i18n";
 
 /** native:saveImage 核心的结果形状（见 nuwaxBridgeHandlers.performSaveImage）。 */
@@ -76,6 +77,7 @@ export type ContextMenuEditAction =
   | "cut"
   | "copy"
   | "paste"
+  | "pasteAndMatchStyle"
   | "delete"
   | "selectAll";
 
@@ -89,6 +91,7 @@ const EDIT_COMMANDS: Record<
   cut: (wc) => wc.cut(),
   copy: (wc) => wc.copy(),
   paste: (wc) => wc.paste(),
+  pasteAndMatchStyle: (wc) => wc.pasteAndMatchStyle(),
   delete: (wc) => wc.delete(),
   selectAll: (wc) => wc.selectAll(),
 };
@@ -198,10 +201,16 @@ export function buildContextMenuTemplate(
       });
     }
     if (flags?.canPaste) {
-      clipboardOps.push({
-        label: t("Claw.ContextMenu.paste"),
-        click: () => actions.edit("paste"),
-      });
+      clipboardOps.push(
+        {
+          label: t("Claw.ContextMenu.paste"),
+          click: () => actions.edit("paste"),
+        },
+        {
+          label: t(I18N_KEYS.ContextMenu.PASTE_AS_TEXT),
+          click: () => actions.edit("pasteAndMatchStyle"),
+        },
+      );
     }
     if (flags?.canDelete && params.selectionText) {
       clipboardOps.push({

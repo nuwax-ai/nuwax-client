@@ -1,5 +1,0 @@
-# Cursor 项目入口
-
-先阅读本目录 `AGENTS.md` 和仓库根 `../AGENTS.md`，客户端内部规则见 `crates/agent-electron-client/AGENTS.md`。
-
-本目录属于 nuwax-client；命令从仓库根运行，开发、测试、构建与发布以 `../docs/npm-scripts.md` 为准。不要使用迁移前文档中的独立基座、overlay 同步或不存在的 harness 入口。

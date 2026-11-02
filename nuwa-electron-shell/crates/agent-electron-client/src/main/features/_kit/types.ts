@@ -46,6 +46,8 @@ export interface FeatureSession {
 export interface FeatureWindows {
   /** 宿主主窗口；未创建或已销毁时为 null。 */
   getMain(): BrowserWindow | null;
+  /** 宿主将本机业务路由转换为可交给系统浏览器的地址；无安全目标时返回 null。 */
+  toExternalUrl?(value: string): string | null;
 }
 
 /** 本地 MCP 条目（与客户端 `mcp_local_config` 的条目形状一致）。 */
@@ -83,6 +85,8 @@ export interface FeaturePermissionServices {
 }
 
 export interface FeatureContext {
+  /** Host-owned development profile; features do not read application build globals. */
+  developmentProfile?: boolean;
   /** 宿主产品标识（如 `nuwax`）。特性不应自行判断产品，门控看清单的 `products`。 */
   product: string;
   /** 面向业务页（受信顶层文档）的 IPC：sender 必须是当前受信的顶层业务文档。 */

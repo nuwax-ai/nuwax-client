@@ -16,14 +16,14 @@
 /** ACP agent mode（v4 增加 plan：只规划不执行） */
 export type AcpMode = "ask" | "yolo" | "plan";
 
-/** ACP engine ID（v3 收敛：codex 统一使用，codex-cli/codex-acp/nuwax-codex-acp 兼容映射） */
+/** ACP engine ID（Codex 统一经 nuwax harness 接入） */
 export type AgentEngineId = "claude-code" | "nuwaxcode" | "codex";
 
-/** 旧 engine ID → 新 AgentEngineId 兼容映射 */
+/** 命令名 / engine ID → AgentEngineId 映射 */
 export const ENGINE_ID_ALIASES: Record<string, AgentEngineId> = {
   "codex-cli": "codex",
-  "codex-acp": "codex",
-  "nuwax-codex-acp": "codex",
+  "nuwax-harness": "codex",
+  "nuwax-harness-acp-ts": "codex",
 };
 
 /** 将任意 engine 标识规范化为 AgentEngineId，未知值返回 null */

@@ -50,7 +50,7 @@ button:disabled {
 }
 #toolbar {
   flex-shrink: 0;
-  height: var(--toolbar-height, 36px);
+  height: var(--toolbar-height, 44px);
   display: flex;
   align-items: center;
   gap: 7px;
@@ -61,6 +61,9 @@ button:disabled {
   user-select: none;
 }
 #toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 28px;
 }
 #toolbar svg {
@@ -78,7 +81,7 @@ body[data-platform="linux"] #toolbar {
   display: flex;
   margin-left: 5px;
   align-self: stretch;
-  height: var(--toolbar-height, 36px);
+  height: var(--toolbar-height, 44px);
 }
 #windowControls button {
   width: 40px;
@@ -98,12 +101,10 @@ nav {
   display: flex;
   gap: 2px;
 }
-nav button {
-  font-size: 21px;
-}
-#location {
+#toolbar #location {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   flex: 1;
   max-width: 560px;
@@ -126,9 +127,6 @@ nav button {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 35%;
-}
-#menu {
-  font-size: 24px;
 }
 #pin[aria-pressed="true"] {
   color: #3272c7;

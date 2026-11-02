@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   show: vi.fn(), focus: vi.fn(), restore: vi.fn(),
   listener: undefined as ((state: any) => void) | undefined,
   activities: [] as Array<{ actions: Array<{ id: string; run(): void }> } | null>,
+  development: false,
 }));
 vi.mock("electron", () => ({
   ipcMain: {
@@ -51,6 +52,7 @@ beforeEach(() => {
   mocks.stop.mockResolvedValue({ success: true }); mocks.pause.mockResolvedValue({ success: true });
   mocks.taskPause.mockResolvedValue({ success: true }); mocks.taskStop.mockResolvedValue({ success: true });
   mocks.register.mockReturnValue(false); mocks.runtime = { phase: "running" };
+  mocks.development = false;
 });
 
 function register(loggedIn = true, permissions?: unknown) {
@@ -60,6 +62,7 @@ function register(loggedIn = true, permissions?: unknown) {
   };
   const noop = () => () => {};
   const ctx = {
+    developmentProfile: mocks.development,
     product: "nuwax",
     ipc: createTrustedIpc(ipcMain as never, () => true),
     hostIpc: createTrustedIpc(ipcMain as never, (event: any) => event?.trusted === true),
@@ -89,6 +92,17 @@ function register(loggedIn = true, permissions?: unknown) {
 }
 
 describe("Computer Use trusted controls", () => {
+  it("development keeps UI stop controls without claiming or releasing installed global shortcuts", async () => {
+    mocks.development = true;
+    const handle = register();
+    expect(mocks.register).not.toHaveBeenCalled();
+    expect(mocks.shortcut).toHaveBeenCalledWith(false);
+    mocks.activities.at(-1)?.actions.find(action => action.id === "stop")?.run();
+    expect(mocks.stop).toHaveBeenCalled();
+    handle.dispose();
+    const { globalShortcut } = await import("electron");
+    expect(globalShortcut.unregister).not.toHaveBeenCalled();
+  });
   it("registers the helper identity without requesting permission or enabling CU, and disposes it", async () => {
     const cua = await import("./computerUse");
     const unregister = vi.fn();

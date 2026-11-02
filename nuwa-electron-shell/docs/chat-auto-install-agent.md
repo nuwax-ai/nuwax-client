@@ -12,8 +12,8 @@
   "prompt": "帮我写代码",
   "agent_config": {
     "agent_server": {
-      "agent_id": "codex-acp",
-      "command": "codex-acp",
+      "agent_id": "example-agent",
+      "command": "example-agent",
       "args": [],
       "env": {}
     }
@@ -66,8 +66,8 @@
   "space_id": "space_001",
   "isolation_type": "tenant",
   "agent": {
-    "agent_id": "codex-acp",
-    "command": "codex-acp",
+    "agent_id": "example-agent",
+    "command": "example-agent",
     "args": ["--serve", "--port", "7091"],
     "version": "1.2.0"
   },
@@ -106,8 +106,8 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `agent_id` | string | 是 | Agent 标识符（如 "codex-acp"） |
-| `command` | string | 是 | 入口可执行文件名（如 "codex-acp"） |
+| `agent_id` | string | 是 | Agent 标识符（如 "example-agent"） |
+| `command` | string | 是 | 入口可执行文件名（如 "example-agent"） |
 | `args` | string[] | 否 | 启动参数（默认空） |
 | `version` | string | 否 | 版本号（semver 格式，如 "1.2.0"） |
 
@@ -138,9 +138,9 @@
   "success": true,
   "tid": "trace_id_123",
   "data": {
-    "agent_id": "codex-acp",
+    "agent_id": "example-agent",
     "status": "available",
-    "binary_path": "codex-acp",
+    "binary_path": "example-agent",
     "file_type": "tar.gz",
     "file_size": 52428800,
     "file_count": 3,
@@ -209,17 +209,17 @@ curl -X POST http://localhost:8087/agent-mgmt/agents/install-from-url \
   -d '{
     "project_id": "p1",
     "agent": {
-      "agent_id": "codex-acp",
-      "command": "codex-acp",
+      "agent_id": "example-agent",
+      "command": "example-agent",
       "version": "1.2.0"
     },
     "platforms": {
       "linux-x86_64": {
-        "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-amd64.tar.gz",
+        "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-amd64.tar.gz",
         "sha256": "e3b0c44298fc1c14..."
       },
       "linux-aarch64": {
-        "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-arm64.tar.gz"
+        "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-arm64.tar.gz"
       }
     }
   }'
@@ -256,18 +256,18 @@ curl -X POST http://localhost:8087/agent-mgmt/agents/install-from-url \
   "model_provider": { ... },
   "agent_config": {
     "agent_server": {
-      "agent_id": "codex-acp",
-      "command": "codex-acp",
+      "agent_id": "example-agent",
+      "command": "example-agent",
       "args": ["--serve"],
       "version": "1.2.0",
       "platforms": {
         "linux-x86_64": {
-          "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-amd64.tar.gz",
+          "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-amd64.tar.gz",
           "sha256": "e3b0c44298fc1c14...",
           "size": 52428800
         },
         "linux-aarch64": {
-          "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-arm64.tar.gz"
+          "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-arm64.tar.gz"
         }
       },
       "env": {"ANTHROPIC_API_KEY": "sk-xxx"},
@@ -322,7 +322,7 @@ curl -X POST http://localhost:8087/agent-mgmt/agents/install-from-url \
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `agent_id` | string | 否 | Agent 标识符（默认 "claude-code-acp-ts"） |
-| `command` | string | 否 | 执行命令（如 "codex-acp"） |
+| `command` | string | 否 | 执行命令（如 "example-agent"） |
 | `args` | string[] | 否 | 命令参数 |
 | `version` | string | 否 | 版本号（semver 格式，如 "1.2.0"） |
 | `platforms` | object | 否 | 多平台下载地址（key 为 `{os}-{arch}`） |
@@ -466,12 +466,12 @@ curl -X POST http://localhost:8087/computer/chat \
     "prompt": "帮我写一个 Python 脚本",
     "agent_config": {
       "agent_server": {
-        "agent_id": "codex-acp",
-        "command": "codex-acp",
+        "agent_id": "example-agent",
+        "command": "example-agent",
         "version": "1.2.0",
         "platforms": {
           "linux-x86_64": {
-            "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-amd64.tar.gz"
+            "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-amd64.tar.gz"
           }
         },
         "model_env_bindings": [
@@ -508,12 +508,12 @@ curl -X POST http://localhost:8087/computer/chat \
     "prompt": "继续上次的任务",
     "agent_config": {
       "agent_server": {
-        "agent_id": "codex-acp",
-        "command": "codex-acp",
+        "agent_id": "example-agent",
+        "command": "example-agent",
         "version": "1.2.0",
         "platforms": {
           "linux-x86_64": {
-            "url": "https://cdn.example.com/codex-acp/1.2.0/codex-acp-linux-amd64.tar.gz"
+            "url": "https://cdn.example.com/example-agent/1.2.0/example-agent-linux-amd64.tar.gz"
           }
         }
       }
@@ -547,8 +547,8 @@ curl -X POST http://localhost:8087/computer/chat \
     "prompt": "hello",
     "agent_config": {
       "agent_server": {
-        "agent_id": "codex-acp",
-        "command": "codex-acp"
+        "agent_id": "example-agent",
+        "command": "example-agent"
       }
     }
   }'

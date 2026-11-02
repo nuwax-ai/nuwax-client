@@ -10,6 +10,7 @@ export function installWindowInteraction(
     end?: number | null;
     direction?: "forward" | "backward" | "none" | null;
     range?: Range;
+    backward?: boolean;
   };
   let hostFocused = true;
   let saved: EditingPosition | null = null;
@@ -48,8 +49,18 @@ export function installWindowInteraction(
       element.contains(position.range.startContainer) && element.contains(position.range.endContainer)
     ) {
       const selection = doc.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(position.range);
+      // Range 始终按文档顺序排列；反向选区必须同时恢复 anchor/focus 方向。
+      if (position.backward) {
+        selection?.setBaseAndExtent(
+          position.range.endContainer,
+          position.range.endOffset,
+          position.range.startContainer,
+          position.range.startOffset,
+        );
+      } else {
+        selection?.removeAllRanges();
+        selection?.addRange(position.range);
+      }
     }
   };
 
@@ -83,6 +94,9 @@ export function installWindowInteraction(
       saved = { element };
       if (selection?.rangeCount && element.contains(selection.anchorNode) && element.contains(selection.focusNode)) {
         saved.range = selection.getRangeAt(0).cloneRange();
+        saved.backward =
+          selection.anchorNode === saved.range.endContainer &&
+          selection.anchorOffset === saved.range.endOffset;
       }
     }
     element?.blur();

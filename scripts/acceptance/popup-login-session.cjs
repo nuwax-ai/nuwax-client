@@ -36,10 +36,12 @@ async function launch() {
         import { createBrowserWindows } from ${JSON.stringify(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/src/main/features/browser/windows.ts'))};
         import { pathToFileURL } from 'node:url';
         export const browserFixturePages = new Map();
+        let mode="available"; export const setBrowserFixtureMode=value=>{mode=value};
         let runtime;
-        export const isDesktopBrowserAvailable=()=>true;
+        export const isDesktopBrowserAvailable=()=>mode==="available";
         export const isDesktopFeatureRequestSource=()=>false;
         export function createDesktopBrowserPage(options) {
+          if(mode==="disabled")return null; if(mode==="failed")throw new Error("fixture failure");
           runtime ??= createBrowserWindows({settings:{read:()=>undefined},windows:{getMain:()=>null},translate:key=>key,log:console});
           const page=runtime.open({...options,toolbarUrl:${JSON.stringify(require('node:url').pathToFileURL(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/dist/browser.html')).href)},preloadPath:${JSON.stringify(path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/dist/preload/browserWindow.js'))}});
           browserFixturePages.set(page.window.id,page.contents);
@@ -62,7 +64,7 @@ async function launch() {
       ? execFileSync('git', ['show', `${baselineRef}:${policyRelative}`], { cwd: root, encoding: 'utf8' }) : null;
     await fromShell('esbuild').build({
       stdin: {
-        contents: `export * from ${JSON.stringify(path.join(services, 'system/webviewPolicy.ts'))}; export * from ${JSON.stringify(path.join(services, 'sessionAuthInjection.ts'))}; export { settings } from '@fixture/db'; export { browserFixturePages } from '@fixture/features';`,
+        contents: `export * from ${JSON.stringify(path.join(services, 'system/webviewPolicy.ts'))}; export * from ${JSON.stringify(path.join(services, 'sessionAuthInjection.ts'))}; export { settings } from '@fixture/db'; export { browserFixturePages, setBrowserFixtureMode } from '@fixture/features';`,
         resolveDir: root,
       },
       bundle: true, platform: 'node', format: 'cjs', outfile: bundlePath(temp), external: ['electron'],
@@ -109,7 +111,7 @@ async function run() {
   app.setPath('sessionData', path.join(temp, 'profile'));
   app.on('window-all-closed', () => {});
   await app.whenReady();
-  const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings, browserFixturePages } = require(bundlePath(temp));
+  const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings, browserFixturePages, setBrowserFixtureMode, createBusinessReadingPage, trackPopupWindow, trustInitialBusinessNavigation, loadPopupDocument } = require(bundlePath(temp));
   const pageContents = win => browserFixturePages.get(win.id) ?? win.webContents;
   const requests = [];
   const downloadBytes = Buffer.from('early browser window download fixture\n'.repeat(128));
@@ -172,7 +174,7 @@ async function run() {
     await contents.executeJavaScript(code, true);
     const win = await waitFor(() => BrowserWindow.getAllWindows().find(win => !ids.has(win.id) &&
       !pageContents(win).isLoading() && pageContents(win).getURL() === target), `loaded popup: ${kind}`);
-    return { webContents: pageContents(win), destroy: () => win.destroy() };
+    return { window: win, webContents: pageContents(win), destroy: () => win.destroy() };
   };
   try {
     for (const mode of ['direct', 'gateway']) {
@@ -221,6 +223,59 @@ async function run() {
           child.destroy();
           console.log(`PASS ${mode}/${type}/${kind}: first document and subsequent API logged in`);
         }
+        for (const readerMode of ['available', 'disabled', 'failed']) {
+          setBrowserFixtureMode(readerMode);
+          settings.set('nuwax.linkOpenMode', 'system');
+          const target = `${source}/repo/doc/fixture?reader=${mode}-${type}-${readerMode}`;
+          const page = createBusinessReadingPage({show:false,width:1000,height:720,webPreferences:{session:session.defaultSession,contextIsolation:true,sandbox:true,preload:path.join(temp,'main/preload/webviewPerfBridge.js'),additionalArguments:['--nuwax-host-product=nuwax',`--nuwax-trusted-origins=${encodeURIComponent(JSON.stringify(context.trustedOrigins))}`]}}, target);
+          trackPopupWindow(page.window, opener, page.contents);
+          trustInitialBusinessNavigation(page.contents, target);
+          loadPopupDocument(page.window, target, undefined, page.contents);
+          await waitFor(()=>!page.contents.isLoading() && page.contents.getURL()===target,'reader document ready');
+          assert.equal(browserFixturePages.has(page.window.id),readerMode==='available');
+          assert.equal((await page.contents.executeJavaScript("fetch('/api/me').then(r=>r.json())")).authenticated,true);
+          page.window.show();
+          if(readerMode==='available') {
+            const command=cmd=>page.window.webContents.executeJavaScript(`window.browserWindow.command(${JSON.stringify(cmd)})`);
+            await command({type:'window-maximize'}); await waitFor(()=>page.window.isMaximized(),'reader maximize');
+            await command({type:'window-maximize'}); await waitFor(()=>!page.window.isMaximized(),'reader restore');
+          }
+          page.window.destroy();
+          console.log(`PASS ${mode}/${type}/reader-${readerMode}: authenticated in-app fallback with system preference`);
+        }
+        for (const readerMode of ['available', 'disabled', 'failed']) {
+          setBrowserFixtureMode(readerMode);
+          settings.set('nuwax.linkOpenMode', 'system');
+          const target = `${source}/repo/doc/fixture?raw=${mode}-${type}-${readerMode}`;
+          const raw = await openFrom(opener, target, 'window');
+          assert.equal(browserFixturePages.has(raw.window.id), readerMode === 'available', 'raw business GET retains reader controls');
+          assert.equal(raw.webContents.session, session.defaultSession);
+          assert((await raw.webContents.executeJavaScript("fetch('/api/me').then(r=>r.json())")).authenticated);
+          if (readerMode === 'available') {
+            const command = cmd => raw.window.webContents.executeJavaScript(`window.browserWindow.command(${JSON.stringify(cmd)})`);
+            const until = async (predicate, label) => {
+              const deadline = Date.now() + 7000;
+              while (Date.now() < deadline) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 20)); }
+              assert.fail(label);
+            };
+            raw.window.show(); raw.window.focus(); raw.webContents.focus();
+            raw.webContents.sendInputEvent({type:'keyDown',keyCode:'f',modifiers:['meta']});
+            raw.webContents.sendInputEvent({type:'keyUp',keyCode:'f',modifiers:['meta']});
+            await until(()=>raw.window.webContents.executeJavaScript("document.hasFocus() && document.activeElement.id === 'query'"), 'raw reader Find input focus');
+            await raw.window.webContents.insertText('LOGGED_IN');
+            await until(async ()=>(await raw.window.webContents.executeJavaScript('window.browserWindow.getState()')).matches === 1, 'raw reader finds authenticated document');
+            await command({type:'find-close'});
+            const next = target + '-next';
+            await raw.webContents.loadURL(next);
+            await command({type:'back'});
+            await until(()=>!raw.webContents.isLoading() && raw.webContents.getURL()===target, 'raw reader Back');
+            await command({type:'forward'});
+            await until(()=>!raw.webContents.isLoading() && raw.webContents.getURL()===next, 'raw reader Forward');
+          }
+          raw.destroy();
+          console.log(`PASS ${mode}/${type}/raw-${readerMode}: authenticated same-session reader; Find/Back/Forward when available`);
+        }
+        setBrowserFixtureMode('available'); settings.delete('nuwax.linkOpenMode');
         const outside = await openFrom(opener, `${externalOrigin}/outside?case=${mode}-${type}`, 'anchor');
         assert.equal(outside.webContents.session, session.defaultSession, 'external popup uses the normal browser session');
         assert.equal(await outside.webContents.executeJavaScript('typeof window.NuwaClawBridge'), 'undefined');

@@ -10,6 +10,7 @@
     "host-bridge:check": "node scripts/sync-host-bridge-contract.mjs --check",
     "theme-core:sync": "node scripts/sync-theme-core.mjs",
     "theme-core:check": "node scripts/sync-theme-core.mjs --check",
+    "typecheck": "node scripts/run-shell.cjs --no-env -- npm --prefix crates/agent-electron-client run typecheck:main",
     "test:commercial": "node scripts/run-shell.cjs --no-env -- npm run test:electron",
     "test:scripts": "node --test scripts/*.test.mjs",
     "diagnostics:export": "node scripts/export-diagnostics.mjs",

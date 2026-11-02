@@ -61,7 +61,6 @@ function createMockCtx() {
       lanproxy: {} as any,
       fileServer: {} as any,
       agentRunner: {} as any,
-      guiServer: {} as any,
       agentRunnerPorts: null,
       setAgentRunnerPorts: vi.fn(),
     } as HandlerContext,

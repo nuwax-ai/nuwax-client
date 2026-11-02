@@ -15,16 +15,12 @@ import * as fs from "fs";
 import log from "electron-log";
 import type { ChildProcess } from "child_process";
 import { ACP_SESSION_CANCELLED_ERROR_CODE } from "@shared/constants";
-import type { SandboxProcessConfig } from "@shared/types/sandbox";
-import { getAcpEngineSandboxCapabilities } from "./sandbox/acpEngineSandbox";
-import { resolveAcpSandboxProcessConfig } from "./sandbox/acpSandboxPolicy";
+import { getAcpEngineProfile } from "./config/engineProfile";
 import { getBundledGitBashPath } from "@main/services/system/binaryLocator";
 import {
   buildOpencodeSpawnConfig,
-  describeOpencodeSandboxActive,
   resolveOpencodePermissionEnv,
-  stripGuiMcpFromOpencodeConfigContent,
-} from "./sandbox/opencodeAcpSpawnConfig";
+} from "./config/opencodeSpawnConfig";
 import {
   modelsEquivalentForProvider,
   resolveOpenAICompatModel,
@@ -55,7 +51,6 @@ import {
 } from "./acpClient";
 import {
   AcpTerminalManager,
-  createTerminalManagerForSandbox,
 } from "./acpTerminalManager";
 import { AcpPermissionCoordinator } from "./permission/permissionCoordinator";
 import {
@@ -233,12 +228,8 @@ export class AcpEngine extends EventEmitter {
   private isolatedHomeScope: IsolatedHomeScope | null = null;
   /** 🔧 FIX: Store cleanup function to properly dispose of event listeners */
   private processCleanup: (() => void) | null = null;
-  /** Sandbox resource cleanup (temp profiles, etc.) */
-  private sandboxCleanup: (() => void) | null = null;
-  /** Terminal manager for ACP terminal/* methods (per-command sandboxing) */
+  /** Terminal manager for ACP terminal/* methods (process lifecycle) */
   private terminalManager: AcpTerminalManager | null = null;
-  /** Stored sandbox config for use in createSession (MCP Bash injection) */
-  private storedSandboxConfig: SandboxProcessConfig | null = null;
   /** ACP initialize 返回的 agentCapabilities，用于 session/resume 决策 */
   private agentCapabilities: Record<string, unknown> | null = null;
   private sessions = new Map<string, AcpSession>();
@@ -448,11 +439,6 @@ export class AcpEngine extends EventEmitter {
     return this.config;
   }
 
-  /** The sandbox strictness mode used when this engine was initialized */
-  get sandboxMode(): string {
-    return this.storedSandboxConfig?.mode ?? "compat";
-  }
-
   /**
    * 更新引擎配置（复用预热引擎时调用，确保 mcpServers 等与本请求的 effectiveConfig 一致，
    * 否则 createSession 会使用 init 时的旧 MCP 配置，导致动态 context_servers 不生效）。
@@ -469,8 +455,8 @@ export class AcpEngine extends EventEmitter {
 
   private isMcpReconnectFailure(errorMsg: string): boolean {
     return isMcpReconnectFailureWith(errorMsg, {
-      // 与 sandboxCaps 一致：自定义 agent 即使 engineName fallback 为 nuwaxcode 也不走 OpenCode 重试语义
-      isOpencodeEngine: this.sandboxCaps.usesOpencodeSpawnConfig,
+      // 与 engineProfile 一致：自定义 agent 即使 engineName fallback 为 nuwaxcode 也不走 OpenCode 重试语义
+      isOpencodeEngine: this.engineProfile.usesOpencodeSpawnConfig,
       acpProcess: this.acpProcess,
       reconnectWindowMs: MCP_RECONNECT_WINDOW_MS,
     });
@@ -484,7 +470,7 @@ export class AcpEngine extends EventEmitter {
       meta.requestId = opts.messageID;
       meta.request_id = opts.messageID;
     }
-    if (this.sandboxCaps.usesOpencodeSpawnConfig) {
+    if (this.engineProfile.usesOpencodeSpawnConfig) {
       const policy = opts?.mcpInitPolicy ?? NUWAX_MCP_INIT_POLICY_DEFAULT;
       if (policy) {
         meta.mcpInitPolicy = policy;
@@ -543,8 +529,6 @@ export class AcpEngine extends EventEmitter {
       sessionId: params.sessionId,
       requestId: params.requestId,
       shouldWait,
-      sandboxEnabled: this.storedSandboxConfig?.enabled === true,
-      sandboxMode: this.storedSandboxConfig?.mode ?? "(none)",
       mcpServerCount: params.mcpServerCount,
       contextServerNames: params.contextServerNames,
       waitMs: shouldWait ? CLAUDE_MCP_FIRST_PROMPT_WARMUP_DELAY_MS : 0,
@@ -566,22 +550,14 @@ export class AcpEngine extends EventEmitter {
     });
   }
 
-  private get sandboxCaps() {
+  private get engineProfile() {
     // 自定义下发 agent（如 command=node + bundle.mjs）不是 OpenCode 引擎。
     // mapAgentCommand 失败时 requiredEngine 会 fallback 到 nuwaxcode，
     // 若仍按 engineName 取 caps，会错误注入 OPENCODE_CONFIG_CONTENT。
     if (this.config?.customEngineCommand) {
-      return getAcpEngineSandboxCapabilities("__custom_agent__");
+      return getAcpEngineProfile("__custom_agent__");
     }
-    return getAcpEngineSandboxCapabilities(this.engineName);
-  }
-
-  private isStrictSandboxActiveForEngine(): boolean {
-    return (
-      this.sandboxCaps.supportsStrictSessionGuard &&
-      this.storedSandboxConfig?.enabled === true &&
-      this.storedSandboxConfig.mode === "strict"
-    );
+    return getAcpEngineProfile(this.engineName);
   }
 
   private resolveCodexAuthMethod(
@@ -683,35 +659,22 @@ export class AcpEngine extends EventEmitter {
       // For nuwaxcode: inject config via OPENCODE_CONFIG_CONTENT env var
       const spawnEnv = { ...(config.env || {}) };
 
-      if (this.sandboxCaps.usesOpencodeSpawnConfig) {
+      if (this.engineProfile.usesOpencodeSpawnConfig) {
         spawnEnv.OPENCODE_PERMISSION = resolveOpencodePermissionEnv(
           spawnEnv.OPENCODE_PERMISSION,
         );
       }
 
-      // Resolve sandbox policy early (OpenCode spawn config + process wrap + createSession).
-      const sandboxResolved = await resolveAcpSandboxProcessConfig(
-        config.workspaceDir,
-        this.logTag,
-      );
-      if (sandboxResolved.unavailable) {
-        throw sandboxResolved.unavailable;
-      }
-      const sandboxConfig = sandboxResolved.config;
-
-      if (this.sandboxCaps.usesOpencodeSpawnConfig) {
+      if (this.engineProfile.usesOpencodeSpawnConfig) {
         // MCP 只走 ACP session/new 的 mcpServers，不再写入 OPENCODE_CONFIG_CONTENT.mcp。
         // 旧「双路径」会让引擎 Instance 初始化先连一遍 cfg.mcp，registerMcpServers
         // 再 mcp.add 一遍；坏远程 MCP 各卡 ~20s → session/new 合计 ~40s。
-        const { configObj, sandboxApply: opencodeSandboxApply } =
+        const { configObj } =
           buildOpencodeSpawnConfig({
             model: config.model,
-            sandboxConfig,
             workspaceDir: config.workspaceDir,
             gitBashPath: getBundledGitBashPath() || undefined,
             toolApprovalRules: this.opencodePermissionBridgeRules,
-            applySandbox: (opts) =>
-              this.sandboxCaps.applyOpencodeSpawnSandbox(opts),
           });
 
         this.opencodePermissionBridgeKey = computeOpencodePermissionBridgeKey(
@@ -719,14 +682,6 @@ export class AcpEngine extends EventEmitter {
         );
 
         spawnEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(configObj);
-        if (
-          opencodeSandboxApply?.opencodeSandboxConfigInjected &&
-          configObj.sandbox
-        ) {
-          spawnEnv.NUWAX_AGENT_SANDBOX_CONFIG = JSON.stringify(
-            configObj.sandbox,
-          );
-        }
         const effectivePerm = configObj.permission as Record<string, string>;
         const injectedShell =
           typeof configObj.shell === "string" ? configObj.shell : undefined;
@@ -741,7 +696,6 @@ export class AcpEngine extends EventEmitter {
               : [],
             permission: effectivePerm,
             permission_bridge_key: this.opencodePermissionBridgeKey || "(none)",
-            sandbox_active: describeOpencodeSandboxActive(opencodeSandboxApply),
             opencode_shell: injectedShell ?? "(default)",
             opencode_shell_injected: Boolean(injectedShell),
           },
@@ -751,42 +705,14 @@ export class AcpEngine extends EventEmitter {
             `${this.logTag} Bundled Git Bash not found; OPENCODE_CONFIG_CONTENT.shell not injected. Run npm run prepare:git to avoid Windows .sh open-with dialog in nuwaxcode bash tool.`,
           );
         }
-        if (opencodeSandboxApply) {
-          if (opencodeSandboxApply.opencodeSandboxConfigInjected) {
-            log.info(
-              `${this.logTag} OPENCODE sandbox config injected (engine=${this.engineName}, v${opencodeSandboxApply.engineVersion})`,
-            );
-          } else {
-            log.info(
-              `${this.logTag} OpenCode ACP compat sandbox (engine=${this.engineName}, v${opencodeSandboxApply.engineVersion ?? "?"}): helper serve + sandboxed-bash/fs MCP`,
-              {
-                builtinBashDenied: opencodeSandboxApply.builtinBashDenied,
-                builtinEditDenied: opencodeSandboxApply.builtinEditDenied,
-              },
-            );
-          }
-        }
+
       }
 
       // Spawn ACP binary and create ClientSideConnection
       configTimer.end("acp.init.config", { engine: this.engineName });
 
-      // GUI MCP (gui-agent) and sandbox are mutually exclusive for now.
-      if (this.sandboxCaps.usesOpencodeSpawnConfig && sandboxConfig?.enabled) {
-        stripGuiMcpFromOpencodeConfigContent(spawnEnv, this.logTag);
-      }
-
-      // Create Terminal Manager for per-command sandboxing via ACP Terminal API.
-      // claude-code-acp-ts uses terminal/create for bash execution.
-      // On Windows, this routes through nuwax-sandbox-helper.exe run.
-      // On macOS/Linux, commands are executed directly.
-      this.terminalManager = createTerminalManagerForSandbox(
-        sandboxConfig,
-        this.logTag,
-      );
-
-      // Store sandbox config for use in createSession (MCP Bash injection)
-      this.storedSandboxConfig = sandboxConfig ?? null;
+      // ACP terminal commands retain their normal process lifecycle.
+      this.terminalManager = new AcpTerminalManager();
 
       // Build ACP client handler AFTER terminalManager is initialized
       // so that getClientHandlers() spread includes terminal methods.
@@ -798,7 +724,6 @@ export class AcpEngine extends EventEmitter {
         process: proc,
         isolatedHome,
         cleanup,
-        sandboxCleanup: acpSandboxCleanup,
       } = await createAcpConnection(
         {
           binPath,
@@ -812,7 +737,6 @@ export class AcpEngine extends EventEmitter {
           env: spawnEnv,
           engineType: this.engineName,
           purpose: config.purpose ?? "engine",
-          sandbox: sandboxConfig,
           isolatedHomeScope: config.__isolatedHomeScope,
         },
         clientHandler,
@@ -825,7 +749,6 @@ export class AcpEngine extends EventEmitter {
       this.isolatedHome = isolatedHome;
       this.isolatedHomeScope = config.__isolatedHomeScope ?? null;
       this.processCleanup = cleanup; // 🔧 FIX: Store cleanup function
-      this.sandboxCleanup = acpSandboxCleanup ?? null;
 
       // Handle process exit
       proc.on("exit", (code, signal) => {
@@ -983,16 +906,6 @@ export class AcpEngine extends EventEmitter {
     this.cleanupIsolatedHomeDirectory();
     this.isolatedHomeScope = null;
 
-    // Cleanup sandbox resources (temp seatbelt profiles, etc.)
-    if (this.sandboxCleanup) {
-      try {
-        this.sandboxCleanup();
-      } catch (e) {
-        log.warn(`${this.logTag} Sandbox resource cleanup failed:`, e);
-      }
-      this.sandboxCleanup = null;
-    }
-
     // Cleanup terminal manager (kill running processes, release resources)
     if (this.terminalManager) {
       try {
@@ -1064,7 +977,6 @@ export class AcpEngine extends EventEmitter {
 
     const { sessionCwd, mcpServers, _meta } = buildNewSessionParams(opts, {
       config: this.config,
-      storedSandboxConfig: this.storedSandboxConfig,
       engineName: this.engineName,
       logTag: this.logTag,
     });
@@ -1129,7 +1041,6 @@ export class AcpEngine extends EventEmitter {
 
     const { sessionCwd, mcpServers, _meta } = buildNewSessionParams(opts, {
       config: this.config,
-      storedSandboxConfig: this.storedSandboxConfig,
       engineName: this.engineName,
       logTag: this.logTag,
     });
@@ -1224,7 +1135,6 @@ export class AcpEngine extends EventEmitter {
     // 见 acpNewSessionParams.ts
     const { sessionCwd, mcpServers, _meta } = buildNewSessionParams(opts, {
       config: this.config,
-      storedSandboxConfig: this.storedSandboxConfig,
       engineName: this.engineName,
       logTag: this.logTag,
     });
@@ -1593,7 +1503,7 @@ export class AcpEngine extends EventEmitter {
             prompt: promptContent,
             _meta: this.buildPromptMeta(_opts),
           };
-          if (this.sandboxCaps.usesOpencodePromptBehaviors) {
+          if (this.engineProfile.usesOpencodePromptBehaviors) {
             log.info(`${this.logTag} acp.prompt.meta`, {
               sessionId,
               requestId: _opts?.messageID,
@@ -1608,7 +1518,7 @@ export class AcpEngine extends EventEmitter {
             }),
             {
               // A lost prompt response can follow an applied desktop action. Never replay that prompt.
-              maxAttempts: this.sandboxCaps.usesOpencodePromptBehaviors && !agentTurn.active ? 2 : 1,
+              maxAttempts: this.engineProfile.usesOpencodePromptBehaviors && !agentTurn.active ? 2 : 1,
               retryDelayMs: MCP_RETRY_DELAY_MS,
               logTag: this.logTag,
               sessionId,
@@ -1905,7 +1815,7 @@ export class AcpEngine extends EventEmitter {
   private async ensureOpencodePermissionBridge(
     rules: ToolApprovalRuleInput[] | undefined,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (!this.sandboxCaps.usesOpencodeSpawnConfig || !this.config) {
+    if (!this.engineProfile.usesOpencodeSpawnConfig || !this.config) {
       return { ok: true };
     }
 
@@ -1948,7 +1858,7 @@ export class AcpEngine extends EventEmitter {
   private syncOpencodePermissionFromRequest(
     request: ComputerChatRequest,
   ): void {
-    if (!this.sandboxCaps.usesOpencodeSpawnConfig || !this.config) return;
+    if (!this.engineProfile.usesOpencodeSpawnConfig || !this.config) return;
     const perm = resolveOpencodePermissionEnv(
       request.agent_config?.agent_server?.env?.OPENCODE_PERMISSION,
     );
@@ -2265,7 +2175,7 @@ export class AcpEngine extends EventEmitter {
         const promptOptions: PromptOptions = {
           messageID: request.request_id,
         };
-        if (this.sandboxCaps.usesOpencodePromptBehaviors) {
+        if (this.engineProfile.usesOpencodePromptBehaviors) {
           promptOptions.mcpInitPolicy = NUWAX_MCP_INIT_POLICY_DEFAULT;
           promptOptions.mcpInitTimeoutMs = NUWAX_MCP_INIT_TIMEOUT_MS_DEFAULT;
         }
@@ -2596,23 +2506,8 @@ export class AcpEngine extends EventEmitter {
       return { outcome: { outcome: "cancelled" } };
     }
 
-    // 决策链（question 拒绝 → strict guard → tool_approval_rules → agent_mode）
-    // 见 permission/permissionCoordinator.ts
-    const decision = this.permissions.evaluate(params, {
-      strictEnabled: this.isStrictSandboxActiveForEngine(),
-      sandboxMode: this.sandboxMode,
-      workspaceDir: this.config?.workspaceDir,
-      projectWorkspaceDir: this.storedSandboxConfig?.projectWorkspaceDir,
-      sessionWorkspaceDir: this.sessions.get(acpSessionId)?.cwd,
-      isolatedHome: this.isolatedHome,
-      appDataDir: path.join(os.homedir(), APP_DATA_DIR_NAME),
-      tempDirs: [
-        os.tmpdir(),
-        process.env.TMPDIR,
-        process.env.TMP,
-        process.env.TEMP,
-      ].filter(Boolean) as string[],
-    });
+    // Tool rules and agent mode remain coordinated with the approval service.
+    const decision = this.permissions.evaluate(params);
 
     if (decision.kind === "cancel") {
       return { outcome: { outcome: "cancelled" } };

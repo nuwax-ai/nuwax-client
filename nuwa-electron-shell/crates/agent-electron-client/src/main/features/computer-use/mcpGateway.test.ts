@@ -84,6 +84,35 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
 }
 
 describe("multi-window MCP transport", () => {
+  it("reads permissions before a window exists without creating or resuming a task", async () => {
+    const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+    const checkPermissions = vi.fn(async () => ({ content: [{ type: "text", text: "permissions ready" }], structuredContent: { accessibility: true, screen_recording: true } }));
+    const f = await fixture(3000, grant => typeof grant === "string" ? grant : null, undefined, registry,
+      { allowedTools: ["check_permissions", "get_window_state"], checkPermissions, humanWaitTimeoutMs: 30 });
+    const peer = await f.client("test-token", true, "A");
+    const reply = await peer.request("tools/call", { name: "check_permissions", arguments: { prompt: true, pid: 999, session: "untrusted" } });
+    expect(reply).toMatchObject({ result: { structuredContent: { accessibility: true, screen_recording: true } } });
+    expect(checkPermissions.mock.calls).toEqual([[]]);
+    expect(registry.stateForOwner("A")).toBeUndefined();
+    expect(f.dispatches).not.toHaveBeenCalled();
+    const task = registry.ensure("A"); registry.bind(task.id, { pid: 10, windowId: 100, label: "A" });
+    registry.pauseTask(task.id, "userPaused");
+    expect((await peer.request("tools/call", { name: "check_permissions" })).result.structuredContent.accessibility).toBe(true);
+    expect(registry.stateForOwner("A")).toMatchObject({ phase: "paused", reason: "userPaused", stepCount: 0 });
+  });
+
+  it("rejects a permission result if the session expires during the read", async () => {
+    let authorized = true, finish!: (value: any) => void;
+    const checkPermissions = vi.fn(() => new Promise<any>(resolve => { finish = resolve; }));
+    const f = await fixture(3000, () => authorized ? "A" : null, undefined, undefined,
+      { allowedTools: ["check_permissions"], checkPermissions });
+    const peer = await f.client("test-token", true, "A");
+    const pending = peer.request("tools/call", { name: "check_permissions" });
+    await vi.waitFor(() => expect(checkPermissions).toHaveBeenCalledOnce());
+    authorized = false; finish({ structuredContent: { accessibility: true } });
+    expect((await pending).result.structuredContent.code).toBe("sessionRequired");
+  });
+
   it("returns an actionable refusal for a paused task instead of waiting on a different window", async () => {
     const { tasks: registry, a } = tasks();
     const f = await fixture(3000, grant => typeof grant === "string" ? grant : null, undefined, registry);

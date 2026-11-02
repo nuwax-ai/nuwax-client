@@ -5,7 +5,7 @@ const { apiRequest, changeLanguage } = vi.hoisted(() => ({
 }));
 vi.mock("./api", () => ({ apiRequest }));
 vi.mock("../i18n", () => ({ default: { changeLanguage } }));
-vi.mock("@shared/constants", () => ({ APP_NAME_IDENTIFIER: "nuwax" }));
+vi.mock("@shared/constants", () => ({ APP_NAME_IDENTIFIER: "nuwax", IS_DEV_PROFILE: false }));
 let settings: Map<string, unknown>;
 let setLang: ReturnType<typeof vi.fn>;
 beforeEach(() => {

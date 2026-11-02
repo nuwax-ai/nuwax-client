@@ -16,14 +16,6 @@ vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock("@main/services/packages/guiAgentServer", () => ({
-  getGuiAgentServerUrl: vi.fn(() => null),
-}));
-
-vi.mock("@main/services/packages/windowsMcp", () => ({
-  getWindowsMcpUrl: vi.fn(() => null),
-}));
-
 vi.mock("@main/services/system/dependencies", () => ({
   getResourcesPath: vi.fn(() => "/mock/resources"),
   getRipgrepBinPath: vi.fn(() => "/mock/rg"),
@@ -55,7 +47,6 @@ describe("buildNewSessionParams — MCP name sanitization", () => {
 
     const { mcpServers } = buildNewSessionParams(undefined, {
       config,
-      storedSandboxConfig: null,
       engineName: "deepagents-flow-ts",
       logTag: "[test]",
     });
@@ -83,7 +74,6 @@ describe("buildNewSessionParams — MCP name sanitization", () => {
       { mcpServers: config.mcpServers },
       {
         config,
-        storedSandboxConfig: null,
         engineName: "nuwaxcode",
         logTag: "[test]",
       },

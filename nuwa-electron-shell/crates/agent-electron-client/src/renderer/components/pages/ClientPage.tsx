@@ -1,3 +1,4 @@
+import { CLIENT_SERVICE_KEYS } from "@shared/serviceNames";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
 /**
  * ClientPage - Dashboard page (Electron version)
@@ -48,7 +49,6 @@ import { buildRedirectUrl } from "../../services/utils/sessionUrl";
 import { t } from "../../services/core/i18n";
 import { resolveDepDisplayName } from "../../utils/dependencyI18n";
 import styles from "../../styles/components/ClientPage.module.css";
-import { FEATURES } from "@shared/featureFlags";
 import {
   normalizeAgentEngine,
   normalizeOptionalPort,
@@ -109,16 +109,7 @@ function ClientPage({
   onGotoLogin,
 }: ClientPageProps) {
   const getStartupServiceKeys = useCallback(async (): Promise<string[]> => {
-    const keys = ["mcpProxy", "agent", "fileServer", "lanproxy", "ttyd"];
-    if (!FEATURES.ENABLE_GUI_AGENT_SERVER) return keys;
-    try {
-      const guiEnabledRes = await window.electronAPI?.guiServer?.isEnabled();
-      if (guiEnabledRes?.enabled) {
-        keys.splice(3, 0, "guiServer");
-      }
-    } catch (e) {
-      console.warn("[ClientPage] Failed to read GUI MCP enabled status:", e);
-    }
+    const keys = [...CLIENT_SERVICE_KEYS];
     return keys;
   }, []);
 
@@ -212,7 +203,6 @@ function ClientPage({
   const serviceNameMap: Record<string, string> = {
     agent: "Claw.Service.agent",
     fileServer: "Claw.Service.file",
-    guiServer: "Claw.Service.guiMcp",
     lanproxy: "Claw.Service.proxy",
     mcpProxy: "Claw.Service.mcp",
     ttyd: "Claw.Service.ttyd",
@@ -300,13 +290,6 @@ function ClientPage({
         });
       } else if (key === "mcpProxy") {
         result = await window.electronAPI?.mcp.start();
-      } else if (key === "guiServer") {
-        const guiEnabledRes = await window.electronAPI?.guiServer?.isEnabled();
-        if (!guiEnabledRes?.enabled) {
-          await onRefreshServices();
-          return false;
-        }
-        result = await window.electronAPI?.guiServer?.start();
       } else if (key === "ttyd") {
         result = await window.electronAPI?.ttyd.start();
       }
@@ -362,7 +345,6 @@ function ClientPage({
         await window.electronAPI?.fileServer.stop();
       else if (key === "lanproxy") await window.electronAPI?.lanproxy.stop();
       else if (key === "mcpProxy") await window.electronAPI?.mcp.stop();
-      else if (key === "guiServer") await window.electronAPI?.guiServer?.stop();
       else if (key === "ttyd") await window.electronAPI?.ttyd.stop();
     } catch (error) {
       message.error(t("Claw.Client.stopFailed", String(error)));
@@ -464,8 +446,6 @@ function ClientPage({
             await window.electronAPI?.lanproxy.stop();
           else if (svc.key === "mcpProxy") await window.electronAPI?.mcp.stop();
           else if (svc.key === "ttyd") await window.electronAPI?.ttyd.stop();
-          else if (svc.key === "guiServer")
-            await window.electronAPI?.guiServer?.stop();
         } catch (error) {
           console.error(`[ClientPage] Failed to stop ${svc.label}:`, error);
         }
@@ -562,10 +542,9 @@ function ClientPage({
       // 这样可避免在 reg 同步/状态切换瞬间，UI 被代理地址或空值“覆盖”导致的域名跳变。
       const displayDomain = authState.domain || displayDomainFallback || "";
       // 与 Tauri 一致：服务未全部启动时禁用「开始会话」「扫码使用」
-      // 注意：guiServer 是可选服务，其启动失败不阻塞 Start Session
       const allServicesRunning =
         services.length > 0 &&
-        services.filter((s) => s.key !== "guiServer").every((s) => s.running);
+        services.every((s) => s.running);
       const isButtonDisabled = !redirectUrl || !allServicesRunning;
       // nuwax 宿主（商业版）会话入口在 web 端：账户区块只展示登录状态，不渲染
       // 「开始会话/扫码使用」；社区壳（nuwaclaw）保持与 Tauri 对齐的双按钮。

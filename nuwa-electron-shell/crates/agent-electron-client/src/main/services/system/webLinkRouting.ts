@@ -7,6 +7,7 @@ import {
 import { isDesktopBrowserAvailable } from "../../features";
 import { externalWebUrl } from "../../ipc/openExternal";
 import { t } from "../i18n";
+import { publicWebUrl } from '@shared/utils/publicWebUrl';
 
 export const prefersDesktopBrowser = (): boolean =>
   linkOpenMode(readSetting(BROWSER_SETTING)) === "in-app" &&
@@ -14,7 +15,10 @@ export const prefersDesktopBrowser = (): boolean =>
 export async function openSystemWebLink(
   value: string
 ): Promise<{ success: boolean; error?: string }> {
-  const url = externalWebUrl(value);
+  const input = externalWebUrl(value);
+  const step1 = readSetting('step1_config') as { serverHost?: string } | null;
+  const loopback = readSetting('nuwax.loopback') as { origin?: string } | null;
+  const url = input && publicWebUrl(input, { businessOrigin: step1?.serverHost, gatewayOrigin: loopback?.origin });
   if (!url) return { success: false, error: "Invalid webpage URL" };
   try {
     await shell.openExternal(url);

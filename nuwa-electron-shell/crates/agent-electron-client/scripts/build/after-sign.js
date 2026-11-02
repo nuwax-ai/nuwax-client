@@ -201,18 +201,6 @@ async function afterSignMac(context) {
     }
   }
 
-  // 5. 签名 resources/sandbox-runtime（三端沙箱运行时）
-  const sandboxRuntimePath = path.join(resourcesPath, 'sandbox-runtime');
-  if (fs.existsSync(sandboxRuntimePath)) {
-    const sandboxRuntimeFiles = findExecutables(sandboxRuntimePath);
-    console.log(`[after-sign] 找到 sandbox-runtime 可执行文件: ${sandboxRuntimeFiles.length} 个`);
-    for (const file of sandboxRuntimeFiles) {
-      const relative = path.relative(sandboxRuntimePath, file);
-      console.log(`[after-sign] 签名 sandbox-runtime/${relative}`);
-      codesign(file, identity);
-    }
-  }
-
   // 5b. 签名 resources/nuwaxcode（内置引擎二进制）
   const nuwaxcodePath = path.join(resourcesPath, 'nuwaxcode');
   if (fs.existsSync(nuwaxcodePath)) {
@@ -230,13 +218,13 @@ async function afterSignMac(context) {
   // 5c. 签名 resources/nuwax-harness-acp-ts（引擎二进制组；vendor/ 非隐藏路径）
   //     prepare 仅做了 ad-hoc 占位签名，这里用 Developer ID 覆盖，否则带 quarantine 的
   //     ad-hoc 二进制会触发 Gatekeeper「无法验证开发者」弹窗。
-  const codexAcpTsPath = path.join(resourcesPath, 'nuwax-harness-acp-ts', 'vendor', 'nuwax-harness');
-  if (fs.existsSync(codexAcpTsPath)) {
-    const codexFiles = findExecutables(codexAcpTsPath);
+  const harnessAcpPath = path.join(resourcesPath, 'nuwax-harness-acp-ts', 'vendor', 'nuwax-harness');
+  if (fs.existsSync(harnessAcpPath)) {
+    const codexFiles = findExecutables(harnessAcpPath);
     console.log(`[after-sign] 找到 nuwax-harness-acp-ts 可执行文件: ${codexFiles.length} 个`);
     for (const file of codexFiles) {
       if (file.includes('.cache')) continue;
-      const relative = path.relative(codexAcpTsPath, file);
+      const relative = path.relative(harnessAcpPath, file);
       console.log(`[after-sign] 签名 nuwax-harness-acp-ts/vendor/nuwax-harness/${relative}`);
       codesign(file, identity);
     }
@@ -287,7 +275,6 @@ async function afterSignMac(context) {
         path.join(resourcesPath, 'nuwax-harness-acp-ts', 'vendor', 'nuwax-harness'),
         path.join(resourcesPath, 'node'),
         path.join(resourcesPath, 'uv'),
-        path.join(resourcesPath, 'sandbox-runtime'),
         path.join(resourcesPath, 'nuwaxcode'),
       ];
       let stapled = 0;
@@ -436,30 +423,12 @@ async function afterSignWindows(context) {
     totalFailed += result.failed;
   }
 
-  // 7. 签名 sandbox-runtime（如果存在）
-  const sandboxRuntimePath = path.join(resourcesPath, 'sandbox-runtime');
-  if (fs.existsSync(sandboxRuntimePath)) {
-    console.log('[after-sign] Windows: 签名 sandbox-runtime...');
-    const result = signWin.signDirectory(sandboxRuntimePath);
-    totalSigned += result.success;
-    totalFailed += result.failed;
-  }
-
-  // 8. 签名 sandbox-helper（nuwax-sandbox-helper.exe 等）
-  const sandboxHelperPath = path.join(resourcesPath, 'sandbox-helper');
-  if (fs.existsSync(sandboxHelperPath)) {
-    console.log('[after-sign] Windows: 签名 sandbox-helper...');
-    const result = signWin.signDirectory(sandboxHelperPath);
-    totalSigned += result.success;
-    totalFailed += result.failed;
-  }
-
   // 9. 签名 nuwax-harness-acp-ts（引擎二进制组 nuwax-harness.exe 等）
   //    signDirectory 按扩展名(.exe/.dll)筛选，dist/index.js 等非可执行文件会被忽略。
-  const codexAcpTsPath = path.join(resourcesPath, 'nuwax-harness-acp-ts');
-  if (fs.existsSync(codexAcpTsPath)) {
+  const harnessAcpPath = path.join(resourcesPath, 'nuwax-harness-acp-ts');
+  if (fs.existsSync(harnessAcpPath)) {
     console.log('[after-sign] Windows: 签名 nuwax-harness-acp-ts...');
-    const result = signWin.signDirectory(codexAcpTsPath);
+    const result = signWin.signDirectory(harnessAcpPath);
     totalSigned += result.success;
     totalFailed += result.failed;
   }

@@ -40,6 +40,7 @@ export function commercialEnv(root, overrides = {}) {
     ...process.env,
     NUWAX_APP_IDENTIFIER: config.product.identifier,
     NUWAX_APP_DISPLAY_NAME: config.product.displayName,
+    NUWAX_DEV_PROFILE: '',
     NUWAX_UPDATE_FEED_BASE: config.product.feedBase,
     NUWAX_DOWNLOAD_PAGE_URL: config.product.downloadUrl,
     NUWAX_PORT_OFFSET: String(config.product.portOffset),
@@ -87,7 +88,7 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['ttyd', [path.join(r, 'ttyd/bin', `ttyd${exe}`)], true],
     ['mcp-proxy', [path.join(r, 'mcp-proxy-ts/dist/index.js'), path.join(r, 'mcp-proxy-ts/dist/lib.bundle.mjs')]],
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
-    ['codex-acp-ts', [path.join(r, 'nuwax-harness-acp-ts/dist/index.js')]],
+    ['harness', [path.join(r, 'nuwax-harness-acp-ts/dist/index.js')]],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
@@ -243,7 +244,7 @@ export async function prepare(root, options = {}) {
   const tools = options.tools ?? core;
   const p = tools.paths(root);
   const opt = { frontend: config.frontend.mode, platform: process.platform, arch: process.arch, ...options };
-  if (!['dist', 'source'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist 或 source');
+  if (!['dist', 'source', 'remote'].includes(opt.frontend)) throw new Error('[prepare] frontend 必须是 dist、source 或 remote');
   await ensureSubmodules(root, opt, tools);
   const plan = ['commercial-dependencies', 'agent-kit', 'workspace', 'native', 'resources'];
   if (opt.dryRun) {
@@ -259,8 +260,8 @@ export async function prepare(root, options = {}) {
   const env = commercialEnv(root, { TARGET_ARCH: opt.arch });
     await ensureCommercialDependencies(root, tools);
     const kit = path.join(p.base, 'crates/agent-kit');
-    // The inherited workspace postinstall can generate an ignored standalone
-    // lock. It is build output, rather than an authoritative dependency input.
+    // Only a tracked agent-kit lock participates in reproducible build inputs;
+    // an ignored local lock must not invalidate the prepared workspace cache.
     const kitLockTracked = Boolean(await tools.git(p.base, ['ls-files', '--error-unmatch', '--', 'crates/agent-kit/pnpm-lock.yaml'], { allowFailure: true }));
     const kitKey = tools.fingerprint([opt.platform, opt.arch, process.versions.node, inputDigest([kit], { excludeNames: kitLockTracked ? [] : ['pnpm-lock.yaml'] })]);
     if (state.kit !== kitKey || !['index.js', 'index.cjs', 'index.d.ts'].every((name) => fileReady(path.join(kit, 'dist', name)))) {
@@ -273,7 +274,7 @@ export async function prepare(root, options = {}) {
     const workspaceKey = tools.fingerprint([kitKey, opt.platform, opt.arch, process.versions.node, inputDigest([path.join(p.base, 'package.json'), path.join(p.base, 'pnpm-lock.yaml'), path.join(p.base, 'pnpm-workspace.yaml'), path.join(p.client, 'package.json')])]);
     const dependenciesReady = ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')));
     if (state.workspace !== workspaceKey || !dependenciesReady) {
-      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', '--filter', '!agent-gui-server', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
+      await tools.pnpmRun(p.base, ['install', '--frozen-lockfile', '--prod=false', '--filter', '@nuwax-ai/nuwaclaw...', ...(state.workspace ? ['--force'] : [])], { env: { ...env, CI: 'true' } });
       if (!['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit'].every((name) => fileReady(path.join(p.client, 'node_modules', name, 'package.json')))) throw new Error('[prepare] 工作区依赖入口缺失');
       state.workspace = workspaceKey;
       save();

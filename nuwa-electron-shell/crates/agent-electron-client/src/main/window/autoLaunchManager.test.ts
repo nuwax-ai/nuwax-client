@@ -6,7 +6,17 @@ const state = vi.hoisted(() => ({
   allowed: true,
   apply: true,
   preference: null as unknown,
+  development: false,
+  commercial: false,
+  otherArgs: false,
+  cleanup: vi.fn(async () => undefined),
 }));
+vi.mock('@shared/constants', async (original) => ({
+  ...await original<typeof import('@shared/constants')>(),
+  get IS_DEV_PROFILE() { return state.development; },
+  get APP_NAME_IDENTIFIER() { return state.commercial ? "nuwax" : "nuwaclaw"; },
+}));
+vi.mock("./windowsAutoLaunch", () => ({ cleanupWindowsAutoLaunch: state.cleanup }));
 
 vi.mock("electron", () => ({
   app: {
@@ -15,7 +25,7 @@ vi.mock("electron", () => ({
     },
     getLoginItemSettings: vi.fn(() => ({
       openAtLogin: state.registered,
-      executableWillLaunchAtLogin: state.allowed,
+      executableWillLaunchAtLogin: (state.registered || state.otherArgs) && state.allowed,
     })),
     setLoginItemSettings: vi.fn(
       (settings: { openAtLogin: boolean; enabled?: boolean }) => {
@@ -57,7 +67,11 @@ beforeEach(() => {
     allowed: true,
     apply: true,
     preference: null,
+    development: false,
+    commercial: false,
+    otherArgs: false,
   });
+  state.cleanup.mockReset().mockResolvedValue(undefined);
   Object.defineProperty(process, "platform", { value: "win32" });
 });
 
@@ -68,6 +82,64 @@ afterEach(() => {
 });
 
 describe("开机自启动默认值与用户选择", () => {
+  it.each([false, true])("关闭清理在途时再次开启，清理失败=%s 也会串行完成并最终开启", async (cleanupFails) => {
+    state.commercial = true;
+    state.registered = true;
+    let finish!: () => void;
+    state.cleanup.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { finish = () => { state.registered = false; if (cleanupFails) reject(new Error("cleanup denied")); else resolve(); }; }));
+    const manager = new AutoLaunchManager();
+    const disable = manager.setEnabled(false);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const enable = manager.setEnabled(true);
+    expect(app.setLoginItemSettings).not.toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true }));
+    finish();
+    expect(await disable).toBe(!cleanupFails);
+    expect(await enable).toBe(true);
+    expect(state.registered).toBe(true);
+    expect(state.preference).toBe(true);
+  });
+
+  it("Windows 不因参数不匹配而隐藏仍会运行的启动项", async () => {
+    state.registered = false;
+    state.otherArgs = true;
+    state.allowed = true;
+    expect(await new AutoLaunchManager().isEnabled()).toBe(true);
+  });
+
+  it("商业包保存关闭意图并在下次启动清除遗留项，清理失败也不重新默认开启", async () => {
+    state.commercial = true;
+    state.registered = true;
+    state.cleanup.mockRejectedValueOnce(new Error("machine entry denied"));
+    expect(await new AutoLaunchManager().setEnabled(false)).toBe(false);
+    expect(state.preference).toBe(false);
+    vi.mocked(app.setLoginItemSettings).mockClear();
+    await new AutoLaunchManager().initializeDefault();
+    expect(state.cleanup).toHaveBeenCalledTimes(2);
+    expect(app.setLoginItemSettings).toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: false }));
+    expect(app.setLoginItemSettings).not.toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true }));
+  });
+
+  it("默认初始化在途时用户关闭，不会被迟到的默认开启覆盖", async () => {
+    state.commercial = true;
+    const manager = new AutoLaunchManager();
+    const pending = manager.initializeDefault();
+    await manager.setEnabled(false);
+    await pending;
+    expect(state.preference).toBe(false);
+    expect(app.setLoginItemSettings).not.toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true }));
+  });
+  it("开发档案不查询或修改安装版的系统自启动项", async () => {
+    state.development = true;
+    state.packaged = false;
+    const manager = new AutoLaunchManager();
+    expect(manager.isSupported()).toBe(false);
+    expect(await manager.isEnabled()).toBe(false);
+    expect(await manager.setEnabled(true)).toBe(false);
+    await manager.initializeDefault();
+    expect(app.getLoginItemSettings).not.toHaveBeenCalled();
+    expect(app.setLoginItemSettings).not.toHaveBeenCalled();
+    expect(writeSetting).not.toHaveBeenCalled();
+  });
   it("安装包首次运行默认开启，读写匹配同一启动参数", async () => {
     await new AutoLaunchManager().initializeDefault();
     expect(app.setLoginItemSettings).toHaveBeenCalledWith(

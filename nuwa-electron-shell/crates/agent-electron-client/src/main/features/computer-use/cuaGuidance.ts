@@ -34,6 +34,7 @@ export function cuaInstructions(scope: CuaScope): string {
 }
 
 const TOOL_NOTES: Record<string, (scope: CuaScope) => string | null> = {
+  check_permissions: () => "Read-only status check, available before selecting a window. The host always uses prompt:false; system permission requests belong to the user's settings flow. This does not resume a paused task.",
   get_browser_state: () => "Preferred way to read a web page. Refs stay valid until the next snapshot or navigation.",
   browser_prepare: (scope) => scope.kind === "window"
     ? "Only strategy existing_profile on the selected window is allowed."

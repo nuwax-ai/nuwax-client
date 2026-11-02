@@ -1,4 +1,5 @@
 import { useDesktopThemes, packageTheme, createShellThemeApplicator } from './features/themes';
+import { CLIENT_SERVICE_KEYS } from "@shared/serviceNames";
 import React, {
   useState,
   useEffect,
@@ -673,7 +674,6 @@ function App() {
   const [agentStatus, setAgentStatus] = useState<string>("idle");
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
-  const [guiMcpEnabled, setGuiMcpEnabled] = useState(false);
   const [pollFailCount, setPollFailCount] = useState(0);
   const [serviceLifecyclePhase, setServiceLifecyclePhase] =
     useState<CommercialServicePhase>("stopped");
@@ -693,26 +693,9 @@ function App() {
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: "idle",
   });
-  const statusExpectedKeys = useMemo(() => {
-    const keys = ["mcpProxy", "agent", "fileServer", "lanproxy", "ttyd"];
-    if (FEATURES.ENABLE_GUI_AGENT_SERVER && guiMcpEnabled) {
-      keys.splice(3, 0, "guiServer");
-    }
-    return keys;
-  }, [guiMcpEnabled]);
-  const getStartupServiceKeys = useCallback(async (): Promise<string[]> => {
-    const keys = ["mcpProxy", "agent", "fileServer", "lanproxy", "ttyd"];
-    if (!FEATURES.ENABLE_GUI_AGENT_SERVER) return keys;
-    try {
-      const guiEnabledRes = await window.electronAPI?.guiServer?.isEnabled();
-      if (guiEnabledRes?.enabled) {
-        keys.splice(3, 0, "guiServer");
-      }
-    } catch (e) {
-      console.warn("[App] Failed to read GUI MCP enabled status:", e);
-    }
-    return keys;
-  }, []);
+  const statusExpectedKeys: readonly string[] = CLIENT_SERVICE_KEYS;
+  const getStartupServiceKeys = useCallback(async (): Promise<string[]> =>
+    [...CLIENT_SERVICE_KEYS], []);
 
   // ============================================
   // 检查初始化向导状态（每次启动优先读取 quick init 配置）
@@ -1175,8 +1158,6 @@ function App() {
         window.electronAPI?.agent.serviceStatus(),
         window.electronAPI?.mcp.status(),
         window.electronAPI?.computerServer.status(),
-        window.electronAPI?.guiServer?.status(),
-        window.electronAPI?.guiServer?.isEnabled(),
         window.electronAPI?.ttyd.status(),
       ]);
       if (!isCurrent()) return;
@@ -1187,12 +1168,7 @@ function App() {
       const agentSvcStatus = unwrap(settled[2], { running: false });
       const mcpStatus = unwrap(settled[3], { running: false });
       const csStatus = unwrap(settled[4], { running: false });
-      const guiStatus = unwrap(settled[5], undefined);
-      const guiEnabledRes = unwrap(settled[6], undefined);
-      const ttydStatus = unwrap(settled[7], { running: false });
-      const isGuiEnabled =
-        FEATURES.ENABLE_GUI_AGENT_SERVER && (guiEnabledRes?.enabled ?? false);
-      setGuiMcpEnabled(isGuiEnabled);
+      const ttydStatus = unwrap(settled[5], { running: false });
       items.push({
         key: "mcpProxy",
         label: t("Claw.Service.mcp"),
@@ -1226,16 +1202,7 @@ function App() {
         pid: fsStatus?.pid,
         error: fsStatus?.error,
       });
-      if (isGuiEnabled) {
-        items.push({
-          key: "guiServer",
-          label: t("Claw.Service.guiMcp"),
-          description: t("Claw.Service.guiMcpDesc"),
-          running: guiStatus?.running ?? false,
-          pid: guiStatus?.pid,
-          error: guiStatus?.error,
-        });
-      }
+
       items.push({
         key: "lanproxy",
         label: t("Claw.Service.proxy"),
@@ -1333,8 +1300,6 @@ function App() {
               `fileServer: ${result?.success ? "ok" : "failed"}`,
               result?.error,
             );
-          } else if (key === "guiServer") {
-            result = await window.electronAPI?.guiServer?.start();
           } else if (key === "lanproxy") {
             const clientKey = (await window.electronAPI?.settings.get(
               "auth.saved_key",

@@ -26,8 +26,8 @@
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
-import type { IpcMainInvokeEvent } from "electron";
-import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
+import type { IpcMainInvokeEvent, BrowserWindowConstructorOptions } from "electron";
+import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -54,8 +54,9 @@ import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../ser
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
-import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage } from "../services/system/webviewPolicy";
+import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
+import { publicWebUrl } from "@shared/utils/publicWebUrl";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
   advanceTicketEpoch, mirrorNativeResponseTicket, ticketEpoch } from "../services/commercialTicketSession";
 import { initIMReceiver, startIMReceiver, stopIMReceiver, setIMNotificationEnabled, getIMUnreadSnapshot, onIMUnreadChanged } from "../services/imReceiverRuntime";
@@ -237,10 +238,6 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       signal.throwIfAborted();
       if (deps.some((d) => d.status === "missing" || d.status === "error"))
         throw new Error("Required dependencies unavailable");
-      const { startSandboxService } =
-        await import("../services/sandbox/serviceBootstrap");
-      await startSandboxService();
-      signal.throwIfAborted();
       // 桌面特性就绪（清理未启用特性残留 MCP 条目）须先于任何引擎读取本地配置。
       await runFeatureServicesStarting(signal);
       signal.throwIfAborted();
@@ -328,6 +325,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   // 桌面特性（截屏/录屏、开源组件声明等）：静态注册，按产品与开关加载，关闭即零痕迹。
   // isHostSender 在下方才声明，这里用闭包延迟取值（IPC 到达时早已初始化）。
   startDesktopFeatures({
+    developmentProfile: IS_DEV_PROFILE,
     product: APP_NAME_IDENTIFIER,
     ipcMain,
     isBusinessSender: isIMSender,
@@ -342,7 +340,14 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     host: {
       settings: { read: readSetting, write: writeSetting },
       session: { isAuthenticated: () => !!currentTicket() },
-      windows: { getMain: () => ctx.getMainWindow() },
+      windows: {
+        getMain: () => ctx.getMainWindow(),
+        toExternalUrl: (value) => {
+          const config = readSetting("step1_config") as { serverHost?: string } | null;
+          const gateway = readSetting("nuwax.loopback") as { origin?: string } | null;
+          return publicWebUrl(value, { businessOrigin: config?.serverHost, gatewayOrigin: gateway?.origin });
+        },
+      },
       agent: createFeatureAgentHost(),
     },
     permissions: { openGuide: openPermissionGuide, onFileAccessError: guideForFileAccessError,
@@ -959,7 +964,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         target = new URL(`${loopback.origin}${target.pathname}${target.search}${target.hash}`);
         target.searchParams.set("_shell", "1");
       }
-      const win = new BrowserWindow({
+      const windowOptions: BrowserWindowConstructorOptions = {
         width: 1280,
         height: 832,
         // 承载同一 nuwax 前端，同受 768 移动端断点约束，与主窗口共用下限
@@ -978,9 +983,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           nodeIntegration: false,
           sandbox: true,
         },
-      });
-      trackPopupWindow(win, event.sender);
-      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(win.webContents);
+      };
+      const readingPage = APP_NAME_IDENTIFIER === 'nuwax' && businessWindow && opts.purpose === 'page'
+        ? createBusinessReadingPage(windowOptions, target.href) : null;
+      const win = readingPage?.window ?? new BrowserWindow(windowOptions);
+      const contents = readingPage?.contents ?? win.webContents;
+      trackPopupWindow(win, event.sender, contents);
+      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(contents);
       shellWindows.add(win);
       businessShellWindows.add(win);
       win.on("closed", () => {
@@ -988,11 +997,12 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         businessShellWindows.delete(win);
       });
       if (businessWindow) {
-        trustInitialBusinessNavigation(win.webContents, target.href);
+        trustInitialBusinessNavigation(contents, target.href);
       }
-      attachHostActivityBusinessWindow(win);
-      computerServiceState.attach(win.webContents);
-      loadPopupDocument(win, target.href);
+      if (readingPage) attachHostActivityBusinessWindow(win, contents);
+      else attachHostActivityBusinessWindow(win);
+      computerServiceState.attach(contents);
+      loadPopupDocument(win, target.href, undefined, contents);
       log.info("[NuwaxBridge] native:openWindow", { path: raw });
       return { success: true };
     } catch (error) {

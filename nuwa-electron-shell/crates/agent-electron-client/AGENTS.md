@@ -15,7 +15,7 @@
 - `npm run dev`：开发；`npm run build`：主进程及 renderer 构建。
 - `npm run test:run -- <相关测试文件>`：日常验证；`npm run test:run`：集成全量。
 - `npm run test:scripts`：构建脚本测试；`npm run check:boundaries`、`npm run check:appdir`：相关静态检查。
-- 沙箱集成测试依赖真实平台环境，不以通用 CI 通过代替实机验收。发布和签名由仓库根 CLI 编排。
+- 桌面功能依赖真实平台环境，不以通用 CI 通过代替实机验收。发布和签名由仓库根 CLI 编排。
 
 ## 国际化
 

@@ -9,7 +9,7 @@
 
 | 引擎 | ACP 命令 | 运行时 | 安装方式 | ACP 来源 | 集成难度 |
 |------|---------|--------|---------|---------|---------|
-| **codex-cli** | `codex-acp` | Rust binary | `make build` (源码) | 社区 bridge | 低 |
+| **Nuwax Harness** | `nuwax-harness-acp-ts` | Node.js adapter + 原生引擎 | 随客户端内置 | Nuwax Harness adapter | 已集成 |
 | **pi-agent** | `pi-acp` | Node.js (JS) | `npm install -g pi-acp` | 社区 adapter | 低 |
 | **hermes-agent** | `hermes acp` | Python | `pip install -e '.[acp]'` | 原生支持 | 低 |
 | **kilo-cli** | `kilo acp` | Go native (opencode) | `npm install -g @kilocode/cli` | 原生支持 | 低 |
@@ -19,103 +19,10 @@
 
 ---
 
-## 1. codex-cli (OpenAI Codex CLI)
+## 1. Nuwax Harness
 
-### 基本信息
-
-- **全名**: OpenAI Codex CLI
-- **仓库**: [openai/codex](https://github.com/openai/codex) | ACP bridge: [cola-io/codex-acp](https://github.com/cola-io/codex-acp)
-- **语言**: Rust (2024 edition, MSRV 1.91+)
-- **ACP 来源**: 社区项目 `codex-acp`，非官方
-
-### 安装
-
-```bash
-# 源码构建
-git clone https://github.com/cola-io/codex-acp
-cd codex-acp
-make release  # → target/release/codex-acp
-```
-
-依赖：Rust 工具链、网络访问（Git 依赖 openai/codex workspace）。
-
-### ACP 启动
-
-```bash
-# 作为 stdio ACP agent 运行
-./target/release/codex-acp
-
-# 环境变量
-RUST_LOG=info                          # 日志级别 (默认 info)
-CODEX_LOG_FILE=./logs/codex-acp.log    # 日志文件
-CODEX_LOG_DIR=./logs                   # 按日轮转日志
-CODEX_LOG_STDERR=0                     # 禁用 stderr 日志
-```
-
-无命令行参数，直接通过 stdio 通信。
-
-### 支持的 ACP 方法
-
-| 方法 | 说明 |
-|------|------|
-| `initialize` | 握手，声明能力和 `custom_provider` 认证 |
-| `authenticate` | 认证（OpenAI 内置 / 自定义 provider） |
-| `session/new` | 创建会话，自动注册 `acp_fs` MCP server |
-| `session/load` | 恢复已有会话 |
-| `session/prompt` | 发送提示词，流式返回 |
-| `session/cancel` | 取消当前 turn |
-| `session/setMode` | 切换模式：`read-only` / `auto` / `full-access` |
-| `session/setModel` | 切换模型（仅自定义 provider） |
-
-### 会话模式
-
-- `read-only` — 禁用写工具
-- `auto` — 默认
-- `full-access` — 全权限
-
-### 内置 MCP
-
-自动启动 `acp_fs` MCP server（基于 rmcp），提供 `read_text_file`、`write_text_file`、`edit_text_file`、`multi_edit_text_file`。
-
-### 斜杠命令
-
-`/init`、`/status`、`/compact`、`/review`
-
-### NuwaClaw 集成要点
-
-- `binPath`: 构建产物路径或 `~/.nuwaclaw/node_modules/.bin/codex-acp`
-- `binArgs`: `[]`
-- `isNative`: `true` (Rust 原生二进制)
-- 认证：通过 `codex login` 或环境变量 `OPENAI_API_KEY`
-- chat2response: 可选，当用户配置国内模型时可自动走第三方代理（chat -> responses）
-
-#### codex-cli + chat2response 运行时配置示例
-
-背景说明：
-- `codex-cli` 侧主要面向较新的 Responses 协议，而国内很多模型网关仍以 Chat Completions 兼容层为主。
-- 因此在国内模型场景下，需要 `chat2response` 代理做协议桥接（chat -> responses），以保证 codex-cli 可用性。
-
-```bash
-# 必填：国内模型上游（例如 DeepSeek / Qwen / 智谱 的 OpenAI 兼容入口）
-OPENAI_BASE_URL=https://api.deepseek.com/v1
-OPENAI_API_KEY=sk-xxx
-
-# 必填：chat2response 代理地址（由代理负责 chat -> responses 转换）
-NUWAX_CHAT2RESPONSE_PROXY_URL=https://chat2response.example.com/proxy
-
-# 可选：是否启用自动路由（默认 true）
-# 1/true/yes/on -> 启用
-# 0/false/no/off -> 禁用
-NUWAX_CHAT2RESPONSE_ENABLED=true
-```
-
-行为说明：
-- NuwaClaw 在 `codex-cli` 引擎场景下可托管本地 `chat2response` 服务（默认 `http://127.0.0.1:60009/v1`），优先使用本地服务做协议转换。
-- `chat2response` 现已收口为本仓独立维护项目（`crates/chat2response-server`），客户端打包阶段通过 `prepare:chat2response` 复制到 `resources/chat2response`，不依赖用户运行时动态安装。
-- `prepare:chat2response` 使用 Node 原生 `fs.cpSync`（跨平台），并且仅当 `resources/chat2response/node_modules/chat2response/package.json` 存在时才允许“版本一致即跳过”，避免产物残缺导致假成功。
-- 当引擎为 `codex-cli` 且为 OpenAI 兼容协议时，若 `OPENAI_BASE_URL` 不是官方 `api.openai.com`，会优先尝试改写到 `NUWAX_CHAT2RESPONSE_PROXY_URL`。
-- 改写成功后，原上游地址会保存在 `NUWAX_CHAT2RESPONSE_UPSTREAM_BASE_URL`，供代理继续转发。
-- 若未配置代理地址，则回退为原始 `OPENAI_BASE_URL` 并记录告警日志，不会中断会话。
+Codex 接入统一使用 Nuwax Harness，入口为 `nuwax-harness-acp-ts`。
+当前运行、资源准备和模型协议配置见 [Nuwax Harness 接入](nuwax-harness.md)。
 
 ---
 

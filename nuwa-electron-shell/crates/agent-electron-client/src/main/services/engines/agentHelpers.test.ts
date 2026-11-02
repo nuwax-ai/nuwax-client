@@ -44,13 +44,10 @@ describe("agentHelpers", () => {
       expect(mapAgentCommand("claude-code-acp-ts")).toBe("claude-code");
     });
 
-    it('should map "nuwax-codex-acp" to codex-cli engine', () => {
-      expect(mapAgentCommand("nuwax-codex-acp")).toBe("codex-cli");
-    });
-
-    it('should map "nuwax-codex-acp-ts" to codex-cli engine', () => {
-      expect(mapAgentCommand("nuwax-codex-acp-ts")).toBe("codex-cli");
-    });
+    it.each(["codex", "codex-cli", "nuwax-harness"])(
+      'maps "%s" to the Nuwax Harness engine',
+      (command) => expect(mapAgentCommand(command)).toBe("codex-cli"),
+    );
 
     it('should map "nuwax-harness-acp-ts" to codex-cli engine', () => {
       expect(mapAgentCommand("nuwax-harness-acp-ts")).toBe("codex-cli");

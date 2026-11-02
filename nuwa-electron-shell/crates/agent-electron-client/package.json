@@ -10,19 +10,15 @@
     "dev": "node scripts/dev/ensure-resources.js && dotenv -e .env.development -- cross-env NODE_ENV=development concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "vite --force",
     "dev:electron": "node scripts/dev/wait-vite.js && npm run prepare:mcp-proxy && npm run build:main:dev && dotenv -e .env.development -- cross-env NODE_ENV=development electron .",
-    "prebuild:main:dev": "echo \"agent-kit from npm, skip local build\"",
     "build:main:dev": "dotenv -e .env.development -- cross-env NODE_ENV=development node scripts/build/build-main-esbuild.js",
-    "prebuild:main": "echo \"agent-kit from npm, skip local build\"",
     "build:main": "cross-env NODE_ENV=production node scripts/build/build-main-esbuild.js",
     "build:renderer": "vite build",
     "build": "dotenv -e .env.production -- cross-env NODE_ENV=production npm run build:main && npm run build:renderer",
     "test": "vitest",
-    "pretest:run": "echo \"agent-kit from npm, skip local build\"",
     "test:run": "vitest run",
     "test:scripts": "vitest run tests/scripts",
     "test:coverage": "vitest run --coverage",
-    "sandbox:matrix:check": "vitest run tests/scripts/sandbox-matrix-consistency.test.ts",
-    "sandbox:matrix:generate": "cross-env SANDBOX_MATRIX_WRITE=1 vitest run tests/scripts/sandbox-matrix-consistency.test.ts",
+    "typecheck:main": "tsc --noEmit -p tsconfig.main.json",
     "check:boundaries": "node scripts/tools/check-import-boundaries.js",
     "check:appdir": "node scripts/tools/check-app-dir-literals.js",
     "test:integrated-node": "node scripts/tools/test-integrated-node.js && npm run test:scripts",
@@ -36,18 +32,11 @@
     "check-ports": "node scripts/tools/check-startup-ports.js",
     "check-ports:dev": "node scripts/tools/check-startup-ports.js --vite",
     "prepare:mcp-proxy": "node scripts/prepare/prepare-mcp-proxy.js",
-    "prepare:sandboxed-mcp": "node scripts/prepare/prepare-sandboxed-mcp.js",
-    "verify:sandboxed-mcp": "node scripts/verify-sandboxed-mcp-bundle.mjs",
     "prepare:nuwaxcode": "node scripts/prepare/prepare-nuwaxcode.js",
-    "prepare:codex-acp-ts": "node scripts/prepare/prepare-codex-acp-ts.js",
-    "prepare:sandbox-runtime": "node scripts/prepare/prepare-sandbox-runtime.js",
-    "build:sandbox-helper": "node scripts/prepare/build-sandbox-helper.js",
-    "prepare:sandbox-helper-win": "node scripts/prepare/prepare-sandbox-helper-windows.js",
+    "prepare:harness": "node scripts/prepare/prepare-harness.js",
     "prepare:all": "node scripts/prepare/prepare-all.js",
     "prepare:nuwax-file-server": "node scripts/prepare/prepare-nuwax-file-server.js",
     "prepare:claude-code-acp-ts": "node scripts/prepare/prepare-claude-code-acp-ts.js",
-    "prepare:gui-server": "node scripts/prepare/prepare-gui-server.js",
-    "prepare:windows-mcp": "node scripts/prepare/prepare-windows-mcp.js",
     "electron-rebuild": "electron-rebuild -f -w better-sqlite3",
     "build:electron": "npm run build && node scripts/build/run-build-electron.js",
     "dist": "npm run build:electron -- --mac",
@@ -81,7 +70,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@nuwax-ai/agent-kit": "0.4.0",
     "@nuwax-ai/mcp-proxy-ts": "1.5.4",
-    "@nuwax-ai/nuwax-harness-acp-ts": "^1.2.22",
+    "@nuwax-ai/nuwax-harness-acp-ts": "^1.2.24",
     "@uiw/react-json-view": "2.0.0-alpha.42",
     "@uiw/react-textarea-code-editor": "^3.1.1",
     "adm-zip": "^0.5.16",
@@ -94,6 +83,9 @@
     "electron-log": "^5.2.4",
     "electron-updater": "^6.8.3",
     "jszip": "3.10.1",
+    "i18next": "^26.0.3",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "i18next-http-backend": "^3.0.4",
     "node-cron": "^4.2.1",
     "node-machine-id": "^1.1.12",
     "postcss": "8.5.26",
@@ -102,6 +94,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.2",
     "react-syntax-highlighter": "^16.1.1",
     "sqlite-vec": "^0.1.7-alpha.2",
     "zod": "^3.25.0"
@@ -118,7 +111,6 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^2.1.8",
-    "agent-gui-server": "workspace:*",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "dotenv-cli": "^11.0.0",
@@ -260,39 +252,6 @@
         ]
       },
       {
-        "from": "resources/sandboxed-bash-mcp",
-        "to": "sandboxed-bash-mcp",
-        "filter": [
-          "**/*.mjs",
-          "dist/**",
-          ".bundle-version"
-        ]
-      },
-      {
-        "from": "resources/sandboxed-fs-mcp",
-        "to": "sandboxed-fs-mcp",
-        "filter": [
-          "**/*.mjs",
-          "dist/**",
-          ".bundle-version"
-        ]
-      },
-      {
-        "from": "resources/sandbox-runtime",
-        "to": "sandbox-runtime",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "resources/agent-gui-server",
-        "to": "agent-gui-server",
-        "filter": [
-          "**/*",
-          "!**/node_modules/.bin/**"
-        ]
-      },
-      {
         "from": "resources/nuwaxcode",
         "to": "nuwaxcode",
         "filter": [
@@ -400,20 +359,6 @@
           "filter": [
             "**/*"
           ]
-        },
-        {
-          "from": "resources/windows-mcp",
-          "to": "windows-mcp",
-          "filter": [
-            "**/*"
-          ]
-        },
-        {
-          "from": "resources/sandbox-helper",
-          "to": "sandbox-helper",
-          "filter": [
-            "**/*.exe"
-          ]
         }
       ]
     },
@@ -453,5 +398,6 @@
       "node_modules/better-sqlite3/build/Release/*.node",
       "dist/main/*.node"
     ]
-  }
+  },
+  "private": true
 }

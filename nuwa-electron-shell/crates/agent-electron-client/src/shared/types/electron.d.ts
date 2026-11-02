@@ -106,45 +106,6 @@ export interface AgentRunnerAPI {
   }>;
 }
 
-import type {
-  SandboxStatus,
-  SandboxPolicy,
-  SandboxCapabilities,
-} from "./sandbox";
-
-export interface SandboxAPI {
-  status: () => Promise<{
-    success: boolean;
-    data?: SandboxStatus;
-    error?: string;
-    code?: string;
-  }>;
-  getPolicy: () => Promise<{
-    success: boolean;
-    data?: SandboxPolicy;
-    error?: string;
-    code?: string;
-  }>;
-  setPolicy: (patch: Partial<SandboxPolicy>) => Promise<{
-    success: boolean;
-    data?: SandboxPolicy;
-    error?: string;
-    code?: string;
-  }>;
-  capabilities: () => Promise<{
-    success: boolean;
-    data?: SandboxCapabilities;
-    error?: string;
-    code?: string;
-  }>;
-  setup: () => Promise<{
-    success: boolean;
-    data?: { success: boolean; message?: string };
-    error?: string;
-    code?: string;
-  }>;
-}
-
 export interface FileServerAPI {
   start: (port?: number) => Promise<{ success: boolean; error?: string }>;
   stop: () => Promise<{ success: boolean; error?: string }>;
@@ -177,16 +138,6 @@ export interface ComputerServerAPI {
   start: (port?: number) => Promise<{ success: boolean; error?: string }>;
   stop: () => Promise<{ success: boolean; error?: string }>;
   status: () => Promise<{ running: boolean; port?: number; error?: string }>;
-}
-
-export interface GuiServerAPI {
-  start: () => Promise<{ success: boolean; error?: string }>;
-  stop: () => Promise<{ success: boolean; error?: string }>;
-  status: () => Promise<{ running: boolean; pid?: number; error?: string }>;
-  isEnabled: () => Promise<{ enabled: boolean; reason?: string }>;
-  setEnabled: (
-    enabled: boolean,
-  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface AdminServerAPI {
@@ -270,8 +221,8 @@ export interface DependenciesAPI {
     version?: string;
     error?: string;
   }>;
-  /** 应用包内集成的 nuwax-codex-acp */
-  checkCodexAcpBundled: () => Promise<{
+  /** 应用包内集成的 Nuwax Harness */
+  checkHarnessBundled: () => Promise<{
     success: boolean;
     available?: boolean;
     version?: string;
@@ -849,11 +800,9 @@ export interface ElectronAPI {
   mcp: MCPAPI;
   lanproxy: LanproxyAPI;
   agentRunner: AgentRunnerAPI;
-  sandbox: SandboxAPI;
   fileServer: FileServerAPI;
   ttyd: TtydAPI;
   computerServer: ComputerServerAPI;
-  guiServer: GuiServerAPI;
   adminServer: AdminServerAPI;
   dependencies: DependenciesAPI;
   shell: ShellAPI;

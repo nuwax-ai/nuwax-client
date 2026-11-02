@@ -10,8 +10,6 @@ const guarded = new Set([
   "computerServer:start",
   "mcp:start",
   "ttyd:start",
-  "guiServer:start",
-  "sandbox:create",
   "services:restartAllExceptLanproxy",
 ]);
 /** 单服务启动也进入会话队列，避免登出后迟到的 IPC 绕开聚合门禁。 */

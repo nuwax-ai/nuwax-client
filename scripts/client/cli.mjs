@@ -31,7 +31,7 @@ export function parseArgs(argv) {
       options[camel(flag)] = value;
     } else throw new Error('Unknown option: --' + flag);
   }
-  if (options.frontend && !['dist', 'source'].includes(options.frontend)) throw new Error('--frontend must be dist or source');
+  if (options.frontend && !(command === 'dev' ? ['dist', 'source', 'remote'] : ['dist', 'source']).includes(options.frontend)) throw new Error('--frontend must be dist or source (dev also accepts remote)');
   if (options.stage && !['sign', 'sync'].includes(options.stage)) throw new Error('--stage must be sign or sync');
   if (options.port) {
     options.port = Number(options.port);
@@ -42,7 +42,7 @@ export function parseArgs(argv) {
 export async function main(argv = process.argv.slice(2)) {
   const { command, options } = parseArgs(argv);
   if (command === 'help' || options.help) {
-    console.log('Nuwax: dev [--frontend source], frontend:build, pack [--frontend source] [--dir],');
+    console.log('Nuwax: dev [--frontend source|remote], frontend:build, pack [--frontend source] [--dir],');
     console.log('       sub:update [--nuwax ref] [--push],');
     console.log('       release --version X.Y.Z[-beta.N] [--channel stable|beta] [--tag existing-tag] [--stage sign|sync] [--dry-run], doctor [--json]');
     return;

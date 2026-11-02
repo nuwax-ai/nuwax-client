@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatMcpServerSummary, simplifyCommandPath } from "./mcpServerEditorUtils";
-import { isComputerUseManagedServerId } from "../../../shared/guiMcp";
+import { isComputerUseManagedServerId } from "../../../shared/managedMcp";
 
 vi.mock("../../services/core/i18n", () => ({
   t: (key: string) => key,

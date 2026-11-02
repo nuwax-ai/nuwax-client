@@ -23,10 +23,16 @@ import type { AgentEngineType } from "@shared/types/electron";
  */
 const NUWAX_APP_IDENTIFIER_ENV = process.env.NUWAX_APP_IDENTIFIER;
 const NUWAX_APP_DISPLAY_NAME_ENV = process.env.NUWAX_APP_DISPLAY_NAME;
+const NUWAX_DEV_PROFILE_ENV = process.env.NUWAX_DEV_PROFILE;
+
+/** Keep the commercial product identity while isolating local development state. */
+export const IS_DEV_PROFILE = NUWAX_APP_IDENTIFIER_ENV?.trim() === "nuwax" && NUWAX_DEV_PROFILE_ENV === "1";
+/** ASCII profile name is shared by Chromium storage and the default business workspace. */
+export const COMMERCIAL_PROFILE_NAME = IS_DEV_PROFILE ? "Nuwax Dev" : "Nuwax";
 
 /** 应用对外显示名称（窗口标题、关于、安装包名称等），与 package.json build.productName 保持一致 */
 export const APP_DISPLAY_NAME =
-  NUWAX_APP_DISPLAY_NAME_ENV?.trim() || "女娲 Nuwax";
+  (NUWAX_APP_DISPLAY_NAME_ENV?.trim() || "女娲 Nuwax") + (IS_DEV_PROFILE ? " Dev" : "");
 
 /** 应用技术标识（进程名、目录名等，小写字母），与 appId 等保持一致 */
 export const APP_NAME_IDENTIFIER =
@@ -88,11 +94,8 @@ export const DEFAULT_FILE_SERVER_PORT = 60005 + NUWAX_PORT_OFFSET;
 /** Lanproxy 默认端口 */
 export const DEFAULT_LANPROXY_PORT = 60002 + NUWAX_PORT_OFFSET;
 
-/** GUI Agent MCP 默认端口 */
+/** Legacy registration protocol field; no local GUI service listens on this port. */
 export const DEFAULT_GUI_MCP_PORT = 60008 + NUWAX_PORT_OFFSET;
-
-/** 本地 MCP 管理中 GUI MCP 条目的固定 Server ID（与 ACP 注入名一致） */
-export const GUI_MCP_SERVER_ID = "gui-agent";
 
 /** 本地 MCP 管理中 Computer Use (cua) 条目的固定 Server ID */
 export const CUA_MCP_SERVER_ID = "cua";
@@ -305,7 +308,7 @@ export const DEFAULT_MIRROR_CONFIG = {
 // ==================== 应用目录 ====================
 
 /** 应用数据目录名称（与 APP_NAME_IDENTIFIER 对应，带点号前缀） */
-export const APP_DATA_DIR_NAME = `.${APP_NAME_IDENTIFIER}`;
+export const APP_DATA_DIR_NAME = `.${APP_NAME_IDENTIFIER}${IS_DEV_PROFILE ? "-dev" : ""}`;
 
 /** 日志目录名称 */
 export const LOGS_DIR_NAME = "logs";
@@ -510,6 +513,9 @@ export const I18N_KEYS = {
     MESSAGE_SOUND: "Claw.IM.messageSound",
     MESSAGE_SOUND_DESC: "Claw.IM.messageSoundDesc",
   },
+  ContextMenu: {
+    PASTE_AS_TEXT: "Claw.ContextMenu.pasteAsText",
+  },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",
     CHECKUPDATE: "Claw.NativeMenu.checkUpdate",
@@ -667,7 +673,6 @@ export const I18N_KEYS = {
       PROXY: "Claw.Pages.Service.proxy",
       AGENT: "Claw.Pages.Service.agent",
       MCP_PROXY: "Claw.Pages.Service.mcpProxy",
-      GUI_MCP: "Claw.Pages.Service.guiMcp",
     },
     Agent: {
       STATUS: {
@@ -740,7 +745,7 @@ export const I18N_KEYS = {
       DEP_FILE_SERVER: "Claw.Pages.Dependencies.dep.fileServer",
       DEP_MCP_PROXY: "Claw.Pages.Dependencies.dep.mcpProxy",
       DEP_NUWAXCODE: "Claw.Pages.Dependencies.dep.nuwaxcode",
-      DEP_CODEX_ACP: "Claw.Pages.Dependencies.dep.codexAcp",
+      DEP_HARNESS: "Claw.Pages.Dependencies.dep.harness",
       DEP_RIPGREP: "Claw.Pages.Dependencies.dep.ripgrep",
 
       // 依赖描述
@@ -751,7 +756,7 @@ export const I18N_KEYS = {
       DESC_FILE_SERVER: "Claw.Pages.Dependencies.desc.fileServer",
       DESC_MCP_PROXY: "Claw.Pages.Dependencies.desc.mcpProxy",
       DESC_NUWAXCODE: "Claw.Pages.Dependencies.desc.nuwaxcode",
-      DESC_CODEX_ACP: "Claw.Pages.Dependencies.desc.codexAcp",
+      DESC_HARNESS: "Claw.Pages.Dependencies.desc.harness",
       DESC_RIPGREP: "Claw.Pages.Dependencies.desc.ripgrep",
 
       // 版本要求
@@ -797,6 +802,7 @@ export const I18N_KEYS = {
 
 /** Computer Use product controls and diagnostics. */
 export const CUA_I18N_KEYS = {
+  PREVIEW_RESIZE: "Claw.Cua.preview.resize",
   MW_MULTIWINDOW_TITLE: "Claw.Cua.multiwindow.title",
   MW_MULTIWINDOW_DESCRIPTION: "Claw.Cua.multiwindow.description",
   MW_MULTIWINDOW_ENABLE: "Claw.Cua.multiwindow.enable",

@@ -9,10 +9,6 @@ import {
 } from "../services/packages/mcp";
 import { getConfiguredPorts } from "../services/startupPorts";
 import { DEPS_SYNC_TIMEOUT } from "@shared/constants";
-import {
-  startSandboxService,
-  stopSandboxService,
-} from "../services/sandbox/serviceBootstrap";
 
 /** 依赖同步是否正在进行 */
 let _depsSyncInProgress = false;
@@ -103,19 +99,6 @@ export async function runStartupTasks(): Promise<void> {
     log.info("[McpProxy] Config loaded");
   } catch (e) {
     log.warn("[McpProxy] Init config failed:", e);
-  }
-
-  if (APP_NAME_IDENTIFIER !== "nuwax") {
-    // 初始化沙箱服务（后台启动，不阻塞主流程）
-    setImmediate(async () => {
-      try {
-        await startSandboxService();
-        log.info("[Sandbox] Sandbox service started");
-      } catch (e) {
-        log.warn("[Sandbox] Sandbox service start failed (non-fatal):", e);
-        // 沙箱服务失败不阻塞应用，只是功能降级
-      }
-    });
   }
 
   // 客户端升级后：若 appVersion 或 installVersion 变化，后台同步初始化依赖到写死版本

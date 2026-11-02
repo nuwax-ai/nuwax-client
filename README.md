@@ -9,7 +9,7 @@
 
 ### 会话与智能体
 
-- **多引擎**：内置 claude-code / nuwaxcode / codex-cli 三种 Agent 引擎（ACP 协议接入）；运行时依赖首次启动自动初始化，内置优先、缺失时自动下载补齐。
+- **多引擎**：内置 Claude Code / nuwaxcode / Nuwax Harness 三种 Agent 引擎（ACP 协议接入）；Codex 统一通过 Nuwax Harness 接入；运行时依赖首次启动自动初始化，内置优先、缺失时自动下载补齐。
 - 会话工作台：会话详情、历史会话、临时分享会话；计划模式与执行过程中的干预/审批确认。
 - 会话记忆：核心记忆与完整转录随会话留存。
 

@@ -28,6 +28,7 @@ import {
   openReleasesPage,
 } from "../services/autoUpdater";
 import { getDeviceId } from "../services/system/deviceId";
+import { getClientHostname } from "../services/system/computerName";
 import {
   openMacPrivacySettings,
   isMacPrivacyPane,
@@ -286,10 +287,9 @@ export function registerAppHandlers(ctx: HandlerContext): void {
     return getDeviceId();
   });
 
-  // 本机电脑名（os.hostname，三平台），顶栏设备标识等消费；与商业注册上报的
-  // computerName（commercialAuth.getComputerName 剥 .local）同源。
+  // Development display and registration share a Dev label; installed hosts retain their raw hostname.
   ipcMain.handle("app:getHostname", () => {
-    return os.hostname();
+    return getClientHostname();
   });
 
   ipcMain.handle(

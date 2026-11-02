@@ -4,7 +4,7 @@
  * 包含 handleRequest 主路由函数及所有子路由 handler：
  * /computer/chat、/computer/progress/{id}（SSE）、
  * /computer/agent/status|stop|session/cancel、
- * /computer/notify-resolved、/computer/gui-agent/*、/health
+ * /computer/notify-resolved、/health
  */
 
 import * as http from "http";
@@ -31,8 +31,6 @@ import type {
   UnifiedSessionMessage,
 } from "../engines/unifiedAgent";
 import type {
-  GuiVisionModelConfig,
-  GuiDisplayInfo,
 } from "@shared/types/computerTypes";
 import { redactForLog, redactStringForLog } from "../utils/logRedact";
 import { DEFAULT_SSE_HEARTBEAT_INTERVAL } from "@shared/constants";
@@ -1145,85 +1143,6 @@ export async function handleRequest(
       return;
     }
 
-    // POST /computer/gui-agent/vision-model
-    if (pathname === "/computer/gui-agent/vision-model" && method === "POST") {
-      const body = await parseBody(req);
-      log.info("[HTTP] Saving GUI Agent vision model config");
-      const { writeSetting } = await import("../../db");
-      writeSetting("gui_agent_vision_model", body);
-      sendJson(res, 200, httpResult({ success: true }));
-      return;
-    }
-
-    // GET /computer/gui-agent/vision-model
-    if (pathname === "/computer/gui-agent/vision-model" && method === "GET") {
-      const { readSetting } = await import("../../db");
-      const config = readSetting(
-        "gui_agent_vision_model",
-      ) as GuiVisionModelConfig | null;
-      sendJson(
-        res,
-        200,
-        httpResult(
-          config || {
-            provider: "anthropic",
-            apiProtocol: "anthropic",
-            model: "claude-sonnet-4-20250514",
-            displayIndex: 0,
-            coordinateMode: "auto",
-            maxSteps: 50,
-            stepDelayMs: 1500,
-            jpegQuality: 75,
-          },
-        ),
-      );
-      return;
-    }
-
-    // GET /computer/gui-agent/displays
-    if (pathname === "/computer/gui-agent/displays" && method === "GET") {
-      try {
-        const { screen } = await import("electron");
-        const displays = screen.getAllDisplays();
-        const result: GuiDisplayInfo[] = displays.map((d, idx) => ({
-          index: idx,
-          label:
-            idx === 0
-              ? `${t("Claw.GUIAgent.display.primary")} (${d.size.width}x${d.size.height})`
-              : `${t("Claw.GUIAgent.display.secondary")} ${idx + 1} (${d.size.width}x${d.size.height})`,
-          width: d.size.width,
-          height: d.size.height,
-          scaleFactor: d.scaleFactor,
-          isPrimary: d.bounds.x === 0 && d.bounds.y === 0,
-        }));
-        sendJson(res, 200, httpResult(result));
-      } catch (err: any) {
-        log.error("[HTTP] Failed to get display list:", err);
-        sendJson(
-          res,
-          200,
-          httpError("5000", err.message || "Failed to get displays"),
-        );
-      }
-      return;
-    }
-
-    // POST /computer/gui-agent/display
-    if (pathname === "/computer/gui-agent/display" && method === "POST") {
-      const body = await parseBody(req);
-      const displayIndex = body.displayIndex as number;
-      log.info(`[HTTP] Setting GUI Agent target display: ${displayIndex}`);
-      const { readSetting, writeSetting } = await import("../../db");
-      const existing = (readSetting("gui_agent_vision_model") || {}) as Record<
-        string,
-        unknown
-      >;
-      writeSetting("gui_agent_vision_model", { ...existing, displayIndex });
-      sendJson(res, 200, httpResult({ success: true, displayIndex }));
-      return;
-    }
-
-    // 404
     sendJson(res, 404, httpError("NOT_FOUND", `Path not found: ${pathname}`));
   } catch (error: any) {
     log.error(`❌ [HTTP] Request handling error: ${pathname}`, error);

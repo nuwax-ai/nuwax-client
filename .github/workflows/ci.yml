@@ -1,6 +1,6 @@
 # 当前仓库的客户端、前端和工具链门禁；发布与续跑规范见 docs/release-channels.md。
 # 壳源码直接位于 nuwa-electron-shell/。run-shell.cjs 仅负责工作目录、依赖与身份环境，
-# 商业测试不注入构建身份；需真实沙箱环境的集成用例不纳入通用 runner。
+# 商业测试不注入构建身份。
 name: CI (gates)
 
 # main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
@@ -115,7 +115,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -152,7 +152,10 @@ jobs:
           node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npm run check:appdir"
 
       - name: Run commercial tests
-        run: node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude 'tests/sandbox-integration/**' --exclude '**/node_modules/**'"
+        run: node scripts/run-shell.cjs --no-env -- bash -c "cd crates/agent-electron-client && npx vitest run --exclude '**/node_modules/**'"
+
+      - name: Check Electron TypeScript
+        run: npm run typecheck
 
   # 前端门禁快路径：门禁结论只由 nuwax pin + 本 workflow 决定。对照提交（push 前一
   # 尖端 / PR base）的 pin 与 ci.yml 均未变、且其 CI (gates) 已全绿时，下游
@@ -258,7 +261,7 @@ jobs:
           package_json_file: nuwax/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
           cache: pnpm
           cache-dependency-path: nuwax/pnpm-lock.yaml
       - name: Install frontend dependencies
@@ -307,7 +310,7 @@ jobs:
           package_json_file: nuwax/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
           cache: pnpm
           cache-dependency-path: nuwax/pnpm-lock.yaml
       - name: Install frontend dependencies

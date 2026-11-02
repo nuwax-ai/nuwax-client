@@ -174,6 +174,30 @@ describe("commercial branding (overlay, identifier=nuwax)", () => {
     expect(mockWriteSetting).not.toHaveBeenCalled();
   });
 
+  it("development creates its own workspace without reading installed data", async () => {
+    process.env.NUWAX_DEV_PROFILE = "1";
+    vi.resetModules();
+    mockReadSetting.mockReturnValue(null);
+    try {
+      const { migrateDataDir, migrateSettingsPaths } =
+        await import("./migrate");
+      migrateDataDir();
+      migrateSettingsPaths();
+      expect(mockRenameSync).not.toHaveBeenCalled();
+      expect(mockCopyFileSync).not.toHaveBeenCalled();
+      expect(mockMkdirSync).toHaveBeenCalledWith(
+        path.join("/mock/home", "Nuwax Dev"),
+        { recursive: true },
+      );
+      expect(mockWriteSetting).toHaveBeenCalledWith("step1_config", {
+        workspaceDir: path.join("/mock/home", "Nuwax Dev"),
+      });
+    } finally {
+      delete process.env.NUWAX_DEV_PROFILE;
+      vi.resetModules();
+    }
+  });
+
   it("does not persist default when workspace dir creation fails", async () => {
     mockReadSetting.mockReturnValue({ serverHost: "https://t.example" });
     mockMkdirSync.mockImplementationOnce(() => {
@@ -212,6 +236,48 @@ describe("commercial branding (overlay, identifier=nuwax)", () => {
       backend: "auto",
       mode: "strict",
     });
+  });
+
+  it("removes retired GUI entries while preserving CUA, user MCP and unrelated configuration", async () => {
+    const settings: Record<string, unknown> = {
+      step1_config: { workspaceDir: "/Users/x/wsp" },
+      mcp_local_config: {
+        description: "user configuration",
+        mcpServers: {
+          " GUI-AGENT ": { url: "http://127.0.0.1:60008/mcp" },
+          cua: { url: "http://127.0.0.1:24601/mcp", enabled: true },
+          custom: { command: "node", args: ["user-server.js"] },
+        },
+      },
+    };
+    mockReadSetting.mockImplementation((key) => settings[String(key)] ?? null);
+    mockWriteSetting.mockImplementation((key, value) => {
+      settings[key] = value;
+    });
+    const { migrateSettingsPaths } = await import("./migrate");
+    migrateSettingsPaths();
+    expect(settings.mcp_local_config).toEqual({
+      description: "user configuration",
+      mcpServers: {
+        cua: { url: "http://127.0.0.1:24601/mcp", enabled: true },
+        custom: { command: "node", args: ["user-server.js"] },
+      },
+    });
+    mockWriteSetting.mockClear();
+    migrateSettingsPaths();
+    expect(mockWriteSetting).not.toHaveBeenCalled();
+    mockWriteSetting.mockReset();
+  });
+
+  it("does not overwrite malformed MCP configuration during retirement", async () => {
+    mockReadSetting.mockImplementation((key) =>
+      key === "mcp_local_config"
+        ? { mcpServers: ["unexpected"] }
+        : { workspaceDir: "/Users/x/wsp" },
+    );
+    const { migrateSettingsPaths } = await import("./migrate");
+    migrateSettingsPaths();
+    expect(mockWriteSetting).not.toHaveBeenCalled();
   });
 
   it("does not write when experimental flags already off/absent", async () => {

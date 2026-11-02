@@ -5,7 +5,8 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import config from '../../client.config.mjs';
 import * as core from './core.mjs';
-import { prepare, commercialEnv, electronBinary, fileReady } from './prepare.mjs';
+import { prepare, commercialEnv, fileReady } from './prepare.mjs';
+import { prepareDevelopmentApp } from './dev-app.mjs';
 
 export function assertPortAvailable(port, host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
@@ -64,6 +65,14 @@ export function launch(command, args, { cwd, env, log, name, platform = process.
   return { child, exit, alive: () => !failure && child.exitCode === null && child.signalCode === null };
 }
 
+export function developmentEnv(root, mode, frontendPort) {
+  return commercialEnv(root, {
+    NODE_ENV: 'development', NUWAX_DEV_PROFILE: '1',
+    NUWAX_DEV_COMPUTER_USE_ROOT: path.join(core.paths(root).cache, 'dev/computer-use'),
+    NUWAX_WEBVIEW_ORIGIN: mode === 'source' ? `http://localhost:${frontendPort}` : '',
+  });
+}
+
 /** Start independent frontend/Vite/Electron processes, retaining Vite's valid cache. */
 export async function dev(root, options = {}) {
   const tools = options.tools ?? core;
@@ -77,9 +86,10 @@ export async function dev(root, options = {}) {
     return prepared;
   }
   for (const port of [rendererPort, ...(mode === 'source' ? [frontendPort] : [])]) await assertPortAvailable(port);
+  const developmentApp = await (options.prepareDevelopmentApp ?? prepareDevelopmentApp)(root, { tools });
   const logs = path.join(root, 'logs');
   fs.mkdirSync(logs, { recursive: true });
-  const env = commercialEnv(root, { NODE_ENV: 'development', ...(mode === 'source' ? { NUWAX_WEBVIEW_ORIGIN: `http://localhost:${frontendPort}` } : { NUWAX_WEBVIEW_ORIGIN: '' }) });
+  const env = developmentEnv(root, mode, frontendPort);
   const launchProcess = options.launch ?? launch;
   const processes = [];
   let stopping;
@@ -111,9 +121,11 @@ export async function dev(root, options = {}) {
     if (requestedSignal) return { ...prepared, stopped: true };
     await tools.npmRun(p.client, 'build:main:dev', [], { env });
     if (requestedSignal) return { ...prepared, stopped: true };
-    const electron = start('electron', check(electronBinary(p.client)), ['.'], p.client);
-    console.log(`[dev] Electron 已启动；前端 ${mode === 'source' ? `HMR http://localhost:${frontendPort}` : p.dist}。按 Ctrl+C 停止全部进程。`);
-    const exits = processes.map((item) => item.exit.then((result) => ({ item, result })));
+    const electron = start('electron', check(developmentApp.binary), ['.'], p.client);
+    const helper = start('computer-use-prepare', process.execPath, [path.join(root, 'scripts/client/dev-helper.mjs')], root);
+    void helper.exit.then(({ code }) => console.log(code === 0 ? '[dev] Computer Use Dev 助手已就绪' : '[dev] Computer Use Dev 助手准备失败，主客户端可继续使用；查看 computer-use-prepare-dev.log'));
+    console.log(`[dev] Electron 已启动；前端 ${mode === 'source' ? `HMR http://localhost:${frontendPort}` : mode === 'remote' ? '使用客户端设置中的业务域名（Cookie 登录）' : p.dist}。按 Ctrl+C 停止全部进程。`);
+    const exits = processes.filter(item => item !== helper).map((item) => item.exit.then((result) => ({ item, result })));
     const { result } = await Promise.race(exits);
     if (result.code !== 0 && !requestedSignal) throw new Error(`[dev] 子进程退出 (${result.code})；查看 ${logs}`);
     return { ...prepared, stopped: true, code: requestedSignal ? 0 : result.code, electronPid: electron.child.pid };

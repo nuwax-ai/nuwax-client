@@ -5,8 +5,6 @@ import * as path from "path";
 import { ACP_SESSION_CANCELLED_ERROR_CODE } from "@shared/constants";
 import type { AcpChatHttpResult } from "@shared/types/computerTypes";
 import * as dependencies from "@main/services/system/dependencies";
-import * as sandboxPolicy from "@main/services/sandbox/policy";
-import * as opencodeAcpSandbox from "./sandbox/opencodeAcpSandbox";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
 import type { ServerResponse } from "http";
 import type { HandlerContext } from "@shared/types/ipc";
@@ -72,14 +70,6 @@ vi.mock("../../system/processRegistry", () => ({
   },
 }));
 
-vi.mock("@main/services/packages/guiAgentServer", () => ({
-  getGuiAgentServerUrl: vi.fn(() => null),
-}));
-
-vi.mock("@main/services/packages/windowsMcp", () => ({
-  getWindowsMcpUrl: vi.fn(() => null),
-}));
-
 vi.mock("@main/services/system/dependencies", () => ({
   getResourcesPath: vi.fn(() => "/mock/resources"),
   getAppEnv: vi.fn(() => ({ PATH: "/mock/path" })),
@@ -98,22 +88,6 @@ vi.mock("@main/services/system/binaryLocator", async (importOriginal) => {
     getBundledGitBashPath: () => mockGetBundledGitBashPath(),
   };
 });
-
-vi.mock("@main/services/sandbox/policy", () => ({
-  getSandboxPolicy: vi.fn(() => ({
-    enabled: false,
-    backend: "auto",
-    mode: "compat",
-    autoFallback: "startup-only",
-    windowsMode: "workspace-write",
-  })),
-  resolveSandboxType: vi.fn(async () => ({
-    type: "none",
-    degraded: false,
-  })),
-  getBundledLinuxBwrapPath: vi.fn(() => null),
-  getBundledWindowsSandboxHelperPath: vi.fn(() => null),
-}));
 
 import { AcpEngine } from "./acpEngine";
 import * as acpClient from "./acpClient";

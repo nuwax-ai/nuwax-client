@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { legacyAgentRunnerUnavailable } from "@shared/legacyAgentRunner";
-import type { SandboxPolicy } from "@shared/types/sandbox";
 import type { UpdateCheckOptions } from "@shared/types/updateTypes";
 import { hostFeatureNamespaces } from "./features";
 
@@ -105,16 +104,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }) => Promise.resolve(legacyAgentRunnerUnavailable()),
     stop: () => ipcRenderer.invoke("agentRunner:stop"),
     status: () => ipcRenderer.invoke("agentRunner:status"),
-  },
-
-  // Sandbox policy and diagnostics
-  sandbox: {
-    status: () => ipcRenderer.invoke("sandbox:status"),
-    getPolicy: () => ipcRenderer.invoke("sandbox:policy:get"),
-    setPolicy: (patch: Partial<SandboxPolicy>) =>
-      ipcRenderer.invoke("sandbox:policy:set", patch),
-    capabilities: () => ipcRenderer.invoke("sandbox:capabilities"),
-    setup: () => ipcRenderer.invoke("sandbox:setup"),
   },
 
   // Agent - unified ACP service (claude-code/nuwaxcode)
@@ -269,16 +258,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     status: () => ipcRenderer.invoke("computerServer:status"),
   },
 
-  // GUI Agent Server lifecycle (桌面自动化视觉操作服务)
-  guiServer: {
-    start: () => ipcRenderer.invoke("guiServer:start"),
-    stop: () => ipcRenderer.invoke("guiServer:stop"),
-    status: () => ipcRenderer.invoke("guiServer:status"),
-    isEnabled: () => ipcRenderer.invoke("guiServer:isEnabled"),
-    setEnabled: (enabled: boolean) =>
-      ipcRenderer.invoke("guiServer:setEnabled", enabled),
-  },
-
   // Admin Server lifecycle (管理接口服务)
   adminServer: {
     start: (port?: number) => ipcRenderer.invoke("adminServer:start", port),
@@ -342,8 +321,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("dependencies:checkNuwaxcodeBundled"),
     checkClaudeCodeAcpBundled: () =>
       ipcRenderer.invoke("dependencies:checkClaudeCodeAcpBundled"),
-    checkCodexAcpBundled: () =>
-      ipcRenderer.invoke("dependencies:checkCodexAcpBundled"),
+    checkHarnessBundled: () =>
+      ipcRenderer.invoke("dependencies:checkHarnessBundled"),
     checkNuwaxFileServerBundled: () =>
       ipcRenderer.invoke("dependencies:checkNuwaxFileServerBundled"),
     detectPackage: (packageName: string, binName?: string) =>

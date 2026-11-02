@@ -52,7 +52,7 @@ const RESOURCES = [
     required: true,
   },
   {
-    script: 'prepare:codex-acp-ts',
+    script: 'prepare:harness',
     dir: 'nuwax-harness-acp-ts',
     marker: ['package.json'],
     required: true,
@@ -63,8 +63,6 @@ const RESOURCES = [
   ...(isWin ? [{ script: 'prepare:git', dir: 'git', marker: ['bin'], required: true }] : []),
   { script: 'prepare:node', dir: 'node', marker: [], required: false },
   { script: 'prepare:ripgrep', dir: 'ripgrep', marker: ['bin'], required: false },
-  { script: 'prepare:gui-server', dir: 'agent-gui-server', marker: [], required: false },
-  { script: 'prepare:sandboxed-mcp', dir: 'sandboxed-bash-mcp', marker: [], required: false },
 ];
 
 function isPresent(item) {

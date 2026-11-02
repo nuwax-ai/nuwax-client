@@ -124,7 +124,7 @@ export default function DependenciesPage() {
     available: boolean;
     version?: string;
   } | null>(null);
-  const [codexAcpBundled, setCodexAcpBundled] = useState<{
+  const [harnessBundled, setHarnessBundled] = useState<{
     available: boolean;
     version?: string;
   } | null>(null);
@@ -217,13 +217,13 @@ export default function DependenciesPage() {
           : { available: false },
       );
 
-      // 应用包内集成的 nuwax-codex-acp
-      if (window.electronAPI?.dependencies.checkCodexAcpBundled) {
-        const codexAcpRes =
-          await window.electronAPI.dependencies.checkCodexAcpBundled();
-        setCodexAcpBundled(
-          codexAcpRes?.success && codexAcpRes.available
-            ? { available: true, version: codexAcpRes.version }
+      // 应用包内集成的 Nuwax Harness
+      if (window.electronAPI?.dependencies.checkHarnessBundled) {
+        const harnessRes =
+          await window.electronAPI.dependencies.checkHarnessBundled();
+        setHarnessBundled(
+          harnessRes?.success && harnessRes.available
+            ? { available: true, version: harnessRes.version }
             : { available: false },
         );
       }
@@ -918,10 +918,10 @@ export default function DependenciesPage() {
             </span>
           </div>
 
-          {/* nuwax-codex-acp：应用包内集成 */}
+          {/* Nuwax Harness：应用包内集成 */}
           <div className={styles.serviceRow}>
             <div className={styles.serviceInfo}>
-              {codexAcpBundled?.available ? (
+              {harnessBundled?.available ? (
                 <CheckCircleOutlined
                   style={{ color: "var(--color-success)", fontSize: 12 }}
                 />
@@ -932,12 +932,12 @@ export default function DependenciesPage() {
               )}
               <div>
                 <span className={styles.serviceLabel}>
-                  {t(I18N_KEYS.Pages.Dependencies.DEP_CODEX_ACP)}
+                  {t(I18N_KEYS.Pages.Dependencies.DEP_HARNESS)}
                 </span>
-                {codexAcpBundled?.available && codexAcpBundled.version && (
+                {harnessBundled?.available && harnessBundled.version && (
                   <span className={styles.serviceDescription}>
                     {" "}
-                    {codexAcpBundled.version}
+                    {harnessBundled.version}
                   </span>
                 )}
               </div>
@@ -945,12 +945,12 @@ export default function DependenciesPage() {
             <span
               style={{
                 fontSize: 12,
-                color: codexAcpBundled?.available
+                color: harnessBundled?.available
                   ? "var(--color-success)"
                   : "var(--color-text-tertiary)",
               }}
             >
-              {codexAcpBundled?.available
+              {harnessBundled?.available
                 ? t(I18N_KEYS.Pages.Dependencies.INTEGRATED)
                 : t(I18N_KEYS.Pages.Dependencies.NOT_INTEGRATED)}
             </span>

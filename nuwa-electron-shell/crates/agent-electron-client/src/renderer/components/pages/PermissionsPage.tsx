@@ -18,6 +18,8 @@ import {
 import { watchPermissionSnapshot } from "../../services/permissionPolling";
 import { t } from "../../services/core/i18n";
 import styles from "../../styles/components/PermissionsPage.module.css";
+import { IS_DEV_PROFILE } from "@shared/constants";
+import { permissionHelperName } from "@shared/utils/permissionIdentityText";
 
 const text = (key: string, ...values: string[]) =>
   t(`Claw.PermissionGuide.${key}`, ...values);
@@ -104,7 +106,7 @@ export default function PermissionsPage({
   const granted = items.filter((item) => item.status === "granted").length;
   const index = items.findIndex((item) => item.key === selected);
   const subject = (key: PermissionKey) =>
-    helperKey(key) ? "Nuwax Computer Use" : snapshot.appName;
+    helperKey(key) ? permissionHelperName(IS_DEV_PROFILE) : snapshot.appName;
   const isMac = snapshot.platform === "darwin";
   const missingHelper =
     typeof selected === "string" &&

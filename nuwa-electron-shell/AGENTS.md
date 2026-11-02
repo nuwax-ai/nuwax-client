@@ -14,7 +14,7 @@
 - 客户端内的具体约束见 `crates/agent-electron-client/AGENTS.md`。只读与任务相关的文档，不默认遍历历史设计和验收记录。
 - `npm run test:electron` 执行客户端全量测试；日常在 crate 内使用 `npm run test:run -- <相关文件>`。
 - `npm run test:electron:scripts` 检查构建脚本；构建 agent-kit 使用 `npm run build:agent-kit`。
-- 提交钩子仅格式化暂存文件。测试按改动域执行，已有结果足够且代码未变时不重复全量验证。
+- 工程入口与质量门统一由仓库根管理。测试按改动域执行，已有结果足够且代码未变时不重复全量验证。
 - 新增测试覆盖真实行为和未覆盖的风险；注释保留原因、协议、平台差异及单位，不记录开发流水账。
 
 ## 产品隔离

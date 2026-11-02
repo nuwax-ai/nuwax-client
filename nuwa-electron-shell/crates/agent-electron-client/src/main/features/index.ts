@@ -67,6 +67,7 @@ export interface FeatureHostServices {
 }
 
 export interface StartFeaturesOptions {
+  developmentProfile?: boolean;
   product: string;
   ipcMain: IpcMainLike;
   /** 业务页调用方是否受信（受信顶层文档且为当前代次）。 */
@@ -150,6 +151,7 @@ export function startDesktopFeatures(
   });
 
   const createContext = (feature: DesktopFeature): FeatureContext => ({
+    developmentProfile: options.developmentProfile,
     product: options.product,
     ipc: createTrustedIpc(options.ipcMain, options.isBusinessSender),
     hostIpc: createTrustedIpc(options.ipcMain, options.isHostSender),

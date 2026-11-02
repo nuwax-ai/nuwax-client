@@ -34,10 +34,6 @@ import { APP_DATA_DIR_NAME } from "../constants";
 import { isWindows } from "../system/shellEnv";
 import { persistentMcpBridge } from "./persistentMcpBridge";
 import { discoverRemoteMcpTools } from "./discoverRemoteMcpTools";
-import { isGuiMcpManagedServerId } from "@shared/guiMcp";
-import { getGuiMcpEnabled } from "./guiMcpLocalConfig";
-import { getGuiAgentServerUrl } from "./guiAgentServer";
-import { getWindowsMcpUrl } from "./windowsMcp";
 import { discoverStdioMcpTools } from "./discoverStdioMcpTools";
 import {
   filterEnabledMcpServers,
@@ -490,7 +486,14 @@ export const DEFAULT_MCP_PROXY_CONFIG: McpServersConfig = {
   mcpServers: {
     "chrome-devtools": {
       command: "npx",
-      args: ["-y", "chrome-devtools-mcp@latest"],
+      args: [
+        "-y",
+        // 自研 fork（官方包 puppeteer 默认 --enable-automation → navigator.webdriver=true，
+        // Google 登录触发风控）；两个反检测参数与容器内 /etc/mcp/mcp-proxy-config.json 对齐
+        "@nuwax-ai/chrome-devtools-mcp@latest",
+        "--ignore-default-chrome-arg=--enable-automation",
+        "--chrome-arg=--disable-blink-features=AutomationControlled",
+      ],
       persistent: true,
     },
   },
@@ -1071,18 +1074,7 @@ class McpProxyManager {
     }
 
     if (isRemoteEntry(entry)) {
-      if (isGuiMcpManagedServerId(serverId)) {
-        if (!getGuiMcpEnabled()) {
-          throw new Error(t("Claw.MCP.list.guiMcpDisabledForTest"));
-        }
-        const liveUrl = isWindows()
-          ? getWindowsMcpUrl()
-          : getGuiAgentServerUrl();
-        if (!liveUrl) {
-          throw new Error(t("Claw.MCP.list.guiMcpNotRunning"));
-        }
-        entry = { ...entry, url: liveUrl };
-      }
+
       try {
         return await discoverRemoteMcpTools(entry);
       } catch (e) {

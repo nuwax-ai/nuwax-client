@@ -76,6 +76,13 @@ const feature = (id: string, over: Partial<DesktopFeature> = {}): DesktopFeature
 });
 
 describe("startDesktopFeatures", () => {
+  it.each([false, true])("injects the host profile without changing the commercial product (development=%s)", (developmentProfile) => {
+    const f = feature("alpha");
+    startDesktopFeatures(options({ developmentProfile }), [f]);
+    const ctx = (f.register as ReturnType<typeof vi.fn>).mock.calls[0][0] as FeatureContext;
+    expect(ctx.developmentProfile).toBe(developmentProfile);
+    expect(ctx.product).toBe("nuwax");
+  });
   it("为每个特性构造上下文：ipc / hostIpc / 以 <dataDir>/<id> 为根的 scratch", () => {
     const f = feature("alpha");
     startDesktopFeatures(options(), [f]);

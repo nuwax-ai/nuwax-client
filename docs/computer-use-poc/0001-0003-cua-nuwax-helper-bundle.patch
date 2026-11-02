@@ -262,7 +262,7 @@ index d3d0fb47..85393d10 100644
  pub fn bundle_id() -> &'static str {
      if is_local_installation() {
          LOCAL_BUNDLE_ID
-@@ -106,13 +137,43 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
+@@ -106,13 +137,44 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
          .ok()
          .and_then(|path| std::fs::canonicalize(path).ok())
          .is_some_and(|path| {
@@ -289,6 +289,7 @@ index d3d0fb47..85393d10 100644
 +        "CuaDriver.app",
 +        "CuaDriverLocal.app",
 +        "Nuwax Computer Use.app",
++        "Nuwax Computer Use Dev.app",
 +        "NuwaClaw Computer Use.app",
 +    ];
 +    let extras = std::env::var("CUA_DRIVER_BUNDLE_DIR_NAMES")
@@ -1759,24 +1760,27 @@ diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissi
 index b7617427..4a4a5003 100644
 --- a/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
 +++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/check_permissions.rs
-@@ -45,6 +45,8 @@ fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
+@@ -45,6 +45,10 @@ fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
          Some("com.trycua.driver.local")
      } else if executable.contains("/CuaDriver.app/Contents/MacOS/") {
          Some("com.trycua.driver")
 +    } else if executable.contains("/Nuwax Computer Use.app/Contents/MacOS/") {
 +        Some("com.nuwax-ai.nuwax-computer-use")
++    } else if executable.contains("/Nuwax Computer Use Dev.app/Contents/MacOS/") {
++        Some("com.nuwax-ai.nuwax-computer-use.dev")
      } else {
          None
      }
-@@ -70,11 +72,18 @@ fn direct_capture_evidence_store_for_identity(
+@@ -70,11 +74,19 @@ fn direct_capture_evidence_store_for_identity(
      let state_directory = match bundle_id {
          "com.trycua.driver.local" => ".cua-driver-local",
          "com.trycua.driver" => ".cua-driver",
 +        "com.nuwax-ai.nuwax-computer-use" => ".nuwax/computer-use",
++        "com.nuwax-ai.nuwax-computer-use.dev" => ".nuwax-dev/computer-use",
          _ => return None,
      };
 -    Some(DirectCaptureEvidenceStore::new(
-+    let state_root = if bundle_id == "com.nuwax-ai.nuwax-computer-use" {
++    let state_root = if matches!(bundle_id, "com.nuwax-ai.nuwax-computer-use" | "com.nuwax-ai.nuwax-computer-use.dev") {
 +        std::env::var_os("CUA_DRIVER_DATA_HOME")
 +            .map(std::path::PathBuf::from)
 +            .unwrap_or_else(|| home.join(state_directory))
@@ -1789,7 +1793,7 @@ index b7617427..4a4a5003 100644
          bundle_id,
      ))
  }
-@@ -555,12 +564,37 @@ mod tests {
+@@ -555,12 +567,41 @@ mod tests {
              ),
              Some("com.trycua.driver.local")
          );
@@ -1798,6 +1802,10 @@ index b7617427..4a4a5003 100644
 +                "/Users/test/Nuwax Computer Use.app/Contents/MacOS/Nuwax Computer Use"
 +            ),
 +            Some("com.nuwax-ai.nuwax-computer-use")
++        );
++        assert_eq!(
++            driver_bundle_id_for_executable("/Users/test/Nuwax Computer Use Dev.app/Contents/MacOS/Nuwax Computer Use"),
++            Some("com.nuwax-ai.nuwax-computer-use.dev")
 +        );
          assert_eq!(
              driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),

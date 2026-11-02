@@ -1,35 +1,12 @@
-/**
- * ACP Terminal Manager — Client-side implementation of the ACP Terminal API.
- *
- * Manages terminal lifecycle for commands delegated by ACP agents via
- * `terminal/create`. On Windows, commands are routed through
- * `nuwax-sandbox-helper.exe run` for per-command sandboxing.
- * On macOS/Linux, commands are executed directly (process-level sandboxing
- * is handled separately via seatbelt/bwrap).
- *
- * Implements the ACP Terminal protocol methods:
- * - terminal/create  → createTerminal()
- * - terminal/output  → terminalOutput()
- * - terminal/wait_for_exit → waitForExit()
- * - terminal/kill    → kill()
- * - terminal/release → release()
- *
- * @see https://agentclientprotocol.com/protocol/terminals
- */
+/** ACP terminal transport with owned process cleanup and bounded output. */
 
 import { spawn, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
 import path from "path";
 import log from "electron-log";
-import { SandboxInvoker } from "@main/services/sandbox/SandboxInvoker";
 import { killProcessTree } from "@main/services/utils/processTree";
 import { createPlatformAdapter } from "@main/services/system/platformAdapter";
 import { wrapWindowsCommandWithGitBash } from "@main/services/system/windowsGitBashCommand";
-import type {
-  SandboxMode,
-  SandboxProcessConfig,
-  WindowsSandboxMode,
-} from "@shared/types/sandbox";
 
 // ============================================================================
 // Types
@@ -61,158 +38,6 @@ interface TerminalSession {
   resolveExit: (status: TerminalExitStatus) => void;
 }
 
-export const TERMINAL_SANDBOX_SAFE_ENV_KEYS = [
-  "PATH",
-  "Path",
-  "SYSTEMROOT",
-  "SystemRoot",
-  "WINDIR",
-  "windir",
-  "SYSTEMDRIVE",
-  "SystemDrive",
-  "COMSPEC",
-  "ComSpec",
-  "PATHEXT",
-  "PATHExt",
-  "TEMP",
-  "TMP",
-  "USERPROFILE",
-  "HOME",
-  "LOCALAPPDATA",
-  "APPDATA",
-  "COMPUTERNAME",
-  "USERNAME",
-  "OS",
-  "PROCESSOR_ARCHITECTURE",
-  "LANG",
-  "TZ",
-  "ORIGINAL_PATH",
-  "MSYS2_PATH_TYPE",
-] as const;
-
-function isPathWithinRoot(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
-export function resolveSandboxCwdWithinRoots(
-  requestedCwd: string,
-  writableRoots: string[],
-): string {
-  const resolvedCwd = path.resolve(requestedCwd);
-  const resolvedRoots = writableRoots.map((root) => path.resolve(root));
-
-  if (resolvedRoots.length === 0) {
-    return resolvedCwd;
-  }
-
-  if (resolvedRoots.some((root) => isPathWithinRoot(resolvedCwd, root))) {
-    return resolvedCwd;
-  }
-
-  throw new Error(
-    `Sandbox terminal cwd is outside writable roots: ${resolvedCwd}`,
-  );
-}
-
-export function resolveSandboxCwdWithFallback(
-  requestedCwd: string | null | undefined,
-  writableRoots: string[],
-  fallbackCwd: string,
-): { cwd: string; usedFallback: boolean } {
-  const resolvedRoots = writableRoots.map((root) => path.resolve(root));
-
-  if (resolvedRoots.length === 0) {
-    return {
-      cwd: path.resolve(requestedCwd ?? fallbackCwd),
-      usedFallback: false,
-    };
-  }
-
-  const fallbackRoot = resolvedRoots[0];
-
-  if (!requestedCwd) {
-    return { cwd: fallbackRoot, usedFallback: true };
-  }
-
-  try {
-    return {
-      cwd: resolveSandboxCwdWithinRoots(requestedCwd, resolvedRoots),
-      usedFallback: false,
-    };
-  } catch {
-    return { cwd: fallbackRoot, usedFallback: true };
-  }
-}
-
-export function buildTerminalSandboxEnv(
-  hostEnv: NodeJS.ProcessEnv,
-  overrides?: Array<{ name: string; value: string }>,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-
-  for (const key of TERMINAL_SANDBOX_SAFE_ENV_KEYS) {
-    const val = hostEnv[key];
-    if (val !== undefined && val !== null) {
-      env[key] = String(val);
-    }
-  }
-
-  if (overrides) {
-    for (const { name, value } of overrides) {
-      env[name] = value;
-    }
-  }
-
-  return env;
-}
-
-export interface AcpTerminalManagerOptions {
-  /** Path to nuwax-sandbox-helper.exe (Windows only) */
-  windowsSandboxHelperPath?: string;
-  /** Windows sandbox mode */
-  windowsSandboxMode?: WindowsSandboxMode;
-  /** Whether network access is allowed for sandboxed commands */
-  networkEnabled?: boolean;
-  /** Paths that sandboxed commands can write to */
-  writablePaths?: string[];
-  /** Sandbox strictness mode (strict / compat / permissive) */
-  mode?: SandboxMode;
-}
-
-/**
- * 根据沙箱配置创建 Terminal Manager（从 AcpEngine.init 提取的工厂）。
- * Windows + helper 路径存在 → 沙箱执行；其余平台/配置 → 直接执行。
- */
-export function createTerminalManagerForSandbox(
-  sandboxConfig: SandboxProcessConfig | null | undefined,
-  logTag: string,
-): AcpTerminalManager {
-  if (
-    sandboxConfig?.enabled &&
-    sandboxConfig.type === "windows-sandbox" &&
-    sandboxConfig.windowsSandboxHelperPath
-  ) {
-    const manager = new AcpTerminalManager({
-      windowsSandboxHelperPath: sandboxConfig.windowsSandboxHelperPath,
-      windowsSandboxMode: sandboxConfig.windowsSandboxMode,
-      networkEnabled: sandboxConfig.networkEnabled ?? true,
-      writablePaths: sandboxConfig.projectWorkspaceDir
-        ? [sandboxConfig.projectWorkspaceDir]
-        : [],
-      mode: sandboxConfig.mode,
-    });
-    log.info(`${logTag} Terminal manager initialized (Windows sandbox)`);
-    return manager;
-  }
-  const manager = new AcpTerminalManager();
-  log.info(`${logTag} Terminal manager initialized (direct execution)`);
-  return manager;
-}
-
 // ============================================================================
 // AcpTerminalManager
 // ============================================================================
@@ -220,38 +45,6 @@ export function createTerminalManagerForSandbox(
 export class AcpTerminalManager {
   private static readonly MAX_CONCURRENT = 50;
   private terminals = new Map<string, TerminalSession>();
-  private sandboxInvoker: SandboxInvoker | null;
-  private readonly useSandbox: boolean;
-  private readonly networkEnabled: boolean;
-  private readonly writablePaths: string[];
-
-  constructor(options?: AcpTerminalManagerOptions) {
-    const platformAdapter = createPlatformAdapter();
-    this.useSandbox = !!(
-      options?.windowsSandboxHelperPath && platformAdapter.isWindows
-    );
-    this.networkEnabled = options?.networkEnabled ?? true;
-    this.writablePaths = options?.writablePaths ?? [];
-
-    if (this.useSandbox) {
-      this.sandboxInvoker = new SandboxInvoker("windows-sandbox", {
-        windowsSandboxHelperPath: options!.windowsSandboxHelperPath,
-        windowsSandboxMode: options!.windowsSandboxMode,
-        networkEnabled: options!.networkEnabled ?? true,
-        mode: options!.mode,
-      });
-      log.info(
-        "[AcpTerminalManager] Initialized with Windows sandbox helper:",
-        options!.windowsSandboxHelperPath,
-      );
-    } else {
-      this.sandboxInvoker = null;
-      log.info(
-        "[AcpTerminalManager] Initialized (direct execution, no sandbox)",
-      );
-    }
-  }
-
   // --- terminal/create ---
 
   async createTerminal(params: {
@@ -288,126 +81,45 @@ export class AcpTerminalManager {
       resolveExit: resolveExit!,
     };
 
-    // Build a sanitized environment for sandboxed commands.
-    // Avoid leaking sensitive host env vars (API keys, tokens, etc.)
-    // into sandboxed child processes.
-    const env: Record<string, string> = this.useSandbox
-      ? buildTerminalSandboxEnv(process.env, params.env)
-      : {
-          ...(process.env as Record<string, string>),
-          ...(params.env
-            ? Object.fromEntries(
-                params.env.map(({ name, value }) => [name, value]),
-              )
-            : {}),
-        };
-
-    const requestedCwd = params.cwd ?? process.cwd();
-    let cwd = requestedCwd;
-    if (this.useSandbox && this.writablePaths.length > 0) {
-      const resolved = resolveSandboxCwdWithFallback(
-        params.cwd,
-        this.writablePaths,
-        process.cwd(),
-      );
-      cwd = resolved.cwd;
-      if (resolved.usedFallback) {
-        log.warn(
-          "[AcpTerminalManager] terminal/create cwd adjusted to writable root",
-          {
-            terminalId,
-            sessionId: params.sessionId,
-            requestedCwd: params.cwd ?? null,
-            resolvedCwd: cwd,
-          },
-        );
-      }
-    }
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...(params.env
+        ? Object.fromEntries(params.env.map(({ name, value }) => [name, value]))
+        : {}),
+    };
+    const cwd = params.cwd ?? process.cwd();
 
     // Register BEFORE spawning so fast-exiting processes don't cause "not found" errors
     // in terminalOutput()/waitForExit() calls from the agent.
     this.terminals.set(terminalId, session);
 
-    if (this.useSandbox && this.sandboxInvoker) {
-      // Windows: route through nuwax-sandbox-helper.exe run
-      let invocation;
-      try {
-        invocation = await this.sandboxInvoker.buildInvocation({
-          command: params.command,
-          args: params.args || [],
-          cwd,
-          env,
-          writablePaths: this.writablePaths,
-          networkEnabled: this.networkEnabled,
-          subcommand: "run",
-        });
-      } catch (invErr) {
-        this.terminals.delete(terminalId);
-        throw invErr;
-      }
+    const directCommand = wrapWindowsCommandWithGitBash(
+      params.command,
+      params.args || [],
+    );
+    log.info("[AcpTerminalManager] ⚡ Terminal created:", {
+      terminalId,
+      sessionId: params.sessionId,
+      originalCommand: params.command,
+      originalArgs: params.args,
+      command: directCommand.command,
+      args: directCommand.args,
+      platform: createPlatformAdapter().platform,
+      cwd,
+    });
 
-      log.info("[AcpTerminalManager] ✅ SANDBOXED terminal created:", {
-        terminalId,
-        sessionId: params.sessionId,
-        originalCommand: params.command,
-        originalArgs: params.args,
-        wrappedCommand: invocation.command,
-        wrappedArgs: invocation.args,
-        sandboxed: true,
-        sandboxMode: "windows-sandbox-helper",
-        networkEnabled: this.networkEnabled,
-        writablePaths: this.writablePaths,
+    try {
+      this.spawnProcess(
+        session,
+        directCommand.command,
+        directCommand.args,
+        env,
         cwd,
-        parseJson: invocation.parseJson,
-      });
-
-      try {
-        this.spawnProcess(
-          session,
-          invocation.command,
-          invocation.args,
-          invocation.env,
-          cwd,
-          true, // parseJson: helper run returns JSON
-        );
-      } catch (spawnErr) {
-        this.cleanupFailedSpawn(session, terminalId);
-        throw spawnErr;
-      }
-    } else {
-      const directCommand = wrapWindowsCommandWithGitBash(
-        params.command,
-        params.args || [],
+        !directCommand.gitBashWrapped,
       );
-      log.info(
-        "[AcpTerminalManager] ⚡ DIRECT terminal created (no sandbox):",
-        {
-          terminalId,
-          sessionId: params.sessionId,
-          originalCommand: params.command,
-          originalArgs: params.args,
-          command: directCommand.command,
-          args: directCommand.args,
-          sandboxed: false,
-          platform: createPlatformAdapter().platform,
-          cwd,
-        },
-      );
-
-      try {
-        this.spawnProcess(
-          session,
-          directCommand.command,
-          directCommand.args,
-          env,
-          cwd,
-          false,
-          !directCommand.gitBashWrapped,
-        );
-      } catch (spawnErr) {
-        this.cleanupFailedSpawn(session, terminalId);
-        throw spawnErr;
-      }
+    } catch (spawnErr) {
+      this.cleanupFailedSpawn(session, terminalId);
+      throw spawnErr;
     }
 
     return terminalId;
@@ -595,20 +307,16 @@ export class AcpTerminalManager {
     args: string[],
     env: Record<string, string> | undefined,
     cwd: string,
-    parseJson: boolean,
     /** bundled Git Bash 不可用时，Windows 直连终端回退 cmd shell */
     useWindowsCmdShellFallback = false,
   ): void {
-    const sandboxed = parseJson;
     const platformAdapter = createPlatformAdapter();
-    const useShell =
-      !parseJson && platformAdapter.isWindows && useWindowsCmdShellFallback;
+    const useShell = platformAdapter.isWindows && useWindowsCmdShellFallback;
     log.info("[AcpTerminalManager] 🚀 Spawning process:", {
       terminalId: session.id,
       command,
       args: args.length > 0 ? args : undefined,
       cwd,
-      sandboxed,
       shell: useShell,
     });
 
@@ -624,117 +332,29 @@ export class AcpTerminalManager {
     log.info("[AcpTerminalManager] Process spawned:", {
       terminalId: session.id,
       pid: proc.pid,
-      sandboxed,
     });
 
-    if (parseJson) {
-      // Windows sandbox helper run mode: stdout is JSON blob, stderr is log
-      let jsonBuffer = "";
-      proc.stdout?.on("data", (data: Buffer) => {
-        jsonBuffer += data.toString();
+    // Direct execution: stdout/stderr are command output
+    proc.stdout?.on("data", (data: Buffer) => this.appendOutput(session, data));
+    proc.stderr?.on("data", (data: Buffer) => this.appendOutput(session, data));
+    proc.on("close", (code, signal) => {
+      log.info("[AcpTerminalManager] 🔚 Direct process exited:", {
+        terminalId: session.id,
+        exitCode: code,
+        signal,
+        outputLength: session.output.length,
       });
-      proc.stderr?.on("data", (data: Buffer) => {
-        // stderr from helper itself is debug output — log but don't mix into
-        // the session output buffer. The real command stderr comes from the
-        // JSON envelope after the helper exits.
-        log.debug(
-          "[AcpTerminalManager] Sandbox helper stderr:",
-          data.toString().trim(),
-        );
-      });
-      proc.on("close", (code, signal) => {
-        // Parse the JSON result from helper
-        log.info(
-          "[AcpTerminalManager] 📦 Sandbox helper exited, parsing JSON result:",
-          {
-            terminalId: session.id,
-            exitCode: code,
-            signal,
-            jsonBufferLength: jsonBuffer.length,
-          },
-        );
-        try {
-          const result = JSON.parse(jsonBuffer) as {
-            exit_code: number;
-            stdout: string;
-            stderr: string;
-            timed_out: boolean;
-          };
-          // The real command output is inside the JSON envelope
-          log.info("[AcpTerminalManager] ✅ Sandbox result parsed:", {
-            terminalId: session.id,
-            exit_code: result.exit_code,
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-            timed_out: result.timed_out,
-          });
-          if (result.stdout) {
-            this.appendOutput(session, Buffer.from(result.stdout));
-          }
-          if (result.stderr) {
-            this.appendOutput(session, Buffer.from(result.stderr));
-          }
-          const status: TerminalExitStatus = {
-            exitCode: result.exit_code,
-            signal: null,
-          };
-          session.exitStatus = status;
-          session.process = null;
-          if (!session.resolved) {
-            session.resolved = true;
-            session.resolveExit(status);
-          }
-        } catch (parseErr) {
-          // JSON parse failed, fall back to raw exit code
-          log.warn(
-            "[AcpTerminalManager] ⚠️ JSON parse failed, using raw exit code:",
-            {
-              terminalId: session.id,
-              exitCode: code,
-              jsonBufferPreview: jsonBuffer.slice(0, 200),
-              error:
-                parseErr instanceof Error ? parseErr.message : String(parseErr),
-            },
-          );
-          const status: TerminalExitStatus = {
-            exitCode: code ?? 1,
-            signal: signal ?? null,
-          };
-          session.exitStatus = status;
-          session.process = null;
-          if (!session.resolved) {
-            session.resolved = true;
-            session.resolveExit(status);
-          }
-        }
-      });
-    } else {
-      // Direct execution: stdout/stderr are command output
-      proc.stdout?.on("data", (data: Buffer) =>
-        this.appendOutput(session, data),
-      );
-      proc.stderr?.on("data", (data: Buffer) =>
-        this.appendOutput(session, data),
-      );
-      proc.on("close", (code, signal) => {
-        log.info("[AcpTerminalManager] 🔚 Direct process exited:", {
-          terminalId: session.id,
-          exitCode: code,
-          signal,
-          outputLength: session.output.length,
-        });
-        const status: TerminalExitStatus = {
-          exitCode: code,
-          signal: signal ?? null,
-        };
-        session.exitStatus = status;
-        session.process = null;
-        if (!session.resolved) {
-          session.resolved = true;
-          session.resolveExit(status);
-        }
-      });
-    }
+      const status: TerminalExitStatus = {
+        exitCode: code,
+        signal: signal ?? null,
+      };
+      session.exitStatus = status;
+      session.process = null;
+      if (!session.resolved) {
+        session.resolved = true;
+        session.resolveExit(status);
+      }
+    });
 
     proc.on("error", (err) => {
       log.error("[AcpTerminalManager] Process spawn error:", err);

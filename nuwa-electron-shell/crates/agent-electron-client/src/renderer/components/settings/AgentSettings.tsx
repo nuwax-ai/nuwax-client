@@ -177,7 +177,7 @@ function AgentSettings({ isOpen, onClose }: AgentSettingsProps) {
                 const defaultBinPaths: Record<string, string> = {
                   "claude-code": "claude-code",
                   nuwaxcode: "nuwaxcode",
-                  codex: "nuwax-codex-acp",
+                  codex: "nuwax-harness-acp-ts",
                 };
                 setBinPath(defaultBinPaths[v] || v);
               }}
@@ -212,7 +212,7 @@ function AgentSettings({ isOpen, onClose }: AgentSettingsProps) {
               </Select.Option>
               <Select.Option value="codex">
                 <Space>
-                  <span>Codex CLI (ACP)</span>
+                  <span>Nuwax Harness</span>
                   <Tag
                     color="orange"
                     style={{ fontSize: 11, lineHeight: "18px" }}
@@ -220,7 +220,7 @@ function AgentSettings({ isOpen, onClose }: AgentSettingsProps) {
                     OpenAI
                   </Tag>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    OpenAI Codex
+                    Codex
                   </Text>
                 </Space>
               </Select.Option>

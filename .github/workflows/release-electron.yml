@@ -193,8 +193,6 @@ jobs:
           # 前端 dist 打包来源（基座已中立化移除该条目）：壳根 nuwax/dist →
           # resources/nuwax-dist（dev 形态运行时经 NUWAX_FRONTEND_DIST env 解析）
           node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.build.extraResources=(j.build.extraResources||[]).filter(e=>!(e.from&&e.from.includes('nuwax/dist'))).concat([{from:'../../../nuwax/dist',to:'nuwax-dist'}]);fs.writeFileSync(p,JSON.stringify(j,null,2));"
-          # 商业版已停用旧沙箱与 GUI/Windows MCP 方案，移除通用与 Windows 专用的资源打包条目。
-          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const legacy=new Set(['sandboxed-bash-mcp','sandboxed-fs-mcp','sandbox-runtime','sandbox-helper','agent-gui-server','windows-mcp']);for(const config of [j.build,j.build.win])if(config?.extraResources)config.extraResources=config.extraResources.filter(e=>!legacy.has(e.to));j.build.files=[...(Array.isArray(j.build.files)?j.build.files:j.build.files?[j.build.files]:['**/*']),'!node_modules/agent-gui-server/**/*','!node_modules/@nut-tree-fork/**/*'];fs.writeFileSync(p,JSON.stringify(j,null,2));"
 
       - name: Configure system application names
         env:
@@ -212,7 +210,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '24'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -248,7 +246,7 @@ jobs:
       # pnpm workspace 根在基座（nuwa-electron-shell/）内
       - name: Install workspace dependencies
         working-directory: nuwa-electron-shell
-        run: pnpm install --filter @nuwax-ai/nuwaclaw... --filter '!agent-gui-server'
+        run: pnpm install --filter @nuwax-ai/nuwaclaw...
 
       - name: Rebuild native modules for Electron
         working-directory: nuwa-electron-shell/crates/agent-electron-client

@@ -15,7 +15,9 @@ import log from "electron-log";
 import {
   getAppEnv,
   applySharedPackageManagerCacheEnv,
-  getCodexAcpBundledDir,
+  getHarnessAcpBundledDir,
+  resolveBundledHarnessEnginePath,
+  installNpmPackage,
   getNuwaxcodeBundledBinPath,
 } from "../system/dependencies";
 import { mcpProxyManager } from "../packages/mcp";
@@ -112,14 +114,9 @@ export function isEngineInstalledLocally(engine: AgentEngine): boolean {
   }
 
   if (engine === "codex-cli") {
-    const binPaths = [
-      path.join(getAppDataDir(), "node_modules", ".bin", "nuwax-codex-acp"),
-    ];
-    for (const p of binPaths) {
-      if (fs.existsSync(p)) return true;
-      if (fs.existsSync(p + ".exe")) return true;
-      if (fs.existsSync(p + ".cmd")) return true;
-    }
+    return Boolean(
+      findEngineBinary(engine) && resolveBundledHarnessEnginePath(),
+    );
   }
 
   return false;
@@ -136,7 +133,7 @@ export async function isEngineInstalledGlobally(
       ? "claude-code"
       : engine === "nuwaxcode"
         ? "nuwaxcode"
-        : "nuwax-codex-acp";
+        : "nuwax-harness-acp-ts";
 
   return new Promise((resolve) => {
     const checkCmd = isWindows() ? "where" : "which";
@@ -160,20 +157,22 @@ export async function getEngineVersion(
   engine: AgentEngine,
 ): Promise<string | null> {
   if (engine === "codex-cli") {
-    const bundledDir = getCodexAcpBundledDir();
-    if (bundledDir) {
+    const adapterDir = getHarnessAcpBundledDir() || getEnginePackageDir(engine);
+    if (adapterDir) {
       try {
-        const version = fs
-          .readFileSync(path.join(bundledDir, ".version"), "utf-8")
-          .trim();
-        if (version) return version;
+        return (
+          JSON.parse(
+            fs.readFileSync(path.join(adapterDir, "package.json"), "utf-8"),
+          ).version || null
+        );
       } catch (error) {
         log.warn(
-          "[Engine] Failed to read bundled nuwax-codex-acp version",
+          "[Engine] Failed to read Nuwax Harness adapter version",
           error,
         );
       }
     }
+    return null;
   }
 
   // 先尝试本地
@@ -186,7 +185,7 @@ export async function getEngineVersion(
         ? "claude-code"
         : engine === "nuwaxcode"
           ? "nuwaxcode"
-          : "nuwax-codex-acp");
+          : "nuwax-harness-acp-ts");
     const args = ["--version"];
 
     const proc = spawn(cmd, args, {
@@ -218,7 +217,7 @@ function getEnginePackageDir(engine: AgentEngine): string | null {
       ? "claude-code"
       : engine === "nuwaxcode"
         ? "nuwaxcode"
-        : "nuwax-codex-acp";
+        : "@nuwax-ai/nuwax-harness-acp-ts";
   const packageDir = path.join(nodeModules, packageName);
   return fs.existsSync(packageDir) ? packageDir : null;
 }
@@ -229,6 +228,11 @@ function getEnginePackageDir(engine: AgentEngine): string | null {
  * 使用通用工具 resolveNpmPackageEntry 解析入口文件
  */
 export function findEngineBinary(engine: AgentEngine): string | null {
+  if (engine === "codex-cli") {
+    const adapterDir = getHarnessAcpBundledDir() || getEnginePackageDir(engine);
+    const entry = adapterDir ? path.join(adapterDir, "dist", "index.js") : null;
+    return entry && fs.existsSync(entry) ? entry : null;
+  }
   // nuwaxcode：优先使用应用内打包的二进制
   if (engine === "nuwaxcode") {
     const bundledPath = getNuwaxcodeBundledBinPath();
@@ -246,7 +250,7 @@ export function findEngineBinary(engine: AgentEngine): string | null {
       ? "claude-code"
       : engine === "nuwaxcode"
         ? "nuwaxcode"
-        : "nuwax-codex-acp";
+        : "nuwax-harness-acp-ts";
   return resolveNpmPackageEntry(packageDir, packageName);
 }
 
@@ -259,6 +263,12 @@ export async function installEngine(
   engine: AgentEngine,
   options?: { registry?: string },
 ): Promise<{ success: boolean; error?: string }> {
+  if (engine === "codex-cli") {
+    return installNpmPackage("@nuwax-ai/nuwax-harness-acp-ts", {
+      version: "1.2.24",
+      ...options,
+    });
+  }
   const engineDir = getEngineDir(engine);
 
   // 确保目录存在
@@ -271,7 +281,7 @@ export async function installEngine(
       ? "claude-code"
       : engine === "nuwaxcode"
         ? "nuwaxcode"
-        : "nuwax-codex-acp";
+        : "@nuwax-ai/nuwax-harness-acp-ts";
 
   return new Promise((resolve) => {
     const npmCmd = isWindows() ? "npm.cmd" : "npm";
@@ -396,6 +406,18 @@ export function createIsolatedEnvironment(config: EngineConfig): {
 
   if (config.model) {
     env.ANTHROPIC_MODEL = config.model;
+  }
+
+  if (config.engine === "codex-cli") {
+    const enginePath = resolveBundledHarnessEnginePath();
+    if (enginePath) env.NUWAX_PATH = enginePath;
+    if (config.apiKey) env.CODEX_API_KEY = config.apiKey;
+    if (config.baseUrl) env.CODEX_BASE_URL = config.baseUrl;
+    if (config.model) env.CODEX_MODEL = config.model;
+    const codexHome = path.join(isolatedHome, ".codex");
+    fs.mkdirSync(codexHome, { recursive: true });
+    env.CODEX_HOME = codexHome;
+    env.CODEX_SQLITE_HOME = codexHome;
   }
 
   // 清理函数

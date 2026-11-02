@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 const runtime = vi.hoisted(() => ({
   ready: vi.fn(), registered: vi.fn(), register: vi.fn(), unregister: vi.fn(),
   on: vi.fn(), removeListener: vi.fn(),
+  development: false,
 }));
 vi.mock('electron', () => ({
   app: { isReady: runtime.ready, on: runtime.on, removeListener: runtime.removeListener },
@@ -24,6 +25,7 @@ beforeEach(() => {
   runtime.ready.mockReturnValue(true);
   runtime.registered.mockReturnValue(false);
   runtime.register.mockReturnValue(true);
+  runtime.development = false;
 });
 
 describe.each(['darwin', 'win32', 'linux'] as const)('%s global capture shortcuts', platform => {
@@ -36,7 +38,7 @@ describe.each(['darwin', 'win32', 'linux'] as const)('%s global capture shortcut
     const unavailable = vi.fn();
     const dispose = bindCaptureShortcuts(target as never,
       () => [[screenshot, 'screenshot'], ['CmdOrCtrl+Shift+R', 'mp4']], dispatch,
-      { platform, onUnavailable: unavailable });
+      { platform, enabled: !runtime.development, onUnavailable: unavailable });
     disposers.push(dispose);
     const focus = () => { target.isFocused.mockReturnValue(true); target.emit('focus'); };
     const blur = () => { target.isFocused.mockReturnValue(false); target.emit('blur'); };
@@ -59,6 +61,14 @@ describe.each(['darwin', 'win32', 'linux'] as const)('%s global capture shortcut
     expect(runtime.unregister.mock.calls).toEqual([[shortcut], ['CmdOrCtrl+Shift+R']]);
     screenshotCallback(); recordCallback();
     expect(f.dispatch).toHaveBeenCalledTimes(4);
+  });
+
+  it('a disabled global binding leaves installed hotkeys untouched during setup and cleanup', () => {
+    runtime.development = true;
+    const f = bind();
+    f.dispose();
+    expect(runtime.register).not.toHaveBeenCalled();
+    expect(runtime.unregister).not.toHaveBeenCalled();
   });
 
   it('recognizes its active binding when saving the same key and rebinds saved preferences without stale callbacks', () => {
