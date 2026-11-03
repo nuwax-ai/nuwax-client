@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/apple/workspace/nuwax-client/.codex/hooks/guard-paths.mjs'"
+            "command": "node .codex/hooks/guard-paths.mjs"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/apple/workspace/nuwax-client/.codex/hooks/plan-gate.mjs'"
+            "command": "node .codex/hooks/plan-gate.mjs"
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node '/Users/apple/workspace/nuwax-client/.codex/hooks/deploy-gate.mjs'"
+            "command": "node .codex/hooks/deploy-gate.mjs"
           }
         ]
       }
