@@ -28,8 +28,8 @@
     "@nuwax-ai/nuwax-harness-acp-ts": "^1.2.22"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^1.4.0",
-    "@types/node": "^22.20.1",
+    "@agentclientprotocol/sdk": "^1.9.0",
+    "@types/node": "^22.20.5",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
