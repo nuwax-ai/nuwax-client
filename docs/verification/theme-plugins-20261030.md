@@ -84,3 +84,11 @@ macOS 实际 `fs.watch` 验证通过：连续写入取最后有效值、无效�
 实际启动根入口 `npm run dev -- --frontend source`，使用独立 `Nuwax Dev.app`、`~/.nuwax-dev` 档案。PC Web 源码热更新地址为 `http://localhost:3000`，壳开发地址为 `http://127.0.0.1:61173`。在真实客户端设置中经本地文件选择器导入 Blue Hour ZIP，已选中“澄蓝 · Blue Hour”并切为“深色”；原生窗口和 AX 状态均已确认，进程保留给用户操作。当前为登录页，登录后的业务页面及多窗口仍需实际账户验收。
 
 本轮只启动开发客户端，没有重新启动打包验收；既有 4/4 次上限继续有效。集成测试与构建日志保存在 `/Users/apple/Documents/Codex/2026-11-02/theme-plugins-dev/logs/`，开发运行日志为同目录上级 `dev-run.log`。
+
+## 2026-11-04 客户端源码调试兼容
+
+`npm run dev -- --frontend source` 已改为调用 PC Web 现有 `build:prod`，产物移入客户端私有临时目录后恢复原 `nuwax/dist`（包含未提交文件）。客户端从同源 Cookie 网关加载本地资源；不启动 UMI 开发服务，也不占用其端口。PC Web 源码、配置、独立 Token 调试逻辑和 IM／资料库上游源码无修改；`agent-platform` 仅作只读契约核对。源码改动后重启重建，主题包目录仍支持热更新。
+
+脚本专项 28 测试、原 PC Web 鉴权 89 测试、网关／会话 165 测试通过；商业门禁 311 文件、3746 测试通过、1 测试跳过。真实 Electron Cookie 验收通过，覆盖 direct、网关 HTTP／WS、HttpOnly 镜像、旋转／注销、真实 Axios POST 与后续鉴权／注册。
+
+真实 Nuwax Dev 已加载本次私有构建，业务页为 `127.0.0.1:24601`，前端工作区恢复干净。真实账户登录仍未验收：对照客户端 `remote` 模式直接加载测试域，也收到 HTTP 200、`0001`、`校验参数异常`，请求已携带验证码参数且未返回 Token。只读后端源码显示该文案对应阿里云验证码验证未通过，校验先于账号密码检查；具体测试环境原因仍需后端日志确认。未修改验证码、鉴权策略或后端代码。证据保存在 `/Users/apple/Documents/Codex/2026-11-04/theme-plugins-dev/`，本轮没有重新启动安装包验收。

@@ -100,10 +100,10 @@ export function syncWebviewOverrideFromEnv(): void {
   }
 }
 
-/** 本地前端与后端跨站；开发档案也必须经网关接收服务端 ticket。 */
+/** 客户端源码预览使用本地生产资源和同源 Cookie 网关，不加载 PC Web dev server。 */
 function usesSourceDevFrontend(): boolean {
   return !app.isPackaged && process.env.NUWAX_DEV_PROFILE === "1" &&
-    httpOrigin(resolveWebviewOverrideFromEnv()) !== null;
+    process.env.NUWAX_DEV_FRONTEND_MODE === "source";
 }
 
 interface Step1GatewayFields {

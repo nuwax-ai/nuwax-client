@@ -7,7 +7,7 @@
 | 命令 | 行为 |
 |---|---|
 | `npm run setup` | 初始化缺失的前端子模块，构建 agent-kit、安装依赖、重编原生模块并准备资源 |
-| `npm run dev` | 自动准备并启动客户端；`--frontend source` 使用前端源码热更新；`--frontend remote` 调试客户端壳，业务页使用设置中的域名与 Cookie 登录 |
+| `npm run dev` | 自动准备并启动客户端；`--frontend source` 使用当前源码的本地生产构建与同源 Cookie 网关；`--frontend remote` 调试客户端壳，业务页使用设置中的域名与 Cookie 登录 |
 | `npm run pack` | 当前平台无签名包；`--frontend source` 将当前前端源码构建入包 |
 | `npm run frontend:build` | 构建前端，保留输出 `nuwax/dist` |
 | `npm run sub:update` | 更新前端源码、构建并推送产物仓，再提交前端双 pin；`--push` 才推外层分支 |
@@ -45,7 +45,11 @@
 npm run dev -- --frontend remote
 ```
 
-业务 Webview 使用**开发版设置中选择的域名**，不是 `localhost:3000`；壳自身仍从本地 Vite 加载。`--frontend source` 用于需要联调前端源码的场景。
+业务 Webview 使用**开发版设置中选择的域名**；壳自身仍从本地 Vite 加载。
+
+调试本地前端源码时运行 `npm run dev -- --frontend source`。客户端调用现有 `build:prod`，将产物移到客户端临时缓存后恢复原 `nuwax/dist`，从同源 loopback 网关加载主站、微应用和 API，登录全程使用 Cookie。客户端源码模式会临时启用该网关，不修改保存的加载模式；退出清理缓存，源码改动后重启重建。旧 `--port` 参数保留兼容提示，不再启动 PC Web dev server。
+
+PC Web 自己的 `npm run dev`、开发环境配置和 Token 登录逻辑保持原样。此处只改变客户端的调试编排，主题目录监听仍可热更新，不要求每次改主题 CSS 都重建前端。
 
 开发版不注册系统自启动，也不占用全局截图和 Computer Use 急停快捷键；截图菜单、按钮与 Computer Use 暂停/停止面板可照常使用。系统权限、桌面焦点和键鼠仍由同一操作系统共享；需要不干扰用户的真实键鼠测试时，应使用独立测试机或虚拟机。
 

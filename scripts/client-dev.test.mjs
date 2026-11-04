@@ -5,18 +5,81 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { assertPortAvailable, waitForHttp, launch, stopProcess, developmentEnv } from './client/dev.mjs';
+import { assertPortAvailable, waitForHttp, launch, stopProcess, developmentEnv, dev } from './client/dev.mjs';
+import { prepareDevelopmentFrontend } from './client/dev-frontend.mjs';
+import * as core from './client/core.mjs';
 import { unsignedEnv } from './client/pack.mjs';
 
 test('all development modes isolate the profile while keeping the commercial host and automatic ports', () => {
   for (const mode of ['dist', 'source', 'remote']) {
-    const env = developmentEnv('/client', mode, 3000);
+    const env = developmentEnv('/client', mode, mode === 'source' ? '/private-preview/dist' : undefined);
     assert.equal(env.NUWAX_DEV_PROFILE, '1');
     assert.equal(env.NUWAX_APP_IDENTIFIER, 'nuwax');
     assert.equal(env.NUWAX_LOCAL_PORT_MODE, 'auto');
-    assert.equal(env.NUWAX_WEBVIEW_ORIGIN, mode === 'source' ? 'http://localhost:3000' : '');
+    assert.equal(env.NUWAX_WEBVIEW_ORIGIN, '');
+    assert.equal(env.NUWAX_DEV_FRONTEND_MODE, mode);
+    assert.equal(env.NUWAX_FRONTEND_DIST, mode === 'source' ? '/private-preview/dist' : '/client/nuwax-dist');
   }
 });
+
+test('source preview launches only the local shell and Electron with the private production frontend', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-dev-source-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const p = core.paths(root);
+  const binary = path.join(root, 'electron-fixture');
+  const vite = path.join(p.client, 'node_modules/vite/bin/vite.js');
+  for (const file of [binary, vite]) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'fixture'); }
+  const launched = [], waited = [], checkedPorts = [];
+  let disposed = false;
+  await dev(root, {
+    frontend: 'source', port: 3000,
+    tools: { ...core, npmRun: async () => {} },
+    prepare: async () => ({}),
+    prepareDevelopmentApp: async () => ({ binary }),
+    prepareDevelopmentFrontend: async () => ({ distDir: '/private-source/dist', dispose: () => { disposed = true; } }),
+    assertPortAvailable: async (port) => { checkedPorts.push(port); },
+    waitForHttp: async (url) => { waited.push(url); },
+    launch: (command, args, options) => {
+      launched.push({ command, args, ...options });
+      return { child: {}, alive: () => true, exit: options.name === 'vite' ? new Promise(() => {}) : Promise.resolve({ code: 0 }) };
+    },
+  });
+  assert.deepEqual(launched.map(item => item.name), ['vite', 'electron', 'computer-use-prepare']);
+  assert.deepEqual(checkedPorts, [61173], 'the PC Web development port is never claimed');
+  assert.equal(waited.length, 1);
+  assert.ok(waited[0].includes(':61173/'));
+  assert.ok(launched.every(item => item.env.NUWAX_WEBVIEW_ORIGIN === ''));
+  assert.ok(launched.every(item => item.env.NUWAX_FRONTEND_DIST === '/private-source/dist'));
+  assert.equal(disposed, true);
+});
+
+for (const fail of [false, true]) {
+  test(`source preview restores developer dist after ${fail ? 'failed' : 'successful'} production build`, async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'client-dev-dist-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const dist = path.join(root, 'nuwax/dist');
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, 'developer-wip.txt'), 'preserve these bytes');
+    let built;
+    const run = () => prepareDevelopmentFrontend(root, { buildFrontend: async (_root, options) => {
+      assert.equal(options.cleanDist, false);
+      assert.equal(fs.existsSync(dist), false);
+      fs.mkdirSync(dist);
+      fs.writeFileSync(path.join(dist, 'index.html'), 'local production preview');
+      if (fail) throw new Error('build rejected');
+      return { distDir: dist, sourceSha: 'fixture' };
+    } });
+    if (fail) await assert.rejects(run(), /build rejected/);
+    else {
+      built = await run();
+      assert.equal(fs.readFileSync(path.join(built.distDir, 'index.html'), 'utf8'), 'local production preview');
+    }
+    assert.deepEqual(fs.readdirSync(dist), ['developer-wip.txt']);
+    assert.equal(fs.readFileSync(path.join(dist, 'developer-wip.txt'), 'utf8'), 'preserve these bytes');
+    built?.dispose();
+    assert.deepEqual(fs.readdirSync(path.join(core.paths(root).cache, 'dev')), []);
+  });
+}
 
 test('packaging cannot inherit the local development profile', () => {
   const previous = process.env.NUWAX_DEV_PROFILE;

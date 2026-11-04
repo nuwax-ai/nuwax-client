@@ -18,6 +18,8 @@
 
 ## 用户补充
 
+2026-11-04 开发兼容修复：仅修改客户端启动脚本和壳，不修改 PC Web 的独立开发逻辑，不修改 agent-platform。`dev --frontend source` 调用已有 `build:prod`，将构建移入客户端临时缓存并恢复原 `nuwax/dist`；客户端通过同源 loopback 消费本地生产资源，使用既有 Cookie 会话。移除客户端对 UMI dev server 的自动启动与 localhost 页面覆盖。验证启动编排、目录恢复、会话与网关回归、真实 Electron 和测试环境登录；不重新启动安装包验收。
+
 2026-10-30：im-web/repo 子模块仅走 overlay/样式复写，不侵入原码。所有验证、安装与改动在本 worktree；不推送、不发布，验收包沿用既有基线且同一问题至多四次。
 
 Devkit 当前适配器的两项 reserved openai provider 参数不兼容 Codex 0.165；仓外任务级兼容入口仅过滤这两项，保留 fresh exec / sandbox / JSON / 不加载用户规则。首批执行因其 token 预算门停止，未记为执行成功或零实耗；源码由主控修正并独立验证。
