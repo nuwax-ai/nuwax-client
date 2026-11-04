@@ -15,6 +15,7 @@ import { createNoticesBridge } from "./open-source-notices";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
 import { createBrowserBridge } from './browser';
+import { createAndroidBridge } from './android';
 
 export interface FeatureNamespaces {
   browser: ReturnType<typeof createBrowserBridge>;
@@ -23,6 +24,7 @@ export interface FeatureNamespaces {
 }
 
 export interface HostFeatureNamespaces {
+  android: ReturnType<typeof createAndroidBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   notices: NoticesBridge;
   capture: HostCaptureBridge;
@@ -40,6 +42,7 @@ export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
+    android: createAndroidBridge(ipc),
     browser: createBrowserBridge(ipc, true),
     notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
