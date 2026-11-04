@@ -130,4 +130,3 @@ G2 延续既有任务范围；本目标文档不缩减原有交付承诺。G3、
 - [调研 DeepSeek Harness 插件兼容方案](codex://threads/01a1a568-e9d8-74d2-82b5-5973c37c46b3)：真实 DSH Runtime、DS-Bot 与原生插件生态。
 - 已核对 `codex/theme-plugins` 的 `specs/theme-plugins.md`，以及 `codex/dsh-dsbot-runtime` 的 `docs/dsh-runtime.md`、`docs/dsh-runtime-acceptance.md`。
 - 受影响模块：主题服务与设置、DSH 宿主及插件管理适配、本地 MCP 与授权、Agent 接入、跨窗口状态同步。
-

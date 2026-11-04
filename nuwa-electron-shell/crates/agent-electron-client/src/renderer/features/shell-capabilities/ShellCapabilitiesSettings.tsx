@@ -46,7 +46,7 @@ export function ShellCapabilitiesSettings({ t, Row }: {
     </Space>} />
     {state.changes.length > 0 && <Row label={text("changes")} desc={<details><summary>{text("showChanges")}</summary>
       <ul>{state.changes.slice(0, 10).map(change => <li key={change.id}>
-        {text(`operations.${change.operation}`)} · {text(`outcomes.${change.status}`)} · {new Date(change.at).toLocaleString()}
+        {text(`operations.${change.operation.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase())}`)} · {text(`outcomes.${change.status}`)} · {new Date(change.at).toLocaleString()}
       </li>)}</ul>
     </details>} />}
   </>;
