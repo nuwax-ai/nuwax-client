@@ -96,6 +96,44 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/acceptance/terminal-compat.mjs
 
+  dsh-runtime:
+    name: DSH runtime resources (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26-intel, windows-latest, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nuwa-electron-shell/crates/dsh-runtime/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: .cache/dsh-office
+          key: dsh-office-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('nuwa-electron-shell/crates/dsh-runtime/vendor/primary-runtime.lock.json') }}
+      - name: Install locked runtime dependencies
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test model authorization and owned process lifecycle
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: npm test
+      - name: Exercise real DSH sessions and Plugin Manager
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: |
+          npm run smoke
+          node test/plugin-smoke.mjs
+      - name: Prepare and admit native speech and Office resources
+        run: |
+          npm --prefix nuwa-electron-shell/crates/agent-electron-client run prepare:dsh
+          node scripts/check-dsh-resources.mjs
+      - name: Create, edit, render and recalculate Office documents
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: node test/office-smoke.mjs
+
   commercial:
     name: commercial gate (test:commercial)
     runs-on: ubuntu-latest

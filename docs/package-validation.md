@@ -15,3 +15,5 @@
 2026-10-25 首轮按用户要求停止 QA.5。随后用户明确重新授权独立验收，最多四次，通过后发布 Beta.4，PR 不合并。新系列固定为 `pr-66-cua-3023-restart-20261025`；原 QA 历史保留，不伪装为本轮成功证据。所有 push/dispatch/rerun、失败及取消统一计入本系列四次上限。
 
 2026-10-25 后续最新授权：版本号不动，暂时不要发布。继续联合候选的独立验证、Windows EXE 实包验收并保留截图日志；此前“通过后发 Beta.4”已被覆盖，客户端 PR 仍不合并。当前系列已用3/4次，最后一次仍受原上限约束。
+
+DSH / DS-Bot 特性可选择 `all`，在同一固定 series 内构建 macOS arm64/x64、Windows x64 EXE 和 Linux x64/arm64 AppImage。也可单选 `linux-x64` / `linux-arm64`。Linux 验证只产出 AppImage，不生成 deb/rpm 或发布元数据；五平台并行仍算同一次启动，后续 run / rerun 继续累计原四次上限。

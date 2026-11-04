@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
  * helper/capture caches. Bump it ONLY when the staged file set or manifest
  * admission contract changes (build-resource-artifacts.mjs is no longer a
  * recipe member — transport/observability edits there must not invalidate). */
-export const RESOURCE_STAGING_CONTRACT = 1;
+export const RESOURCE_STAGING_CONTRACT = 2;
 
 export function paths(root) {
   const base = path.join(root, 'nuwa-electron-shell');

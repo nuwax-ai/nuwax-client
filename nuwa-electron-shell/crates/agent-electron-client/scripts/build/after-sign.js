@@ -425,6 +425,16 @@ async function afterSignWindows(context) {
 
   // 9. 签名 nuwax-harness-acp-ts（引擎二进制组 nuwax-harness.exe 等）
   //    signDirectory 按扩展名(.exe/.dll)筛选，dist/index.js 等非可执行文件会被忽略。
+  for (const name of ['dsh-runtime', 'dsh-office']) {
+    const directory = path.join(resourcesPath, name);
+    if (fs.existsSync(directory)) {
+      for (const file of require('./dsh-sign-targets.cjs').nativeTargets(directory, 'pe')) {
+        const result = signWin.signWithSigntool(file);
+        if (result.success) totalSigned++;
+        else totalFailed++;
+      }
+    }
+  }
   const harnessAcpPath = path.join(resourcesPath, 'nuwax-harness-acp-ts');
   if (fs.existsSync(harnessAcpPath)) {
     console.log('[after-sign] Windows: 签名 nuwax-harness-acp-ts...');

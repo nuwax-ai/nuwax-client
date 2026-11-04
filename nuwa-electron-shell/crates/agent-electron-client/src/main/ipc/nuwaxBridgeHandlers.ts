@@ -66,6 +66,7 @@ import {
   isDesktopFeatureRegistered, notifyFeatureSessionEnd, startDesktopFeatures,
   runFeatureServicesStarting, isFeatureCapabilityAvailable, type SessionEndReason,
 } from "../features";
+import { createFeaturePlatformHost } from "../services/featurePlatformHost";
 import { createFeatureAgentHost } from "../services/featureHost";
 import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
 import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
@@ -349,6 +350,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         },
       },
       agent: createFeatureAgentHost(),
+      platform: createFeaturePlatformHost(),
     },
     permissions: { openGuide: openPermissionGuide, onFileAccessError: guideForFileAccessError,
       registerExternalSubject: registerHelperPermissionAdapter },

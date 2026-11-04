@@ -332,6 +332,19 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  DSH: {
+    title: "Claw.Dsh.title",
+    description: "Claw.Dsh.description",
+    models: "Claw.Dsh.models",
+    open: "Claw.Dsh.open",
+    stop: "Claw.Dsh.stop",
+    failed: "Claw.Dsh.failed",
+    unavailable: "Claw.Dsh.unavailable",
+    authorize: "Claw.Dsh.authorize",
+    cancel: "Claw.Dsh.cancel",
+    authorizationDescription: "Claw.Dsh.authorizationDescription",
+    noModels: "Claw.Dsh.noModels",
+  },
   Browser: {
     back: "Claw.Browser.back",
     forward: "Claw.Browser.forward",

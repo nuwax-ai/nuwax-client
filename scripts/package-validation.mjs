@@ -9,6 +9,32 @@ export const MAX_VALIDATION_STARTS = 4;
 const workflowFile = 'package-validation.yml';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const gitAt = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+const restartFile = '.github/package-validation-restart.json';
+const restartToolingPaths = new Set([restartFile, 'scripts/package-validation.mjs',
+  'scripts/package-validation.test.mjs', 'docs/dsh-runtime-acceptance.md']);
+
+function approvedRestart(cwd, identity) {
+  if (!gitAt(cwd, 'ls-tree', '--name-only', identity.source.client, '--', restartFile)) return undefined;
+  // Read the committed record, never a mutable workspace override. This records
+  // explicit user approval; it does not infer approval from a failed build.
+  const record = JSON.parse(gitAt(cwd, 'show', `${identity.source.client}:${restartFile}`));
+  if (record.series !== identity.series) return undefined;
+  if (record.schema !== 1 || record.additionalStarts !== 1 ||
+      record.authority?.kind !== 'explicit-user-approval' || typeof record.authority.decision !== 'string' || !record.authority.decision.trim() ||
+      !/^[a-f0-9]{40}$/.test(record.approvedSource ?? '') || record.baselineTag !== identity.baselineTag ||
+      !Array.isArray(record.previousRuns) || !record.previousRuns.length ||
+      record.previousRuns.some(run => !run || typeof run.id !== 'string' || !/^[1-9]\d*$/.test(run.id) || !Number.isSafeInteger(run.attempts) || run.attempts < 1) ||
+      new Set(record.previousRuns.map(run => run.id)).size !== record.previousRuns.length ||
+      record.previousRuns.reduce((total, run) => total + run.attempts, 0) !== MAX_VALIDATION_STARTS ||
+      record.platform !== 'darwin' || record.arch !== 'arm64' || identity.matrix.length !== 1 ||
+      identity.matrix[0].platform !== record.platform || identity.matrix[0].arch !== record.arch) {
+    throw new Error('人工重启授权与本次版本、平台或历史不符，停止构建');
+  }
+  gitAt(cwd, 'merge-base', '--is-ancestor', record.approvedSource, identity.source.client);
+  const changes = gitAt(cwd, 'diff', '--name-only', '--no-renames', record.approvedSource, identity.source.client).split('\n').filter(Boolean);
+  if (changes.some(file => !restartToolingPaths.has(file))) throw new Error('应用源码超出人工批准的冻结提交，停止构建');
+  return record;
+}
 
 export function validationIdentity(cwd, env = process.env) {
   const series = env.VALIDATION_SERIES ?? '';
@@ -26,7 +52,10 @@ export function validationIdentity(cwd, env = process.env) {
   const platforms = { both: [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }, { runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
     'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }],
     'mac-x64': [{ runner: 'macos-26-intel', platform: 'darwin', arch: 'x64' }],
-    'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
+    'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
+    'linux-x64': [{ runner: 'ubuntu-24.04', platform: 'linux', arch: 'x64' }],
+    'linux-arm64': [{ runner: 'ubuntu-24.04-arm', platform: 'linux', arch: 'arm64' }] };
+  platforms.all = ['mac-arm64', 'mac-x64', 'windows-x64', 'linux-x64', 'linux-arm64'].flatMap(name => platforms[name]);
   const selectedPlatforms = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
   if (!selectedPlatforms) throw new Error('未知验证平台');
   const matrix = selectedPlatforms.map(item => ({ ...item, baselineTag: target.tag }));
@@ -42,12 +71,14 @@ export function validationIdentity(cwd, env = process.env) {
   const baseline = parseReleaseTag(env.VALIDATION_PACKAGE_BASELINE_TAG || target.tag);
   if (!matrix.some(item => item.baselineTag === baseline.tag)) throw new Error('构建版本不在冻结验证矩阵中');
   const baselineSha = gitAt(cwd, 'rev-parse', '--verify', `refs/tags/${baseline.tag}^{commit}`);
-  return { kind: 'package-validation', series, baselineTag: baseline.tag, baselineSha,
+  const identity = { kind: 'package-validation', series, baselineTag: baseline.tag, baselineSha,
     packageVersion: baseline.version, nativeVersion: baseline.baseVersion, channel: baseline.channel,
     source: { client: sha, shell: gitAt(cwd, 'rev-parse', 'HEAD:nuwa-electron-shell'), frontend: gitAt(cwd, 'rev-parse', 'HEAD:nuwax'),
       frontendDist: gitAt(cwd, 'rev-parse', 'HEAD:nuwax-dist') },
     runId: env.GITHUB_RUN_ID, runAttempt: Number(env.GITHUB_RUN_ATTEMPT),
     buildId: `${sha.slice(0, 12)}-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`, matrix };
+  const restart = approvedRestart(cwd, identity);
+  return restart ? { ...identity, restart } : identity;
 }
 
 export function assertValidationBudget(runs, identity) {
@@ -62,7 +93,16 @@ export function assertValidationBudget(runs, identity) {
   }
   // Count every start, including reruns, cancellation and a changed source SHA.
   // A successful run completes the validation; it is not a reason to reset here.
-  if (starts > MAX_VALIDATION_STARTS) throw new Error(`同一问题最多 ${MAX_VALIDATION_STARTS} 次验证启动，已达到停止条件；不得自动换系列继续`);
+  if (identity.restart) {
+    const previous = new Map(identity.restart.previousRuns.map(run => [run.id, run.attempts]));
+    const resumed = own.filter(run => !previous.has(String(run.id)));
+    if (previous.has(identity.runId) || previous.size !== own.length - resumed.length ||
+        own.some(run => previous.has(String(run.id)) && previous.get(String(run.id)) !== run.run_attempt) ||
+        resumed.length !== 1 || String(resumed[0].id) !== identity.runId || resumed[0].run_attempt !== 1 ||
+        starts !== MAX_VALIDATION_STARTS + 1) {
+      throw new Error('人工重启仅授权一次新启动，历史变更、额外启动或 rerun 已达到停止条件');
+    }
+  } else if (starts > MAX_VALIDATION_STARTS) throw new Error(`同一问题最多 ${MAX_VALIDATION_STARTS} 次验证启动，已达到停止条件；不得自动换系列继续`);
   return starts;
 }
 
@@ -86,10 +126,10 @@ export async function checkValidationBudget(identity, env = process.env, fetcher
 }
 
 export async function stageValidation(cwd, output, stage, identity, platform, signing = null) {
-  if (!['darwin', 'win32'].includes(platform)) throw new Error('验证仅支持 Mac ARM64/x64 / Windows x64 EXE');
+  if (!['darwin', 'win32', 'linux'].includes(platform)) throw new Error('未知验证平台');
   const entries = fs.readdirSync(output, { withFileTypes: true });
   if (platform === 'win32' && entries.some(entry => entry.isFile() && /\.msi$/i.test(entry.name))) throw new Error('Windows 验证不应生成 MSI');
-  const packages = entries.filter(entry => entry.isFile() && (platform === 'win32' ? /\.exe$/i : /\.(zip|dmg)$/i).test(entry.name));
+  const packages = entries.filter(entry => entry.isFile() && (platform === 'win32' ? /\.exe$/i : platform === 'linux' ? /\.AppImage$/i : /\.(zip|dmg)$/i).test(entry.name));
   if (!packages.length) throw new Error('没有完整验证安装包');
   if (gitAt(cwd, 'rev-parse', 'HEAD') !== identity.source.client) throw new Error('打包期间源码身份发生变化');
   if (fs.existsSync(stage)) throw new Error('验证产物目录必须是本次新建目录');
@@ -105,7 +145,7 @@ export async function stageValidation(cwd, output, stage, identity, platform, si
   }
   if (platform === 'darwin' && (!signing?.signed || !signing?.notarized || !signing?.team)) throw new Error('Mac acceptance requires verified Developer ID and notarization');
   const receipt = { ...identity, platform, distribution: 'actions-artifacts-only', signed: Boolean(signing?.signed), signing,
-    acceptance: platform === 'darwin' ? 'Private signed and notarized validation artifact; not an official release' : 'Unsigned Windows EXE validation; Beta Windows packages are also unsigned',
+    acceptance: platform === 'darwin' ? 'Private signed and notarized validation artifact; not an official release' : platform === 'linux' ? 'Unsigned Linux AppImage validation; not an official release' : 'Unsigned Windows EXE validation; Beta Windows packages are also unsigned',
     published: false, tagCreated: false, versionSequenceAdvanced: false, updatePointersChanged: false, artifacts };
   fs.writeFileSync(path.join(stage, 'validation-context.json'), `${JSON.stringify(receipt, null, 2)}\n`);
   return receipt;
@@ -136,6 +176,7 @@ export async function buildValidation(cwd, identity, { platform = process.platfo
   pkg.build.buildVersion = identity.nativeVersion;
   pkg.build.mac.bundleShortVersion = identity.nativeVersion;
   if (platform === 'win32') { pkg.build.win ??= {}; pkg.build.win.target = ['nsis']; }
+  if (platform === 'linux') { pkg.build.linux ??= {}; pkg.build.linux.target = ['AppImage']; }
   const output = platform === 'win32' ? path.join(temp, 'pv', `${identity.runId}-${identity.runAttempt}`) : path.join(temp, `package-validation-output-${identity.buildId}-${platform}`);
   const stage = path.join(temp, `package-validation-artifacts-${identity.buildId}-${platform}`);
   try {
@@ -156,7 +197,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const values = { source_sha: identity.source.client, baseline_tag: identity.baselineTag,
         version: identity.packageVersion, build_id: identity.buildId, matrix: JSON.stringify({ include: identity.matrix }) };
       fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(''));
-      console.log(`Package validation ${identity.buildId}; existing baseline ${identity.baselineTag}; start ${starts}/${MAX_VALIDATION_STARTS}`);
+      const budget = identity.restart ? `explicit user restart 1/1; ${MAX_VALIDATION_STARTS} prior starts preserved; total ${starts}` : `start ${starts}/${MAX_VALIDATION_STARTS}`;
+      console.log(`Package validation ${identity.buildId}; existing baseline ${identity.baselineTag}; ${budget}`);
     } else if (process.argv[2] === 'build') {
       const stage = await buildValidation(root, identity);
       fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_path=${stage}\n`);

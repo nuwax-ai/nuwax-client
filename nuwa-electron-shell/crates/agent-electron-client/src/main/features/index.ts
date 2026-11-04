@@ -35,11 +35,13 @@ import type {
   FeatureWindows,
   FeatureWorkspaceServices,
   FeaturePermissionServices,
+  FeaturePlatform,
 } from "./_kit/types";
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
 import { browserFeature } from "./browser";
+import { dshRuntimeFeature } from "./dsh-runtime";
 import { localFilesFeature } from "./local-files";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
@@ -52,12 +54,14 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   openSourceNoticesFeature,
   localFilesFeature,
   browserFeature,
+  dshRuntimeFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */
 export const FEATURES_REGISTERED_IPC = "features:registered";
 
 export interface FeatureHostServices {
+  platform?: FeaturePlatform;
   settings: FeatureSettings;
   session: FeatureSession;
   windows: FeatureWindows;
@@ -158,6 +162,7 @@ export function startDesktopFeatures(
     dataDir: nodePath.join(options.dataDir, feature.id),
     log: options.log,
     translate: options.translate,
+    platform: host.platform,
     settings: host.settings,
     session: host.session,
     windows: host.windows,
@@ -322,3 +327,5 @@ export { routeCaptureShortcut } from "./capture/shortcutRouting";
 export { applyCuaCapabilityNotice } from "./computer-use/cuaSessionNotice";
 
 export { createDesktopBrowserPage, isDesktopBrowserAvailable, refreshDesktopBrowserWindows } from "./browser";
+
+export type { FeaturePlatform, FeatureAccountScope } from "./_kit/types";

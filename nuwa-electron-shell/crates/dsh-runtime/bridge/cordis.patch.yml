@@ -1,0 +1,4 @@
+- insert:
+    - id: nuwax-models
+      name: '@nuwax-ai/dsh-nuwax-bridge'
+      inject: [llm, credentials]
