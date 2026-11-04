@@ -11,6 +11,7 @@
     "typecheck": "node scripts/run-shell.cjs --no-env -- npm --prefix crates/agent-electron-client run typecheck:main",
     "test:commercial": "node scripts/run-shell.cjs --no-env -- npm run test:electron",
     "test:scripts": "node --test scripts/*.test.mjs",
+    "verify:tooling": "node scripts/sdlc-verify.mjs --root . --recipe .verification/client-tooling.json",
     "diagnostics:export": "node scripts/export-diagnostics.mjs",
     "frontend:build": "node scripts/client/cli.mjs frontend:build",
     "dev": "node scripts/client/cli.mjs dev",

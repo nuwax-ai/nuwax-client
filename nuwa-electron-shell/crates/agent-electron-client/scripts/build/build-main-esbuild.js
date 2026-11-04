@@ -91,6 +91,7 @@ esbuild
       'preload/cuaControls': 'src/preload/features/computer-use/controlPreload.ts',
       'preload/permissionChip': 'src/preload/features/permissionChip.ts',
       'preload/webviewPerfBridge': 'src/preload/webviewPerfBridge.ts',
+      'preload/webviewFind': 'src/preload/webviewFind.ts',
       'preload/browserWindow': 'src/preload/features/browser/windowPreload.ts',
       ...(fs.existsSync(path.join(root, 'src/preload/features/capture/windowPreload.ts'))
         ? { 'preload/captureWindow': 'src/preload/features/capture/windowPreload.ts' } : {}),

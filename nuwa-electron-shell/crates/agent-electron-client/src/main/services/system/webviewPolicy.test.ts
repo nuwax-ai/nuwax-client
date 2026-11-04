@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
+  const findViews: Array<{
+    options: unknown;
+    webContents: ReturnType<typeof fakeContents> & { loadURL: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> };
+    setBounds: ReturnType<typeof vi.fn>;
+    setVisible: ReturnType<typeof vi.fn>;
+  }> = [];
   const popupWindows: Array<{
     options: unknown;
     loadURL: ReturnType<typeof vi.fn>;
@@ -32,7 +38,8 @@ const mocks = vi.hoisted(() => {
     partitionSessions.set(partition, ses);
     return ses;
   });
-  return { browserAvailable: true, createBrowserPage: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
+  return { findViews, focused: null as unknown, owner: null as unknown,
+    browserAvailable: true, createBrowserPage: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
     attachHostActivityBusinessWindow: vi.fn(), trustInitialBusinessNavigation: vi.fn() };
 });
 const settings = new Map<string, unknown>();
@@ -43,7 +50,19 @@ vi.mock("electron", () => ({
   shell: { openExternal: mocks.openExternal },
   dialog: { showMessageBoxSync: mocks.showMessageBoxSync },
   session: { defaultSession: mocks.defaultSession, fromPartition: mocks.fromPartition },
+  webContents: { getFocusedWebContents: () => mocks.focused },
+  WebContentsView: class {
+    webContents = {
+      ...fakeContents("window", "about:blank"),
+      loadURL: vi.fn(async (url: string) => { this.webContents.getURL.mockReturnValue(url); this.webContents.mainFrame.url = url; }),
+      close: vi.fn(),
+    };
+    setBounds = vi.fn();
+    setVisible = vi.fn();
+    constructor(public options: unknown) { mocks.findViews.push(this); }
+  },
   BrowserWindow: class {
+    static fromWebContents = () => mocks.owner;
     loadURL = vi.fn(async () => undefined);
     focus = vi.fn();
     show = vi.fn();
@@ -83,16 +102,19 @@ const originalProduct = process.env.NUWAX_APP_IDENTIFIER;
 function fakeContents(type: "window" | "webview", url: string, session: unknown = mocks.defaultSession) {
   return {
     getType: () => type,
-    getURL: () => url,
-    mainFrame: { framesInSubtree: [{ origin: new URL(url || "about:blank").origin }] },
+    getURL: vi.fn(() => url),
+    mainFrame: { url, framesInSubtree: [{ origin: new URL(url || "about:blank").origin }] },
     session,
-    isDestroyed: () => false,
+    isDestroyed: vi.fn(() => false),
     on: vi.fn(),
     once: vi.fn(),
     removeListener: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     send: vi.fn(),
     openDevTools: vi.fn(),
+    findInPage: vi.fn(() => 1),
+    stopFindInPage: vi.fn(),
+    focus: vi.fn(function (this: unknown) { mocks.focused = this; }),
   };
 }
 
@@ -133,6 +155,9 @@ function webviewPopupHandler(created: Awaited<ReturnType<typeof setup>>, source:
 }
 
 beforeEach(async () => {
+  mocks.findViews.length = 0;
+  mocks.focused = null;
+  mocks.owner = null;
   mocks.browserAvailable = true;
   mocks.createBrowserPage.mockReset();
   mocks.openExternal.mockClear();
@@ -150,6 +175,7 @@ beforeEach(async () => {
   mocks.trustInitialBusinessNavigation.mockClear();
 });
 afterEach(() => {
+  vi.useRealTimers();
   if (originalProduct === undefined) delete process.env.NUWAX_APP_IDENTIFIER;
   else process.env.NUWAX_APP_IDENTIFIER = originalProduct;
 });
@@ -779,5 +805,204 @@ describe("new task keyboard availability", () => {
     keyboard(guest)(event, input());
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(guest.send).toHaveBeenCalledWith("nuwax:host-command", { type: "new-task" });
+  });
+});
+
+describe("embedded webview find", () => {
+  const input = (overrides: Record<string, unknown> = {}) => ({
+    type: "keyDown", key: "f", control: true, meta: false, shift: false, alt: false,
+    ...overrides,
+  });
+  const emit = (contents: { on: ReturnType<typeof vi.fn> }, name: string, ...args: unknown[]) => {
+    for (const [, callback] of contents.on.mock.calls.filter(([event]) => event === name)) callback(...args);
+  };
+  const press = (contents: ReturnType<typeof fakeContents>, overrides: Record<string, unknown> = {}) => {
+    const event = { preventDefault: vi.fn() };
+    emit(contents, "before-input-event", event, input(overrides));
+    return event;
+  };
+  async function fixture(open = true) {
+    const created = await setup();
+    const host = fakeContents("window", "file:///app/index.html");
+    const guest = fakeContents("webview", `${external}/long-document`);
+    const owner = {
+      isDestroyed: vi.fn(() => false), isFocused: vi.fn(() => true), focus: vi.fn(),
+      getContentSize: vi.fn(() => [1024, 768]),
+      contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      on: vi.fn(), removeListener: vi.fn(),
+    };
+    mocks.owner = owner;
+    mocks.focused = guest;
+    created({}, host);
+    const attach = (target: ReturnType<typeof fakeContents>) => emit(host, "did-attach-webview", {}, target);
+    attach(guest);
+    if (open) { press(guest); await Promise.resolve(); }
+    const bar = () => mocks.findViews.at(-1)!.webContents;
+    const command = (type: string, text = "needle", event: unknown = { sender: bar(), senderFrame: bar().mainFrame }) => {
+      emit(bar(), "ipc-message", event, "webview-find:command", { type, text });
+    };
+    return { guest, host, owner, attach, bar, command };
+  }
+
+  it.each([
+    [{}, true], [{ key: "F", control: false, meta: true }, true],
+    [{ shift: true }, false], [{ alt: true }, false],
+    [{ control: false }, false], [{ type: "keyUp" }, false],
+  ])("filters find shortcut modifiers %j", async (overrides, intercepted) => {
+    const { guest } = await fixture(false);
+    const event = press(guest, overrides);
+    expect(event.preventDefault).toHaveBeenCalledTimes(intercepted ? 1 : 0);
+    expect(mocks.findViews).toHaveLength(intercepted ? 1 : 0);
+    expect(guest.send).not.toHaveBeenCalled();
+    expect(guest.openDevTools).not.toHaveBeenCalled();
+  });
+
+  it("contains the sandboxed local UI in the owner window and refocuses/selects on repeat F", async () => {
+    const { guest, owner, bar } = await fixture();
+    expect(mocks.findViews[0].options).toMatchObject({ webPreferences: {
+      sandbox: true, contextIsolation: true, nodeIntegration: false,
+      preload: expect.stringContaining("preload/webviewFind.js"),
+    } });
+    expect(bar().getURL()).toMatch(/^data:text\/html/);
+    expect(owner.contentView.addChildView).toHaveBeenCalledWith(mocks.findViews[0]);
+    expect(mocks.findViews[0].setBounds).toHaveBeenCalledWith({ x: 612, y: 48, width: 400, height: 44 });
+    expect(bar().focus).toHaveBeenCalledOnce();
+    expect(bar().send).toHaveBeenCalledWith("webview-find:focus");
+    press(guest);
+    press(bar(), { control: false, meta: true, key: "F" });
+    expect(mocks.findViews).toHaveLength(1);
+    expect(bar().focus).toHaveBeenCalledTimes(3);
+    expect(owner.focus).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing DevTools modifier policy without opening find", async () => {
+    const { guest } = await fixture(false);
+    expect(press(guest, { key: "I", shift: true, alt: true }).preventDefault).toHaveBeenCalledOnce();
+    expect(guest.openDevTools).toHaveBeenCalledOnce();
+    expect(press(guest, { key: "i" }).preventDefault).not.toHaveBeenCalled();
+    expect(press(guest, { key: "I", shift: true, type: "keyUp" }).preventDefault).not.toHaveBeenCalled();
+    expect(mocks.findViews).toHaveLength(0);
+  });
+
+  it("debounces input within 150ms and passes Electron's new-session/continuation and direction flags", async () => {
+    vi.useFakeTimers();
+    const { guest, command } = await fixture();
+    command("input", "nee");
+    vi.advanceTimersByTime(70);
+    command("input");
+    vi.advanceTimersByTime(99);
+    expect(guest.findInPage).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(guest.findInPage).toHaveBeenLastCalledWith("needle", { findNext: true, forward: true });
+    command("next");
+    expect(guest.findInPage).toHaveBeenLastCalledWith("needle", { findNext: false, forward: true });
+    command("previous");
+    expect(guest.findInPage).toHaveBeenLastCalledWith("needle", { findNext: false, forward: false });
+    command("input", "changed");
+    command("previous", "changed");
+    expect(guest.findInPage).toHaveBeenLastCalledWith("changed", { findNext: true, forward: false });
+    vi.runOnlyPendingTimers();
+    expect(guest.findInPage).toHaveBeenCalledTimes(4);
+  });
+
+  it("updates only matching request counts and clears on empty input", async () => {
+    vi.useFakeTimers();
+    const { guest, bar, command } = await fixture();
+    guest.findInPage.mockReturnValue(23);
+    command("next");
+    emit(guest, "found-in-page", {}, { requestId: 23, matches: 4, activeMatchOrdinal: 2 });
+    expect(bar().send).toHaveBeenLastCalledWith("webview-find:count", { matches: 4, activeMatchOrdinal: 2 });
+    bar().send.mockClear();
+    emit(guest, "found-in-page", {}, { requestId: 22, matches: 9, activeMatchOrdinal: 1 });
+    expect(bar().send).not.toHaveBeenCalled();
+    command("input", "");
+    bar().send.mockClear();
+    emit(guest, "found-in-page", {}, { requestId: 23, matches: 4, activeMatchOrdinal: 3 });
+    expect(bar().send).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(guest.stopFindInPage).toHaveBeenCalledWith("clearSelection");
+    expect(bar().send).toHaveBeenLastCalledWith("webview-find:count", { matches: 0, activeMatchOrdinal: 0 });
+  });
+
+  it.each(["bar", "guest", "button"])("closes and clears highlights via %s, cancelling pending input", async (source) => {
+    vi.useFakeTimers();
+    const { guest, bar, owner, command } = await fixture();
+    command("input");
+    if (source === "button") command("close");
+    else expect(press(source === "bar" ? bar() : guest, { key: "Escape", control: false }).preventDefault).toHaveBeenCalledOnce();
+    expect(guest.stopFindInPage).toHaveBeenCalledOnce();
+    expect(guest.stopFindInPage).toHaveBeenCalledWith("clearSelection");
+    expect(owner.contentView.removeChildView).toHaveBeenCalledWith(mocks.findViews[0]);
+    expect(bar().close).toHaveBeenCalledOnce();
+    expect(guest.focus).toHaveBeenCalledOnce();
+    expect(guest.removeListener).toHaveBeenCalledWith("found-in-page", expect.any(Function));
+    vi.runOnlyPendingTimers();
+    expect(guest.findInPage).not.toHaveBeenCalled();
+  });
+
+  it("rebinds the bar to the shortcut source when two webviews share a host", async () => {
+    const { guest, attach, command, bar } = await fixture();
+    const oldBar = bar();
+    command("next");
+    const second = fakeContents("webview", `${business}/other-document`);
+    attach(second);
+    mocks.focused = second;
+    press(second);
+    await Promise.resolve();
+    expect(oldBar.close).toHaveBeenCalledOnce();
+    expect(guest.stopFindInPage).toHaveBeenCalledWith("clearSelection");
+    command("next", "second");
+    expect(second.findInPage).toHaveBeenCalledWith("second", { findNext: true, forward: true });
+    expect(guest.findInPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus transitions between bar and target, and dismisses when focus reaches the host", async () => {
+    vi.useFakeTimers();
+    const { guest, host, bar } = await fixture();
+    emit(guest, "blur"); // focus was transferred into our bar
+    vi.runOnlyPendingTimers();
+    expect(bar().close).not.toHaveBeenCalled();
+    mocks.focused = guest;
+    emit(bar(), "blur");
+    vi.runOnlyPendingTimers();
+    expect(bar().close).not.toHaveBeenCalled();
+    mocks.focused = host;
+    emit(host, "focus");
+    vi.runOnlyPendingTimers();
+    expect(bar().close).toHaveBeenCalledOnce();
+    expect(guest.focus).not.toHaveBeenCalled();
+  });
+
+  it("cleans up after target destruction without calling destroyed webContents", async () => {
+    vi.useFakeTimers();
+    const { guest, bar, command } = await fixture();
+    command("input");
+    guest.isDestroyed.mockReturnValue(true);
+    emit(guest, "destroyed");
+    vi.runOnlyPendingTimers();
+    expect(bar().close).toHaveBeenCalledOnce();
+    expect(guest.stopFindInPage).not.toHaveBeenCalled();
+    expect(guest.findInPage).not.toHaveBeenCalled();
+    expect(guest.focus).not.toHaveBeenCalled();
+  });
+
+  it.each(["blur", "hide", "closed"])("cleans up on owner %s without bringing it forward", async (event) => {
+    const { guest, owner, bar } = await fixture();
+    emit(owner, event);
+    expect(bar().close).toHaveBeenCalledOnce();
+    expect(guest.stopFindInPage).toHaveBeenCalledWith("clearSelection");
+    expect(guest.focus).not.toHaveBeenCalled();
+    expect(owner.focus).not.toHaveBeenCalled();
+  });
+
+  it("rejects other frames, remote contents and invalid commands", async () => {
+    const { guest, bar, command } = await fixture();
+    command("next", "needle", { sender: guest, senderFrame: guest.mainFrame });
+    command("next", "needle", { sender: bar(), senderFrame: { url: bar().getURL() } });
+    command("next", "x".repeat(4097));
+    command("unknown");
+    expect(guest.findInPage).not.toHaveBeenCalled();
+    command("next");
+    expect(guest.findInPage).toHaveBeenCalledOnce();
   });
 });
