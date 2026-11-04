@@ -17,6 +17,7 @@ export interface ShellCapabilitiesState {
   error?: string;
   history: Array<{ id: string; at: string; themeId: string }>;
   changes: ShellChange[];
+  themeRevision: number | null;
 }
 export interface ShellCapabilitiesBridge {
   getState(): Promise<ShellCapabilitiesState>;

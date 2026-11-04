@@ -2,15 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { FeatureSettings } from "../_kit/types";
-import type { ThemeService } from "../themes/service";
-import { defaultTokens, tokenNames, surfaces } from "@shared/features/themes/core";
-import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract";
 import type { ShellAccess, ShellDomain, ShellChange } from "@shared/features/shell-capabilities/contract";
-import { themeError } from "../themes/service";
+import { shellError, type ShellThemeService, type ShellAuthoringContext, type ShellLinkPreference } from "./ports";
 
 export type PluginOperation = "list" | "install" | "enable" | "disable" | "remove" | "configure";
 export interface ShellToolPorts {
-  themes(): ThemeService | null;
+  themes(): ShellThemeService | null;
+  themeAuthoring(): ShellAuthoringContext;
+  linkPreference: ShellLinkPreference;
   settings: FeatureSettings;
   plugins?(operation: PluginOperation, input: { target?: string; expectedRevision?: number; patch?: Record<string, unknown> }, signal: AbortSignal): Promise<unknown>;
   check(domain?: ShellDomain): void;
@@ -54,7 +53,7 @@ export function createShellMcpServer(access: ShellAccess, ports: ShellToolPorts)
         return { ...(failed ? { isError: true } : {}), content: [{ type: "text" as const, text: JSON.stringify(value) }] };
       } catch (error) {
         record(extra.signal.aborted ? "canceled" : "failed");
-        return { isError: true, content: [{ type: "text" as const, text: themeError(error) }] };
+        return { isError: true, content: [{ type: "text" as const, text: shellError(error) }] };
       }
     });
   }
@@ -64,6 +63,7 @@ export function createShellMcpServer(access: ShellAccess, ports: ShellToolPorts)
   }), true);
   tool("themes_context", "themes", "Read themes, selection, revision, editable token names, defaults and package format before making changes.", {}, () => {
     const state = themes().state();
+    const { tokenNames, defaultTokens, surfaces } = ports.themeAuthoring();
     return { revision: state.revision, selection: state.selection, themes: state.themes, history: themes().history(), tokenNames, defaultTokens, surfaces,
       packageFormat: { manifest: "theme.json (schemaVersion: 1, id, name, version, variants: { light?: { tokens, styles? }, dark?: { tokens, styles? } })",
         tokens: "JSON object using tokenNames; omitted tokens inherit defaults", styles: "CSS files scoped to declared surfaces; use [data-theme-part] and --nuwax-* variables. Remote URLs, @import and executable content are forbidden.",
@@ -87,16 +87,16 @@ export function createShellMcpServer(access: ShellAccess, ports: ShellToolPorts)
     historyId: z.string().uuid(), expectedRevision: revision, expectedVersion: version,
   }, (args, check) => themes().restore(args, check));
   tool("shell_settings_get", "settings", "Read the declared desktop settings and their writable schema. Only listed settings can be changed.", {}, () => {
-    const value = linkOpenMode(ports.settings.read(BROWSER_SETTING));
+    const value = ports.linkPreference.normalize(ports.settings.read(ports.linkPreference.key));
     return { version: settingsVersion(value), values: { linkOpenMode: value }, schema: { linkOpenMode: { type: "string", enum: ["in-app", "system"], effect: "Next link opening", recovery: "Set the previous value with shell_settings_update" } } };
   }, true);
   tool("shell_settings_update", "settings", "Change the declared link opening preference. Returns the previous value for restoration. Does not accept arbitrary settings keys.", {
     expectedVersion: version, linkOpenMode: z.enum(["in-app", "system"]),
   }, (args, check) => {
-    const previous = linkOpenMode(ports.settings.read(BROWSER_SETTING));
+    const previous = ports.linkPreference.normalize(ports.settings.read(ports.linkPreference.key));
     if (settingsVersion(previous) !== args.expectedVersion) throw new Error("Settings version conflict; read again");
     check();
-    if (!ports.settings.write(BROWSER_SETTING, args.linkOpenMode)) throw new Error("Settings could not be saved");
+    if (!ports.settings.write(ports.linkPreference.key, args.linkOpenMode)) throw new Error("Settings could not be saved");
     return { applied: true, effect: "Next link opening", previous: { linkOpenMode: previous }, version: settingsVersion(args.linkOpenMode) };
   });
   tool("extensions_list", "extensions", "Read native DSH bundles, their state, protected core bundles and restart requirements. DS-Bot must be running.", {}, (_args, _check, signal) => {

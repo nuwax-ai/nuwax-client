@@ -33,7 +33,7 @@ DS-Bot 独立界面的视觉样式仍由其上游主题系统管理；Nuwax 主�
 
 ```sh
 # Electron 客户端 crate 中运行
-npm run test:run -- src/main/features/themes src/main/features/shell-capabilities tests/shell-dsh.integration.test.ts
+npm run test:run -- src/main/features/themes tests/shell-capabilities.test.ts tests/shell-dsh.integration.test.ts
 npm run typecheck:main
 npm run check:boundaries
 

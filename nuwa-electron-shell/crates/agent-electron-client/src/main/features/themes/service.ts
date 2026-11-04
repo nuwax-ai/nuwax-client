@@ -10,6 +10,9 @@ import {
   assertInstallableThemeId,
   canonicalPath,
   limits,
+  tokenNames,
+  defaultTokens,
+  surfaces,
 } from "@shared/features/themes/core";
 import type {
   HostThemeFiles,
@@ -41,6 +44,7 @@ export type ThemeDeps = {
   applyPreference: (mode: HostThemePreference) => void;
   changed: (revision: number) => void;
 };
+export const themeAuthoringContext = () => ({ tokenNames, defaultTokens, surfaces });
 export const watchThemeDirectory: ThemeDeps["watch"] = (directory, change) => {
   const watchers: ReturnType<typeof watch>[] = [];
   // Watch the closest available ancestor so an unplugged drive or missing parent

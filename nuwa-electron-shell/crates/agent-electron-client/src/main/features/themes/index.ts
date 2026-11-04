@@ -8,6 +8,7 @@ import type {
   HostThemePreference,
 } from "@shared/features/themes/contract";
 import { ThemeService, watchThemeDirectory, themeError } from "./service";
+export { themeAuthoringContext } from "./service";
 
 let desktopSnapshot:
   | import("@shared/types/hostBridge").HostThemeSnapshot

@@ -40,7 +40,8 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
-import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot, getThemeService } from "./themes";
+import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot, getThemeService, themeAuthoringContext } from "./themes";
+import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract";
 import { createBrowserFeature } from "./browser";
 import { createDshRuntimeFeature, manageDshPlugins } from "./dsh-runtime";
 import { createShellCapabilitiesFeature, getShellMcpEntry, subscribeShellMcp } from "./shell-capabilities";
@@ -57,7 +58,8 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   localFilesFeature,
   createBrowserFeature({getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot}),
   themesFeature,
-  createShellCapabilitiesFeature({ themes: getThemeService, plugins: manageDshPlugins }),
+  createShellCapabilitiesFeature({ themes: getThemeService, themeAuthoring: themeAuthoringContext,
+    linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode }, plugins: manageDshPlugins }),
   createDshRuntimeFeature({ shellMcp: getShellMcpEntry, subscribeShellMcp }),
 ];
 

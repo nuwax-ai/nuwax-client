@@ -57,7 +57,7 @@ jobs:
         run: >-
           pnpm -C nuwa-electron-shell/crates/agent-electron-client exec vitest run
           src/main/features/local-files src/main/features/computer-use
-          src/main/features/shell-capabilities
+          tests/shell-capabilities.test.ts
           src/main/services/commercialAutoUpdater.test.ts
           src/main/ipc/settingsHandlers.hostActivity.test.ts
           src/preload/features/local-files.test.ts

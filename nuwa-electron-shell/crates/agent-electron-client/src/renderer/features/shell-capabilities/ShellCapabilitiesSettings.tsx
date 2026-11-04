@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Alert, Button, Select, Space, Switch } from "antd";
 import { shellDomains, type ShellAccess, type ShellCapabilitiesState, type ShellDomain } from "@shared/features/shell-capabilities/contract";
-import { getThemesBridge } from "../themes/state";
 
 export function ShellCapabilitiesSettings({ t, Row }: {
   t(key: string): string;
@@ -39,9 +38,9 @@ export function ShellCapabilitiesSettings({ t, Row }: {
         value={state.history.some(row => row.id === historyId) ? historyId : undefined} placeholder={text("chooseHistory")}
         onChange={setHistoryId} options={state.history.map(row => ({ value: row.id, label: `${row.themeId} · ${new Date(row.at).toLocaleString()}` }))} />
       <Button disabled={busy || !historyId || !state.history.some(row => row.id === historyId)} onClick={() => void perform(async () => {
-        const theme = await getThemesBridge()?.getState();
-        if (!theme || !historyId) throw new Error("Theme state unavailable");
-        await bridge.restoreTheme(historyId, theme.revision); setHistoryId(undefined);
+        const current = await bridge.getState();
+        if (current.themeRevision === null || !historyId) throw new Error("Theme state unavailable");
+        await bridge.restoreTheme(historyId, current.themeRevision); setHistoryId(undefined);
       })}>{text("restore")}</Button>
     </Space>} />
     {state.changes.length > 0 && <Row label={text("changes")} desc={<details><summary>{text("showChanges")}</summary>

@@ -6,8 +6,9 @@ import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { ShellCapabilitiesRuntime, getShellMcpEntry, subscribeShellMcp } from "../src/main/features/shell-capabilities";
-import { ThemeService } from "../src/main/features/themes/service";
+import { ThemeService, themeAuthoringContext } from "../src/main/features/themes/service";
 import { createFeatureLifecycle } from "../src/main/features/_kit/lifecycle";
+import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract";
 import type { FeatureContext } from "../src/main/features/_kit/types";
 
 // The DSH/DS-Bot/MCP/model loop is real. Only the remote model responses are
@@ -26,7 +27,7 @@ it("real DS-Bot discovers host tools, edits/applies/restores a personal theme an
     platform: { scope: () => ({ accountId: "fixture", origin: "https://fixture.example", epoch: 1 }) },
     settings: { read: key => settings.get(key), write: (key, value) => { settings.set(key, value); return true; } },
     agent: { resolveNodeBinary: () => process.execPath, setLocalMcpServer: async () => {} }, log: { warn: () => {} },
-  } as unknown as FeatureContext, { themes: () => themes });
+  } as unknown as FeatureContext, { themes: () => themes, themeAuthoring: themeAuthoringContext, linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode } });
   let child: ChildProcess | undefined, cookie = "", origin = "", output = "";
   const calls: string[] = [], failure: string[] = [];
   let revokedCatalog = false;

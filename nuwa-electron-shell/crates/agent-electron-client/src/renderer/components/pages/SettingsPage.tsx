@@ -37,7 +37,7 @@ import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
 import { DshSettings } from "../../features/dsh-runtime";
-import { ShellCapabilitiesSettings } from "../../features/shell-capabilities/ShellCapabilitiesSettings";
+import { ShellCapabilitiesSettings } from "../../features/shell-capabilities";
 import { BrowserSettings } from '../../features/browser';
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {

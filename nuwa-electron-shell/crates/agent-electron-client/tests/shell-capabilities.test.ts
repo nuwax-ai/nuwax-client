@@ -4,13 +4,13 @@ import path from "node:path";
 import os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { ShellCapabilitiesRuntime, getShellMcpEntry } from "./index";
-import { ThemeService } from "../themes/service";
-import { createFeatureLifecycle } from "../_kit/lifecycle";
-import { createTrustedIpc } from "../_kit/trustedIpc";
-import type { FeatureContext } from "../_kit/types";
+import { ShellCapabilitiesRuntime, getShellMcpEntry } from "../src/main/features/shell-capabilities";
+import { ThemeService, themeAuthoringContext } from "../src/main/features/themes/service";
+import { createFeatureLifecycle } from "../src/main/features/_kit/lifecycle";
+import { createTrustedIpc } from "../src/main/features/_kit/trustedIpc";
+import type { FeatureContext } from "../src/main/features/_kit/types";
 import { SHELL_CAPABILITIES_IPC } from "@shared/features/shell-capabilities/contract";
-import { BROWSER_SETTING } from "@shared/features/browser/contract";
+import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -29,7 +29,7 @@ async function setup() {
   const runtime = new ShellCapabilitiesRuntime({ product: "nuwax", settings: { read: key => settings.get(key), write: (key, value) => { settings.set(key, value); return true; } },
     agent, session: { isAuthenticated: () => authenticated }, platform: { scope: () => authenticated ? identity : null },
     hostIpc: createTrustedIpc(ipc, (event: any) => event.trusted === true), lifecycle, log: { warn: vi.fn() },
-  } as unknown as FeatureContext, { themes: () => themes, plugins });
+  } as unknown as FeatureContext, { themes: () => themes, themeAuthoring: themeAuthoringContext, linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode }, plugins });
   cleanup.push(() => runtime.dispose());
   const connect = async () => {
     const entry = getShellMcpEntry(); expect(entry).not.toBeNull();

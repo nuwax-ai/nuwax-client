@@ -4,8 +4,7 @@ import os from "node:os";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { DesktopFeature, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
-import type { ThemeService } from "../themes/service";
-import { themeError } from "../themes/service";
+import { shellError } from "./ports";
 import { SHELL_ACCESS_SETTING, SHELL_CAPABILITIES_IPC, SHELL_MCP_SERVER, type ShellAccess, type ShellCapabilitiesState, type ShellDomain, type ShellChange } from "@shared/features/shell-capabilities/contract";
 import { ShellMcpGateway, SHELL_STDIO_RELAY } from "./transport";
 import { createShellMcpServer, type ShellToolPorts } from "./tools";
@@ -21,10 +20,7 @@ function publish(entry: FeatureMcpServerEntry | null) {
   currentEntry = entry;
   for (const listener of listeners) { try { listener(); } catch { /* isolate runtime consumers */ } }
 }
-export interface ShellCapabilityPorts {
-  themes(): ThemeService | null;
-  plugins?: ShellToolPorts["plugins"];
-}
+export type ShellCapabilityPorts = Pick<ShellToolPorts, "themes" | "themeAuthoring" | "linkPreference" | "plugins">;
 
 export class ShellCapabilitiesRuntime {
   private access: ShellAccess;
@@ -64,7 +60,8 @@ export class ShellCapabilitiesRuntime {
   }
   state(): ShellCapabilitiesState {
     return { access: this.permissionWriteFailed ? noAccess() : this.readAccess(), ready: this.active && this.gateway?.ready === true,
-      ...(this.error ? { error: this.error } : {}), history: this.ports.themes()?.history() ?? [], changes: this.changes(this.scopeKey()) };
+      ...(this.error ? { error: this.error } : {}), history: this.ports.themes()?.history() ?? [], changes: this.changes(this.scopeKey()),
+      themeRevision: this.ports.themes()?.state().revision ?? null };
   }
   private scopeKey() {
     const scope = this.ctx.platform?.scope();
@@ -151,7 +148,7 @@ export class ShellCapabilitiesRuntime {
       if (generation !== this.generation) return;
       this.revoke();
       await this.gateway?.close().catch(() => undefined); this.gateway = undefined;
-      this.error = themeError(error);
+      this.error = shellError(error);
       this.ctx.log.warn("[Shell capabilities] MCP unavailable");
     });
     this.queue = work;
