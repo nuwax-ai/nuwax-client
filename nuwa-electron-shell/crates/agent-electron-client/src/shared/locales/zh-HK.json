@@ -1436,5 +1436,15 @@
   "Claw.Browser.inApp": "應用程式內獨立視窗",
   "Claw.Browser.system": "預設瀏覽器",
   "Claw.Browser.settingsLoadFailed": "無法載入網頁開啟設定。",
-  "Claw.Browser.settingsSaveFailed": "無法儲存網頁開啟設定。"
+  "Claw.Browser.settingsSaveFailed": "無法儲存網頁開啟設定。",
+  "Claw.Cua.service.label": "執行狀態",
+  "Claw.Cua.service.applied": "設定已生效",
+  "Claw.Cua.service.pending": "設定已儲存，正在套用",
+  "Claw.Cua.service.disabled": "已關閉",
+  "Claw.Cua.service.starting": "正在啟動",
+  "Claw.Cua.service.ready": "可用",
+  "Claw.Cua.service.reconfiguring": "正在套用設定",
+  "Claw.Cua.service.recovering": "正在恢復連線",
+  "Claw.Cua.service.waitingPermission": "等待系統授權",
+  "Claw.Cua.service.degraded": "暫時無法使用"
 }

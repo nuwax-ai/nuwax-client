@@ -107,6 +107,9 @@ export class CuaTaskRegistry {
     this.enabled = available;
     for (const task of this.tasks.values()) task.controller.setAvailable(available);
   }
+  invalidateObservations(owner?: string) {
+    for (const task of this.tasks.values()) if (!owner || task.owner === owner) task.controller.invalidateObservations();
+  }
   bind(id: string, target: CuaWindow) {
     const task = this.tasks.get(id);
     if (!task || task.pending || TERMINAL.has(task.controller.snapshot().phase)) throw new Error("taskUnavailable");

@@ -12,15 +12,18 @@ export class CuaSessionAuthority {
   private root?: string;
   private entry?: (file: string) => Entry;
   private release?: (owner: string, cancelled: boolean) => void;
-  configure(root: string, entry: (file: string) => Entry, release: (owner: string, cancelled: boolean) => void) {
+  private begin?: () => void;
+  private available?: () => boolean;
+  configure(root: string, entry: (file: string) => Entry, release: (owner: string, cancelled: boolean) => void,
+    begin?: () => void, available?: () => boolean) {
     if (this.root !== root) pruneStaleGrantDirectories(path.dirname(root));
-    this.root = root; this.entry = entry; this.release = release;
+    this.root = root; this.entry = entry; this.release = release; this.begin = begin; this.available = available;
   }
   issue(servers: McpServer[]): Grant | undefined {
     const index = servers.findIndex((server) => server.name === "cua");
     if (index < 0) return;
     // Never pass a stale direct-helper configuration when the host gateway is unavailable.
-    if (!this.root || !this.entry) { servers.splice(index, 1); return; }
+    if (!this.root || !this.entry || this.available?.() === false) { servers.splice(index, 1); return; }
     if (this.grants.size >= 256) throw new Error("Computer Use session capacity reached");
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     const stat = fs.lstatSync(this.root);
@@ -48,6 +51,7 @@ export class CuaSessionAuthority {
     if (!grant || !this.grants.has(grant.secret)) return 0;
     if (grant.active) this.finish(grant, grant.turn, true);
     grant.owner = randomUUID(); grant.active = true; grant.conversationId = conversationId;
+    this.begin?.();
     return ++grant.turn;
   }
   finish(grant: Grant | undefined, turn: number, cancelled: boolean) {
@@ -60,6 +64,13 @@ export class CuaSessionAuthority {
     this.finish(grant, grant.turn, true);
     this.grants.delete(grant.secret);
     try { fs.rmSync(grant.file, { force: true }); } catch { /* Already revoked in memory; retry on next boot. */ }
+  }
+  /** Host-wide shutdown owns native drain; invalidate every old transport before asynchronous cleanup. */
+  revokeAll() {
+    for (const grant of [...this.grants.values()]) {
+      grant.active = false;
+      this.remove(grant);
+    }
   }
   get size() { return this.grants.size; }
 }

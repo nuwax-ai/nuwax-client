@@ -32,6 +32,17 @@ afterEach(() => vi.unstubAllGlobals());
 const render = () => renderToStaticMarkup(<CuaControls api={api as any} t={(key) => key} />);
 const Row = ({ label, desc, control }: any) => <section><h4>{label}</h4><p>{desc}</p>{control}</section>;
 const renderRows = () => renderToStaticMarkup(<CuaSettingsRows api={api as any} t={(key) => key} Row={Row} />);
+describe("CUA service availability", () => {
+  it("shows applying until the runtime acknowledges the saved settings", () => {
+    harness.states[0] = { ...harness.states[0], serviceState: "reconfiguring", desiredConfigRevision: 4, appliedConfigRevision: 3 };
+    expect(renderRows()).toContain("Claw.Cua.service.pending");
+    harness.cursor = 0;
+    harness.states[0] = { ...harness.states[0], serviceState: "ready", appliedConfigRevision: 4 };
+    const html = renderRows();
+    expect(html).toContain("Claw.Cua.service.applied");
+    expect(html).toContain("Claw.Cua.service.ready");
+  });
+});
 describe("Computer Use controls", () => {
   it("lets a fresh profile explicitly enable multiwindow through the host without changing its default", async () => {
     harness.states = [{ ...harness.states[0], phase: "idle", multiwindow: false }, false];

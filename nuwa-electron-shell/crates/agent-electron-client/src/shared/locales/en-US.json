@@ -1436,5 +1436,15 @@
   "Claw.Browser.inApp": "In-app window",
   "Claw.Browser.system": "Default browser",
   "Claw.Browser.settingsLoadFailed": "Unable to load webpage preferences.",
-  "Claw.Browser.settingsSaveFailed": "Unable to save webpage preferences."
+  "Claw.Browser.settingsSaveFailed": "Unable to save webpage preferences.",
+  "Claw.Cua.service.label": "Service status",
+  "Claw.Cua.service.applied": "Settings applied",
+  "Claw.Cua.service.pending": "Settings saved, applying",
+  "Claw.Cua.service.disabled": "Disabled",
+  "Claw.Cua.service.starting": "Starting",
+  "Claw.Cua.service.ready": "Ready",
+  "Claw.Cua.service.reconfiguring": "Applying settings",
+  "Claw.Cua.service.recovering": "Restoring connection",
+  "Claw.Cua.service.waitingPermission": "Waiting for system permissions",
+  "Claw.Cua.service.degraded": "Temporarily unavailable"
 }

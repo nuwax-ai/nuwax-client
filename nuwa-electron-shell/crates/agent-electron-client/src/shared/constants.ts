@@ -773,6 +773,17 @@ export const I18N_KEYS = {
 
 /** Computer Use product controls and diagnostics. */
 export const CUA_I18N_KEYS = {
+  SERVICE_LABEL: "Claw.Cua.service.label",
+  SERVICE_APPLIED: "Claw.Cua.service.applied",
+  SERVICE_PENDING: "Claw.Cua.service.pending",
+  SERVICE_DISABLED: "Claw.Cua.service.disabled",
+  SERVICE_STARTING: "Claw.Cua.service.starting",
+  SERVICE_READY: "Claw.Cua.service.ready",
+  SERVICE_RECONFIGURING: "Claw.Cua.service.reconfiguring",
+  SERVICE_RECOVERING: "Claw.Cua.service.recovering",
+  SERVICE_WAITINGPERMISSION: "Claw.Cua.service.waitingPermission",
+  SERVICE_DEGRADED: "Claw.Cua.service.degraded",
+
   PREVIEW_RESIZE: "Claw.Cua.preview.resize",
   MW_MULTIWINDOW_TITLE: "Claw.Cua.multiwindow.title",
   MW_MULTIWINDOW_DESCRIPTION: "Claw.Cua.multiwindow.description",

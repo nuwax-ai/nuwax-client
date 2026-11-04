@@ -1436,5 +1436,15 @@
   "Claw.Browser.inApp": "应用内独立窗口",
   "Claw.Browser.system": "默认浏览器",
   "Claw.Browser.settingsLoadFailed": "无法加载网页打开设置。",
-  "Claw.Browser.settingsSaveFailed": "无法保存网页打开设置。"
+  "Claw.Browser.settingsSaveFailed": "无法保存网页打开设置。",
+  "Claw.Cua.service.label": "运行状态",
+  "Claw.Cua.service.applied": "配置已生效",
+  "Claw.Cua.service.pending": "配置已保存，正在应用",
+  "Claw.Cua.service.disabled": "已关闭",
+  "Claw.Cua.service.starting": "正在启动",
+  "Claw.Cua.service.ready": "可用",
+  "Claw.Cua.service.reconfiguring": "正在应用配置",
+  "Claw.Cua.service.recovering": "正在恢复连接",
+  "Claw.Cua.service.waitingPermission": "等待系统授权",
+  "Claw.Cua.service.degraded": "暂时不可用"
 }

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import { createHash, createHmac } from "node:crypto";
 import os from "node:os";
@@ -71,15 +71,18 @@ vi.mock("electron", () => ({
 vi.mock("./mcpGateway", () => ({
   CUA_STDIO_RELAY: "relay",
   CuaMcpGateway: class {
-    constructor(options: unknown) { mocks.gatewayOptions = options; }
+    constructor(private options: any) { mocks.gatewayOptions = options; }
     ready = false;
     async listen(socket: string) { this.ready = true; if (!socket.startsWith("\\\\")) fs.writeFileSync(socket, ""); }
     async close() { this.ready = false; }
+    configureExecution(controller: unknown, tasks: unknown) { Object.assign(this.options, { controller, tasks }); mocks.gatewayOptions = this.options; }
+    updateAgentCursor() {}
     cancelPending() {}
     pauseTransports() {}
     async resumeTransports() {}
     holdOwner() {}
     async ownerDrained() {}
+    nativeDrained() {}
   },
 }));
 vi.mock("electron-log", () => ({
@@ -318,7 +321,8 @@ async function createEndpointSocket(stale: boolean) {
   return { socketPath, server };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
   mocks.development = false;
   mocks.signatureId = undefined;
   mocks.settings.clear();
@@ -349,7 +353,9 @@ beforeEach(() => {
     value: path.join(mocks.userDataURL, "resources"),
     configurable: true,
   });
+  cuaModule = await loadCua();
 });
+afterEach(async () => { mocks.daemonReady = false; await cuaModule.suspendCua("appQuit"); });
 
 describe("cua MCP 条目注入", () => {
   it("开关开→upsert cua stdio 条目并同步 Proxy", async () => {
@@ -462,14 +468,16 @@ describe("cua 开关与启动收敛", () => {
     expect(fs.readFileSync(target, "utf8")).toBe("keep");
   });
 
-  it("未设置开关时默认关闭，启动只清除旧 MCP 条目，不安装或启动 helper", async () => {
+  it("默认关闭时也提供稳定 MCP 入口，不安装或启动 helper", async () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.settings.set("mcp_local_config", JSON.stringify({ mcpServers: {
       cua: { command: "old-helper", args: ["mcp"] },
       other: { command: "other-server", args: [] },
     } }));
     await ensureCuaOnBoot();
-    expect(readMcpServers()).toEqual({ other: { command: "other-server", args: [] } });
+    expect(readMcpServers().other).toEqual({ command: "other-server", args: [] });
+    expect(readMcpServers().cua?.command).toBe("/bundled/node");
+    expect(mocks.gatewayOptions.unavailable()).toBe("disabled");
     expect(fs.existsSync(stableHelperPath())).toBe(false);
     expect(mocks.spawnCalls).toEqual([]);
     expect(mocks.execCalls).toEqual([]);
@@ -556,7 +564,7 @@ describe("cua 开关与启动收敛", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe("permissionsRequired");
     expect(result.status.enabled).toBe(false);
-    expect(readMcpServers().cua).toBeUndefined();
+    expect(readMcpServers().cua).toBeTruthy();
     expect(mocks.spawnCalls.some((c) => c.args.includes("serve"))).toBe(false);
   });
 
@@ -584,8 +592,9 @@ describe("cua 开关与启动收敛", () => {
     mocks.permissionGranted = false;
     const revoked = await getCuaStatus();
     expect(revoked.enabled).toBe(true);
-    expect(revoked.running).toBe(false);
-    expect(readMcpServers().cua).toBeUndefined();
+    expect(revoked.running).toBe(true); // status reads do not tear down the gateway
+    expect(revoked.error).toBe("permissionsRequired");
+    expect(mocks.gatewayOptions.unavailable()).toBe("permissionsRequired");
   });
 
   it("enabled but daemon down does not report stale granted helper permissions", async () => {
@@ -613,7 +622,7 @@ describe("cua 开关与启动收敛", () => {
     expect(first.success).toBe(false);
     expect(first.error).toBe("permissionsRequired");
     expect(first.status.consentPending).toBe(true);
-    expect(readMcpServers().cua).toBeUndefined();
+    expect(readMcpServers().cua).toBeTruthy();
 
     vi.resetModules();
     const reopened = await loadCua();
@@ -683,7 +692,7 @@ describe("cua 开关与启动收敛", () => {
     const after = await getCuaStatus();
     expect(after.enabled).toBe(false);
     expect(after.running).toBe(false);
-    expect(after.mcpInjected).toBe(false);
+    expect(after.mcpInjected).toBe(true);
   });
 
   it("显式启用与关闭并发，关闭请求会取消尚未持久化的启用", async () => {
@@ -707,7 +716,7 @@ describe("cua 开关与启动收敛", () => {
     const final = await getCuaStatus();
     expect(final.enabled).toBe(false);
     expect(final.running).toBe(false);
-    expect(final.mcpInjected).toBe(false);
+    expect(final.mcpInjected).toBe(true);
   });
 
   it("登录失效在启动队列等待期间同步撤销，并保留用户开关偏好", async () => {
@@ -749,7 +758,7 @@ describe("cua 开关与启动收敛", () => {
     expect((await recovering).success).toBe(false);
     expect((await stopping).success).toBe(true);
     expect(cuaModule.getCuaRuntime()).toMatchObject({ phase: "stopped", reason: "userStopped" });
-    expect(await getCuaStatus()).toMatchObject({ enabled: true, running: false, mcpInjected: false });
+    expect(await getCuaStatus()).toMatchObject({ enabled: true, running: false, mcpInjected: true });
   });
 
   it("策略握手未生效→拒绝开启、清理 daemon 和 MCP", async () => {
@@ -761,7 +770,7 @@ describe("cua 开关与启动收敛", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe("policyNotActive");
     expect(result.status.enabled).toBe(false);
-    expect(readMcpServers().cua).toBeUndefined();
+    expect(readMcpServers().cua).toBeTruthy();
   });
 
   it("启动收敛只做无提示探测，撤权时停止执行但保留用户偏好", async () => {
@@ -770,7 +779,7 @@ describe("cua 开关与启动收敛", () => {
     mocks.autoReady = true;
     await ensureCuaOnBoot();
     expect((mocks.settings.get("step1_config") as Record<string, unknown>).computerUseEnabled).toBe(true);
-    expect(readMcpServers().cua).toBeUndefined();
+    expect(readMcpServers().cua).toBeTruthy();
     expect(mocks.spawnCalls.some((c) => c.args.includes("__permissions-host-request"))).toBe(false);
     expect(mocks.spawnCalls.find(c => c.args.includes("serve"))?.args).toContain("--no-permissions-gate");
   });
@@ -865,7 +874,7 @@ describe("upgrade preference ownership", () => {
     mocks.settingFailure = true;
     const result = await setCuaEnabled(false);
     expect(result.success).toBe(false);
-    expect(result.status).toMatchObject({ running: false, mcpInjected: false });
+    expect(result.status).toMatchObject({ running: false, mcpInjected: true });
   });
 
   it("a stale general-settings snapshot cannot erase or resurrect the CU preference", async () => {
@@ -993,7 +1002,7 @@ describe("permission request ownership", () => {
     const disabling = setCuaEnabled(false);
     const [on, off] = await Promise.all([enabling, disabling]);
     expect(on).toMatchObject({ success: false, error: "operationCancelled" });
-    expect(off).toMatchObject({ success: true, status: { enabled: false, consentPending: false, mcpInjected: false } });
+    expect(off).toMatchObject({ success: true, status: { enabled: false, consentPending: false, mcpInjected: true } });
     expect(mocks.spawnCalls.some(c => c.args.includes("serve"))).toBe(false);
   });
   it("session invalidation revokes the outstanding host before lifecycle cleanup", async () => {
@@ -1358,7 +1367,7 @@ describe("multiwindow native handoff lifecycle", () => {
     expect((await cuaModule.stopCuaTask()).success).toBe(true);
     expect(cuaModule.getCuaRuntime()).toMatchObject({ recoverable: true, controlPending: false });
     expect((await cuaModule.recoverCua()).success).toBe(true);
-    expect(cuaModule.getCuaTasks()).toEqual([]);
+    expect(cuaModule.getCuaTasks()).toEqual([expect.objectContaining({ phase: "stopped", reason: "userStopped" })]);
     const next = registry.ensure("new-turn");
     registry.bind(next.id, { pid: 25, windowId: 50, label: "" }); registry.resumeTask(next.id);
     const release = await registry.acquire(next.owner); release();
@@ -1382,5 +1391,80 @@ describe("Linux legacy target migration", () => {
     const policy = JSON.parse(fs.readFileSync(mocks.policyPath, "utf8"));
     expect(policy.allow.rules[0].constraints.window_id.allowed).toEqual([50]);
     await setCuaEnabled(false);
+  });
+});
+
+
+describe("CUA live configuration reconciliation", () => {
+  it("loads the saved mode while disabled and applies a later mode change without starting a helper", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await loadCua();
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.settings.set("step1_config", { computerUseEnabled: false, computerUseMultiwindow: true, computerUseConfigRevision: 4 });
+    await ensureCuaOnBoot();
+    expect(cuaModule.getCuaRuntime()).toMatchObject({ multiwindow: true, serviceState: "disabled", desiredConfigRevision: 4, appliedConfigRevision: 4 });
+    expect((await cuaModule.setMultiwindowEnabled(false)).success).toBe(true);
+    expect(cuaModule.getCuaRuntime().multiwindow).not.toBe(true);
+    expect((mocks.settings.get("computerUsePreferences.v1") as any).computerUseMultiwindow).toBe(false);
+    expect(mocks.spawnCalls).toEqual([]);
+  });
+  async function enabled() {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await loadCua();
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+  }
+  it("keeps the protocol entry created while disabled across enable and disable", async () => {
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    vi.resetModules(); cuaModule = await loadCua();
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
+    await ensureCuaOnBoot();
+    const front = readMcpServers().cua;
+    const options = mocks.gatewayOptions;
+    expect(options.unavailable()).toBe("disabled");
+    expect(mocks.spawnCalls).toEqual([]);
+    mocks.permissionGranted = true; mocks.autoReady = true;
+    expect((await setCuaEnabled(true)).success).toBe(true);
+    expect(mocks.gatewayOptions).toBe(options);
+    expect(readMcpServers().cua).toEqual(front);
+    expect(options.unavailable()).toBeNull();
+    await setCuaEnabled(false);
+    expect(readMcpServers().cua).toEqual(front);
+    expect(options.unavailable()).toBe("disabled");
+  });
+  it("applies the last rapid mode change without replacing the MCP front", async () => {
+    await enabled();
+    const front = readMcpServers().cua, options = mocks.gatewayOptions;
+    const first = cuaModule.setMultiwindowEnabled(true);
+    const second = cuaModule.setMultiwindowEnabled(false);
+    const [old, latest] = await Promise.all([first, second]);
+    expect(old.success).toBe(false); expect(latest.success).toBe(true);
+    expect(mocks.gatewayOptions).toBe(options);
+    expect(readMcpServers().cua).toEqual(front);
+    const runtime = cuaModule.getCuaRuntime();
+    expect(runtime.multiwindow).not.toBe(true);
+    expect(runtime.appliedConfigRevision).toBe(runtime.desiredConfigRevision);
+    expect((await getCuaStatus()).serviceState).toBe("ready");
+  });
+  it("does not resurrect a failed explicit disable when a new turn starts", async () => {
+    await enabled();
+    const { cuaSessionAuthority } = await import("./sessionAuthority");
+    const grant = cuaSessionAuthority.issue([{ name: "cua" }]);
+    const serves = mocks.spawnCalls.filter(call => call.args.includes("serve")).length;
+    mocks.settingFailure = true;
+    expect((await setCuaEnabled(false)).success).toBe(false);
+    cuaSessionAuthority.start(grant);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(mocks.gatewayOptions.unavailable()).toBe("disabled");
+    expect(mocks.spawnCalls.filter(call => call.args.includes("serve"))).toHaveLength(serves);
+    cuaSessionAuthority.remove(grant);
+  });
+  it("blocks execution if saving a stricter authorization policy fails", async () => {
+    await enabled();
+    mocks.settingFailure = true;
+    const result = await setCuaAuthMode("ask");
+    expect(result).toMatchObject({ success: false, error: "databaseNotReady", status: { running: false, serviceState: "degraded" } });
+    expect(mocks.gatewayOptions.unavailable()).toBe("serviceRecovering");
   });
 });
