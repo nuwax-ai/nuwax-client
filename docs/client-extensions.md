@@ -43,3 +43,14 @@ node test/plugin-smoke.mjs --shell
 ```
 
 真实 DS-Bot 集成测试运行原版 DSH、DS-Bot 和原生 MCP Client，用确定性模型验证主题读取、个人副本、文件修改、应用、恢复及撤权。它不替代真实平台模型、实体麦克风或签名安装包验收。CI 商业门禁安装锁定的 DSH 依赖后运行该测试，原生平台任务另验 MCP 连接和插件管理。
+
+## 2026-11-04 集成验收记录
+
+- 分支：`codex/client-extension-integration`。应用源码为 `b874fef6`，整合主题 `56a90d28` 与 DSH `cdf82ea4`，前端源码 pin 为 `b338d54f6f`。
+- 商业完整门禁：313 个测试文件通过，3794 个用例通过、1 个跳过。根脚本 429 项、DSH 单测 8 项通过；类型检查、两层特性边界、应用目录、宿主桥与七份主题核心快照检查通过。
+- 原生 DSH 插件适配：真实额外插件安装、配置、版本冲突拒绝、核心包保护、禁用、启用和移除均通过。
+- Nuwax Dev 已实际运行集成工作树；运行时确认同时注册 themes、shell-capabilities、dsh-runtime，前端页面内构建标记为 `b338d54f6f`。主进程构建时间晚于所有本次源码修改。
+- 正在运行的 Nuwax Dev 经真实 MCP 完成个人主题复制、两个文件的整包校验与写入、选择应用、文件和选择恢复，以及临时主题清理。关闭开关后原有连接被拒绝。变更记录在界面中显示，最终恢复 Blue Hour 深色主题，三个 Agent 授权开关均关闭，开发工具已收起。
+- DS-Bot 在此开发档案中尚无平台模型授权，未创建新平台凭据。真实模型驱动的 Dev 联调等待用户确认仅限 `glm-5.2-anthropic-QC` 的授权；此前的真实 DSH + 确定性模型闭环已通过。
+
+本机安全证据：`/Users/apple/Documents/Codex/2026-11-04/client-extension-integration/verification.json`。该文件只包含来源、构建摘要和验收结果，不含平台 Key、MCP 令牌或主题文件正文。
