@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "series": "dsh-dsbot-runtime-20261104",
+  "approvedSource": "3891b96245e52207b204005a8fc09f2340c3106f",
+  "baselineTag": "v3.1.0-beta.24",
+  "platform": "darwin",
+  "arch": "arm64",
+  "additionalStarts": 1,
+  "previousRuns": [
+    { "id": "41812217969", "attempts": 1 },
+    { "id": "41813161971", "attempts": 1 },
+    { "id": "41815551392", "attempts": 1 },
+    { "id": "41821640915", "attempts": 1 }
+  ],
+  "authority": {
+    "kind": "explicit-user-approval",
+    "date": "2026-11-04",
+    "decision": "重新启动，仅 macOS arm64",
+    "context": "User approved one signed package for the Office fix in 3891b962 after the four-start stop. Preserve the series and earlier evidence; no other platforms, reruns or further automatic starts."
+  }
+}

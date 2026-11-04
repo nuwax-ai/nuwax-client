@@ -23,6 +23,21 @@ function fixture(t) {
   return { cwd, git, env, prepared, identity: validationIdentity(cwd, env) };
 }
 const run = (id, attempts, series = 'pr-66', extra = {}) => ({ id, run_attempt: attempts, display_title: `Package validation / ${series}`, ...extra });
+function restartFixture(t) {
+  const f = fixture(t);
+  const record = { schema: 1, series: 'pr-66', approvedSource: f.env.GITHUB_SHA,
+    baselineTag: 'v3.0.23-beta.3', platform: 'darwin', arch: 'arm64', additionalStarts: 1,
+    previousRuns: [119, 120, 121, 122].map(id => ({ id: String(id), attempts: 1 })),
+    authority: { kind: 'explicit-user-approval', decision: 'Restart once for macOS arm64' } };
+  fs.mkdirSync(path.join(f.cwd, '.github'));
+  const file = path.join(f.cwd, '.github/package-validation-restart.json');
+  fs.writeFileSync(file, JSON.stringify(record));
+  const commit = (files = ['.github/package-validation-restart.json']) => { f.git('add', '--', ...files); f.git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'record explicit restart'); };
+  commit();
+  const env = { ...f.env, VALIDATION_PLATFORMS: 'mac-arm64', GITHUB_SHA: f.git('rev-parse', 'HEAD') };
+  return { ...f, env, file, record, commit, identity: validationIdentity(f.cwd, env),
+    runs: [123, 122, 121, 120, 119].map(id => run(id, 1)) };
+}
 
 test('Intel validation uses a native Intel runner and keeps its architecture for upgrade pairs', t => {
   const f = fixture(t);
@@ -59,6 +74,35 @@ test('four-start ceiling includes reruns, cancellations, new commits and new dis
   assert.throws(() => assertValidationBudget([run(123, 5)], { ...identity, runAttempt: 5 }), /停止条件/);
   assert.throws(() => assertValidationBudget([run(122, 1)], identity), /无法确认/);
   assert.throws(() => assertValidationBudget([run(123, undefined)], identity));
+});
+
+test('explicit committed restart preserves prior evidence and admits only one new arm64 start', async t => {
+  const f = restartFixture(t);
+  assert.equal(assertValidationBudget(f.runs, f.identity), 5);
+  assert.deepEqual(f.identity.restart, f.record);
+  assert.throws(() => assertValidationBudget([...f.runs, run(124, 1)], { ...f.identity, runId: '124' }), /仅授权一次/);
+  assert.throws(() => assertValidationBudget(f.runs.map(row => row.id === 123 ? run(123, 2) : row), { ...f.identity, runAttempt: 2 }), /仅授权一次/);
+  assert.throws(() => assertValidationBudget(f.runs, { ...f.identity, runId: '122' }), /仅授权一次/);
+  assert.throws(() => assertValidationBudget(f.runs.filter(row => row.id !== 119), f.identity), /仅授权一次/);
+  assert.throws(() => assertValidationBudget(f.runs.map(row => row.id === 119 ? run(119, 2) : row), f.identity), /仅授权一次/);
+  const output = path.join(f.cwd, 'output'); fs.mkdirSync(output); fs.writeFileSync(path.join(output, 'Nuwax.zip'), 'signed-fixture');
+  const receipt = await stageValidation(f.cwd, output, path.join(f.cwd, 'stage'), f.identity, 'darwin', { signed: true, notarized: true, team: 'TEAM123' });
+  assert.deepEqual(receipt.restart, f.record);
+  assert.equal(receipt.source.client, f.env.GITHUB_SHA);
+});
+
+test('restart is bound to approved application source, baseline and one platform; mutable records do not grant access', t => {
+  const f = restartFixture(t);
+  for (const changes of [{ VALIDATION_PLATFORMS: 'all' }, { VALIDATION_PLATFORMS: 'mac-x64' }, { VALIDATION_BASELINE_TAG: 'v3.0.22' }]) {
+    assert.throws(() => validationIdentity(f.cwd, { ...f.env, ...changes }), /人工重启授权/);
+  }
+  fs.writeFileSync(f.file, JSON.stringify({ ...f.record, additionalStarts: 100 }));
+  assert.equal(validationIdentity(f.cwd, f.env).restart.additionalStarts, 1);
+  f.commit();
+  assert.throws(() => validationIdentity(f.cwd, { ...f.env, GITHUB_SHA: f.git('rev-parse', 'HEAD') }), /人工重启授权/);
+  fs.writeFileSync(f.file, JSON.stringify(f.record));
+  fs.writeFileSync(path.join(f.cwd, 'application.mjs'), 'changed application'); f.commit(['.github/package-validation-restart.json', 'application.mjs']);
+  assert.throws(() => validationIdentity(f.cwd, { ...f.env, GITHUB_SHA: f.git('rev-parse', 'HEAD') }), /冻结提交/);
 });
 
 test('reads all Actions history pages and stops closed on unavailable history', async t => {

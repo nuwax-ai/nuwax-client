@@ -17,6 +17,8 @@
 
 本机安全证据：`/tmp/nuwax-dsh-packaged-platform-20261104-realpath.log`、`/tmp/nuwax-dsh-packaged-office-20261104.log`、`/tmp/nuwax-dsh-office-hardened-control-20261104.log`、`/tmp/nuwax-dsh-office-hardened-fixed-20261104.log`、`/tmp/nuwax-dsh-office-hardened-regression-20261104.log`。原始 CI 包在隔离临时目录中；模型调用和 Office 操作后原包资源签名仍有效，诊断副本不作为安装包验收证据。
 
+用户随后明确批准“重新启动，仅 macOS arm64”。本次仅重新启动一次签名包验证，应用源码冻结于 `3891b96245e52207b204005a8fc09f2340c3106f`，沿用同一系列和 Beta 基线。授权记录位于 `.github/package-validation-restart.json`，固定前四轮 run id / attempt，并写入新包来源记录；只允许新增一次启动，不允许 rerun、其他平台或应用源码变化。为执行人工重启所增加的提交仅包含预算校验、测试、授权和验收记录，不改变已批准的应用实现。定向校验 15 / 15 通过；重新出包和包内复验结果另行补充。
+
 ## 已获得的证据
 
 | 范围 | 实测结果 | 证据层级 |
