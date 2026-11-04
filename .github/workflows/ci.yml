@@ -30,7 +30,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux 已由 commercial 的 Node 24 全量测试覆盖；这里只补平台差异。
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,9 +81,11 @@ jobs:
         with:
           node-version: '24'
       - name: Test terminal wire protocol
+        if: runner.os == 'Windows'
         working-directory: native/legacy-terminal
         run: go test ./...
       - name: Check concurrent session lifecycle
+        # -race 同时执行完整测试，无需在 Linux 再跑一次普通 go test。
         if: runner.os == 'Linux'
         working-directory: native/legacy-terminal
         run: go test -race ./...

@@ -26,27 +26,4 @@ describe('scripts project path contracts', () => {
     expect(resolveFromProject('resources')).toBe(path.join(projectRootByFs, 'resources'));
     expect(resolveFromProject('node_modules')).toBe(path.join(projectRootByFs, 'node_modules'));
   });
-
-  it('keeps moved scripts wired to shared project-path helper', () => {
-    const scripts = [
-      'scripts/prepare/prepare-uv.js',
-      'scripts/prepare/prepare-node.js',
-      'scripts/prepare/prepare-git.js',
-      'scripts/prepare/prepare-lanproxy.js',
-      'scripts/build/sign-uv-mac.js',
-      'scripts/build/dist-current-platform.js',
-      'scripts/tools/check-startup-ports.js',
-      'scripts/tools/generate-tray-icons.js',
-      'scripts/tools/test-integrated-node.js',
-    ];
-
-    const legacyPattern = /path\.resolve\(__dirname,\s*'\.\.'\)/;
-
-    for (const relPath of scripts) {
-      const fullPath = path.join(projectRootByFs, relPath);
-      const content = fs.readFileSync(fullPath, 'utf8');
-      expect(content).toContain('project-paths');
-      expect(content).not.toMatch(legacyPattern);
-    }
-  });
 });

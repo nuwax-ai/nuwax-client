@@ -1,13 +1,13 @@
 <!--
 nuwa-sdlc-kit v1.0.0 · content — 播种一次，本地所有（升级不覆盖）
 SDLC Stage 3 · Build 工件模板
-用法：spec 通过后在 plan mode 访谈产出，存 plans/YYYYMMDD-<slug>-plan.md。
-闸门：接受本计划才允许动 src；实现偏离计划时同一 commit 更新本文件（plan-gate 会提醒）。
+用法：需要记录实施方案时存 plans/YYYYMMDD-<slug>-plan.md；小修无需创建。
+仅在存在未确认的产品边界时先澄清；计划不作为编辑源码的机械门禁。
 -->
 # 实施计划：{功能 slug}
 
-- 对应 spec：specs/{feature-slug}.md
-- 状态：待接受 / 已接受 / 已完成（含偏离记录）
+- 对应 spec：（已有规格时填写，无则省略）
+- 状态：待确认 / 实施中 / 已完成
 
 ## 改动文件清单
 
@@ -20,8 +20,8 @@ SDLC Stage 3 · Build 工件模板
 
 ## 证明成立的测试
 
-- 新增测试：（失败测试先行的，先提交测试再修码）
-- 回归范围：npm run test:commercial
+- 验证方式：（覆盖本次行为风险的现有测试/复现/检查；有证据缺口时才新增用例）
+- 回归范围：（具体命令与理由；按影响域选择，不默认本地重跑全量）
 
 ## 风险与回退
 

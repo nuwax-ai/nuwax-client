@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 .zcode/*
+.vscode/*
+.cursor/*
 !.zcode/config.json
 
 # ZCode 本地工具缓存
