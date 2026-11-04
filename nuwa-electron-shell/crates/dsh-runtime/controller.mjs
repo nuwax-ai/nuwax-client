@@ -95,6 +95,8 @@ export class RuntimeController extends EventEmitter {
       await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port }), { mode: 0o600 })
       if (!current()) throw new Error('Account changed')
       const env = { ...this.#options.env(), HOME: home, USERPROFILE: home, DSH_HOME: home,
+        // Office imports must not create __pycache__ inside a sealed app bundle.
+        PYTHONDONTWRITEBYTECODE: '1',
         NUWAX_DSH_SCOPE_ROOT: home, NUWAX_DSH_BROKER: broker, NUWAX_DSH_RUN_TOKEN: this.#broker.token,
         NUWAX_DSH_OFFICE: this.#options.officeDir, DS_BOT_APP: '1', DSH_TELEMETRY_DISABLED: '1' }
       const child = fork(join(this.#options.runtimeDir, 'host.mjs'), [], {

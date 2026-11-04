@@ -3,11 +3,8 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { nativeTargets } = require('./dsh-sign-targets.cjs');
 /** Run before Electron seals the application; libraries may lack execute bits. */
-async function signDshResources(context) {
-  if (context.electronPlatformName !== 'darwin') return;
-  const identity = process.env.APPLE_SIGNING_IDENTITY || process.env.CSC_NAME;
-  if (!identity || process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') return;
-  const resources = context.packager.getResourcesDir(context.appOutDir);
+async function signDshResources({ resources, identity, keychain }) {
+  if (!identity) throw new Error('DSH resource signing requires the resolved application identity');
   const entitlements = path.resolve(__dirname, '../../build/entitlements.child.plist');
   for (const name of ['dsh-runtime', 'dsh-office']) {
     const root = path.join(resources, name);
@@ -15,7 +12,7 @@ async function signDshResources(context) {
     const targets = nativeTargets(root);
     for (const file of targets) {
       const args = ['--force', '--sign', identity, '--timestamp', '--options', 'runtime'];
-      if (process.env.CSC_KEYCHAIN) args.push('--keychain', process.env.CSC_KEYCHAIN);
+      if (keychain) args.push('--keychain', keychain);
       if (/^(node|python[0-9.]*)$/.test(path.basename(file))) args.push('--entitlements', entitlements);
       execFileSync('codesign', [...args, file], { stdio: ['ignore', 'pipe', 'pipe'] });
       execFileSync('codesign', ['--verify', '--strict', file], { stdio: ['ignore', 'pipe', 'pipe'] });

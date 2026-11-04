@@ -313,6 +313,7 @@
       "icon": "public/icon.icns",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "sign": "scripts/build/dsh-mac-sign.cjs",
       "hardenedRuntime": true,
       "extendInfo": {
         "CFBundleIdentifier": "com.nuwax.agent",

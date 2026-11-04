@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:net'
 import { RuntimeController } from '../controller.mjs'
 
-export async function verifyPlatformRuntime(request, modelId = '100000121') {
+export async function verifyPlatformRuntime(request, modelId = '100000121', exercise) {
   const root = await mkdtemp(join(tmpdir(), 'nuwax-dsh-live-'))
   const saved = new Map()
   const scope = { origin: 'https://testagent.xspaceagi.com', accountId: 'acceptance-only', epoch: 1 }
@@ -36,6 +36,7 @@ export async function verifyPlatformRuntime(request, modelId = '100000121') {
     while (Date.now() < deadline) {
       const chat = await api('chat', { botId: state.mainBotId })
       if (chat.items.some(item => item.kind === 'bot' && item.text.includes('DSH_PLATFORM_OK'))) {
+        if (exercise) await exercise({ api, state, runtime })
         const home=runtime.scopeDir();await runtime.stop();
         const node=fileURLToPath(new URL('../../agent-electron-client/resources/dsh-office/primary-runtime/dependencies/node/bin/node', import.meta.url));
         const proof=JSON.parse(execFileSync(node,[fileURLToPath(new URL('./persisted-proof.cjs',import.meta.url)),home],{encoding:'utf8'}));

@@ -25,7 +25,7 @@ r=Presentation(); s=r.slides.add_slide(r.slide_layouts[1]); s.shapes.title.text=
 r=Presentation(p/'slides.pptx'); r.slides[0].shapes.title.text='Edited slides'; r.save(p/'edited.pptx')
 w=Workbook(); w.active['A1']=20; w.active['B1']=22; w.active['C1']='=A1+B1'; w.save(p/'sheet.xlsx')
 w=load_workbook(p/'sheet.xlsx'); w.active['A2']='Edited workbook'; w.save(p/'edited.xlsx')
-`, directory], { env: { ...process.env, PYTHONPATH: entries.pythonPackages }, timeout: 30000 })
+`, directory], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: entries.pythonPackages }, timeout: 30000 })
   converter = await createConverter({ timeoutMs: 120000, fontMetadataCacheDirectory: false })
   for (const suffix of ['docx', 'pptx', 'xlsx']) {
     const result = await converter.convert({ inputPath: join(directory, 'edited.' + suffix), outputPath: join(directory, suffix + '.pdf') })
@@ -33,10 +33,14 @@ w=load_workbook(p/'sheet.xlsx'); w.active['A2']='Edited workbook'; w.save(p/'edi
     console.log(JSON.stringify({ operation: 'convert', suffix, backend: result.backend }))
   }
   await converter.recalculate({ inputPath: join(directory, 'edited.xlsx'), outputPath: join(directory, 'recalculated.xlsx') })
-  const value = await execute(entries.python, ['-c', "from openpyxl import load_workbook; import sys; print(load_workbook(sys.argv[1], data_only=True).active['C1'].value)", join(directory, 'recalculated.xlsx')], { env: { ...process.env, PYTHONPATH: entries.pythonPackages } })
+  const value = await execute(entries.python, ['-c', "from openpyxl import load_workbook; import sys; print(load_workbook(sys.argv[1], data_only=True).active['C1'].value)", join(directory, 'recalculated.xlsx')], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: entries.pythonPackages } })
   assert.equal(Number(value.stdout.trim()), 42)
   await converter.renderImages({ inputPath: join(directory, 'edited.docx'), outputDir: join(directory, 'pages') })
   const manifest = JSON.parse(await readFile(join(directory, 'pages/manifest.json'), 'utf8'))
   assert.ok(manifest)
+  if (process.platform === 'darwin') {
+    const { verifySignedPython } = await import('./office-signature-smoke.mjs')
+    await verifySignedPython(entries.python)
+  }
   console.log(JSON.stringify({ level: 'bundled-office-native', createAndEdit: ['docx', 'pptx', 'xlsx'], recalculate: 42, renderImages: true }))
 } finally { await converter?.dispose(); await rm(directory, { recursive: true, force: true }) }

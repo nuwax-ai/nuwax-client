@@ -44,6 +44,7 @@ test('duplicate starts share one owned child; only a run token reaches it', asyn
     assert.ok(!JSON.stringify(observed).includes('platform-secret-fixture'))
     assert.ok(observed.env.NUWAX_DSH_RUN_TOKEN)
     assert.equal(observed.env.HOME, f.controller.scopeDir())
+    assert.equal(observed.env.PYTHONDONTWRITEBYTECODE, '1', 'Office must preserve sealed application resources')
     const base = observed.env.NUWAX_DSH_BROKER
     const headers = { Authorization: 'Bearer ' + observed.env.NUWAX_DSH_RUN_TOKEN }
     assert.equal((await fetch(base + '/catalog', { headers })).status, 200)
