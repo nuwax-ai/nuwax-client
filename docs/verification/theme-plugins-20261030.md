@@ -171,3 +171,11 @@ GitHub 与 GitLab 的 `feat-2026.11` 均为 `cf403d24c443df294d9f44840f6d5c106da
 相关主题、TaskResult 与文件预览回归 10 文件、123 项通过，Blue Hour 明暗包校验通过，提交 hook 的 stylelint／格式化及源码生产构建通过。存量 `@container` 容器查询被旧版 stylelint 规则表误报，采用该行限定说明，未放宽全局规则。真实客户端回读 `934dbec007`，文件结果卡片／路径栏／操作区均为 `#202735`，主文字 `#edf2fb`，说明 `#9baac2`，边框 `#303b50`；已有文本文件内容正常显示。实际进入 `/space/752/app-pro/195/1695706`，URL 工具栏周围固定白底已消除，iframe 自有网页样式不变。最终保留此项目的深色预览页，调试工具关闭，开发进程继续运行。
 
 日志为 `/Users/apple/Documents/Codex/2026-11-04/theme-plugins-dev/preview-theme-*`。交付仅同步主题功能分支，不合入发布分支、不部署、不出包。客户端分支继承了历史 `.github/package-validation-request.json`，此次交付提交使用 `[skip ci]` 避免新远端分支触发旧打包请求；已有本地质量门与实机证据仍按本记录保留，4/4 停止条件未重启。
+
+## 2026-11-04 合入最新 feat-2026.11（7d46b5db9e）
+
+再次 fetch 后，GitHub／GitLab 的 `feat-2026.11` 均为 `7d46b5db9eb3a271642bb1d368661cff73c577f1`。从主题分支 `934dbec007` 普通合并，生成 `b338d54f6f`；无冲突，合并前备份为 `codex/theme-plugins-before-feat-934dbec007`。新增内容仅为头像编辑标记和圆形展示，5 文件、47 行新增／4 行删除；没有修改主题核心、会话、终端、正文搜索或上游微应用 pin。
+
+检查确认头像标记由 UploadAvatar 聚合（`src/components/UploadAvatar/index.tsx:21`），默认仍为旧 overlay；资料引导仅通过可选 prop 选择右下角标记（`src/components/ProfileSetupGuide/index.tsx:123`），上传鉴权、保存与关闭逻辑不变。主题及资料引导测试 9 文件／103 项、商业门禁 311 文件／3749 项通过（1 跳过），主题核心 7 份快照一致，提交 hook 的 lint／stylelint／格式化通过。生产构建及微应用缓存检查通过，独立产物为 `3.1.0 / b338d54f6f`，原 `nuwax/dist` 已恢复。
+
+本次只同步源码和客户端的 `nuwax/` gitlink，`nuwax-dist/` pin 不变；不重载用户正在调试的客户端、不部署、不出包。构建及测试日志位于 `/Users/apple/Documents/Codex/2026-11-04/theme-plugins-dev/feat-sync-7d46-*`。
