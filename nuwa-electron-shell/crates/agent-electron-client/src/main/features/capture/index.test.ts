@@ -160,6 +160,57 @@ beforeEach(() => {
 afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
+  it.each([
+    [CAPTURE_IPC.SCREENSHOT, { format: 'png' }, 'image/png'],
+    [CAPTURE_IPC.SCREENSHOT, { format: 'jpeg' }, 'image/jpeg'],
+    [CAPTURE_INTERACTIVE_IPC, { action: 'screenshot' }, 'image/jpeg'],
+    [CAPTURE_INTERACTIVE_IPC, { action: 'mp4' }, 'image/jpeg'],
+  ])('copies a business still to the clipboard before returning an attachment through %s (%j)', async (channel, options, mime) => {
+    const sender = business();
+    if ('action' in options && options.action === 'mp4') mocks.record.mockRejectedValueOnce(new CaptureModeSwitch('screenshot', still));
+    const copied = deferred<{ success: true; kind: 'image' }>();
+    mocks.copy.mockReturnValueOnce(copied.promise);
+    let returned = false;
+    const pending = invoke<CaptureResult>(channel, sender, options).then(result => { returned = true; return result; });
+    await vi.waitFor(() => expect(mocks.copy).toHaveBeenCalledOnce());
+    expect(returned).toBe(false);
+    expect(mocks.copy.mock.calls[0][0]).toMatchObject({ success: true, mime });
+    expect(mocks.copy.mock.calls[0][2]()).toBe(true);
+    copied.resolve({ success: true, kind: 'image' });
+    const result = await pending;
+    expect(result).toMatchObject({ success: true, mime });
+    if (!result.success) throw new Error('capture did not produce a result');
+    expect(await invoke(CAPTURE_IPC.READ_CHUNK, sender, result.resultId, 0, result.bytes)).not.toBeNull();
+    expect(mocks.release).not.toHaveBeenCalled();
+    await invoke(CAPTURE_IPC.RELEASE, sender, result.resultId);
+    expect(mocks.release).toHaveBeenCalledWith(result.resultId);
+  });
+
+  it.each(['failure', 'exception'])('keeps the existing attachment flow available after a clipboard %s', async failure => {
+    if (failure === 'exception') mocks.copy.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    else mocks.copy.mockResolvedValueOnce({ success: false, code: 'failed' });
+    const sender = business();
+    const result = await capture(sender);
+    expect(await invoke(CAPTURE_IPC.READ_CHUNK, sender, result.resultId, 0, result.bytes)).not.toBeNull();
+    expect(ctx.log.warn).toHaveBeenCalledWith('Capture clipboard copy failed:', 'failed');
+    expect(await invoke(CAPTURE_IPC.COPY, sender, result.resultId)).toEqual({ success: true, kind: 'image' });
+  });
+
+  it.each(['navigation', 'logout'])('invalidates automatic clipboard copying when %s ends the document session', async cause => {
+    const sender = business();
+    const copied = deferred<{ success: false; code: 'canceled' }>();
+    mocks.copy.mockReturnValueOnce(copied.promise);
+    const pending = invoke<CaptureResult>(CAPTURE_INTERACTIVE_IPC, sender, { action: 'screenshot' });
+    await vi.waitFor(() => expect(mocks.copy).toHaveBeenCalledOnce());
+    const [, signal, isCurrent] = mocks.copy.mock.calls[0];
+    if (cause === 'navigation') sender.navigate(); else lifecycle.emitSessionEnd('logout');
+    expect(signal.aborted).toBe(true);
+    expect(isCurrent()).toBe(false);
+    copied.resolve({ success: false, code: 'canceled' });
+    expect(await pending).toEqual({ success: false, code: 'canceled' });
+    expect(mocks.data.size).toBe(0);
+  });
+
   it.each(['screenshot', 'mp4', 'gif'] as const)('宿主快捷键通过真实 preload 交互桥执行 %s，并保持宿主结果所有权', async action => {
     const sender = host();
     const ipc = { invoke: vi.fn((channel: string, ...args: unknown[]) => invoke(channel, sender, ...args)),
@@ -183,6 +234,7 @@ describe('native capture entry point security', () => {
     else expect(mocks.record.mock.calls[0][0]).toMatchObject({ output: action, maxDurationMs: 60_000 });
     expect(await bridge.readChunk(result.resultId, 0, result.bytes)).toBeInstanceOf(ArrayBuffer);
     expect(await invoke(CAPTURE_IPC.READ_CHUNK, business(), result.resultId, 0, result.bytes)).toBeNull();
+    expect(mocks.copy).not.toHaveBeenCalled();
     expect(await bridge.copy!(result.resultId)).toEqual(copyResult);
     await bridge.release(result.resultId);
     expect(await bridge.readChunk(result.resultId, 0, result.bytes)).toBeNull();
@@ -280,6 +332,7 @@ describe('native capture entry point security', () => {
   });
   it('copy 拒绝外域、子 frame、其他页面和失效句柄，仅原结果所有者可导出', async () => {
     const sender = business(); const result = await capture(sender);
+    mocks.copy.mockClear();
     expect(await invoke(CAPTURE_IPC.COPY, new Sender(40, 'other'), result.resultId)).toMatchObject({ code: 'untrusted' });
     expect(await channels.get(CAPTURE_IPC.COPY)!(frameEvent(sender, { ...sender.mainFrame }) as never, result.resultId as never)).toMatchObject({ code: 'untrusted' });
     expect(await invoke(CAPTURE_IPC.COPY, new Sender(21, 'business'), result.resultId)).toMatchObject({ code: 'invalid-argument' });
@@ -293,6 +346,7 @@ describe('native capture entry point security', () => {
   });
   it.each(['navigation', 'logout'])('copy 期间 %s 会取消子进程并使所有权检查失效', async cause => {
     const sender = business(); const result = await capture(sender); const done = deferred<unknown>();
+    mocks.copy.mockClear();
     mocks.copy.mockReturnValueOnce(done.promise);
     const pending = invoke(CAPTURE_IPC.COPY, sender, result.resultId);
     const [, signal, isCurrent] = mocks.copy.mock.calls[0];
@@ -326,6 +380,7 @@ describe('native capture entry point security', () => {
     expect(b.send.mock.calls.map(call => call[1])).toEqual(['selecting', 'recording', 'encoding', 'idle']);
     expect(h.send).not.toHaveBeenCalled(); expect(other.send).not.toHaveBeenCalled();
     expect(mocks.showSaveDialog).not.toHaveBeenCalled();
+    expect(mocks.copy).not.toHaveBeenCalled();
     await invoke(CAPTURE_IPC.RELEASE, b, result.resultId);
     expect(await invoke(CAPTURE_IPC.READ_CHUNK, b, result.resultId, 0, bytes.length)).toBeNull();
   });

@@ -171,6 +171,21 @@ export const captureFeature: DesktopFeature = {
       return includeRecording ? pendingService.then(async svc => { await prepareRecording(); return svc; }) : pendingService;
     };
 
+    const copyCaptureResult = async (event: IpcMainInvokeEvent, id: unknown): Promise<CaptureCopyResult> => {
+      if (typeof id !== 'string') return { success: false, code: 'invalid-argument' };
+      const owner = owners.get(id);
+      if (!owner || owner.senderId !== event.sender.id || !captureClipboard) return { success: false, code: 'invalid-argument' };
+      const epoch = generation;
+      const frame = event.senderFrame;
+      const controller = new AbortController();
+      pendingCopies.set(controller, event.sender.id);
+      try {
+        return await captureClipboard.copy(owner.result, controller.signal, () =>
+          !disposed && generation === epoch && owners.get(id) === owner &&
+          !event.sender.isDestroyed() && frame === event.sender.mainFrame);
+      } finally { pendingCopies.delete(controller); }
+    };
+
     const invokeCapture = async (event: IpcMainInvokeEvent, channels: CaptureChannels,
       kind: "screenshot" | "record", options: unknown, interactive = channels === HOST_CAPTURE_IPC, recordingDurationMs?: unknown): Promise<CaptureResult> => {
       const epoch = generation;
@@ -193,6 +208,15 @@ export const captureFeature: DesktopFeature = {
           svc.release(result.resultId); return { success: false, code: "canceled" };
         }
         owners.set(result.resultId, { senderId: event.sender.id, result });
+        // Business composers receive the same still in the clipboard before
+        // reading/releasing it for an attachment, even if they never call copy.
+        if (channels === CAPTURE_IPC && result.mime.startsWith('image/') && result.mime !== 'image/gif') {
+          const copied = await copyCaptureResult(event, result.resultId)
+            .catch(() => ({ success: false, code: 'failed' } as const));
+          if (disposed || generation !== epoch || event.sender.isDestroyed() ||
+            (documentEpochs.get(event.sender.id) ?? 0) !== documentEpoch) return { success: false, code: 'canceled' };
+          if (!copied.success) ctx.log.warn('Capture clipboard copy failed:', copied.code);
+        }
         // Only recordings need a result preview. A confirmed still copies in
         // the controller without bringing a hidden shell to the foreground.
         if (channels === CAPTURE_IPC && (result.mime.startsWith('video/') || result.mime === 'image/gif')) {
@@ -230,20 +254,8 @@ export const captureFeature: DesktopFeature = {
           service?.release(id); owners.delete(id);
         }
       }, undefined);
-      ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureCopyResult> | CaptureCopyResult>(channels.COPY, async (event, id) => {
-        if (typeof id !== 'string') return { success: false, code: 'invalid-argument' };
-        const owner = owners.get(id);
-        if (!owner || owner.senderId !== event.sender.id || !captureClipboard) return { success: false, code: 'invalid-argument' };
-        const epoch = generation;
-        const frame = event.senderFrame;
-        const controller = new AbortController();
-        pendingCopies.set(controller, event.sender.id);
-        try {
-          return await captureClipboard.copy(owner.result, controller.signal, () =>
-            !disposed && generation === epoch && owners.get(id) === owner &&
-            !event.sender.isDestroyed() && frame === event.sender.mainFrame);
-        } finally { pendingCopies.delete(controller); }
-      }, { success: false, code: 'untrusted' });
+      ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureCopyResult> | CaptureCopyResult>(channels.COPY,
+        copyCaptureResult, { success: false, code: 'untrusted' });
       ipc.handle<IpcMainInvokeEvent, [unknown], Promise<CaptureResult> | CaptureResult>(
         channels === HOST_CAPTURE_IPC ? HOST_CAPTURE_INTERACTIVE_IPC : CAPTURE_INTERACTIVE_IPC, async (event, raw) => {
           if (!raw || typeof raw !== 'object') return { success: false, code: 'invalid-argument' };
