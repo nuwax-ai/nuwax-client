@@ -52,3 +52,7 @@ runs:
       if: steps.identity.outcome != 'success'
       shell: bash
       run: echo 'Native resource cache identity unavailable; original cold preparation remains enabled.' >> "$GITHUB_STEP_SUMMARY"
+    - name: Prepare verified cold-build capture archive
+      if: inputs.operation == 'restore'
+      shell: bash
+      run: node scripts/prepare-capture-downloads.mjs

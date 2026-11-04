@@ -38,7 +38,7 @@
 
 1. 可用 OpenAI 平台通路的 SSE、工具续轮、推理、图片、取消与用量，以及平台账单对账；平台权限变更的即时生效。
 2. 真实平台上的完整群聊、双向 Bot 协作、长上下文检查点与历史检索专项验收。现有确定性运行时测试只覆盖表中列出的行为。
-3. 基于既有版本的 package-validation 安装包。提交 `69b9593e` 的[完整 CI 门禁及五平台资源检查已通过](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812089460)。[第 1 轮安装包验证](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812217969)发现子目录 `prepare:dsh` 相对路径多退一级，已修正并通过实际子目录入口验证；CI 也改为覆盖该入口。验证系列固定为 `dsh-dsbot-runtime-20261104`，最多 4 次启动，不创建新版本、Tag、Release 或更新指针。
+3. 基于既有版本的 package-validation 安装包。提交 `ef9bdc47` 的[完整 CI 门禁及五平台资源检查已通过](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812942705)。[第 1 轮安装包验证](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812217969)发现子目录 `prepare:dsh` 相对路径多退一级，已修正并通过实际子目录入口验证；CI 也改为覆盖该入口。[第 2 轮](https://github.com/nuwax-ai/nuwax-client/actions/runs/41813161971)的 Windows 构建已完成 DSH 准备，随后在原采集器下载 `ffmpeg.org` 时连续连接失败。传输层增加 MacPorts 镜像回退，实下载 SHA-256 与原锁定值 `7138d28c…3178a3` 一致；未改源码版本、采集配方或缓存键，坏哈希仍拒绝。验证系列固定为 `dsh-dsbot-runtime-20261104`，最多 4 次启动，不创建新版本、Tag、Release 或更新指针。
 4. macOS / Windows / Linux 安装包中的浏览器登录保持、下载、Office 和语音；真实麦克风、系统播报、拒绝授权及恢复。
 
 本任务未修改或提交 `agent-platform`。平台侧缺口单独记录，不用本地模拟成功替代。
