@@ -14,7 +14,10 @@ async function fixture(readyDelay = 0) {
     import { readFileSync, writeFileSync } from 'node:fs';
     const launch = JSON.parse(readFileSync(process.env.DSH_HOME + '/launch.json'));
     writeFileSync(process.env.DSH_HOME + '/observed.json', JSON.stringify({ pid: process.pid, env: process.env }));
-    process.on('message', message => { if (message.type === 'stop') { process.disconnect(); process.exit(0) } });
+    process.on('message', message => {
+      if (message.type === 'stop') { process.disconnect(); process.exit(0) }
+      if (message.type === 'shell-plugin-request') setTimeout(() => { if (process.connected) process.send({ type: 'shell-plugin-result', id: message.id, value: { operation: message.operation } }) }, 30);
+    });
     setTimeout(() => process.send({ type: 'ready', url: 'http://127.0.0.1:' + launch.port + '/?token=fixture', port: launch.port }), ${readyDelay});
   `)
   let scope = { origin: 'https://a.example', accountId: 'one', epoch: 1 }
@@ -89,5 +92,17 @@ test('stop cancels starts that are still queued', async () => {
     assert.equal(f.controller.status().phase, 'stopped')
     await f.controller.start()
     assert.equal(f.controller.status().phase, 'ready')
+  } finally { await f.dispose() }
+})
+test('host plugin calls bind to a live runtime generation and cancel when authorization or account changes', async () => {
+  const f = await fixture()
+  try {
+    await assert.rejects(f.controller.plugins('list', {}, new AbortController().signal), /Open DS-Bot/)
+    await f.controller.start()
+    assert.deepEqual(await f.controller.plugins('list', {}, new AbortController().signal), { operation: 'list' })
+    const abort = new AbortController(), pending = f.controller.plugins('list', {}, abort.signal)
+    const canceled = assert.rejects(pending, /canceled/); abort.abort(); await canceled
+    const stale = f.controller.plugins('list', {}, new AbortController().signal)
+    const expired = assert.rejects(stale, /canceled/); f.change(); f.controller.invalidate(); await expired
   } finally { await f.dispose() }
 })

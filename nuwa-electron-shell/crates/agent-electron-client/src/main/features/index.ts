@@ -40,9 +40,10 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
-import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot } from "./themes";
+import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot, getThemeService } from "./themes";
 import { createBrowserFeature } from "./browser";
-import { dshRuntimeFeature } from "./dsh-runtime";
+import { createDshRuntimeFeature, manageDshPlugins } from "./dsh-runtime";
+import { createShellCapabilitiesFeature, getShellMcpEntry, subscribeShellMcp } from "./shell-capabilities";
 import { localFilesFeature } from "./local-files";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
@@ -56,7 +57,8 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   localFilesFeature,
   createBrowserFeature({getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot}),
   themesFeature,
-  dshRuntimeFeature,
+  createShellCapabilitiesFeature({ themes: getThemeService, plugins: manageDshPlugins }),
+  createDshRuntimeFeature({ shellMcp: getShellMcpEntry, subscribeShellMcp }),
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */

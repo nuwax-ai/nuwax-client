@@ -2,7 +2,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as electron from "electron";
-import type { DesktopFeature, FeatureContext } from "../_kit/types";
+import type { DesktopFeature, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
 import { DSH_IPC, type DshAction, type DshReply } from "@shared/features/dsh-runtime/contract";
 
 interface RuntimeController {
@@ -17,6 +17,8 @@ interface RuntimeController {
   status(): { phase: string; error?: string; available: boolean };
   scopeDir(): string;
   identity(): { accountId: string; origin: string; epoch: number } | null;
+  updateShellMcp(entry: FeatureMcpServerEntry | null): void;
+  plugins(operation: string, input: unknown, signal: AbortSignal): Promise<unknown>;
   on(event: string, handler: (...args: never[]) => void): void;
 }
 interface Desktop { open(visible?: boolean): Promise<void>; dispose(): void; endpoint(message: unknown): Promise<string>; }
@@ -26,7 +28,15 @@ interface RuntimeModule {
 }
 interface BrowserRequest { id: string; botId: string; downloadRoots: string[]; }
 
-export const dshRuntimeFeature: DesktopFeature = {
+let activeRuntime: RuntimeController | undefined;
+export const manageDshPlugins = (operation: string, input: unknown, signal: AbortSignal) => {
+  if (!activeRuntime?.current()) return Promise.reject(new Error("Open DS-Bot before managing its plugins"));
+  return activeRuntime.plugins(operation, input, signal);
+};
+export function createDshRuntimeFeature(ports: {
+  shellMcp?: () => FeatureMcpServerEntry | null;
+  subscribeShellMcp?: (listener: () => void) => () => void;
+} = {}): DesktopFeature { return {
   id: "dsh-runtime", products: ["nuwax"], enabledByDefault: true,
   register(ctx: FeatureContext) {
     let controller: RuntimeController | undefined;
@@ -53,6 +63,7 @@ export const dshRuntimeFeature: DesktopFeature = {
       if (disposed) throw new Error("Plugin runtime is disposed");
       const runtime = new api.RuntimeController({
         platform: ctx.platform, settings: ctx.settings, runtimeDir, officeDir, dataDir: ctx.dataDir,
+        shellMcp: ports.shellMcp,
         node: () => { const node = ctx.agent.resolveNodeBinary(); if (!node) throw new Error("Bundled Node unavailable"); return node; },
         env: () => ctx.platform!.environment(), allocatePort: () => ctx.platform!.allocatePort(), releasePort: (port: number) => ctx.platform!.releasePort(port),
       });
@@ -62,6 +73,7 @@ export const dshRuntimeFeature: DesktopFeature = {
         void desktop.endpoint(message).then(url => reply({ url }), () => reply({ error: "Browser endpoint unavailable" }));
       }) as (...args: never[]) => void);
       controller = runtime;
+      activeRuntime = runtime;
       return runtime;
     })().catch(error => { loading = undefined; throw error; });
     const open = (visible = true): Promise<void> => {
@@ -104,6 +116,7 @@ export const dshRuntimeFeature: DesktopFeature = {
     }, { ok: false, error: "Untrusted window" });
     const stop = async () => { controller?.invalidate(); destroyWindow(); await controller?.stop(); };
     const off = [
+      ports.subscribeShellMcp?.(() => { controller?.updateShellMcp(ports.shellMcp?.() ?? null); }) ?? (() => {}),
       ctx.lifecycle.onSessionInvalidated(() => { controller?.invalidate(); destroyWindow(); }),
       ctx.lifecycle.onServicesStopping(stop), ctx.lifecycle.onSessionEnd(() => { void stop(); }),
       ctx.lifecycle.onQuit(stop),
@@ -114,6 +127,7 @@ export const dshRuntimeFeature: DesktopFeature = {
         } catch { ctx.log.warn("[DSH] Runtime could not resume; open its settings to retry"); }
       }),
     ];
-    return { async dispose() { disposed = true; off.forEach(dispose => dispose()); await stop(); ctx.hostIpc.dispose(); } };
+    return { async dispose() { disposed = true; off.forEach(dispose => dispose()); await stop(); if (activeRuntime === controller) activeRuntime = undefined; ctx.hostIpc.dispose(); } };
   },
-};
+}; }
+export const dshRuntimeFeature = createDshRuntimeFeature();

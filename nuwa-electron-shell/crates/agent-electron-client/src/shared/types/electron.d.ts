@@ -716,6 +716,7 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  shellCapabilities: import('../features/shell-capabilities/contract').ShellCapabilitiesBridge;
   dshRuntime: import('../features/dsh-runtime/contract').DshBridge;
   browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;

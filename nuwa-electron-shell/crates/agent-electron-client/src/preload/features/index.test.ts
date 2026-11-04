@@ -17,8 +17,9 @@ describe("命名空间汇总", () => {
   });
 
   it("宿主壳通过独立通道提供 notices/computerUse/features/capture", () => {
-    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["themes", "browser", "dshRuntime", "notices", "computerUse", "features", "capture"]);
+    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["shellCapabilities", "themes", "browser", "dshRuntime", "notices", "computerUse", "features", "capture"]);
     expect("dshRuntime" in featureNamespaces(ipc)).toBe(false);
+    expect("shellCapabilities" in featureNamespaces(ipc)).toBe(false);
   });
 
   it("canUse 特性侧探测按命名空间归属派发，非特性命名空间返回 null", async () => {

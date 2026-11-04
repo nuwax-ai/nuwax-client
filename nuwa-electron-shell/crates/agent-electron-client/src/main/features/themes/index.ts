@@ -13,6 +13,8 @@ let desktopSnapshot:
   | import("@shared/types/hostBridge").HostThemeSnapshot
   | null = null;
 const snapshotListeners = new Set<() => void>();
+let currentService: ThemeService | null = null;
+export const getThemeService = () => currentService;
 export const getDesktopThemeSnapshot = () => desktopSnapshot;
 export function subscribeDesktopThemeSnapshot(listener: () => void) {
   snapshotListeners.add(listener);
@@ -78,6 +80,7 @@ export class ThemesRuntime {
         }
       },
     });
+    currentService = this.service;
     void this.service.ready
       .then(() => {
         if (!this.disposed)
@@ -189,6 +192,7 @@ export class ThemesRuntime {
   }
   async dispose() {
     this.disposed = true;
+    if (currentService === this.service) currentService = null;
     publishDesktopSnapshot(null);
     nativeTheme?.removeListener("updated", this.systemUpdate);
     for (const cleanup of [...this.subscribers.values()]) cleanup();

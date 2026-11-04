@@ -33,7 +33,8 @@
     "ws": "8.18.3",
     "yaml": "2.9.1",
     "@nuwax-ai/dsh-nuwax-bridge": "file:./bridge",
-    "playwright": "1.61.1"
+    "playwright": "1.61.1",
+    "@deepseek-ai/dsh-mcp-client": "0.2.1-rc.5"
   },
   "overrides": {
     "@deepseek-ai/cordis": "4.0.5",

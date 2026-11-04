@@ -5,6 +5,7 @@ import { initProfile, loadProfileDirectory, resolveProfileDir, writeProfileBundl
 import { runProfile } from '@deepseek-ai/dsh/profile-boot'
 import { stringify } from 'yaml'
 import { reconcileOfficeRuntime } from './vendor/office-patch.mjs'
+import { createShellIntegration } from './shell-integration.mjs'
 
 const anchor = fileURLToPath(new URL('./package.json', import.meta.url))
 const profileName = 'nuwax-plugins'
@@ -13,9 +14,11 @@ const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app',
 const send = message => { if (process.connected) process.send?.(message) }
 let application
 let stopping
+let shellIntegration
 async function stop() {
   if (stopping) return stopping
   stopping = (async () => {
+    await shellIntegration?.dispose()
     const running = await application?.catch(() => undefined)
     // Checkpoint while the persistence listeners still exist. Profile disposal
     // may unload a consumer before its final asynchronous model turn settles.
@@ -31,7 +34,16 @@ async function stop() {
   })()
   return stopping
 }
-process.on('message', message => { if (message?.type === 'stop') void stop() })
+process.on('message', message => {
+  if (message?.type === 'stop') void stop()
+  if (message?.type === 'shell-mcp') void shellIntegration?.update(message.entry).then(
+    () => send({ type: 'shell-mcp-state', ready: Boolean(message.entry) }),
+    () => send({ type: 'shell-mcp-state', ready: false }))
+  if (message?.type === 'shell-plugin-cancel') shellIntegration?.cancel(message.id)
+  if (message?.type === 'shell-plugin-request' && shellIntegration) void shellIntegration.plugins(message.id, message.operation, message.input).then(
+    value => send({ type: 'shell-plugin-result', id: message.id, value }),
+    error => send({ type: 'shell-plugin-result', id: message.id, error: String(error.message).slice(0, 500) }))
+})
 process.once('disconnect', () => { void stop() })
 
 export async function bootRuntime() {
@@ -79,6 +91,9 @@ export async function bootRuntime() {
   for (const service of ['webServer', 'connection', 'sessionController', 'workspaceRegistry', 'nuwaxModels', 'speechToText', 'schedule', 'pluginManager', 'clientModules']) {
     if (!ctx.get(service)) throw new Error(`Required DSH service failed: ${service}`)
   }
+  shellIntegration = createShellIntegration(ctx, bundles)
+  try { await shellIntegration.update(launch.shellMcp ?? null) }
+  catch { send({ type: 'shell-mcp-state', ready: false }) }
   const url = ctx.get('connection').authenticatedUrl(`http://127.0.0.1:${ctx.get('webServer').port}`)
   const login = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(10000) })
   const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ')

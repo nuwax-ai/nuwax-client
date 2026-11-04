@@ -7,6 +7,7 @@
  */
 
 import { DSH_IPC, type DshBridge } from "@shared/features/dsh-runtime/contract";
+import { SHELL_CAPABILITIES_IPC, type ShellCapabilitiesBridge } from "@shared/features/shell-capabilities/contract";
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
 import type { NoticesBridge } from "@shared/features/open-source-notices/contract";
@@ -26,6 +27,7 @@ export interface FeatureNamespaces {
 }
 
 export interface HostFeatureNamespaces {
+  shellCapabilities: ShellCapabilitiesBridge;
   dshRuntime: DshBridge;
   themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
@@ -45,6 +47,11 @@ export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
+    shellCapabilities: {
+      getState: () => ipc.invoke(SHELL_CAPABILITIES_IPC, "state"),
+      setAccess: access => ipc.invoke(SHELL_CAPABILITIES_IPC, "access", access),
+      restoreTheme: (historyId, expectedRevision) => ipc.invoke(SHELL_CAPABILITIES_IPC, "restore", { historyId, expectedRevision }),
+    },
     themes: createThemesBridge(ipc, true),
     browser: createBrowserBridge(ipc, true),
     dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids) },

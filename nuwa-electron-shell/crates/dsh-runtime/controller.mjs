@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { fork, execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -16,6 +16,30 @@ export class RuntimeController extends EventEmitter {
   constructor(options) { super(); this.#options = options }
   identity() { return this.#scope ? { ...this.#scope } : null }
   current() { return same(this.#scope, this.#options.platform.scope()) && this.#phase === 'ready' }
+  updateShellMcp(entry) {
+    if (this.#child?.connected) this.#child.send({ type: 'shell-mcp', entry }, () => {})
+  }
+  plugins(operation, input, signal) {
+    const child = this.#child, generation = this.#generation
+    if (!this.current() || !child?.connected) return Promise.reject(new Error('Open DS-Bot before managing its plugins'))
+    if (signal.aborted) return Promise.reject(new Error('Plugin operation canceled'))
+    return new Promise((resolve, reject) => {
+      const id = randomUUID()
+      const cleanup = () => { clearTimeout(timer); child.off('message', receive); child.off('exit', ended); this.off('invalidated', canceled); signal.removeEventListener('abort', canceled) }
+      const cancel = error => { if (child.connected) child.send({ type: 'shell-plugin-cancel', id }, () => {}); cleanup(); reject(error) }
+      const canceled = () => cancel(new Error('Plugin operation canceled'))
+      const ended = () => cancel(new Error('DSH runtime stopped'))
+      const receive = message => {
+        if (message?.type !== 'shell-plugin-result' || message.id !== id) return
+        if (!this.current() || generation !== this.#generation) { canceled(); return }
+        cleanup()
+        if (message.error) reject(new Error(message.error)); else resolve(message.value)
+      }
+      const timer = setTimeout(() => cancel(new Error('Plugin operation timed out')), 240000)
+      child.on('message', receive); child.once('exit', ended); this.once('invalidated', canceled); signal.addEventListener('abort', canceled, { once: true })
+      child.send({ type: 'shell-plugin-request', id, operation, input }, error => { if (error) ended() })
+    })
+  }
   scopeDir() { return join(this.#options.dataDir, scopeKey(this.#identity())) }
   status() { return { phase: this.#phase, error: this.#error, available: true } }
   enabled() {
@@ -92,7 +116,7 @@ export class RuntimeController extends EventEmitter {
       const port = await this.#port('runtime')
       this.#broker = createModelBroker({ models, baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
       const broker = await this.#broker.start()
-      await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port }), { mode: 0o600 })
+      await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port, shellMcp: this.#options.shellMcp?.() ?? null }), { mode: 0o600 })
       if (!current()) throw new Error('Account changed')
       const env = { ...this.#options.env(), HOME: home, USERPROFILE: home, DSH_HOME: home,
         // Office imports must not create __pycache__ inside a sealed app bundle.
@@ -133,6 +157,7 @@ export class RuntimeController extends EventEmitter {
       child.once('exit', () => { if (this.#child === child && this.#phase === 'ready') { this.invalidate(); this.#state('failed', 'DSH exited'); this.emit('failed') } })
       this.#options.settings.write('dsh.enabled.' + scopeKey(scope), true)
       this.#state('ready')
+      this.updateShellMcp(this.#options.shellMcp?.() ?? null)
       return this.#url
     } catch (error) {
       await this.#stop()

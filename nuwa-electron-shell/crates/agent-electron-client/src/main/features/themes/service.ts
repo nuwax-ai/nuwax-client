@@ -18,6 +18,7 @@ import type {
   HostThemeSnapshot,
   HostThemeInfo,
 } from "@shared/types/hostBridge";
+import { changedTheme, themeVersion, themeHistory, type ThemeEdit, type ThemeHistoryEntry } from "./editing";
 
 type Package = ReturnType<typeof validateThemePackage>;
 type Entry = {
@@ -30,6 +31,7 @@ type Registry = {
   selection: HostThemesState["selection"];
   userSelected: boolean;
   revision: number;
+  history?: ThemeHistoryEntry[];
 };
 export type ThemeDeps = {
   fs: typeof fs;
@@ -175,6 +177,18 @@ export class ThemeService {
       this.package(raw.selection?.themeId, { ...raw, entries });
       if (!["light", "dark", "system"].includes(raw.selection.mode))
         throw new Error("Invalid theme preference");
+      if (raw.history !== undefined) {
+        if (!Array.isArray(raw.history) || raw.history.length > 5) throw new Error("Invalid theme history");
+        for (const entry of raw.history) {
+          if (!entry || typeof entry.id !== "string" || !/^[a-f0-9-]{36}$/.test(entry.id) ||
+              typeof entry.at !== "string" || !Number.isFinite(Date.parse(entry.at))) throw new Error("Invalid theme history");
+          assertInstallableThemeId(entry.themeId);
+          if (entry.files !== null && validateThemePackage(entry.files).manifest.id !== entry.themeId)
+            throw new Error("Invalid theme history package");
+          if (!entry.selection || typeof entry.selection.themeId !== "string" ||
+              !["light", "dark", "system"].includes(entry.selection.mode)) throw new Error("Invalid theme history selection");
+        }
+      }
       this.registry = { ...raw, entries };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
@@ -249,7 +263,7 @@ export class ThemeService {
       /* subscribers cannot fail a committed transaction */
     }
   }
-  private async persist(next: Registry) {
+  private async persist(next: Registry, check: () => void = () => {}) {
     await this.deps.fs.mkdir(this.directory, { recursive: true });
     const tmp = path.join(this.directory, `.registry-${randomUUID()}`);
     try {
@@ -257,6 +271,7 @@ export class ThemeService {
       if (Buffer.byteLength(encoded) > 128 * 1024 * 1024)
         throw new Error("Theme registry size limit");
       await this.deps.fs.writeFile(tmp, encoded, { flag: "wx" });
+      check();
       await this.deps.fs.rename(
         tmp,
         path.join(this.directory, "registry.json")
@@ -265,9 +280,14 @@ export class ThemeService {
       await this.deps.fs.rm(tmp, { force: true }).catch(() => undefined);
     }
   }
-  private async commit(next: Registry, clearErrorFor?: string) {
+  private async commit(next: Registry, clearErrorFor?: string, check: () => void = () => {}) {
     next.revision = this.registry.revision + 1;
-    await this.persist(next);
+    check();
+    await this.persist(next, check);
+    try { check(); } catch (error) {
+      await this.persist(this.registry);
+      throw error;
+    }
     this.registry = next;
     this.error = undefined;
     if (clearErrorFor) this.errors.delete(clearErrorFor);
@@ -284,6 +304,139 @@ export class ThemeService {
   }
   has(id: string) {
     return Object.hasOwn(this.registry.entries, id);
+  }
+  private checkRevision(revision: number) {
+    if (!Number.isSafeInteger(revision) || revision !== this.registry.revision)
+      throw new Error("Theme revision conflict; read the current state again");
+  }
+  private async editFiles(id: string) {
+    const pkg = this.package(id), entry = this.registry.entries[id];
+    const files = entry ? await this.readDirectory(entry.directory) : pkg.files;
+    if (validateThemePackage(files).manifest.id !== id) throw new Error("Theme directory ID changed");
+    return files as HostThemeFiles;
+  }
+  readForEdit(id: string) {
+    return this.serial(async () => {
+      const files = await this.editFiles(id);
+      return { themeId: id, revision: this.registry.revision, version: themeVersion(files),
+        editable: this.registry.entries[id]?.source === "installed", files: structuredClone(files) };
+    });
+  }
+  history() {
+    return (this.registry.history ?? []).filter(entry => this.registry.entries[entry.themeId]?.source === "installed")
+      .map(({ id, at, themeId }) => ({ id, at, themeId })).reverse();
+  }
+  private remember(next: Registry, id: string) {
+    next.history = themeHistory([...(next.history ?? []), {
+      id: randomUUID(), at: new Date().toISOString(), themeId: id,
+      files: this.has(id) ? structuredClone(this.registry.entries[id].files) : null,
+      selection: { ...this.registry.selection },
+    }]);
+  }
+  private async checkEdit(edit: Omit<ThemeEdit, "changes">) {
+    this.checkRevision(edit.expectedRevision);
+    const files = await this.editFiles(edit.themeId);
+    if (themeVersion(files) !== edit.expectedVersion) throw new Error("Theme file conflict; read the current files again");
+    return files;
+  }
+  previewChanges(edit: ThemeEdit) {
+    return this.serial(async () => {
+      const pkg = changedTheme(await this.checkEdit(edit), edit.changes);
+      return { valid: true, version: themeVersion(pkg.files), manifest: pkg.manifest };
+    });
+  }
+  applyChanges(edit: ThemeEdit, check: () => void = () => {}) {
+    return this.serial(async () => {
+      check();
+      const files = await this.checkEdit(edit);
+      if (this.registry.entries[edit.themeId]?.source !== "installed")
+        throw new Error("Copy builtin or linked themes to a personal theme before editing");
+      const pkg = changedTheme(files, edit.changes), next = this.next();
+      // The history must describe the actual files, including manual edits not yet watched.
+      next.entries[edit.themeId].files = files;
+      this.remember(next, edit.themeId);
+      next.history![next.history!.length - 1].files = structuredClone(files);
+      next.history = themeHistory(next.history!);
+      next.entries[edit.themeId].files = pkg.files;
+      this.normalize(next, edit.themeId, next.selection.mode);
+      await this.replaceManaged(next, edit.themeId, pkg.files, check, async () => { await this.checkEdit(edit); });
+      return { ok: true, state: this.state(), version: themeVersion(pkg.files) };
+    });
+  }
+  copyForEdit(input: { sourceId: string; themeId: string; name: string; expectedRevision: number; expectedVersion: string }, check: () => void = () => {}) {
+    return this.serial(async () => {
+      check();
+      assertInstallableThemeId(input.themeId);
+      if (this.has(input.themeId)) throw new Error("Personal theme already exists");
+      const source = { themeId: input.sourceId, expectedRevision: input.expectedRevision, expectedVersion: input.expectedVersion };
+      const files = { ...await this.checkEdit(source) };
+      const manifest = JSON.parse(Buffer.from(files["theme.json"], "base64").toString("utf8"));
+      manifest.id = input.themeId; manifest.name = input.name;
+      files["theme.json"] = Buffer.from(JSON.stringify(manifest, null, 2)).toString("base64");
+      const pkg = validateThemePackage(files), next = this.next();
+      this.remember(next, input.themeId);
+      next.entries[input.themeId] = { files: pkg.files, source: "installed", directory: this.managed(input.themeId) };
+      await this.replaceManaged(next, input.themeId, pkg.files, check, async () => {
+        await this.checkEdit(source);
+        try { await this.deps.fs.lstat(this.managed(input.themeId)); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        }
+        throw new Error("Personal theme directory already exists");
+      });
+      return { ok: true, state: this.state(), version: themeVersion(pkg.files) };
+    });
+  }
+  restore(input: { historyId: string; expectedRevision: number; expectedVersion: string }, check: () => void = () => {}) {
+    return this.serial(async () => {
+      check();
+      const record = this.registry.history?.find(entry => entry.id === input.historyId);
+      if (!record) throw new Error("Theme history is unavailable");
+      const edit = { themeId: record.themeId, ...input }, files = await this.checkEdit(edit);
+      if (this.registry.entries[record.themeId]?.source !== "installed") throw new Error("Theme is no longer managed");
+      const next = this.next();
+      this.remember(next, record.themeId);
+      next.history![next.history!.length - 1].files = structuredClone(files);
+      next.history = themeHistory(next.history!);
+      if (record.files) next.entries[record.themeId].files = structuredClone(record.files);
+      else delete next.entries[record.themeId];
+      next.selection = { ...record.selection };
+      try { this.package(next.selection.themeId, next); } catch {
+        next.selection = { themeId: officialThemePackage.manifest.id, mode: "light" };
+      }
+      this.normalize(next, next.selection.themeId, next.selection.mode);
+      await this.replaceManaged(next, record.themeId, record.files, check, async () => { await this.checkEdit(edit); });
+      return { ok: true, state: this.state() };
+    });
+  }
+  private async replaceManaged(next: Registry, id: string, files: HostThemeFiles | null, check: () => void, checkFiles: () => Promise<void>) {
+    await this.ensureManagedRoot();
+    const stage = path.join(this.directory, `.stage-${randomUUID()}`), backup = path.join(this.directory, `.backup-${randomUUID()}`), dest = this.managed(id);
+    let backed = false, moved = false;
+    try {
+      if (files) {
+        await this.deps.fs.mkdir(stage, { recursive: true, mode: 0o700 });
+        for (const [name, encoded] of Object.entries(files)) {
+          const target = path.join(stage, canonicalPath(name));
+          await this.deps.fs.mkdir(path.dirname(target), { recursive: true });
+          await this.deps.fs.writeFile(target, Buffer.from(encoded, "base64"), { flag: "wx" });
+        }
+      }
+      await checkFiles(); check();
+      try { await this.deps.fs.rename(dest, backup); backed = true; } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      check();
+      if (files) { await this.deps.fs.rename(stage, dest); moved = true; }
+      await this.commit(next, id, check);
+    } catch (error) {
+      if (moved) await this.deps.fs.rm(dest, { recursive: true, force: true });
+      if (backed) await this.deps.fs.rename(backup, dest);
+      throw error;
+    } finally {
+      await this.deps.fs.rm(stage, { recursive: true, force: true }).catch(() => undefined);
+    }
+    await this.deps.fs.rm(backup, { recursive: true, force: true }).catch(() => undefined);
   }
   private async ensureManagedRoot() {
     const installed = path.join(this.directory, "installed");
@@ -361,8 +514,10 @@ export class ThemeService {
     next.selection.mode =
       modes.length === 1 ? (modes[0] as HostThemePreference) : mode;
   }
-  select(id: string, mode: HostThemePreference, onlyIfUnselected = false) {
+  select(id: string, mode: HostThemePreference, onlyIfUnselected = false, expectedRevision?: number, check: () => void = () => {}) {
     return this.serial(async () => {
+      check();
+      if (expectedRevision !== undefined) this.checkRevision(expectedRevision);
       if (onlyIfUnselected && this.registry.userSelected)
         return { ok: false, conflict: true, state: this.state() };
       this.package(id);
@@ -372,7 +527,7 @@ export class ThemeService {
       next.selection = { themeId: id, mode };
       next.userSelected = true;
       this.normalize(next, id, mode);
-      await this.commit(next);
+      await this.commit(next, undefined, check);
       return { ok: true, state: this.state() };
     });
   }

@@ -332,6 +332,43 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  ShellCapabilities: {
+    changes: "Claw.ShellCapabilities.changes",
+    showChanges: "Claw.ShellCapabilities.showChanges",
+    operations: {
+      themes_copy: "Claw.ShellCapabilities.operations.themes_copy",
+      themes_apply_changes: "Claw.ShellCapabilities.operations.themes_apply_changes",
+      themes_select: "Claw.ShellCapabilities.operations.themes_select",
+      themes_rollback: "Claw.ShellCapabilities.operations.themes_rollback",
+      shell_settings_update: "Claw.ShellCapabilities.operations.shell_settings_update",
+      extensions_install: "Claw.ShellCapabilities.operations.extensions_install",
+      extensions_enable: "Claw.ShellCapabilities.operations.extensions_enable",
+      extensions_disable: "Claw.ShellCapabilities.operations.extensions_disable",
+      extensions_remove: "Claw.ShellCapabilities.operations.extensions_remove",
+      extensions_configure: "Claw.ShellCapabilities.operations.extensions_configure",
+    },
+    outcomes: {
+      applied: "Claw.ShellCapabilities.outcomes.applied",
+      saved: "Claw.ShellCapabilities.outcomes.saved",
+      failed: "Claw.ShellCapabilities.outcomes.failed",
+      canceled: "Claw.ShellCapabilities.outcomes.canceled",
+    },
+    title: "Claw.ShellCapabilities.title",
+    description: "Claw.ShellCapabilities.description",
+    ready: "Claw.ShellCapabilities.ready",
+    inactive: "Claw.ShellCapabilities.inactive",
+    themes: "Claw.ShellCapabilities.themes",
+    themesDescription: "Claw.ShellCapabilities.themesDescription",
+    settings: "Claw.ShellCapabilities.settings",
+    settingsDescription: "Claw.ShellCapabilities.settingsDescription",
+    extensions: "Claw.ShellCapabilities.extensions",
+    extensionsDescription: "Claw.ShellCapabilities.extensionsDescription",
+    history: "Claw.ShellCapabilities.history",
+    historyDescription: "Claw.ShellCapabilities.historyDescription",
+    chooseHistory: "Claw.ShellCapabilities.chooseHistory",
+    restore: "Claw.ShellCapabilities.restore",
+    failed: "Claw.ShellCapabilities.failed",
+  },
   DSH: {
     title: "Claw.Dsh.title",
     description: "Claw.Dsh.description",

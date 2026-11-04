@@ -9,7 +9,7 @@ vi.mock("electron", () => ({
   shell: {},
   nativeTheme: { on: vi.fn(), removeListener: vi.fn() },
 }));
-vi.mock("../../../main/features/themes/service", () => ({
+vi.mock("./service", () => ({
   ThemeService: class {
     ready = new Promise<void>((resolve) => {
       h.resolve = resolve;
@@ -29,7 +29,7 @@ import {
   ThemesRuntime,
   getDesktopThemeSnapshot,
   subscribeDesktopThemeSnapshot,
-} from "../../../main/features/themes";
+} from "./index";
 it("supports browser registration before theme readiness, then updates and unsubscribes", async () => {
   const chrome = vi.fn();
   expect(getDesktopThemeSnapshot()).toBeNull();

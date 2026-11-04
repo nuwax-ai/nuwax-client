@@ -54,6 +54,98 @@ async function setup(directory?: string, overrides: Partial<ThemeDeps> = {}) {
   return { service, deps, callbacks, closed };
 }
 describe("theme package service", () => {
+  it("copies a builtin, atomically edits both modes, and restores durable files and selection after restart", async () => {
+    const { service } = await setup();
+    const source = await service.readForEdit("nuwax-default");
+    await service.copyForEdit({ sourceId: source.themeId, themeId: "personal", name: "Personal", expectedRevision: source.revision, expectedVersion: source.version });
+    await service.select("personal", "dark");
+    const before = await service.readForEdit("personal");
+    const manifest = JSON.parse(Buffer.from(before.files["theme.json"], "base64").toString());
+    const changes = ["light", "dark"].map(mode => ({ path: manifest.variants[mode].tokens, content: JSON.stringify({ primary: "#23755a" }) }));
+    await service.applyChanges({ themeId: "personal", expectedRevision: before.revision, expectedVersion: before.version, changes });
+    const edited = await service.readForEdit("personal");
+    expect(edited.version).not.toBe(before.version);
+    expect(service.state().snapshot.tokens.primary).toBe("#23755a");
+    for (const change of changes) expect(await fs.readFile(path.join(service.directory, "installed/personal", change.path), "utf8")).toBe(change.content);
+    const undo = service.history()[0];
+    const { service: restarted } = await setup(service.directory);
+    const current = await restarted.readForEdit("personal");
+    await restarted.restore({ historyId: undo.id, expectedRevision: current.revision, expectedVersion: current.version });
+    expect((await restarted.readForEdit("personal")).files).toEqual(before.files);
+    expect(restarted.state().selection).toEqual({ themeId: "personal", mode: "dark" });
+  });
+  it("rejects stale revisions, unseen file edits, ID changes and malformed multi-file candidates without losing history", async () => {
+    const { service } = await setup();
+    await service.install(files());
+    const before = await service.readForEdit("custom-theme");
+    const request = { themeId: before.themeId, expectedRevision: before.revision, expectedVersion: before.version,
+      changes: [{ path: "theme.json", content: "{" }] };
+    await expect(service.applyChanges(request)).rejects.toThrow();
+    expect(service.history()).toEqual([]);
+    expect(await service.exportPackage(before.themeId)).toEqual(before.files);
+    const manifest = JSON.parse(Buffer.from(before.files["theme.json"], "base64").toString());
+    manifest.name = "Manual edit";
+    await fs.writeFile(path.join(service.directory, "installed/custom-theme/theme.json"), JSON.stringify(manifest));
+    await expect(service.applyChanges(request)).rejects.toThrow("file conflict");
+    await service.select("nuwax-default", "dark");
+    await expect(service.applyChanges(request)).rejects.toThrow("revision conflict");
+    const fresh = await service.readForEdit(before.themeId);
+    manifest.id = "another-theme";
+    await expect(service.applyChanges({ ...request, expectedRevision: fresh.revision, expectedVersion: fresh.version,
+      changes: [{ path: "theme.json", content: JSON.stringify(manifest) }] })).rejects.toThrow("ID cannot change");
+    await expect(service.applyChanges({ ...request, expectedRevision: fresh.revision, expectedVersion: fresh.version,
+      changes: [{ path: "../private.json", content: "{}" }] })).rejects.toThrow("unsafe");
+    expect(service.history()).toEqual([]);
+  });
+  it("revocation during staging prevents writes to the active theme and does not create a restore point", async () => {
+    let revoked = false, revokeOnStage = false;
+    const io = { ...fs, writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      const result = await fs.writeFile(...args);
+      if (revokeOnStage && String(args[0]).includes(".stage-")) revoked = true;
+      return result;
+    } } as typeof fs;
+    const { service } = await setup(undefined, { fs: io });
+    await service.install(files());
+    const before = await service.readForEdit("custom-theme"), state = service.state();
+    revokeOnStage = true;
+    await expect(service.applyChanges({ themeId: before.themeId, expectedRevision: before.revision, expectedVersion: before.version,
+      changes: [{ path: "README.md", content: "Changed" }] }, () => { if (revoked) throw new Error("Revoked"); })).rejects.toThrow("Revoked");
+    expect(service.state()).toEqual(state);
+    expect((await service.readForEdit(before.themeId)).files).toEqual(before.files);
+    expect(service.history()).toEqual([]);
+  });
+  it("restores the previous directory when durable registry commit fails", async () => {
+    let fail = false;
+    const io = { ...fs, rename: async (...args: Parameters<typeof fs.rename>) => {
+      if (fail && path.basename(String(args[1])) === "registry.json") { fail = false; throw new Error("disk full"); }
+      return fs.rename(...args);
+    } } as typeof fs;
+    const { service } = await setup(undefined, { fs: io });
+    await service.install(files());
+    const before = await service.readForEdit("custom-theme"), state = service.state();
+    fail = true;
+    await expect(service.applyChanges({ themeId: before.themeId, expectedRevision: before.revision, expectedVersion: before.version,
+      changes: [{ path: "README.md", content: "Changed" }] })).rejects.toThrow("disk full");
+    expect(service.state()).toEqual(state);
+    expect((await service.readForEdit(before.themeId)).files).toEqual(before.files);
+    const { service: restarted } = await setup(service.directory);
+    expect(await restarted.exportPackage(before.themeId)).toEqual(before.files);
+  });
+  it("requires a personal copy for linked/builtin edits and can undo creating that copy", async () => {
+    const source = await root();
+    await write(source, files());
+    const { service } = await setup();
+    await service.link(source, async () => true);
+    const linked = await service.readForEdit("custom-theme");
+    await expect(service.applyChanges({ themeId: linked.themeId, expectedRevision: linked.revision, expectedVersion: linked.version,
+      changes: [{ path: "README.md", content: "Changed" }] })).rejects.toThrow("personal theme");
+    await service.copyForEdit({ sourceId: linked.themeId, themeId: "personal", name: "Personal", expectedRevision: linked.revision, expectedVersion: linked.version });
+    const personal = await service.readForEdit("personal"), history = service.history()[0];
+    await service.restore({ historyId: history.id, expectedRevision: personal.revision, expectedVersion: personal.version });
+    expect(service.has("personal")).toBe(false);
+    expect(await service.readDirectory(source)).toEqual(files());
+    await expect(fs.stat(path.join(service.directory, "installed/personal"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("never follows registry or managed-directory symlinks", async () => {
     const directory = await root(),
       outside = await root();
