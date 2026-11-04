@@ -292,15 +292,41 @@ describe("IMReceiver: bounded unread refresh", () => {
     expect(h.deps.onBlocked).not.toHaveBeenCalled();
   });
 
-  it("keeps the last snapshot on request failure without a tight retry loop", async () => {
+  it("preserves unread during transient failures and retries with capped exponential backoff until recovery", async () => {
     const h = harness();
-    h.deps.unread.mockResolvedValueOnce({ total: 2, dndTotal: 3 }).mockRejectedValueOnce(new Error("network request failed"));
+    h.deps.unread.mockResolvedValueOnce({ total: 2, dndTotal: 3 }).mockRejectedValue(new Error("network request failed"));
     const connection = await login(h);
     const snapshot = h.receiver.getSnapshot();
     packet(connection, 3004);
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(h.deps.unread).toHaveBeenCalledTimes(2);
-    expect(h.receiver.getSnapshot()).toEqual(snapshot);
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      const pulls = h.deps.unread.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(h.deps.unread).toHaveBeenCalledTimes(pulls);
+      expect(h.receiver.getSnapshot()).toEqual(snapshot);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.deps.unread).toHaveBeenCalledTimes(pulls + 1);
+    }
+    h.deps.unread.mockResolvedValue({ total: 8, dndTotal: 0 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 8 });
+    expect(h.deps.connect).toHaveBeenCalledTimes(1);
+    expect(h.deps.onBlocked).not.toHaveBeenCalled();
+  });
+
+  it("keeps the one-minute degraded-response limit while retrying failed unread requests", async () => {
+    const h = harness();
+    h.deps.unread.mockResolvedValueOnce({ total: 2, authoritative: false })
+      .mockRejectedValueOnce(new Error("temporary outage")).mockResolvedValue({ total: 8 });
+    const connection = await login(h);
+    packet(connection, 3004);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.deps.unread).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(h.deps.unread).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 8 });
   });
 
   it.each([true, false])("calibrates unread at the foreground=%s interval", async (foreground) => {
@@ -444,6 +470,27 @@ describe("IMReceiver: pause, offline, recovery and connection ownership", () => 
     expect(h.deps.connect).toHaveBeenCalledTimes(1);
     expect(h.deps.unread).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("detects a background network loss without activity events and restores unread after hours offline", async () => {
+    const h = harness();
+    h.setForeground(false);
+    const connection = await login(h, 5);
+    h.setOnline(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(connection.socket.close).toHaveBeenCalledOnce();
+    const pulls = h.deps.unread.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+    expect(h.deps.connect).toHaveBeenCalledTimes(1);
+    expect(h.deps.unread).toHaveBeenCalledTimes(pulls);
+    h.setOnline(true);
+    h.deps.unread.mockResolvedValue({ total: 12 });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await acknowledge(h.connections[1], 5);
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 12 });
+    packet(connection, 3002, { convId: "stale-offline-message" });
+    expect(h.deps.onMessage).not.toHaveBeenCalled();
+    expect(h.deps.connect).toHaveBeenCalledTimes(2);
   });
 
   it("enters the local offline probe when an in-flight unread request fails after connectivity changes", async () => {
@@ -628,6 +675,24 @@ describe("IMReceiver: pause, offline, recovery and connection ownership", () => 
 });
 
 describe("IMReceiver: heartbeat and disposal", () => {
+  it("keeps one background receiver alive for 24 simulated hours and still receives messages and unread changes", async () => {
+    const h = harness();
+    h.setForeground(false);
+    const connection = await login(h, 30);
+    for (let tick = 0; tick < 24 * 60 * 2; tick++) {
+      await vi.advanceTimersByTimeAsync(30_000);
+      packet(connection, 2001);
+    }
+    h.deps.unread.mockResolvedValue({ total: 42 });
+    packet(connection, 3002, { convId: "after-a-day", msgId: "new-message" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.deps.onMessage).toHaveBeenCalledOnce();
+    expect(h.receiver.getSnapshot()).toMatchObject({ total: 42 });
+    expect(connection.socket.close).not.toHaveBeenCalled();
+    expect(h.deps.register).toHaveBeenCalledTimes(1);
+    expect(h.deps.connect).toHaveBeenCalledTimes(1);
+  });
+
   it("reconnects after three missing heartbeat responses without sending read or receive acknowledgements", async () => {
     const h = harness();
     const connection = await login(h, 5);

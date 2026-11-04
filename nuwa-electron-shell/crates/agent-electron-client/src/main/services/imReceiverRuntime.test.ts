@@ -194,6 +194,7 @@ afterEach(async () => {
   runtime?.disposeIMReceiver();
   runtime = null;
   for (const close of backends.splice(0)) await close();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -524,6 +525,70 @@ describe("IM receiver local HTTP/WebSocket integration", () => {
     expect(backend.requests.filter((request) => request.path.endsWith("/devices"))).toHaveLength(1);
     backend.sendMessage("9223372036854775805");
     await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it("recovers unread HTTP after a temporary outage and publishes the badge without replaying notifications", async () => {
+    const backend = await localBackend();
+    const { api } = await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    const snapshots: number[] = [];
+    const off = api.onIMUnreadChanged(snapshot => { if (snapshot) snapshots.push(snapshot.total); });
+    let failed = false;
+    backend.state.unreadHandler = response => {
+      if (!failed) { failed = true; reply(response, null, "temporary_unavailable", 503); }
+      else reply(response, { total: 17 });
+    };
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(snapshots).toEqual([17]), { timeout: 3500 });
+    expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(17);
+    expect(mocks.native.showMessage).toHaveBeenCalledOnce();
+    expect(backend.connections).toHaveLength(1);
+    expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] state", {state: "unread-retrying"});
+    expect(mocks.info).toHaveBeenCalledWith("[IMReceiver] state", {state: "unread-recovered"});
+    off();
+  });
+
+  it("clears a stale screen lock on resume without requiring an unlock event or restart", async () => {
+    const backend = await localBackend();
+    await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    mocks.idle = "locked";
+    mocks.powerEvents!.emit("lock-screen");
+    mocks.powerEvents!.emit("suspend");
+    await vi.waitFor(() => expect(backend.sockets.filter(socket => socket.readyState === WebSocket.OPEN)).toHaveLength(0));
+    backend.state.unread.total = 12;
+    mocks.idle = "active";
+    mocks.powerEvents!.emit("resume");
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(12));
+    backend.sendMessage();
+    await vi.waitFor(() => expect(mocks.native.showMessage).toHaveBeenCalledOnce());
+    expect(backend.connections).toHaveLength(2);
+  });
+
+  it("recovers a missed unlock in the background using local state checks without polling HTTP", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const backend = await localBackend();
+    const { api } = await start(backend);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenCalledWith(9));
+    mocks.idle = "locked";
+    mocks.powerEvents!.emit("lock-screen");
+    await vi.waitFor(() => expect(backend.sockets.filter(socket => socket.readyState === WebSocket.OPEN)).toHaveLength(0));
+    const requests = backend.requests.length;
+    mocks.idle = "unknown";
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(backend.requests).toHaveLength(requests);
+    expect(backend.connections).toHaveLength(1);
+    mocks.idle = "idle";
+    backend.state.unread.total = 12;
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(mocks.native.setUnreadCount).toHaveBeenLastCalledWith(12));
+    const recoveredRequests = backend.requests.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(backend.requests).toHaveLength(recoveredRequests);
+    expect(backend.connections).toHaveLength(2);
+    api.disposeIMReceiver();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("ignores a real late unread response after stop even when the transport cannot abort", async () => {

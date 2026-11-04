@@ -261,18 +261,42 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     pumpMessages();
   }
   let activeSession: IMReceiverSession | null = null;
-  const lock = () => { receiver.setLocked(true); abortPresentations(); };
-  const unlock = () => receiver.setLocked(false);
-  const suspend = () => { receiver.setSuspended(true); abortPresentations(); };
+  let locked = false;
+  let suspended = false;
+  const setLocked = (next: boolean) => {
+    if (locked === next) return;
+    locked = next;
+    receiver.setLocked(next);
+    if (next) abortPresentations();
+    log.info("[IMReceiver] screen state", {locked: next});
+  };
+  const syncLockState = () => {
+    try {
+      const state = powerMonitor.getSystemIdleState(1);
+      // unknown/查询失败不足以推翻系统锁屏事件；idle 仍是已解锁状态。
+      if (state === "locked") setLocked(true);
+      else if (state === "active" || state === "idle") setLocked(false);
+    } catch { /* Keep the last known state on unsupported systems. */ }
+  };
+  const lock = () => setLocked(true);
+  const unlock = () => setLocked(false);
+  const suspend = () => { suspended = true; receiver.setSuspended(true); abortPresentations(); };
   const resume = () => {
-    try { if (powerMonitor.getSystemIdleState(1) === "locked") receiver.setLocked(true); } catch { /* best effort */ }
+    syncLockState();
+    suspended = false;
     receiver.setSuspended(false);
   };
   const activity = () => receiver.activityChanged();
+  const focus = () => { if (!suspended) syncLockState(); activity(); };
+  // 锁屏/解锁事件可能丢失或与唤醒乱序；只查询本机状态，不增加 HTTP/WS 轮询。
+  const screenTimer = setInterval(() => {
+    if (activeSession && !suspended) syncLockState();
+  }, 15_000);
+  screenTimer.unref?.();
   powerMonitor.on("lock-screen", lock); powerMonitor.on("unlock-screen", unlock);
   powerMonitor.on("suspend", suspend); powerMonitor.on("resume", resume);
-  app.on("browser-window-focus", activity); app.on("browser-window-blur", activity);
-  try { receiver.setLocked(powerMonitor.getSystemIdleState(1) === "locked"); } catch { /* supported platforms only */ }
+  app.on("browser-window-focus", focus); app.on("browser-window-blur", activity);
+  syncLockState();
   return {
     start(account: string) {
       if (disposed || quitting || !currentTicket()) return;
@@ -290,10 +314,11 @@ function createRuntime(getMainWindow: () => BrowserWindow | null) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      clearInterval(screenTimer);
       receiver.dispose(); native.dispose();
       powerMonitor.removeListener("lock-screen", lock); powerMonitor.removeListener("unlock-screen", unlock);
       powerMonitor.removeListener("suspend", suspend); powerMonitor.removeListener("resume", resume);
-      app.removeListener("browser-window-focus", activity); app.removeListener("browser-window-blur", activity);
+      app.removeListener("browser-window-focus", focus); app.removeListener("browser-window-blur", activity);
     },
   };
 }

@@ -68,17 +68,19 @@ function message(msgId = "m1", sessionGeneration = 1): IMNativeMessage {
 }
 
 describe("IM message notification sounds", () => {
-  it("silences bursts across conversations for 3 seconds without dropping banners or unread counts", () => {
+  it.each(["darwin", "win32", "linux"] as const)("silences bursts for 3 seconds without dropping banners or unread counts on %s", platform => {
     const now = vi.spyOn(Date, "now").mockReturnValue(10000);
     try {
-      const fixture = setup();
+      const fixture = setup({platform});
       for (let index = 0; index < 50; index++) {
         fixture.presentation.showMessage({ ...message(`m${index}`), convId: `c${index}` });
       }
       expect(fixture.created).toHaveLength(50);
       expect(fixture.created.filter(item => item.details.silent === false)).toHaveLength(1);
       fixture.presentation.setUnreadCount(50);
-      expect(fixture.options.setDockBadge).toHaveBeenLastCalledWith("50");
+      expect(fixture.options.setTrayBadgeCount).toHaveBeenLastCalledWith(50);
+      if (platform === "darwin") expect(fixture.options.setDockBadge).toHaveBeenLastCalledWith("50");
+      else if (platform === "win32") expect(fixture.main.setOverlayIcon).toHaveBeenLastCalledWith(fixture.image, "50 unread messages");
       now.mockReturnValue(12999);
       fixture.presentation.showMessage(message("before-boundary"));
       expect(fixture.created.at(-1)!.details.silent).toBe(true);

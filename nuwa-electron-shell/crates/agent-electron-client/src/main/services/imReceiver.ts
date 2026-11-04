@@ -63,6 +63,8 @@ export class IMReceiver {
   private selfId = "";
   private lastPull = -Infinity;
   private pullMinMs = 1_000;
+  private pullFailures = 0;
+  private pullRetryAt = 0;
   private dirty = false;
   private connectingAbort: AbortController | null = null;
   private pullAbort: AbortController | null = null;
@@ -141,6 +143,8 @@ export class IMReceiver {
     this.connectingAbort?.abort(); this.connectingAbort = null;
     this.pullAbort?.abort(); this.pullAbort = null;
     this.dirty = false;
+    this.pullFailures = 0;
+    this.pullRetryAt = 0;
     this.connecting = false;
     this.connected = false;
     const socket = this.socket;
@@ -291,7 +295,7 @@ export class IMReceiver {
     if (this.pullAbort || this.pullTimer) return;
     const generation = this.generation;
     const run = this.connectionRun;
-    const wait = Math.max(delay, this.lastPull + this.pullMinMs - this.now());
+    const wait = Math.max(delay, this.lastPull + this.pullMinMs - this.now(), this.pullRetryAt - this.now());
     this.pullTimer = setTimeout(() => {
       this.pullTimer = null;
       if (generation === this.generation && run === this.connectionRun) void this.pull();
@@ -316,13 +320,23 @@ export class IMReceiver {
       if (!nonNegativeCount(result.total) || !nonNegativeCount(dndTotal) ||
           !Number.isSafeInteger(result.total + dndTotal)) throw new Error("Invalid IM unread result");
       this.pullMinMs = result.authoritative === false ? 60_000 : 1_000;
+      if (this.pullFailures) this.deps.log?.("unread-recovered");
+      this.pullFailures = 0;
+      this.pullRetryAt = 0;
       const next = {sessionGeneration: generation, revision: ++this.revision, total: result.total, dndTotal};
       this.snapshot = next;
       this.deps.onUnread({...next});
     } catch (error) {
       if (current() && error instanceof IMReceiverError && !RETRY_CODES.has(error.code)) this.block(error.code);
-      // 无网络时进入离线探针；其它错误保留最后成功计数，不立即循环请求。
+      // 无网络时只做本地探测；临时故障保留最后成功数，并与事件刷新共用一个调度器。
       else if (sameRun() && !this.deps.isOnline()) this.reconcile();
+      else if (current()) {
+        const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(this.pullFailures++, 5));
+        const random = this.deps.random?.() ?? Math.random();
+        this.pullRetryAt = this.now() + Math.round(backoff * (0.75 + 0.25 * random));
+        this.dirty = true;
+        this.deps.log?.("unread-retrying");
+      }
     } finally {
       if (this.pullAbort === abort) {
         this.pullAbort = null;
