@@ -15,6 +15,7 @@
 | `npm run test:commercial` | 完整客户端测试，准备依赖但不注入构建身份；专项 env 测试验证产品差异 |
 | `npm run typecheck` | 主进程、preload 与共享契约的严格 TypeScript 检查；CI 同步执行 |
 | `npm run test:scripts` | 外层工具链和发布脚本测试 |
+| `npm run verify:tooling -- --output <仓外证据目录>` | 验证 doctor 结构、CLI、启动管理和资源缓存，输出带输入摘要与日志校验的验收记录；`--reuse` 复用仍有效的记录 |
 | `npm run host-bridge:check` | 核对前端事实源与本仓宿主桥类型快照 |
 | `npm run release -- --version X.Y.Z[-beta.N] --dry-run` | 发布预检，版本推导通道；去掉 `--dry-run` 启动正式流程 |
 | `npm run diagnostics:export` | 导出诊断包 |
