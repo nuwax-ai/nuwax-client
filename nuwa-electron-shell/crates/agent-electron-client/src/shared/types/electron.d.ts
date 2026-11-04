@@ -716,6 +716,7 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  android: import('../features/android/contract').AndroidBridge;
   browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;
   notices: NoticesBridge;
