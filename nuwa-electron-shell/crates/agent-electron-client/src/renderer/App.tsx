@@ -1,3 +1,4 @@
+import { useDesktopThemes, packageTheme, createShellThemeApplicator } from './features/themes';
 import { CLIENT_SERVICE_KEYS } from "@shared/serviceNames";
 import React, {
   useState,
@@ -99,6 +100,7 @@ import { createLogger } from "./services/utils/rendererLog";
 import styles from "./styles/components/App.module.css";
 import {
   lightTheme,
+  rootTheme,
   darkTheme,
   applyShellTheme,
   type ShellThemePayload,
@@ -259,6 +261,8 @@ function App() {
   // ============================================
   // 主题状态
   // ============================================
+  const desktopThemes = useDesktopThemes();
+  const packageSnapshot = desktopThemes?.snapshot;
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [systemIsDark, setSystemIsDark] = useState(false);
 
@@ -266,12 +270,13 @@ function App() {
   // 暗黑模式经环境变量关闭（FEATURES.DARK_THEME，默认 false）：恒浅色，
   // 与 nuwax 女娲主题（亮色体系）保持统一基调，外观设置项随之隐藏。
   const isDarkMode = useMemo(() => {
+    if (packageSnapshot) return packageSnapshot.mode === "dark";
     if (!FEATURES.DARK_THEME) return false;
     if (themeMode === "system") {
       return systemIsDark;
     }
     return themeMode === "dark";
-  }, [themeMode, systemIsDark]);
+  }, [themeMode, systemIsDark, packageSnapshot]);
 
   // ============================================
   // nuwax 女娲主题 → 壳原生 UI 统一
@@ -357,6 +362,7 @@ function App() {
   // CSS 变量叠加（inline 优先级高于 index.css 的亮/暗定义，removeProperty 即回落）。
   // 与 antd tokens 同步加暗色守卫：壳深色时不叠加，避免米白变量染坏暗色 UI。
   useEffect(() => {
+    if (packageSnapshot) return;
     const root = document.documentElement;
     const active = shellTheme?.active === true && !isDarkMode;
     const vars: Array<[string, string | undefined]> = [
@@ -383,15 +389,27 @@ function App() {
       if (value) root.style.setProperty(name, value);
       else root.style.removeProperty(name);
     });
-  }, [shellTheme, isDarkMode]);
+  }, [shellTheme, isDarkMode, packageSnapshot]);
 
   const currentTheme = useMemo(() => {
+    if (packageSnapshot) return packageTheme(packageSnapshot, rootTheme);
     const base = isDarkMode ? darkTheme : lightTheme;
     // 女娲主题是亮色体系：仅在壳非深色且 nuwax 报告 active 时叠加
     return !isDarkMode && shellTheme?.active
       ? applyShellTheme(base, shellTheme)
       : base;
-  }, [isDarkMode, shellTheme]);
+  }, [isDarkMode, shellTheme, packageSnapshot]);
+
+  const themeApplicator = useRef<ReturnType<typeof createShellThemeApplicator> | null>(null);
+  useEffect(() => {
+    themeApplicator.current = createShellThemeApplicator(document);
+    return () => { themeApplicator.current?.dispose(); themeApplicator.current = null; };
+  }, []);
+  useEffect(() => {
+    if (!packageSnapshot) return;
+    try { themeApplicator.current?.apply(packageSnapshot); }
+    catch (error) { console.warn('[Themes] Could not apply shell appearance', error); }
+  }, [packageSnapshot]);
 
   // ============================================
   // i18n 语言状态（响应式，供 Context 下发）
@@ -1868,7 +1886,7 @@ function App() {
       destroyOnHidden
     >
       <div
-        className={styles.configPane}
+        className={styles.configPane} data-theme-part="settings"
         style={{
           display: "flex",
           height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
@@ -1930,7 +1948,7 @@ function App() {
               </button>
             ))}
         </div>
-        <div className="app-content">
+        <div className="app-content" data-theme-part="content">
           <div className="app-content-titlebar">
             <span className="app-content-title">
               {menuItems.find((item) => item.key === activeTab)
@@ -2010,7 +2028,7 @@ function App() {
       <I18nContext.Provider value={i18nContextValue}>
         <ConfigProvider theme={currentTheme}>
           <ThemeContext.Provider value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}>
-            <div className="app-container">
+            <div className="app-container" data-theme-part="app">
               <TrafficLightToolbar
                 menuCollapsed={false} menuAvailable={false}
                 canGoBack={false} canGoForward={false}
@@ -2044,7 +2062,7 @@ function App() {
         <ThemeContext.Provider
           value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
         >
-          <div className="app-container">
+          <div className="app-container" data-theme-part="app">
             {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
             {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} />}
 
@@ -2210,7 +2228,7 @@ function App() {
             />
 
             {/* 主体部分：平台 webview 常驻挂载，切换时仅隐藏不重载 */}
-            <div className="app-body">
+            <div className="app-body" data-theme-part="body">
               <div
                 className={`app-content app-content-fullwidth ${styles.platformPane}`}
                 style={{

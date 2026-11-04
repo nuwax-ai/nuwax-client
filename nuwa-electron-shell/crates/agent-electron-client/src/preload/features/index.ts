@@ -15,9 +15,11 @@ import { createCaptureBridge, captureCapabilityProbe } from "./capture";
 import { createNoticesBridge } from "./open-source-notices";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
+import { createThemesBridge, themesCapabilityProbe } from "./themes";
 import { createBrowserBridge } from './browser';
 
 export interface FeatureNamespaces {
+  themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   capture: CaptureBridge;
   localFiles: ReturnType<typeof createLocalFilesBridge>;
@@ -25,6 +27,7 @@ export interface FeatureNamespaces {
 
 export interface HostFeatureNamespaces {
   dshRuntime: DshBridge;
+  themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   notices: NoticesBridge;
   capture: HostCaptureBridge;
@@ -35,13 +38,14 @@ export interface HostFeatureNamespaces {
 export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
-  return { browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
+  return { themes: createThemesBridge(ipc), browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
 }
 
 export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
+    themes: createThemesBridge(ipc, true),
     browser: createBrowserBridge(ipc, true),
     dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids) },
     notices: createNoticesBridge(ipc),
@@ -71,6 +75,7 @@ export type CapabilityProbe = (
 ) => Promise<boolean>;
 
 const FEATURE_PROBES: Record<string, CapabilityProbe> = {
+  themes: themesCapabilityProbe as CapabilityProbe,
   capture: captureCapabilityProbe as CapabilityProbe,
   localFiles: localFilesCapabilityProbe as CapabilityProbe,
 };

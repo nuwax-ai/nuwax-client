@@ -11,7 +11,12 @@ export function createCanUse(bridge: CompatibleHostBridge, authorize: (name: str
       const namespace = bridge[capability.namespace];
       if (!namespace) return false;
       const methods = capability.methods.filter(method => typeof (namespace as Record<string, unknown>)[method] === 'function');
-      if (!methods.length || await authorize(name) !== true) return false;
+      if (!methods.length) return false;
+      // 主题先于页面会话恢复启动。让主进程验证并登记当前文档，避免首次
+      // 探测被文档代次门拒绝后，页面永久使用浏览器默认主题；不触发登录或服务。
+      if (capability.namespace === 'themes' && bridge.auth?.getContext &&
+        !(await bridge.auth.getContext())) return false;
+      if (await authorize(name) !== true) return false;
       if (capability.namespace === 'perf') return bridge.perf?.enabled?.() === true;
       // 特性归属的命名空间由各特性 preload 探测（可用性/格式），之后仍需通用流程放行。
       const probed = await probeFeatureCapability(

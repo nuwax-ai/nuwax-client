@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CaptureCapabilities, CompatibleHostBridge } from '@shared/types/hostBridge';
+import type { CaptureCapabilities, CompatibleHostBridge, HostThemesState } from '@shared/types/hostBridge';
 import { createCanUse } from './canUse';
 
 const caps = { available: true, permission: 'denied', formats: { still: ['png', 'jpeg'], video: ['mp4'], gif: true } } as CaptureCapabilities;
@@ -9,7 +9,7 @@ function fixture(value = caps) {
   const bridge: CompatibleHostBridge = { capture, native: { openWindow: vi.fn() }, auth: { getToken: vi.fn(), persistToken: vi.fn() } };
   return { authorize, capture, bridge, canUse: createCanUse(bridge, authorize) };
 }
-describe('canUse 无副作用的能力探测', () => {
+describe('canUse 文档授权和能力探测', () => {
   it('无桥、未知能力、原型键、退休 token 与缺失方法都返回 false', async () => {
     const f = fixture();
     for (const name of ['constructor', '__proto__', 'capture.toString', 'capture.screenshot.png.extra', 'Capture', 'auth.getToken', 'auth.persistToken', 'native.saveFile']) {
@@ -56,5 +56,49 @@ describe('canUse 无副作用的能力探测', () => {
     expect(listFiles).not.toHaveBeenCalled(); expect(resolveContext).not.toHaveBeenCalled();
     f.authorize.mockResolvedValueOnce(true).mockResolvedValue(false);
     expect(await f.canUse('localFiles.listFiles')).toBe(false);
+  });
+  it('主题在页面启动时先登记受信文档，再读取快照并检查当前代次', async () => {
+    let registered = false;
+    const order: string[] = [];
+    const getContext = vi.fn(async () => {
+      order.push('context');
+      registered = true;
+      return { businessOrigin: 'https://business.example', gatewayOrigin: null, loadMode: 'direct' as const };
+    });
+    const getState = vi.fn(async () => {
+      order.push('snapshot');
+      return { revision: 4 } as HostThemesState;
+    });
+    const authorize = vi.fn(async () => {
+      order.push('authorize');
+      return registered;
+    });
+    const bridge: CompatibleHostBridge = { auth: { getContext }, themes: { getState } };
+    expect(await createCanUse(bridge, authorize)('themes')).toBe(true);
+    expect(order).toEqual(['context', 'authorize', 'snapshot', 'authorize']);
+    expect(getContext).toHaveBeenCalledTimes(1);
+  });
+  it('主题文档登记失败时拒绝能力，不读取快照或绕过授权', async () => {
+    const getContext = vi.fn(async () => null);
+    const getState = vi.fn();
+    const authorize = vi.fn(async () => true);
+    const bridge: CompatibleHostBridge = { auth: { getContext }, themes: { getState } };
+    const canUse = createCanUse(bridge, authorize);
+    expect(await canUse('themes')).toBe(false);
+    getContext.mockRejectedValueOnce(new Error('Context unavailable'));
+    expect(await canUse('themes.getState')).toBe(false);
+    expect(getState).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+  });
+  it('主题快照读取期间授权失效时仍拒绝，也不为其他能力登记文档', async () => {
+    const f = fixture();
+    const getContext = vi.fn(async () => ({ businessOrigin: 'https://business.example', gatewayOrigin: null, loadMode: 'direct' as const }));
+    f.bridge.auth = { getContext };
+    f.bridge.themes = { getState: vi.fn(async () => ({ revision: 2 } as HostThemesState)) };
+    expect(await f.canUse('capture')).toBe(true);
+    expect(getContext).not.toHaveBeenCalled();
+    f.authorize.mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await f.canUse('themes')).toBe(false);
+    expect(getContext).toHaveBeenCalledTimes(1);
   });
 });

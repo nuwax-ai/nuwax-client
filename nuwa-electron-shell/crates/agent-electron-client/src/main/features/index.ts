@@ -40,7 +40,8 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
-import { browserFeature } from "./browser";
+import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot } from "./themes";
+import { createBrowserFeature } from "./browser";
 import { dshRuntimeFeature } from "./dsh-runtime";
 import { localFilesFeature } from "./local-files";
 
@@ -53,7 +54,8 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   openSourceNoticesFeature,
   localFilesFeature,
-  browserFeature,
+  createBrowserFeature({getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot}),
+  themesFeature,
   dshRuntimeFeature,
 ];
 
