@@ -8,6 +8,17 @@ import { dshSourceDigest, DSH_VERSIONS } from './client/dsh-resources.mjs';
 const require = createRequire(import.meta.url);
 const { nativeTargets } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-sign-targets.cjs');
 const { createMacSigner, withLimitedBinaryProbes } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-mac-sign.cjs');
+const { entitlementsForNative } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-sign-resources.cjs');
+test('Office executable has its limited hardened-runtime permissions; libraries get none', async () => {
+ const office = entitlementsForNative('/resources/engine/bin/libreoffice-kit');
+ assert.match(office, /entitlements\.office\.plist$/);
+ const plist = await fs.readFile(office, 'utf8');
+ assert.match(plist, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
+ assert.doesNotMatch(plist, /disable-library-validation|allow-jit/);
+ assert.match(entitlementsForNative('/resources/node'), /entitlements\.child\.plist$/);
+ assert.match(entitlementsForNative('/resources/python3.12'), /entitlements\.child\.plist$/);
+ assert.equal(entitlementsForNative('/resources/libexample.dylib'), undefined);
+});
 test('DSH cache includes adapter sources and lock; ignores installed dependencies and acceptance tests', async t => {
  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-inputs-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
  await fs.writeFile(path.join(root, 'host.mjs'), 'one');

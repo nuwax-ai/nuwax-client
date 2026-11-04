@@ -11,7 +11,12 @@ const office = resolve(process.argv[2] ?? '../agent-electron-client/resources/ds
 const entries = await resolvePrimaryRuntime(join(office, 'primary-runtime'))
 const directory = await mkdtemp(join(tmpdir(), 'nuwax-dsh-office-'))
 let converter
+let restoreSignature
 try {
+  if (process.platform === 'darwin') {
+    const { prepareSignedOffice } = await import('./office-signature-smoke.mjs')
+    restoreSignature = await prepareSignedOffice()
+  }
   await execute(entries.python, ['-c', `
 import sys
 from pathlib import Path
@@ -42,5 +47,8 @@ w=load_workbook(p/'sheet.xlsx'); w.active['A2']='Edited workbook'; w.save(p/'edi
     const { verifySignedPython } = await import('./office-signature-smoke.mjs')
     await verifySignedPython(entries.python)
   }
-  console.log(JSON.stringify({ level: 'bundled-office-native', createAndEdit: ['docx', 'pptx', 'xlsx'], recalculate: 42, renderImages: true }))
-} finally { await converter?.dispose(); await rm(directory, { recursive: true, force: true }) }
+  console.log(JSON.stringify({ level: 'bundled-office-native', hardenedRuntime: process.platform === 'darwin', createAndEdit: ['docx', 'pptx', 'xlsx'], recalculate: 42, renderImages: true }))
+} finally {
+  try { await converter?.dispose() }
+  finally { try { await restoreSignature?.() } finally { await rm(directory, { recursive: true, force: true }) } }
+}
