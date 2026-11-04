@@ -62,7 +62,7 @@
     "sync:oss": "bash scripts/sync-oss.sh",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "prepare:dsh": "node ../../../../scripts/prepare-dsh-resources.mjs"
+    "prepare:dsh": "node ../../../scripts/prepare-dsh-resources.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0",

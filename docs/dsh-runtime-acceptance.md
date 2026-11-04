@@ -16,7 +16,7 @@
 | Electron 窗口和浏览器 | 原 DS-Bot Client 加载及对话；两个 Bot Cookie 隔离；读页、Playwright CDP 自动化；旧文档 IPC 拒绝；停止时断开 CDP | 本机 macOS arm64，源码 Electron |
 | Office | 随包 Python 创建并编辑 DOCX / PPTX / XLSX；三种文档转 PDF；文档渲染图片；公式重算得到 42 | 本机 macOS arm64，真实原生运行资源 |
 | 语音 | 固定权重下载、哈希验证、取消和重试；本地 SenseVoice 转写系统生成 WAV，得到 “This is a voice integration test.” | 本机原生推理；不包含实体麦克风 |
-| 资源与许可证 | macOS arm64 原生语音库和 Office 准入检查通过；保留运行包和 Office 许可证与来源记录 | 本机资源准备；其他平台待 CI |
+| 资源与许可证 | macOS arm64 / x64、Windows x64、Linux x64 / arm64 的运行时、语音原生库和 Office 准入及真实文档处理均通过；许可证与来源记录保留 | 五平台真实 CI runner；不替代安装包 |
 | 开发工具链配方 | `verify:tooling` 通过，证据目录 `/tmp/nuwax-dsh-tooling-20261104` | source-tooling，不替代安装包 |
 
 ## 测试平台真实模型联调
@@ -38,7 +38,7 @@
 
 1. 可用 OpenAI 平台通路的 SSE、工具续轮、推理、图片、取消与用量，以及平台账单对账；平台权限变更的即时生效。
 2. 真实平台上的完整群聊、双向 Bot 协作、长上下文检查点与历史检索专项验收。现有确定性运行时测试只覆盖表中列出的行为。
-3. CI 完整门禁和五平台原生资源检查；基于既有版本的 package-validation 安装包。验证系列固定为 `dsh-dsbot-runtime-20261104`，最多 4 次启动，不创建新版本、Tag、Release 或更新指针。
+3. 基于既有版本的 package-validation 安装包。提交 `69b9593e` 的[完整 CI 门禁及五平台资源检查已通过](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812089460)。[第 1 轮安装包验证](https://github.com/nuwax-ai/nuwax-client/actions/runs/41812217969)发现子目录 `prepare:dsh` 相对路径多退一级，已修正并通过实际子目录入口验证；CI 也改为覆盖该入口。验证系列固定为 `dsh-dsbot-runtime-20261104`，最多 4 次启动，不创建新版本、Tag、Release 或更新指针。
 4. macOS / Windows / Linux 安装包中的浏览器登录保持、下载、Office 和语音；真实麦克风、系统播报、拒绝授权及恢复。
 
 本任务未修改或提交 `agent-platform`。平台侧缺口单独记录，不用本地模拟成功替代。

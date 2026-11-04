@@ -128,7 +128,7 @@ jobs:
           node test/plugin-smoke.mjs
       - name: Prepare and admit native speech and Office resources
         run: |
-          npm run prepare:dsh
+          npm --prefix nuwa-electron-shell/crates/agent-electron-client run prepare:dsh
           node scripts/check-dsh-resources.mjs
       - name: Create, edit, render and recalculate Office documents
         working-directory: nuwa-electron-shell/crates/dsh-runtime
