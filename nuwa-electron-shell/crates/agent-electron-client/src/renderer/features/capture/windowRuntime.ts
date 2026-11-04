@@ -392,8 +392,14 @@ export async function mountCaptureWindow(
     const brightness = channels[0] * .299 + channels[1] * .587 + channels[2] * .114;
     textInput.style.backgroundColor = brightness < 135 ? '#f3f6fa' : '#18222f';
     textInput.style.textShadow = 'none';
-    textInput.style.width = `${Math.min(innerWidth - 16, Math.max(180, painter.bounds(context, { ...pendingText, text: textInput.value }).width / scale + 22))}px`;
-    textInput.style.height = `${Math.min(innerHeight - 16, Math.max(size * 1.2 + 14, textInput.value.split('\n').length * size * 1.2 + 14))}px`;
+    const text = textInput.value || textInput.placeholder;
+    textInput.style.width = `${Math.min(innerWidth - 16, Math.ceil(Math.max(180, painter.bounds(context, { ...pendingText, text }).width / scale + 22)))}px`;
+    const height = Math.ceil(text.split('\n').length * size * 1.2 + 14);
+    textInput.style.height = `${Math.min(innerHeight - 16, height)}px`;
+    // Classic scrollbars take space inside the border box. A long line must
+    // retain its full line height even when the viewport caps the input width.
+    const scrollbarHeight = textInput.offsetHeight - textInput.clientHeight - 4;
+    if (scrollbarHeight > 0) textInput.style.height = `${Math.min(innerHeight - 16, height + scrollbarHeight)}px`;
     textInput.style.left = `${Math.max(0, Math.min(innerWidth - textInput.offsetWidth, r.x + point.x / scale - 7))}px`;
     textInput.style.top = `${Math.max(0, Math.min(innerHeight - textInput.offsetHeight, r.y + point.y / scale - 7))}px`;
   }

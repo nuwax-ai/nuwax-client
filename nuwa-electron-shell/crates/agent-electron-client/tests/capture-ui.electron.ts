@@ -74,6 +74,18 @@ app.whenReady().then(async () => {
   const script = (selector: BrowserWindow, source: string) => selector.webContents.executeJavaScript(source);
   const tool = (selector: BrowserWindow, name: string) => script(selector, `document.querySelector('[data-action=${name}]').click()`);
   const editing = (selector: BrowserWindow) => script(selector, `({focused:document.activeElement.className,display:document.querySelector('.textInput').style.display,value:document.querySelector('.textInput').value})`);
+  const checkTextLayout = async (selector: BrowserWindow, fitsWidth = true) => {
+    const layout = await script(selector, `(()=>{
+      const input=document.querySelector('.textInput'), style=getComputedStyle(input);
+      return {clientWidth:input.clientWidth,scrollWidth:input.scrollWidth,
+        contentHeight:input.clientHeight-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom),
+        expectedHeight:input.value.split('\\n').length*parseFloat(style.lineHeight),
+        scrollbarHeight:input.offsetHeight-input.clientHeight-parseFloat(style.borderTopWidth)-parseFloat(style.borderBottomWidth)};
+    })()`);
+    assert.ok(layout.contentHeight >= layout.expectedHeight - 1, `文字行高不能被滚动条挤占: ${JSON.stringify(layout)}`);
+    if (fitsWidth) assert.ok(layout.scrollWidth <= layout.clientWidth, `短文字与占位提示不应出现横向滚动条: ${JSON.stringify(layout)}`);
+    else assert.ok(layout.scrollbarHeight >= 16, '超长单行必须保留占空间的原生滚动条进行验证');
+  };
   const frame = (selector: BrowserWindow) => script(selector, `document.querySelector('.frame').toDataURL()`);
   const drag = async (selector: BrowserWindow, from: [number, number], to: [number, number]) => {
     await mouse(selector, 'mouseDown', ...from); await mouse(selector, 'mouseMove', ...to); await mouse(selector, 'mouseUp', ...to);
@@ -123,14 +135,32 @@ app.whenReady().then(async () => {
   assert.equal(await script(selectors[2], `document.querySelector('.magnifier').hidden`), true);
 
   const current = selectors[0];
+  // macOS 默认覆盖式滚动条不占高度；显式尺寸覆盖 Windows 等平台的经典滚动条。
+  await current.webContents.insertCSS('.textInput::-webkit-scrollbar{width:16px;height:16px}');
   await mouse(current, 'mouseDown', 80, 80);
   await mouse(current, 'mouseMove', 700, 400);
   await mouse(current, 'mouseUp', 700, 400);
   await tool(current, 'text'); await click(current, 100, 100);
   assert.deepEqual(await editing(current), { focused: 'textInput', display: 'block', value: '' }, '真实点击后输入框必须保持焦点');
+  await saveScreenshot(current, 'text-input-empty');
+  await checkTextLayout(current);
+  for (const size of [14, 24, 36]) {
+    await clickControl(current, `.fontPreset[data-size="${size}"]`);
+    await checkTextLayout(current);
+    await current.webContents.insertText('第一行文字 Test\n第二行\n\n第四行');
+    await checkTextLayout(current);
+    await script(current, `document.querySelector('.textInput').select()`);
+    await current.webContents.insertText('超长单行'.repeat(80));
+    await checkTextLayout(current, false);
+    await script(current, `document.querySelector('.textInput').select()`);
+    await key(current, 'Backspace');
+    await checkTextLayout(current);
+  }
+  await clickControl(current, '.fontPreset[data-size="14"]');
   current.webContents.sendInputEvent({ type: 'char', keyCode: 'T' }); await delay();
   await current.webContents.insertText('文字 Test');
   assert.equal((await editing(current)).value, 'T文字 Test');
+  await checkTextLayout(current);
   await script(current, `document.querySelector('.textInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}))`);
   assert.equal((await editing(current)).display, 'block', '输入法确认候选词不能结束编辑');
   await key(current, 'Enter');
@@ -139,6 +169,7 @@ app.whenReady().then(async () => {
   assert.equal((await editing(current)).value, 'T文字 Test\n');
   await current.webContents.insertText('第二行\n\n第四行');
   assert.equal((await editing(current)).value, 'T文字 Test\n第二行\n\n第四行');
+  await checkTextLayout(current);
   await key(current, 'Enter', ['control']);
   assert.equal((await editing(current)).display, 'none');
   await tool(current, 'undo');
@@ -171,6 +202,7 @@ app.whenReady().then(async () => {
   await clickControl(next, '.swatch[data-color="#36d5ae"]');
   await clickControl(next, '.fontPreset[data-size="24"]');
   assert.deepEqual(await editing(next), { focused: 'textInput', display: 'block', value: '直接确认' }, '输入中点击颜色/字号快捷按钮应保持输入焦点与未提交文字');
+  await checkTextLayout(next);
   await next.webContents.insertText('继续输入');
   assert.equal((await editing(next)).value, '直接确认继续输入');
   await clickControl(next, '.swatch[data-color="#ff3b52"]');
