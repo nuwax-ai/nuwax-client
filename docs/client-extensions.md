@@ -44,6 +44,12 @@ node test/plugin-smoke.mjs --shell
 
 真实 DS-Bot 集成测试运行原版 DSH、DS-Bot 和原生 MCP Client，用确定性模型验证主题读取、个人副本、文件修改、应用、恢复及撤权。它不替代真实平台模型、实体麦克风或签名安装包验收。CI 商业门禁安装锁定的 DSH 依赖后运行该测试，原生平台任务另验 MCP 连接和插件管理。
 
+### Dev 模型联调代理
+
+未打包且设置 `NUWAX_DEV_PROFILE=1` 的进程可通过 `NUWAX_DSH_DEV_MODEL_PROXY` 和 `NUWAX_DSH_DEV_MODEL_PROXY_TOKEN` 接入一次性测试代理。地址仅接受带端口的 `http://127.0.0.1`，令牌须为 64 位十六进制随机值；无参数时继续使用平台代理，安装包忽略这两个参数。
+
+测试代理使用平台模型路由格式 `/<modelId>/v1/messages` 或 `/<modelId>/v1/chat/completions`，自行持有真实上游凭据。客户端仍验证已有平台授权、所选模型、请求体模型及当前账号代次，向测试代理只发送短期本地令牌。参数在主进程消费后从环境移除，不进入 DSH 子进程、模型目录和设置库。测试代理须独立限制目标模型、拒绝未授权请求，并在验收后关闭；该结果单独标记为 Dev 直连验收，不证明平台模型代理已恢复。
+
 ## 2026-11-04 集成验收记录
 
 - 分支：`codex/client-extension-integration`。应用源码为 `b874fef6`，整合主题 `56a90d28` 与 DSH `cdf82ea4`，前端源码 pin 为 `b338d54f6f`。

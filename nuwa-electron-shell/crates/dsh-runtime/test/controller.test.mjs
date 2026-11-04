@@ -4,9 +4,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
-import { RuntimeController, scopeKey } from '../controller.mjs'
+import { createServer as createHttpServer } from 'node:http'
+import { RuntimeController, scopeKey, developmentModelProxy } from '../controller.mjs'
 
-async function fixture(readyDelay = 0) {
+async function fixture(readyDelay = 0, devModelProxy) {
   const root = await mkdtemp(join(tmpdir(), 'nuwax-dsh-controller-'))
   const runtimeDir = join(root, 'runtime')
   await mkdir(runtimeDir)
@@ -24,8 +25,8 @@ async function fixture(readyDelay = 0) {
   const allocated = [], released = []
   const saved = new Map([['dsh.authorization.' + scopeKey(scope), { keyId: 5, models: ['12'] }]])
   const controller = new RuntimeController({
-    runtimeDir, officeDir: join(root, 'office'), dataDir: root, node: () => process.execPath,
-    env: () => ({ PATH: process.env.PATH }),
+    runtimeDir, officeDir: join(root, 'office'), dataDir: root, node: () => process.execPath, devModelProxy,
+    env: () => ({ PATH: process.env.PATH, NUWAX_DSH_DEV_MODEL_PROXY: 'fixture', NUWAX_DSH_DEV_MODEL_PROXY_TOKEN: 'fixture-capability' }),
     settings: { read: key => saved.get(key), write: (key, value) => saved.set(key, value) },
     allocatePort: () => new Promise(resolve => { const server = createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; allocated.push(port); server.close(() => resolve(port)) }) }),
     releasePort: async port => { released.push(port) },
@@ -45,6 +46,8 @@ test('duplicate starts share one owned child; only a run token reaches it', asyn
     assert.equal(first, second)
     const observed = JSON.parse(await readFile(join(f.controller.scopeDir(), 'observed.json'), 'utf8'))
     assert.ok(!JSON.stringify(observed).includes('platform-secret-fixture'))
+    assert.equal(observed.env.NUWAX_DSH_DEV_MODEL_PROXY, undefined)
+    assert.equal(observed.env.NUWAX_DSH_DEV_MODEL_PROXY_TOKEN, undefined)
     assert.ok(observed.env.NUWAX_DSH_RUN_TOKEN)
     assert.equal(observed.env.HOME, f.controller.scopeDir())
     assert.equal(observed.env.PYTHONDONTWRITEBYTECODE, '1', 'Office must preserve sealed application resources')
@@ -61,6 +64,49 @@ test('duplicate starts share one owned child; only a run token reaches it', asyn
     await f.controller.stop()
     assert.deepEqual(f.released, f.allocated, 'private allocations are released exactly once')
   } finally { await f.dispose() }
+})
+test('development model proxy requires an explicit dev profile and a private loopback capability', () => {
+  const input = { development: true, baseUrl: 'http://127.0.0.1:12345', token: 'a'.repeat(64) }
+  assert.deepEqual(developmentModelProxy(input), { baseUrl: input.baseUrl, apiKey: input.token })
+  assert.equal(developmentModelProxy({ ...input, development: false }), undefined)
+  assert.equal(developmentModelProxy({ development: true }), undefined)
+  for (const baseUrl of ['https://remote.example', 'http://localhost:12345', 'http://127.0.0.1:12345/path', 'http://user@127.0.0.1:12345', 'http://127.0.0.1:12345/?key=x']) {
+    assert.throws(() => developmentModelProxy({ ...input, baseUrl }), /Invalid development/)
+  }
+  assert.throws(() => developmentModelProxy({ ...input, token: 'short' }), /Invalid development/)
+})
+test('development proxy preserves selected models and revocation without forwarding platform credentials', async () => {
+  let calls = 0
+  const upstream = createHttpServer(async (req, res) => {
+    calls++
+    assert.equal(req.url, '/12/v1/chat/completions')
+    assert.equal(req.headers.authorization, 'Bearer ' + 'b'.repeat(64))
+    let body = ''; for await (const chunk of req) body += chunk
+    assert.equal(JSON.parse(body).model, 'test')
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end('data: [DONE]\n\n')
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const f = await fixture(0, developmentModelProxy({ development: true, baseUrl: 'http://127.0.0.1:' + upstream.address().port, token: 'b'.repeat(64) }))
+  try {
+    await f.controller.start()
+    const observed = JSON.parse(await readFile(join(f.controller.scopeDir(), 'observed.json'), 'utf8'))
+    const launch = await readFile(join(f.controller.scopeDir(), 'launch.json'), 'utf8')
+    assert.ok(!JSON.stringify(observed).includes('b'.repeat(64)))
+    assert.ok(!launch.includes('b'.repeat(64)))
+    const base = observed.env.NUWAX_DSH_BROKER
+    const headers = { Authorization: 'Bearer ' + observed.env.NUWAX_DSH_RUN_TOKEN }
+    const post = (id, model) => fetch(base + '/model/' + id + '/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [] }) })
+    assert.equal((await post('13', 'test')).status, 404)
+    assert.equal((await post('12', 'other')).status, 403)
+    const response = await post('12', 'test')
+    assert.equal(await response.text(), 'data: [DONE]\n\n')
+    assert.equal(calls, 1)
+    f.change(); f.controller.invalidate()
+    assert.equal((await post('12', 'test')).status, 403)
+    assert.equal(calls, 1)
+  } finally {
+    await f.dispose(); upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve))
+  }
 })
 test('invalidation interrupts a child waiting for readiness and releases its private ports', async () => {
   const f = await fixture(60000)

@@ -10,6 +10,18 @@ export function scopeKey(scope) {
 }
 const same = (a, b) => a && b && a.origin === b.origin && a.accountId === b.accountId && a.epoch === b.epoch
 
+/** Development fixtures hold provider credentials outside the application and repository. */
+export function developmentModelProxy({ development, baseUrl, token }) {
+  if (!development || (!baseUrl && !token)) return undefined
+  try {
+    const url = new URL(baseUrl)
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port ||
+      url.pathname !== '/' || url.username || url.password || url.search || url.hash ||
+      !/^[a-f0-9]{64}$/.test(token ?? '')) throw new Error()
+    return { baseUrl: url.origin, apiKey: token }
+  } catch { throw new Error('Invalid development model proxy configuration') }
+}
+
 /** Serializes runtime ownership; invalidation closes admission synchronously. */
 export class RuntimeController extends EventEmitter {
   #options; #phase = 'stopped'; #error; #child; #broker; #scope; #url; #queue = Promise.resolve(); #generation = 0; #checkpointFailed = false; #ports = []
@@ -114,7 +126,8 @@ export class RuntimeController extends EventEmitter {
       const workspace = join(home, 'workspace')
       await mkdir(workspace, { recursive: true, mode: 0o700 })
       const port = await this.#port('runtime')
-      this.#broker = createModelBroker({ models, baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
+      const upstream = this.#options.devModelProxy ?? { baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey }
+      this.#broker = createModelBroker({ models, ...upstream, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
       const broker = await this.#broker.start()
       await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port, shellMcp: this.#options.shellMcp?.() ?? null }), { mode: 0o600 })
       if (!current()) throw new Error('Account changed')
@@ -123,6 +136,8 @@ export class RuntimeController extends EventEmitter {
         PYTHONDONTWRITEBYTECODE: '1',
         NUWAX_DSH_SCOPE_ROOT: home, NUWAX_DSH_BROKER: broker, NUWAX_DSH_RUN_TOKEN: this.#broker.token,
         NUWAX_DSH_OFFICE: this.#options.officeDir, DS_BOT_APP: '1', DSH_TELEMETRY_DISABLED: '1' }
+      delete env.NUWAX_DSH_DEV_MODEL_PROXY
+      delete env.NUWAX_DSH_DEV_MODEL_PROXY_TOKEN
       const child = fork(join(this.#options.runtimeDir, 'host.mjs'), [], {
         execPath: this.#options.node(), cwd: home, env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       })

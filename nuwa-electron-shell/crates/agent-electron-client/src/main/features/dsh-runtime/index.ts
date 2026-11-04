@@ -25,6 +25,7 @@ interface Desktop { open(visible?: boolean): Promise<void>; dispose(): void; end
 interface RuntimeModule {
   RuntimeController: new(options: Record<string, unknown>) => RuntimeController;
   scopeKey(scope: unknown): string;
+  developmentModelProxy(input: { development: boolean; baseUrl?: string; token?: string }): { baseUrl: string; apiKey: string } | undefined;
 }
 interface BrowserRequest { id: string; botId: string; downloadRoots: string[]; }
 
@@ -39,6 +40,15 @@ export function createDshRuntimeFeature(ports: {
 } = {}): DesktopFeature { return {
   id: "dsh-runtime", products: ["nuwax"], enabledByDefault: true,
   register(ctx: FeatureContext) {
+    // Only this development process can consume the ephemeral fixture capability.
+    // Real provider credentials stay in the external fixture's memory.
+    const devProxyInput = {
+      development: !electron.app.isPackaged && process.env.NUWAX_DEV_PROFILE === "1",
+      baseUrl: process.env.NUWAX_DSH_DEV_MODEL_PROXY,
+      token: process.env.NUWAX_DSH_DEV_MODEL_PROXY_TOKEN,
+    };
+    delete process.env.NUWAX_DSH_DEV_MODEL_PROXY;
+    delete process.env.NUWAX_DSH_DEV_MODEL_PROXY_TOKEN;
     let controller: RuntimeController | undefined;
     let desktop: Desktop | undefined;
     let desktopPort: number | undefined;
@@ -63,6 +73,7 @@ export function createDshRuntimeFeature(ports: {
       if (disposed) throw new Error("Plugin runtime is disposed");
       const runtime = new api.RuntimeController({
         platform: ctx.platform, settings: ctx.settings, runtimeDir, officeDir, dataDir: ctx.dataDir,
+        devModelProxy: api.developmentModelProxy(devProxyInput),
         shellMcp: ports.shellMcp,
         node: () => { const node = ctx.agent.resolveNodeBinary(); if (!node) throw new Error("Bundled Node unavailable"); return node; },
         env: () => ctx.platform!.environment(), allocatePort: () => ctx.platform!.allocatePort(), releasePort: (port: number) => ctx.platform!.releasePort(port),
