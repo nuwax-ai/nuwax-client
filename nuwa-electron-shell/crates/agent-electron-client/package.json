@@ -61,7 +61,8 @@
     "sign:win:v1": "bash scripts/build/sign-release-win.sh",
     "sync:oss": "bash scripts/sync-oss.sh",
     "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint:fix": "eslint src --fix",
+    "prepare:dsh": "node ../../../../scripts/prepare-dsh-resources.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0",
@@ -279,6 +280,20 @@
           "**/*",
           "!**/node_modules/.bin/**"
         ]
+      },
+      {
+        "from": "resources/dsh-runtime",
+        "to": "dsh-runtime",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/dsh-office",
+        "to": "dsh-office",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "publish": [
@@ -305,7 +320,8 @@
         "CFBundleDisplayName": "女娲 Nuwax",
         "NSDesktopFolderUsageDescription": "需要访问桌面文件夹以支持文件操作",
         "NSDocumentsFolderUsageDescription": "需要访问文档文件夹以支持文件操作",
-        "NSDownloadsFolderUsageDescription": "需要访问下载文件夹以支持文件操作"
+        "NSDownloadsFolderUsageDescription": "需要访问下载文件夹以支持文件操作",
+        "NSMicrophoneUsageDescription": "Nuwax uses the microphone for voice input in DS-Bot."
       }
     },
     "dmg": {

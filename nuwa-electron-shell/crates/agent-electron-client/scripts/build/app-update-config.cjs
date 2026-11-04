@@ -48,6 +48,7 @@ function verifyResources(resources, feedBase) {
 // electron-builder calls the user afterPack handler after its own PublishManager
 // and before code signing. Its built-in handler skips macOS --dir entirely.
 async function afterPack(context) {
+  await require('./dsh-sign-resources.cjs').signDshResources(context);
   const { packager, appOutDir } = context;
   const publish = packager.config.publish;
   if (!Array.isArray(publish) || publish.length !== 1 || publish[0].provider !== 'generic'

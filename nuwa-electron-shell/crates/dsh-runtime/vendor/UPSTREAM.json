@@ -1,0 +1,39 @@
+{
+  "repository": "https://github.com/Fei2411/DS-Bot",
+  "commit": "71d344bf193f3f18185f25de3d8e5c483046910a",
+  "files": {
+    "bot-browser.mjs": {
+      "source": "app/src/bot-browser.mjs",
+      "sha256": "5f08dc0406b11ca065cc6acca5da93b9083c99ea0b9c87bcb6927ab606f48b5b"
+    },
+    "bot-views.mjs": {
+      "source": "app/src/bot-views.mjs",
+      "sha256": "9c8fbc5ff1b0899e652b63ffb0cb594181eea2e8f83bdf29fe236a2117a03d91"
+    },
+    "prepare-office.mjs": {
+      "source": "app/scripts/prepare-runtime.mjs",
+      "sha256": "ef7b057dadc8ec9b1b9a17d7219c0a19a7ec1e400a0df4e2d5107f1684d7e4d8"
+    },
+    "primary-runtime.lock.json": {
+      "source": "app/scripts/primary-runtime.lock.json",
+      "sha256": "733c3c53d95ae524bddb123e1319c48ecacb0dc729be956c25188f930c095bd5"
+    },
+    "office-patch.mjs": {
+      "source": "app/src/office-patch.mjs",
+      "sha256": "f7e0341eec2eac1988c103972b07f29698883e34e5ad463775820ceb1c02c28d"
+    },
+    "DS-Bot-LICENSE": {
+      "source": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "DS-Bot-NOTICE": {
+      "source": "NOTICE",
+      "sha256": "a36724fba7a8855a5fab53a116dd995480a176141bb89d87aadd03ca2ba28c12"
+    }
+  },
+  "changes": [
+    "bot-browser.mjs: partition namespace includes Nuwax account and domain scope",
+    "bot-views.mjs: loopback CDP port supplied by the owning main process",
+    "bot-views.mjs: disposal terminates active automation sockets and rejects further view creation"
+  ]
+}

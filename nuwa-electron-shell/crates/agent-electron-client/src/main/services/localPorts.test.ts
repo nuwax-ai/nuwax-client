@@ -171,3 +171,15 @@ describe("automatic local ports", () => {
     expect(ports.get("agent")?.port).toBe(selected);
   });
 });
+
+it("private feature listeners share allocation without entering published endpoints or saved ports", async () => {
+  const persist = vi.fn();
+  const ports = manager({ ranges: [[24600, 24605]], bind: async () => reservation(), persist });
+  const [privatePort, agent] = await Promise.all([ports.allocatePrivate(), ports.reserve("agent")]);
+  expect(privatePort).not.toBe(agent);
+  expect(ports.snapshot().map(value => value.service)).toEqual(["agent"]);
+  expect(persist).not.toHaveBeenCalled();
+  await ports.releasePrivate(privatePort);
+  expect(await ports.allocatePrivate()).toBe(privatePort);
+  await ports.dispose();
+});

@@ -264,3 +264,19 @@ test('input hashing ignores build/cache and catches source contents; packageRead
   write(path.join(f.kit, 'package.json'), { main: 'dist/missing.js' });
   assert.equal(packageReady(f.kit), false);
 });
+
+test('DSH source edits refresh only the DSH payload and tests do not invalidate it', async t => {
+  const f = fixture(t);
+  const source = path.join(f.p.base, 'crates/dsh-runtime');
+  write(path.join(source, 'host.mjs'), 'version one');
+  const options = { tools: f.tools, platform: f.platform, arch: f.arch };
+  await prepare(f.root, options);
+  f.calls.length = 0;
+  write(path.join(source, 'host.mjs'), 'version two');
+  await prepare(f.root, options);
+  assert.deepEqual(f.calls.filter(call => call[0] === 'npm').map(call => call[2]), ['prepare:dsh']);
+  f.calls.length = 0;
+  write(path.join(source, 'test/new.test.mjs'), 'test code');
+  await prepare(f.root, options);
+  assert.equal(f.calls.filter(call => ['npm', 'pnpm'].includes(call[0])).length, 0);
+});

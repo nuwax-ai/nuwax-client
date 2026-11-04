@@ -199,3 +199,20 @@ test('one frozen matrix contains both existing Mac versions and only the target 
     { VALIDATION_PACKAGE_BASELINE_TAG: 'v3.0.22' },
   ]) assert.throws(() => validationIdentity(f.cwd, { ...env, ...invalid }));
 });
+
+test('five-platform validation retains the budget and stages Linux AppImage without updater or release outputs', async t => {
+  const f = fixture(t);
+  const identity = validationIdentity(f.cwd, { ...f.env, VALIDATION_PLATFORMS: 'all' });
+  assert.deepEqual(identity.matrix.map(value => [value.platform, value.arch]), [['darwin','arm64'],['darwin','x64'],['win32','x64'],['linux','x64'],['linux','arm64']]);
+  assert.equal(assertValidationBudget([run(123, 1)], identity), 1);
+  const output = path.join(f.cwd, 'linux-output');fs.mkdirSync(output);
+  fs.writeFileSync(path.join(output, 'Nuwax.AppImage'), 'complete-appimage');
+  fs.writeFileSync(path.join(output, 'latest-linux.yml'), 'must-not-ship');
+  fs.writeFileSync(path.join(output, 'Nuwax.deb'), 'must-not-ship');
+  const stage = path.join(f.cwd, 'linux-stage');
+  const result = await stageValidation(f.cwd, output, stage, identity, 'linux');
+  assert.equal(Object.keys(result.artifacts).length, 1);
+  assert.ok(Object.keys(result.artifacts)[0].endsWith('.AppImage'));
+  assert.equal(result.published, false);assert.equal(result.updatePointersChanged, false);
+  assert.equal(fs.readdirSync(stage).length, 2);
+});

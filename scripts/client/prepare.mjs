@@ -89,6 +89,7 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['mcp-proxy', [path.join(r, 'mcp-proxy-ts/dist/index.js'), path.join(r, 'mcp-proxy-ts/dist/lib.bundle.mjs')]],
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
     ['harness', [path.join(r, 'nuwax-harness-acp-ts/dist/index.js')]],
+    ['dsh', [path.join(r, 'dsh-runtime/host.mjs'), path.join(r, 'dsh-runtime/nuwax-runtime.json'), path.join(r, 'dsh-office/primary-runtime/runtime.json')]],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
@@ -298,8 +299,11 @@ export async function prepare(root, options = {}) {
     const resourceKey = tools.fingerprint([workspaceKey, scriptsKey, opt.platform, opt.arch]);
     state.resources ??= {};
     for (const spec of resourceSpecs(p.client, opt.platform, opt.arch)) {
+      const specKey = spec.name === 'dsh' ? tools.fingerprint([opt.platform, opt.arch,
+        inputDigest([path.join(p.base, 'crates/dsh-runtime')], { excludeNames: ['test'] }),
+        inputDigest([path.join(root, 'scripts/prepare-dsh-resources.mjs'), path.join(root, 'scripts/client/dsh-resources.mjs')])]) : resourceKey;
       const ready = () => spec.files.every(fileReady) && (!spec.check || spec.check());
-      if (state.resources[spec.name]?.key === resourceKey && state.resources[spec.name]?.artifact === inputDigest(spec.files) && (ready() || state.resources[spec.name]?.skipped && spec.optional)) {
+      if (state.resources[spec.name]?.key === specKey && state.resources[spec.name]?.artifact === inputDigest(spec.files) && (ready() || state.resources[spec.name]?.skipped && spec.optional)) {
         console.log(`[prepare] 复用 ${spec.name}`);
         continue;
       }
@@ -308,7 +312,7 @@ export async function prepare(root, options = {}) {
       if (!ready() && !spec.optional) throw new Error(`[prepare] ${spec.script} 返回成功但产物缺失: ${spec.files.join(', ')}`);
       const skipped = !ready();
       if (skipped) console.warn(`[prepare] ${spec.name} 当前平台未提供资源，相关功能不可用`);
-      state.resources[spec.name] = { key: resourceKey, skipped, artifact: inputDigest(spec.files) };
+      state.resources[spec.name] = { key: specKey, skipped, artifact: inputDigest(spec.files) };
       save();
     }
     let captureDir = null;

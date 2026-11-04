@@ -35,6 +35,7 @@ import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
+import { DshSettings } from "../../features/dsh-runtime";
 import { BrowserSettings } from '../../features/browser';
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
@@ -494,6 +495,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
         </div>
         <div className={styles.groupCard}>
           <MessageSoundSettings t={t} Row={SettingsRow} />
+          {APP_NAME_IDENTIFIER === 'nuwax' && <DshSettings t={t} Row={SettingsRow} />}
           {APP_NAME_IDENTIFIER === 'nuwax' && <BrowserSettings t={t} Row={SettingsRow} bridge={window.electronAPI?.browser} settings={window.electronAPI?.settings} />}
           <SettingsRow
             label={t("Claw.Settings.system.autoLaunch")}

@@ -26,7 +26,10 @@ export function validationIdentity(cwd, env = process.env) {
   const platforms = { both: [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }, { runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
     'mac-arm64': [{ runner: 'macos-latest', platform: 'darwin', arch: 'arm64' }],
     'mac-x64': [{ runner: 'macos-26-intel', platform: 'darwin', arch: 'x64' }],
-    'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }] };
+    'windows-x64': [{ runner: 'windows-latest', platform: 'win32', arch: 'x64' }],
+    'linux-x64': [{ runner: 'ubuntu-24.04', platform: 'linux', arch: 'x64' }],
+    'linux-arm64': [{ runner: 'ubuntu-24.04-arm', platform: 'linux', arch: 'arm64' }] };
+  platforms.all = ['mac-arm64', 'mac-x64', 'windows-x64', 'linux-x64', 'linux-arm64'].flatMap(name => platforms[name]);
   const selectedPlatforms = platforms[request ? request.platforms : env.VALIDATION_PLATFORMS];
   if (!selectedPlatforms) throw new Error('未知验证平台');
   const matrix = selectedPlatforms.map(item => ({ ...item, baselineTag: target.tag }));
@@ -86,10 +89,10 @@ export async function checkValidationBudget(identity, env = process.env, fetcher
 }
 
 export async function stageValidation(cwd, output, stage, identity, platform, signing = null) {
-  if (!['darwin', 'win32'].includes(platform)) throw new Error('验证仅支持 Mac ARM64/x64 / Windows x64 EXE');
+  if (!['darwin', 'win32', 'linux'].includes(platform)) throw new Error('未知验证平台');
   const entries = fs.readdirSync(output, { withFileTypes: true });
   if (platform === 'win32' && entries.some(entry => entry.isFile() && /\.msi$/i.test(entry.name))) throw new Error('Windows 验证不应生成 MSI');
-  const packages = entries.filter(entry => entry.isFile() && (platform === 'win32' ? /\.exe$/i : /\.(zip|dmg)$/i).test(entry.name));
+  const packages = entries.filter(entry => entry.isFile() && (platform === 'win32' ? /\.exe$/i : platform === 'linux' ? /\.AppImage$/i : /\.(zip|dmg)$/i).test(entry.name));
   if (!packages.length) throw new Error('没有完整验证安装包');
   if (gitAt(cwd, 'rev-parse', 'HEAD') !== identity.source.client) throw new Error('打包期间源码身份发生变化');
   if (fs.existsSync(stage)) throw new Error('验证产物目录必须是本次新建目录');
@@ -105,7 +108,7 @@ export async function stageValidation(cwd, output, stage, identity, platform, si
   }
   if (platform === 'darwin' && (!signing?.signed || !signing?.notarized || !signing?.team)) throw new Error('Mac acceptance requires verified Developer ID and notarization');
   const receipt = { ...identity, platform, distribution: 'actions-artifacts-only', signed: Boolean(signing?.signed), signing,
-    acceptance: platform === 'darwin' ? 'Private signed and notarized validation artifact; not an official release' : 'Unsigned Windows EXE validation; Beta Windows packages are also unsigned',
+    acceptance: platform === 'darwin' ? 'Private signed and notarized validation artifact; not an official release' : platform === 'linux' ? 'Unsigned Linux AppImage validation; not an official release' : 'Unsigned Windows EXE validation; Beta Windows packages are also unsigned',
     published: false, tagCreated: false, versionSequenceAdvanced: false, updatePointersChanged: false, artifacts };
   fs.writeFileSync(path.join(stage, 'validation-context.json'), `${JSON.stringify(receipt, null, 2)}\n`);
   return receipt;
@@ -136,6 +139,7 @@ export async function buildValidation(cwd, identity, { platform = process.platfo
   pkg.build.buildVersion = identity.nativeVersion;
   pkg.build.mac.bundleShortVersion = identity.nativeVersion;
   if (platform === 'win32') { pkg.build.win ??= {}; pkg.build.win.target = ['nsis']; }
+  if (platform === 'linux') { pkg.build.linux ??= {}; pkg.build.linux.target = ['AppImage']; }
   const output = platform === 'win32' ? path.join(temp, 'pv', `${identity.runId}-${identity.runAttempt}`) : path.join(temp, `package-validation-output-${identity.buildId}-${platform}`);
   const stage = path.join(temp, `package-validation-artifacts-${identity.buildId}-${platform}`);
   try {

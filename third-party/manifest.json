@@ -3,7 +3,8 @@
   "schema": 1,
   "npmRoots": [
     ".",
-    "nuwa-electron-shell/crates/agent-electron-client"
+    "nuwa-electron-shell/crates/agent-electron-client",
+    "nuwa-electron-shell/crates/agent-electron-client/resources/dsh-runtime"
   ],
   "npmExtra": [],
   "resources": {
@@ -250,6 +251,28 @@
       "modified": false,
       "checkIntegrity": true,
       "notes": "Existing PortableGit CLI distribution; keep its complete bundled copyright/license directories. The release source is https://github.com/git-for-windows/git/archive/refs/tags/v2.54.0.windows.1.tar.gz ."
+    },
+    "dsh-runtime": {
+      "id": "dsh-runtime",
+      "name": "DeepSeek Harness / DS-Bot runtime",
+      "version": "0.2.1-rc.5 / 0.2.7",
+      "license": "MIT AND Apache-2.0",
+      "licenseFile": "nuwa-electron-shell/crates/dsh-runtime/vendor/DS-Bot-NOTICE",
+      "sourceUrl": "https://github.com/Fei2411/DS-Bot/tree/71d344bf193f3f18185f25de3d8e5c483046910a",
+      "modified": true,
+      "usedBy": "dsh-runtime",
+      "notes": "Pinned npm dependency graph is included in the npm inventory; native bridge changes are recorded in vendor/UPSTREAM.json."
+    },
+    "dsh-office": {
+      "id": "dsh-office",
+      "name": "DSH Office primary runtime",
+      "version": "0.2.7",
+      "license": "Python-2.0 AND BSD-3-Clause AND MIT AND Apache-2.0",
+      "licenseFile": "nuwa-electron-shell/crates/agent-electron-client/resources/dsh-office/LICENSES.txt",
+      "sourceUrl": "https://github.com/Fei2411/DS-Bot/tree/71d344bf193f3f18185f25de3d8e5c483046910a/app/scripts",
+      "modified": false,
+      "usedBy": "dsh-runtime",
+      "notes": "All downloaded interpreter and wheel license files are retained, with an aggregate LICENSES.txt. LibreOffice Kit is separately inventoried as an npm dependency."
     }
   },
   "allow": [
