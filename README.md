@@ -233,10 +233,11 @@ npm run release -- --tag v3.0.11 --stage sync
 
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
 
-1. 提交 `release-notes/vX.Y.Z.md`（beta 使用 `release-notes/vX.Y.Z-beta.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
+1. 提交 `release-notes/vX.Y.Z.md`（Beta 使用 `release-notes/vX.Y.Z-beta.N.md`，Dev 使用 `release-notes/vX.Y.Z-alpha.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
 2. `npm run release -- --version 3.0.10 --dry-run` 预检，随后正式运行；不可变 tag push 触发对应 Actions，先校验版本，再跑商业、前端和脚本门禁和五平台矩阵。macOS 必须签名、公证，Windows 初始产出 unsigned 包。stable 默认停在 Draft 签名阶段。
 3. 完成 Windows SimplySign 签名和真实安装包验收后，运行 `npm run release -- --tag v3.0.10 --stage sync`：验证来源和哈希，同步镜像、推进 stable 及较旧 beta 指针，最后公开 Release。
 4. beta 五平台全部成功后自动同步 beta 指针并公开 prerelease。可以多轮 beta 后同号转正，也可直接或连续发 stable；正式 tag 创建后关闭同号 beta。序号从 1 开始，已有 tag/Draft 占用版本，源码变更必须升号。
+5. Dev 使用 `X.Y.Z-alpha.N`，复用预发布矩阵，独立发布到 Dev 指针。用户先开启 Beta，再开启 Dev；Dev 只接收 Dev 更新，关闭后回 Beta。Beta/Stable 发布不会覆盖 Dev，切换通道不自动降级。
 
 旧 tag 和资产目录保留，使用 `--tag` 续跑同 SHA。首次上线已完成 `v3.0.10` 兼容正式版与 `v3.0.11-beta.4` 的 beta 链路；当前候选 `v3.0.11-beta.6` 纳入已合入的前端双 pin；`beta.5` 保留旧 tag/SHA，不替换源码。完整规范见 [发布与更新通道](./docs/release-channels.md)，Windows 签名见 [签名指南](./docs/sign-windows.md)，验收见 [发布验收模板](./docs/release-acceptance-template.md)。
 

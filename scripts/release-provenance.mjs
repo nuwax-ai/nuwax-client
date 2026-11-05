@@ -184,8 +184,8 @@ function record([tag, platform, arch, outDir], qa = false) {
 }
 
 function verify([tag, assetsDir, channel = 'stable']) {
-  if (!tag || !assetsDir || !['beta', 'stable'].includes(channel)) {
-    fail('用法: verify <tag> <downloaded-release-assets-dir> [beta|stable]');
+  if (!tag || !assetsDir || !['dev', 'beta', 'stable'].includes(channel)) {
+    fail('用法: verify <tag> <downloaded-release-assets-dir> [dev|beta|stable]');
   }
   requiredArtifacts(tag, platforms[0]);
   const dir = resolve(assetsDir);
@@ -234,7 +234,7 @@ function verify([tag, assetsDir, channel = 'stable']) {
   const identity = parseReleaseTag(tag, { allowLegacy: true });
   if (identity.channel !== channel) fail('tag 与 channel 冲突');
   const version = identity.version;
-  const windowsExe = channel === 'beta'
+  const windowsExe = channel !== 'stable'
     ? `Nuwax-Setup-${version}-unsigned.exe`
     : `Nuwax.Setup.${version}.exe`;
   const missingAssetMessage = channel === 'stable' ? '缺少已签名资产' : '缺少发布资产';

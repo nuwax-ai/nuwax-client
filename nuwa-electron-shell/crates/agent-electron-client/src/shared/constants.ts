@@ -332,6 +332,13 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  * 后端 /api/i18n/query 返回的翻译 map 以这些 key 为键
  */
 export const I18N_KEYS = {
+  UpdateChannel: {
+    UPDATE_UNAVAILABLE: "Claw.AutoUpdater.channelUpdateUnavailable",
+    DEV_CHANNEL: "Claw.About.devChannel",
+    DEV_DISCLAIMER: "Claw.About.devDisclaimer",
+    DEV_WARNING: "Claw.About.devWarning",
+    SWITCHED_TO_DEV: "Claw.About.switchedToDev",
+  },
   Browser: {
     back: "Claw.Browser.back",
     forward: "Claw.Browser.forward",

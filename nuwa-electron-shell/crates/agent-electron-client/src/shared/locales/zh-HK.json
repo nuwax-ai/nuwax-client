@@ -1,4 +1,5 @@
 {
+  "Claw.AutoUpdater.channelUpdateUnavailable": "目前訂閱已變更，請重新檢查並下載更新。",
   "Claw.Webview.leaveTitle": "離開目前頁面？",
   "Claw.Webview.leaveMessage": "頁面可能有尚未完成的付款或未儲存的操作，是否離開？",
   "Claw.Webview.leave": "離開",
@@ -583,6 +584,10 @@
   "Claw.About.openOfficialWebsite": "前往官網",
   "Claw.About.systemInfo.title": "系統資訊",
   "Claw.About.betaChannel": "Beta 升級通道",
+  "Claw.About.devChannel": "Dev 升級通道",
+  "Claw.About.devDisclaimer": "僅接收 Dev 體驗版更新；關閉後回到 Beta，版本較低時等待後續更新。",
+  "Claw.About.devWarning": "Dev 體驗版可能包含尚未充分驗證的變更，穩定性較低。切換通道不會自動降級已安裝版本。",
+  "Claw.About.switchedToDev": "已切換到 Dev 通道",
   "Claw.About.betaDisclaimer": "開啟後將切換到預發測試版通道，可能包含未驗證改動。",
   "Claw.About.showDebugInfo": "顯示調試資訊",
   "Claw.About.hideDebugInfo": "隱藏調試資訊",

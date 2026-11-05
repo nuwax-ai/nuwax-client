@@ -221,7 +221,7 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
   const { PlatformPackager } = builderRequire('app-builder-lib/out/platformPackager.js');
   const { validateConfiguration } = builderRequire('app-builder-lib/out/util/config/config.js');
   const { Arch } = builderRequire('builder-util');
-  for (const version of ['3.0.11-beta.1', '3.0.11-beta.10']) {
+  for (const version of ['3.0.11-alpha.1', '3.0.11-alpha.10', '3.0.11-beta.1', '3.0.11-beta.10']) {
     for (const arch of ['x64', 'arm64']) {
       await t.test(`${version} ${arch}`, async (t) => {
         const directory = mkdtempSync(path.join(os.tmpdir(), 'nuwax-beta-native-version-'));
@@ -240,7 +240,7 @@ test('public Beta keeps numeric Mac bundle versions and full DMG identity in the
         await validateConfiguration(pkg.build, { isEnabled: false });
         const appInfo = new AppInfo({ metadata: pkg, config: pkg.build });
         assert.equal(appInfo.version, version);
-        assert.equal(appInfo.channel, 'beta');
+        assert.equal(appInfo.channel, version.includes('-alpha.') ? 'alpha' : 'beta');
         const plist = {};
         await MacPackager.prototype.applyCommonInfo.call({ appInfo, getIconPath: async () => null,
           platformSpecificBuildOptions: pkg.build.mac, config: pkg.build }, plist, '/unused-fixture');
@@ -480,4 +480,13 @@ test('Beta Mac build commands override maximum with the stable compression level
     if (initialLevel === undefined) delete process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL;
     else process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL = initialLevel;
   }
+});
+
+test('public Dev tag resolves the full alpha identity and numeric native version', t => {
+  const result = resolveIdentity(t, { BUILD_EVENT: 'push', BUILD_REF: 'refs/tags/v3.0.11-alpha.1' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.values.version, '3.0.11-alpha.1');
+  assert.equal(result.values.tag, 'v3.0.11-alpha.1');
+  assert.equal(result.values.native_version, '3.0.11');
+  assert.equal(result.values.qa_build, 'false');
 });
