@@ -51,6 +51,7 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
   handle('forget', async (event, key) => { const id = identity(String(key).slice(4)); await views.forget(id); await guests.forget(event.sender, key) })
   handle('create', (_event, botId, tabId, url) => views.create(identity(botId), { tabId, ...(url ? { url } : {}) }).tabId)
   handle('sync', (_event, botId) => views.sync(identity(botId)))
+  handle('restore', () => views.restore())
   handle('place', (_event, tabId, rect, visible) => views.place(tabId, rect, visible))
   for (const action of ['navigate', 'command', 'focus', 'read', 'close']) {
     handle(action, (_event, botId, tabId, value) => views.operate(identity(botId), action, {

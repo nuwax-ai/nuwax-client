@@ -34,6 +34,8 @@
   "changes": [
     "bot-browser.mjs: partition namespace includes Nuwax account and domain scope",
     "bot-views.mjs: loopback CDP port supplied by the owning main process",
-    "bot-views.mjs: disposal terminates active automation sockets and rejects further view creation"
+    "bot-views.mjs: disposal terminates active automation sockets and rejects further view creation",
+    "bot-views.mjs: user takeover uses the native save dialog; automated downloads retain their session and directory checks",
+    "bot-views.mjs: publish saved tabs when the original Client subscribes, restoring its state across private Host port changes"
   ]
 }

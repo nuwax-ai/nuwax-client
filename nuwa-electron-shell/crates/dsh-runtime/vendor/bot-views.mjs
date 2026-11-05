@@ -182,6 +182,10 @@ export class BotViews {
   }
 
   #download(entry, event, item) {
+    if (this.#disposed) { event.preventDefault(); return }
+    // A user-owned browser uses Electron's native save dialog. Do not reuse an
+    // automation download path after takeover, even while CDP disconnects.
+    if (this.#held.has(entry.botId)) return
     if (entry.downloadPath === undefined || entry.sessions.size === 0) {
       event.preventDefault()
       return
@@ -356,6 +360,22 @@ export class BotViews {
 
   sync(botId) {
     return [...this.#views.values()].filter(entry => entry.botId === botId).map(entry => this.#state(entry))
+  }
+
+  /** Rehydrate the Client after a restart, including when the Host port changed. */
+  restore() {
+    if (this.#disposed) throw new Error('Browser runtime is disposed')
+    for (const [botId, saved] of Object.entries(structuredClone(this.#saved))) {
+      if (!isBotId(botId)) continue
+      // The original Client selects the last created tab.
+      const tabs = [...saved.tabs.filter(tab => tab.tabId !== saved.active), ...saved.tabs.filter(tab => tab.tabId === saved.active)]
+      for (const tab of tabs) {
+        const existing = this.#views.get(tab.tabId)
+        if (existing) {
+          if (existing.botId === botId) this.#onChange({ type: 'created', ...this.#state(existing) })
+        } else this.create(botId, tab)
+      }
+    }
   }
 
   /**

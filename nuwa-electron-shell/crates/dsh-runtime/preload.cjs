@@ -27,7 +27,11 @@ if (origin && location.origin === origin) {
         read: (botId, tabId, script) => invoke('read', botId, tabId, script),
         close: (botId, tabId) => invoke('close', botId, tabId),
         hold: (botId, held) => invoke('hold', botId, held),
-        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
+        subscribe(listener) {
+          listeners.add(listener)
+          void invoke('restore').catch(() => { console.warn('DS-Bot browser state could not be restored') })
+          return () => listeners.delete(listener)
+        },
       },
     },
   })
