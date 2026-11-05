@@ -13,12 +13,12 @@ describe("命名空间汇总", () => {
   const ipc = { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() } as never;
 
   it("业务页命名空间包含 capture 与 localFiles", () => {
-    expect(Object.keys(featureNamespaces(ipc))).toEqual(["themes", "browser", "capture", "localFiles"]);
+    expect(Object.keys(featureNamespaces(ipc))).toEqual(["dshRuntime", "themes", "browser", "capture", "localFiles"]);
   });
 
   it("宿主壳通过独立通道提供 notices/computerUse/features/capture", () => {
     expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["shellCapabilities", "themes", "browser", "dshRuntime", "notices", "computerUse", "features", "capture"]);
-    expect("dshRuntime" in featureNamespaces(ipc)).toBe(false);
+    expect(Object.keys(featureNamespaces(ipc).dshRuntime)).toEqual(["getState", "open"]);
     expect("shellCapabilities" in featureNamespaces(ipc)).toBe(false);
   });
 

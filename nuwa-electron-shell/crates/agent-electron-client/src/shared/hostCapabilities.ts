@@ -24,6 +24,7 @@ export const HOST_CAPABILITY_METHODS = {
   capture: ['getCapabilities', 'screenshot', 'record', 'cancel', 'onStateChange', 'readChunk', 'release', 'copy'],
   browser: ['getCapabilities'],
   themes: ['getState', 'install', 'linkDirectory', 'exportPackage', 'select', 'remove', 'openDirectory', 'onChanged'],
+  dshRuntime: ['getState', 'open'],
 } as const satisfies MethodLists;
 
 const VARIANTS = {

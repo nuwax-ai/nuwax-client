@@ -6,7 +6,8 @@
  * - `hostFeatureNamespaces`：给宿主壳渲染进程（`window.electronAPI.*`）。
  */
 
-import { DSH_IPC, type DshBridge } from "@shared/features/dsh-runtime/contract";
+import { DSH_IPC, DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, type DshBridge } from "@shared/features/dsh-runtime/contract";
+import type { HostDshLauncherBridge } from "@shared/types/hostBridge";
 import { SHELL_CAPABILITIES_IPC, type ShellCapabilitiesBridge } from "@shared/features/shell-capabilities/contract";
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
@@ -20,6 +21,7 @@ import { createThemesBridge, themesCapabilityProbe } from "./themes";
 import { createBrowserBridge } from './browser';
 
 export interface FeatureNamespaces {
+  dshRuntime: HostDshLauncherBridge;
   themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   capture: CaptureBridge;
@@ -40,7 +42,10 @@ export interface HostFeatureNamespaces {
 export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
-  return { themes: createThemesBridge(ipc), browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
+  return {
+    dshRuntime: { getState: () => ipc.invoke(DSH_LAUNCHER_STATE), open: () => ipc.invoke(DSH_LAUNCHER_OPEN) },
+    themes: createThemesBridge(ipc), browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc),
+  };
 }
 
 export function hostFeatureNamespaces(

@@ -455,6 +455,7 @@ if (bridgeAllowed) {
     auth,
     native,
     themes: businessFeatures.themes,
+    dshRuntime: businessFeatures.dshRuntime,
     localFiles: businessFeatures.localFiles,
     updater,
     events,

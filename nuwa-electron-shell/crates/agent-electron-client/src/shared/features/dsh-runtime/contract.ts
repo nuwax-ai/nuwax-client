@@ -1,4 +1,6 @@
 export const DSH_IPC = "dsh-runtime:control";
+export const DSH_LAUNCHER_STATE = "dsh-runtime:launcher-state";
+export const DSH_LAUNCHER_OPEN = "dsh-runtime:launcher-open";
 export type DshAction = "status" | "catalog" | "authorize" | "open" | "stop";
 export interface DshModel { id: string; name: string; model: string; reason?: string; }
 export interface DshStatus { phase: string; error?: string; available: boolean; }

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import * as electron from "electron";
 import type { DesktopFeature, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
 import { DSH_IPC, type DshAction, type DshReply } from "@shared/features/dsh-runtime/contract";
+import { registerDshLauncher } from "./launcher";
 
 interface RuntimeController {
   catalog(includeUnsupported?: boolean): Promise<Array<{ id: string; name: string; model: string }>>;
@@ -39,6 +40,7 @@ export function createDshRuntimeFeature(ports: {
   subscribeShellMcp?: (listener: () => void) => () => void;
 } = {}): DesktopFeature { return {
   id: "dsh-runtime", products: ["nuwax"], enabledByDefault: true,
+  bridge: { namespaces: ["dshRuntime"] },
   register(ctx: FeatureContext) {
     // Only this development process can consume the ephemeral fixture capability.
     // Real provider credentials stay in the external fixture's memory.
@@ -125,6 +127,7 @@ export function createDshRuntimeFeature(ports: {
         return { ok: false, error: error instanceof Error ? error.message : "Plugin operation failed" };
       }
     }, { ok: false, error: "Untrusted window" });
+    registerDshLauncher(ctx, { load, open });
     const stop = async () => { controller?.invalidate(); destroyWindow(); await controller?.stop(); };
     const off = [
       ports.subscribeShellMcp?.(() => { controller?.updateShellMcp(ports.shellMcp?.() ?? null); }) ?? (() => {}),
@@ -138,7 +141,7 @@ export function createDshRuntimeFeature(ports: {
         } catch { ctx.log.warn("[DSH] Runtime could not resume; open its settings to retry"); }
       }),
     ];
-    return { async dispose() { disposed = true; off.forEach(dispose => dispose()); await stop(); if (activeRuntime === controller) activeRuntime = undefined; ctx.hostIpc.dispose(); } };
+    return { async dispose() { disposed = true; off.forEach(dispose => dispose()); await stop(); if (activeRuntime === controller) activeRuntime = undefined; ctx.ipc.dispose(); ctx.hostIpc.dispose(); } };
   },
 }; }
 export const dshRuntimeFeature = createDshRuntimeFeature();
