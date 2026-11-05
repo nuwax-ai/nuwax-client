@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { RequestError } from "@agentclientprotocol/sdk";
 
 vi.mock("electron-log", () => ({
   default: {
@@ -32,6 +33,36 @@ import {
 describe("toErrorMessage", () => {
   it("Error 取 message", () => {
     expect(toErrorMessage(new Error("boom"))).toBe("boom");
+  });
+  it.each([
+    "API error: 403 您的积分已用完，请先增购积分 · model not changed",
+    "API error: 429 Provider rate limited",
+    "  Agent failed\n  original diagnostics  ",
+  ])("通过 SDK RequestError 原样保留 Agent 原因: %s", (details) => {
+    expect(toErrorMessage(RequestError.internalError({ details }))).toBe(details);
+  });
+  it("读取 SDK 对 JSON 异常消息转换后的 data.message", () => {
+    const message = "Provider temporarily unavailable";
+    const error = RequestError.internalError({ status: 503, message });
+    expect(toErrorMessage(error)).toBe(message);
+  });
+  it("不依赖协议错误码或外层文案", () => {
+    const details = "Credentials expired";
+    expect(toErrorMessage(RequestError.authRequired({ details }))).toBe(details);
+  });
+  it("保留 SDK 的字符串 data", () => {
+    expect(toErrorMessage(RequestError.internalError("Agent stopped"))).toBe("Agent stopped");
+  });
+  it.each([undefined, null, {}, { details: " " }, { details: 403 }])(
+    "ACP 缺少可读原因时保留原错误: %j",
+    (data) => {
+      const error = RequestError.internalError(data);
+      expect(toErrorMessage(error)).toBe("Internal error");
+    },
+  );
+  it("SDK 协议错误没有 Agent 原因时保留外层文案", () => {
+    const error = RequestError.methodNotFound("session/set_config_option");
+    expect(toErrorMessage(error)).toBe(error.message);
   });
   it("对象走 JSON 序列化", () => {
     expect(toErrorMessage({ code: 1 })).toBe('{"code":1}');

@@ -10,11 +10,31 @@
 
 import log from "electron-log";
 import type { ChildProcess } from "child_process";
+import type { RequestError } from "@agentclientprotocol/sdk";
 import { ACP_SESSION_CANCELLED_ERROR_CODE } from "@shared/constants";
 import { isMcpReconnectWindowActive } from "./acpClient";
 import { safeStringify } from "../utils/safeStringify";
 
 export function toErrorMessage(error: unknown): string {
+  // SDK 动态加载为 ESM，使用 RequestError 的公开方法兼容 SDK 与 TS 封装实例。
+  if (
+    error instanceof Error &&
+    typeof (error as Partial<RequestError>).toErrorResponse === "function"
+  ) {
+    const { message, data } = (error as RequestError).toErrorResponse();
+    // HTTP/SSE 现有契约承载文本；Agent 原因来自 SDK 的 data，不按业务内容改写。
+    const candidates =
+      data && typeof data === "object"
+        ? [
+            (data as { details?: unknown }).details,
+            (data as { message?: unknown }).message,
+          ]
+        : [data];
+    for (const text of candidates) {
+      if (typeof text === "string" && text.trim()) return text;
+    }
+    return message;
+  }
   return error instanceof Error
     ? error.message
     : typeof error === "object" && error !== null
