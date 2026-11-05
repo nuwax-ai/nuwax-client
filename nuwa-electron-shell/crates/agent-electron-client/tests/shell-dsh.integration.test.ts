@@ -50,8 +50,8 @@ it("real DS-Bot discovers host tools, edits/applies/restores a personal theme an
         revokedCatalog = !body.tools?.some((tool: any) => tool.function.name.startsWith("mcp__nuwax-shell__"));
         name = undefined!; final = "NO_SHELL_ACCESS";
       }
-      if (name === "themes_read_files") args = { themeId: results.length === 1 ? "nuwax-default" : "agent-forest" };
-      if (name === "themes_copy") args = { sourceId: "nuwax-default", themeId: "agent-forest", name: "Forest", expectedRevision: results[1].revision, expectedVersion: results[1].version };
+      if (name === "themes_read_files") args = { themeId: results.length === 1 ? "deepseek-inspired" : "agent-forest" };
+      if (name === "themes_copy") args = { sourceId: "deepseek-inspired", themeId: "agent-forest", name: "Forest", expectedRevision: results[1].revision, expectedVersion: results[1].version };
       if (name === "themes_apply_changes") {
         const read = results[3], manifest = JSON.parse(read.files.find((file: any) => file.path === "theme.json").content);
         args = { themeId: "agent-forest", expectedRevision: read.revision, expectedVersion: read.version,

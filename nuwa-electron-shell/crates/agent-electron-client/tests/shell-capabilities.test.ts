@@ -63,7 +63,7 @@ describe("shell capabilities over the actual MCP stdio connection", () => {
     const { runtime, themes, connect, call } = await setup();
     await runtime.setAccess({ themes: true, settings: false, extensions: false });
     const client = await connect();
-    const source = (await call(client, "themes_read_files", { themeId: "nuwax-default" })).value;
+    const source = (await call(client, "themes_read_files", { themeId: "deepseek-inspired" })).value;
     const copied = await call(client, "themes_copy", { sourceId: source.themeId, themeId: "agent-theme", name: "Agent Theme", expectedRevision: source.revision, expectedVersion: source.version });
     expect(copied.error).toBe(false);
     const current = (await call(client, "themes_read_files", { themeId: "agent-theme" })).value;
