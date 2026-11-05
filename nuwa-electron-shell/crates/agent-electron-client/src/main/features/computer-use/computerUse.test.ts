@@ -803,7 +803,14 @@ describe("live blacklist enforcement", () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true; mocks.autoReady = true;
     const enabled = await setCuaEnabled(true);
-    expect(enabled.success, enabled.error).toBe(true);
+    expect(enabled.success, JSON.stringify({
+      error: enabled.error,
+      daemonReady: mocks.daemonReady,
+      autoReady: mocks.autoReady,
+      serveLaunches: mocks.spawnCalls.filter(call => call.args.includes("serve")).length,
+      stopCalls: mocks.execCalls.filter(call => call.args.includes("stop")).length,
+      metadataRequests: mocks.hostRequests.filter(call => call.method === "metadata").length,
+    })).toBe(true);
     await cuaModule.setCuaAuthMode("ask");
     const args = { pid: 25, window_id: 50, snapshot_id: "s00000001", element_index: 7 };
     mocks.gatewayOptions.onResult("get_window_state", args, "ok", {
