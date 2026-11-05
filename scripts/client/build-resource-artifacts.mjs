@@ -95,7 +95,7 @@ async function trustRun(run) {
   if (run.repository?.full_name !== repository || run.head_repository?.full_name !== repository || !commit.test(run.head_sha || '')
     || (run.pull_requests || []).length) throw new Error('Producer is not a same-repository non-PR run');
   if (run.path === warmer && branches.has(run.head_branch) && ['push', 'workflow_dispatch'].includes(run.event)) return;
-  if (!releaseWorkflows.has(run.path) || run.event !== 'push' || !/^v\d+\.\d+\.\d+(?:-beta\.\d+)?$/.test(run.head_branch || '')) {
+  if (!releaseWorkflows.has(run.path) || run.event !== 'push' || !/^v\d+\.\d+\.\d+(?:-(?:alpha|beta)\.\d+)?$/.test(run.head_branch || '')) {
     throw new Error('Producer workflow, event or ref is not trusted');
   }
   let reference = (await api(`git/ref/tags/${encodeURIComponent(run.head_branch)}`)).object;

@@ -264,7 +264,8 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
         wc.stop();
         break;
       case "copy": {
-        const url = webUrl(entry.state.url);
+        // 与系统浏览器交接共用业务地址，不能把仅本机可用的网关链接放进剪贴板。
+        const url = publicUrl(entry.state.url);
         if (!url) return false;
         clipboard.writeText(url);
         break;

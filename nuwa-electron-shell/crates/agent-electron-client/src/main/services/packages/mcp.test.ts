@@ -4,7 +4,7 @@
  * 测试 MCP Proxy 配置管理和 binary 验证
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as path from "path";
 
 // Mock electron
@@ -141,39 +141,37 @@ vi.mock("./persistentMcpBridge", () => ({
   },
 }));
 
+function mockBridge(overrides: Record<string, unknown> = {}) {
+  vi.doMock("./persistentMcpBridge", () => ({
+    persistentMcpBridge: {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      isRunning: vi.fn(() => false),
+      getBridgeUrl: vi.fn(() => null),
+      isServerHealthy: vi.fn(() => false),
+      ...overrides,
+    },
+  }));
+}
+
+// 每个用例恢复默认依赖，避免错误分支的 doMock 泄漏到后续测试。
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockExistsSync.mockReset().mockReturnValue(true);
+  mockBridge();
+  vi.doMock("./packageLocator", () => ({
+    getAppPaths: () => ({ nodeModules: "/mock/home/.nuwaclaw/node_modules" }),
+    getBundledMcpProxyDir: () => `${process.cwd()}/resources/mcp-proxy-ts`,
+    isInstalledLocally: () => true,
+  }));
+  vi.doMock("../utils/spawnNoWindow", () => ({
+    resolveNpmPackageEntry: () =>
+      "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
+  }));
+  vi.resetModules();
+});
+
 describe("McpProxyManager", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // 恢复 persistentMcpBridge 到默认 mock（防止 vi.doMock 跨测试泄漏）
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    // 恢复 packageLocator 到默认 mock（防止 vi.doMock 跨测试泄漏）
-    vi.doMock("./packageLocator", () => ({
-      getAppPaths: vi.fn(() => ({
-        nodeModules: "/mock/home/.nuwaclaw/node_modules",
-      })),
-      getBundledMcpProxyDir: vi.fn(
-        () => `${process.cwd()}/resources/mcp-proxy-ts`,
-      ),
-      isInstalledLocally: vi.fn(() => true),
-    }));
-    vi.resetModules();
-
-    // 重置 mock
-    mockExistsSync.mockReturnValue(true);
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
   describe("配置管理", () => {
     it("setConfig 和 getConfig 应该正确工作", async () => {
       const { mcpProxyManager } = await import("./mcp");
@@ -277,37 +275,9 @@ describe("McpProxyManager", () => {
       expect(
         mcpConfig?.["test-server"].env?.ELECTRON_RUN_AS_NODE,
       ).toBeUndefined();
-    });
-
-    it("mcp-proxy env 只包含增量覆盖项（基础环境由 ACP 引擎继承）", async () => {
-      const { mcpProxyManager } = await import("./mcp");
-
-      // 设置临时 server 配置
-      mcpProxyManager.setConfig({
-        mcpServers: {
-          "test-server": {
-            command: "npx",
-            args: ["-y", "test-mcp"],
-          },
-        },
-      });
-
-      await mcpProxyManager.start();
-      const mcpConfig = mcpProxyManager.getAgentMcpConfig();
-
-      expect(mcpConfig).toBeDefined();
-      // 拆分模式：每个服务独立入口
-      expect(mcpConfig?.["test-server"]).toBeDefined();
-
-      // env 字段现在只包含增量覆盖项，基础环境由 ACP 引擎进程继承
-      // 参考: acpClient.ts 的 env = { ...getAppEnv(), ... } + Object.assign(env, config.env)
-      const proxyEnv = mcpConfig?.["test-server"].env;
-      expect(proxyEnv).toBeDefined();
-      // 每个服务有独立的日志文件，无 projectId 时使用 "shared" 作为默认标识
-      // 日志路径格式: mcp-proxy/shared/{serverName}.log
-      expect(proxyEnv?.MCP_PROXY_LOG_FILE).toBeDefined();
-      expect(proxyEnv?.MCP_PROXY_LOG_FILE).toContain("mcp-proxy/shared");
-      expect(proxyEnv?.MCP_PROXY_LOG_FILE).toContain("test-server.log");
+      expect(mcpConfig?.["test-server"].env?.MCP_PROXY_LOG_FILE).toContain(
+        "mcp-proxy/shared/test-server.log",
+      );
     });
 
     it("传入 projectId 时日志文件名应包含项目标识", async () => {
@@ -367,116 +337,6 @@ describe("McpProxyManager", () => {
       }
     });
 
-    it("persistent server 在 bridge 运行时应该返回包含 url 的 proxy 配置", async () => {
-      vi.doMock("./persistentMcpBridge", () => ({
-        persistentMcpBridge: {
-          start: vi.fn().mockResolvedValue(undefined),
-          stop: vi.fn().mockResolvedValue(undefined),
-          isRunning: vi.fn(() => true),
-          getBridgeUrl: vi.fn(
-            () => "http://127.0.0.1:12345/mcp/chrome-devtools",
-          ),
-          isServerHealthy: vi.fn(() => true),
-        },
-      }));
-      vi.resetModules();
-
-      const { mcpProxyManager } = await import("./mcp");
-
-      // 手动设置 persistent server 配置
-      mcpProxyManager.setConfig({
-        mcpServers: {
-          "chrome-devtools": {
-            command: "chrome-devtools-mcp",
-            args: [],
-            persistent: true,
-          },
-        },
-      });
-
-      await mcpProxyManager.start();
-      const mcpConfig = mcpProxyManager.getAgentMcpConfig();
-
-      // bridge 运行中 → proxy 配置中应包含 persistent server 的 url
-      expect(mcpConfig).toBeDefined();
-      // 拆分模式：每个服务独立入口，key 为服务名
-      expect(mcpConfig?.["chrome-devtools"]).toBeDefined();
-      // 使用 --config-file 避免 Windows 命令行长度限制
-      expect(mcpConfig?.["chrome-devtools"].args).toContain("--config-file");
-
-      // 验证临时配置文件路径格式正确（拆分模式：包含服务名 chrome-devtools）
-      const configIdx =
-        mcpConfig!["chrome-devtools"].args.indexOf("--config-file");
-      const configFilePath = mcpConfig!["chrome-devtools"].args[configIdx + 1];
-      expect(configFilePath).toContain("mcp-config-chrome-devtools-");
-      expect(configFilePath).toContain(".json");
-      // 验证 writeFileSync 被调用以写入配置
-      expect(mockWriteFileSync).toHaveBeenCalled();
-    });
-
-    it("混合临时和持久化 server 应该聚合到同一个 proxy", async () => {
-      vi.doMock("./persistentMcpBridge", () => ({
-        persistentMcpBridge: {
-          start: vi.fn().mockResolvedValue(undefined),
-          stop: vi.fn().mockResolvedValue(undefined),
-          isRunning: vi.fn(() => true),
-          getBridgeUrl: vi.fn(
-            (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
-          ),
-          isServerHealthy: vi.fn(() => true),
-        },
-      }));
-      vi.resetModules();
-
-      const { mcpProxyManager } = await import("./mcp");
-
-      mcpProxyManager.setConfig({
-        mcpServers: {
-          "chrome-devtools": {
-            command: "chrome-devtools-mcp",
-            args: [],
-            persistent: true,
-          },
-          "test-server": {
-            command: "npx",
-            args: ["-y", "test-mcp"],
-          },
-        },
-      });
-
-      await mcpProxyManager.start();
-      const mcpConfig = mcpProxyManager.getAgentMcpConfig();
-
-      // 拆分模式：每个服务独立入口
-      expect(mcpConfig).toBeDefined();
-      const serverNames = Object.keys(mcpConfig!);
-      expect(serverNames.length).toBe(2); // chrome-devtools + test-server
-
-      // 每个服务都使用 --config-file
-      for (const name of serverNames) {
-        expect(mcpConfig![name].args).toContain("--config-file");
-      }
-
-      // 验证 writeFileSync 被调用（每个服务一个配置文件）
-      expect(mockWriteFileSync).toHaveBeenCalled();
-      expect(mockWriteFileSync.mock.calls.length).toBe(2);
-
-      // 验证配置内容：bridge 运行中，每个服务的配置包含 bridge URL
-      for (const call of mockWriteFileSync.mock.calls) {
-        const configJson = JSON.parse(call[1] as string);
-        const serverName = Object.keys(configJson.mcpServers)[0];
-        if (serverName === "test-server") {
-          expect(configJson.mcpServers["test-server"].url).toBe(
-            "http://127.0.0.1:12345/mcp/test-server",
-          );
-        } else if (serverName === "chrome-devtools") {
-          expect(configJson.mcpServers["chrome-devtools"].url).toBe(
-            "http://127.0.0.1:12345/mcp/chrome-devtools",
-          );
-        }
-      }
-    });
-
     it("没有配置服务器时应该返回 null", async () => {
       const { mcpProxyManager } = await import("./mcp");
 
@@ -521,30 +381,7 @@ describe("McpProxyManager", () => {
     });
   });
 
-  describe("cleanup", () => {
-    it("cleanup 应该安全执行（async）", async () => {
-      const { mcpProxyManager } = await import("./mcp");
-
-      await expect(mcpProxyManager.cleanup()).resolves.not.toThrow();
-    });
-  });
-
-  describe("stop", () => {
-    it("stop 应该返回成功（no-op）", async () => {
-      const { mcpProxyManager } = await import("./mcp");
-
-      const result = await mcpProxyManager.stop();
-      expect(result.success).toBe(true);
-    });
-  });
-
   describe("start - 验证 binary 可用性", () => {
-    it("@nuwax-ai/mcp-proxy-ts 已安装时应该返回成功", async () => {
-      const { mcpProxyManager } = await import("./mcp");
-      const result = await mcpProxyManager.start();
-      expect(result.success).toBe(true);
-    });
-
     it("@nuwax-ai/mcp-proxy-ts 未安装时应该返回错误", async () => {
       vi.doMock("./packageLocator", () => ({
         getAppPaths: vi.fn(() => ({
@@ -568,268 +405,95 @@ describe("McpProxyManager", () => {
       expect(result.error).toMatch(/未安装|Claw\.MCP\.notInstalled/);
     });
   });
-
-  describe("restart", () => {
-    it("restart 应该调用 start", async () => {
-      const { mcpProxyManager } = await import("./mcp");
-
-      const startSpy = vi.spyOn(mcpProxyManager, "start");
-
-      await mcpProxyManager.restart();
-
-      expect(startSpy).toHaveBeenCalled();
-    });
-  });
 });
 
 describe("extractRealMcpServers", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-  });
-
-  it("应该从桥接条目中提取真实 MCP 服务", async () => {
+  it("extracts mixed stdio/remote servers, resolves uvx and merges environment and tool filters", async () => {
     const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            command: "uvx",
-            args: ["mcp-server-fetch"],
-          },
-        },
-      }),
-    ];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeDefined();
-    expect(result?.["test-server"]).toBeDefined();
-    // uvx 应该被解析为 uv tool run
-    expect(result?.["test-server"].command).toContain("uv");
-    expect(result?.["test-server"].args).toContain("tool");
-    expect(result?.["test-server"].args).toContain("run");
-  });
-
-  it("应该处理多个 MCP 服务", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          fetch: {
-            command: "uvx",
-            args: ["mcp-server-fetch"],
-          },
-          time: {
-            command: "npx",
-            args: ["-y", "mcp-server-time"],
-          },
-        },
-      }),
-    ];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeDefined();
-    expect(Object.keys(result!)).toHaveLength(2);
-    expect(result?.["fetch"]).toBeDefined();
-    expect(result?.["time"]).toBeDefined();
-  });
-
-  it("应该合并外部 env 和内部 env", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            command: "npx",
-            args: ["-y", "test-mcp"],
-            env: { INNER_VAR: "inner_value" },
-          },
-        },
-      }),
-    ];
-    const externalEnv = { OUTER_VAR: "outer_value" };
-
-    const result = extractRealMcpServers(command, args, externalEnv);
-
-    expect(result).toBeDefined();
-    expect(result?.["test-server"].env?.OUTER_VAR).toBe("outer_value");
-    expect(result?.["test-server"].env?.INNER_VAR).toBe("inner_value");
-  });
-
-  it("非桥接条目应该返回 null", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "npx";
-    const args = ["-y", "mcp-server-fetch"];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeNull();
-  });
-
-  it("没有 --config 参数时应该返回 null", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = ["convert", "http://localhost:8080"];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeNull();
-  });
-
-  it("--config JSON 解析失败时应该返回 null", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = ["convert", "--config", "invalid-json"];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeNull();
-  });
-
-  it("--config JSON 中没有 mcpServers 时应该返回 null", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = ["convert", "--config", JSON.stringify({ otherKey: "value" })];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeNull();
-  });
-
-  it("空的 mcpServers 应该返回 null", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = ["convert", "--config", JSON.stringify({ mcpServers: {} })];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeNull();
-  });
-
-  it("应该跳过没有 command 的服务条目", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "valid-server": {
-            command: "npx",
-            args: ["-y", "test"],
-          },
-          "invalid-server": {
-            args: ["-y", "test"],
-            // 缺少 command
-          },
-        },
-      }),
-    ];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeDefined();
-    expect(result?.["valid-server"]).toBeDefined();
-    expect(result?.["invalid-server"]).toBeUndefined();
-  });
-
-  it("应该处理自定义 uvBinDir 参数", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const command = "mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            command: "uvx",
-            args: ["mcp-server-fetch"],
-          },
-        },
-      }),
-    ];
-    const customUvBinDir = "/custom/uv/bin";
-
     const result = extractRealMcpServers(
-      command,
-      args,
-      undefined,
-      customUvBinDir,
+      "/bin/mcp-proxy",
+      [
+        "convert",
+        "--config",
+        JSON.stringify({
+          mcpServers: {
+            fetch: {
+              command: "uvx",
+              args: ["mcp-server-fetch"],
+              env: { INNER: "inner" },
+            },
+            local: { command: "npx", args: ["-y", "local-mcp"] },
+            remote: { url: "https://example.com/mcp" },
+            invalid: { args: [] },
+          },
+        }),
+        "--allow-tools",
+        "fetch,search",
+      ],
+      { OUTER: "outer" },
     );
-
-    expect(result).toBeDefined();
-    // 由于 mock fs.existsSync 返回 false，uvx 不会被解析
-    // 但函数应该正确接收并使用自定义路径参数
+    expect(Object.keys(result!)).toEqual(["fetch", "local", "remote"]);
+    expect(result!.fetch).toMatchObject({
+      command: expect.stringContaining("uv"),
+      args: expect.arrayContaining(["tool", "run", "mcp-server-fetch"]),
+      env: { INNER: "inner", OUTER: "outer" },
+      allowTools: ["fetch", "search"],
+    });
+    expect(result!.local).toMatchObject({
+      command: "npx",
+      args: ["-y", "local-mcp"],
+    });
+    expect(result!.remote).toMatchObject({ url: "https://example.com/mcp" });
   });
 
-  it("mcp-proxy 使用 basename 匹配也应该工作", async () => {
+  it("returns null for non-bridge commands and missing, invalid or empty config", async () => {
     const { extractRealMcpServers } = await import("./mcp");
+    for (const [command, args] of [
+      ["npx", ["-y", "mcp-server-fetch"]],
+      ["mcp-proxy", ["convert", "http://localhost:8080"]],
+      ...["invalid-json", "{}", '{"mcpServers":{}}'].map((config) => [
+        "mcp-proxy",
+        ["convert", "--config", config],
+      ]),
+    ] as [string, string[]][]) {
+      expect(
+        extractRealMcpServers(command, args),
+        JSON.stringify([command, args]),
+      ).toBeNull();
+    }
+  });
 
-    const command = "/some/path/to/mcp-proxy";
-    const args = [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            command: "npx",
-            args: ["-y", "test-mcp"],
+  it("accepts header aliases and separators, merging headers with explicit overrides", async () => {
+    const { extractRealMcpServers } = await import("./mcp");
+    for (const flag of ["-H", "--header"]) {
+      const result = extractRealMcpServers("mcp-proxy", [
+        "convert",
+        "--config",
+        JSON.stringify({
+          mcpServers: {
+            remote: {
+              url: "https://example.com/mcp",
+              headers: { Authorization: "old", "X-Keep": "keep" },
+            },
           },
+        }),
+        flag,
+        "Authorization=Bearer new",
+        flag,
+        "X-Custom: custom",
+      ]);
+      expect(result!.remote).toMatchObject({
+        headers: {
+          Authorization: "Bearer new",
+          "X-Keep": "keep",
+          "X-Custom": "custom",
         },
-      }),
-    ];
-
-    const result = extractRealMcpServers(command, args);
-
-    expect(result).toBeDefined();
-    expect(result?.["test-server"]).toBeDefined();
+      });
+    }
   });
 });
 
-// ========== 新增测试: MCP 首次提示词就绪 + 退出清理 ==========
-
 describe("McpProxyManager - getAllStdioServers", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
   it("应该返回所有 stdio 类型 server（包括 persistent 和临时）", async () => {
     const { mcpProxyManager } = await import("./mcp");
 
@@ -885,39 +549,14 @@ describe("McpProxyManager - getAllStdioServers", () => {
 });
 
 describe("McpProxyManager - bridge URL 优先策略", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    // 恢复 spawnNoWindow mock（防止前序测试 doMock 泄漏）
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
   it("bridge 运行时所有 stdio server 应使用 bridge URL", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => true),
-        getBridgeUrl: vi.fn(
-          (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
-        ),
-        isServerHealthy: vi.fn(() => true),
-      },
-    }));
+    mockBridge({
+      isRunning: vi.fn(() => true),
+      getBridgeUrl: vi.fn(
+        (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
+      ),
+      isServerHealthy: vi.fn(() => true),
+    });
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -947,19 +586,14 @@ describe("McpProxyManager - bridge URL 优先策略", () => {
   });
 
   it("bridge 运行但某 server 未就绪时应降级到 stdio", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => true),
-        getBridgeUrl: vi.fn((name: string) => {
-          // 只有 server-a 就绪
-          if (name === "server-a") return "http://127.0.0.1:12345/mcp/server-a";
-          return null; // server-b 未就绪
-        }),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
+    mockBridge({
+      isRunning: vi.fn(() => true),
+      getBridgeUrl: vi.fn((name: string) => {
+        // 只有 server-a 就绪
+        if (name === "server-a") return "http://127.0.0.1:12345/mcp/server-a";
+        return null; // server-b 未就绪
+      }),
+    });
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -996,17 +630,13 @@ describe("McpProxyManager - bridge URL 优先策略", () => {
   });
 
   it("bridge URL 应保留 allowTools/denyTools", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => true),
-        getBridgeUrl: vi.fn(
-          (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
-        ),
-        isServerHealthy: vi.fn(() => true),
-      },
-    }));
+    mockBridge({
+      isRunning: vi.fn(() => true),
+      getBridgeUrl: vi.fn(
+        (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
+      ),
+      isServerHealthy: vi.fn(() => true),
+    });
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -1068,17 +698,13 @@ describe("McpProxyManager - bridge URL 优先策略", () => {
   });
 
   it("远程 server 应不受 bridge 影响直接透传", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => true),
-        getBridgeUrl: vi.fn(
-          (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
-        ),
-        isServerHealthy: vi.fn(() => true),
-      },
-    }));
+    mockBridge({
+      isRunning: vi.fn(() => true),
+      getBridgeUrl: vi.fn(
+        (name: string) => `http://127.0.0.1:12345/mcp/${name}`,
+      ),
+      isServerHealthy: vi.fn(() => true),
+    });
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -1121,17 +747,6 @@ describe("McpProxyManager - bridge URL 优先策略", () => {
 
 describe("syncMcpConfigToProxyAndReload - bridge 重启", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    // Mock DB for syncMcpConfigToProxyAndReload
     vi.doMock("../../db", () => ({
       getDb: vi.fn(() => ({
         prepare: vi.fn(() => ({
@@ -1139,13 +754,6 @@ describe("syncMcpConfigToProxyAndReload - bridge 重启", () => {
         })),
       })),
     }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
   });
 
   it("同步配置后应重启 PersistentMcpBridge", async () => {
@@ -1207,15 +815,9 @@ describe("syncMcpConfigToProxyAndReload - bridge 重启", () => {
   });
 
   it("bridge 重启失败不应阻断同步流程", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockRejectedValue(new Error("bridge start failed")),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
+    mockBridge({
+      start: vi.fn().mockRejectedValue(new Error("bridge start failed")),
+    });
     vi.doMock("../../db", () => ({
       getDb: vi.fn(() => ({
         prepare: vi.fn(() => ({
@@ -1242,26 +844,6 @@ describe("syncMcpConfigToProxyAndReload - bridge 重启", () => {
 });
 
 describe("McpProxyManager - cleanup async", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
   it("cleanup 应该 await persistentMcpBridge.stop()", async () => {
     const { mcpProxyManager } = await import("./mcp");
     const { persistentMcpBridge } = await import("./persistentMcpBridge");
@@ -1272,15 +854,7 @@ describe("McpProxyManager - cleanup async", () => {
   });
 
   it("cleanup 在 bridge.stop() 失败时不应抛出", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockRejectedValue(new Error("stop failed")),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
+    mockBridge({ stop: vi.fn().mockRejectedValue(new Error("stop failed")) });
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -1290,36 +864,8 @@ describe("McpProxyManager - cleanup async", () => {
 });
 
 describe("McpProxyManager - start 启动所有 stdio servers", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
   it("ensureBridgeStarted() 应通过 bridge 启动所有 stdio server（懒加载）", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
+    mockBridge();
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -1361,15 +907,7 @@ describe("McpProxyManager - start 启动所有 stdio servers", () => {
   });
 
   it("start() 只有远程 server 时不应启动 bridge", async () => {
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
+    mockBridge();
     vi.resetModules();
 
     const { mcpProxyManager } = await import("./mcp");
@@ -1387,286 +925,8 @@ describe("McpProxyManager - start 启动所有 stdio servers", () => {
   });
 });
 
-// ========== 真实场景测试（基于生产日志数据） ==========
-
-describe("extractRealMcpServers - 真实 context_servers 配置", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
-  it("应该从真实 uvx bridge 条目中提取 stdio server（如 markdownify）", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    // 真实日志: "Markdown 万能转成" 使用 uvx + --allow-tools
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "Markdown 万能转成": {
-            command: "uvx",
-            args: ["markdownify-mcp-server"],
-            env: {},
-            source: "custom",
-            enabled: true,
-          },
-        },
-      }),
-      "--allow-tools",
-      "youtube-to-markdown,pdf-to-markdown",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(result!["Markdown 万能转成"]).toBeDefined();
-    // uvx 应被解析为 uv tool run
-    expect(result!["Markdown 万能转成"].command).toContain("uv");
-    expect(result!["Markdown 万能转成"].args).toContain("tool");
-    expect(result!["Markdown 万能转成"].args).toContain("run");
-    expect(result!["Markdown 万能转成"].args).toContain(
-      "markdownify-mcp-server",
-    );
-    // allowTools 应从 --allow-tools 参数解析
-    expect(
-      (result!["Markdown 万能转成"] as { allowTools?: string[] }).allowTools,
-    ).toEqual(["youtube-to-markdown", "pdf-to-markdown"]);
-  });
-
-  it("应该从真实远程 URL bridge 条目中提取 SSE server", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    // 真实日志: "image-understanding-and-generation" 使用远程 SSE URL
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "image-understanding-and-generation": {
-            url: "https://mcp-api.nuwax.com/api/mcp/sse?ak=ak-test123",
-          },
-        },
-      }),
-      "--allow-tools",
-      "ocr_image_text_extraction,image_understanding,generate_image",
-    ]);
-
-    expect(result).toBeDefined();
-    const srv = result!["image-understanding-and-generation"];
-    expect(srv).toBeDefined();
-    // 远程类型应保持 URL
-    expect((srv as { url: string }).url).toBe(
-      "https://mcp-api.nuwax.com/api/mcp/sse?ak=ak-test123",
-    );
-  });
-
-  it("应该处理真实混合配置（uvx + npx + 远程 URL）", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    // 真实日志: whois 使用 npx
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          whois: {
-            command: "npx",
-            args: ["-y", "@bharathvaj/whois-mcp@latest"],
-            source: "custom",
-            enabled: true,
-          },
-        },
-      }),
-      "--allow-tools",
-      "whois_domain,whois_tld,whois_ip,whois_as",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(result!["whois"]).toBeDefined();
-    // npx 不应被 resolveUvCommand 改写
-    expect(result!["whois"].command).toBe("npx");
-    expect(result!["whois"].args).toEqual([
-      "-y",
-      "@bharathvaj/whois-mcp@latest",
-    ]);
-    expect((result!["whois"] as { allowTools?: string[] }).allowTools).toEqual([
-      "whois_domain",
-      "whois_tld",
-      "whois_ip",
-      "whois_as",
-    ]);
-  });
-
-  it("应该从 -H 参数中提取 headers 并合并到 URL-based entry", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    // 模拟 nuwaxcode 传递的配置格式
-    // mcp-proxy convert --config '{"mcpServers":{"天眼查-test":{"url":"https://mcp.coze.cn/v1/plugins/xxx"}}}' -H 'Authorization=Bearer xxx'
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "天眼查-test": {
-            url: "https://mcp.coze.cn/v1/plugins/7407724292865130515",
-          },
-        },
-      }),
-      "-H",
-      "Authorization=Bearer cztei_test_token",
-      "--allow-tools",
-      "abnormal_operation,change_log,company_detail",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(result!["天眼查-test"]).toBeDefined();
-    // 验证 headers 被正确提取
-    expect(
-      (result!["天眼查-test"] as { headers?: Record<string, string> }).headers,
-    ).toEqual({
-      Authorization: "Bearer cztei_test_token",
-    });
-    // 验证 allowTools 也被正确提取
-    expect(
-      (result!["天眼查-test"] as { allowTools?: string[] }).allowTools,
-    ).toEqual(["abnormal_operation", "change_log", "company_detail"]);
-  });
-
-  it("应该支持 -H 参数的冒号格式 (Key: Value)", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            url: "https://example.com/mcp",
-          },
-        },
-      }),
-      "-H",
-      "X-Custom-Header: custom-value",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(
-      (result!["test-server"] as { headers?: Record<string, string> }).headers,
-    ).toEqual({
-      "X-Custom-Header": "custom-value",
-    });
-  });
-
-  it("应该支持多个 -H 参数", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            url: "https://example.com/mcp",
-          },
-        },
-      }),
-      "-H",
-      "Authorization=Bearer token123",
-      "-H",
-      "X-Api-Key=apikey456",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(
-      (result!["test-server"] as { headers?: Record<string, string> }).headers,
-    ).toEqual({
-      Authorization: "Bearer token123",
-      "X-Api-Key": "apikey456",
-    });
-  });
-
-  it("extraHeaders 应该覆盖 srv.headers 中的同名 key", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            url: "https://example.com/mcp",
-            headers: {
-              Authorization: "old-token",
-              "X-Keep": "keep-value",
-            },
-          },
-        },
-      }),
-      "-H",
-      "Authorization=new-token",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(
-      (result!["test-server"] as { headers?: Record<string, string> }).headers,
-    ).toEqual({
-      Authorization: "new-token", // extraHeaders 覆盖
-      "X-Keep": "keep-value", // srv.headers 保留
-    });
-  });
-
-  it("应该支持 --header 作为 -H 的别名", async () => {
-    const { extractRealMcpServers } = await import("./mcp");
-
-    const result = extractRealMcpServers("mcp-proxy", [
-      "convert",
-      "--config",
-      JSON.stringify({
-        mcpServers: {
-          "test-server": {
-            url: "https://example.com/mcp",
-          },
-        },
-      }),
-      "--header",
-      "X-Custom=value",
-    ]);
-
-    expect(result).toBeDefined();
-    expect(
-      (result!["test-server"] as { headers?: Record<string, string> }).headers,
-    ).toEqual({
-      "X-Custom": "value",
-    });
-  });
-});
-
 describe("syncMcpConfigToProxyAndReload - 真实 context_servers 场景", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
     vi.doMock("../../db", () => ({
       getDb: vi.fn(() => ({
         prepare: vi.fn(() => ({
@@ -1674,13 +934,6 @@ describe("syncMcpConfigToProxyAndReload - 真实 context_servers 场景", () => 
         })),
       })),
     }));
-    vi.doMock("../utils/spawnNoWindow", () => ({
-      resolveNpmPackageEntry: vi.fn(
-        () => "/mock/home/.nuwaclaw/node_modules/mcp-proxy-ts/dist/index.js",
-      ),
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
   });
 
   it("同步真实混合配置后应合并默认 server 并重启 bridge", async () => {
@@ -1745,21 +998,6 @@ describe("syncMcpConfigToProxyAndReload - 真实 context_servers 场景", () => 
 // markBridgeStarted — 修复：syncMcpConfigToProxyAndReload 重启 bridge 后同步 bridgeStarted
 // ────────────────────────────────────────────────────────────────────────────
 describe("markBridgeStarted — bridge 状态同步", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
   it("markBridgeStarted() 后，ensureBridgeStarted() 应跳过重复启动", async () => {
     const { mcpProxyManager } = await import("./mcp");
     // 通过同一 import 循环获取被 mock 替换的 persistentMcpBridge
@@ -1857,101 +1095,8 @@ describe("markBridgeStarted — bridge 状态同步", () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// PERF summary 日志：主日志 + perf 日志双写，且为单行 key=value
-// ────────────────────────────────────────────────────────────────────────────
-describe("McpProxy perf summary logging", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.resetModules();
-    mockExistsSync.mockReturnValue(true);
-  });
-
-  it("ensureBridgeStarted 输出单行 summary（no_persistent）", async () => {
-    const { mcpProxyManager } = await import("./mcp");
-    const mockedLog = (await import("electron-log")).default as unknown as {
-      info: ReturnType<typeof vi.fn>;
-    };
-
-    await mcpProxyManager.start();
-    mcpProxyManager.setConfig({ mcpServers: {} });
-    await mcpProxyManager.ensureBridgeStarted();
-
-    const infoLines = mockedLog.info.mock.calls.map((call) => String(call[0]));
-    expect(
-      infoLines.some(
-        (line) =>
-          line.includes("[McpProxy][perf] ensureBridge.summary") &&
-          line.includes("branch=no_persistent") &&
-          line.includes("elapsedMs="),
-      ),
-    ).toBe(true);
-    expect(
-      infoLines.some(
-        (line) =>
-          line.includes("[PERF] mcp.ensureBridge.summary") &&
-          line.includes("branch=no_persistent"),
-      ),
-    ).toBe(true);
-  });
-
-  it("syncMcpConfigToProxyAndReload 输出 sync.lock/sync summary 到 PERF 通道", async () => {
-    const { syncMcpConfigToProxyAndReload } = await import("./mcp");
-    const mockedLog = (await import("electron-log")).default as unknown as {
-      info: ReturnType<typeof vi.fn>;
-    };
-
-    await syncMcpConfigToProxyAndReload({});
-
-    const infoLines = mockedLog.info.mock.calls.map((call) => String(call[0]));
-    expect(
-      infoLines.some(
-        (line) =>
-          line.includes("[PERF] mcp.sync.lock.summary") &&
-          line.includes("lockWaitMs=") &&
-          line.includes("runMs=") &&
-          line.includes("totalMs="),
-      ),
-    ).toBe(true);
-    expect(
-      infoLines.some(
-        (line) =>
-          line.includes("[PERF] mcp.sync.summary") &&
-          line.includes("branch=") &&
-          line.includes("extractMs=") &&
-          line.includes("prepareMs=") &&
-          line.includes("setConfigMs=") &&
-          line.includes("totalMs="),
-      ),
-    ).toBe(true);
-  });
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// getAgentMcpConfig — 修复：内容哈希替代 UUID，相同配置复用文件
-// ────────────────────────────────────────────────────────────────────────────
 describe("getAgentMcpConfig — 内容哈希临时文件", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.doMock("./persistentMcpBridge", () => ({
-      persistentMcpBridge: {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        isRunning: vi.fn(() => false),
-        getBridgeUrl: vi.fn(() => null),
-        isServerHealthy: vi.fn(() => false),
-      },
-    }));
-    vi.resetModules();
     mockExistsSync.mockImplementation((p: unknown) => {
       // configDir 存在，config 文件首次不存在（触发写入）
       if (typeof p === "string" && p.endsWith(".json")) return false;

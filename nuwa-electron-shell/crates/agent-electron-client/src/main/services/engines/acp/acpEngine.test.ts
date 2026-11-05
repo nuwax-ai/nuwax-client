@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { RequestError } from "@agentclientprotocol/sdk";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -1191,43 +1192,6 @@ describe("AcpEngine.chat", () => {
     expect(promptAsyncSpy).toHaveBeenCalled();
   });
 
-  it("dispatch: latest turn records memory before promptAsync", async () => {
-    chatDispatchCoordinator.reset();
-    const { engine, sessionId, session } = setupEngine();
-    session.projectId = "project-test-001";
-
-    chatDispatchCoordinator.bumpArrival("project-test-001", "rid-1");
-    chatDispatchCoordinator.bumpArrival("project-test-001", "rid-2");
-
-    const recordMemorySpy = vi.spyOn(
-      acpChatMemory,
-      "recordUserMessageToMemory",
-    );
-    const promptAsyncSpy = vi
-      .spyOn(engine, "promptAsync")
-      .mockResolvedValue(undefined);
-
-    const result = await engine.chat(
-      {
-        user_id: "user-1",
-        project_id: "project-test-001",
-        session_id: sessionId,
-        request_id: "rid-chat-latest-memory",
-        prompt: "hello",
-        original_user_prompt: "hello",
-        open_long_memory: true,
-      } as any,
-      { dispatchKey: "project-test-001", turnGeneration: 2 },
-    );
-
-    expect(result.success).toBe(true);
-    expect((result as AcpChatHttpResult).promptDispatched).toBe(true);
-    expect(recordMemorySpy).toHaveBeenCalledTimes(1);
-    expect(promptAsyncSpy).toHaveBeenCalled();
-
-    recordMemorySpy.mockRestore();
-  });
-
   it("dispatch: latest turn calls memory before promptAsync", async () => {
     chatDispatchCoordinator.reset();
     const key = "project-test-001";
@@ -1487,6 +1451,65 @@ describe("AcpEngine.resumeAcpSession", () => {
     expect(sdk.id).toBe("existing-sess");
     expect((engine as any).sessions.has("existing-sess")).toBe(true);
     expect((engine as any).pendingNewSessionRegistration).toBe(false);
+  });
+});
+
+describe("AcpEngine ACP error propagation", () => {
+  const details = "API error: 403 您的积分已用完，请先增购积分 · model not changed";
+  const agentError = () => RequestError.internalError({ details });
+
+  it.each(["new", "existing"])(
+    "returns the Agent rejection when model sync fails for a %s session",
+    async (sessionSource) => {
+      const { engine, newSession } = setupEngineForCreateSession("claude-code");
+      (engine as any).config.model = "deepseek-flash";
+      const setSessionConfigOption = vi.fn().mockRejectedValue(agentError());
+      (engine as any).acpConnection.setSessionConfigOption = setSessionConfigOption;
+      const promptAsync = vi.spyOn(engine, "promptAsync");
+      const sessionId = "acp-session-1";
+      if (sessionSource === "existing") {
+        (engine as any).sessions.set(sessionId, {
+          id: sessionId,
+          acpSessionId: sessionId,
+          createdAt: Date.now(),
+          status: "idle",
+        });
+      }
+
+      const result = await engine.chat({
+        user_id: "u1",
+        project_id: "credit-error-project",
+        ...(sessionSource === "existing" ? { session_id: sessionId } : {}),
+        prompt: "你好",
+        request_id: "credit-error-request",
+      });
+
+      expect(newSession).toHaveBeenCalledTimes(sessionSource === "new" ? 1 : 0);
+      expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
+      expect(setSessionConfigOption).toHaveBeenCalledWith({
+        sessionId,
+        configId: "model",
+        value: "deepseek-flash",
+      });
+      expect(result).toMatchObject({ success: false, message: details });
+      expect(promptAsync).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves the Agent rejection in the prompt terminal event", async () => {
+    const { engine, sessionId, acpConnection } = setupEngine("claude-code");
+    acpConnection.prompt.mockRejectedValue(agentError());
+    const terminal = vi.fn();
+    engine.on("computer:promptEnd", terminal);
+
+    await engine.prompt(sessionId, [{ type: "text", text: "你好" }]);
+
+    expect(acpConnection.prompt).toHaveBeenCalledTimes(1);
+    expect(terminal).toHaveBeenCalledTimes(1);
+    expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "error",
+      description: details,
+    }));
   });
 });
 

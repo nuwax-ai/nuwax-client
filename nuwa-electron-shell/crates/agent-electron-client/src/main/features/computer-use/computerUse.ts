@@ -32,6 +32,8 @@ import type { CuaExecutionMode } from "@shared/features/computer-use/contract";
 import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
 import { computerUseHost } from "./ports";
 import { readCuaPreferences, writeCuaPreferences } from "./preferences";
+import { readCuaToolCatalog } from "./toolCatalog";
+import { CuaRuntimeRecovery } from "./runtimeRecovery";
 import { cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/features/computer-use/contract";
 import { CuaBrowserBindings, cuaPolicy, scopeCuaCall, visibleCuaTools } from "./windowScope";
@@ -103,8 +105,40 @@ async function pollWindowTasks() {
   } finally { framePollBusy = false; }
 }
 let cuaGateway: CuaMcpGateway | null = null;
+let cuaGatewayRoot: string | null = null;
 const cuaBindings = new CuaBrowserBindings();
 let runtimeSuspended = false;
+let cuaHostActive = false;
+let recoveryBlocked: "userStopped" | "configSaveFailed" | null = null;
+let explicitDisabled = false;
+let forceNativeRestart = true;
+let nativeGeneration = 0;
+let serviceState: import("@shared/features/computer-use/contract").CuaServiceState = "disabled";
+let appliedConfigRevision = 0;
+const desiredConfigRevision = () => {
+  const value = readCuaPreferences().computerUseConfigRevision;
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0;
+};
+function publishService(state: typeof serviceState, error: string | null = null) {
+  serviceState = state; lastCuaError = error; cuaTasks.notify();
+}
+function runtimeAllowed() {
+  return cuaHostActive && !explicitDisabled && !recoveryBlocked && readEnabled() && (computerUseHost().isAuthenticated?.() ?? true);
+}
+const recovery = new CuaRuntimeRecovery({
+  allowed: runtimeAllowed,
+  state: (state, error) => publishService(state, error ?? null),
+  repair: async signal => {
+    const epoch = cuaDisableEpoch;
+    await serializeCua(async () => {
+      if (signal.aborted || epoch !== cuaDisableEpoch || !runtimeAllowed()) return;
+      await ensureCuaOnBootUnlocked(epoch);
+      if (signal.aborted || epoch !== cuaDisableEpoch || !runtimeAllowed()) return;
+      if (runtimeSuspended) throw new Error(lastCuaError ?? "daemonNotReady");
+      await cuaGateway?.resumeTransports();
+    });
+  },
+});
 let shortcutAvailable = false;
 let pendingControls = 0;
 let preparingRuntime = false;
@@ -126,10 +160,10 @@ function initializeScopePreference() {
   // Native IDs are not durable. A previous window scope must never widen on restart.
   if (!multiwindow && saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
 }
-export const getCuaRuntime = (): CuaRuntime => ({ ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
+export const getCuaRuntime = (): CuaRuntime => ({ serviceState, desiredConfigRevision: desiredConfigRevision(), appliedConfigRevision, ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
   presentationConversationId: computerUseHost().getConversationId?.() ?? null,
   ...(!multiwindow ? { scope: structuredClone(cuaScope) } : {}), revision: runtimeRevision,
-  recoverable: runtimeSuspended && readEnabled(),
+  recoverable: runtimeSuspended && readEnabled() && !explicitDisabled,
   shortcutAvailable, controlPending: pendingControls > 0 || (multiwindow && windowTasks.list().some((task) => task.controlPending)) });
 export const onCuaRuntime = (listener: (state: CuaRuntime) => void) => {
   const emit = () => listener(getCuaRuntime());
@@ -142,9 +176,34 @@ export function notifyCuaPresentation() { cuaTasks.notify(); }
 
 async function ensureCuaGateway(helperRoot: string): Promise<string> {
   const selected = endpoint();
+  if (cuaGateway && cuaGatewayRoot !== selected.root) {
+    await cuaGateway.close(); cuaGateway = null;
+  }
+  cuaGatewayRoot = selected.root;
   const socketPath = IS_WIN ? `${selected.socketPath}-gateway` : path.join(path.dirname(selected.socketPath), "g");
   if (!cuaGateway) {
     cuaGateway = new CuaMcpGateway({
+      catalog: async () => {
+        const root = findBundledHelper() ?? findHelperApp() ?? helperRoot;
+        const signature = await verifyHelperSignature(root);
+        if (!signature.ok) throw new Error("helperProtocolInvalid");
+        return readCuaToolCatalog(helperExecutable(root));
+      },
+      unavailable: () => !cuaHostActive || !(computerUseHost().isAuthenticated?.() ?? true) ? "sessionRequired"
+        : explicitDisabled || !readEnabled() ? "disabled" : runtimeSuspended ? "serviceRecovering"
+        : IS_MAC && (!lastPermissionHint.accessibility || !lastPermissionHint.screenRecording) ? "permissionsRequired" : null,
+      configurationRevision: desiredConfigRevision,
+      onTransportFailure: (owner, uncertain) => {
+        log.warn("[Cua] MCP transport lost", { uncertain, generation: cuaDisableEpoch });
+        cuaElements.forget(owner); confirmationGate.clear(); cuaBindings.clear();
+        cuaTasks.invalidateObservations(); windowTasks.invalidateObservations(owner);
+        const task = owner && multiwindow ? windowTasks.stateForOwner(owner) : undefined;
+        const drained = uncertain ? task ? pauseWindowTask(task.taskId, "uncertainResult") : pauseCuaTask("uncertainResult") : Promise.resolve();
+        void drained.then(result => {
+          if (result && !result.success) forceNativeRestart = true;
+          recovery.request();
+        }).catch(() => { forceNativeRestart = true; recovery.request(); });
+      },
       controller: multiwindow ? windowTasks : cuaTasks,
       tasks: multiwindow ? windowTasks : undefined,
       discoverWindows: listAllowedNativeCuaWindows,
@@ -193,12 +252,13 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         if (!task.target) throw new Error("targetRequired");
         return taskCuaCall(windowTasks.scopeFor(owner!), task.mode, guarded.tool, guarded.args);
       },
-      beforeCall: multiwindow ? async (owner, call) => {
+      beforeCall: async (owner, call) => {
+        if (!multiwindow) return call;
         const context = windowTasks.nativeContext(owner);
         const reply = await requestDaemon("nuwax_task", "bind", context);
         if (!reply?.ok) throw new Error("targetClosed");
         return { ...call, args: { ...(call.args as Record<string, unknown>), _nuwax_task: context } };
-      } : undefined,
+      },
       onResult: (tool, args, outcome, structured, owner) => {
         cuaBindings.record(cuaScope, tool, args, outcome, structured);
         if (owner && outcome === "ok") confirmationGate.observe(owner, tool, args, structured);
@@ -244,6 +304,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
       },
     });
   }
+  cuaGateway.configureExecution(multiwindow ? windowTasks : cuaTasks, multiwindow ? windowTasks : undefined);
   if (!cuaGateway.ready && !IS_WIN) fs.rmSync(socketPath, { force: true });
   await cuaGateway.listen(socketPath, selected.token);
   if (!IS_WIN) fs.chmodSync(socketPath, 0o600);
@@ -259,11 +320,16 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         return;
       }
       if (cuaTasks.owns(owner)) {
-        if (cancelled || cuaTasks.hasPending(owner) || cuaTasks.snapshot().phase === "paused") void suspendCua("sessionEnded").catch(() => undefined);
+        if (cancelled || cuaTasks.hasPending(owner) || cuaTasks.snapshot().phase === "paused") void suspendCua("turnEnded").then(() => recovery.request()).catch(() => undefined);
         else { cuaTasks.complete(owner); sweepCuaScreenshots(); void cuaGateway?.releaseOwner(owner).catch(() => undefined); }
       }
       cuaTasks.retire(owner);
-    });
+    }, () => {
+      if (!cuaHostActive || explicitDisabled || !readEnabled() || !(computerUseHost().isAuthenticated?.() ?? true)) return;
+      if (recoveryBlocked === "configSaveFailed") return;
+      recoveryBlocked = null;
+      if (runtimeSuspended) recovery.request();
+    }, () => cuaHostActive && (computerUseHost().isAuthenticated?.() ?? true));
   return socketPath;
 }
 
@@ -585,15 +651,20 @@ function policyDigest(filename: string, contents: Buffer): string {
   return hash.digest("hex");
 }
 
+function cuaPolicyContents(): Buffer {
+  initializeScopePreference();
+  return Buffer.from(multiwindow
+    ? cuaPolicy({ kind: "desktop" }, [...CUA_WINDOW_TASK_TOOLS, "list_windows", "bring_to_front", "set_agent_cursor_enabled"], CUA_DENIED_TOOLS)
+    : cuaPolicy(cuaScope, CUA_ALLOWED_TOOLS, CUA_DENIED_TOOLS));
+}
+
 /** 主进程托管的驱动策略同时覆盖 MCP 与同用户私有 socket 直连。 */
 function prepareCuaPolicy(): { path: string; sha256: string } {
   initializeScopePreference();
   const dir = cuaDataHome();
   const filename = "nuwax-capabilities.yaml";
   const target = path.join(dir, filename);
-  const contents = Buffer.from(multiwindow
-    ? cuaPolicy({ kind: "desktop" }, [...CUA_WINDOW_TASK_TOOLS, "list_windows", "bring_to_front", "set_agent_cursor_enabled"], CUA_DENIED_TOOLS)
-    : cuaPolicy(cuaScope, CUA_ALLOWED_TOOLS, CUA_DENIED_TOOLS));
+  const contents = cuaPolicyContents();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (!fs.existsSync(target) || !fs.readFileSync(target).equals(contents)) {
     const stage = path.join(dir, `.${filename}.${randomUUID()}.stage`);
@@ -681,6 +752,8 @@ async function launchDaemon(helperRoot: string): Promise<string> {
   const policy = prepareCuaPolicy();
   if (await isDaemonAlive()) return policy.sha256;
   await reclaimStaleDaemonSocket();
+  nativeGeneration++;
+  log.info("[Cua] native launch requested", { nativeGeneration, desiredConfigRevision: desiredConfigRevision() });
   if (IS_MAC) {
     const child = spawn(
       "open",
@@ -783,20 +856,70 @@ function persistConsentPending(pending: boolean): void {
   if (!writeCuaPreferences({ computerUseConsentPending: pending })) throw new Error("databaseNotReady");
 }
 function readStep1(): Record<string, unknown> { return readCuaPreferences(); }
-function patchStep1(patch: Record<string, unknown>): boolean { return writeCuaPreferences(patch); }
+function patchStep1(patch: Record<string, unknown>, forceRevision = false): boolean { return writeCuaPreferences(patch, forceRevision); }
+
+async function failConfigurationSave(): Promise<CuaStatus> {
+  recoveryBlocked = "configSaveFailed";
+  await suspendCua("configSaveFailed").catch(error => log.warn("[Cua] configuration failure cleanup failed", error));
+  publishService("degraded", "databaseNotReady");
+  return getCuaStatus();
+}
+function configurationSaved() {
+  if (recoveryBlocked === "configSaveFailed") { recoveryBlocked = null; recovery.request(); }
+}
 
 export async function setCuaAuthMode(mode: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
   if (!patchStep1({ computerUseAuthMode: readCuaAuthMode(mode) })) {
-    return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
+    return { success: false, error: "databaseNotReady", status: await failConfigurationSave() };
   }
-  confirmationGate.clear();
+  configurationSaved();
+  confirmationGate.clear(); cuaElements.forget(); cuaBindings.clear();
+  cuaTasks.invalidateObservations(); windowTasks.invalidateObservations();
+  if (readCuaAuthMode(mode) === "ask" && getCuaRuntime().phase === "running") {
+    const paused = await pauseCuaTask("configChanged");
+    if (!paused.success) {
+      forceNativeRestart = true; recovery.request();
+      return { success: false, error: "handoffPending", status: await getCuaStatus() };
+    }
+    recovery.request();
+  }
+  if (!runtimeSuspended) appliedConfigRevision = desiredConfigRevision();
+  cuaTasks.notify();
   return { success: true, status: await getCuaStatus() };
 }
 
 export async function setCuaBlacklist(list: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
-  if (!patchStep1({ computerUseBlacklist: readCuaBlacklist(list) })) {
-    return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
+  const previous = readCuaBlacklist(readStep1().computerUseBlacklist);
+  const next = readCuaBlacklist(list);
+  if (!patchStep1({ computerUseBlacklist: next })) return { success: false, error: "databaseNotReady", status: await failConfigurationSave() };
+  configurationSaved();
+  const revision = desiredConfigRevision();
+  confirmationGate.clear(); cuaElements.forget(); cuaBindings.clear();
+  cuaTasks.invalidateObservations(); windowTasks.invalidateObservations();
+  if (next.some(app => !previous.includes(app)) && readEnabled() && !runtimeSuspended) {
+    const windows = await readLiveCuaWindows().catch(() => null);
+    if (revision !== desiredConfigRevision()) return { success: false, error: "operationCancelled", status: await getCuaStatus() };
+    if (multiwindow) {
+      const results = await Promise.all(windowTasks.list().filter(task => ["running", "paused"].includes(task.phase) &&
+        (!windows || windows.some(window => task.scope?.kind === "window" && window.pid === task.scope.pid &&
+          window.window_id === task.scope.windowId && isDeniedCuaApp([window.app_name, window.title], next))))
+        .map(task => pauseWindowTask(task.taskId, "blacklisted")));
+      if (results.some(result => !result.success)) {
+        forceNativeRestart = true; recovery.request();
+        return { success: false, error: "handoffPending", status: await getCuaStatus() };
+      }
+    } else if (["running", "paused"].includes(cuaTasks.snapshot().phase) && (!windows || windows.some(window => (cuaScope.kind === "desktop" || window.pid === cuaScope.pid && window.window_id === cuaScope.windowId) &&
+      isDeniedCuaApp([window.app_name, window.title], next)))) {
+      const paused = await pauseCuaTask("blacklisted");
+      if (!paused.success) {
+        forceNativeRestart = true; recovery.request();
+        return { success: false, error: "handoffPending", status: await getCuaStatus() };
+      }
+      recovery.request();
+    }
   }
+  if (!runtimeSuspended && revision === desiredConfigRevision()) appliedConfigRevision = revision;
+  cuaTasks.notify();
   return { success: true, status: await getCuaStatus() };
 }
 
@@ -831,6 +954,14 @@ export async function setCuaAgentCursorEnabled(enabled: boolean): Promise<{
   if (!persistAgentCursorEnabled(enabled === true)) {
     return { success: false, error: "databaseNotReady", status: await getCuaStatus() };
   }
+  const revision = desiredConfigRevision();
+  try { await cuaGateway?.updateAgentCursor(); }
+  catch {
+    recovery.request();
+    return { success: false, error: "gatewayFailed", status: await getCuaStatus() };
+  }
+  if (!runtimeSuspended && revision === desiredConfigRevision()) appliedConfigRevision = revision;
+  cuaTasks.notify();
   return { success: true, status: await getCuaStatus() };
 }
 
@@ -848,7 +979,7 @@ function isMcpInjected(): boolean {
 export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
   const host = computerUseHost();
   if (enabled) {
-    const helperRoot = findHelperApp();
+    const helperRoot = findHelperApp() ?? findBundledHelper();
     if (!helperRoot) {
       await host.setLocalMcpServer(MCP_SERVER_ID, null);
     } else {
@@ -889,30 +1020,19 @@ export async function getCuaStatus(): Promise<CuaStatus> {
   }
   let policyValid = true;
   if (running && readEnabled()) {
-    try { policyValid = await verifyDaemonAuthorization(prepareCuaPolicy().sha256); }
+    try { policyValid = await verifyDaemonAuthorization(policyDigest("nuwax-capabilities.yaml", cuaPolicyContents())); }
     catch { policyValid = false; }
   }
-  // 启动期尚未跑 ensureCuaOnBoot 时 monitor 不存在，不能把“尚未拉起”误判为掉线。
-  if (readEnabled() && !runtimeSuspended && !cuaBootReconciling && !cuaLifecycleBusy &&
-      ((!running && cuaMonitor !== null) ||
-       (running && (!policyValid ||
-        (IS_MAC && (!permissions.accessibility || !permissions.screenRecording)))))) {
-    lastCuaError = !running ? "daemonNotReady" :
-      !policyValid ? "policyNotActive" : "permissionsRequired";
-    await serializeCua(async () => {
-      if (readEnabled()) {
-        cuaTasks.fail(lastCuaError ?? "daemonNotReady");
-        await suspendCuaRuntimeResources();
-      }
-    }).catch((e) => log.warn("[Cua] status cleanup failed", e));
-    running = await isDaemonAlive();
-  }
+  const observedError = !running && readEnabled() && !runtimeSuspended ? "daemonNotReady"
+    : !policyValid ? "policyNotActive"
+    : running && IS_MAC && (!permissions.accessibility || !permissions.screenRecording) ? "permissionsRequired" : lastCuaError;
   return {
+    serviceState, desiredConfigRevision: desiredConfigRevision(), appliedConfigRevision,
     supported: IS_MAC || IS_WIN || IS_LINUX,
     installed: !!helperPath,
     installable: !helperPath && !!findBundledHelper(),
     running,
-    enabled: readEnabled(),
+    enabled: readEnabled() && !explicitDisabled,
     consentPending: consentPending(),
     mcpInjected: isMcpInjected(),
     agentCursor: readAgentCursorEnabled(),
@@ -922,7 +1042,7 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     socketPath: endpoint().socketPath,
     helperPath,
     ...permissions,
-    error: lastCuaError,
+    error: observedError,
   };
 }
 
@@ -951,11 +1071,37 @@ function stopCuaMonitor(): void {
   publishFrames([]);
 }
 
+let monitorBusy = false;
+let lastMonitorProbe = 0;
 function startCuaMonitor(): void {
   stopCuaMonitor();
   cuaMonitor = setInterval(() => {
-    void getCuaStatus().catch((e) => log.warn("[Cua] status monitor failed", e));
-  }, 30_000);
+    const active = ["running", "paused"].includes(getCuaRuntime().phase);
+    if (monitorBusy || !runtimeAllowed() || Date.now() - lastMonitorProbe < (active ? 5000 : 30_000)) return;
+    monitorBusy = true; lastMonitorProbe = Date.now();
+    const epoch = cuaDisableEpoch, revision = desiredConfigRevision(), generation = nativeGeneration;
+    void getCuaStatus().then(status => {
+      if (!runtimeAllowed() || cuaLifecycleBusy || epoch !== cuaDisableEpoch || revision !== desiredConfigRevision() || generation !== nativeGeneration) return;
+      if (IS_MAC && status.running && (!status.accessibility || !status.screenRecording)) {
+        runtimeSuspended = true;
+        cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+        cuaGateway?.pauseTransports();
+        if (serviceState !== "waitingPermission") {
+          cuaTasks.pause("permissionsRequired"); windowTasks.pause("permissionsRequired");
+          forceNativeRestart = true;
+          recovery.request();
+        }
+        publishService("waitingPermission", "permissionsRequired");
+        return;
+      }
+      if (!status.running || status.error) {
+        runtimeSuspended = true;
+        cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+        cuaGateway?.pauseTransports();
+        recovery.request();
+      }
+    }).catch(() => recovery.request()).finally(() => { monitorBusy = false; });
+  }, 5000);
   cuaMonitor.unref();
   if (multiwindow) {
     frameMonitor = setInterval(() => { void pollWindowTasks().catch(() => publishFrames([])); }, 250);
@@ -964,8 +1110,8 @@ function startCuaMonitor(): void {
 }
 
 /** Cleanup still runs when config removal fails; report an unconfirmed stop first. */
-async function removeMcpAndStopDaemon(preservePermissionLinger = false): Promise<void> {
-  const config = await syncCuaMcpConfig(false).then(
+async function removeMcpAndStopDaemon(preservePermissionLinger = false, preserveGateway = false): Promise<void> {
+  const config = await syncCuaMcpConfig(preserveGateway).then(
     () => ({ ok: true as const }),
     error => ({ ok: false as const, error }),
   );
@@ -981,17 +1127,17 @@ async function disableCua(preserveEnabled = false, preservePermissionLinger = fa
   cuaTasks.setAvailable(false);
   cuaTasks.stop("disabled");
   runtimeSuspended = true;
-  const gateway = cuaGateway;
-  cuaGateway = null;
-  await gateway?.close();
+  recovery.cancel();
+  cuaGateway?.pauseTransports();
   stopCuaMonitor();
+  publishService("disabled");
   let persistenceError: unknown;
   try {
     if (!preserveEnabled) persistEnabled(false);
     persistConsentPending(false);
   } catch (error) { persistenceError = error; }
   // Revocation must finish even when the settings database cannot be written.
-  await removeMcpAndStopDaemon(preservePermissionLinger);
+  await removeMcpAndStopDaemon(preservePermissionLinger, cuaHostActive);
   if (persistenceError) throw persistenceError;
 }
 
@@ -1000,7 +1146,18 @@ export async function setCuaEnabled(enabled: boolean): Promise<{
   error?: string;
   status: CuaStatus;
 }> {
-  if (!enabled) { cuaDisableEpoch++; cancelCuaPermissionRequest(); }
+  log.info("[Cua] enable requested", { enabled, nativeGeneration });
+  recovery.cancel();
+  if (!enabled) {
+    explicitDisabled = true;
+    cuaDisableEpoch++; cancelCuaPermissionRequest();
+    runtimeSuspended = true; cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+    cuaGateway?.cancelPending("disabled"); cuaGateway?.pauseTransports();
+  } else {
+    explicitDisabled = false;
+    cuaHostActive = computerUseHost().isAuthenticated?.() ?? true; recoveryBlocked = null;
+    publishService("starting");
+  }
   const epoch = cuaDisableEpoch;
   return serializeCua(() => setCuaEnabledUnlocked(enabled, epoch));
 }
@@ -1014,6 +1171,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
       await disableCua();
       lastPermissionHint = { accessibility: null, screenRecording: null };
       lastCuaError = null;
+      appliedConfigRevision = desiredConfigRevision();
       publishCuaCapabilityNotice(CUA_DISABLED_NOTICE);
       sweepCuaScreenshots();
       return { success: true, status: await getCuaStatus() };
@@ -1024,12 +1182,19 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     }
   }
   try {
+    if (previouslyEnabled && !runtimeSuspended && await isDaemonAlive()) {
+      await ensureCuaOnBootUnlocked(epoch);
+      if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
+      if (!runtimeSuspended) return { success: true, status: await getCuaStatus() };
+    }
+    runtimeSuspended = true;
+    cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+    cuaGateway?.pauseTransports();
     // 此调用只在用户接受一次性全范围确认后发出；系统授权未完成时保留待办。
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     persistConsentPending(true);
     // 任何旧条目先撤销；直到安装、系统授权和 daemon 双重探测全部通过才持久启用。
     if (!previouslyEnabled) persistEnabled(false);
-    await syncCuaMcpConfig(false);
     const installed = await installCuaHelper();
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     if (!installed.success || !installed.installedPath) {
@@ -1044,6 +1209,7 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringEnable");
     await stopDaemon();
     if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+    confirmWindowTasksStopped(); forceNativeRestart = false;
     const policySha256 = await launchDaemon(installed.installedPath);
     if (!(await waitForSocket(8000))) throw new Error("daemonNotReady");
     if (!(await verifyDaemonAuthorization(policySha256))) throw new Error("policyNotActive");
@@ -1060,9 +1226,11 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
     persistEnabled(true, "enableConfirmed");
     runtimeSuspended = false;
     cuaTasks.setAvailable(true);
-    cuaTasks.reset();
+    windowTasks.setAvailable(true);
     persistConsentPending(false);
-    lastCuaError = null;
+    appliedConfigRevision = desiredConfigRevision();
+    publishService("ready");
+    await cuaGateway?.resumeTransports();
     startCuaMonitor();
     publishCuaCapabilityNotice(CUA_ENABLED_NOTICE);
     return { success: true, status: await getCuaStatus() };
@@ -1084,7 +1252,8 @@ async function setCuaEnabledUnlocked(enabled: boolean, epoch: number): Promise<{
  * lifecycle start 回调（引擎启动前替换旧 MCP 条目，避免读取旧的直连入口）。
  */
 export async function ensureCuaOnBoot(signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
+  if (signal?.aborted || !(computerUseHost().isAuthenticated?.() ?? true)) return;
+  cuaHostActive = true;
   const epoch = cuaDisableEpoch;
   const abort = () => { void suspendCua("sessionEnded").catch(() => undefined); };
   signal?.addEventListener("abort", abort, { once: true });
@@ -1094,8 +1263,11 @@ export async function ensureCuaOnBoot(signal?: AbortSignal): Promise<void> {
 
 async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
   sweepCuaScreenshots();
-  if (!readEnabled()) {
-    if (isMcpInjected()) await syncCuaMcpConfig(false);
+  initializeScopePreference();
+  if (explicitDisabled || !readEnabled()) {
+    await syncCuaMcpConfig(true);
+    appliedConfigRevision = desiredConfigRevision();
+    publishService("disabled");
     return;
   }
   cuaBootReconciling = true;
@@ -1105,11 +1277,20 @@ async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
       throw new Error(installed.error ?? "helperNotInstalled");
     }
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
-    await stopDaemon();
-    if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
-    const policySha256 = await launchDaemon(installed.installedPath);
-    if (!(await waitForSocket(8000))) throw new Error("daemonNotReady");
-    if (!(await verifyDaemonAuthorization(policySha256))) throw new Error("policyNotActive");
+    const policy = prepareCuaPolicy();
+    const healthy = !forceNativeRestart && await isDaemonAlive() && await verifyDaemonAuthorization(policy.sha256);
+    if (!healthy) {
+      cuaGateway?.pauseTransports();
+      cuaBindings.clear(); cuaElements.forget(); confirmationGate.clear();
+      cuaTasks.invalidateObservations(); windowTasks.invalidateObservations();
+      await stopDaemon();
+      if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+      confirmWindowTasksStopped(); forceNativeRestart = false;
+      if (epoch !== cuaDisableEpoch) return;
+      const policySha256 = await launchDaemon(installed.installedPath);
+      if (!(await waitForSocket(8000))) throw new Error("daemonNotReady");
+      if (!(await verifyDaemonAuthorization(policySha256))) throw new Error("policyNotActive");
+    }
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
     if (IS_MAC) {
       const confirmed = await waitForDaemonPermissions(8000);
@@ -1122,14 +1303,25 @@ async function ensureCuaOnBootUnlocked(epoch: number): Promise<void> {
     if (epoch !== cuaDisableEpoch) throw new Error("disabledDuringBoot");
     lastCuaError = null;
     runtimeSuspended = false;
-    cuaTasks.setAvailable(true);
+    cuaTasks.setAvailable(true); windowTasks.setAvailable(true);
+    appliedConfigRevision = desiredConfigRevision();
+    publishService("ready");
+    await cuaGateway?.resumeTransports();
     startCuaMonitor();
   } catch (e) {
     if (epoch !== cuaDisableEpoch) return; // the queued revocation owns cleanup and the final state
     log.warn("[Cua] boot: daemon launch failed", e);
     lastCuaError = e instanceof Error ? e.message : String(e);
-    cuaTasks.fail(["permissionsRequired", "policyNotActive", "daemonNotReady"].includes(lastCuaError) ? lastCuaError : "daemonNotReady");
-    await suspendCuaRuntimeResources().catch((cleanupError) =>
+    publishService(lastCuaError === "permissionsRequired" ? "waitingPermission" : "degraded", lastCuaError);
+    if (lastCuaError === "permissionsRequired") {
+      runtimeSuspended = true;
+      cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+      cuaGateway?.pauseTransports();
+      await syncCuaMcpConfig(true);
+      startCuaMonitor();
+      return;
+    }
+    await suspendCuaRuntimeResources(true).catch((cleanupError) =>
       log.warn("[Cua] boot cleanup failed", cleanupError),
     );
   } finally {
@@ -1292,6 +1484,11 @@ export async function installCuaHelper(): Promise<CuaInstallResult> {
 
 /** Revoke synchronously before waiting for any lifecycle queue or OS operation. */
 export function suspendCua(reason = "sessionEnded"): Promise<void> {
+  log.info("[Cua] suspend requested", { reason, desiredConfigRevision: desiredConfigRevision() });
+  recovery.cancel();
+  if (["sessionEnded", "appQuit"].includes(reason)) cuaHostActive = false;
+  if (reason === "userStopped") recoveryBlocked = "userStopped";
+  publishService(cuaHostActive ? reason === "turnEnded" ? "recovering" : "degraded" : "disabled", reason);
   cuaDisableEpoch++;
   // Capture both promises before cancel so quit still awaits owned-host pkill.
   const permissionCleanup = Promise.all([
@@ -1305,25 +1502,28 @@ export function suspendCua(reason = "sessionEnded"): Promise<void> {
   cuaTasks.stop(reason);
   windowTasks.setAvailable(false);
   windowTasks.stop(reason);
+  if (!cuaHostActive) cuaSessionAuthority.revokeAll();
   cuaBindings.clear();
   cuaGateway?.cancelPending(reason);
   // Standalone permission IPC is outside the lifecycle queue. Cancellation
   // interrupts the 20s poll and any post-timeout linger; await only owned-host
   // cleanup so an enable request cannot form a queue cycle.
-  return Promise.allSettled([serializeCua(suspendCuaRuntimeResources), permissionCleanup]).then(results => {
+  return Promise.allSettled([serializeCua(() => suspendCuaRuntimeResources(cuaHostActive)), permissionCleanup]).then(results => {
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   }).finally(() => { pendingControls--; cuaTasks.notify(); });
 }
 
-async function suspendCuaRuntimeResources(): Promise<void> {
+async function suspendCuaRuntimeResources(preserveGateway = false): Promise<void> {
   runtimeSuspended = true;
-  cuaTasks.setAvailable(false);
+  cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
   stopCuaMonitor();
-  const gateway = cuaGateway;
-  cuaGateway = null;
-  await gateway?.close();
-  await removeMcpAndStopDaemon();
+  if (preserveGateway) cuaGateway?.pauseTransports();
+  else {
+    const gateway = cuaGateway; cuaGateway = null;
+    await gateway?.close();
+  }
+  await removeMcpAndStopDaemon(false, preserveGateway);
 }
 
 export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlResult> {
@@ -1332,6 +1532,7 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
       .map((task) => pauseWindowTask(task.taskId, reason)));
     return { success: !windowTasks.list().some((task) => task.controlPending), runtime: getCuaRuntime() };
   }
+  recovery.cancel();
   pendingControls++;
   cuaDisableEpoch++;
   cancelCuaPermissionRequest();
@@ -1344,7 +1545,10 @@ export async function pauseCuaTask(reason = "userPaused"): Promise<CuaControlRes
     await serializeCua(async () => {
       await stopDaemon();
       if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+      confirmWindowTasksStopped();
     });
+    publishService("recovering");
+    recovery.request();
     return { success: true, runtime: { ...getCuaRuntime(), controlPending: pendingControls > 1 } };
   } catch {
     cuaTasks.fail("helperStillRunning");
@@ -1363,6 +1567,7 @@ export async function resumeCuaTask(): Promise<CuaControlResult> {
       CUA_FINAL_REASONS.includes(runtime.reason ?? ""))
     return { success: false, error: "cannotResume", runtime: getCuaRuntime() };
   preparingRuntime = true;
+  recoveryBlocked = null;
   const epoch = cuaDisableEpoch;
   try {
     await ensureCuaOnBoot();
@@ -1386,6 +1591,7 @@ async function stopSingleCuaTask(id: string): Promise<CuaControlResult> {
     return taskResult(false, "taskUnavailable");
   if (preparingRuntime || pendingControls) return taskResult(false, "handoffPending");
 
+  recovery.cancel();
   pendingControls++;
   const epoch = ++cuaDisableEpoch;
   cancelCuaPermissionRequest();
@@ -1436,19 +1642,15 @@ export async function stopCuaTask(): Promise<CuaControlResult> {
 }
 
 export async function recoverCua(): Promise<CuaControlResult> {
-  if (preparingRuntime || pendingControls || !readEnabled())
+  if (pendingControls || explicitDisabled || !readEnabled() || !(computerUseHost().isAuthenticated?.() ?? true))
     return { success: false, error: "cannotResume", runtime: getCuaRuntime() };
-  preparingRuntime = true;
-  try {
-    const stopping = suspendCua("recovering");
-    const epoch = cuaDisableEpoch;
-    await stopping;
-    if (epoch !== cuaDisableEpoch) return { success: false, error: "operationCancelled", runtime: getCuaRuntime() };
-    await ensureCuaOnBoot();
-    const success = epoch === cuaDisableEpoch && !runtimeSuspended && cuaGateway?.ready === true;
-    if (success) { cuaTasks.reset(); windowTasks.clearHistory(); }
-    return { success, ...(success ? {} : { error: lastCuaError ?? "daemonNotReady" }), runtime: getCuaRuntime() };
-  } finally { preparingRuntime = false; }
+  recovery.cancel(); recoveryBlocked = null; cuaHostActive = true;
+  const epoch = cuaDisableEpoch;
+  publishService("recovering");
+  await ensureCuaOnBoot();
+  const success = epoch === cuaDisableEpoch && !runtimeSuspended && cuaGateway?.ready === true;
+  if (!success) recovery.request();
+  return { success, ...(success ? {} : { error: lastCuaError ?? "daemonNotReady" }), runtime: getCuaRuntime() };
 }
 
 export function clearCuaHistory(): boolean { return multiwindow ? windowTasks.clearHistory() : cuaTasks.clearHistory(); }
@@ -1470,31 +1672,50 @@ async function listAllowedNativeCuaWindows() {
   return (await readLiveCuaWindows()).filter(window => !isDeniedCuaApp([window.app_name, window.title], blacklist));
 }
 
-export async function setCuaScope(requested: unknown): Promise<CuaControlResult> {
-  if (multiwindow) return { success: false, error: "taskSelectionRequired", runtime: getCuaRuntime() };
-  if (preparingRuntime || pendingControls || ["running", "paused"].includes(getCuaRuntime().phase) || !readEnabled())
-    return { success: false, error: "scopeBusy", runtime: getCuaRuntime() };
-  const value = requested as Partial<CuaWindow> & { kind?: string } | null;
-  if (value?.kind !== "window" && value?.kind !== "desktop") return { success: false, error: "scopeViolation", runtime: getCuaRuntime() };
-  preparingRuntime = true;
+/** Config changes share the lifecycle queue but keep every agent-facing transport. */
+async function reconfigureRuntime(reason: string, apply: () => void): Promise<CuaControlResult> {
+  recovery.cancel();
+  const epoch = ++cuaDisableEpoch;
+  runtimeSuspended = true;
+  cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+  cuaTasks.stop(reason); windowTasks.stop(reason);
+  cuaBindings.clear(); cuaElements.forget(); confirmationGate.clear();
+  cuaGateway?.cancelPending("configChanged"); cuaGateway?.pauseTransports("configChanged");
+  publishService("reconfiguring");
+  log.info("[Cua] configuration reconcile", { reason, desiredConfigRevision: desiredConfigRevision(), epoch });
+  publishCuaCapabilityNotice("Computer Use 配置已更新；按当前权限和范围重新观察。已中断的动作不得自动重放，已暂停或停止的任务仍需用户明确继续。");
   try {
-    const epoch = cuaDisableEpoch;
-    const target = value.kind === "window" ? (await listCuaWindows()).find((item) => item.pid === value.pid && item.windowId === value.windowId) : undefined;
-    if (epoch !== cuaDisableEpoch || (value.kind === "window" && !target)) return { success: false, error: "targetClosed", runtime: getCuaRuntime() };
-    const stopping = suspendCua("scopeChanged");
-    const nextEpoch = cuaDisableEpoch;
-    await stopping;
-    if (nextEpoch !== cuaDisableEpoch) return { success: false, error: "sessionEnded", runtime: getCuaRuntime() };
-    const nextScope: CuaScope = target ? { kind: "window", ...target } : { kind: "desktop" };
-    if (!patchStep1({ computerUseScopeKind: nextScope.kind }))
-      return { success: false, error: "scopeSaveFailed", runtime: getCuaRuntime() };
-    scopeInitialized = true;
-    cuaScope = nextScope;
-    await ensureCuaOnBoot();
-    const success = nextEpoch === cuaDisableEpoch && !runtimeSuspended;
-    if (success) cuaTasks.reset();
-    return { success, ...(success ? {} : { error: "daemonNotReady" }), runtime: getCuaRuntime() };
-  } finally { preparingRuntime = false; }
+    await serializeCua(async () => {
+      if (epoch !== cuaDisableEpoch) return;
+      await stopDaemon();
+      if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+      confirmWindowTasksStopped();
+      if (epoch !== cuaDisableEpoch) return;
+      apply();
+      if (!readEnabled()) { appliedConfigRevision = desiredConfigRevision(); publishService("disabled"); return; }
+      await ensureCuaOnBootUnlocked(epoch);
+    });
+    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
+    return taskResult(!readEnabled() || !runtimeSuspended, lastCuaError ?? undefined);
+  } catch (error) {
+    publishService("degraded", error instanceof Error ? error.message : "gatewayFailed");
+    return taskResult(false, lastCuaError ?? "gatewayFailed");
+  }
+}
+
+export async function setCuaScope(requested: unknown): Promise<CuaControlResult> {
+  if (multiwindow) return taskResult(false, "taskSelectionRequired");
+  const value = requested as Partial<CuaWindow> & { kind?: string } | null;
+  if (value?.kind !== "window" && value?.kind !== "desktop") return taskResult(false, "scopeViolation");
+  const epoch = cuaDisableEpoch, revision = desiredConfigRevision();
+  const target = value.kind === "window" ? (await listCuaWindows()).find(item => item.pid === value.pid && item.windowId === value.windowId) : undefined;
+  if (epoch !== cuaDisableEpoch || revision !== desiredConfigRevision()) return taskResult(false, "operationCancelled");
+  if (value.kind === "window" && !target) return taskResult(false, "targetClosed");
+  const next: CuaScope = target ? { kind: "window", ...target } : { kind: "desktop" };
+  if (JSON.stringify(next) === JSON.stringify(cuaScope) && serviceState !== "reconfiguring") return taskResult(true);
+  if (!patchStep1({ computerUseScopeKind: next.kind }, true)) { await failConfigurationSave(); return taskResult(false, "scopeSaveFailed"); }
+  configurationSaved();
+  return reconfigureRuntime("scopeChanged", () => { scopeInitialized = true; cuaScope = next; });
 }
 
 export function getCuaTasks() { return multiwindow ? windowTasks.list() : []; }
@@ -1503,6 +1724,7 @@ function taskResult(success: boolean, error?: string): CuaControlResult {
   return { success, ...(error ? { error } : {}), runtime: getCuaRuntime() };
 }
 function confirmWindowTasksStopped() {
+  cuaGateway?.nativeDrained();
   nativeStoppedEpoch = cuaDisableEpoch;
   for (const task of windowTasks.list()) {
     const owner = windowTasks.byId(task.taskId)?.owner;
@@ -1631,24 +1853,16 @@ export async function setWindowTaskMode(id: string, mode: unknown): Promise<CuaC
   catch (error) { return taskResult(false, error instanceof Error ? error.message : "cannotResume"); }
 }
 export async function setMultiwindowEnabled(enabled: boolean): Promise<CuaControlResult> {
-  if (typeof enabled !== "boolean" || (enabled && IS_LINUX)) return taskResult(false, "unsupportedPlatform");
-  if (enabled && !readEnabled()) return taskResult(false, "disabled");
-  if (enabled === multiwindow) return taskResult(true);
-  if (preparingRuntime || pendingControls) return taskResult(false, "scopeBusy");
-  preparingRuntime = true;
-  try {
-    const stopping = suspendCua("modeChanged");
-    const epoch = cuaDisableEpoch;
-    await stopping;
-    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
-    if (!patchStep1({ computerUseMultiwindow: enabled }))
-      return taskResult(false, "scopeSaveFailed");
-    multiwindow = enabled; multiwindowCapable = false;
-    await ensureCuaOnBoot();
-    if (epoch !== cuaDisableEpoch) return taskResult(false, "operationCancelled");
-    if (enabled && !multiwindowCapable) return taskResult(false, "helperUpgradeRequired");
-    return taskResult(!runtimeSuspended, runtimeSuspended ? "daemonNotReady" : undefined);
-  } finally { preparingRuntime = false; }
+  initializeScopePreference();
+  if (typeof enabled !== "boolean" || enabled && IS_LINUX) return taskResult(false, "unsupportedPlatform");
+  if (enabled === multiwindow && serviceState !== "reconfiguring") return taskResult(true);
+  if (!patchStep1({ computerUseMultiwindow: enabled })) { await failConfigurationSave(); return taskResult(false, "scopeSaveFailed"); }
+  configurationSaved();
+  const result = await reconfigureRuntime("modeChanged", () => {
+    multiwindow = enabled; multiwindowCapable = false; scopeInitialized = true;
+  });
+  if (result.success && readEnabled() && enabled && !multiwindowCapable) return taskResult(false, "helperUpgradeRequired");
+  return result;
 }
 
 export async function getCuaDiagnostics() {
@@ -1685,6 +1899,9 @@ export async function selfTestCua(): Promise<CuaCheck[]> {
 // ========== TCC 授权（仅 mac；win 无此概念） ==========
 
 export interface CuaStatus {
+  serviceState?: import("@shared/features/computer-use/contract").CuaServiceState;
+  desiredConfigRevision?: number;
+  appliedConfigRevision?: number;
   supported: boolean;
   installed: boolean;
   /** 随包 Resources 有 helper 但未安装（首用安装流输入）。 */
@@ -1823,7 +2040,12 @@ function startPermissionLinger(lease: PermissionHostLease): void {
       const parsed = readPermissionHostFile(linger.resultFile);
       if (linger.controller.signal.aborted || linger.epoch !== cuaDisableEpoch) break;
       if (parsed) lastPermissionHint = parsed.hint;
-      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      await new Promise<void>(resolve => {
+        const done = () => { clearTimeout(timer); linger.controller.signal.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, 500);
+        linger.controller.signal.addEventListener("abort", done, { once: true });
+        if (linger.controller.signal.aborted) done();
+      });
     }
   })().finally(async () => {
     await cleanupPermissionHost(linger);

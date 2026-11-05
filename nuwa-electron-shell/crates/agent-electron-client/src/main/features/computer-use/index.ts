@@ -34,6 +34,7 @@ export const computerUseFeature: DesktopFeature = {
       changed: () => cua.notifyCuaPresentation(),
     });
     configureComputerUseHost({
+      isAuthenticated: () => ctx.session.isAuthenticated(),
       developmentProfile: ctx.developmentProfile,
       getConversationId: () => conversation.get(),
       dataHome: ctx.dataDir,

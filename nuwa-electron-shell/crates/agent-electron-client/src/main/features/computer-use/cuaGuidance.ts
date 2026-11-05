@@ -65,6 +65,10 @@ export function cuaMergeInstructions(scope: CuaScope, existing: unknown): string
 }
 
 const REJECTIONS: Record<string, string> = {
+  disabled: "The user disabled Computer Use. Do not retry or enable it yourself. The user can enable it in settings and continue in this conversation.",
+  serviceRecovering: "The host is restoring Computer Use connectivity. No action was replayed. Wait for recovery, then observe the actual target before acting.",
+  configChanged: "The user changed Computer Use settings. Observe again and obey the new scope and authorization. Never replay a prior action whose result was not confirmed.",
+  outcomeUnknown: "The native connection was lost after dispatch. This action may already have taken effect. Never repeat it automatically; inspect the actual result after recovery and ask for user help if uncertain.",
   userTakingControl: "The user is controlling the bound window. This task is paused. Do not switch windows or retry through another tool. Tell the user to switch away and resume the task; if this turn ends, ask them to send a new continue request. Observe the window again after explicit resume.",
   userPaused: "The user paused this task. Do not switch windows or retry automatically. Explain that it is waiting for the user; after this turn ends they can send a new continue request. After explicit resume, observe again before acting.",
   operationPaused: "This request ended while waiting for human input; it was not replayed. Do not switch windows or retry automatically. Explain what the user needs to resolve and ask them to send a new continue request. After explicit resume, observe again and verify the previous action before acting.",

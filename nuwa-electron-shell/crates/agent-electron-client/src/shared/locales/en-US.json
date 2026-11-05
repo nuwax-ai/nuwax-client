@@ -1,4 +1,5 @@
 {
+  "Claw.AutoUpdater.channelUpdateUnavailable": "The update subscription has changed. Check for updates and download again.",
   "Claw.Webview.leaveTitle": "Leave this page?",
   "Claw.Webview.leaveMessage": "This page may have a pending payment or unsaved work. Do you want to leave?",
   "Claw.Webview.leave": "Leave",
@@ -586,6 +587,10 @@
   "Claw.About.openOfficialWebsite": "Visit Website",
   "Claw.About.systemInfo.title": "System Info",
   "Claw.About.betaChannel": "Beta Upgrade Channel",
+  "Claw.About.devChannel": "Dev Upgrade Channel",
+  "Claw.About.devDisclaimer": "Receive only Dev previews. Turn off to return to Beta; lower versions will not be installed.",
+  "Claw.About.devWarning": "Dev previews may include changes that have not been fully tested and may be less stable. Changing channels does not downgrade the installed app.",
+  "Claw.About.switchedToDev": "Switched to Dev channel",
   "Claw.About.betaDisclaimer": "Enabling will switch to the beta channel, which may contain unverified changes.",
   "Claw.About.showDebugInfo": "Show Debug Info",
   "Claw.About.hideDebugInfo": "Hide Debug Info",
@@ -1535,5 +1540,15 @@
   "Claw.Dsh.plugins.publicConfiguration": "Advanced plugin configuration",
   "Claw.Dsh.plugins.patchHint": "Enter only the public fields to change as a JSON object. Omitted fields are preserved.",
   "Claw.Dsh.plugins.invalidJson": "Enter a valid JSON object.",
-  "Claw.Dsh.plugins.notInstalled": "Not installed"
+  "Claw.Dsh.plugins.notInstalled": "Not installed",
+  "Claw.Cua.service.label": "Service status",
+  "Claw.Cua.service.applied": "Settings applied",
+  "Claw.Cua.service.pending": "Settings saved, applying",
+  "Claw.Cua.service.disabled": "Disabled",
+  "Claw.Cua.service.starting": "Starting",
+  "Claw.Cua.service.ready": "Ready",
+  "Claw.Cua.service.reconfiguring": "Applying settings",
+  "Claw.Cua.service.recovering": "Restoring connection",
+  "Claw.Cua.service.waitingPermission": "Waiting for system permissions",
+  "Claw.Cua.service.degraded": "Temporarily unavailable"
 }

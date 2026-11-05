@@ -21,6 +21,28 @@ function fixture() {
   return { root, authority, release, engine, prepare };
 }
 describe("CUA host session capabilities", () => {
+  it("invalidates active and pending capabilities across host session changes", () => {
+    const f = fixture(), active = f.prepare("active");
+    const pending = f.engine.prepare([{ name: "cua" }]);
+    f.engine.start("active");
+    expect(f.authority.authorize(active.secret)).toBeTruthy();
+    f.authority.revokeAll();
+    pending.bind("late");
+    expect(f.authority.authorize(active.secret)).toBeNull();
+    expect(f.engine.start("active")).toBe(0);
+    expect(f.engine.start("late")).toBe(0);
+    expect(fs.readdirSync(f.root)).toEqual([]);
+    expect(f.release).not.toHaveBeenCalled();
+    f.engine.destroy();
+  });
+  it("cannot issue a new capability while the host is unauthenticated", () => {
+    const f = fixture();
+    f.authority.configure(f.root, () => ({ command: "node", args: [], env: {} }), f.release, undefined, () => false);
+    const servers = [{ name: "cua" }, { name: "other" }];
+    expect(f.authority.issue(servers)).toBeUndefined();
+    expect(servers).toEqual([{ name: "other" }]);
+    expect(f.authority.size).toBe(0);
+  });
   it("binds different same-engine sessions and identical IDs in different engines independently", () => {
     const f = fixture(), other = new CuaEngineSessions(f.authority);
     const a = f.prepare("a"), b = f.prepare("b"), c = f.prepare("a", other);

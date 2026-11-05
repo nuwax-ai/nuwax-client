@@ -50,7 +50,8 @@ function render(state: BrowserState) {
     try { themeApplicator.apply(state.themeSnapshot); } catch { /* keep chrome usable for recovery */ }
   }
   const wasFinding = current?.finding;
-  const findFocusRequested = current?.findFocusRequest !== state.findFocusRequest;
+  const findFocusRequested =
+    current?.findFocusRequest !== state.findFocusRequest;
   const wasAddressOpen = current?.addressOpen;
   current = state;
   document.title = state.title || "Nuwax";
@@ -77,6 +78,9 @@ function render(state: BrowserState) {
   element("loadingText").textContent = state.labels.loading;
   element("errorMessage").textContent = state.error;
   element("findbar").hidden = !state.finding;
+  // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
+  if (!state.finding && wasFinding)
+    element<HTMLInputElement>("query").value = "";
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
   for (const [id, key] of Object.entries({
@@ -155,6 +159,7 @@ window.addEventListener("unload", () => { disposed = true; unsubscribe(); themeA
 void bridge
   .getState()
   .then((state) => {
+    // A live notification takes precedence over the initial request, including theme state.
     if (state && !notified) render(state);
   })
   .catch(() => {});

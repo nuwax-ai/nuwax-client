@@ -314,7 +314,7 @@ describe("NW-050 ACP SDK NDJSON error boundary", () => {
     agentService.removeAllListeners();
   });
 
-  it.each(["HTTP 400", "JSON HTTP 400", "unrelated metadata", "max_tokens", "refusal", "end_turn", "cancelled"])(
+  it.each(["HTTP 400", "JSON HTTP 400", "API 403", "JSON API 503", "unrelated metadata", "max_tokens", "refusal", "end_turn", "cancelled"])(
     "preserves the terminal outcome for %s over the actual SDK transport",
     async (outcome) => {
       const sdk = await import("@agentclientprotocol/sdk");
@@ -330,6 +330,8 @@ describe("NW-050 ACP SDK NDJSON error boundary", () => {
       const remotePrompt = vi.fn(async () => {
         if (outcome === "HTTP 400") throw new Error("HTTP 400: context length exceeded");
         if (outcome === "JSON HTTP 400") throw new Error(JSON.stringify({ statusCode: 400, message: "context length exceeded" }));
+        if (outcome === "API 403") throw new Error("API error: 403 您的积分已用完，请先增购积分");
+        if (outcome === "JSON API 503") throw new Error(JSON.stringify({ status: 503, message: "Provider temporarily unavailable" }));
         if (outcome === "unrelated metadata") throw new Error(JSON.stringify({
           message: "transport unavailable", previousRequest: "HTTP 400",
         }));
@@ -346,7 +348,8 @@ describe("NW-050 ACP SDK NDJSON error boundary", () => {
       const terminal = vi.fn();
       engine.on("computer:promptEnd", terminal);
       (engine as any).acpConnection = client;
-      vi.spyOn(engine as any, "isMcpReconnectFailure").mockReturnValue(true);
+      vi.spyOn(engine as any, "isMcpReconnectFailure")
+        .mockReturnValue(!["API 403", "JSON API 503"].includes(outcome));
       const expectedSdkError = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         await engine.prompt(sessionId, [{ type: "text", text: "protocol fixture" }]);
@@ -356,6 +359,17 @@ describe("NW-050 ACP SDK NDJSON error boundary", () => {
         expect(terminal).toHaveBeenCalledTimes(1);
         expect(terminal).toHaveBeenCalledWith(expect.objectContaining({ reason }));
         expect(remotePrompt).toHaveBeenCalledTimes(outcome === "unrelated metadata" ? 2 : 1);
+        if (["API 403", "JSON API 503"].includes(outcome)) {
+          expect(receivedFrames[0].error).toMatchObject({
+            code: -32603,
+            message: "Internal error",
+          });
+          expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+            description: outcome === "API 403"
+              ? "API error: 403 您的积分已用完，请先增购积分"
+              : "Provider temporarily unavailable",
+          }));
+        }
         if (outcome.includes("HTTP 400")) {
           // Generic agent errors become JSON-RPC Internal error; the original
           // diagnostic is carried in data.details by the installed ACP SDK.

@@ -153,7 +153,10 @@ export function CuaSettingsRows({ api, t, Row }: { api?: ComputerUseAPI; t: T; R
   if (!api?.getRuntime || !runtime) return null;
   // Keep an explicit entry for fresh profiles, which retain the legacy mode until selected.
   const supportsMultiwindow = typeof navigator !== "undefined" && /mac|win/i.test(navigator.platform);
-  return <>{supportsMultiwindow && api.setMultiwindowEnabled && <Row label={t("Claw.Cua.multiwindow.enable")}
+  return <>{runtime.serviceState && <Row label={t("Claw.Cua.service.label")}
+    desc={t(runtime.desiredConfigRevision === runtime.appliedConfigRevision ? "Claw.Cua.service.applied" : "Claw.Cua.service.pending")}
+    control={<span role="status">{t("Claw.Cua.service." + runtime.serviceState)}</span>} />}
+    {supportsMultiwindow && api.setMultiwindowEnabled && <Row label={t("Claw.Cua.multiwindow.enable")}
     desc={t("Claw.Cua.multiwindow.description")}
     control={<Switch checked={runtime.multiwindow === true} loading={busy} disabled={!!runtime.controlPending}
       onChange={enabled => void run(() => api.setMultiwindowEnabled(enabled))} />} />}

@@ -34,11 +34,12 @@ test('stable and beta run native Windows installer space checks before building 
 test('public release routes are exclusive, validated before gates, and beta publication needs the matrix', () => {
   const stable = workflow('release-electron.yml'), beta = workflow('release-electron-dev.yml');
   assert.match(stable, /tags:\n\s+- "v\*"\n\s+- "!v\*-beta\.\*"/);
-  assert.match(beta, /tags:\n\s+- "v\*-beta\.\*"/);
+  assert.match(beta, /tags:\n\s+- "v\*-beta\.\*"\n\s+- "v\*-alpha\.\*"/);
+  assert.ok(stable.includes('!v*-alpha.*'));
   for (const [text, channel] of [[stable, 'stable'], [beta, 'beta']]) {
     assert.ok(text.indexOf('  validate-tag:') < text.indexOf('  verify-source:'));
     assert.match(text, /verify-source:\n(?:[^\n]*\n)*?\s+needs: validate-tag/);
-    assert.ok(text.includes(`node scripts/release-version.mjs "$RELEASE_TAG" ${channel}`));
+    assert.ok(text.includes(`node scripts/release-version.mjs "$RELEASE_TAG"${channel === 'stable' ? ' stable' : ''}`));
     for (const tag of channel === 'stable' ? ['v3.0.10', 'v3.0.11'] : ['v3.0.11-beta.1', 'v3.0.11-beta.10']) {
       const result = spawnSync(process.execPath, [new URL('./release-version.mjs', import.meta.url).pathname, tag, channel], { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);

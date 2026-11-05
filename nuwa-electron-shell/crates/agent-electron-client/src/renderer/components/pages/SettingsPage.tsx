@@ -173,7 +173,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       ?.get(UPDATE_CHANNEL_SETTING_KEY)
       .then((saved) => {
         // 旧版本未写过该键，按 stable 处理（与 AboutPage 一致）
-        if (active && saved === "beta") setDevToolsVisible(true);
+        if (active && (saved === "beta" || saved === "dev")) setDevToolsVisible(true);
       })
       .catch(() => undefined);
     return () => {

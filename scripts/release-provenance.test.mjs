@@ -91,7 +91,7 @@ function fixture({ tag = 'electron-v1.0.32', channel = 'stable' } = {}) {
   for (const name of Object.values(names).flat().filter((name) => !name.endsWith('-unsigned.exe'))) {
     writeFileSync(join(assets, name), 'signed fixture');
   }
-  if (channel === 'beta') writeFileSync(join(assets, `Nuwax-Setup-${version}-unsigned.exe`), unsigned);
+  if (channel !== 'stable') writeFileSync(join(assets, `Nuwax-Setup-${version}-unsigned.exe`), unsigned);
   else writeFileSync(join(assets, `Nuwax.Setup.${version}.exe`), signedPe(unsigned));
   for (const name of ['latest.yml', 'latest-mac.yml', 'latest-linux.yml',
     'latest-linux-arm64.yml', 'latest-linux-x64.yml']) {
@@ -359,5 +359,16 @@ test('record-qa rejects a frontend dist stamp outside the frozen source gitlink'
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /前端 dist stamp .* 与 gitlink .* 不符/);
     assert.throws(() => readFileSync(qa.manifest), { code: 'ENOENT' });
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('Dev provenance keeps alpha identity and verifies unsigned Windows installer', () => {
+  const f = fixture({ tag: 'v1.0.32-alpha.1', channel: 'dev' });
+  try {
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(readFileSync(join(f.assets, 'release-provenance.json'), 'utf8'));
+    assert.equal(value.tag, 'v1.0.32-alpha.1');
+    assert.match(value.assets['Nuwax-Setup-1.0.32-alpha.1-unsigned.exe'], /^[0-9a-f]{64}$/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

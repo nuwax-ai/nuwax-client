@@ -416,6 +416,13 @@ export const I18N_KEYS = {
     dialogReplace: "Claw.Themes.dialogReplace",
     dialogLinkTitle: "Claw.Themes.dialogLinkTitle",
   },
+  UpdateChannel: {
+    UPDATE_UNAVAILABLE: "Claw.AutoUpdater.channelUpdateUnavailable",
+    DEV_CHANNEL: "Claw.About.devChannel",
+    DEV_DISCLAIMER: "Claw.About.devDisclaimer",
+    DEV_WARNING: "Claw.About.devWarning",
+    SWITCHED_TO_DEV: "Claw.About.switchedToDev",
+  },
   Browser: {
     back: "Claw.Browser.back",
     forward: "Claw.Browser.forward",
@@ -857,6 +864,17 @@ export const I18N_KEYS = {
 
 /** Computer Use product controls and diagnostics. */
 export const CUA_I18N_KEYS = {
+  SERVICE_LABEL: "Claw.Cua.service.label",
+  SERVICE_APPLIED: "Claw.Cua.service.applied",
+  SERVICE_PENDING: "Claw.Cua.service.pending",
+  SERVICE_DISABLED: "Claw.Cua.service.disabled",
+  SERVICE_STARTING: "Claw.Cua.service.starting",
+  SERVICE_READY: "Claw.Cua.service.ready",
+  SERVICE_RECONFIGURING: "Claw.Cua.service.reconfiguring",
+  SERVICE_RECOVERING: "Claw.Cua.service.recovering",
+  SERVICE_WAITINGPERMISSION: "Claw.Cua.service.waitingPermission",
+  SERVICE_DEGRADED: "Claw.Cua.service.degraded",
+
   PREVIEW_RESIZE: "Claw.Cua.preview.resize",
   MW_MULTIWINDOW_TITLE: "Claw.Cua.multiwindow.title",
   MW_MULTIWINDOW_DESCRIPTION: "Claw.Cua.multiwindow.description",
