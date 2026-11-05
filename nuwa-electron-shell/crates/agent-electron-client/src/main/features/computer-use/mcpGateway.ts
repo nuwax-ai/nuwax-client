@@ -2,11 +2,15 @@ import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { CuaTaskController, CUA_FINAL_REASONS, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
-import { classifyReply, type CuaOutcome } from "./cuaOutcome";
+import { classifyReply, CUA_READS, type CuaOutcome } from "./cuaOutcome";
 import { CUA_AGENT_CURSOR_ENABLE, CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
 import type { CuaScope } from "@shared/features/computer-use/contract";
 import type { CuaTaskRegistry } from "./taskRegistry";
 import { CUA_TASK_GUIDANCE } from "./taskPolicy";
+import type { CuaTool } from "./toolCatalog";
+const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+const LATEST_PROTOCOL_VERSION = "2025-11-25";
+export { CUA_STDIO_RELAY } from "./stdioRelay";
 
 /** Errors `transformCall` may throw that are reported to the model as-is. */
 const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttachRequiresWindowScope", "blacklisted", "confirmationRequired", "sensitiveTarget"]);
@@ -14,30 +18,23 @@ const CALL_REJECTIONS = new Set(["scopeViolation", "targetClosed", "profileAttac
 // (120s) followed by human handoff must settle before that outer deadline.
 const HUMAN_WAIT_TIMEOUT_MS = 60_000;
 
-/** Runs with the bundled Node runtime; stdout remains exclusively MCP NDJSON. */
-export const CUA_STDIO_RELAY = `
-const fs=require('node:fs'),net=require('node:net');
-const s=net.connect(process.env.NUWAX_CUA_GATEWAY);
-s.on('connect',()=>{s.write(JSON.stringify({token:fs.readFileSync(process.env.NUWAX_CUA_GATEWAY_TOKEN,'utf8').trim(),grant:process.env.NUWAX_CUA_SESSION_FILE?fs.readFileSync(process.env.NUWAX_CUA_SESSION_FILE,'utf8').trim():undefined})+'\\n');process.stdin.pipe(s);s.pipe(process.stdout);});
-s.on('error',()=>process.exit(1));s.on('close',()=>process.exit(0));
-process.stdin.on('end',()=>s.end());
-`;
-
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string;
   params?: { name?: string; arguments?: unknown };
   result?: { isError?: boolean; structuredContent?: unknown; instructions?: unknown; content?: Array<{ type: string; text?: string }>;
     tools?: Array<{ name: string; description?: string; [key: string]: unknown }> };
   error?: unknown };
 type Pending = { method?: string; permit?: CuaPermit; call?: { tool: string; args: unknown }; timer: ReturnType<typeof setTimeout>;
-  release?: () => void; aborted?: boolean; held?: boolean; replied?: boolean };
+  release?: () => void; aborted?: boolean; held?: boolean; replied?: boolean; dispatched?: boolean; revision?: number;
+  complete?: (error?: Error) => void };
 type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
   grant?: unknown; owner?: string;
-  initialization?: Rpc; initialized: boolean;
+  initialization?: Rpc; initialized: boolean; generation: number;
+  warmingPromise?: Promise<void>;
   /** 本条 helper 租约是否已按偏好处理过 agent cursor（开或明确跳过）。 */
   cursorArmed?: boolean;
   tokenOnlyTools: Set<string>;
   warming?: { id: string; finish: (error?: Error) => void };
-  pending: Map<string, Pending>; reservations: Set<string>; lifetime: AbortController; close: () => void };
+  pending: Map<string, Pending>; reservations: Set<string>; processing: Set<string>; lifetime: AbortController; close: () => void };
 const keyOf = (id: unknown) => `${typeof id}:${String(id)}`;
 
 /** Host checks retain indexed evidence; modern native tools accept only its complete token. */
@@ -99,7 +96,18 @@ export class CuaMcpGateway {
     sanitizeResult?: (tool: string, result: NonNullable<Rpc["result"]>) => void;
     tasks?: CuaTaskRegistry;
     beforeCall?: (owner: string, call: { tool: string; args: unknown }) => Promise<{ tool: string; args: unknown }>;
+    /** Protocol discovery is available even when native execution is disabled. */
+    catalog?: () => Promise<CuaTool[]>;
+    unavailable?: () => string | null;
+    configurationRevision?: () => number;
+    onTransportFailure?: (owner: string | undefined, uncertain: boolean) => void;
   }) {}
+  configureExecution(controller: CuaTaskController | CuaTaskRegistry, tasks?: CuaTaskRegistry) {
+    const changed = this.options.controller !== controller || this.options.tasks !== tasks;
+    this.options.controller = controller; this.options.tasks = tasks;
+    if (changed) for (const connection of this.clients) if (connection.initialized)
+      connection.socket.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }) + "\n");
+  }
   private scope(owner?: string): CuaScope { return this.options.scope?.(owner) ?? { kind: "desktop" }; }
   private get humanWaitTimeoutMs() { return Math.min(this.options.humanWaitTimeoutMs ?? HUMAN_WAIT_TIMEOUT_MS, HUMAN_WAIT_TIMEOUT_MS); }
   private fail(reason: string, owner?: string) {
@@ -163,8 +171,8 @@ export class CuaMcpGateway {
   }
 
   private connect(socket: net.Socket): Connection {
-    const connection: Connection = { id: randomUUID(), socket, child: null, initialized: false,
-      pending: new Map(), reservations: new Set(), tokenOnlyTools: new Set(), lifetime: new AbortController(), close: () => {} };
+    const connection: Connection = { id: randomUUID(), socket, child: null, initialized: false, generation: 0,
+      pending: new Map(), reservations: new Set(), processing: new Set(), tokenOnlyTools: new Set(), lifetime: new AbortController(), close: () => {} };
     let closed = false;
     connection.close = () => {
       if (closed) return;
@@ -172,7 +180,7 @@ export class CuaMcpGateway {
       connection.lifetime.abort();
       const hadOperation = [...connection.pending.values()].some((p) => p.permit);
       const hadOwnership = this.options.controller.owns(connection.owner ?? connection.id);
-      for (const p of connection.pending.values()) clearTimeout(p.timer);
+      for (const p of connection.pending.values()) { clearTimeout(p.timer); p.complete?.(new Error("connectionClosed")); }
       connection.pending.clear();
       connection.warming?.finish(new Error("connectionClosed"));
       this.clients.delete(connection);
@@ -186,7 +194,7 @@ export class CuaMcpGateway {
     this.clients.add(connection);
     socket.once("close", connection.close);
     socket.on("drain", () => connection.child?.stdout.resume());
-    if (!this.holding) this.attachDriver(connection);
+    if (!this.holding && !this.options.catalog) this.attachDriver(connection);
     return connection;
   }
 
@@ -195,7 +203,7 @@ export class CuaMcpGateway {
     const child = this.options.launch();
     connection.child = child;
     connection.cursorArmed = false;
-    const failed = () => { if (connection.child === child) connection.close(); };
+    const failed = () => { if (connection.child === child) this.driverFailed(connection); };
     child.on("error", failed);
     child.on("exit", failed);
     child.stdin.on("error", failed);
@@ -227,6 +235,10 @@ export class CuaMcpGateway {
         if (pending) {
           clearTimeout(pending.timer);
           connection.pending.delete(keyOf(message.id));
+          if (pending.complete) {
+            pending.complete(message.error || message.result?.isError ? new Error("gatewayFailed") : undefined);
+            continue;
+          }
           pending.release?.();
           pending.release = undefined;
           if (pending.aborted) {
@@ -257,6 +269,14 @@ export class CuaMcpGateway {
             line = JSON.stringify(message);
           }
           if (pending.permit) {
+            const revoked = this.options.authorize && this.options.authorize(connection.grant) !== pending.permit.owner;
+            if (revoked || pending.revision !== this.options.configurationRevision?.()) {
+              const unknown = pending.dispatched && !CUA_READS.has(pending.permit.tool);
+              this.options.controller.finish(pending.permit, unknown ? "uncertain" : "refused");
+              this.reject(socket, message.id, revoked ? "sessionRequired" : unknown ? "outcomeUnknown" : "configChanged");
+              if (unknown) this.fail("uncertainResult", pending.permit.owner);
+              continue;
+            }
             if (pending.call && message.result) this.options.sanitizeResult?.(pending.call.tool, message.result);
             const outcome = classifyReply(pending.permit.tool, message);
             const structured = message.result?.structuredContent;
@@ -303,31 +323,89 @@ export class CuaMcpGateway {
     });
   }
 
+  private driverFailed(connection: Connection) {
+    const child = connection.child;
+    connection.child = null; connection.generation++;
+    connection.warming?.finish(new Error("gatewayFailed"));
+    let uncertain = false;
+    for (const [key, pending] of connection.pending) {
+      clearTimeout(pending.timer);
+      if (pending.complete) { pending.complete(new Error("gatewayFailed")); continue; }
+      if (pending.permit && !pending.aborted) {
+        const unknown = pending.dispatched === true && !CUA_READS.has(pending.permit.tool);
+        uncertain ||= unknown;
+        this.options.controller.finish(pending.permit, unknown ? "uncertain" : "refused");
+      }
+      pending.aborted = true; pending.held = false;
+      if (!pending.replied) {
+        pending.replied = true;
+        this.reject(connection.socket, key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7),
+          pending.dispatched ? "outcomeUnknown" : "serviceRecovering", pending.method);
+      }
+      // Native leases are released by ownerDrained after revoke/stop acknowledgement.
+      if (!pending.release) connection.pending.delete(key);
+    }
+    stopDriver(child); connection.socket.resume();
+    this.options.onTransportFailure?.(connection.owner, uncertain);
+  }
+
   /** Keep the agent-facing connection while shutting down every driver-facing transport. */
-  pauseTransports() {
+  pauseTransports(reason = "operationCancelled") {
     this.holding = true;
-    this.cancelPending("operationCancelled");
+    for (const connection of this.clients) for (const pending of connection.pending.values()) {
+      if (pending.permit && !pending.aborted) this.options.controller.finish(pending.permit, pending.dispatched ? "uncertain" : "refused");
+    }
+    this.cancelPending(reason);
     for (const connection of [...this.clients]) {
-      if (!connection.initialized) { connection.close(); continue; }
+      if (!connection.initialized && !this.options.catalog) { connection.close(); continue; }
       const child = connection.child;
       connection.child = null; // ignore old process events and replies before killing it
+      connection.generation++;
       stopDriver(child);
       connection.warming?.finish(new Error("operationCancelled"));
       connection.socket.resume();
     }
   }
 
-  private async warmDriver(connection: Connection) {
-    this.attachDriver(connection);
-    await new Promise<void>((resolve, reject) => {
+  private warmDriver(connection: Connection): Promise<void> {
+    if (connection.warmingPromise) return connection.warmingPromise;
+    const promise = new Promise<void>((resolve, reject) => {
       const id = `reconnect-${randomUUID()}`;
       const timer = setTimeout(() => connection.warming?.finish(new Error("gatewayFailed")), 8000);
       connection.warming = { id, finish: (error) => {
         clearTimeout(timer); connection.warming = undefined;
         if (error) reject(error); else resolve();
       } };
-      connection.child!.stdin.write(JSON.stringify({ ...connection.initialization, id }) + "\n");
+      try {
+        this.attachDriver(connection);
+        connection.child!.stdin.write(JSON.stringify({ ...connection.initialization, id }) + "\n");
+      } catch { connection.warming?.finish(new Error("gatewayFailed")); }
     });
+    connection.warmingPromise = promise;
+    void promise.finally(() => { if (connection.warmingPromise === promise) connection.warmingPromise = undefined; }).catch(() => undefined);
+    return promise;
+  }
+
+  /** Update existing leases as well as future ones. */
+  updateAgentCursor() {
+    if (this.options.unavailable?.()) return Promise.resolve();
+    return Promise.all([...this.clients].map(connection => {
+      connection.cursorArmed = false;
+      if (!connection.child || !connection.initialized || !connection.owner) return;
+      return new Promise<void>((resolve, reject) => {
+        const id = "host-cursor-" + randomUUID(), key = keyOf(id);
+        const timer = setTimeout(() => finish(new Error("gatewayFailed")), 2000);
+        timer.unref();
+        const finish = (error?: Error) => {
+          clearTimeout(timer); connection.pending.delete(key);
+          if (error) reject(error); else { connection.cursorArmed = true; resolve(); }
+        };
+        connection.pending.set(key, { method: "tools/call", timer, complete: finish });
+        connection.child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id,
+          method: "tools/call", params: { name: CUA_AGENT_CURSOR_ENABLE.name,
+            arguments: { enabled: this.options.agentCursor?.() === true } } }) + "\n");
+      });
+    })).then(() => undefined);
   }
 
   /** Host-issued overlay enablement; not a model step and not gated on observation. */
@@ -351,16 +429,18 @@ export class CuaMcpGateway {
       const child = connection.child; connection.child = null; connection.owner = this.options.tasks ? owner : undefined;
       connection.cursorArmed = false;
       stopDriver(child);
-      if (!this.holding) {
-        try { await this.warmDriver(connection); } catch { connection.close(); }
+      if (!this.holding && !this.options.catalog) {
+        try { await this.warmDriver(connection); } catch { this.options.onTransportFailure?.(owner, false); }
       }
     }));
   }
 
   async resumeTransports() {
-    if (!this.holding) return;
+    if (this.options.unavailable?.()) return;
     await Promise.all([...this.clients].map(async (connection) => {
-      if (!connection.initialization || !connection.initialized) { connection.close(); return; }
+      if (!connection.initialization || !connection.initialized) return;
+      if (this.options.catalog && this.options.authorize && !this.options.authorize(connection.grant)) return;
+      if (connection.child && !this.holding) return;
       await this.warmDriver(connection);
     }));
     this.holding = false;
@@ -388,7 +468,54 @@ export class CuaMcpGateway {
       else this.cancelPending("violationLimit");
     }
   }
+  private async hostProtocol(connection: Connection, message: Rpc): Promise<boolean> {
+    if (!this.options.catalog) return false;
+    const { id, method } = message;
+    if (method === "notifications/initialized") return true;
+    if (method === "ping") {
+      if (id !== undefined) connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result: {} }) + "\n");
+      return true;
+    }
+    if (!["initialize", "tools/list"].includes(method ?? "")) return false;
+    if (id === undefined) return true;
+    connection.reservations.add(keyOf(id));
+    try {
+      const tools = (await this.options.catalog()).filter(tool => this.options.allowedTools.includes(tool.name));
+      if (connection.lifetime.signal.aborted) return true;
+      for (const tool of tools) {
+        const props = tool.inputSchema.properties as Record<string, unknown> | undefined;
+        if (props?.element_token && !props.element_index) connection.tokenOnlyTools.add(tool.name);
+      }
+      let result: unknown;
+      if (method === "initialize") {
+        connection.initialization = structuredClone(message); connection.initialized = true;
+        const requested = (message.params as Record<string, unknown> | undefined)?.protocolVersion;
+        result = { protocolVersion: typeof requested === "string" && SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION,
+          capabilities: { tools: { listChanged: true } }, serverInfo: { name: "nuwax-computer-use", version: "1.0.0" },
+          instructions: cuaMergeInstructions(this.scope(connection.owner), "Configuration may change during this conversation. Obey the host's current execution policy and observe again after recovery.") };
+      } else {
+        result = { tools: tools.map(tool => ({ ...tool,
+          description: this.options.tasks ? CUA_TASK_GUIDANCE + "\n\n" + (tool.description ?? "")
+            : cuaToolDescription(this.scope(connection.owner), tool.name, tool.description) })) };
+      }
+      connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+    } catch { this.reject(connection.socket, id, "helperProtocolInvalid", method); }
+    finally { connection.reservations.delete(keyOf(id)); }
+    return true;
+  }
+
   private async forward(connection: Connection, message: Rpc, line: string) {
+    const key = keyOf(message.id);
+    if (message.id !== undefined && (connection.processing.has(key) || connection.pending.has(key))) {
+      connection.close(); return;
+    }
+    if (connection.processing.size + connection.pending.size >= 32) { connection.close(); return; }
+    if (message.id !== undefined) connection.processing.add(key);
+    try { await this.dispatch(connection, message, line); }
+    finally { connection.processing.delete(key); }
+  }
+
+  private async dispatch(connection: Connection, message: Rpc, line: string) {
     let permit: CuaPermit | undefined;
     let call: { tool: string; args: unknown } | undefined;
     const id = message.id;
@@ -399,6 +526,19 @@ export class CuaMcpGateway {
     if (id !== undefined && (id === null || !["string", "number"].includes(typeof id))) { connection.close(); return; }
     if (id !== undefined && (connection.pending.has(keyOf(id)) || connection.reservations.has(keyOf(id)))) { connection.close(); return; }
     if (connection.pending.size + connection.reservations.size >= 32) { connection.close(); return; }
+    if (await this.hostProtocol(connection, message)) return;
+    const revision = this.options.configurationRevision?.();
+    const unavailable = this.options.unavailable?.();
+    if (unavailable) { this.reject(connection.socket, id, unavailable, message.method); return; }
+    if (this.options.catalog && !this.holding && !connection.child) {
+      if (this.options.authorize && !this.options.authorize(connection.grant)) {
+        this.reject(connection.socket, id, "sessionRequired", message.method); return;
+      }
+      if (!connection.initialized) { this.reject(connection.socket, id, "notInitialized", message.method); return; }
+      try { await this.warmDriver(connection); }
+      catch { this.reject(connection.socket, id, "serviceRecovering", message.method); return; }
+    }
+    const generation = connection.generation;
     if (this.holding || !connection.child) {
       const owner = this.options.authorize ? this.options.authorize(connection.grant) : connection.id;
       const state = this.options.controller.snapshot();
@@ -493,6 +633,7 @@ export class CuaMcpGateway {
         this.reject(connection.socket, id, "sessionRequired"); return;
       }
       if (blocked) { this.refuse(connection, owner, id, blocked); return; }
+      if (connection.lifetime.signal.aborted) return;
       if (this.options.requireConfirmation?.(call.tool, call.args, owner)) {
         if (!this.options.controller.owns(owner)) {
           this.refuse(connection, owner, id, "observationRequired"); return;
@@ -511,7 +652,7 @@ export class CuaMcpGateway {
       line = JSON.stringify(message);
     }
     if (id !== undefined && message.method) {
-      const entry: Pending = { permit, call, timer: undefined as unknown as ReturnType<typeof setTimeout>, method: message.method };
+      const entry: Pending = { permit, call, revision, timer: undefined as unknown as ReturnType<typeof setTimeout>, method: message.method };
       const timer = setTimeout(() => {
         entry.aborted = true;
         if (!this.options.tasks) connection.pending.delete(keyOf(id));
@@ -582,6 +723,18 @@ export class CuaMcpGateway {
         this.refuse(connection, permit.owner, id, "scopeViolation"); return;
       }
     }
+    const entry = id !== undefined ? connection.pending.get(keyOf(id)) : undefined;
+    if (entry?.aborted || entry?.replied) return;
+    const changed = revision !== this.options.configurationRevision?.() || generation !== connection.generation;
+    const unavailableNow = this.options.unavailable?.();
+    if (changed || unavailableNow || !connection.child || connection.lifetime.signal.aborted) {
+      if (entry) {
+        clearTimeout(entry.timer); entry.release?.(); connection.pending.delete(keyOf(id));
+        if (permit) this.options.controller.finish(permit, "refused");
+      }
+      this.reject(connection.socket, id, unavailableNow ?? "configChanged", message.method); return;
+    }
+    if (entry) entry.dispatched = true;
     if (!connection.child.stdin.write(`${line}\n`)) connection.socket.pause();
   }
 
@@ -664,6 +817,16 @@ export class CuaMcpGateway {
     await this.releaseOwner(owner);
   }
 
+  /** A confirmed daemon stop drains all old native leases, including disconnected owners. */
+  nativeDrained() {
+    for (const connection of this.clients) for (const [key, pending] of connection.pending) {
+      if (pending.complete) { pending.complete(new Error("operationCancelled")); continue; }
+      if (!pending.aborted) continue;
+      pending.release?.(); pending.release = undefined;
+      if (!pending.held) connection.pending.delete(key);
+    }
+  }
+
   cancelPending(reason: string) {
     for (const c of this.clients) for (const [key, pending] of c.pending) {
       if (!pending.permit) continue;
@@ -681,9 +844,12 @@ export class CuaMcpGateway {
       }
       clearTimeout(pending.timer);
       pending.held = false;
-      c.pending.delete(key);
+      pending.aborted = true;
+      pending.replied = true;
+      if (!pending.release) c.pending.delete(key);
       const id = key.startsWith("number:") ? Number(key.slice(7)) : key.slice(7);
-      this.reject(c.socket, id, reason);
+      const outcomeUnknown = reason === "configChanged" && pending.dispatched && pending.permit && !CUA_READS.has(pending.permit.tool);
+      this.reject(c.socket, id, outcomeUnknown ? "outcomeUnknown" : reason);
     }
   }
   async close() {

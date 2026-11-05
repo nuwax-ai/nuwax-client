@@ -13,15 +13,19 @@ import { CuaElementIndex, resolveAndGuardCuaCall } from "./cuaTargeting";
 import { scopeCuaCall } from "./windowScope";
 
 const cleanups: Array<() => Promise<void> | void> = [];
+const catalog = async () => ["get_desktop_state", "get_window_state", "click"].map(name => ({
+  name, inputSchema: { type: "object" }, description: name,
+}));
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 const fakeDriver = `
-let cursorEnables=0;
+let cursorEnables=0,cursorEnabled=null;
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id===undefined)return;
- if(m.params?.name==='set_agent_cursor_enabled')cursorEnables++;
+ if(m.params?.name==='set_agent_cursor_enabled'){cursorEnables++;cursorEnabled=m.params.arguments.enabled;}
+ if(m.params?.name==='click')process.stderr.write('WRITE'+String.fromCharCode(10));
  const a=m.params?.arguments??{};
  if(a.hang)return;
- const structuredContent=a.wireReport?{wireArgs:a}:a.cursorReport?{cursorEnables}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
+ const structuredContent=a.wireReport?{wireArgs:a}:a.cursorReport?{cursorEnables,cursorEnabled}:a.refuse?{status:'refused',refusal:{code:'browser_binding_stale'}}:(a.snapshot||a.elements)?{snapshot_id:a.snapshot,elements:a.elements}:undefined;
  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:m.method==='tools/list'?[{name:'click',inputSchema:{type:'object',properties:{element_token:{type:'string'}}}},{name:'check_for_update'}]:undefined,isError:a.fail===true,structuredContent,content:[{type:'text',text:'ok'}]}})+'\\n');
 });`;
 
@@ -30,6 +34,7 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cg-"));
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\cg-${randomUUID()}` : path.join(root, "s");
+  const children: ReturnType<typeof spawn>[] = [];
   const controller = tasks ?? new CuaTaskController();
   controller.setAvailable(true);
   const failure = vi.fn();
@@ -45,7 +50,7 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
       return taskCuaCall(tasks.scopeFor(owner!), task.mode, tool, args);
     } } : {}),
     ...extra,
-    launch: () => spawn(process.execPath, ["-e", fakeDriver], { stdio: ["pipe", "pipe", "pipe"] }),
+    launch: () => { const child = spawn(process.execPath, ["-e", fakeDriver], { stdio: ["pipe", "pipe", "pipe"] }); children.push(child); return child; },
   });
   await gateway.listen(socketPath, "test-token");
   cleanups.push(() => gateway.close());
@@ -80,8 +85,102 @@ async function fixture(timeoutMs = 3000, authorize?: (grant: unknown) => string 
     if (token === "test-token" && initialize) await peer.request("initialize", {});
     return peer;
   }
-  return { gateway, controller, client, failure, results, dispatches };
+  return { gateway, controller, client, failure, results, dispatches, children };
 }
+
+describe("stable CUA protocol front", () => {
+  it("applies the cursor setting to the active native lease and waits for acknowledgement", async () => {
+    let enabled = true;
+    const f = await fixture(3000, undefined, undefined, undefined, { catalog, agentCursor: () => enabled });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    enabled = false; await f.gateway.updateAgentCursor();
+    expect((await peer.request("tools/call", { name: "get_desktop_state", arguments: { cursorReport: true } })).result.structuredContent.cursorEnabled).toBe(false);
+    enabled = true; await f.gateway.updateAgentCursor();
+    expect((await peer.request("tools/call", { name: "get_desktop_state", arguments: { cursorReport: true } })).result.structuredContent.cursorEnabled).toBe(true);
+    expect(peer.socket.destroyed).toBe(false);
+  });
+
+  it("reports an interrupted dispatched write as unknown when settings change", async () => {
+    const f = await fixture(3000, undefined, undefined, undefined, { catalog });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    const dispatched = vi.fn();
+    f.children[0].stderr!.on("data", dispatched);
+    const pending = peer.request("tools/call", { name: "click", arguments: { hang: true } });
+    await vi.waitFor(() => expect(dispatched).toHaveBeenCalledOnce());
+    f.controller.stop("modeChanged"); f.gateway.cancelPending("configChanged");
+    expect((await pending).result.structuredContent.code).toBe("outcomeUnknown");
+  });
+
+  it("initializes while disabled without a driver and enables again in the same connection", async () => {
+    let disabled = true, owner = "A";
+    const f = await fixture(3000, () => owner, undefined, undefined,
+      { catalog, unavailable: () => disabled ? "disabled" : null });
+    const peer = await f.client("test-token", true, "credential");
+    expect((await peer.request("tools/list")).result.tools.map((tool: any) => tool.name)).toContain("click");
+    expect(f.children).toHaveLength(0);
+    expect((await peer.request("tools/call", { name: "get_desktop_state" })).result.structuredContent.code).toBe("disabled");
+    disabled = false;
+    expect((await peer.request("tools/call", { name: "get_desktop_state" })).result.isError).toBe(false);
+    disabled = true; f.controller.stop("disabled"); f.gateway.pauseTransports("disabled");
+    expect((await peer.request("tools/call", { name: "click" })).result.structuredContent.code).toBe("disabled");
+    owner = "B"; disabled = false;
+    await f.gateway.resumeTransports();
+    expect((await peer.request("tools/call", { name: "get_desktop_state" })).result.isError).toBe(false);
+    expect(peer.socket.destroyed).toBe(false);
+    expect(f.children).toHaveLength(2);
+  });
+
+  it("reattaches a lost idle driver without closing the MCP client", async () => {
+    const failed = vi.fn();
+    const f = await fixture(3000, undefined, undefined, undefined, { catalog, onTransportFailure: failed });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    f.children[0].kill();
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce());
+    expect((await peer.request("tools/call", { name: "get_desktop_state" })).result.isError).toBe(false);
+    expect(f.children).toHaveLength(2);
+    expect(peer.socket.destroyed).toBe(false);
+  });
+
+  it("settles a lost dispatched write once as unknown and never replays it", async () => {
+    const failed = vi.fn();
+    const f = await fixture(3000, undefined, undefined, undefined, { catalog, onTransportFailure: failed });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    let writes = 0;
+    f.children[0].stderr!.on("data", data => { writes += String(data).split("WRITE").length - 1; });
+    const pending = peer.request("tools/call", { name: "click", arguments: { x: 1, y: 2, hang: true } });
+    await vi.waitFor(() => expect(writes).toBe(1));
+    f.children[0].kill();
+    const reply = await pending;
+    expect(reply.result.structuredContent.code).toBe("outcomeUnknown");
+    await f.gateway.resumeTransports();
+    expect(f.controller.snapshot()).toMatchObject({ phase: "paused", needsObservation: true });
+    expect((await peer.request("tools/call", { name: "click", arguments: { x: 1, y: 2 } })).result.structuredContent.code).toBe("uncertainResult");
+    expect(writes).toBe(1);
+    expect(peer.received.filter(item => item.id === reply.id)).toHaveLength(1);
+  });
+
+  it("rejects an obsolete policy after an asynchronous native guard without dispatch", async () => {
+    let revision = 1, release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const entered = vi.fn();
+    const f = await fixture(3000, undefined, undefined, undefined, { catalog, configurationRevision: () => revision,
+      rejectTarget: async tool => { if (tool === "click") { entered(); await blocked; } return null; } });
+    const peer = await f.client();
+    await peer.request("tools/call", { name: "get_desktop_state" });
+    let writes = 0;
+    f.children[0].stderr!.on("data", () => { writes++; });
+    const pending = peer.request("tools/call", { name: "click", arguments: { x: 1, y: 2 } });
+    await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce());
+    revision++; release();
+    expect((await pending).result.structuredContent.code).toBe("configChanged");
+    expect(writes).toBe(0);
+    expect(peer.socket.destroyed).toBe(false);
+  });
+});
 
 describe("multi-window MCP transport", () => {
   it("reads permissions before a window exists without creating or resuming a task", async () => {
@@ -188,6 +287,25 @@ describe("multi-window MCP transport", () => {
     await f.gateway.ownerDrained("A");
     expect((await other).result.isError).toBe(false);
     expect(f.dispatches).toHaveBeenCalledTimes(3);
+  });
+
+  it("releases a cancelled owner's lease after a confirmed global native stop", async () => {
+    const registry = new CuaTaskRegistry(); registry.setAvailable(true);
+    const a = registry.ensure("A"), b = registry.ensure("B");
+    registry.bind(a.id, { pid: 10, windowId: 100, label: "A" }); registry.resumeTask(a.id);
+    registry.bind(b.id, { pid: 10, windowId: 200, label: "B" }); registry.resumeTask(b.id);
+    const f = await fixture(3000, grant => typeof grant === "string" ? grant : null, undefined, registry, { catalog });
+    const ca = await f.client("test-token", true, "A"), cb = await f.client("test-token", true, "B");
+    await ca.request("tools/call", { name: "get_window_state" });
+    const pending = ca.request("tools/call", { name: "click", arguments: { element_index: 0, hang: true } });
+    await vi.waitFor(() => expect(f.dispatches).toHaveBeenCalledTimes(2));
+    registry.stopTask(a.id); f.gateway.pauseTransports("configChanged");
+    await pending;
+    f.gateway.nativeDrained();
+    await f.gateway.resumeTransports();
+    expect((await cb.request("tools/call", { name: "get_window_state" })).result.isError).toBe(false);
+    expect(f.dispatches).toHaveBeenCalledTimes(3);
+    expect(registry.stateForOwner("A")?.phase).toBe("stopped");
   });
 
   it("keeps host element metadata out of the native token-only protocol", async () => {

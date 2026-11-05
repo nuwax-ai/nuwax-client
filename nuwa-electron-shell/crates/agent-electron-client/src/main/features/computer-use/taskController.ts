@@ -93,6 +93,8 @@ export class CuaTaskController {
     this.state.needsObservation = true;
   }
 
+  invalidateObservations() { this.forgetObservations(); this.emit(); }
+
   begin(owner: string, tool: string, args: unknown): Decision {
     if (!this.enabled) return { error: "unavailable" };
     if (this.blockedOwners.has(owner)) return { error: "taskStopped" };
@@ -193,7 +195,7 @@ export class CuaTaskController {
       this.forgetObservations();
     } else if (outcome === "refused") {
       this.state.stats.refused++;
-    } else if (CUA_OBSERVATIONS.has(permit.tool)) {
+    } else if (outcome === "ok" && CUA_OBSERVATIONS.has(permit.tool)) {
       const targets = observedTargets(permit.tool, flight.args, structured) ?? [];
       const digest = observationDigest(structured);
       const allowance = this.options.writesPerObservation ?? CUA_WRITES_PER_OBSERVATION;
