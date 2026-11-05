@@ -45,10 +45,10 @@ export function DshPluginsSettings({ t, enabled }: { t(key: string): string; ena
         <Button disabled={busy} onClick={() => void perform(refresh)}>{text("refresh")}</Button>
       </Space.Compact>
       {bundles.map(bundle => <div key={bundle.name} style={{ padding: "12px 0", borderBottom: "1px solid var(--nuwax-border-default, #8883)" }}>
-        <Space wrap><strong>{bundle.name}</strong><span>{bundle.version}</span>{bundle.protected && <Tag>{text("core")}</Tag>}{!bundle.installed && <Tag>{text("notInstalled")}</Tag>}</Space>
+        <Space wrap><strong>{bundle.name}</strong><span>{bundle.version}</span>{bundle.protected && <Tag>{text("core")}</Tag>}{bundle.availability === "missing" && <Tag>{text("notInstalled")}</Tag>}</Space>
         <Space wrap style={{ float: "right" }}>
-          <Switch checked={bundle.enabled} disabled={busy || !bundle.installed || bundle.protected || !!bundle.readOnlyReason} aria-label={`${bundle.name} ${text("enabled")}`} onChange={value => void perform(() => change(value ? "enable" : "disable", bundle.name))} />
-          {!bundle.installed && !bundle.protected && <Button size="small" disabled={busy} onClick={() => confirm("install", bundle.name)}>{text("install")}</Button>}
+          <Switch checked={bundle.enabled} disabled={busy || bundle.availability === "missing" || bundle.protected || !!bundle.readOnlyReason} aria-label={`${bundle.name} ${text("enabled")}`} onChange={value => void perform(() => change(value ? "enable" : "disable", bundle.name))} />
+          {bundle.availability === "missing" && !bundle.protected && <Button size="small" disabled={busy} onClick={() => confirm("install", bundle.name)}>{text("install")}</Button>}
           {!bundle.protected && bundle.removable && <Button size="small" danger disabled={busy} onClick={() => confirm("remove", bundle.name)}>{text("remove")}</Button>}
         </Space>
       </div>)}
