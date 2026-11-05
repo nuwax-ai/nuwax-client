@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   execCalls: [] as Array<{ cmd: string; args: string[] }>,
   userDataURL: "",
   daemonReady: false,
+  daemonTokenFile: undefined as string | undefined,
   autoReady: false,
   permissionGranted: false,
   deferPermissionHost: false,
@@ -112,6 +113,8 @@ vi.mock("node:child_process", () => ({
     mocks.spawnCalls.push({ cmd, args, env: opts?.env });
     if (args.includes("serve") && mocks.autoReady) {
       mocks.daemonReady = true;
+      // 与真实 daemon 一样绑定启动时的令牌文件，不追随后续发现文件的变化。
+      mocks.daemonTokenFile = opts?.env?.CUA_DRIVER_NUWAX_TOKEN_FILE;
       mocks.policyPath = opts?.env?.CUA_DRIVER_MANAGED_POLICY_FILE ??
         args.find((arg) => arg.startsWith("CUA_DRIVER_MANAGED_POLICY_FILE="))?.split("=").slice(1).join("=") ?? "";
     }
@@ -154,7 +157,7 @@ vi.mock("node:net", async (importOriginal) => {
             let reply: unknown = { ok: false };
             if (request.method === "metadata") {
               if (request.args?.nuwax_nonce) {
-                const token = fs.readFileSync(endpointTokenFile(), "utf8");
+                const token = fs.readFileSync(mocks.daemonTokenFile ?? endpointTokenFile(), "utf8");
                 const proof = createHmac("sha256", token).update(request.args.nuwax_nonce).digest("hex");
                 reply = { ok: true, result: { nuwax_endpoint_proof: mocks.endpointProofValid ? proof : "0".repeat(64) } };
               } else {
@@ -332,6 +335,7 @@ beforeEach(async () => {
   mocks.execCalls.length = 0;
   mocks.userDataURL = fs.mkdtempSync(path.join(os.tmpdir(), "cua-test-"));
   mocks.daemonReady = false;
+  mocks.daemonTokenFile = undefined;
   mocks.autoReady = false;
   mocks.permissionGranted = false;
   mocks.deferPermissionHost = false;
@@ -803,14 +807,7 @@ describe("live blacklist enforcement", () => {
     makeHelperApp(path.join(process.resourcesPath as string, "computer-use"));
     mocks.permissionGranted = true; mocks.autoReady = true;
     const enabled = await setCuaEnabled(true);
-    expect(enabled.success, JSON.stringify({
-      error: enabled.error,
-      daemonReady: mocks.daemonReady,
-      autoReady: mocks.autoReady,
-      serveLaunches: mocks.spawnCalls.filter(call => call.args.includes("serve")).length,
-      stopCalls: mocks.execCalls.filter(call => call.args.includes("stop")).length,
-      metadataRequests: mocks.hostRequests.filter(call => call.method === "metadata").length,
-    })).toBe(true);
+    expect(enabled.success, enabled.error).toBe(true);
     await cuaModule.setCuaAuthMode("ask");
     const args = { pid: 25, window_id: 50, snapshot_id: "s00000001", element_index: 7 };
     mocks.gatewayOptions.onResult("get_window_state", args, "ok", {
