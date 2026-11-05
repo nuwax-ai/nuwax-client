@@ -553,7 +553,7 @@
   "Claw.About.distCheck.stateAhead": "Bundled newer: local {local} / cloud {cloud}",
   "Claw.About.distCheck.stateUnknown": "Unknown",
   "Claw.About.distCheck.stateDifferent": "Bundled pages differ from the online version",
-  "Claw.About.distCheck.notice": "Bundled pages differ from the online version. If a page cannot open, update the client or turn off local acceleration in Settings and try again.",
+  "Claw.About.distCheck.notice": "Bundled pages differ from the online version. If a page cannot open, update the client or check page loading options such as theme preview and local acceleration in Settings.",
   "Claw.About.distCheck.dismiss": "Dismiss notice",
   "Claw.About.distCheck.openSettings": "Open settings",
   "Claw.About.distCheck.checkedAt": "Checked {minutes} min ago",

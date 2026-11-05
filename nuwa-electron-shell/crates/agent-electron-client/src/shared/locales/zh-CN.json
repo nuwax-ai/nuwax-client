@@ -553,7 +553,7 @@
   "Claw.About.distCheck.stateAhead": "内置版本较新：本地 {local} / 云端 {cloud}",
   "Claw.About.distCheck.stateUnknown": "无法判定",
   "Claw.About.distCheck.stateDifferent": "内置页面与线上版本不同",
-  "Claw.About.distCheck.notice": "内置页面与线上版本不同。如遇页面无法打开，可更新客户端，或到设置关闭本地化加速后重试。",
+  "Claw.About.distCheck.notice": "内置页面与线上版本不同。如遇页面无法打开，可更新客户端，或到设置检查主题预览、本地化加速等页面加载选项。",
   "Claw.About.distCheck.dismiss": "关闭提示",
   "Claw.About.distCheck.openSettings": "打开设置",
   "Claw.About.distCheck.checkedAt": "检查于 {minutes} 分钟前",
