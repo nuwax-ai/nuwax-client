@@ -5,7 +5,7 @@ import { BotViews, isBotId } from './vendor/bot-views.mjs'
 import { dshLanguage } from './locale.mjs'
 
 /** The original plugin consumes this desktop protocol; no business bridge enters the page. */
-export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port, launchUrl, current, language = () => 'zh-CN' }) {
+export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port, launchUrl, current, language = () => 'zh-CN', openSettings }) {
   const { BrowserWindow, WebContentsView, session, ipcMain, shell } = electron
   const origin = new URL(launchUrl).origin
   let window
@@ -48,6 +48,7 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
   })
   channels.push('nuwax-dsh:document')
   handle('locale', () => ({ languages: [language()], preference: dshLanguage(language()) }))
+  handle('settings', () => { if (!openSettings) throw new Error('Nuwax settings unavailable'); openSettings() })
   handle('acquire', (event, key) => { identity(String(key).slice(4)); if (!String(key).startsWith('bot:')) throw new Error('Invalid browser key'); return guests.acquire(event.sender, key) })
   handle('release', (event, lease) => guests.release(event.sender, lease))
   handle('forget', async (event, key) => { const id = identity(String(key).slice(4)); await views.forget(id); await guests.forget(event.sender, key) })
@@ -71,11 +72,17 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
       if (!current()) throw new Error('Plugin runtime is no longer authorized')
       if (window && !window.isDestroyed()) { if (visible) { window.show(); window.focus() } return }
       window = new BrowserWindow({
-        width: 1280, height: 860, title: 'DS-Bot · Nuwax', show: visible,
+        width: 1280, height: 860, title: 'DS Bot · Nuwax', show: visible,
         webPreferences: { partition, preload: join(runtimeDir, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true,
           additionalArguments: ['--nuwax-dsh-origin=' + origin] },
       })
       views.attach(window)
+      window.webContents.on('page-title-updated', event => { event.preventDefault(); window.setTitle('DS Bot · Nuwax') })
+      window.webContents.on('before-input-event', (event, input) => {
+        if (current() && input.type === 'keyDown' && (input.control || input.meta) && input.key === ',' && openSettings) {
+          event.preventDefault(); openSettings()
+        }
+      })
       guests.bind(window)
       window.on('close', event => { if (!disposing && current()) { event.preventDefault(); window.hide() } })
       window.webContents.on('did-start-navigation', (_event, _url, _inPlace, main) => { if (main) documentToken = undefined })

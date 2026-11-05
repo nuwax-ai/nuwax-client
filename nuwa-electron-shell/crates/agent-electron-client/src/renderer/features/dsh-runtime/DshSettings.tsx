@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Button, Checkbox, Modal, Space, message } from "antd";
+import { Button, Checkbox, Modal, Space, Switch, message } from "antd";
+import { DshPluginsSettings } from "./DshPluginsSettings";
 import type { DshAction, DshModel, DshReply, DshStatus } from "@shared/features/dsh-runtime/contract";
 
 export function DshSettings({ Row, t }: {
@@ -30,12 +31,21 @@ export function DshSettings({ Row, t }: {
     try { await run(); } catch (error) { message.error(t("Claw.Dsh.failed") + ": " + (error instanceof Error ? error.message : "")); }
     finally { setBusy(false); }
   };
+  const enabled = status?.enabled ?? status?.phase === "ready";
+  const modelsDialog = async () => { const value = await call("catalog"); setModels(value.models ?? []); setSelected([]); };
   return <>
     <Row label={t("Claw.Dsh.title")} desc={<>{t("Claw.Dsh.description")}{status && <div>{t("Claw.Dsh.status." + status.phase)}{status.error ? ": " + status.error : ""}</div>}</>} control={
       <Space wrap>
-        <Button disabled={busy} onClick={() => void perform(async () => { const value = await call("catalog"); setModels(value.models ?? []); setSelected([]); })}>{t("Claw.Dsh.models")}</Button>
-        <Button disabled={busy} onClick={() => void perform(() => call("open"))}>{t("Claw.Dsh.open")}</Button>
-        <Button disabled={busy} onClick={() => void perform(() => call("stop"))}>{t("Claw.Dsh.stop")}</Button>
+        <Switch aria-label={t("Claw.Dsh.enabled")} checked={enabled} loading={busy} onChange={on => void perform(async () => {
+          if (!on) { await call("stop"); return; }
+          try { await call("open"); } catch (failure) {
+            if (!(failure instanceof Error) || !failure.message.includes("Authorize Nuwax models")) throw failure;
+            await modelsDialog();
+          }
+        })} />
+        <Button disabled={busy} onClick={() => void perform(modelsDialog)}>{t("Claw.Dsh.models")}</Button>
+        <Button disabled={busy || !enabled} onClick={() => void perform(() => call("open"))}>{t("Claw.Dsh.open")}</Button>
+        <DshPluginsSettings t={t} enabled={enabled && status?.phase === "ready"} />
       </Space>
     } />
     <Modal title={t("Claw.Dsh.models")} open={models !== null} onCancel={() => setModels(null)}

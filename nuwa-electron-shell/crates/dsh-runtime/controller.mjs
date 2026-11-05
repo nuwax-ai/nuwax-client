@@ -53,7 +53,7 @@ export class RuntimeController extends EventEmitter {
     })
   }
   scopeDir() { return join(this.#options.dataDir, scopeKey(this.#identity())) }
-  status() { return { phase: this.#phase, error: this.#error, available: true } }
+  status() { return { phase: this.#phase, error: this.#error, available: true, enabled: this.enabled() } }
   syncLanguage() {
     if (this.#child?.connected) this.#child.send({ type: 'language', language: this.#options.language?.() ?? 'zh-CN' }, () => {})
   }

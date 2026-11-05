@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE } from "@shared/features/dsh-runtime/contract";
+import { DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, DSH_PLUGINS_IPC } from "@shared/features/dsh-runtime/contract";
 import type { FeatureContext } from "../_kit/types";
 import { createTrustedIpc } from "../_kit/trustedIpc";
-import { registerDshLauncher } from "./launcher";
+import { registerDshLauncher, registerDshPluginSettings } from "./launcher";
 
 function fixture() {
   const handlers = new Map<string, (event: unknown) => unknown>();
@@ -52,4 +52,22 @@ describe("DS-Bot business launcher", () => {
     expect(await f.call(DSH_LAUNCHER_OPEN)).toEqual({ ok: false });
     expect(f.ports.open).not.toHaveBeenCalled();
   });
+});
+
+it("plugin settings remain host-only and require a running authenticated account", async () => {
+  let invoke: (event: unknown, ...args: unknown[]) => unknown = () => {};
+  const hostIpc = createTrustedIpc({ handle: (channel, handler) => { expect(channel).toBe(DSH_PLUGINS_IPC); invoke = handler; }, removeHandler() {} }, event => event === "host");
+  const controller = { current: vi.fn(() => true), plugins: vi.fn(async () => ({ bundles: [] })) };
+  const session = { isAuthenticated: vi.fn(() => true) };
+  registerDshPluginSettings({ hostIpc, session } as unknown as FeatureContext, () => controller);
+  expect(await invoke("business", "install", { target: "fixture" })).toEqual({ ok: false, error: "Untrusted window" });
+  session.isAuthenticated.mockReturnValue(false);
+  expect(await invoke("host", "install", { target: "fixture" })).toMatchObject({ ok: false });
+  session.isAuthenticated.mockReturnValue(true); controller.current.mockReturnValue(false);
+  expect(await invoke("host", "install", { target: "fixture" })).toMatchObject({ ok: false });
+  controller.current.mockReturnValue(true);
+  expect(await invoke("host", "authorize", {})).toMatchObject({ ok: false });
+  expect(controller.plugins).not.toHaveBeenCalled();
+  expect(await invoke("host", "list")).toEqual({ ok: true, value: { bundles: [] } });
+  expect(controller.plugins).toHaveBeenCalledWith("list", {}, expect.any(AbortSignal));
 });

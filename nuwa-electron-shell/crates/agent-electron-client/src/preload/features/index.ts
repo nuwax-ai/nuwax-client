@@ -6,7 +6,7 @@
  * - `hostFeatureNamespaces`：给宿主壳渲染进程（`window.electronAPI.*`）。
  */
 
-import { DSH_IPC, DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, type DshBridge } from "@shared/features/dsh-runtime/contract";
+import { DSH_IPC, DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, DSH_PLUGINS_IPC, type DshBridge } from "@shared/features/dsh-runtime/contract";
 import type { HostDshLauncherBridge } from "@shared/types/hostBridge";
 import { SHELL_CAPABILITIES_IPC, type ShellCapabilitiesBridge } from "@shared/features/shell-capabilities/contract";
 import type { IpcRenderer } from "electron";
@@ -59,7 +59,7 @@ export function hostFeatureNamespaces(
     },
     themes: createThemesBridge(ipc, true),
     browser: createBrowserBridge(ipc, true),
-    dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids) },
+    dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids), plugins: (operation, input) => ipc.invoke(DSH_PLUGINS_IPC, operation, input) },
     notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
     features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },

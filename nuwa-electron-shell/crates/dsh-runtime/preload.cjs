@@ -8,6 +8,7 @@ if (origin && location.origin === origin) {
     // The shell is the preference owner; DSH reports render changes through this native contract.
     onChange() {},
   })
+  contextBridge.exposeInMainWorld('nuwaxBotHost', { openSettings: () => invoke('settings') })
   const listeners = new Set()
   const opens = new Map()
   ipcRenderer.on('ds-bot:browser-view-changed', (_event, value) => { for (const listener of listeners) listener(value) })

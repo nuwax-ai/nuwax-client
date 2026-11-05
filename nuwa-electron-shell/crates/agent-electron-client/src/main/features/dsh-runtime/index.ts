@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import * as electron from "electron";
 import type { DesktopFeature, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
 import { DSH_IPC, type DshAction, type DshReply } from "@shared/features/dsh-runtime/contract";
-import { registerDshLauncher } from "./launcher";
+import { registerDshLauncher, registerDshPluginSettings } from "./launcher";
 
 interface RuntimeController {
   catalog(includeUnsupported?: boolean): Promise<Array<{ id: string; name: string; model: string }>>;
@@ -60,7 +60,7 @@ export function createDshRuntimeFeature(ports: {
     let disposed = false;
     const runtimeDir = electron.app.isPackaged
       ? path.join(process.resourcesPath, "dsh-runtime")
-      : path.resolve(electron.app.getAppPath(), "../dsh-runtime");
+      : path.join(electron.app.getAppPath(), "resources/dsh-runtime");
     const officeDir = electron.app.isPackaged
       ? path.join(process.resourcesPath, "dsh-office")
       : path.join(electron.app.getAppPath(), "resources/dsh-office");
@@ -108,7 +108,14 @@ export function createDshRuntimeFeature(ports: {
             if (!runtime.current()) throw new Error("Account changed");
             desktop = api.createDesktop({ electron, runtimeDir, scopeDir: runtime.scopeDir(),
               namespace: scopeKey(runtime.identity()), port, launchUrl: url, current: () => runtime.current(),
-              language: () => ctx.locale?.current() ?? "zh-CN" });
+              language: () => ctx.locale?.current() ?? "zh-CN",
+              openSettings: () => {
+                const main = ctx.windows.getMain();
+                if (!main || main.isDestroyed()) throw new Error("Nuwax settings unavailable");
+                if (main.isMinimized()) main.restore();
+                main.show(); main.focus();
+                main.webContents.send("nuwax:open-client-settings", {});
+              } });
             desktopPort = port;
           } catch (error) { await ctx.platform!.releasePort(port); throw error; }
         }
@@ -131,6 +138,7 @@ export function createDshRuntimeFeature(ports: {
       }
     }, { ok: false, error: "Untrusted window" });
     registerDshLauncher(ctx, { load, open });
+    registerDshPluginSettings(ctx, () => controller);
     const stop = async () => { controller?.invalidate(); destroyWindow(); await controller?.stop(); };
     const off = [
       ctx.locale?.subscribe(() => { controller?.syncLanguage(); }) ?? (() => {}),

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { botClientProfile } from '../../nuwa-electron-shell/crates/dsh-runtime/bot-client-profile.mjs';
 
 export const DSH_VERSIONS = Object.freeze({ dsh: '0.2.1-rc.5', bot: '0.2.7', botSource: '71d344bf193f3f18185f25de3d8e5c483046910a' });
 const targetNames = { 'win32-x64': 'win-x64', 'darwin-arm64': 'mac-arm64', 'darwin-x64': 'mac-x64', 'linux-x64': 'linux-x64', 'linux-arm64': 'linux-arm64' };
@@ -45,6 +46,8 @@ export async function prepareDshResources(root, options = {}) {
         filter: file => !['node_modules', 'test'].includes(path.basename(file)) });
       await run(process.platform === 'win32' ? 'npm.cmd' : 'npm',
         ['ci', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund', '--os=' + platform, '--cpu=' + arch], staging);
+      const botClient = path.join(staging, 'node_modules/ds-bot/client.js');
+      await writeFile(botClient, botClientProfile(await readFile(botClient, 'utf8')));
       await writeFile(path.join(staging, 'nuwax-runtime.json'), JSON.stringify({ key, platform, arch, ...DSH_VERSIONS }) + '\n');
       await rm(output, { recursive: true, force: true });
       await rename(staging, output);
