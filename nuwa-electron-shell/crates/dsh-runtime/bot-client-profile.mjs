@@ -28,5 +28,5 @@ export function botClientProfile(source) {
     .replaceAll('"Open Harness settings"', '"Open Nuwax settings"').replaceAll('"打开 Harness 设置"', '"打开 Nuwax 设置"')
     .replaceAll('"Models, providers, and the rest of DeepSeek Harness"', '"Model authorization and plugins in Nuwax"')
     .replaceAll('"模型、服务商和 DeepSeek Harness 的其他设置"', '"Nuwax 中的模型授权与插件设置"')
-  return marker + source
+  return marker + '// Modified by Nuwax from DS Bot 0.2.7 (Apache-2.0); see ds-bot/LICENSE.\n' + source
 }

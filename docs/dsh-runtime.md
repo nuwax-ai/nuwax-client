@@ -12,6 +12,8 @@ Office 使用上游锁定的 Node 24.21.0、Python 3.12.14、wheel 哈希和 Off
 
 开发准备在仓库根执行 `npm run prepare:dsh`；完整 setup / dev / pack 会准备此资源。`node scripts/check-dsh-resources.mjs` 检查当前平台的锁版、语音原生库和 Office 引擎。资源来源与修改记录在 `vendor/UPSTREAM.json`；完整第三方目录、许可证和 Office 的聚合许可证随资源保留。macOS 自定义签名入口用已解析的应用身份先签署嵌套原生库及解释器，再调用现有签名器完成应用封装；仅限制文件探测的并发量，保留原有签名、重试和严格校验。
 
+Dev 与安装包均消费准备后的 DSH 资源。构建时 `bot-client-profile.mjs` 对锁定的 DS Bot 0.2.7 Client 校验 SHA-256 和适配位置，生成仅展示 Bot 工作台、运行设置跳回 Nuwax 的产物；上游来源变化时拒绝生成，升级须重新审查适配点。生成文件标记修改来源，保留上游开源链接及许可证；运行时不改写已签名资源，不更改 Bot 会话、记忆或任务数据。
+
 定向验证：
 
 ```sh
