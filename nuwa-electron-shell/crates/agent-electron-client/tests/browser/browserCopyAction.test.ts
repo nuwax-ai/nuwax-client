@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BROWSER_IPC } from "@shared/features/browser/contract";
 import { publicWebUrl } from "@shared/utils/publicWebUrl";
-import type { FeatureContext } from "../_kit/types";
-import { createBrowserWindows } from "./windows";
+import type { FeatureContext } from "@main/features/_kit/types";
+import { createBrowserWindows } from "@main/features/browser/windows";
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
@@ -47,7 +47,7 @@ vi.mock("electron", async () => {
     }),
   };
 });
-vi.mock("./vendor/pageView", () => ({
+vi.mock("@main/features/browser/vendor/pageView", () => ({
   PageView: class {
     webContents: unknown;
     view = { setVisible: vi.fn() };

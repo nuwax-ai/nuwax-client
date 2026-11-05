@@ -31,7 +31,8 @@ const label = (id: string, value: string) => {
 };
 function render(state: BrowserState) {
   const wasFinding = current?.finding;
-  const findFocusRequested = current?.findFocusRequest !== state.findFocusRequest;
+  const findFocusRequested =
+    current?.findFocusRequest !== state.findFocusRequest;
   const wasAddressOpen = current?.addressOpen;
   current = state;
   document.title = state.title || "Nuwax";
@@ -57,6 +58,9 @@ function render(state: BrowserState) {
   element("loadingText").textContent = state.labels.loading;
   element("errorMessage").textContent = state.error;
   element("findbar").hidden = !state.finding;
+  // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
+  if (!state.finding && wasFinding)
+    element<HTMLInputElement>("query").value = "";
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
   for (const [id, key] of Object.entries({
@@ -135,6 +139,7 @@ window.addEventListener("unload", unsubscribe, { once: true });
 void bridge
   .getState()
   .then((state) => {
-    if (state) render(state);
+    // 推送可能先于初始请求返回；不能用旧快照覆盖已经显示的新状态。
+    if (state && !current) render(state);
   })
   .catch(() => {});
