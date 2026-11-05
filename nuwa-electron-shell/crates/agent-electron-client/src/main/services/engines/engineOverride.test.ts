@@ -21,6 +21,10 @@ import {
   DEV_FORCE_ENGINE_SETTING_KEY,
 } from "./engineOverride";
 
+it("allows Dev to retain Beta testing controls", () => {
+  expect(isEngineOverrideAllowed({ nodeEnv: "production", updateChannel: "dev" })).toBe(true);
+});
+
 describe("isEngineOverrideAllowed", () => {
   it("开发构建放行", () => {
     expect(

@@ -32,6 +32,7 @@ const mockAppQuit = vi.fn();
 const mockShowMessageBox = vi.fn();
 const mockInstallLinuxDeb = vi.fn();
 const mockPushGuestState = vi.fn();
+const mockShellOpenExternal = vi.fn();
 
 vi.mock("./hostActivity", () => ({ sendToMainWindowGuests: (...args: unknown[]) => mockPushGuestState(...args) }));
 
@@ -70,7 +71,7 @@ vi.mock("electron", () => ({
     quit: (...args: unknown[]) => mockAppQuit(...args),
   },
   BrowserWindow: class {},
-  shell: {},
+  shell: { openExternal: (...args: unknown[]) => mockShellOpenExternal(...args) },
   dialog: {
     showMessageBox: (...args: unknown[]) => mockShowMessageBox(...args),
   },
@@ -135,7 +136,8 @@ async function importFresh() {
 /** 重置并导入，同时注入 fake 的 electron-updater（require 路径需走加载缝） */
 async function importFreshWithUpdaterMock() {
   const mod = await importFresh();
-  mod._setAutoUpdaterModuleLoaderForTest(fakeElectronUpdaterModule);
+  const fake = fakeElectronUpdaterModule();
+  mod._setAutoUpdaterModuleLoaderForTest(() => fake);
   return mod;
 }
 
@@ -600,6 +602,97 @@ describe("autoUpdater - getInstallerType & canAutoUpdate", () => {
   });
 });
 
+describe("Dev subscription switching", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    mockDarwin(); mockUpdaterOn.mockClear(); mockUpdaterQuitAndInstall.mockClear();
+    mockAppVersion.mockReturnValue("3.0.10");
+    mockUpdaterCheckForUpdates.mockReset().mockResolvedValue(undefined);
+    mockUpdaterDownloadUpdate.mockReset();
+    const { readSetting } = await import("../db");
+    vi.mocked(readSetting).mockReturnValue("dev");
+  });
+  afterEach(async () => {
+    const { readSetting } = await import("../db");
+    vi.mocked(readSetting).mockReset();
+    mockAppVersion.mockReturnValue("0.9.4"); vi.useRealTimers();
+  });
+  const emit = (name: string, payload: unknown) => {
+    const handler = mockUpdaterOn.mock.calls.find(([event]) => event === name)![1] as (info: unknown) => void;
+    handler(payload);
+  };
+
+  it("requires Beta before Dev and clears a downloaded Dev when returning to Beta", async () => {
+    const { readSetting } = await import("../db");
+    const mod = await importFreshWithUpdaterMock(); mod.initAutoUpdater(() => null);
+    vi.mocked(readSetting).mockReturnValue("stable");
+    const persist = vi.fn();
+    expect(mod.changeUpdateChannel("dev", persist)).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    vi.mocked(readSetting).mockReturnValue("dev");
+    emit("update-downloaded", { version: "3.0.11-alpha.1" });
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(true);
+    expect(mod.changeUpdateChannel("beta", () => vi.mocked(readSetting).mockReturnValue("beta"))).toBe(true);
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+    expect(mod.getUpdateState()).toMatchObject({ status: "idle", version: undefined });
+    expect((await mod.installUpdate()).success).toBe(false);
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("rechecks Beta after a stale Dev response (old request failed: %s)", async (failure) => {
+    const { readSetting } = await import("../db");
+    const mod = await importFreshWithUpdaterMock();
+    let finish!: () => void;
+    const pendingFeed = new Promise<void>((resolve, reject) => { finish = () => failure ? reject(new Error("stale request failed")) : resolve(); });
+    mockUpdaterCheckForUpdates.mockImplementationOnce(() => pendingFeed);
+    respondLatestJson({ version: "3.0.11-alpha.1", yml: { darwin: "https://example.invalid/dev-build/v3.0.11-alpha.1/latest-mac.yml" } });
+    const pending = mod.checkForUpdates();
+    await vi.waitFor(() => expect(mockUpdaterCheckForUpdates).toHaveBeenCalledOnce());
+    expect(mod.changeUpdateChannel("beta", () => vi.mocked(readSetting).mockReturnValue("beta"))).toBe(true);
+    respondLatestJson({ version: "3.0.11-beta.9", yml: { darwin: "https://example.invalid/beta-build/v3.0.11-beta.9/latest-mac.yml" } });
+    finish();
+    expect(await pending).toMatchObject({ hasUpdate: true, version: "3.0.11-beta.9" });
+    expect(mod.getUpdateState()).toMatchObject({ status: "available", version: "3.0.11-beta.9" });
+  });
+
+  it("rejects a downloaded Beta while subscribed to Dev", async () => {
+    const mod = await importFreshWithUpdaterMock(); mod.initAutoUpdater(() => null);
+    emit("update-downloaded", { version: "3.0.11-beta.9" });
+    expect(mod.getUpdateState().status).toBe("error");
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+    expect((await mod.installUpdate()).success).toBe(false);
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("uses the Dev installer URL for manual Windows downloads", async () => {
+    mockWin32(); mockShellOpenExternal.mockClear();
+    const { getWindowsDownloadUrl } = await import("./updatePlatformUtils");
+    vi.mocked(getWindowsDownloadUrl).mockReturnValue("https://example.invalid/dev-build/v3.0.11-alpha.1/setup.exe");
+    respondLatestJson({ version: "3.0.11-alpha.1", platforms: {} });
+    const mod = await importFreshWithUpdaterMock();
+    await mod.openReleasesPage();
+    expect(mockShellOpenExternal).toHaveBeenCalledWith("https://example.invalid/dev-build/v3.0.11-alpha.1/setup.exe");
+    expect(mockNetRequest.mock.calls.at(-1)![0]).toContain("/dev/latest.json");
+  });
+
+  it("keeps the download target fixed until the download finishes", async () => {
+    const { readSetting } = await import("../db");
+    const mod = await importFreshWithUpdaterMock(); mod.initAutoUpdater(() => null);
+    respondLatestJson({ version: "3.0.11-alpha.1", yml: { darwin: "https://example.invalid/dev-build/v3.0.11-alpha.1/latest-mac.yml" } });
+    let finish!: () => void;
+    mockUpdaterDownloadUpdate.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const pending = mod.downloadUpdate();
+    await vi.waitFor(() => expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce());
+    const persist = vi.fn(() => vi.mocked(readSetting).mockReturnValue("beta"));
+    expect(mod.changeUpdateChannel("beta", persist)).toBe(false);
+    expect(persist).not.toHaveBeenCalled();
+    emit("update-downloaded", { version: "3.0.11-alpha.1" }); finish();
+    expect((await pending).success).toBe(true);
+    expect(mod.changeUpdateChannel("beta", persist)).toBe(true);
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+  });
+});
+
 describe("shouldDisableDifferentialDownload", () => {
   it("win32 未设 env 时应关闭差分下载", async () => {
     const { shouldDisableDifferentialDownload } = await importFresh();
@@ -880,6 +973,15 @@ describe("后台静默检查（checkForUpdates({background:true})）", () => {
   });
 
   it.each([
+    ["3.0.10", "3.0.11-alpha.1", "dev", true],
+    ["3.0.11-alpha.1", "3.0.11-alpha.2", "dev", true],
+    ["3.0.11-alpha.10", "3.0.11-alpha.2", "dev", false],
+    ["3.0.11-alpha.1", "3.0.11-beta.8", "dev", false],
+    ["3.0.11-alpha.1", "3.0.11", "dev", false],
+    ["3.0.11-beta.8", "3.0.11-alpha.2", "dev", false],
+    ["3.0.11-beta.8", "3.0.12-alpha.1", "dev", true],
+    ["3.0.10", "3.0.11-alpha.1", "beta", false],
+    ["3.0.10", "3.0.11-alpha.1", "stable", false],
     ["3.0.10", "3.0.11-beta.1", "beta", true],
     ["3.0.11-beta.1", "3.0.11-beta.2", "beta", true],
     ["3.0.11-beta.2", "3.0.11-beta.10", "beta", true],
@@ -903,7 +1005,8 @@ describe("后台静默检查（checkForUpdates({background:true})）", () => {
         expect(
           (await mod.checkForUpdates({ background: true })).hasUpdate,
         ).toBe(available);
-        expect(lastFakeUpdater.allowPrerelease).toBe(subscription === "beta");
+        expect(lastFakeUpdater.allowPrerelease).toBe(subscription !== "stable");
+        expect(mockNetRequest.mock.calls[0][0]).toContain(`/${subscription === "stable" ? "latest" : subscription}/latest.json`);
         expect(lastFakeUpdater.allowDowngrade).toBe(false);
         if (available)
           expect(mockUpdaterSetFeedURL).toHaveBeenCalledWith({
@@ -1101,6 +1204,7 @@ describe("installUpdate — 安装前清理 await 语义", () => {
       String(args[0]).includes("Uninstall NuwaClaw.exe"),
     );
     mockUpdaterQuitAndInstall.mockClear();
+    mockUpdaterOn.mockClear();
   });
 
   it("cleanup 未完成前不调 quitAndInstall，完成后才安装", async () => {
@@ -1121,6 +1225,8 @@ describe("installUpdate — 安装前清理 await 语义", () => {
         () => {},
       );
 
+      const downloaded = mockUpdaterOn.mock.calls.find(([event]) => event === "update-downloaded")![1] as (info: unknown) => void;
+      downloaded({ version: "0.9.5" });
       const pending = installUpdate();
       await Promise.resolve();
       // 清理挂起中：不得触发安装
@@ -1149,6 +1255,8 @@ describe("installUpdate — 安装前清理 await 语义", () => {
         () => {},
       );
 
+      const downloaded = mockUpdaterOn.mock.calls.find(([event]) => event === "update-downloaded")![1] as (info: unknown) => void;
+      downloaded({ version: "0.9.5" });
       const pending = installUpdate();
       await vi.advanceTimersByTimeAsync(9_999);
       expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();

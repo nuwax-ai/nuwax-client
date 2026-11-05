@@ -2,13 +2,23 @@
 import { pathToFileURL } from 'node:url';
 
 const core = '(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)';
-const versionPattern = new RegExp(`^${core}(?:-beta\\.([1-9]\\d*))?$`);
+const versionPattern = new RegExp(`^${core}(?:-(alpha|beta)\\.([1-9]\\d*))?$`);
 
 export function parseReleaseVersion(version) {
   const match = versionPattern.exec(version ?? '');
-  if (!match || match[0] !== version) throw new Error('版本须为 X.Y.Z 或 X.Y.Z-beta.N（N 从 1 开始，无前导零）');
+  if (!match || match[0] !== version) throw new Error('版本须为 X.Y.Z、X.Y.Z-beta.N 或 X.Y.Z-alpha.N（Dev；N 从 1 开始，无前导零）');
   return { version, baseVersion: match.slice(1, 4).join('.'), line: `${match[1]}.${match[2]}`,
-    beta: match[4] ?? null, channel: match[4] ? 'beta' : 'stable' };
+    beta: match[4] === 'beta' ? match[5] : null,
+    alpha: match[4] === 'alpha' ? match[5] : null,
+    channel: match[4] === 'alpha' ? 'dev' : match[4] === 'beta' ? 'beta' : 'stable' };
+}
+
+export function channelPointerFolder(identity) {
+  return identity.channel === 'stable' ? 'latest' : identity.channel;
+}
+
+export function releaseAssetPrefix(identity) {
+  return identity.channel === 'stable' ? identity.tag : `${identity.channel}-build/${identity.tag}`;
 }
 
 export function parseReleaseTag(tag, { allowLegacy = false } = {}) {
@@ -17,7 +27,7 @@ export function parseReleaseTag(tag, { allowLegacy = false } = {}) {
   const match = /^(electron|prerelease)-v(.+)$/.exec(tag);
   if (!allowLegacy || !match) throw new Error(`无效发布 tag: ${tag}`);
   const parsed = parseReleaseVersion(match[2]);
-  if (parsed.beta) throw new Error(`无效历史 tag: ${tag}`);
+  if (parsed.channel !== 'stable') throw new Error(`无效历史 tag: ${tag}`);
   return { ...parsed, tag, channel: match[1] === 'prerelease' ? 'beta' : 'stable', legacy: true };
 }
 
@@ -25,10 +35,11 @@ export function compareReleaseVersions(a, b) {
   const left = parseReleaseVersion(a), right = parseReleaseVersion(b);
   const lc = left.baseVersion.split('.').map(BigInt), rc = right.baseVersion.split('.').map(BigInt);
   for (let i = 0; i < 3; i++) if (lc[i] !== rc[i]) return lc[i] > rc[i] ? 1 : -1;
-  if (left.beta === right.beta) return 0;
-  if (left.beta === null) return 1;
-  if (right.beta === null) return -1;
-  return BigInt(left.beta) > BigInt(right.beta) ? 1 : -1;
+  const rank = { dev: 0, beta: 1, stable: 2 };
+  if (left.channel !== right.channel) return rank[left.channel] > rank[right.channel] ? 1 : -1;
+  const serial = (value) => value.alpha ?? value.beta;
+  if (serial(left) === serial(right)) return 0;
+  return BigInt(serial(left)) > BigInt(serial(right)) ? 1 : -1;
 }
 
 export function releaseTagHistory(refs) {
@@ -53,14 +64,14 @@ export function releaseSequenceFindings(identity, sha, refs) {
   if (collision) return [`版本 ${identity.version} 已被 ${collision.tag} 占用`];
   const completed = history.filter((tag) => tag.channel === 'stable' || tag.legacy);
   if (completed.some((tag) => compareReleaseVersions(identity.baseVersion, tag.baseVersion) <= 0))
-    return [`${identity.baseVersion} 已被正式版或历史版本占用；新版本必须大于已占用版本，同号 beta 已关闭`];
-  if (identity.channel === 'beta') {
-    const previous = history.filter((tag) => tag.channel === 'beta' && !tag.legacy && tag.baseVersion === identity.baseVersion);
+    return [`${identity.baseVersion} 已被正式版或历史版本占用；新版本必须大于已占用版本，同号预发布已关闭`];
+  if (identity.channel !== 'stable') {
+    const previous = history.filter((tag) => tag.channel === identity.channel && !tag.legacy && tag.baseVersion === identity.baseVersion);
     if (previous.some((tag) => compareReleaseVersions(identity.version, tag.version) <= 0))
-      return [`新 beta 版本 ${identity.version} 必须大于已占用的 beta 版本`];
-    const serials = previous.map((tag) => BigInt(tag.beta));
+      return [`新 ${identity.channel} 版本 ${identity.version} 必须大于已占用的同通道版本`];
+    const serials = previous.map((tag) => BigInt(tag.alpha ?? tag.beta));
     const next = serials.reduce((max, value) => value > max ? value : max, 0n) + 1n;
-    if (BigInt(identity.beta) !== next) return [`${identity.baseVersion} 下一 beta 序号须为 ${next}`];
+    if (BigInt(identity.alpha ?? identity.beta) !== next) return [`${identity.baseVersion} 下一 ${identity.channel} 序号须为 ${next}`];
   }
   return [];
 }

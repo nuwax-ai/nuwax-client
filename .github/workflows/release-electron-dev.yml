@@ -1,4 +1,4 @@
-# Nuwax Beta 发布：源码、壳和构建脚本全部来自本仓固定 tag。
+# Nuwax Beta / Dev 发布：源码、壳和构建脚本全部来自本仓固定 tag。
 # 前端从 nuwax/ 固定源码 pin 构建一次共享产物，供五平台使用。
 # 入口：npm run release -- --version X.Y.Z-beta.N（先 --dry-run）。
 # 五平台成功后核验来源与哈希、同步 S3/OSS、推进 Beta 指针并公开 prerelease。
@@ -13,6 +13,7 @@ on:
   push:
     tags:
       - "v*-beta.*"
+      - "v*-alpha.*"
 
 permissions:
   actions: read
@@ -51,7 +52,7 @@ jobs:
       - id: identity
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/release-version.mjs "$RELEASE_TAG" beta >> "$GITHUB_OUTPUT"
+        run: node scripts/release-version.mjs "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   verify-source:
     if: always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped')
@@ -119,6 +120,7 @@ jobs:
       windows_archive: ${{ steps.version.outputs.windows_archive }}
       qa_build: ${{ steps.version.outputs.qa_build }}
       native_version: ${{ steps.version.outputs.native_version }}
+      channel: ${{ needs.validate-tag.outputs.channel }}
       frontend_artifact: ${{ needs.build-frontend.outputs.artifact_name }}
       frontend_manifest_sha256: ${{ needs.build-frontend.outputs.manifest_sha256 }}
     steps:
@@ -141,9 +143,9 @@ jobs:
           WINDOWS_ARCHIVE=""
           QA_BUILD=false
           case "$BUILD_EVENT:$BUILD_REF" in
-            push:refs/tags/v*-beta.*)
+            push:refs/tags/v*-beta.*|push:refs/tags/v*-alpha.*)
               TAG="${BUILD_REF#refs/tags/}"
-              node scripts/release-version.mjs "$TAG" beta > /tmp/build-release-identity
+              node scripts/release-version.mjs "$TAG" > /tmp/build-release-identity
               VERSION="$(sed -n 's/^version=//p' /tmp/build-release-identity)"
               ;;
             push:refs/heads/codex/beta-qa/*)
@@ -184,7 +186,7 @@ jobs:
             TAG="qa-v${VERSION}"
             NATIVE_VERSION="${VERSION%%-qa.*}"
           else
-            NATIVE_VERSION="${VERSION%%-beta.*}"
+            NATIVE_VERSION="${VERSION%%-*}"
           fi
           SOURCE_SHA="$(git rev-parse HEAD)"
           [ "$SOURCE_SHA" = "$BUILD_SHA" ] || { echo "::error::Checkout differs from frozen workflow SHA"; exit 1; }
@@ -206,7 +208,7 @@ jobs:
           if [ -f "$NOTES_FILE" ]; then
             echo "Using release notes from $NOTES_FILE"
             cp "$NOTES_FILE" release_notes.txt
-          elif [ "$BUILD_EVENT" != push ] || [[ "$BUILD_REF" != refs/tags/v*-beta.* ]]; then
+          elif [ "$BUILD_EVENT" != push ] || [[ "$BUILD_REF" != refs/tags/v*-beta.* && "$BUILD_REF" != refs/tags/v*-alpha.* ]]; then
             echo "::error::QA builds require committed release notes: $NOTES_FILE"
             exit 1
           else
@@ -311,7 +313,7 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           npm pkg set version="$VERSION"
           # package.version 保留完整 Beta/QA 标识；原生版本字段使用数字基线，便于 Mac 公证及 Windows 安装器。
-          if [ "$QA_BUILD" = true ] || [[ "$VERSION" == *-beta.* ]]; then
+          if [ "$QA_BUILD" = true ] || [[ "$VERSION" == *-beta.* || "$VERSION" == *-alpha.* ]]; then
             npm pkg set build.buildVersion="$NATIVE_VERSION"
             npm pkg set build.mac.bundleShortVersion="$NATIVE_VERSION"
             # dmg-builder 默认用 bundleShortVersion 命名 DMG；Beta/QA 包文件必须保留完整应用版本。
@@ -624,8 +626,8 @@ jobs:
           # identifier=nuwax → 数据目录 ~/.nuwax（迁移链已被 overlay 阻断，全新开始）
           NUWAX_APP_IDENTIFIER: nuwax
           NUWAX_APP_DISPLAY_NAME: "女娲Nuwax"
-          # 新安装且未显式设置更新通道时默认 beta；业务服务域与更新通道独立。
-          NUWAX_RELEASE_CHANNEL: beta
+          # Beta 首装默认 Beta；Dev 首装须用户显式选择订阅，业务服务域与通道独立。
+          NUWAX_RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
           # 独立更新通道（客户端 autoUpdater 的 OSS_BASE）
           NUWAX_UPDATE_FEED_BASE: "https://nuwa-packages.oss-rg-china-mainland.aliyuncs.com/nuwax-electron"
           NUWAX_DOWNLOAD_PAGE_URL: "https://nuwax.com"
@@ -872,11 +874,11 @@ jobs:
           retention-days: 3
 
   publish-beta:
-    name: Publish beta after five platform builds
+    name: Publish prerelease after five platform builds
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: build-electron
     uses: ./.github/workflows/sync-electron-to-oss.yml
     with:
       tag: ${{ github.ref_name }}
-      channel: beta
+      channel: ${{ contains(github.ref_name, '-alpha.') && 'dev' || 'beta' }}
     secrets: inherit
