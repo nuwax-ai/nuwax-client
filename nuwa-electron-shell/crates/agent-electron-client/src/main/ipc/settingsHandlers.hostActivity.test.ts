@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   refreshBrowser: vi.fn(),
   shortcutAvailable: vi.fn(),
   development: false,
+  themePreview: vi.fn(),
+  setThemePreview: vi.fn(),
 }));
 vi.mock('@shared/constants', async (original) => ({
   ...await original<typeof import('@shared/constants')>(),
@@ -30,6 +32,7 @@ vi.mock("../services/hostActivity", () => ({
   DORMANCY_SETTING_KEY: "nuwax.dormancy",
   refreshHostActivity: mocks.refresh,
 }));
+vi.mock("../services/loopbackGateway", () => ({ getThemePreviewState: mocks.themePreview, setThemePreviewEnabled: mocks.setThemePreview }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
 vi.mock("../features", () => ({ refreshDesktopBrowserWindows: mocks.refreshBrowser, notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
@@ -45,11 +48,23 @@ beforeEach(() => {
   mocks.warn.mockClear();
   mocks.notifyCapture.mockReset();
   mocks.refreshBrowser.mockReset();
+  mocks.themePreview.mockReset().mockReturnValue({ available: true, enabled: false });
+  mocks.setThemePreview.mockReset().mockResolvedValue(true);
   mocks.shortcutAvailable.mockReset().mockImplementation((_shortcut, _action, persist) => { persist(); return true; });
   registerSettingsHandlers();
 });
 
 describe("settings:set host activity refresh", () => {
+  it('delegates preview changes to the gateway owner without writing acceleration settings', async () => {
+    const set = mocks.handlers.get('settings:set')!;
+    expect(set({}, 'nuwax.themePreview.state', true)).toBe(false);
+    expect(set({}, 'nuwax.themePreview.enabled', 'true')).toBe(false);
+    expect(mocks.setThemePreview).not.toHaveBeenCalled();
+    await expect(set({}, 'nuwax.themePreview.enabled', true)).resolves.toBe(true);
+    expect(mocks.setThemePreview).toHaveBeenCalledWith(true);
+    await expect(mocks.handlers.get('settings:get')!({}, 'nuwax.themePreview.state')).resolves.toEqual({ available: true, enabled: false });
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
   it('development saves its own shortcut preference without reserving a system hotkey', () => {
     mocks.development = true;
     expect(mocks.handlers.get('settings:set')!({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(true);

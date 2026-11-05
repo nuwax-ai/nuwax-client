@@ -1,4 +1,5 @@
 export { useDesktopThemes } from "./state";
+export { ThemePreviewSettings } from "./ThemePreviewSettings";
 export { ThemeManager } from "./ThemeManager";
 export { packageTheme } from "./appearance";
 export { createShellThemeApplicator } from "./shell";

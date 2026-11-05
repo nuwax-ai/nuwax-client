@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { dialog, nativeTheme, shell } from "electron";
+import { dialog, nativeImage, nativeTheme, shell } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import type { DesktopFeature, FeatureContext } from "../_kit/types";
 import { themeChannel, THEMES_CHANGED } from "@shared/features/themes/contract";
@@ -51,6 +51,16 @@ export class ThemesRuntime {
       safeMode: process.argv.includes("--safe-theme"),
       watch: watchThemeDirectory,
       systemDark: () => nativeTheme?.shouldUseDarkColors === true,
+      thumbnail: asset => {
+        if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(asset.mime)) return;
+        const image = nativeImage.createFromBuffer(Buffer.from(asset.base64, "base64"));
+        if (image.isEmpty()) return;
+        const { width, height } = image.getSize();
+        if (width <= 0 || height <= 0 || width * height > 16_000_000) return;
+        const scale = Math.min(320 / width, 180 / height, 1);
+        const data = image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: "good" }).toDataURL();
+        return data.length <= 256 * 1024 ? data : undefined;
+      },
       applyPreference: (mode) => {
         if (!ctx.settings.write("theme_mode", mode))
           ctx.log.warn("[Themes] legacy theme preference was not saved");
@@ -148,7 +158,7 @@ export class ThemesRuntime {
       "getState",
       (event) => {
         this.remember(event);
-        return this.service.state();
+        return this.service.state({ previews: host });
       },
       null
     );

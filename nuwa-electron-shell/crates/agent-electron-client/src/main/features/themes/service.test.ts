@@ -54,6 +54,31 @@ async function setup(directory?: string, overrides: Partial<ThemeDeps> = {}) {
   return { service, deps, callbacks, closed };
 }
 describe("theme package service", () => {
+  it("provides actual card palettes and a cached background thumbnail without selecting a theme", async () => {
+    const thumbnail = vi.fn(() => "data:image/png;base64,thumbnail");
+    const { service } = await setup(undefined, { thumbnail });
+    const selectedBefore = service.state().selection;
+    const custom = files("card-preview", "Card preview");
+    const manifest = JSON.parse(Buffer.from(custom["theme.json"], "base64").toString());
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRlEAAAAASUVORK5CYII=";
+    custom["assets/preview.png"] = png;
+    custom["styles/preview.css"] = Buffer.from('[data-theme-part="app"]{background-image:url("../assets/preview.png")}').toString("base64");
+    manifest.variants.light.styles = { shell: ["styles/preview.css"] };
+    custom[manifest.variants.light.tokens] = Buffer.from(JSON.stringify({ primary: "#23755a" })).toString("base64");
+    custom["theme.json"] = Buffer.from(JSON.stringify(manifest)).toString("base64");
+    await service.install(custom);
+    expect(service.state().themes.find(item => item.id === "card-preview")?.preview).toBeUndefined();
+    expect(thumbnail).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i++) {
+      const state = service.state({ previews: true });
+      expect(state.selection).toEqual(selectedBefore);
+      expect(state.themes.find(item => item.id === "card-preview")?.preview).toMatchObject({
+        mode: "light", tokens: { primary: "#23755a" }, image: "data:image/png;base64,thumbnail",
+      });
+    }
+    expect(thumbnail).toHaveBeenCalledOnce();
+    expect(thumbnail).toHaveBeenCalledWith({ mime: "image/png", base64: png });
+  });
   it("copies a builtin, atomically edits both modes, and restores durable files and selection after restart", async () => {
     const { service } = await setup();
     const source = await service.readForEdit("nuwax-default");

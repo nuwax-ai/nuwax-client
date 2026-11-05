@@ -2,7 +2,7 @@ import React from "react";
 import { Select } from "antd";
 import { FEATURES } from "@shared/featureFlags";
 import { useTheme, type ThemeMode } from "../../App";
-import { useDesktopThemes, ThemeManager } from "../../features/themes";
+import { useDesktopThemes, ThemeManager, ThemePreviewSettings } from "../../features/themes";
 import { t } from "../../services/core/i18n";
 import { SettingsRow } from "../settings/SettingsRow";
 import styles from "../../styles/components/SettingsPage.module.css";
@@ -12,7 +12,8 @@ export default function ThemesPage() {
   const { themeMode, setThemeMode } = useTheme();
 
   return <div className={styles.page}>
-    {desktopThemes ? <ThemeManager state={desktopThemes} t={t} className={`${styles.groupCard} ${styles.cardContent}`} />
+    <ThemePreviewSettings t={t} Row={SettingsRow} className={`${styles.group} ${styles.groupCard}`} />
+    {desktopThemes ? <ThemeManager state={desktopThemes} t={t} Row={SettingsRow} className={`${styles.groupCard} ${styles.cardContent}`} />
       : FEATURES.DARK_THEME && <div className={styles.groupCard}><SettingsRow
         label={t("Claw.Settings.system.theme")}
         desc={t("Claw.Settings.system.themeDesc")}

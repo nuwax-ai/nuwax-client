@@ -43,6 +43,7 @@ export type ThemeDeps = {
   systemDark: () => boolean;
   applyPreference: (mode: HostThemePreference) => void;
   changed: (revision: number) => void;
+  thumbnail?: (asset: HostThemeSnapshot["assets"][string]) => string | undefined;
 };
 export const themeAuthoringContext = () => ({ tokenNames, defaultTokens, surfaces });
 export const watchThemeDirectory: ThemeDeps["watch"] = (directory, change) => {
@@ -98,6 +99,7 @@ export class ThemeService {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private disposed = false;
   private systemDark = false;
+  private previewImages = new Map<string, string | undefined>();
   readonly ready: Promise<void>;
   constructor(readonly directory: string, private deps: ThemeDeps) {
     this.systemDark = deps.systemDark();
@@ -207,19 +209,36 @@ export class ThemeService {
   private managed(id: string) {
     return path.join(this.directory, "installed", id);
   }
-  state(): HostThemesState {
+  state(options: { previews?: boolean } = {}): HostThemesState {
     const r = this.registry;
     const info = (
       pkg: Package,
       source: HostThemeInfo["source"]
-    ): HostThemeInfo => ({
-      id: pkg.manifest.id,
-      name: pkg.manifest.name,
-      version: pkg.manifest.version,
-      description: pkg.manifest.description,
-      modes: Object.keys(pkg.manifest.variants) as HostThemeInfo["modes"],
-      source,
-    });
+    ): HostThemeInfo => {
+      const info: HostThemeInfo = {
+        id: pkg.manifest.id,
+        name: pkg.manifest.name,
+        version: pkg.manifest.version,
+        description: pkg.manifest.description,
+        modes: Object.keys(pkg.manifest.variants) as HostThemeInfo["modes"],
+        source,
+      };
+      if (!options.previews) return info;
+      const preview = resolveThemePackage(pkg, r.selection.mode, this.systemDark, r.revision) as HostThemeSnapshot;
+      const background = /background-image\s*:[^;}]*?url\(["']?theme-asset:([^\s"'()]+)/i.exec(preview.css.shell);
+      const imagePath = pkg.manifest.preview ?? (background ? decodeURIComponent(background[1]) : undefined);
+      const asset = imagePath && Object.hasOwn(preview.assets, imagePath) ? preview.assets[imagePath] : undefined;
+      let image: string | undefined;
+      if (asset && this.deps.thumbnail) {
+        if (!this.previewImages.has(asset.base64)) {
+          try { image = this.deps.thumbnail(asset); } catch { /* Invalid image still has a palette preview. */ }
+          if (this.previewImages.size >= 24) this.previewImages.delete(this.previewImages.keys().next().value!);
+          this.previewImages.set(asset.base64, image);
+        }
+        image = this.previewImages.get(asset.base64);
+      }
+      return { ...info, preview: { mode: preview.mode, tokens: preview.tokens, ...(image ? { image } : {}) } };
+    };
     return structuredClone({
       revision: r.revision,
       selection: r.selection,

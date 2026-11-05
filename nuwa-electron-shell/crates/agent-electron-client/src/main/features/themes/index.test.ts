@@ -67,6 +67,10 @@ describe("trusted themes IPC", () => {
       revision: 1,
     });
     expect(await handlers.get("host:themes:getState")!(event)).toBeNull();
+    expect((await handlers.get("themes:getState")!(event, { previews: true })).themes[0].preview).toBeUndefined();
+    event.host = true;
+    expect((await handlers.get("host:themes:getState")!(event)).themes[0].preview).toMatchObject({ mode: "light", tokens: { primary: expect.any(String) } });
+    event.host = false;
     event.business = false;
     expect(await handlers.get("themes:getState")!(event)).toBeNull();
     await runtime.service.select("deepseek-inspired", "dark");
