@@ -35,7 +35,7 @@ import { saveResponse } from "../services/system/saveResponse";
 import log from "electron-log";
 import type { HandlerContext } from "@shared/types/ipc";
 import { readSetting, writeSetting, getDb } from "../db";
-import { getMainLang, setMainLang, t } from "../services/i18n";
+import { getMainLang, setMainLang, onMainLangChanged, t } from "../services/i18n";
 import { getTrayManager } from "../window/trayManager";
 import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLanguage";
 import { stopAllServicesNow, restartAllServicesNow } from "./processHandlers";
@@ -338,6 +338,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     log,
     translate: t,
+    locale: { current: getMainLang, subscribe: onMainLangChanged },
     host: {
       settings: { read: readSetting, write: writeSetting },
       session: { isAuthenticated: () => !!currentTicket() },

@@ -2,9 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { BotBrowserGuests } from './vendor/bot-browser.mjs'
 import { BotViews, isBotId } from './vendor/bot-views.mjs'
+import { dshLanguage } from './locale.mjs'
 
 /** The original plugin consumes this desktop protocol; no business bridge enters the page. */
-export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port, launchUrl, current }) {
+export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port, launchUrl, current, language = () => 'zh-CN' }) {
   const { BrowserWindow, WebContentsView, session, ipcMain, shell } = electron
   const origin = new URL(launchUrl).origin
   let window
@@ -46,6 +47,7 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
     return documentToken ??= randomBytes(32).toString('hex')
   })
   channels.push('nuwax-dsh:document')
+  handle('locale', () => ({ languages: [language()], preference: dshLanguage(language()) }))
   handle('acquire', (event, key) => { identity(String(key).slice(4)); if (!String(key).startsWith('bot:')) throw new Error('Invalid browser key'); return guests.acquire(event.sender, key) })
   handle('release', (event, lease) => guests.release(event.sender, lease))
   handle('forget', async (event, key) => { const id = identity(String(key).slice(4)); await views.forget(id); await guests.forget(event.sender, key) })

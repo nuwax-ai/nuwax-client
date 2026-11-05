@@ -16,6 +16,7 @@ interface RuntimeController {
   invalidate(): void;
   current(): boolean;
   status(): { phase: string; error?: string; available: boolean };
+  syncLanguage(): void;
   scopeDir(): string;
   identity(): { accountId: string; origin: string; epoch: number } | null;
   updateShellMcp(entry: FeatureMcpServerEntry | null): void;
@@ -77,6 +78,7 @@ export function createDshRuntimeFeature(ports: {
         platform: ctx.platform, settings: ctx.settings, runtimeDir, officeDir, dataDir: ctx.dataDir,
         devModelProxy: api.developmentModelProxy(devProxyInput),
         shellMcp: ports.shellMcp,
+        language: () => ctx.locale?.current() ?? "zh-CN",
         node: () => { const node = ctx.agent.resolveNodeBinary(); if (!node) throw new Error("Bundled Node unavailable"); return node; },
         env: () => ctx.platform!.environment(), allocatePort: () => ctx.platform!.allocatePort(), releasePort: (port: number) => ctx.platform!.releasePort(port),
       });
@@ -105,7 +107,8 @@ export function createDshRuntimeFeature(ports: {
           try {
             if (!runtime.current()) throw new Error("Account changed");
             desktop = api.createDesktop({ electron, runtimeDir, scopeDir: runtime.scopeDir(),
-              namespace: scopeKey(runtime.identity()), port, launchUrl: url, current: () => runtime.current() });
+              namespace: scopeKey(runtime.identity()), port, launchUrl: url, current: () => runtime.current(),
+              language: () => ctx.locale?.current() ?? "zh-CN" });
             desktopPort = port;
           } catch (error) { await ctx.platform!.releasePort(port); throw error; }
         }
@@ -130,6 +133,7 @@ export function createDshRuntimeFeature(ports: {
     registerDshLauncher(ctx, { load, open });
     const stop = async () => { controller?.invalidate(); destroyWindow(); await controller?.stop(); };
     const off = [
+      ctx.locale?.subscribe(() => { controller?.syncLanguage(); }) ?? (() => {}),
       ports.subscribeShellMcp?.(() => { controller?.updateShellMcp(ports.shellMcp?.() ?? null); }) ?? (() => {}),
       ctx.lifecycle.onSessionInvalidated(() => { controller?.invalidate(); destroyWindow(); }),
       ctx.lifecycle.onServicesStopping(stop), ctx.lifecycle.onSessionEnd(() => { void stop(); }),

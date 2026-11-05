@@ -54,6 +54,9 @@ export class RuntimeController extends EventEmitter {
   }
   scopeDir() { return join(this.#options.dataDir, scopeKey(this.#identity())) }
   status() { return { phase: this.#phase, error: this.#error, available: true } }
+  syncLanguage() {
+    if (this.#child?.connected) this.#child.send({ type: 'language', language: this.#options.language?.() ?? 'zh-CN' }, () => {})
+  }
   enabled() {
     const scope = this.#options.platform.scope()
     return Boolean(scope && this.#options.settings.read('dsh.enabled.' + scopeKey(scope)) === true)
@@ -129,7 +132,8 @@ export class RuntimeController extends EventEmitter {
       const upstream = this.#options.devModelProxy ?? { baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey }
       this.#broker = createModelBroker({ models, ...upstream, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
       const broker = await this.#broker.start()
-      await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port, shellMcp: this.#options.shellMcp?.() ?? null }), { mode: 0o600 })
+      await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port, shellMcp: this.#options.shellMcp?.() ?? null,
+        language: this.#options.language?.() ?? 'zh-CN' }), { mode: 0o600 })
       if (!current()) throw new Error('Account changed')
       const env = { ...this.#options.env(), HOME: home, USERPROFILE: home, DSH_HOME: home,
         // Office imports must not create __pycache__ inside a sealed app bundle.
@@ -172,6 +176,7 @@ export class RuntimeController extends EventEmitter {
       child.once('exit', () => { if (this.#child === child && this.#phase === 'ready') { this.invalidate(); this.#state('failed', 'DSH exited'); this.emit('failed') } })
       this.#options.settings.write('dsh.enabled.' + scopeKey(scope), true)
       this.#state('ready')
+      this.syncLanguage()
       this.updateShellMcp(this.#options.shellMcp?.() ?? null)
       return this.#url
     } catch (error) {

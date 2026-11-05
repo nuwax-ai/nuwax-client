@@ -3,6 +3,11 @@ const origin = process.argv.find(x => x.startsWith('--nuwax-dsh-origin='))?.slic
 if (origin && location.origin === origin) {
   const documentToken = ipcRenderer.invoke('nuwax-dsh:document')
   const invoke = async (action, ...args) => ipcRenderer.invoke('nuwax-dsh:' + action, await documentToken, ...args)
+  contextBridge.exposeInMainWorld('__DSH_LOCALE__', {
+    read: () => invoke('locale'),
+    // The shell is the preference owner; DSH reports render changes through this native contract.
+    onChange() {},
+  })
   const listeners = new Set()
   const opens = new Map()
   ipcRenderer.on('ds-bot:browser-view-changed', (_event, value) => { for (const listener of listeners) listener(value) })

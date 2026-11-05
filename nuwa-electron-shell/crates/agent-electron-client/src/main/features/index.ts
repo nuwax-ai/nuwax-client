@@ -36,6 +36,7 @@ import type {
   FeatureWorkspaceServices,
   FeaturePermissionServices,
   FeaturePlatform,
+  FeatureLocale,
 } from "./_kit/types";
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
@@ -75,6 +76,7 @@ export interface FeatureHostServices {
 }
 
 export interface StartFeaturesOptions {
+  locale?: FeatureLocale;
   developmentProfile?: boolean;
   product: string;
   ipcMain: IpcMainLike;
@@ -168,6 +170,7 @@ export function startDesktopFeatures(
     dataDir: nodePath.join(options.dataDir, feature.id),
     log: options.log,
     translate: options.translate,
+    locale: options.locale,
     platform: host.platform,
     settings: host.settings,
     session: host.session,

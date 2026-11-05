@@ -83,6 +83,15 @@ describe("startDesktopFeatures", () => {
     expect(ctx.developmentProfile).toBe(developmentProfile);
     expect(ctx.product).toBe("nuwax");
   });
+
+  it("provides the host language as a shared read/subscribe port", () => {
+    const locale = { current: () => "zh-cn", subscribe: vi.fn(() => vi.fn()) };
+    const f = feature("alpha");
+    startDesktopFeatures(options({ locale }), [f]);
+    const ctx = (f.register as ReturnType<typeof vi.fn>).mock.calls[0][0] as FeatureContext;
+    expect(ctx.locale).toBe(locale);
+    expect(ctx.locale?.current()).toBe("zh-cn");
+  });
   it("为每个特性构造上下文：ipc / hostIpc / 以 <dataDir>/<id> 为根的 scratch", () => {
     const f = feature("alpha");
     startDesktopFeatures(options(), [f]);

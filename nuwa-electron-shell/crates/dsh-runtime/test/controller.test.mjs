@@ -14,8 +14,9 @@ async function fixture(readyDelay = 0, devModelProxy) {
   await writeFile(join(runtimeDir, 'host.mjs'), `
     import { readFileSync, writeFileSync } from 'node:fs';
     const launch = JSON.parse(readFileSync(process.env.DSH_HOME + '/launch.json'));
-    writeFileSync(process.env.DSH_HOME + '/observed.json', JSON.stringify({ pid: process.pid, env: process.env }));
+    writeFileSync(process.env.DSH_HOME + '/observed.json', JSON.stringify({ pid: process.pid, env: process.env, language: launch.language }));
     process.on('message', message => {
+      if (message.type === 'language') writeFileSync(process.env.DSH_HOME + '/language.json', JSON.stringify(message.language));
       if (message.type === 'stop') { process.disconnect(); process.exit(0) }
       if (message.type === 'shell-plugin-request') setTimeout(() => { if (process.connected) process.send({ type: 'shell-plugin-result', id: message.id, value: { operation: message.operation } }) }, 30);
     });
@@ -23,9 +24,11 @@ async function fixture(readyDelay = 0, devModelProxy) {
   `)
   let scope = { origin: 'https://a.example', accountId: 'one', epoch: 1 }
   const allocated = [], released = []
+  let language = 'zh-CN'
   const saved = new Map([['dsh.authorization.' + scopeKey(scope), { keyId: 5, models: ['12'] }]])
   const controller = new RuntimeController({
     runtimeDir, officeDir: join(root, 'office'), dataDir: root, node: () => process.execPath, devModelProxy,
+    language: () => language,
     env: () => ({ PATH: process.env.PATH, NUWAX_DSH_DEV_MODEL_PROXY: 'fixture', NUWAX_DSH_DEV_MODEL_PROXY_TOKEN: 'fixture-capability' }),
     settings: { read: key => saved.get(key), write: (key, value) => saved.set(key, value) },
     allocatePort: () => new Promise(resolve => { const server = createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; allocated.push(port); server.close(() => resolve(port)) }) }),
@@ -36,9 +39,30 @@ async function fixture(readyDelay = 0, devModelProxy) {
       if (route === '/api/tenant/config') return { baseModelApiUrl: 'https://models.example' }
     } },
   })
-  return { controller, allocated, released, change: () => { scope = { ...scope, accountId: 'two', epoch: 2 } }, root,
+  return { controller, allocated, released, changeLanguage: value => { language = value; controller.syncLanguage() }, change: () => { scope = { ...scope, accountId: 'two', epoch: 2 } }, root,
     dispose: async () => { await controller.stop(); await rm(root, { recursive: true, force: true }) } }
 }
+test('startup reads the shell language and later notifications reach only the owned runtime', async () => {
+  const f = await fixture()
+  try {
+    f.changeLanguage('zh-TW')
+    assert.equal(f.controller.status().phase, 'stopped')
+    await f.controller.start()
+    assert.equal(JSON.parse(await readFile(join(f.controller.scopeDir(), 'observed.json'), 'utf8')).language, 'zh-TW')
+    f.changeLanguage('en-US')
+    const deadline = Date.now() + 5000
+    let observed
+    while (Date.now() < deadline) {
+      try { observed = JSON.parse(await readFile(join(f.controller.scopeDir(), 'language.json'), 'utf8')) } catch {}
+      if (observed === 'en-US') break
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(observed, 'en-US')
+    await f.controller.stop()
+    f.changeLanguage('zh-CN')
+    assert.equal(f.controller.status().phase, 'stopped')
+  } finally { await f.dispose() }
+})
 test('duplicate starts share one owned child; only a run token reaches it', async () => {
   const f = await fixture()
   try {

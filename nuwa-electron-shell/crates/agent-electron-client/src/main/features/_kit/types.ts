@@ -43,6 +43,12 @@ export interface FeatureSession {
   isAuthenticated(): boolean;
 }
 
+/** 宿主统一语言；特性只读取和订阅，不另存一份产品语言偏好。 */
+export interface FeatureLocale {
+  current(): string;
+  subscribe(listener: (language: string) => void): () => void;
+}
+
 export interface FeatureWindows {
   /** 宿主主窗口；未创建或已销毁时为 null。 */
   getMain(): BrowserWindow | null;
@@ -94,6 +100,7 @@ export interface FeaturePlatform {
 }
 
 export interface FeatureContext {
+  locale?: FeatureLocale;
   /** Host-owned development profile; features do not read application build globals. */
   developmentProfile?: boolean;
   platform?: FeaturePlatform;

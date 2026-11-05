@@ -6,6 +6,7 @@ import { runProfile } from '@deepseek-ai/dsh/profile-boot'
 import { stringify } from 'yaml'
 import { reconcileOfficeRuntime } from './vendor/office-patch.mjs'
 import { createShellIntegration } from './shell-integration.mjs'
+import { createLocaleSync } from './locale.mjs'
 
 const anchor = fileURLToPath(new URL('./package.json', import.meta.url))
 const profileName = 'nuwax-plugins'
@@ -15,10 +16,13 @@ const send = message => { if (process.connected) process.send?.(message) }
 let application
 let stopping
 let shellIntegration
+let localeSync
+let latestLanguage
 async function stop() {
   if (stopping) return stopping
   stopping = (async () => {
     await shellIntegration?.dispose()
+    localeSync?.dispose()
     const running = await application?.catch(() => undefined)
     // Checkpoint while the persistence listeners still exist. Profile disposal
     // may unload a consumer before its final asynchronous model turn settles.
@@ -35,6 +39,10 @@ async function stop() {
   return stopping
 }
 process.on('message', message => {
+  if (message?.type === 'language' && typeof message.language === 'string') {
+    latestLanguage = message.language
+    void localeSync?.update(latestLanguage).catch(() => { console.warn('Nuwax interface language could not be synchronized') })
+  }
   if (message?.type === 'stop') void stop()
   if (message?.type === 'shell-mcp') void shellIntegration?.update(message.entry).then(
     () => send({ type: 'shell-mcp-state', ready: Boolean(message.entry) }),
@@ -88,6 +96,8 @@ export async function bootRuntime() {
   })
   const running = await application
   const { ctx } = running
+  localeSync = createLocaleSync(ctx)
+  await localeSync.update(latestLanguage ?? launch.language ?? 'zh-CN')
   for (const service of ['webServer', 'connection', 'sessionController', 'workspaceRegistry', 'nuwaxModels', 'speechToText', 'schedule', 'pluginManager', 'clientModules']) {
     if (!ctx.get(service)) throw new Error(`Required DSH service failed: ${service}`)
   }
