@@ -16,6 +16,8 @@ export function botClientProfile(source) {
   replace('const groups = [\n    [\n      [t("Usage"), GaugeIcon,', 'const groups = globalThis.nuwaxBotHost ? [[\n    [t("Usage"), GaugeIcon, () => actions.openSettings("usage")],\n    [t("Automation tasks"), ClockIcon, () => actions.selectPanel("schedules")],\n    [t("Bot settings"), GearIcon, () => actions.openSettings("general")],\n    [t("Harness settings"), SlidersIcon, () => globalThis.nuwaxBotHost.openSettings()]\n  ]] : [\n    [\n      [t("Usage"), GaugeIcon,')
   replace('actions.signInEntry = () => ctx.slots.entries?.("settings.models.sign-in")?.[0] ?? null;', 'actions.signInEntry = () => globalThis.nuwaxBotHost ? null : ctx.slots.entries?.("settings.models.sign-in")?.[0] ?? null;')
   replace('actions.openHarnessSettings = openHarnessSettings;', 'actions.openHarnessSettings = globalThis.nuwaxBotHost ? () => globalThis.nuwaxBotHost.openSettings() : openHarnessSettings;')
+  replace('openModels: () => openSettings("models"),', 'openModels: () => globalThis.nuwaxBotHost ? globalThis.nuwaxBotHost.openSettings() : openSettings("models"),')
+  replace('openConnectors: () => {', 'openConnectors: () => {\n      if (globalThis.nuwaxBotHost) return globalThis.nuwaxBotHost.openSettings();')
   replace('actions.openHarnessModels = () => {', 'actions.openHarnessModels = () => {\n    if (globalThis.nuwaxBotHost) return globalThis.nuwaxBotHost.openSettings();')
   replace('if ((roster.agents ?? []).length === 0 && actions.addAgent) {', 'if (!globalThis.nuwaxBotHost && (roster.agents ?? []).length === 0 && actions.addAgent) {')
   replace('...(roster.agents ?? []).map((agent) => ({ kind: "agent",', '...(globalThis.nuwaxBotHost ? [] : roster.agents ?? []).map((agent) => ({ kind: "agent",')
