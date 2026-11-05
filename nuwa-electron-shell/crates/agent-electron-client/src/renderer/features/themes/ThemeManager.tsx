@@ -1,7 +1,7 @@
 import { relativeThemeDetail } from "./errors";
 import { getThemesBridge } from "./state";
 import React, { useState } from "react";
-import { Alert, Button, Modal, Select, Space } from "antd";
+import { Alert, Button, Modal, Segmented, Space } from "antd";
 import styles from "./ThemeManager.module.css";
 import type {
   HostThemeResult,
@@ -162,10 +162,10 @@ export function ThemeManager({
         })}
       </div>
       <div className={styles.operations}>
-        <Row label={text("mode")} desc={text("modeDescription")} control={<Select
+        <Row label={text("mode")} desc={text(selected?.modes.length === 1 ? "singleModeDescription" : "modeDescription")} control={<Segmented
           aria-label={text("mode")} disabled={busy || selected?.modes.length === 1}
-          value={state.selection.mode} style={{ minWidth: 130 }}
-          options={[...(selected?.modes ?? ["light"]), ...(selected?.modes.length === 2 ? ["system"] : [])].map(value => ({ value, label: text(value) }))}
+          value={state.selection.mode}
+          options={[...(selected?.modes.length === 2 ? ["system"] : []), ...(selected?.modes ?? ["light"])].map(value => ({ value, label: text(value) }))}
           onChange={mode => void perform(async () => consume(await bridge.select(state.selection.themeId, mode as "light" | "dark" | "system")))}
         />} />
         <Row label={text("packages")} desc={text("packagesDescription")} control={<Space wrap>

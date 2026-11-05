@@ -391,6 +391,7 @@ export const I18N_KEYS = {
     selected: "Claw.Themes.selected",
     apply: "Claw.Themes.apply",
     modeDescription: "Claw.Themes.modeDescription",
+    singleModeDescription: "Claw.Themes.singleModeDescription",
     packages: "Claw.Themes.packages",
     packagesDescription: "Claw.Themes.packagesDescription",
     directories: "Claw.Themes.directories",

@@ -225,6 +225,27 @@ describe("theme package service", () => {
     expect(service.state().selection.mode).toBe("system");
     expect(service.state().error).toBeUndefined();
   });
+  it.each(["light", "dark"] as const)("keeps forced %s appearance across system changes and uses a single variant automatically", async mode => {
+    let dark = mode === "dark";
+    const { service, deps } = await setup(undefined, { systemDark: () => dark });
+    await service.select("nuwax-default", mode);
+    const revision = service.state().revision;
+    dark = !dark;
+    await service.systemChanged();
+    expect(service.state()).toMatchObject({ revision, selection: { mode }, snapshot: { mode } });
+    expect(deps.applyPreference).toHaveBeenLastCalledWith(mode);
+
+    const single = files();
+    const manifest = JSON.parse(Buffer.from(single["theme.json"], "base64").toString());
+    delete manifest.variants[mode === "light" ? "dark" : "light"];
+    single["theme.json"] = Buffer.from(JSON.stringify(manifest)).toString("base64");
+    await service.install(single);
+    await service.select("custom-theme", "system");
+    expect(service.state()).toMatchObject({ selection: { mode }, snapshot: { mode } });
+    dark = !dark;
+    await service.systemChanged();
+    expect(service.state().snapshot.mode).toBe(mode);
+  });
   it("installs, rejects duplicates, confirms replacement, exports cache and persists explicit selection", async () => {
     const { service } = await setup();
     expect(service.state()).toMatchObject({
