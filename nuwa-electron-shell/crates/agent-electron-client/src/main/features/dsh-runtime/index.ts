@@ -114,7 +114,7 @@ export function createDshRuntimeFeature(ports: {
                 if (!main || main.isDestroyed()) throw new Error("Nuwax settings unavailable");
                 if (main.isMinimized()) main.restore();
                 main.show(); main.focus();
-                main.webContents.send("nuwax:open-client-settings", {});
+                main.webContents.send("nuwax:open-client-settings", { tab: "extensions" });
               } });
             desktopPort = port;
           } catch (error) { await ctx.platform!.releasePort(port); throw error; }

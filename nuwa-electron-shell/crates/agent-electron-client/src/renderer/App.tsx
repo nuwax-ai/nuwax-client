@@ -34,6 +34,8 @@ import {
   RocketOutlined,
   CloseOutlined,
   CameraOutlined,
+  SkinOutlined,
+  ExperimentOutlined,
 } from "@ant-design/icons";
 import {
   setupService,
@@ -54,6 +56,7 @@ import {
   DEFAULT_SERVER_HOST,
   APP_NAME_IDENTIFIER,
   MIN_SPLASH_MS,
+  I18N_KEYS,
   normalizeAgentEngine,
 } from "@shared/constants";
 import {
@@ -78,6 +81,8 @@ import { PageLoadRecovery } from "./components/PageLoadRecovery";
 import { observeServiceReadiness, type ServiceGateActivity } from "./services/serviceReadiness";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
+import ThemesPage from "./components/pages/ThemesPage";
+import ExtensionsPage from "./components/pages/ExtensionsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
 import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
@@ -155,6 +160,8 @@ type TabKey =
   | "sessions"
   | "mcp"
   | "settings"
+  | "themes"
+  | "extensions"
   | "capture"
   | "dependencies"
   | "permissions"
@@ -262,6 +269,7 @@ function App() {
   // 主题状态
   // ============================================
   const desktopThemes = useDesktopThemes();
+  const themesAvailable = !!desktopThemes || FEATURES.DARK_THEME;
   const packageSnapshot = desktopThemes?.snapshot;
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [systemIsDark, setSystemIsDark] = useState(false);
@@ -329,11 +337,11 @@ function App() {
   }, []);
 
   // nuwax 设置入口（web 用户区「客户端设置」按钮，仅 nuwax 宿主渲染）→ 打开壳
-  // 设置弹窗并落到 settings tab（与 menu:settings 同链路；壳顶行设置按钮在
-  // nuwax 宿主下移除，入口由 web 承担）。
+  // 设置弹窗；Bot 原生入口直达扩展页，普通入口落到通用设置。
   useEffect(() => {
-    const onOpenClientSettings = () => {
-      setActiveTab("settings");
+    const onOpenClientSettings = (payload: unknown) => {
+      const tab = (payload as { tab?: unknown } | null)?.tab;
+      setActiveTab(tab === "extensions" && APP_NAME_IDENTIFIER === "nuwax" ? "extensions" : "settings");
       setSettingsModalOpen(true);
     };
     window.electronAPI?.on(
@@ -1757,12 +1765,14 @@ function App() {
         icon: <SettingOutlined />,
         label: t("Claw.Menu.settings"),
       },
-      {
-        key: "dependencies",
-        icon: <FolderOutlined />,
-        label: t("Claw.Menu.dependencies"),
-      },
     ];
+    if (themesAvailable) {
+      items.push({ key: "themes", icon: <SkinOutlined />, label: t(I18N_KEYS.SettingsNavigation.themes) });
+    }
+    if (APP_NAME_IDENTIFIER === "nuwax") {
+      items.push({ key: "extensions", icon: <ExperimentOutlined />, label: t(I18N_KEYS.SettingsNavigation.extensions) });
+    }
+    items.push({ key: "dependencies", icon: <FolderOutlined />, label: t("Claw.Menu.dependencies") });
     if (permissionGuideAvailable) {
       items.push({
         key: "permissions",
@@ -1782,7 +1792,7 @@ function App() {
       },
     );
     return items;
-  }, [i18nLang, captureAvailable, permissionGuideAvailable]);
+  }, [i18nLang, captureAvailable, permissionGuideAvailable, themesAvailable]);
 
   // ============================================
   // i18n Context value
@@ -2007,6 +2017,8 @@ function App() {
               <MCPSettings isOpen={activeTab === "mcp"} />
             </div>
             {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
+            {activeTab === "themes" && <ThemesPage />}
+            {activeTab === "extensions" && APP_NAME_IDENTIFIER === "nuwax" && <ExtensionsPage />}
             {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
             {activeTab === "dependencies" && <DependenciesPage />}
             {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => { setSettingsModalOpen(false); void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined); }} />}

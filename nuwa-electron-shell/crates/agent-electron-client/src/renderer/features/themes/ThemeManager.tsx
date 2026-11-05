@@ -28,9 +28,11 @@ async function download(files: Record<string, string>, id: string) {
 export function ThemeManager({
   state,
   t: translate,
+  className,
 }: {
   state: HostThemesState;
   t: (key: string) => string;
+  className?: string;
 }) {
   const text = (key: string) => translate(`Claw.Themes.${key}`);
   function confirm(key: string): Promise<boolean> {
@@ -103,7 +105,7 @@ export function ThemeManager({
       );
   };
   return (
-    <section data-theme-part="theme-manager" aria-label={text("title")}>
+    <section className={className} data-theme-part="theme-manager" aria-label={text("title")}>
       <h3>{text("title")}</h3>
       <p>{text("deviceScope")}</p>
       {state.recovery && (
