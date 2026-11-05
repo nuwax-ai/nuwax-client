@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DistHandshakeView } from "@shared/types/distVersionHandshake";
-import { DIST_HANDSHAKE_READ_TIMEOUT_MS, observeDistHandshake, shouldShowDistSnapshotNotice } from "./distHandshake";
+import { DIST_HANDSHAKE_READ_TIMEOUT_MS, observeDistHandshake } from "./distHandshake";
 
 const snapshot: DistHandshakeView = {
   backendOrigin: "https://cloud.example", bundled: { name: "n", version: "3.0.3", gitHash: "aaaa111" },
@@ -9,19 +9,7 @@ const snapshot: DistHandshakeView = {
 };
 afterEach(() => vi.useRealTimers());
 
-describe("dist mismatch notice", () => {
-  it("warns only for a checked mismatch displayed through the same dist gateway", () => {
-    expect(shouldShowDistSnapshotNotice(snapshot, "http://127.0.0.1:46800/home")).toBe(true);
-    for (const changed of [null, { ...snapshot, relation: "match" }, { ...snapshot, relation: "unknown" },
-      { ...snapshot, gateway: null }, { ...snapshot, gateway: { ...snapshot.gateway!, mode: "proxy" } },
-      { ...snapshot, checkedAt: null }]) {
-      expect(shouldShowDistSnapshotNotice(changed as DistHandshakeView | null, "http://127.0.0.1:46800/home")).toBe(false);
-    }
-    for (const url of ["https://cloud.example/home", "https://external.example", "invalid", "http://user:secret@127.0.0.1:46800/home"]) {
-      expect(shouldShowDistSnapshotNotice(snapshot, url)).toBe(false);
-    }
-  });
-
+describe("dist version diagnostics", () => {
   it("old preload without the private method remains silent", async () => {
     const update = vi.fn(); const on = vi.fn();
     const observer = observeDistHandshake({ on }, update);

@@ -196,6 +196,7 @@ export class ThemeService {
         }
       }
       this.registry = { ...raw, entries };
+      this.normalize(this.registry, raw.selection.themeId, raw.selection.mode);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         this.error = message(error);

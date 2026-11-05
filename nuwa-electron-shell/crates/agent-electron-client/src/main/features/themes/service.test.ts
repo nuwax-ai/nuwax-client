@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { ThemeService, type ThemeDeps } from "./service";
-import { officialThemePackage, limits } from "@shared/features/themes/core";
+import { officialThemePackage, deepSeekThemePackage, limits } from "@shared/features/themes/core";
 import type { HostThemeFiles } from "@shared/types/hostBridge";
 
 const roots: string[] = [],
@@ -20,7 +20,7 @@ async function root() {
   return dir;
 }
 function files(id = "custom-theme", name = "Custom"): HostThemeFiles {
-  const out = { ...officialThemePackage.files } as HostThemeFiles;
+  const out = { ...deepSeekThemePackage.files } as HostThemeFiles;
   const manifest = JSON.parse(
     Buffer.from(out["theme.json"], "base64").toString()
   );
@@ -81,7 +81,7 @@ describe("theme package service", () => {
   });
   it("copies a builtin, atomically edits both modes, and restores durable files and selection after restart", async () => {
     const { service } = await setup();
-    const source = await service.readForEdit("nuwax-default");
+    const source = await service.readForEdit("deepseek-inspired");
     await service.copyForEdit({ sourceId: source.themeId, themeId: "personal", name: "Personal", expectedRevision: source.revision, expectedVersion: source.version });
     await service.select("personal", "dark");
     const before = await service.readForEdit("personal");
@@ -198,10 +198,25 @@ describe("theme package service", () => {
     expect(safe.state()).toMatchObject({
       recovery: true,
       selection: { themeId: "custom-theme", mode: "dark" },
-      snapshot: { themeId: "nuwax-default", mode: "dark" },
+      snapshot: { themeId: "nuwax-default", mode: "light" },
     });
     const { service: restarted } = await setup(service.directory);
     expect(restarted.state().snapshot.themeId).toBe("custom-theme");
+  });
+  it("keeps the default theme light and normalizes an old system preference on restart", async () => {
+    const { service } = await setup();
+    await service.select("nuwax-default", "dark");
+    expect(service.state()).toMatchObject({ selection: { mode: "light" }, snapshot: { mode: "light" } });
+    const registryPath = path.join(service.directory, "registry.json");
+    const registry = JSON.parse(await fs.readFile(registryPath, "utf8"));
+    registry.selection.mode = "system";
+    await fs.writeFile(registryPath, JSON.stringify(registry));
+    const restarted = await setup(service.directory, { systemDark: () => true });
+    expect(restarted.service.state()).toMatchObject({ selection: { mode: "light" }, snapshot: { mode: "light" } });
+    expect(restarted.deps.applyPreference).toHaveBeenLastCalledWith("light");
+    const revision = restarted.service.state().revision;
+    await restarted.service.systemChanged();
+    expect(restarted.service.state().revision).toBe(revision);
   });
   it("updates system appearance without a storage write or resetting the selection", async () => {
     let dark = false,
@@ -217,7 +232,7 @@ describe("theme package service", () => {
       fs: io,
       systemDark: () => dark,
     });
-    await service.select("nuwax-default", "system");
+    await service.select("deepseek-inspired", "system");
     fail = true;
     dark = true;
     await service.systemChanged();
@@ -228,7 +243,7 @@ describe("theme package service", () => {
   it.each(["light", "dark"] as const)("keeps forced %s appearance across system changes and uses a single variant automatically", async mode => {
     let dark = mode === "dark";
     const { service, deps } = await setup(undefined, { systemDark: () => dark });
-    await service.select("nuwax-default", mode);
+    await service.select("deepseek-inspired", mode);
     const revision = service.state().revision;
     dark = !dark;
     await service.systemChanged();
@@ -416,7 +431,7 @@ describe("theme package service", () => {
     const { service, deps } = await setup(undefined, {
       systemDark: () => dark,
     });
-    await service.select("nuwax-default", "system");
+    await service.select("deepseek-inspired", "system");
     expect(service.state().snapshot.mode).toBe("light");
     dark = true;
     expect(service.state().snapshot.mode).toBe("light");

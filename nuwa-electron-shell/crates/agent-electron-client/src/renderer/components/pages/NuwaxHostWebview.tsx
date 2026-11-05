@@ -27,7 +27,6 @@ import { logger } from "../../services/utils/logService";
 import type { GuestLoadPhase } from "../../bootTiming";
 import { PageLoadRecovery } from "../PageLoadRecovery";
 import { GuestPageViewport } from "../GuestPageViewport";
-import { DistSnapshotNotice } from "../DistSnapshotNotice";
 import { getCurrentLang } from "../../services/core/i18n";
 import {
   diagnosticPageUrl,
@@ -445,7 +444,6 @@ const NuwaxHostWebview = forwardRef<
           />
         )}
       </GuestPageViewport>
-      {!recoveryMode && <DistSnapshotNotice key={url} guestUrl={pageUrl || url} onOpenSettings={onOpenSettings} />}
       {recoveryMode && (
         <PageLoadRecovery
           mode={recoveryMode}

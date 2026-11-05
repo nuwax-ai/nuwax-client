@@ -1,3 +1,5 @@
+.appearance { margin: 16px -20px 0; border-block: 1px solid var(--color-border); }
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

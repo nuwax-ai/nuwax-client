@@ -127,6 +127,14 @@ export function ThemeManager({
           }
         />
       )}
+      <div className={styles.appearance}>
+        <Row label={text("mode")} desc={text(selected?.modes.length === 1 ? "singleModeDescription" : "modeDescription")} control={<Segmented
+          aria-label={text("mode")} disabled={busy || selected?.modes.length === 1}
+          value={state.selection.mode}
+          options={[...(selected?.modes.length === 2 ? ["system"] : []), ...(selected?.modes ?? ["light"])].map(value => ({ value, label: text(value) }))}
+          onChange={mode => void perform(async () => consume(await bridge.select(state.selection.themeId, mode as "light" | "dark" | "system")))}
+        />} />
+      </div>
       <div className={styles.cards} role="group" aria-label={text("selection")}>
         {state.themes.map(item => {
           const active = item.id === state.selection.themeId;
@@ -155,19 +163,13 @@ export function ThemeManager({
               </span>
             </span>
             <span className={styles.cardFooter}>
-              <span className={styles.cardInfo}><strong>{item.name}</strong><small>{text(mode)}</small></span>
+              <span className={styles.cardInfo}><strong>{item.name}</strong><small>{item.modes.map(mode => text(mode)).join(" / ")}</small></span>
               <span className={active ? styles.selected : styles.apply}>{active ? `✓ ${text("selected")}` : text("apply")}</span>
             </span>
           </button>;
         })}
       </div>
       <div className={styles.operations}>
-        <Row label={text("mode")} desc={text(selected?.modes.length === 1 ? "singleModeDescription" : "modeDescription")} control={<Segmented
-          aria-label={text("mode")} disabled={busy || selected?.modes.length === 1}
-          value={state.selection.mode}
-          options={[...(selected?.modes.length === 2 ? ["system"] : []), ...(selected?.modes ?? ["light"])].map(value => ({ value, label: text(value) }))}
-          onChange={mode => void perform(async () => consume(await bridge.select(state.selection.themeId, mode as "light" | "dark" | "system")))}
-        />} />
         <Row label={text("packages")} desc={text("packagesDescription")} control={<Space wrap>
           <Button disabled={busy} onClick={() => document.getElementById("theme-zip-input")?.click()}>{text("import")}</Button>
           <input id="theme-zip-input" hidden type="file" accept=".zip,application/zip" onChange={event => {
@@ -180,8 +182,10 @@ export function ThemeManager({
             await download(result.files, state.selection.themeId);
           })}>{text("export")}</Button>
           <Button disabled={busy} onClick={() => void perform(async () => {
-            const manifest = { ...officialThemePackage.manifest, id: "my-theme", name: "My Theme" };
-            await download({ ...officialThemePackage.files, "theme.json": encodeThemeText(JSON.stringify(manifest, null, 2)) }, "my-theme");
+            const manifest = { ...officialThemePackage.manifest, id: "my-theme", name: "My Theme",
+              variants: { ...officialThemePackage.manifest.variants, dark: { tokens: "dark.json" } } };
+            await download({ ...officialThemePackage.files, "dark.json": encodeThemeText(JSON.stringify(defaultTokens.dark, null, 2)),
+              "theme.json": encodeThemeText(JSON.stringify(manifest, null, 2)) }, "my-theme");
           })}>{text("template")}</Button>
         </Space>} />
         <Row label={text("directories")} desc={text("directoriesDescription")} control={<Space wrap>
