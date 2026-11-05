@@ -7,7 +7,7 @@ export interface DshModel { id: string; name: string; model: string; reason?: st
 export interface DshStatus { phase: string; error?: string; available: boolean; enabled?: boolean; }
 export interface DshReply { ok: boolean; error?: string; status?: DshStatus; models?: DshModel[]; }
 export type DshPluginOperation = "list" | "install" | "enable" | "disable" | "remove" | "configure";
-export interface DshPluginBundle { name: string; version?: string; enabled: boolean; protected: boolean; removable: boolean; readOnlyReason?: string; }
+export interface DshPluginBundle { name: string; version?: string; installed: boolean; enabled: boolean; protected: boolean; removable: boolean; readOnlyReason?: string; }
 export interface DshPluginConfiguration { ns: string; value: Record<string, unknown>; revision: number; }
 export interface DshPluginReply { ok: boolean; error?: string; value?: {
   bundles?: DshPluginBundle[]; configuration?: DshPluginConfiguration[]; application?: string; restartReason?: string;

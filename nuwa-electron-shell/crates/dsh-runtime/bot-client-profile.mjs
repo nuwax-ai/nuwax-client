@@ -18,6 +18,9 @@ export function botClientProfile(source) {
   replace('actions.openHarnessSettings = openHarnessSettings;', 'actions.openHarnessSettings = globalThis.nuwaxBotHost ? () => globalThis.nuwaxBotHost.openSettings() : openHarnessSettings;')
   replace('actions.openHarnessModels = () => {', 'actions.openHarnessModels = () => {\n    if (globalThis.nuwaxBotHost) return globalThis.nuwaxBotHost.openSettings();')
   replace('if ((roster.agents ?? []).length === 0 && actions.addAgent) {', 'if (!globalThis.nuwaxBotHost && (roster.agents ?? []).length === 0 && actions.addAgent) {')
+  replace('...(roster.agents ?? []).map((agent) => ({ kind: "agent",', '...(globalThis.nuwaxBotHost ? [] : roster.agents ?? []).map((agent) => ({ kind: "agent",')
+  replace('const agents = (roster.agents ?? []).filter(() => matchesName("DSH Agent"))', 'const agents = (globalThis.nuwaxBotHost ? [] : roster.agents ?? []).filter(() => matchesName("DSH Agent"))')
+  replace('openAgentSession: (sessionId) => {', 'openAgentSession: (sessionId) => {\n      if (globalThis.nuwaxBotHost) return homeToMainBot();')
   replace('const pages = SETTINGS_PAGES.filter(([key]) => key !== "models" || actions.providers !== void 0);', 'const pages = SETTINGS_PAGES.filter(([key]) => globalThis.nuwaxBotHost ? !["models", "connectors"].includes(key) : key !== "models" || actions.providers !== void 0);')
   replace('dsh?.current ? (0, import_react45.createElement)(Row3, { label: "DeepSeek Harness"', '!globalThis.nuwaxBotHost && dsh?.current ? (0, import_react45.createElement)(Row3, { label: "DeepSeek Harness"')
   // Translate product-owned navigation copy; upstream credits and diagnostics stay intact.

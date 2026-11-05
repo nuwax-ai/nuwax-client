@@ -1522,7 +1522,7 @@
   "Claw.Dsh.plugins.install": "安装",
   "Claw.Dsh.plugins.refresh": "刷新",
   "Claw.Dsh.plugins.core": "核心组件",
-  "Claw.Dsh.plugins.enabled": "已启用",
+  "Claw.Dsh.plugins.enabled": "启用",
   "Claw.Dsh.plugins.configure": "配置",
   "Claw.Dsh.plugins.remove": "移除",
   "Claw.Dsh.plugins.confirm": "确认",
@@ -1531,5 +1531,6 @@
   "Claw.Dsh.plugins.restart": "需要重启 DS Bot 后生效。",
   "Claw.Dsh.plugins.publicConfiguration": "高级插件配置",
   "Claw.Dsh.plugins.patchHint": "以 JSON 对象填写需要修改的公开字段，未填写的字段保持当前值。",
-  "Claw.Dsh.plugins.invalidJson": "请输入有效的 JSON 对象。"
+  "Claw.Dsh.plugins.invalidJson": "请输入有效的 JSON 对象。",
+  "Claw.Dsh.plugins.notInstalled": "未安装"
 }

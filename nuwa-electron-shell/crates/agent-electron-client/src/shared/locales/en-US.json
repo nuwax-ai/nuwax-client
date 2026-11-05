@@ -1522,7 +1522,7 @@
   "Claw.Dsh.plugins.install": "Install",
   "Claw.Dsh.plugins.refresh": "Refresh",
   "Claw.Dsh.plugins.core": "Core component",
-  "Claw.Dsh.plugins.enabled": "Enabled",
+  "Claw.Dsh.plugins.enabled": "Enable",
   "Claw.Dsh.plugins.configure": "Configure",
   "Claw.Dsh.plugins.remove": "Remove",
   "Claw.Dsh.plugins.confirm": "Confirm",
@@ -1531,5 +1531,6 @@
   "Claw.Dsh.plugins.restart": "Restart DS Bot to apply this change.",
   "Claw.Dsh.plugins.publicConfiguration": "Advanced plugin configuration",
   "Claw.Dsh.plugins.patchHint": "Enter only the public fields to change as a JSON object. Omitted fields are preserved.",
-  "Claw.Dsh.plugins.invalidJson": "Enter a valid JSON object."
+  "Claw.Dsh.plugins.invalidJson": "Enter a valid JSON object.",
+  "Claw.Dsh.plugins.notInstalled": "Not installed"
 }
