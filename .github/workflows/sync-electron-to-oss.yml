@@ -8,7 +8,7 @@
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
 
 name: Sync Electron Release to MinIO S3 & OSS (Nuwax)
-run-name: Sync ${{ inputs.channel || ((contains(inputs.tag, '-beta.') || startsWith(inputs.tag, 'prerelease-v')) && 'beta' || 'stable') }} ${{ inputs.tag }}
+run-name: Sync ${{ inputs.channel || (contains(inputs.tag, '-alpha.') && 'dev' || ((contains(inputs.tag, '-beta.') || startsWith(inputs.tag, 'prerelease-v')) && 'beta' || 'stable')) }} ${{ inputs.tag }}
 
 on:
   workflow_call:
@@ -37,7 +37,7 @@ on:
         required: true
         type: string
       channel:
-        description: "Optional channel assertion (stable|beta); inferred from tag"
+        description: "Optional channel assertion (stable|beta|dev); inferred from tag"
         required: false
         type: string
 
@@ -97,7 +97,7 @@ jobs:
             --json tagName,isDraft,isPrerelease)"
           echo "$RELEASE_JSON" | jq -e --arg tag "$RELEASE_TAG" --arg channel "$RELEASE_CHANNEL" '
             .tagName == $tag and
-            (if $channel == "beta" then .isPrerelease == true
+            (if $channel != "stable" then .isPrerelease == true
              else .isPrerelease == false end)
           ' >/dev/null || {
             echo "::error::${RELEASE_TAG} 的 Release 状态不匹配 ${RELEASE_CHANNEL} 通道"
@@ -106,7 +106,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             # workflow_call 保留调用方的 push/tag 上下文。调用方 publish-beta
             # 明确 needs: build-electron；此时整条 run 尚未 completed。
-            [ "$RELEASE_CHANNEL" = beta ] &&
+            { [ "$RELEASE_CHANNEL" = beta ] || [ "$RELEASE_CHANNEL" = dev ]; } &&
               [ "$GITHUB_REF" = "refs/tags/${RELEASE_TAG}" ] &&
               [ "$GITHUB_SHA" = "$(git -C release-source rev-parse HEAD)" ] || {
                 echo "::error::自动 beta 同步必须来自相同 tag/SHA 的构建工作流"
@@ -114,14 +114,14 @@ jobs:
               }
           else
             # workflow_dispatch 重试没有 needs 依赖，必须查成功完成的构建 run。
-            if [ "$RELEASE_CHANNEL" = beta ]; then
+            if [ "$RELEASE_CHANNEL" != stable ]; then
               BUILD_WORKFLOW=release-electron-dev.yml
             else
               BUILD_WORKFLOW=release-electron.yml
             fi
             BUILD_RUNS="$(gh run list --workflow "$BUILD_WORKFLOW" --repo "$GITHUB_REPOSITORY" --limit 100 \
               --json databaseId,headBranch,headSha,event,status,conclusion)"
-            if [ "$RELEASE_CHANNEL" = beta ]; then
+            if [ "$RELEASE_CHANNEL" != stable ]; then
               # 自动同步失败会使整个 prerelease run 标红；手动重试只要求
               # 前置源码门禁及五个平台 build job 都成功（矩阵 job 依赖 prepare/verify-source）。
               BUILD_RUN_ID="$(echo "$BUILD_RUNS" | jq -r --arg tag "$RELEASE_TAG" --arg sha "$(git -C release-source rev-parse HEAD)" '
@@ -194,20 +194,20 @@ jobs:
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
           VERSION="${RELEASE_VERSION}"
-          if [ "$CHANNEL" = beta ]; then
+          if [ "$CHANNEL" != stable ]; then
             WIN_EXE="${PRODUCT_PREFIX}-Setup-${VERSION}-unsigned.exe"
           else
             WIN_EXE="${PRODUCT_PREFIX}.Setup.${VERSION}.exe"
           fi
-          if [ "$CHANNEL" = "beta" ]; then
-            S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
+          if [ "$CHANNEL" != "stable" ]; then
+            S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/${CHANNEL}-build/${TAG}"
           else
             S3_URL_PREFIX="${S3_CDN_BASE}/${RELEASE_ROOT}/${TAG}"
           fi
           ASSETS_DIR="/tmp/release-assets"
 
-          if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
-            echo "::error::Invalid channel '${CHANNEL}', expected stable or beta"
+          if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ] && [ "$CHANNEL" != "dev" ]; then
+            echo "::error::Invalid channel '${CHANNEL}', expected stable, beta or dev"
             exit 1
           fi
 
@@ -379,8 +379,8 @@ jobs:
           aws configure set default.s3.multipart_chunksize 8MB
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "beta" ]; then
-            S3_PREFIX="${RELEASE_ROOT}/beta-build/${TAG}"
+          if [ "$CHANNEL" != "stable" ]; then
+            S3_PREFIX="${RELEASE_ROOT}/${CHANNEL}-build/${TAG}"
           else
             S3_PREFIX="${RELEASE_ROOT}/${TAG}"
           fi
@@ -420,8 +420,8 @@ jobs:
         run: |
           TAG="${RELEASE_TAG}"
           CHANNEL="${RELEASE_CHANNEL}"
-          if [ "$CHANNEL" = "beta" ]; then
-            OSS_VERSION_PREFIX="${OSS_BUCKET}/${RELEASE_ROOT}/beta-build/${TAG}"
+          if [ "$CHANNEL" != "stable" ]; then
+            OSS_VERSION_PREFIX="${OSS_BUCKET}/${RELEASE_ROOT}/${CHANNEL}-build/${TAG}"
           else
             OSS_VERSION_PREFIX="${OSS_BUCKET}/${RELEASE_ROOT}/${TAG}"
           fi
@@ -453,7 +453,7 @@ jobs:
           if [ "$CHANNEL" = "stable" ]; then
             VERIFY_PREFIX="${OSS_CDN_BASE}/${RELEASE_ROOT}/${TAG}"
           else
-            VERIFY_PREFIX="${OSS_CDN_BASE}/${RELEASE_ROOT}/beta-build/${TAG}"
+            VERIFY_PREFIX="${OSS_CDN_BASE}/${RELEASE_ROOT}/${CHANNEL}-build/${TAG}"
           fi
           for file in /tmp/release-assets/*.yml /tmp/release-assets/latest.json; do
             [ -f "$file" ] || continue

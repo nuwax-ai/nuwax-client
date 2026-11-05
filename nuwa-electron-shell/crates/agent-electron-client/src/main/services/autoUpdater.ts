@@ -24,6 +24,12 @@ import type {
   UpdateProgress,
   UpdateCheckOptions,
 } from "@shared/types/updateTypes";
+import {
+  UPDATE_CHANNEL_SETTING_KEY,
+  normalizeUpdateChannel,
+  allowsUpdateVersion,
+  type UpdateChannel,
+} from "@shared/types/updateChannel";
 import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "@shared/constants";
 import { readSetting } from "../db";
 import { compareVersions } from "./system/dependencyUtils";
@@ -56,8 +62,7 @@ const OSS_BETA_LATEST_JSON_URL = `${OSS_BASE}/beta/latest.json`;
 const OFFICIAL_DOWNLOAD_PAGE_URL =
   process.env.NUWAX_DOWNLOAD_PAGE_URL?.trim() ||
   "https://nuwax.com/nuwaclaw.html";
-type UpdateChannel = "stable" | "beta";
-const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
+const OSS_DEV_LATEST_JSON_URL = `${OSS_BASE}/dev/latest.json`;
 
 /** Squirrel.Mac 在只读卷（如从「下载」直接打开）上无法就地更新时的错误信息特征 */
 const READ_ONLY_VOLUME_ERROR_SUBSTR = "read-only volume";
@@ -80,10 +85,11 @@ interface LatestJson {
 
 function getUpdateChannel(): UpdateChannel {
   const raw = readSetting(UPDATE_CHANNEL_SETTING_KEY);
-  return raw === "beta" ? "beta" : "stable";
+  return normalizeUpdateChannel(raw);
 }
 
 function getLatestJsonUrlByChannel(channel: UpdateChannel): string {
+  if (channel === "dev") return OSS_DEV_LATEST_JSON_URL;
   return channel === "beta"
     ? OSS_BETA_LATEST_JSON_URL
     : OSS_STABLE_LATEST_JSON_URL;
@@ -488,6 +494,9 @@ const INSTALL_CLEANUP_TIMEOUT_MS = 10_000;
 let markQuitting: (() => void) | null = null;
 /** electron-updater 下载完成的安装包路径（Linux deb 自行安装时使用） */
 let downloadedUpdateFile: string | null = null;
+let downloadedVersion: string | null = null;
+let channelRevision = 0;
+let updaterInitialized = false;
 let linuxDebInstallInFlight = false;
 /** 可选宿主策略，默认仍由用户在下载后选择安装时机。 */
 let installAfterDownload = false;
@@ -542,19 +551,31 @@ export type CheckOptions = UpdateCheckOptions;
  * 所有检查入口共用在途任务，避免不同 feed 与元数据交错。
  * 下载前也通过此处核对，绕过公开入口的下载任务互斥保护。
  */
+function isCurrentChannel(channel: UpdateChannel, revision: number): boolean {
+  return revision === channelRevision && channel === getUpdateChannel();
+}
+
+/** Serialize feed changes, then retry if a channel changed during an awaited check. */
 function runUpdateCheck(options: CheckOptions = {}): Promise<UpdateInfo> {
   if (checkTask) return checkTask;
-  suppressUpdaterStatusEvents = options.background === true;
+  suppressUpdaterStatusEvents = true;
   checkTask = Promise.resolve()
-    .then(() => doCheckForUpdates(options))
+    .then(async () => {
+      while (true) {
+        const channel = getUpdateChannel();
+        const revision = channelRevision;
+        try {
+          const result = await doCheckForUpdates(options, channel, revision);
+          if (isCurrentChannel(channel, revision)) return result;
+        } catch (error) {
+          if (isCurrentChannel(channel, revision)) throw error;
+        }
+      }
+    })
     .catch((err: Error) => {
       log.error("[AutoUpdater] Check failed:", err.message);
       if (!options.background) {
-        setState({
-          status: "error",
-          error: err.message,
-          canAutoUpdate: canAutoUpdate(),
-        });
+        setState({ status: "error", error: err.message, canAutoUpdate: canAutoUpdate() });
       }
       return { hasUpdate: false, error: err.message };
     })
@@ -565,12 +586,31 @@ function runUpdateCheck(options: CheckOptions = {}): Promise<UpdateInfo> {
   return checkTask;
 }
 
+/** Persist and invalidate in one synchronous step. Active installs/downloads keep their feed fixed. */
+export function changeUpdateChannel(next: UpdateChannel, persist: () => void): boolean {
+  const current = getUpdateChannel();
+  if (next === current) return true;
+  if (next === "dev" && current === "stable") return false;
+  if (updateTask || downloadTask || linuxDebInstallInFlight || currentState.status === "installing") {
+    return false;
+  }
+  persist();
+  channelRevision += 1;
+  downloadedVersion = null;
+  downloadedUpdateFile = null;
+  if (updaterInitialized) loadAutoUpdaterModule().autoUpdater.autoInstallOnAppQuit = false;
+  setState({ status: "idle", version: undefined, releaseDate: undefined, releaseNotes: undefined, progress: undefined, error: undefined });
+  if (updaterInitialized) scheduleBackgroundCheck(0);
+  return true;
+}
+
 async function doCheckViaLatestJson(
-  options: CheckOptions = {},
+  options: CheckOptions,
+  updateChannel: UpdateChannel,
+  revision: number,
 ): Promise<UpdateInfo> {
   const { autoUpdater } = loadAutoUpdaterModule();
-  const updateChannel = getUpdateChannel();
-  autoUpdater.allowPrerelease = updateChannel === "beta";
+  autoUpdater.allowPrerelease = updateChannel !== "stable";
   // Versioned generic feeds always expose latest-*.yml. Setting channel enables
   // downgrades in electron-updater, so reset it explicitly after the setter.
   autoUpdater.channel = "latest";
@@ -593,6 +633,7 @@ async function doCheckViaLatestJson(
   try {
     latestJson = await fetchLatestJson(latestJsonUrl);
   } catch (e: any) {
+    if (!isCurrentChannel(updateChannel, revision)) return { hasUpdate: false };
     // 日志保留完整错误信息（含 URL），用户提示仅显示 HTTP 状态码
     log.error(
       `[AutoUpdater] Failed to fetch latest.json from OSS(channel=${updateChannel}): ${e.message}`,
@@ -616,10 +657,10 @@ async function doCheckViaLatestJson(
     };
   }
 
+  if (!isCurrentChannel(updateChannel, revision)) return { hasUpdate: false };
   if (
     !isValidUpdateVersion(latestJson.version) ||
-    (updateChannel === "stable" &&
-      latestJson.version.split("+")[0].includes("-"))
+    !allowsUpdateVersion(updateChannel, latestJson.version)
   ) {
     const msg = t(
       "Claw.AutoUpdater.invalidMetadataVersion",
@@ -649,6 +690,7 @@ async function doCheckViaLatestJson(
     const ymlUrl = latestJson.yml?.[platformKey];
     // 去掉文件名得到目录路径，供 electron-updater generic provider 自动拼接 {channel}.yml
     const ymlDir = ymlUrl ? ymlUrl.replace(/\/[^/]+\.yml$/, "/") : null;
+    if (updateChannel === "dev" && !ymlDir) throw new Error("Dev update metadata is missing a platform yml URL");
     const versionedUrl = ymlDir
       ? ymlDir
       : updateChannel === "beta"
@@ -660,6 +702,7 @@ async function doCheckViaLatestJson(
     autoUpdater.setFeedURL({ provider: "generic", url: versionedUrl });
     // 初始化 electron-updater 内部状态，为后续 downloadUpdate() 做准备
     await autoUpdater.checkForUpdates();
+    if (!isCurrentChannel(updateChannel, revision)) return { hasUpdate: false };
     // electron-updater 的 update-available 事件只保证 version；latest.json 才是
     // 商业发布说明/日期的事实源，因此在检查完成后补回完整元数据。
     setState({
@@ -732,6 +775,7 @@ export function initAutoUpdater(
   // CJS 具名导入 electron-updater（经加载缝，见 loadAutoUpdaterModule）
   const { autoUpdater } = loadAutoUpdaterModule();
 
+  updaterInitialized = true;
   autoUpdater.logger = log;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = canAutoUpdate();
@@ -819,7 +863,16 @@ export function initAutoUpdater(
 
   autoUpdater.on("update-downloaded", (info: any) => {
     log.info("[AutoUpdater] Update downloaded:", info.version);
+    if (!isValidUpdateVersion(info.version) || !allowsUpdateVersion(getUpdateChannel(), info.version)) {
+      autoUpdater.autoInstallOnAppQuit = false;
+      downloadedVersion = null;
+      downloadedUpdateFile = null;
+      setState({ status: "error", error: t("Claw.AutoUpdater.channelUpdateUnavailable"), progress: undefined });
+      return;
+    }
+    downloadedVersion = info.version;
     downloadedUpdateFile = info.downloadedFile ?? null;
+    autoUpdater.autoInstallOnAppQuit = app.isPackaged && canAutoUpdate() && !isLinuxDebInstall();
     setState({
       status: updateTask ? "installing" : "downloaded",
       version: info.version,
@@ -1093,10 +1146,10 @@ export async function checkForUpdates(
   return runUpdateCheck(options);
 }
 
-async function doCheckForUpdates(options: CheckOptions): Promise<UpdateInfo> {
+async function doCheckForUpdates(options: CheckOptions, channel: UpdateChannel, revision: number): Promise<UpdateInfo> {
   // 自定义更新源（本地测试用）直接走 electron-updater，适用于 stable 通道
-  // beta 通道始终走 doCheckViaLatestJson，确保 feedURL 指向 beta-build 路径
-  if (process.env.NUWAX_UPDATE_SERVER && getUpdateChannel() === "stable") {
+  // Beta / Dev 始终使用各自 latest.json 指向的不可变版本目录。
+  if (process.env.NUWAX_UPDATE_SERVER && channel === "stable") {
     if (options.background) suppressUpdaterStatusEvents = true;
     try {
       const { autoUpdater } = loadAutoUpdaterModule();
@@ -1109,22 +1162,22 @@ async function doCheckForUpdates(options: CheckOptions): Promise<UpdateInfo> {
         });
       }
       const result = await autoUpdater.checkForUpdates();
+      if (!isCurrentChannel(channel, revision)) return { hasUpdate: false };
       if (result?.updateInfo) {
-        const hasUpdate =
+        const hasUpdate = isValidUpdateVersion(result.updateInfo.version) &&
+          allowsUpdateVersion(channel, result.updateInfo.version) &&
           compareVersions(result.updateInfo.version, app.getVersion()) > 0;
-        if (options.background) {
-          setState({
-            status: hasUpdate ? "available" : "not-available",
-            version: hasUpdate ? result.updateInfo.version : undefined,
-            releaseDate: hasUpdate ? result.updateInfo.releaseDate : undefined,
-            releaseNotes:
-              hasUpdate && typeof result.updateInfo.releaseNotes === "string"
-                ? result.updateInfo.releaseNotes
-                : undefined,
-            error: undefined,
-            canAutoUpdate: canAutoUpdate(),
-          });
-        }
+        setState({
+          status: hasUpdate ? "available" : "not-available",
+          version: hasUpdate ? result.updateInfo.version : undefined,
+          releaseDate: hasUpdate ? result.updateInfo.releaseDate : undefined,
+          releaseNotes:
+            hasUpdate && typeof result.updateInfo.releaseNotes === "string"
+              ? result.updateInfo.releaseNotes
+              : undefined,
+          error: undefined,
+          canAutoUpdate: canAutoUpdate(),
+        });
         return {
           hasUpdate,
           version: result.updateInfo.version,
@@ -1135,19 +1188,18 @@ async function doCheckForUpdates(options: CheckOptions): Promise<UpdateInfo> {
               : undefined,
         };
       }
-      if (options.background) {
-        setState({
-          status: "not-available",
-          version: undefined,
-          releaseDate: undefined,
-          releaseNotes: undefined,
-          error: undefined,
-          canAutoUpdate: canAutoUpdate(),
-        });
-      }
+      setState({
+        status: "not-available",
+        version: undefined,
+        releaseDate: undefined,
+        releaseNotes: undefined,
+        error: undefined,
+        canAutoUpdate: canAutoUpdate(),
+      });
       return { hasUpdate: false };
     } catch (err: any) {
       log.error("[AutoUpdater] checkForUpdates error:", err.message);
+      if (!isCurrentChannel(channel, revision)) return { hasUpdate: false };
       if (!options.background) {
         setState({
           status: "error",
@@ -1156,12 +1208,10 @@ async function doCheckForUpdates(options: CheckOptions): Promise<UpdateInfo> {
         });
       }
       return { hasUpdate: false, error: err.message };
-    } finally {
-      if (options.background) suppressUpdaterStatusEvents = false;
     }
   }
 
-  return doCheckViaLatestJson(options);
+  return doCheckViaLatestJson(options, channel, revision);
 }
 
 /**
@@ -1266,6 +1316,7 @@ async function doDownloadOnlyUpdate(): Promise<UpdateResult> {
     });
     const { autoUpdater } = loadAutoUpdaterModule();
     await autoUpdater.downloadUpdate();
+    if (currentState.status === "error") return { success: false, error: currentState.error };
     return { success: true };
   } catch (err: any) {
     log.error("[AutoUpdater] downloadUpdate error:", err.message);
@@ -1287,6 +1338,16 @@ export function installUpdate(): Promise<UpdateResult> {
 }
 
 async function installDownloadedUpdate(): Promise<UpdateResult> {
+  if (!downloadedVersion || !allowsUpdateVersion(getUpdateChannel(), downloadedVersion)) {
+    return { success: false, error: t("Claw.AutoUpdater.channelUpdateUnavailable") };
+  }
+  setState({ status: "installing", progress: undefined });
+  const result = await applyDownloadedUpdate();
+  if (!result.success) setState({ status: "error", error: result.error });
+  return result;
+}
+
+async function applyDownloadedUpdate(): Promise<UpdateResult> {
   if (!app.isPackaged) {
     const errMsg = t("Claw.AutoUpdater.installDevUnsupported");
     log.info(
@@ -1412,14 +1473,15 @@ export function getUpdateState(): UpdateState {
 
 /**
  * 打开下载页：
- * - Windows: 统一打开官网下载安装页（避免 MSI/EXE 安装路径不一致带来的升级问题）
+ * - Windows Stable/Beta: 官网下载页；Dev 使用所选版本的安装包，避免丢失订阅
  * - macOS/Linux: 从 OSS latest.json 获取当前平台对应下载链接
  * - macOS: 根据架构选择 arm64/x64 .zip
  * - Linux: 根据架构选择 arm64/x64 AppImage
  * OSS 不可达时弹窗提示错误，不 fallback 到 GitHub
  */
 export async function openReleasesPage(): Promise<void> {
-  if (process.platform === "win32") {
+  const updateChannel = getUpdateChannel();
+  if (process.platform === "win32" && updateChannel !== "dev") {
     log.info(
       `[AutoUpdater] Opening official download page on Windows: ${OFFICIAL_DOWNLOAD_PAGE_URL}`,
     );
@@ -1429,7 +1491,7 @@ export async function openReleasesPage(): Promise<void> {
 
   let url: string;
   let platformName: string;
-  const updateChannel = getUpdateChannel();
+  const revision = channelRevision;
   const latestJsonUrl = getLatestJsonUrlByChannel(updateChannel);
 
   try {
@@ -1437,9 +1499,16 @@ export async function openReleasesPage(): Promise<void> {
       `[AutoUpdater] Resolve download URL via channel=${updateChannel}, url=${latestJsonUrl}`,
     );
     const latest = await fetchLatestJson(latestJsonUrl);
+    if (!isCurrentChannel(updateChannel, revision)) return;
+    if (!isValidUpdateVersion(latest.version) || !allowsUpdateVersion(updateChannel, latest.version)) {
+      throw new Error("Download metadata does not match the update subscription");
+    }
     const platforms: Platforms | undefined = latest.platforms;
 
-    if (process.platform === "darwin") {
+    if (process.platform === "win32") {
+      url = getWindowsDownloadUrl(platforms, getInstallerType());
+      platformName = "Windows";
+    } else if (process.platform === "darwin") {
       url = getMacosDownloadUrl(platforms);
       platformName = `macOS (${process.arch})`;
     } else {

@@ -170,3 +170,8 @@ describe("settings:set host activity refresh", () => {
     expect(mocks.warn).toHaveBeenCalledWith(expect.stringContaining("Host activity"), error);
   });
 });
+
+it.each([null, undefined, "alpha", "nightly", true, 1, {}])("rejects invalid update channel %s without persisting", (value) => {
+  expect(mocks.handlers.get("settings:set")!({}, "update_channel", value)).toBe(false);
+  expect(mocks.run).not.toHaveBeenCalled();
+});

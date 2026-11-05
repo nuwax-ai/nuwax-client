@@ -4,9 +4,9 @@ import { publishPointers } from './publish-release-pointers.mjs';
 import { parseReleaseTag } from './release-version.mjs';
 
 const metadata = (version) => Buffer.from(JSON.stringify({ version, yml: { win: `https://example.invalid/v${version}/latest.yml` } }));
-function fixture(latest, beta) {
+function fixture(latest, beta, dev = null) {
   const data = new Map();
-  for (const mirror of ['s3', 'oss']) for (const [folder, version] of [['latest', latest], ['beta', beta]])
+  for (const mirror of ['s3', 'oss']) for (const [folder, version] of [['latest', latest], ['beta', beta], ['dev', dev]])
     data.set(`${mirror}/${folder}`, version ? metadata(version) : null);
   const original = new Map(data), calls = [], faults = {};
   const adapter = {
@@ -24,7 +24,7 @@ function fixture(latest, beta) {
 test('stable promotes both subscriptions, beta changes only beta', async () => {
   const stable = fixture('3.0.10', '3.0.11-beta.2');
   assert.deepEqual((await stable.run('v3.0.11')).updated, ['latest', 'beta']);
-  for (const bytes of stable.data.values()) assert.deepEqual(bytes, metadata('3.0.11'));
+  for (const [key, bytes] of stable.data) if (!key.endsWith('/dev')) assert.deepEqual(bytes, metadata('3.0.11'));
   const beta = fixture('3.0.11', '3.0.11');
   assert.deepEqual((await beta.run('v3.0.12-beta.1')).updated, ['beta']);
   assert.deepEqual(beta.data.get('oss/latest'), metadata('3.0.11'));
@@ -81,4 +81,29 @@ test('interruption between mirror uploads rolls back completed writes', async ()
   };
   await assert.rejects(f.run('v3.0.11', undefined, controller.signal), /interrupted/);
   assert.deepEqual(f.data, f.original);
+});
+
+test('Dev is isolated from frequent Beta and Stable releases, including rollback', async () => {
+  const f = fixture('3.0.10', '3.0.11-beta.8', '3.0.11-alpha.1');
+  assert.deepEqual(await f.run('v3.0.11-beta.9'), { updated: ['beta'], retained: [] });
+  assert.deepEqual(f.data.get('s3/dev'), metadata('3.0.11-alpha.1'));
+  assert.deepEqual(await f.run('v3.0.11'), { updated: ['latest', 'beta'], retained: [] });
+  assert.deepEqual(f.data.get('s3/dev'), metadata('3.0.11-alpha.1'));
+  // A later base version Dev can advance independently of the existing Beta history.
+  assert.deepEqual(await f.run('v3.0.12-alpha.1'), { updated: ['dev'], retained: [] });
+  assert.deepEqual(f.data.get('oss/beta'), metadata('3.0.11'));
+  for (const key of ['s3/dev', 'oss/dev']) {
+    const failure = fixture('3.0.10', '3.0.11-beta.8', '3.0.11-alpha.1');
+    failure.faults.write = key;
+    await assert.rejects(failure.run('v3.0.12-alpha.1'));
+    assert.deepEqual(failure.data, failure.original);
+  }
+});
+
+test('misrouted Dev and Beta pointers fail before writes', async () => {
+  const beta = fixture('3.0.10', '3.0.11-alpha.1');
+  await assert.rejects(beta.run('v3.0.11-beta.1'), /Beta 指针/);
+  const dev = fixture('3.0.10', '3.0.10', '3.0.11-beta.1');
+  await assert.rejects(dev.run('v3.0.12-alpha.1'), /Dev 指针/);
+  assert.deepEqual(beta.calls, []); assert.deepEqual(dev.calls, []);
 });

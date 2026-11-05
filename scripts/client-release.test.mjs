@@ -44,7 +44,7 @@ test('CLI storage verification uses provenance SHA256 headers without downloadin
 });
 
 function fixture({ channel = 'stable', signed = true, publicRelease = true, root = '/nonexistent/nuwax-release-fixture' } = {}) {
-  const version = channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';
+  const version = channel === 'dev' ? '1.2.3-alpha.1' : channel === 'beta' ? '1.2.3-beta.1' : '1.2.3';
   const identity = releaseIdentity(channel, version);
   const calls = [];
   const data = new Map();
@@ -65,13 +65,13 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true, root
     manifests[key] = value;
     data.set(`build-manifest-${key}.json`, Buffer.from(JSON.stringify(value)));
   }
-  let isSigned = signed || channel === 'beta';
+  let isSigned = signed || channel !== 'stable';
   function sign() {
     if (channel === 'stable') { data.delete('Nuwax-Setup-1.2.3-unsigned.exe'); data.set(identity.windows, Buffer.from('signed exe fixture')); }
     isSigned = true;
   }
   if (isSigned) sign();
-  const prefix = channel === 'stable' ? identity.tag : `beta-build/${identity.tag}`;
+  const prefix = channel === 'stable' ? identity.tag : `${channel}-build/${identity.tag}`;
   const platformNames = {
     'darwin-aarch64': 'Nuwax-1.2.3-arm64.dmg', 'darwin-aarch64-zip': 'Nuwax-1.2.3-arm64-mac.zip',
     'darwin-x86_64': 'Nuwax-1.2.3.dmg', 'darwin-x86_64-zip': 'Nuwax-1.2.3-mac.zip',
@@ -88,7 +88,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true, root
     publicRelease = true;
   }
   if (publicRelease && isSigned) publish();
-  const view = () => ({ tag_name: identity.tag, draft: !publicRelease, prerelease: channel === 'beta', assets: [...data].map(([name, bytes]) => ({ name, size: bytes.length, digest: `sha256:${digest(bytes)}` })) });
+  const view = () => ({ tag_name: identity.tag, draft: !publicRelease, prerelease: channel !== 'stable', assets: [...data].map(([name, bytes]) => ({ name, size: bytes.length, digest: `sha256:${digest(bytes)}` })) });
   const build = { databaseId: 10, headBranch: identity.tag, headSha: source.client, event: 'push', status: 'completed', conclusion: 'success' };
   const successfulSync = { databaseId: 20, headBranch: 'release-fixture', headSha: source.client, event: 'workflow_dispatch', displayTitle: `Sync ${channel} ${identity.tag}`, status: 'completed', conclusion: 'success' };
   const state = { remoteTag: source.client, remoteHead: source.client, syncRuns: publicRelease ? [successfulSync] : [], builds: [build], lookup: 0, releaseTags: '', sequenceReads: 0 };
@@ -631,4 +631,16 @@ test('--tag resumes the historical source using current automation without movin
   assert.equal(result.source.client, source.client);
   assert.equal(f.state.syncRuns[0].headSha, source.dist);
   assert.deepEqual(tagMutations(f.calls), []);
+});
+
+// Dev reuses the verified prerelease pipeline but has its own immutable asset path and subscription.
+test('Dev release resumes through its own pointer without signing or switching to Beta', async () => {
+  const f = fixture({ channel: 'dev' });
+  const requested = [], fetch = f.adapters.fetchBytes;
+  f.adapters.fetchBytes = async url => { requested.push(url); return fetch(url); };
+  const result = await f.run();
+  assert.equal(result.tag, 'v1.2.3-alpha.1');
+  assert.ok(requested.some(url => url.includes('/dev/latest.json')));
+  assert.ok(!requested.some(url => url.includes('/beta/latest.json')));
+  assert.ok(!f.calls.some(call => call[0] === 'signingTools'));
 });

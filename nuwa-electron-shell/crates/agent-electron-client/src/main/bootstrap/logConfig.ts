@@ -320,15 +320,15 @@ export function initLogging(): void {
 /**
  * 更新日志级别（数据库初始化后调用）
  *
- * beta 通道：文件日志级别为 debug
+ * Beta / Dev 通道：文件日志级别为 debug
  * stable 通道：文件日志级别为 info（开发环境为 debug）
  */
 export function updateLogLevel(updateChannel: string): void {
-  const isBeta = updateChannel === "beta";
+  const isPreview = updateChannel === "beta" || updateChannel === "dev";
 
-  if (isBeta) {
+  if (isPreview) {
     log.transports.file.level = "debug";
-    log.info("[LogConfig] Beta channel: file log level set to debug");
+    log.info(`[LogConfig] ${updateChannel} channel: file log level set to debug`);
   } else {
     const dev = isDev();
     log.transports.file.level = dev ? "debug" : "info";

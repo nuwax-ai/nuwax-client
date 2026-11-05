@@ -7,12 +7,24 @@ const refs = (...tags) => tags.map((tag) => `${sha}\trefs/tags/${tag}`).join('\n
 const findings = (tag, history) => releaseSequenceFindings(parseReleaseTag(tag), sha, refs(...history));
 
 test('canonical versions reject every unsupported suffix and noncanonical number', () => {
-  for (const value of ['', '1.2', '01.2.3', '1.2.03', '1.2.3-beta', '1.2.3-beta.0', '1.2.3-beta.01', '1.2.3-alpha.1', '1.2.3-rc.1', '1.2.3-dev', '1.2.3+build', 'v1.2.3', '1.2.3\n'])
+  for (const value of ['', '1.2', '01.2.3', '1.2.03', '1.2.3-beta', '1.2.3-beta.0', '1.2.3-beta.01', '1.2.3-alpha.0', '1.2.3-alpha.01', '1.2.3-rc.1', '1.2.3-dev', '1.2.3+build', 'v1.2.3', '1.2.3\n'])
     assert.throws(() => parseReleaseVersion(value));
   assert.equal(parseReleaseTag('v3.0.11-beta.1').channel, 'beta');
   assert.equal(parseReleaseTag('v3.0.11').channel, 'stable');
+  assert.equal(parseReleaseTag('v3.0.11-alpha.1').channel, 'dev');
+  assert.throws(() => parseReleaseTag('prerelease-v3.0.11-alpha.1', { allowLegacy: true }));
   assert.throws(() => parseReleaseTag('electron-v3.0.9'));
   assert.equal(parseReleaseTag('prerelease-v3.0.8', { allowLegacy: true }).channel, 'beta');
+});
+
+test('Dev sorts below same-base Beta and Stable; core and numeric serials take precedence', () => {
+  const versions = ['3.0.10', '3.0.11-alpha.1', '3.0.11-alpha.10', '3.0.11-beta.1', '3.0.11', '3.0.12-alpha.1'];
+  for (let i = 0; i < versions.length; i++) for (let j = 0; j < versions.length; j++)
+    assert.equal(compareReleaseVersions(versions[i], versions[j]), Math.sign(i - j));
+  assert.deepEqual(findings('v3.0.11-alpha.1', ['v3.0.10', 'v3.0.11-beta.8']), []);
+  assert.deepEqual(findings('v3.0.11-alpha.2', ['v3.0.11-alpha.1', 'v3.0.11-beta.8']), []);
+  assert.match(findings('v3.0.11-alpha.3', ['v3.0.11-alpha.1'])[0], /序号须为 2/);
+  assert.match(findings('v3.0.11-alpha.2', ['v3.0.11-alpha.1', 'v3.0.11'])[0], /关闭/);
 });
 
 test('SemVer compares numeric beta identifiers and promotion', () => {

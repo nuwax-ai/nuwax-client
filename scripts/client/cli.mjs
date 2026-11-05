@@ -44,7 +44,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'help' || options.help) {
     console.log('Nuwax: dev [--frontend source|remote], frontend:build, pack [--frontend source] [--dir],');
     console.log('       sub:update [--nuwax ref] [--push],');
-    console.log('       release --version X.Y.Z[-beta.N] [--channel stable|beta] [--tag existing-tag] [--stage sign|sync] [--dry-run], doctor [--json]');
+    console.log('       release --version X.Y.Z[-beta.N|-alpha.N] [--channel stable|beta|dev] [--tag existing-tag] [--stage sign|sync] [--dry-run], doctor [--json]');
     return;
   }
   if (command === 'doctor') return (await import('./doctor.mjs')).doctor(root, options);

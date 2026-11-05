@@ -14,6 +14,8 @@ function pointerVersion(bytes, folder) {
   const version = JSON.parse(Buffer.from(bytes).toString()).version;
   const parsed = parseReleaseVersion(version);
   if (folder === 'latest' && parsed.channel !== 'stable') throw new Error('stable 指针不得包含预发布版本');
+  if (folder === 'beta' && parsed.channel === 'dev') throw new Error('Beta 指针不得包含 Dev 版本');
+  if (folder === 'dev' && parsed.channel !== 'dev') throw new Error('Dev 指针只允许 Dev 版本');
   return version;
 }
 
@@ -23,7 +25,7 @@ export async function publishPointers(identity, bytes, adapter, finalize = async
   const candidate = JSON.parse(Buffer.from(bytes).toString());
   if (candidate.version !== identity.version) throw new Error('目标元数据版本与 tag 不一致');
   parseReleaseVersion(candidate.version);
-  const folders = identity.channel === 'stable' ? ['latest', 'beta'] : ['beta'];
+  const folders = identity.channel === 'stable' ? ['latest', 'beta'] : [identity.channel];
   const previous = new Map(), update = [];
   // Read and validate every intended subscription before making any changes.
   for (const folder of folders) {
@@ -112,7 +114,7 @@ function commandAdapter(env, directory) {
       } catch (error) { throw new Error(`${mirror}/${folder}: 指针删除失败（exit ${error.status ?? 'unknown'}）`); }
     },
     async finalize(identity) {
-      await execute('gh', ['release', 'edit', identity.tag, '--draft=false', `--prerelease=${identity.channel === 'beta'}`, '--repo', env.GITHUB_REPOSITORY]);
+      await execute('gh', ['release', 'edit', identity.tag, '--draft=false', `--prerelease=${identity.channel !== 'stable'}`, '--repo', env.GITHUB_REPOSITORY]);
     },
   };
 }

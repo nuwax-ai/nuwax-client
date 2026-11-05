@@ -1,4 +1,5 @@
 {
+  "Claw.AutoUpdater.channelUpdateUnavailable": "当前订阅已变更，请重新检查并下载更新。",
   "Claw.Webview.leaveTitle": "离开当前页面？",
   "Claw.Webview.leaveMessage": "页面可能有尚未完成的支付或未保存的操作，是否离开？",
   "Claw.Webview.leave": "离开",
@@ -583,6 +584,10 @@
   "Claw.About.openOfficialWebsite": "前往官网",
   "Claw.About.systemInfo.title": "系统信息",
   "Claw.About.betaChannel": "Beta 升级通道",
+  "Claw.About.devChannel": "Dev 升级通道",
+  "Claw.About.devDisclaimer": "仅接收 Dev 体验版更新；关闭后回到 Beta，版本较低时等待后续更新。",
+  "Claw.About.devWarning": "Dev 体验版可能包含尚未充分验证的改动，稳定性较低。切换通道不会自动降级已安装版本。",
+  "Claw.About.switchedToDev": "已切换到 Dev 通道",
   "Claw.About.betaDisclaimer": "开启后将切换到预发测试版通道，可能包含未验证改动。",
   "Claw.About.showDebugInfo": "显示调试信息",
   "Claw.About.hideDebugInfo": "隐藏调试信息",
