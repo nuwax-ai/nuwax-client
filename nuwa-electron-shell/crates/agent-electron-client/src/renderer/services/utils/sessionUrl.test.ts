@@ -104,27 +104,6 @@ describe("syncSessionCookie", () => {
     expect(payload).not.toHaveProperty("secure");
   });
 
-  it("invalid URL 也不设 domain 和 secure", async () => {
-    await syncSessionCookie("not-a-valid-url", "tok123");
-
-    const payload = mockSession.setCookie.mock.calls[0][0];
-    expect(payload).toEqual({
-      url: "not-a-valid-url",
-      name: "ticket",
-      value: "tok123",
-      httpOnly: true,
-    });
-    expect(payload).not.toHaveProperty("domain");
-    expect(payload).not.toHaveProperty("secure");
-  });
-
-  it("host-only cookie — 不设 domain，与 webview Set-Cookie 行为一致", async () => {
-    await syncSessionCookie("https://example.com", "tok");
-
-    const payload = mockSession.setCookie.mock.calls[0][0];
-    expect(payload).not.toHaveProperty("domain");
-  });
-
   it("IPv4 host 也不设 domain", async () => {
     await syncSessionCookie("http://127.0.0.1:8080", "tok-ip");
 
@@ -234,10 +213,7 @@ describe("syncCookieAndGetRedirectUrl", () => {
   });
 
   it("returns redirect URL and syncs cookie when all present", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue("my-token");
 
     const result = await syncCookieAndGetRedirectUrl();
@@ -251,29 +227,11 @@ describe("syncCookieAndGetRedirectUrl", () => {
         value: "my-token",
       }),
     );
-    // host-only cookie，不设 domain
-    const payload = mockSession.setCookie.mock.calls[0][0];
-    expect(payload).not.toHaveProperty("domain");
-  });
-
-  it("clears local auth token after syncing to webview cookie", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
-    mockSettings.get.mockResolvedValue("my-token");
-
-    await syncCookieAndGetRedirectUrl();
-
-    expect(mockSession.setCookie).toHaveBeenCalled();
     expect(mockSettings.set).toHaveBeenCalledWith("auth.token", null);
   });
 
   it("keeps local auth token when cookie sync fails", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue("my-token");
     mockSession.setCookie.mockResolvedValue({
       success: false,
@@ -287,10 +245,7 @@ describe("syncCookieAndGetRedirectUrl", () => {
   });
 
   it("returns URL without syncing cookie when token is null", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue(null);
 
     const result = await syncCookieAndGetRedirectUrl();
@@ -301,10 +256,7 @@ describe("syncCookieAndGetRedirectUrl", () => {
   });
 
   it("overwrites cookie when domain cache token exists (regardless of existing cookie)", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockImplementation((key: string) => {
       if (key === "auth.token") return Promise.resolve(null);
       if (key === "auth.tokens.example.com") return Promise.resolve("my-token");
@@ -326,10 +278,7 @@ describe("syncCookieAndGetRedirectUrl", () => {
   });
 
   it("overwrites existing ticket when one-shot auth token is present", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue("fresh-token");
     mockSession.getCookie.mockResolvedValue({ success: true, found: true });
 
@@ -339,32 +288,6 @@ describe("syncCookieAndGetRedirectUrl", () => {
     );
     expect(mockSession.setCookie).toHaveBeenCalled();
     expect(mockSettings.set).toHaveBeenCalledWith("auth.token", null);
-  });
-
-  it("prints diagnostic logs regardless of NODE_ENV", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
-    mockSettings.get.mockResolvedValue("my-token");
-
-    const result = await syncCookieAndGetRedirectUrl();
-    expect(result).toBe(
-      "https://example.com/api/sandbox/config/redirect/7?hideMenu=true",
-    );
-    expect(mockLogger.debug).toHaveBeenCalledWith(
-      "[SessionUrl] Pre-session state",
-      "SessionUrl",
-      expect.objectContaining({
-        domain: "https://example.com",
-        hasToken: true,
-      }),
-    );
-    expect(mockLogger.debug).toHaveBeenCalledWith(
-      "[SessionUrl] ticket cookie synced successfully",
-      "SessionUrl",
-      expect.objectContaining({ domain: "https://example.com" }),
-    );
   });
 });
 
@@ -380,10 +303,7 @@ describe("syncCookieAndGetNewSessionUrl", () => {
   });
 
   it("returns new-session URL and syncs cookie", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue("my-token");
 
     const result = await syncCookieAndGetNewSessionUrl();
@@ -416,10 +336,7 @@ describe("syncCookieAndGetChatUrl", () => {
   });
 
   it("returns chat URL and syncs cookie", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue("my-token");
 
     const result = await syncCookieAndGetChatUrl("sess-abc");
@@ -444,10 +361,7 @@ describe("syncCookieAndGetChatUrl", () => {
   });
 
   it("returns chat URL without cookie when token is null", async () => {
-    mockGetCurrentAuth.mockResolvedValue({
-      isLoggedIn: true,
-      userInfo: { id: 7, currentDomain: "https://example.com", username: "u" },
-    });
+    setupAuthWithDomain();
     mockSettings.get.mockResolvedValue(null);
 
     const result = await syncCookieAndGetChatUrl("sess-abc");

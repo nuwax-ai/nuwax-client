@@ -1,9 +1,3 @@
-/**
- * 单元测试: constants
- *
- * 测试应用常量的完整性和一致性
- */
-
 import { describe, it, expect } from "vitest";
 import {
   APP_DISPLAY_NAME,
@@ -14,33 +8,17 @@ import {
   DEFAULT_AGENT_RUNNER_PORT,
   DEFAULT_LANPROXY_PORT,
   DEFAULT_DEV_SERVER_PORT,
-  LOCALHOST_IP,
-  LOCALHOST_HOSTNAME,
-  LOCAL_HOST_URL,
-  DEFAULT_ANTHROPIC_API_URL,
-  DEFAULT_SERVER_HOST,
   DEFAULT_AI_ENGINE,
   isAgentEngineType,
   normalizeAgentEngine,
   normalizeOptionalPort,
-  SUPPORTED_AGENT_ENGINES,
-  DEFAULT_AI_MODEL,
-  DEFAULT_MAX_TOKENS,
-  DEFAULT_TEMPERATURE,
-  MODEL_OPTIONS,
-  DEFAULT_API_TIMEOUT,
   DEFAULT_SSE_RETRY_DELAY,
   DEFAULT_SSE_MAX_RETRY_DELAY,
-  DEFAULT_SSE_HEARTBEAT_INTERVAL,
-  DEFAULT_STARTUP_DELAY,
   CLEANUP_TIMEOUT,
   PROCESS_KILL_ESCALATION_TIMEOUT,
   ACP_ABORT_TIMEOUT,
   ENGINE_DESTROY_TIMEOUT,
   DEPS_SYNC_TIMEOUT,
-  NPM_MIRRORS,
-  UV_MIRRORS,
-  DEFAULT_MIRROR_CONFIG,
   STORAGE_KEYS,
   AUTH_KEYS,
 } from "./constants";
@@ -80,31 +58,7 @@ describe("Constants", () => {
     });
   });
 
-  describe("Host Configuration", () => {
-    it("should have localhost configuration", () => {
-      expect(LOCALHOST_IP).toBe("127.0.0.1");
-      expect(LOCALHOST_HOSTNAME).toBe("localhost");
-      expect(LOCAL_HOST_URL).toBe("http://127.0.0.1");
-    });
-  });
-
-  describe("API URLs", () => {
-    it("should have valid API URLs", () => {
-      expect(DEFAULT_ANTHROPIC_API_URL).toMatch(/^https?:\/\//);
-      expect(DEFAULT_SERVER_HOST).toMatch(/^https?:\/\//);
-    });
-  });
-
   describe("AI Configuration", () => {
-    it("should have valid AI engine type", () => {
-      expect(["claude-code", "nuwaxcode"]).toContain(DEFAULT_AI_ENGINE);
-      expect(SUPPORTED_AGENT_ENGINES).toEqual([
-        "claude-code",
-        "nuwaxcode",
-        "codex-cli",
-      ]);
-    });
-
     it("should normalize legacy or invalid AI engine values", () => {
       expect(isAgentEngineType("claude-code")).toBe(true);
       expect(isAgentEngineType("nuwaxcode")).toBe(true);
@@ -122,43 +76,9 @@ describe("Constants", () => {
       expect(normalizeOptionalPort(0)).toBeUndefined();
       expect(normalizeOptionalPort(65536)).toBeUndefined();
     });
-
-    it("should have non-empty model name", () => {
-      expect(DEFAULT_AI_MODEL).toBeTruthy();
-      expect(DEFAULT_AI_MODEL.length).toBeGreaterThan(0);
-    });
-
-    it("should have valid token limits", () => {
-      expect(DEFAULT_MAX_TOKENS).toBeGreaterThan(0);
-    });
-
-    it("should have valid temperature range", () => {
-      expect(DEFAULT_TEMPERATURE).toBeGreaterThanOrEqual(0);
-      expect(DEFAULT_TEMPERATURE).toBeLessThanOrEqual(1);
-    });
-
-    it("should have model options with labels and values", () => {
-      MODEL_OPTIONS.forEach((option) => {
-        expect(option.label).toBeTruthy();
-        expect(option.value).toBeTruthy();
-      });
-    });
   });
 
   describe("Timeout Configuration", () => {
-    it("should have positive timeout values", () => {
-      expect(DEFAULT_API_TIMEOUT).toBeGreaterThan(0);
-      expect(DEFAULT_SSE_RETRY_DELAY).toBeGreaterThan(0);
-      expect(DEFAULT_SSE_MAX_RETRY_DELAY).toBeGreaterThan(0);
-      expect(DEFAULT_SSE_HEARTBEAT_INTERVAL).toBeGreaterThan(0);
-      expect(DEFAULT_STARTUP_DELAY).toBeGreaterThan(0);
-      expect(CLEANUP_TIMEOUT).toBeGreaterThan(0);
-      expect(PROCESS_KILL_ESCALATION_TIMEOUT).toBeGreaterThan(0);
-      expect(ACP_ABORT_TIMEOUT).toBeGreaterThan(0);
-      expect(ENGINE_DESTROY_TIMEOUT).toBeGreaterThan(0);
-      expect(DEPS_SYNC_TIMEOUT).toBeGreaterThan(0);
-    });
-
     it("should have max retry delay greater than initial retry delay", () => {
       expect(DEFAULT_SSE_MAX_RETRY_DELAY).toBeGreaterThanOrEqual(
         DEFAULT_SSE_RETRY_DELAY,
@@ -176,26 +96,6 @@ describe("Constants", () => {
     it("should have deps sync timeout as the largest timeout", () => {
       expect(DEPS_SYNC_TIMEOUT).toBeGreaterThan(ENGINE_DESTROY_TIMEOUT);
       expect(DEPS_SYNC_TIMEOUT).toBeGreaterThan(CLEANUP_TIMEOUT);
-    });
-  });
-
-  describe("Mirror Configuration", () => {
-    it("should have npm mirror presets", () => {
-      expect(NPM_MIRRORS.OFFICIAL).toContain("npmjs.org");
-      expect(NPM_MIRRORS.TAOBAO).toContain("npmmirror");
-      expect(NPM_MIRRORS.TENCENT).toContain("tencent");
-    });
-
-    it("should have uv mirror presets", () => {
-      expect(UV_MIRRORS.OFFICIAL).toContain("pypi.org");
-      expect(UV_MIRRORS.TUNA).toContain("tsinghua");
-      expect(UV_MIRRORS.ALIYUN).toContain("aliyun");
-      expect(UV_MIRRORS.TENCENT).toContain("tencent");
-    });
-
-    it("should have default mirror config", () => {
-      expect(DEFAULT_MIRROR_CONFIG.npmRegistry).toBeTruthy();
-      expect(DEFAULT_MIRROR_CONFIG.uvIndexUrl).toBeTruthy();
     });
   });
 

@@ -1192,43 +1192,6 @@ describe("AcpEngine.chat", () => {
     expect(promptAsyncSpy).toHaveBeenCalled();
   });
 
-  it("dispatch: latest turn records memory before promptAsync", async () => {
-    chatDispatchCoordinator.reset();
-    const { engine, sessionId, session } = setupEngine();
-    session.projectId = "project-test-001";
-
-    chatDispatchCoordinator.bumpArrival("project-test-001", "rid-1");
-    chatDispatchCoordinator.bumpArrival("project-test-001", "rid-2");
-
-    const recordMemorySpy = vi.spyOn(
-      acpChatMemory,
-      "recordUserMessageToMemory",
-    );
-    const promptAsyncSpy = vi
-      .spyOn(engine, "promptAsync")
-      .mockResolvedValue(undefined);
-
-    const result = await engine.chat(
-      {
-        user_id: "user-1",
-        project_id: "project-test-001",
-        session_id: sessionId,
-        request_id: "rid-chat-latest-memory",
-        prompt: "hello",
-        original_user_prompt: "hello",
-        open_long_memory: true,
-      } as any,
-      { dispatchKey: "project-test-001", turnGeneration: 2 },
-    );
-
-    expect(result.success).toBe(true);
-    expect((result as AcpChatHttpResult).promptDispatched).toBe(true);
-    expect(recordMemorySpy).toHaveBeenCalledTimes(1);
-    expect(promptAsyncSpy).toHaveBeenCalled();
-
-    recordMemorySpy.mockRestore();
-  });
-
   it("dispatch: latest turn calls memory before promptAsync", async () => {
     chatDispatchCoordinator.reset();
     const key = "project-test-001";

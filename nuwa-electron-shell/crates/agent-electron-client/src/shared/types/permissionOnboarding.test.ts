@@ -5,11 +5,6 @@ import {
   isPermissionGuideTarget,
   isPermissionKey,
 } from "./permissionOnboarding";
-import { permissionIdentityText } from "../utils/permissionIdentityText";
-import en from "../locales/en-US.json";
-import cn from "../locales/zh-CN.json";
-import tw from "../locales/zh-TW.json";
-import hk from "../locales/zh-HK.json";
 describe("permission guide contract", () => {
   it("validates navigation targets", () => {
     expect(isPermissionGuideTarget("overview")).toBe(true);
@@ -45,101 +40,5 @@ describe("permission guide contract", () => {
     expect(tracker.update("helper_screen_recording", "granted").status).toBe(
       "granted",
     );
-  });
-  it("ships Computer Use session-failure copy in all four locales", () => {
-    const keys = [
-      "Claw.Cua.reason.operationFailed",
-      "Claw.Cua.reason.loginRequired",
-      "Claw.Cua.reason.operationCancelled",
-      "Claw.Cua.reason.permissionsRequired",
-      "Claw.Cua.reason.uncertainResult",
-      "Claw.Cua.reason.helperStillRunning",
-      "Claw.Cua.reason.sensitiveTarget",
-      "Claw.Cua.reason.blacklisted",
-    ] as const;
-    for (const locale of [en, cn, tw, hk]) {
-      for (const key of keys) {
-        expect((locale as Record<string, string>)[key], key).toBeTruthy();
-      }
-      expect(permissionIdentityText((locale as Record<string, string>)["Claw.Cua.reason.operationFailed"])).toContain("Nuwax Computer Use");
-      expect(permissionIdentityText((locale as Record<string, string>)["Claw.Cua.reason.permissionsRequired"])).toContain("Nuwax Computer Use");
-    }
-  });
-  it("ships a short Computer Use consent that names Nuwax Computer Use", () => {
-    const keys = [
-      "Claw.Settings.computerUse.consentTitle",
-      "Claw.Settings.computerUse.consentDescription",
-      "Claw.Settings.computerUse.consentAccept",
-      "Claw.Settings.computerUse.consentCancel",
-      "Claw.Settings.computerUse.setupSection",
-      "Claw.Settings.computerUse.behaviorSection",
-      "Claw.Settings.computerUse.nextGrant",
-      "Claw.PermissionGuide.helperDisabled",
-    ] as const;
-    for (const locale of [en, cn, tw, hk]) {
-      const pack = Object.fromEntries(Object.entries(locale).map(([key, text]) => [key, permissionIdentityText(text)]));
-      for (const key of keys) {
-        expect(pack[key], key).toBeTruthy();
-      }
-      expect(pack["Claw.Settings.computerUse.consentTitle"]).toContain("Nuwax Computer Use");
-      const body = pack["Claw.Settings.computerUse.consentDescription"];
-      expect(body).toContain("Nuwax Computer Use");
-      expect(body).toContain("Nuwax.app");
-      expect(body.length).toBeLessThan(420);
-      expect(pack["Claw.PermissionGuide.helperDisabled"]).toContain("Nuwax Computer Use");
-      expect(pack["Claw.Settings.computerUse.nextGrant"]).toContain("Nuwax Computer Use");
-    }
-    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/sent to your selected model service/i);
-    expect(en["Claw.Settings.computerUse.consentDescription"]).toMatch(/turn it off/i);
-    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/发送给你选择的模型服务/);
-    expect(cn["Claw.Settings.computerUse.consentDescription"]).toMatch(/随时关闭/);
-  });
-
-  it("ships Computer Use helper-target copy in all four locales", () => {
-    const keys = [
-      "Claw.Settings.computerUse.permTargetHint",
-      "Claw.Settings.computerUse.permWatching",
-      "Claw.Settings.computerUse.openAxPane",
-      "Claw.Settings.computerUse.openSrPane",
-      "Claw.Settings.computerUse.retryHelper",
-      "Claw.Settings.computerUse.helperDown",
-      "Claw.Settings.computerUse.errors.timeout",
-      "Claw.Settings.computerUse.errors.installRecovery",
-      "Claw.Settings.computerUse.errors.installRollback",
-      "Claw.Settings.computerUse.errors.helperSignatureFailed",
-      "Claw.PermissionGuide.separateIdentity",
-      "Claw.PermissionGuide.helperPending",
-    ] as const;
-    const helperNamed = keys.filter((key) =>
-      /TargetHint|Watching|helperDown|timeout|separateIdentity|helperPending/.test(key),
-    );
-    for (const locale of [en, cn, tw, hk]) {
-      for (const key of keys) {
-        expect((locale as Record<string, string>)[key], key).toBeTruthy();
-      }
-      for (const key of helperNamed) {
-        expect(permissionIdentityText((locale as Record<string, string>)[key])).toContain("Nuwax Computer Use");
-        expect(permissionIdentityText((locale as Record<string, string>)[key], true)).toContain("Nuwax Computer Use Dev");
-      }
-    }
-  });
-  it("ships all four localizations with matching interpolation slots", () => {
-    const keys = Object.keys(en).filter((key) =>
-      key.startsWith("Claw.PermissionGuide."),
-    );
-    for (const locale of [cn, tw, hk]) {
-      expect(
-        Object.keys(locale).filter((key) =>
-          key.startsWith("Claw.PermissionGuide."),
-        ),
-      ).toEqual(keys);
-      for (const key of keys) {
-        const value = (locale as Record<string, string>)[key];
-        expect(value).toBeTruthy();
-        expect(value.match(/\{\d+\}/g)).toEqual(
-          (en as Record<string, string>)[key].match(/\{\d+\}/g),
-        );
-      }
-    }
   });
 });

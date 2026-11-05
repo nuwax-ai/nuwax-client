@@ -83,7 +83,8 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
       ["mp4", "webm", "gif"].map(output => ({ output, compression: { quality: "high" }, maxDurationMs: 1_800_000 })),
     );
     ui.unmount();
-    expect(ui.offMenu).toHaveBeenCalled();
+    expect(ui.offMenu).toHaveBeenCalledOnce();
+    expect(ui.offState).toHaveBeenCalledOnce();
     ui.menu("screenshot"); await flush();
     expect(ui.capture.screenshot).toHaveBeenCalledOnce();
   });
@@ -121,20 +122,6 @@ describe("宿主菜单与截图按钮共用 CaptureLauncher", () => {
     expect(ui.offMenu).not.toHaveBeenCalled();
     ui.unmount(); expect(ui.offMenu).toHaveBeenCalledOnce();
   });
-  it("包含 WebM 的兼容桥命令使用当前质量，卸载清理订阅", async () => {
-    const ui = mount();
-    ui.menu("screenshot"); await flush();
-    expect(ui.capture.screenshot).toHaveBeenCalledWith({ compression: { quality: "high" } });
-    for (const output of ["mp4", "webm", "gif"] as const) { ui.menu(output); await flush(); }
-    expect(vi.mocked(ui.capture.record).mock.calls.map(([value]) => value)).toEqual(
-      ["mp4", "webm", "gif"].map((output) => ({ output, compression: { quality: "high" }, maxDurationMs: 1_800_000 })),
-    );
-    expect(errors).not.toHaveBeenCalled();
-    ui.unmount();
-    expect(ui.offMenu).toHaveBeenCalledOnce();
-    expect(ui.offState).toHaveBeenCalledOnce();
-  });
-
   it("React 尚未重绘时连续菜单快捷键也不能发起第二次请求", async () => {
     let finish!: (value: { success: false; code: "canceled" }) => void;
     const screenshot = vi.fn(() => new Promise<{ success: false; code: "canceled" }>((resolve) => { finish = resolve; }));
