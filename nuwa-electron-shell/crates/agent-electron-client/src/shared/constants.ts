@@ -333,6 +333,9 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  */
 export const I18N_KEYS = {
   UpdateChannel: {
+    SWITCH_TITLE: "Claw.AutoUpdater.channelSwitchTitle",
+    SWITCH_MESSAGE: "Claw.AutoUpdater.channelSwitchMessage",
+    SWITCH_INSTALL: "Claw.AutoUpdater.channelSwitchInstall",
     UPDATE_UNAVAILABLE: "Claw.AutoUpdater.channelUpdateUnavailable",
     DEV_CHANNEL: "Claw.About.devChannel",
     DEV_DISCLAIMER: "Claw.About.devDisclaimer",
