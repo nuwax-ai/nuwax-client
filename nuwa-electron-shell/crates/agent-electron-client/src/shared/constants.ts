@@ -387,6 +387,12 @@ export const I18N_KEYS = {
     authorizationDescription: "Claw.Dsh.authorizationDescription",
     noModels: "Claw.Dsh.noModels",
   },
+  Workbench: {
+    title: "Claw.Workbench.title",
+    description: "Claw.Workbench.description",
+    agentAccess: "Claw.Workbench.agentAccess",
+    failed: "Claw.Workbench.failed",
+  },
   Themes: {
     selected: "Claw.Themes.selected",
     apply: "Claw.Themes.apply",

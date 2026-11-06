@@ -47,6 +47,7 @@ import { createBrowserFeature } from "./browser";
 import { createDshRuntimeFeature, manageDshPlugins } from "./dsh-runtime";
 import { createShellCapabilitiesFeature, getShellMcpEntry, subscribeShellMcp } from "./shell-capabilities";
 import { localFilesFeature } from "./local-files";
+import { workbenchFeature } from "./workbench";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
 export type { FeatureMcpServerEntry } from "./_kit/types";
@@ -62,6 +63,7 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   createShellCapabilitiesFeature({ themes: getThemeService, themeAuthoring: themeAuthoringContext,
     linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode }, plugins: manageDshPlugins }),
   createDshRuntimeFeature({ shellMcp: getShellMcpEntry, subscribeShellMcp }),
+  workbenchFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */

@@ -1,14 +1,27 @@
 const { contextBridge, ipcRenderer } = require('electron')
 const origin = process.argv.find(x => x.startsWith('--nuwax-dsh-origin='))?.slice('--nuwax-dsh-origin='.length)
 if (origin && location.origin === origin) {
-  const documentToken = ipcRenderer.invoke('nuwax-dsh:document')
-  const invoke = async (action, ...args) => ipcRenderer.invoke('nuwax-dsh:' + action, await documentToken, ...args)
+  const workbench = process.argv.includes('--nuwax-dsh-workbench')
+  const prefix = workbench ? 'nuwax-dsh-workbench:' : 'nuwax-dsh:'
+  const documentToken = ipcRenderer.invoke(prefix + 'document')
+  const invoke = async (action, ...args) => ipcRenderer.invoke(prefix + action, await documentToken, ...args)
   contextBridge.exposeInMainWorld('__DSH_LOCALE__', {
     read: () => invoke('locale'),
     // The shell is the preference owner; DSH reports render changes through this native contract.
     onChange() {},
   })
-  contextBridge.exposeInMainWorld('nuwaxBotHost', { openSettings: () => invoke('settings') })
+  if (workbench) {
+    contextBridge.exposeInMainWorld('nuwaxWorkbench', {
+      ready: () => invoke('workbench-ready'),
+      closed: () => invoke('workbench-closed'),
+      reply: (id, result) => invoke('workbench-reply', id, result),
+      onCommand(listener) {
+        const receive = (_event, request) => listener(request)
+        ipcRenderer.on('nuwax-workbench:command', receive)
+        return () => ipcRenderer.removeListener('nuwax-workbench:command', receive)
+      },
+    })
+  } else contextBridge.exposeInMainWorld('nuwaxBotHost', { openSettings: () => invoke('settings') })
   const listeners = new Set()
   const opens = new Map()
   ipcRenderer.on('ds-bot:browser-view-changed', (_event, value) => { for (const listener of listeners) listener(value) })

@@ -1,0 +1,3 @@
+- insert:
+    - id: nuwax-workbench
+      name: '@nuwax-ai/dsh-workbench'
