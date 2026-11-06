@@ -153,6 +153,8 @@ describe("Windows product startup ownership", () => {
         appId: "com.nuwax-ai.nuwax",
       }),
       item({ name: "Nuwax", target: current }),
+      item({ name: "女娲 Nuwax", target: current }),
+      item({ name: "女娲 NuwaClaw", target: current }),
     ];
     const others = [
       item({ name: "Other", target: current }),
