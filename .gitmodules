@@ -1,7 +1,7 @@
 [submodule "nuwax"]
 	path = nuwax
 	url = https://github.com/nuwax-ai/nuwax.git
-	branch = codex/client-theme-surface-integration
+	branch = alpha
 [submodule "nuwax-dist"]
 	path = nuwax-dist
 	url = https://github.com/nuwax-ai/nuwax-dist.git
