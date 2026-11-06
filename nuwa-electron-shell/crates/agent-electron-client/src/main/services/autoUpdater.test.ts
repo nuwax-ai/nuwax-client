@@ -698,7 +698,7 @@ describe("explicit same-series channel downgrade", () => {
   let settings: Map<string, unknown>;
   beforeEach(async () => {
     vi.useFakeTimers(); mockDarwin();
-    mockAppVersion.mockReturnValue("3.1.1-beta.6");
+    mockAppVersion.mockReturnValue("3.1.1-beta.7");
     mockUpdaterOn.mockClear(); mockUpdaterQuitAndInstall.mockClear();
     mockUpdaterCheckForUpdates.mockReset(); mockUpdaterDownloadUpdate.mockReset();
     mockShowMessageBox.mockReset().mockResolvedValue({ response: 0 });
@@ -712,7 +712,7 @@ describe("explicit same-series channel downgrade", () => {
     vi.mocked(readSetting).mockReset(); vi.mocked(writeSetting).mockReset().mockReturnValue(true);
     mockAppVersion.mockReturnValue("0.9.4"); vi.useRealTimers();
   });
-  const offer = (version = "3.1.1-alpha.1") => {
+  const offer = (version = "3.1.1-alpha.2") => {
     respondLatestJson({ version, yml: { darwin: `https://example.invalid/${version}/latest-mac.yml` } });
     mockUpdaterCheckForUpdates.mockResolvedValue({ updateInfo: { version } });
   };
@@ -723,7 +723,7 @@ describe("explicit same-series channel downgrade", () => {
   };
   const switchTo = (mod: Awaited<ReturnType<typeof boot>>, channel: "stable" | "beta" | "dev") =>
     mod.changeUpdateChannel(channel, () => { settings.set("update_channel", channel); });
-  const downloaded = (version = "3.1.1-alpha.1") => {
+  const downloaded = (version = "3.1.1-alpha.2") => {
     const callback = mockUpdaterOn.mock.calls.find(([name]) => name === "update-downloaded")![1] as Function;
     callback({ version, downloadedFile: "/cache/alpha.zip" });
   };
@@ -736,10 +736,10 @@ describe("explicit same-series channel downgrade", () => {
   });
   it("persists an explicit switch and admits only its matching manifest", async () => {
     offer(); const mod = await boot(); expect(switchTo(mod, "dev")).toBe(true);
-    expect(settings.get("update_channel_switch")).toEqual({ fromVersion: "3.1.1-beta.6", channel: "dev" });
-    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: true, version: "3.1.1-alpha.1" });
+    expect(settings.get("update_channel_switch")).toEqual({ fromVersion: "3.1.1-beta.7", channel: "dev" });
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: true, version: "3.1.1-alpha.2" });
     expect(lastFakeUpdater.allowDowngrade).toBe(true);
-    mockUpdaterCheckForUpdates.mockResolvedValue({ updateInfo: { version: "3.1.1-alpha.2" } });
+    mockUpdaterCheckForUpdates.mockResolvedValue({ updateInfo: { version: "3.1.1-alpha.3" } });
     expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: false, error: expect.stringContaining("manifest") });
     downloaded(); expect(mod.getUpdateState().status).toBe("error");
   });
@@ -747,7 +747,7 @@ describe("explicit same-series channel downgrade", () => {
     offer(); const first = await boot(); switchTo(first, "dev");
     const restarted = await boot();
     expect(await restarted.checkForUpdates()).toMatchObject({ hasUpdate: true });
-    mockAppVersion.mockReturnValue("3.1.1-beta.7");
+    mockAppVersion.mockReturnValue("3.1.1-beta.8");
     expect(await restarted.checkForUpdates()).toMatchObject({ hasUpdate: false });
   });
   it.each([
@@ -789,7 +789,7 @@ describe("explicit same-series channel downgrade", () => {
     expect(mod.getUpdateState().status).toBe("downloaded"); expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
     mockShowMessageBox.mockResolvedValue({ response: 1 });
     expect(await mod.installUpdate()).toMatchObject({ success: true });
-    expect(mockShowMessageBox.mock.calls.at(-1)![0]).toMatchObject({ detail: "3.1.1-beta.6 → 3.1.1-alpha.1", defaultId: 0 });
+    expect(mockShowMessageBox.mock.calls.at(-1)![0]).toMatchObject({ detail: "3.1.1-beta.7 → 3.1.1-alpha.2", defaultId: 0 });
     expect(mockUpdaterQuitAndInstall).toHaveBeenCalledOnce();
   });
   it("clears one-click busy state when confirmation is canceled", async () => {

@@ -44,13 +44,13 @@ importers:
         version: 1.27.1(zod@3.25.76)
       '@nuwax-ai/agent-kit':
         specifier: file:../agent-kit
-        version: file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.25)
+        version: file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.26)
       '@nuwax-ai/mcp-proxy-ts':
         specifier: 1.5.4
         version: 1.5.4(zod@3.25.76)
       '@nuwax-ai/nuwax-harness-acp-ts':
-        specifier: ^1.2.25
-        version: 1.2.25
+        specifier: ^1.2.26
+        version: 1.2.26
       '@uiw/react-json-view':
         specifier: 2.0.0-alpha.42
         version: 2.0.0-alpha.42(@babel/runtime@7.29.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -228,10 +228,14 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@agentclientprotocol/sdk@2.0.2':
-    resolution: {integrity: sha512-jLywRB42hZMRMc4aUgt0uRjkY9FQnMdybv4XgLl+ddi75QuJn8Vbl0+CHcVHJDC0+WDfi1KQXRWtHaR5vp6gHw==}
+  '@agentclientprotocol/sdk@2.4.0':
+    resolution: {integrity: sha512-7qJ8nnyj7WesC5ve185ioTpB2/svQoeGV4HA4nLEhgDUrcmBe54/08VcXc/oL4p14tDbxxECZzdYmUYQ+4l+Wg==}
     peerDependencies:
+      '@modelcontextprotocol/server': ^2.4.0
       zod: ^3.25.76 || ^4.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/server':
+        optional: true
 
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
@@ -1170,12 +1174,12 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@nuwax-ai/nuwax-harness-acp-ts@1.2.25':
-    resolution: {integrity: sha512-5oI4Uhu1i8EL+zGf8v7qoWQfG1HVDipeKcgsypQspvpC/yqSsQpvjY8nxAkyS2GML0TVhUt/LYYNuTshJdk5ZA==}
+  '@nuwax-ai/nuwax-harness-acp-ts@1.2.26':
+    resolution: {integrity: sha512-zOv3S38RY0AzaX9RhQOnhyx6f5bRJNH8lB0q/hYBdqLqdhF6oDyz/yegpO7/le72NbzI8064jFWFQSeaYhXooA==}
     hasBin: true
 
-  '@nuwax-ai/nuwax-harness@0.18.26':
-    resolution: {integrity: sha512-/yqradtkp6cr2TU90kXbonYKrrE6hgw8MA9qpvPHLPmB4pGRMHV4AnhSA6CrMtJg9ummc+QzVQUQ+a74BYIqTg==}
+  '@nuwax-ai/nuwax-harness@0.18.29':
+    resolution: {integrity: sha512-tqq7w7dyq7mPSm4cuzOYJZCQX0l3H82U0RqZATgh4c/BgEYwN/02RD7wWq3KOhe7ywSxiLsczXk6KdCaDXzKlw==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -4691,7 +4695,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@agentclientprotocol/sdk@2.0.2(zod@4.4.3)':
+  '@agentclientprotocol/sdk@2.4.0(zod@4.4.3)':
     dependencies:
       zod: 4.4.3
 
@@ -5487,10 +5491,10 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@nuwax-ai/agent-kit@file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.25)':
+  '@nuwax-ai/agent-kit@file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.26)':
     dependencies:
       '@agentclientprotocol/sdk': 0.26.0(zod@3.25.76)
-      '@nuwax-ai/nuwax-harness-acp-ts': 1.2.25
+      '@nuwax-ai/nuwax-harness-acp-ts': 1.2.26
 
   '@nuwax-ai/mcp-proxy-ts@1.5.4(zod@3.25.76)':
     dependencies:
@@ -5500,16 +5504,18 @@ snapshots:
       - supports-color
       - zod
 
-  '@nuwax-ai/nuwax-harness-acp-ts@1.2.25':
+  '@nuwax-ai/nuwax-harness-acp-ts@1.2.26':
     dependencies:
-      '@agentclientprotocol/sdk': 2.0.2(zod@4.4.3)
-      '@nuwax-ai/nuwax-harness': 0.18.26
+      '@agentclientprotocol/sdk': 2.4.0(zod@4.4.3)
+      '@nuwax-ai/nuwax-harness': 0.18.29
       diff: 9.0.0
       open: 11.0.4
       vscode-jsonrpc: 9.0.1
       zod: 4.4.3
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/server'
 
-  '@nuwax-ai/nuwax-harness@0.18.26':
+  '@nuwax-ai/nuwax-harness@0.18.29':
     dependencies:
       detect-libc: 2.1.2
       tar: 7.5.22
