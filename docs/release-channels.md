@@ -8,9 +8,9 @@ Beta 序号按完整 `X.Y.Z` 分别递增：存在 `3.1.1-beta.N` 标签时，`3
 
 ## 发布入口
 
-客户端以长期 `alpha` 分支集成 Dev 体验功能，前端源码仓也以 `alpha` 分支作为对应消费线；客户端仍固定引用具体 gitlink，不随前端分支自动追新。PC Web 已有的 `dev` 部署分支保持原职责。成熟功能经独立 PR 回主干，主干和发布线修复按需回灌 `alpha`。
+客户端以带版本号的 `alpha/v3.1.0` 分支集成 Dev 体验功能，前端源码仓也以 `alpha/v3.1.0` 分支作为对应消费线；客户端仍固定引用具体 gitlink，不随前端分支自动追新。PC Web 已有的 `dev` 部署分支保持原职责。成熟功能经独立 PR 回主干，主干和发布线修复按需回灌对应 Alpha 分支。分支版本表示维护线，安装包版本仍按发布版本规则独立校验。
 
-推送 `alpha` 或向其提交 PR 运行 CI 门禁；正式 Dev 发布仍须创建 `vX.Y.Z-alpha.N` 标签，分支名称不会触发出包或更新订阅指针。产品中的通道名称保持 Dev。
+推送 `alpha/**` 或向其提交 PR 运行 CI 门禁；正式 Dev 发布仍须创建 `vX.Y.Z-alpha.N` 标签，分支名称不会触发出包或更新订阅指针。产品中的通道名称保持 Dev。
 
 ```bash
 npm run release -- --version 3.0.11-beta.6 --dry-run
@@ -41,7 +41,7 @@ stable 打包 workflow 匹配 v* 并排除 v*-beta.* / v*-alpha.*；预发布 wo
 | `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` / `v*-alpha.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
 | `release-electron-dev.yml` | tag push `v*-beta.*` / `v*-alpha.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台 → 自动调用同步，公开 prerelease |
 | `sync-electron-to-oss.yml` | Dev / beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
-| `ci.yml` | main/alpha/release 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
+| `ci.yml` | main、alpha/**、release/** 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
 
 仅修改 `release-notes/*.md` 的分支 push/PR 不触发 `ci.yml`，避免发布说明在 PR、合并、tag 三个入口重复占用 runner。改动包含源码、workflow、pin 或 `.channel.json` 时仍执行完整分支/PR 门禁；tag 发布调用 `ci.yml` 不受路径过滤影响，始终运行全部检查。
 
