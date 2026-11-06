@@ -20,3 +20,4 @@ artifacts/
 /resources/capture/
 /third-party/generated*/
 .pnpm-store/*
+docs/20261105-client-feedback-log-research.md
