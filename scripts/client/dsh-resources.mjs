@@ -1,4 +1,5 @@
 import { cp, mkdir, readFile, readdir, rm, rename, writeFile, lstat } from 'node:fs/promises';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -7,6 +8,42 @@ import { botClientProfile } from '../../nuwa-electron-shell/crates/dsh-runtime/b
 
 export const DSH_VERSIONS = Object.freeze({ dsh: '0.2.1-rc.5', bot: '0.2.7', botSource: '71d344bf193f3f18185f25de3d8e5c483046910a' });
 const targetNames = { 'win32-x64': 'win-x64', 'darwin-arm64': 'mac-arm64', 'darwin-x64': 'mac-x64', 'linux-x64': 'linux-x64', 'linux-arm64': 'linux-arm64' };
+
+/** Admit packaged bytes without running target binaries or modifying a signed app. */
+export function verifyDshResources(resources, { platform = process.platform, arch = process.arch } = {}) {
+  if (!targetNames[platform + '-' + arch]) throw new Error('[dsh] Unsupported runtime target');
+  const requireFile = relative => {
+    try {
+      const stat = statSync(path.join(resources, relative));
+      if (stat.isFile() && stat.size > 0) return;
+    } catch { /* Report absent and unreadable payloads consistently. */ }
+    throw new Error('[dsh] Missing runtime resource: ' + relative);
+  };
+  const manifest = relative => {
+    requireFile(relative);
+    let value;
+    try { value = JSON.parse(readFileSync(path.join(resources, relative), 'utf8')); } catch { /* Invalid metadata. */ }
+    if (value?.platform !== platform || value?.arch !== arch) throw new Error('[dsh] Runtime target mismatch: ' + relative);
+    return value;
+  };
+  const runtime = manifest('dsh-runtime/nuwax-runtime.json');
+  for (const [name, version] of Object.entries(DSH_VERSIONS)) {
+    if (runtime[name] !== version) throw new Error('[dsh] Runtime version mismatch: ' + name);
+  }
+  manifest('dsh-office/primary-runtime/runtime.json');
+  const files = [
+    'dsh-runtime/host.mjs', 'dsh-runtime/controller.mjs', 'dsh-runtime/desktop.mjs',
+    'dsh-runtime/node_modules/@deepseek-ai/dsh/lib/profile-boot.js',
+    'dsh-runtime/node_modules/ds-bot/index.js', 'dsh-runtime/node_modules/ds-bot/client.js',
+    'dsh-runtime/node_modules/@deepseek-ai/libreoffice-kit/lib/index.js',
+    'dsh-office/LICENSES.txt',
+    'dsh-office/primary-runtime/dependencies/node/bin/' + (platform === 'win32' ? 'node.exe' : 'node'),
+    'dsh-office/primary-runtime/dependencies/python/' + (platform === 'win32' ? 'python.exe' : 'bin/python3'),
+  ];
+  files.forEach(requireFile);
+  return { platform, arch, dsh: runtime.dsh, bot: runtime.bot };
+}
+
 const run = (command, args, cwd) => new Promise((resolve, reject) => {
   const child = spawn(command, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' });
   child.once('error', reject);
@@ -72,5 +109,6 @@ export async function prepareDshResources(root, options = {}) {
   await collectLicenses(office);
   if (!licenses.length) throw new Error('Office payload has no license evidence');
   await writeFile(path.join(office, 'LICENSES.txt'), licenses.join('\n\n'));
+  verifyDshResources(resources, { platform, arch });
   return { runtime: output, office, key };
 }

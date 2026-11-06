@@ -4,11 +4,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { dshSourceDigest, DSH_VERSIONS } from './client/dsh-resources.mjs';
 const require = createRequire(import.meta.url);
 const { nativeTargets } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-sign-targets.cjs');
 const { createMacSigner, withLimitedBinaryProbes } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-mac-sign.cjs');
 const { entitlementsForNative } = require('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/dsh-sign-resources.cjs');
+test('release prepare:all includes the required DS Bot runtime preparation', () => {
+ const script = fileURLToPath(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/prepare/prepare-all.js', import.meta.url));
+ const result = spawnSync(process.execPath, [script, '--dry-run'], { encoding: 'utf8' });
+ assert.equal(result.status, 0, result.stderr);
+ assert.match(result.stdout, /\(dry-run\) prepare:dsh(?:\r?\n|$)/);
+});
 test('Office executable has its limited hardened-runtime permissions; libraries get none', async () => {
  const office = entitlementsForNative('/resources/engine/bin/libreoffice-kit');
  assert.match(office, /entitlements\.office\.plist$/);
