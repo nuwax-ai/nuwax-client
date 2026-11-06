@@ -113,6 +113,7 @@ vi.mock("@shared/constants", () => ({
 
 vi.mock("../db", () => ({
   readSetting: vi.fn(),
+  writeSetting: vi.fn(() => true),
 }));
 
 vi.mock("./i18n", () => ({
@@ -690,6 +691,123 @@ describe("Dev subscription switching", () => {
     expect((await pending).success).toBe(true);
     expect(mod.changeUpdateChannel("beta", persist)).toBe(true);
     expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+  });
+});
+
+describe("explicit same-series channel downgrade", () => {
+  let settings: Map<string, unknown>;
+  beforeEach(async () => {
+    vi.useFakeTimers(); mockDarwin();
+    mockAppVersion.mockReturnValue("3.1.1-beta.6");
+    mockUpdaterOn.mockClear(); mockUpdaterQuitAndInstall.mockClear();
+    mockUpdaterCheckForUpdates.mockReset(); mockUpdaterDownloadUpdate.mockReset();
+    mockShowMessageBox.mockReset().mockResolvedValue({ response: 0 });
+    settings = new Map([["update_channel", "beta"]]);
+    const { readSetting, writeSetting } = await import("../db");
+    vi.mocked(readSetting).mockImplementation(key => settings.get(key));
+    vi.mocked(writeSetting).mockReset().mockImplementation((key, value) => { settings.set(key, value); return true; });
+  });
+  afterEach(async () => {
+    const { readSetting, writeSetting } = await import("../db");
+    vi.mocked(readSetting).mockReset(); vi.mocked(writeSetting).mockReset().mockReturnValue(true);
+    mockAppVersion.mockReturnValue("0.9.4"); vi.useRealTimers();
+  });
+  const offer = (version = "3.1.1-alpha.1") => {
+    respondLatestJson({ version, yml: { darwin: `https://example.invalid/${version}/latest-mac.yml` } });
+    mockUpdaterCheckForUpdates.mockResolvedValue({ updateInfo: { version } });
+  };
+  const boot = async (oneClick = false) => {
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null, undefined, undefined, { installAfterDownload: oneClick });
+    return mod;
+  };
+  const switchTo = (mod: Awaited<ReturnType<typeof boot>>, channel: "stable" | "beta" | "dev") =>
+    mod.changeUpdateChannel(channel, () => { settings.set("update_channel", channel); });
+  const downloaded = (version = "3.1.1-alpha.1") => {
+    const callback = mockUpdaterOn.mock.calls.find(([name]) => name === "update-downloaded")![1] as Function;
+    callback({ version, downloadedFile: "/cache/alpha.zip" });
+  };
+
+  it("keeps ordinary checks from downgrading even with a saved Dev subscription", async () => {
+    settings.set("update_channel", "dev"); offer();
+    const mod = await boot();
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: false });
+    expect(lastFakeUpdater.allowDowngrade).toBe(false);
+  });
+  it("persists an explicit switch and admits only its matching manifest", async () => {
+    offer(); const mod = await boot(); expect(switchTo(mod, "dev")).toBe(true);
+    expect(settings.get("update_channel_switch")).toEqual({ fromVersion: "3.1.1-beta.6", channel: "dev" });
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: true, version: "3.1.1-alpha.1" });
+    expect(lastFakeUpdater.allowDowngrade).toBe(true);
+    mockUpdaterCheckForUpdates.mockResolvedValue({ updateInfo: { version: "3.1.1-alpha.2" } });
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: false, error: expect.stringContaining("manifest") });
+    downloaded(); expect(mod.getUpdateState().status).toBe("error");
+  });
+  it("retains switch intent across restart but invalidates it after the installed version changes", async () => {
+    offer(); const first = await boot(); switchTo(first, "dev");
+    const restarted = await boot();
+    expect(await restarted.checkForUpdates()).toMatchObject({ hasUpdate: true });
+    mockAppVersion.mockReturnValue("3.1.1-beta.7");
+    expect(await restarted.checkForUpdates()).toMatchObject({ hasUpdate: false });
+  });
+  it.each([
+    ["3.1.2-beta.1", "3.1.1-alpha.1"],
+    ["3.1.1-alpha.3", "3.1.1-alpha.1"],
+  ])("rejects cross-series and same-release rollbacks from %s", async (installed, target) => {
+    mockAppVersion.mockReturnValue(installed); offer(target);
+    const mod = await boot(); switchTo(mod, "dev");
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: false });
+    expect(lastFakeUpdater.allowDowngrade).toBe(false);
+  });
+  it("allows explicitly leaving Stable for a same-series Beta", async () => {
+    mockAppVersion.mockReturnValue("3.1.1"); settings.set("update_channel", "stable");
+    offer("3.1.1-beta.6"); const mod = await boot(); switchTo(mod, "beta");
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: true, version: "3.1.1-beta.6" });
+  });
+  it.each([["beta", "3.1.1-beta.6"], ["stable", "3.1.1"]] as const)("continues from Alpha to %s without enabling downgrade", async (channel, version) => {
+    mockAppVersion.mockReturnValue("3.1.1-alpha.1"); settings.set("update_channel", "dev");
+    offer(version); const mod = await boot(); switchTo(mod, channel);
+    expect(await mod.checkForUpdates()).toMatchObject({ hasUpdate: true, version });
+    expect(lastFakeUpdater.allowDowngrade).toBe(false);
+  });
+  it("keeps the subscription when saving the intent fails and rolls back on preference failure", async () => {
+    const { writeSetting } = await import("../db"); const mod = await boot();
+    vi.mocked(writeSetting).mockReturnValueOnce(false); const persist = vi.fn();
+    expect(mod.changeUpdateChannel("dev", persist)).toBe(false); expect(persist).not.toHaveBeenCalled();
+    expect(settings.get("update_channel")).toBe("beta");
+    expect(() => mod.changeUpdateChannel("dev", () => { throw new Error("disk full"); })).toThrow("disk full");
+    expect(settings.get("update_channel_switch")).toBeUndefined();
+  });
+  it("requires a prepared target and never installs a downloaded downgrade on quit", async () => {
+    offer(); const mod = await boot(); switchTo(mod, "dev");
+    downloaded(); expect(mod.getUpdateState().status).toBe("error");
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+    mockUpdaterDownloadUpdate.mockImplementation(async () => { downloaded(); return ["/cache/alpha.zip"]; });
+    expect(await mod.downloadUpdate()).toMatchObject({ success: true });
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+    expect(await mod.installUpdate()).toMatchObject({ success: false, canceled: true });
+    expect(mod.getUpdateState().status).toBe("downloaded"); expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+    mockShowMessageBox.mockResolvedValue({ response: 1 });
+    expect(await mod.installUpdate()).toMatchObject({ success: true });
+    expect(mockShowMessageBox.mock.calls.at(-1)![0]).toMatchObject({ detail: "3.1.1-beta.6 → 3.1.1-alpha.1", defaultId: 0 });
+    expect(mockUpdaterQuitAndInstall).toHaveBeenCalledOnce();
+  });
+  it("clears one-click busy state when confirmation is canceled", async () => {
+    offer(); const mod = await boot(true); switchTo(mod, "dev");
+    mockUpdaterDownloadUpdate.mockImplementation(async () => { downloaded(); return ["/cache/alpha.zip"]; });
+    expect(await mod.downloadUpdate()).toMatchObject({ success: false, canceled: true });
+    expect(mod.getUpdateState().status).toBe("downloaded");
+    expect(switchTo(mod, "beta")).toBe(true); expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+  });
+  it("rejects a target invalidated while the install confirmation is open", async () => {
+    offer(); const mod = await boot(); switchTo(mod, "dev");
+    mockUpdaterDownloadUpdate.mockImplementation(async () => { downloaded(); return ["/cache/alpha.zip"]; });
+    await mod.downloadUpdate();
+    let finish!: (value: { response: number }) => void;
+    mockShowMessageBox.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const pending = mod.installUpdate(); await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(switchTo(mod, "beta")).toBe(true); finish({ response: 1 });
+    expect(await pending).toMatchObject({ success: false }); expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
   });
 });
 

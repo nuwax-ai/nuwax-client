@@ -26,12 +26,14 @@ import type {
 } from "@shared/types/updateTypes";
 import {
   UPDATE_CHANNEL_SETTING_KEY,
+  UPDATE_CHANNEL_SWITCH_SETTING_KEY,
   normalizeUpdateChannel,
   allowsUpdateVersion,
+  getReleaseChannel,
   type UpdateChannel,
 } from "@shared/types/updateChannel";
 import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "@shared/constants";
-import { readSetting } from "../db";
+import { readSetting, writeSetting } from "../db";
 import { compareVersions } from "./system/dependencyUtils";
 import { t } from "./i18n";
 import { installLinuxDeb } from "./linuxDebInstaller";
@@ -495,12 +497,13 @@ let markQuitting: (() => void) | null = null;
 /** electron-updater 下载完成的安装包路径（Linux deb 自行安装时使用） */
 let downloadedUpdateFile: string | null = null;
 let downloadedVersion: string | null = null;
+let preparedVersion: string | null = null;
 let channelRevision = 0;
 let updaterInitialized = false;
 let linuxDebInstallInFlight = false;
 /** 可选宿主策略，默认仍由用户在下载后选择安装时机。 */
 let installAfterDownload = false;
-type UpdateResult = { success: boolean; error?: string };
+type UpdateResult = { success: boolean; error?: string; canceled?: boolean };
 let updateTask: Promise<UpdateResult> | null = null;
 let downloadTask: Promise<UpdateResult> | null = null;
 
@@ -586,6 +589,26 @@ function runUpdateCheck(options: CheckOptions = {}): Promise<UpdateInfo> {
   return checkTask;
 }
 
+/** A user-selected subscription may offer an older release within the same base version. */
+function allowsChannelDowngrade(version: string, channel = getUpdateChannel()): boolean {
+  const installed = app.getVersion();
+  const intent = readSetting(UPDATE_CHANNEL_SWITCH_SETTING_KEY);
+  if (!intent || typeof intent !== "object" || Array.isArray(intent)) return false;
+  const record = intent as Record<string, unknown>;
+  return record.fromVersion === installed && record.channel === channel
+    && isValidUpdateVersion(installed) && isValidUpdateVersion(version)
+    && getReleaseChannel(installed) !== null
+    && installed.split(/[+-]/)[0] === version.split(/[+-]/)[0]
+    && getReleaseChannel(installed) !== getReleaseChannel(version)
+    && allowsUpdateVersion(channel, version);
+}
+
+function validDownloadedCandidate(version: string): boolean {
+  return isValidUpdateVersion(version) && allowsUpdateVersion(getUpdateChannel(), version)
+    && (compareVersions(version, app.getVersion()) >= 0
+      || (preparedVersion === version && allowsChannelDowngrade(version)));
+}
+
 /** Persist and invalidate in one synchronous step. Active installs/downloads keep their feed fixed. */
 export function changeUpdateChannel(next: UpdateChannel, persist: () => void): boolean {
   const current = getUpdateChannel();
@@ -594,9 +617,13 @@ export function changeUpdateChannel(next: UpdateChannel, persist: () => void): b
   if (updateTask || downloadTask || linuxDebInstallInFlight || currentState.status === "installing") {
     return false;
   }
-  persist();
+  const previousIntent = readSetting(UPDATE_CHANNEL_SWITCH_SETTING_KEY);
+  if (!writeSetting(UPDATE_CHANNEL_SWITCH_SETTING_KEY, { fromVersion: app.getVersion(), channel: next })) return false;
+  try { persist(); }
+  catch (error) { writeSetting(UPDATE_CHANNEL_SWITCH_SETTING_KEY, previousIntent); throw error; }
   channelRevision += 1;
   downloadedVersion = null;
+  preparedVersion = null;
   downloadedUpdateFile = null;
   if (updaterInitialized) loadAutoUpdaterModule().autoUpdater.autoInstallOnAppQuit = false;
   setState({ status: "idle", version: undefined, releaseDate: undefined, releaseNotes: undefined, progress: undefined, error: undefined });
@@ -610,6 +637,7 @@ async function doCheckViaLatestJson(
   revision: number,
 ): Promise<UpdateInfo> {
   const { autoUpdater } = loadAutoUpdaterModule();
+  preparedVersion = null;
   autoUpdater.allowPrerelease = updateChannel !== "stable";
   // Versioned generic feeds always expose latest-*.yml. Setting channel enables
   // downgrades in electron-updater, so reset it explicitly after the setter.
@@ -680,7 +708,9 @@ async function doCheckViaLatestJson(
     return { hasUpdate: false, error: msg };
   }
 
-  const hasUpdate = compareVersions(latestJson.version, app.getVersion()) > 0;
+  const comparison = compareVersions(latestJson.version, app.getVersion());
+  const downgrade = comparison < 0 && allowsChannelDowngrade(latestJson.version, updateChannel);
+  const hasUpdate = comparison > 0 || downgrade;
 
   if (hasUpdate) {
     // 优先从 latest.json 的 yml 字段读取完整 yml URL（CI 生成，支持任意 OSS 路径结构）
@@ -690,7 +720,7 @@ async function doCheckViaLatestJson(
     const ymlUrl = latestJson.yml?.[platformKey];
     // 去掉文件名得到目录路径，供 electron-updater generic provider 自动拼接 {channel}.yml
     const ymlDir = ymlUrl ? ymlUrl.replace(/\/[^/]+\.yml$/, "/") : null;
-    if (updateChannel === "dev" && !ymlDir) throw new Error("Dev update metadata is missing a platform yml URL");
+    if ((updateChannel === "dev" || downgrade) && !ymlDir) throw new Error("Update metadata is missing a platform yml URL");
     const versionedUrl = ymlDir
       ? ymlDir
       : updateChannel === "beta"
@@ -700,9 +730,13 @@ async function doCheckViaLatestJson(
       `[AutoUpdater] New version ${latestJson.version} found via channel=${updateChannel}, ymlUrl=${ymlUrl ?? "none (using fallback)"}, feedUrl=${versionedUrl}`,
     );
     autoUpdater.setFeedURL({ provider: "generic", url: versionedUrl });
+    autoUpdater.allowDowngrade = downgrade;
     // 初始化 electron-updater 内部状态，为后续 downloadUpdate() 做准备
-    await autoUpdater.checkForUpdates();
+    const checked = await autoUpdater.checkForUpdates();
     if (!isCurrentChannel(updateChannel, revision)) return { hasUpdate: false };
+    if (downgrade && checked?.updateInfo?.version !== latestJson.version)
+      throw new Error("Channel switch manifest does not match the selected version");
+    preparedVersion = latestJson.version;
     // electron-updater 的 update-available 事件只保证 version；latest.json 才是
     // 商业发布说明/日期的事实源，因此在检查完成后补回完整元数据。
     setState({
@@ -863,7 +897,7 @@ export function initAutoUpdater(
 
   autoUpdater.on("update-downloaded", (info: any) => {
     log.info("[AutoUpdater] Update downloaded:", info.version);
-    if (!isValidUpdateVersion(info.version) || !allowsUpdateVersion(getUpdateChannel(), info.version)) {
+    if (!validDownloadedCandidate(info.version)) {
       autoUpdater.autoInstallOnAppQuit = false;
       downloadedVersion = null;
       downloadedUpdateFile = null;
@@ -872,7 +906,8 @@ export function initAutoUpdater(
     }
     downloadedVersion = info.version;
     downloadedUpdateFile = info.downloadedFile ?? null;
-    autoUpdater.autoInstallOnAppQuit = app.isPackaged && canAutoUpdate() && !isLinuxDebInstall();
+    autoUpdater.autoInstallOnAppQuit = app.isPackaged && canAutoUpdate() && !isLinuxDebInstall()
+      && compareVersions(info.version, app.getVersion()) >= 0;
     setState({
       status: updateTask ? "installing" : "downloaded",
       version: info.version,
@@ -1251,7 +1286,7 @@ function runOneClickUpdate(): Promise<UpdateResult> {
       // 成功后保持占用直到退出，防止清理结束至 app.quit 之间重复安装。
       if (!result.success) {
         updateTask = null;
-        if (currentState.status !== "error")
+        if (!result.canceled && currentState.status !== "error")
           setState({ status: "error", error: result.error });
       }
       return result;
@@ -1338,8 +1373,24 @@ export function installUpdate(): Promise<UpdateResult> {
 }
 
 async function installDownloadedUpdate(): Promise<UpdateResult> {
-  if (!downloadedVersion || !allowsUpdateVersion(getUpdateChannel(), downloadedVersion)) {
+  if (!downloadedVersion || !validDownloadedCandidate(downloadedVersion)) {
     return { success: false, error: t("Claw.AutoUpdater.channelUpdateUnavailable") };
+  }
+  if (compareVersions(downloadedVersion, app.getVersion()) < 0) {
+    const version = downloadedVersion, revision = channelRevision;
+    const { response } = await showModal({
+      type: "warning", title: t("Claw.AutoUpdater.channelSwitchTitle"),
+      message: t("Claw.AutoUpdater.channelSwitchMessage"),
+      detail: `${app.getVersion()} → ${version}`,
+      buttons: [t("Claw.Common.cancel"), t("Claw.AutoUpdater.channelSwitchInstall")],
+      defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (revision !== channelRevision || downloadedVersion !== version || !validDownloadedCandidate(version))
+      return { success: false, error: t("Claw.AutoUpdater.channelUpdateUnavailable") };
+    if (response !== 1) {
+      setState({ status: "downloaded", progress: undefined, error: undefined });
+      return { success: false, canceled: true };
+    }
   }
   setState({ status: "installing", progress: undefined });
   const result = await applyDownloadedUpdate();

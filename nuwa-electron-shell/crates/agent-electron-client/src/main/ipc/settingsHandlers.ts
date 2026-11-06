@@ -8,7 +8,7 @@ import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_S
 import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refreshDesktopBrowserWindows } from '../features';
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
 import { IM_MESSAGE_SOUND_SETTING } from '@shared/types/imReceiver';
-import { UPDATE_CHANNEL_SETTING_KEY, isUpdateChannel } from '@shared/types/updateChannel';
+import { UPDATE_CHANNEL_SETTING_KEY, UPDATE_CHANNEL_SWITCH_SETTING_KEY, isUpdateChannel } from '@shared/types/updateChannel';
 import { THEME_PREVIEW_SETTING, THEME_PREVIEW_STATE } from '@shared/features/themes/contract';
 import { BROWSER_SETTING, BROWSER_FEATURE_SETTING } from '@shared/features/browser/contract';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
@@ -27,7 +27,7 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('settings:set', (_, key: string, value: unknown) => {
     const db = getDb();
     if (!db) return false;
-    if (key === THEME_PREVIEW_STATE) return false;
+    if (key === THEME_PREVIEW_STATE || key === UPDATE_CHANNEL_SWITCH_SETTING_KEY) return false;
     if (key === THEME_PREVIEW_SETTING) {
       if (typeof value !== 'boolean') return false;
       const enabled = value;

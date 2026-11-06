@@ -517,8 +517,8 @@ export interface AppAPI {
       gitHash?: string;
     } | null;
   }>;
-  downloadUpdate: () => Promise<{ success: boolean; error?: string }>;
-  installUpdate: () => Promise<{ success: boolean; error?: string }>;
+  downloadUpdate: () => Promise<{ success: boolean; error?: string; canceled?: boolean }>;
+  installUpdate: () => Promise<{ success: boolean; error?: string; canceled?: boolean }>;
   getUpdateState: () => Promise<UpdateState>;
   openReleasesPage: () => Promise<{ success: boolean }>;
   getUpdateDebugInfo: () => Promise<{
