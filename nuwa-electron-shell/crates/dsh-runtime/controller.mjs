@@ -32,24 +32,32 @@ export class RuntimeController extends EventEmitter {
     if (this.#child?.connected) this.#child.send({ type: 'shell-mcp', entry }, () => {})
   }
   plugins(operation, input, signal) {
+    return this.request('shell-plugin', operation, input, signal)
+  }
+  workbench(operation, input, signal) {
+    if (this.#options.mode !== 'workbench') return Promise.reject(new Error('Workbench runtime required'))
+    return this.request('workbench', operation, input, signal)
+  }
+  request(channel, operation, input, signal) {
     const child = this.#child, generation = this.#generation
-    if (!this.current() || !child?.connected) return Promise.reject(new Error('Open DS-Bot before managing its plugins'))
+    if (!this.current() || !child?.connected) return Promise.reject(new Error(this.#options.mode === 'workbench'
+      ? 'Open the workbench first' : 'Open DS-Bot before managing its plugins'))
     if (signal.aborted) return Promise.reject(new Error('Plugin operation canceled'))
     return new Promise((resolve, reject) => {
       const id = randomUUID()
       const cleanup = () => { clearTimeout(timer); child.off('message', receive); child.off('exit', ended); this.off('invalidated', canceled); signal.removeEventListener('abort', canceled) }
-      const cancel = error => { if (child.connected) child.send({ type: 'shell-plugin-cancel', id }, () => {}); cleanup(); reject(error) }
+      const cancel = error => { if (child.connected) child.send({ type: channel + '-cancel', id }, () => {}); cleanup(); reject(error) }
       const canceled = () => cancel(new Error('Plugin operation canceled'))
       const ended = () => cancel(new Error('DSH runtime stopped'))
       const receive = message => {
-        if (message?.type !== 'shell-plugin-result' || message.id !== id) return
+        if (message?.type !== channel + '-result' || message.id !== id) return
         if (!this.current() || generation !== this.#generation) { canceled(); return }
         cleanup()
         if (message.error) reject(new Error(message.error)); else resolve(message.value)
       }
       const timer = setTimeout(() => cancel(new Error('Plugin operation timed out')), 240000)
       child.on('message', receive); child.once('exit', ended); this.once('invalidated', canceled); signal.addEventListener('abort', canceled, { once: true })
-      child.send({ type: 'shell-plugin-request', id, operation, input }, error => { if (error) ended() })
+      child.send({ type: channel + '-request', id, operation, input }, error => { if (error) ended() })
     })
   }
   scopeDir() { return join(this.#options.dataDir, scopeKey(this.#identity())) }
@@ -59,11 +67,12 @@ export class RuntimeController extends EventEmitter {
   }
   enabled() {
     const scope = this.#options.platform.scope()
-    return Boolean(scope && this.#options.settings.read('dsh.enabled.' + scopeKey(scope)) === true)
+    return Boolean(scope && this.#options.settings.read(this.#enabledKey(scope)) === true)
   }
+  #enabledKey(scope) { return (this.#options.mode === 'workbench' ? 'dsh.workbench.enabled.' : 'dsh.enabled.') + scopeKey(scope) }
   disable() {
     const scope = this.#options.platform.scope()
-    if (scope) this.#options.settings.write('dsh.enabled.' + scopeKey(scope), false)
+    if (scope) this.#options.settings.write(this.#enabledKey(scope), false)
     return this.stop()
   }
   #state(phase, error) { this.#phase = phase; this.#error = error; this.emit('status', this.status()) }
@@ -116,33 +125,38 @@ export class RuntimeController extends EventEmitter {
     const current = () => generation === this.#generation && same(scope, this.#options.platform.scope())
     this.#state('starting')
     try {
-      const saved = this.#options.settings.read('dsh.authorization.' + scopeKey(scope))
-      const [all, keys, tenant] = await Promise.all([this.catalog(),
-        this.#options.platform.request(scope, '/api/user/api-key/list'),
-        this.#options.platform.request(scope, '/api/tenant/config')])
-      const key = keys.find(item => String(item.id) === String(saved?.keyId) && item.status === 1)
-      const models = all.filter(model => saved?.models?.includes(model.id) && key?.config?.modelIds?.map(String).includes(model.id))
-      if (!models.length || !key?.accessKey) throw new Error('Authorize Nuwax models before opening DS-Bot')
-      if (!tenant.baseModelApiUrl) throw new Error('The tenant has no model API proxy')
-      if (!current()) throw new Error('Account changed')
       const home = join(this.#options.dataDir, scopeKey(scope))
       const workspace = join(home, 'workspace')
       await mkdir(workspace, { recursive: true, mode: 0o700 })
       const port = await this.#port('runtime')
-      const upstream = this.#options.devModelProxy ?? { baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey }
-      this.#broker = createModelBroker({ models, ...upstream, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
-      const broker = await this.#broker.start()
+      let models = [], modelEnvironment = {}
+      if (this.#options.mode !== 'workbench') {
+        const saved = this.#options.settings.read('dsh.authorization.' + scopeKey(scope))
+        const [all, keys, tenant] = await Promise.all([this.catalog(),
+          this.#options.platform.request(scope, '/api/user/api-key/list'),
+          this.#options.platform.request(scope, '/api/tenant/config')])
+        const key = keys.find(item => String(item.id) === String(saved?.keyId) && item.status === 1)
+        models = all.filter(model => saved?.models?.includes(model.id) && key?.config?.modelIds?.map(String).includes(model.id))
+        if (!models.length || !key?.accessKey) throw new Error('Authorize Nuwax models before opening DS-Bot')
+        if (!tenant.baseModelApiUrl) throw new Error('The tenant has no model API proxy')
+        if (!current()) throw new Error('Account changed')
+        const upstream = this.#options.devModelProxy ?? { baseUrl: tenant.baseModelApiUrl, apiKey: key.accessKey }
+        this.#broker = createModelBroker({ models, ...upstream, current, port: await this.#port('models'), diagnostic: value => this.emit('diagnostic', value) })
+        const broker = await this.#broker.start()
+        modelEnvironment = { NUWAX_DSH_BROKER: broker, NUWAX_DSH_RUN_TOKEN: this.#broker.token }
+      }
       await writeFile(join(home, 'launch.json'), JSON.stringify({ models, workspace, port, shellMcp: this.#options.shellMcp?.() ?? null,
         language: this.#options.language?.() ?? 'zh-CN' }), { mode: 0o600 })
       if (!current()) throw new Error('Account changed')
       const env = { ...this.#options.env(), HOME: home, USERPROFILE: home, DSH_HOME: home,
         // Office imports must not create __pycache__ inside a sealed app bundle.
         PYTHONDONTWRITEBYTECODE: '1',
-        NUWAX_DSH_SCOPE_ROOT: home, NUWAX_DSH_BROKER: broker, NUWAX_DSH_RUN_TOKEN: this.#broker.token,
+        NUWAX_DSH_SCOPE_ROOT: home, ...modelEnvironment,
         NUWAX_DSH_OFFICE: this.#options.officeDir, DS_BOT_APP: '1', DSH_TELEMETRY_DISABLED: '1' }
       delete env.NUWAX_DSH_DEV_MODEL_PROXY
       delete env.NUWAX_DSH_DEV_MODEL_PROXY_TOKEN
-      const child = fork(join(this.#options.runtimeDir, 'host.mjs'), [], {
+      const entrypoint = this.#options.mode === 'workbench' ? 'workbench-host.mjs' : 'host.mjs'
+      const child = fork(join(this.#options.runtimeDir, entrypoint), [], {
         execPath: this.#options.node(), cwd: home, env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       })
       this.#child = child
@@ -174,7 +188,7 @@ export class RuntimeController extends EventEmitter {
       if (!current() || child.exitCode !== null || child.signalCode !== null || new URL(ready.url).origin !== `http://127.0.0.1:${port}`) throw new Error('Stale or invalid DSH readiness')
       this.#url = ready.url
       child.once('exit', () => { if (this.#child === child && this.#phase === 'ready') { this.invalidate(); this.#state('failed', 'DSH exited'); this.emit('failed') } })
-      this.#options.settings.write('dsh.enabled.' + scopeKey(scope), true)
+      this.#options.settings.write(this.#enabledKey(scope), true)
       this.#state('ready')
       this.syncLanguage()
       this.updateShellMcp(this.#options.shellMcp?.() ?? null)

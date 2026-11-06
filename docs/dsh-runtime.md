@@ -1,4 +1,25 @@
-# DS-Bot / DSH 插件运行宿主
+# DSH 插件运行宿主
+
+## 插件工作台
+
+本机会话侧栏中的「插件工作台」打开独立的 DSH 原生工作台。主进程解析当前会话工作区，按服务域和账号隔离 Profile，使用 DSH 原生 Agent 生命周期持有插件会话。现有 ACP Agent 通过会话专属的 `nuwax-workbench` MCP 操作工作台。设置页「允许 Agent 编排」授权后，在后续会话轮次生效，撤销立即阻断已有调用。
+
+工作台独立启动，提供文件预览、终端和共享浏览器。Agent 可以发现原生组件，打开或关闭面板，调整显隐、分栏、浮动和尺寸，并撤销或重做布局。修改先读取 `workbench_state` 的 `layoutVersion`，工具携带 `expectedVersion`，用户修改造成冲突时重新读取。用户可以在工作台锁定 Agent 布局调整。浏览器接管会阻断 Agent 控制并断开已有 CDP 连接。
+
+第三方包由原生 Plugins 页面管理。当前锁定 DSH 0.2.1-rc.5，better-sidebar 使用 `dsh-better-sidebar@0.28.2`。布局适配绑定该版本的 Sidebar Controller/store 接口，升级 DSH 时须一起运行真实 Electron 验收。
+
+本批交付覆盖 V0 兼容原型、首批 V1 面板和 V2 基础编排。临时生成插件、自动诊断修复、更多业务页面迁移分别安排在 V3–V5。深度依赖模型循环的插件按原生 DSH 能力单独验收。
+
+```sh
+npm run prepare:dsh
+npm --prefix nuwa-electron-shell/crates/dsh-runtime test
+# 在 agent-electron-client 目录执行真实 Electron 验收
+node node_modules/electron/cli.js tests/workbench-desktop-smoke.mjs --ecosystem --resources
+```
+
+该配方使用临时账号档案和本机测试页面，覆盖真实文件内容、终端命令输出、共享浏览器、人工接管、会话隔离、布局冲突与锁定、浮动和撤销，以及 better-sidebar 安装、禁用和恢复。当前证据为 macOS arm64 源码及准备资源层级，安装包和其他平台另行验收。
+
+## DS-Bot
 
 客户端设置中的「DS-Bot」先选择并授权 Nuwax 模型，再打开独立窗口。关闭窗口保留后台运行；「停止」关闭当前账号的自动恢复。应用退出、账号失效或换域会先撤销本轮模型及浏览器权限，再结束所属进程。原有 Nuwax 会话引擎继续运行。
 

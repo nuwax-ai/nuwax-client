@@ -8,6 +8,8 @@
 
 import { DSH_IPC, DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, DSH_PLUGINS_IPC, type DshBridge } from "@shared/features/dsh-runtime/contract";
 import type { HostDshLauncherBridge } from "@shared/types/hostBridge";
+import type { HostWorkbenchBridge } from "@shared/types/hostBridge";
+import { WORKBENCH_IPC, WORKBENCH_OPEN_IPC, type WorkbenchBridge } from "@shared/features/workbench/contract";
 import { SHELL_CAPABILITIES_IPC, type ShellCapabilitiesBridge } from "@shared/features/shell-capabilities/contract";
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
@@ -21,6 +23,7 @@ import { createThemesBridge, themesCapabilityProbe } from "./themes";
 import { createBrowserBridge } from './browser';
 
 export interface FeatureNamespaces {
+  workbench: HostWorkbenchBridge;
   dshRuntime: HostDshLauncherBridge;
   themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
@@ -29,6 +32,7 @@ export interface FeatureNamespaces {
 }
 
 export interface HostFeatureNamespaces {
+  workbench: WorkbenchBridge;
   shellCapabilities: ShellCapabilitiesBridge;
   dshRuntime: DshBridge;
   themes: ReturnType<typeof createThemesBridge>;
@@ -43,6 +47,7 @@ export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
   return {
+    workbench: { open: conversationId => ipc.invoke(WORKBENCH_OPEN_IPC, conversationId) },
     dshRuntime: { getState: () => ipc.invoke(DSH_LAUNCHER_STATE), open: () => ipc.invoke(DSH_LAUNCHER_OPEN) },
     themes: createThemesBridge(ipc), browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc),
   };
@@ -52,6 +57,7 @@ export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
+    workbench: { control: (action, enabled) => ipc.invoke(WORKBENCH_IPC, action, enabled) },
     shellCapabilities: {
       getState: () => ipc.invoke(SHELL_CAPABILITIES_IPC, "state"),
       setAccess: access => ipc.invoke(SHELL_CAPABILITIES_IPC, "access", access),

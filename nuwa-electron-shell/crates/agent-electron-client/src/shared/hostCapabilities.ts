@@ -25,6 +25,7 @@ export const HOST_CAPABILITY_METHODS = {
   browser: ['getCapabilities'],
   themes: ['getState', 'install', 'linkDirectory', 'exportPackage', 'select', 'remove', 'openDirectory', 'onChanged'],
   dshRuntime: ['getState', 'open'],
+  workbench: ['open'],
 } as const satisfies MethodLists;
 
 const VARIANTS = {
