@@ -19,3 +19,4 @@ artifacts/
 # 本地可再生的截图/录屏编码资源与声明；源码锁、清单和许可证文本仍跟踪。
 /resources/capture/
 /third-party/generated*/
+.pnpm-store/*
