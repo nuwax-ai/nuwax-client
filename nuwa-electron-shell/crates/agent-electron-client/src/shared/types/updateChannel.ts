@@ -1,6 +1,8 @@
 /** Settings expose nested toggles; persist one channel to avoid invalid combinations. */
 export type UpdateChannel = "stable" | "beta" | "dev";
 export const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
+/** Main-process intent, bound to the installed version and the chosen subscription. */
+export const UPDATE_CHANNEL_SWITCH_SETTING_KEY = "update_channel_switch";
 
 export function isUpdateChannel(value: unknown): value is UpdateChannel {
   return value === "stable" || value === "beta" || value === "dev";

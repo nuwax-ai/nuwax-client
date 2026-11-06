@@ -268,6 +268,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
     }));
     try {
       const result = await window.electronAPI?.app?.downloadUpdate?.();
+      if (result?.canceled) return;
       if (!result || !result.success) {
         message.error(result?.error || t("Claw.About.downloadFailed"));
         setUpdateState((prev) => ({ ...prev, status: "available" }));
@@ -282,6 +283,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
     setInstalling(true);
     try {
       const result = await window.electronAPI?.app?.installUpdate?.();
+      if (result?.canceled) { setInstalling(false); return; }
       if (!result || !result.success) {
         message.error(result?.error || t("Claw.About.installFailed"));
         setInstalling(false);
