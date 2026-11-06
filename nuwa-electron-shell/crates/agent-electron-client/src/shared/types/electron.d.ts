@@ -476,9 +476,17 @@ export interface LogEntry {
   message: string;
 }
 
+export interface LogExportResult {
+  success: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  error?: string;
+}
+
 export interface LogAPI {
   getDir: () => Promise<string>;
   openDir: () => Promise<{ success: boolean; error?: string }>;
+  exportZip: () => Promise<LogExportResult>;
   list: (count?: number, offset?: number) => Promise<LogEntry[]>;
   write: (
     level: "info" | "warn" | "error",
