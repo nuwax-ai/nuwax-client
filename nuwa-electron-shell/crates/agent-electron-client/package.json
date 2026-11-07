@@ -367,6 +367,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
       "artifactName": "${productName}-Setup-${version}-unsigned.${ext}"
     },
     "linux": {
