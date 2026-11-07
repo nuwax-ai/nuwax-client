@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { session } from "electron";
+import log from "electron-log";
 import { disposeDesktopFeatures } from "../features";
 
 const settings = new Map<string, unknown>();
@@ -390,6 +391,25 @@ describe("native IM preference IPC", () => {
 });
 
 describe("cookie 会话与旧 token 桥", () => {
+  it("logs sanitized logout provenance, correlates completion, and records stale requests", async () => {
+    const event = senderEvent(HOST_ORIGIN);
+    handlers.get("auth:getContext")!(event);
+    vi.mocked(log.info).mockClear();
+    const payload = { eventId: "auth-test-1", source: "web-request", reason: "http-401",
+      requestPath: "/api/user/12345?ticket=private-ticket#private-fragment", status: 401,
+      ticket: "private-ticket", message: "private-body" };
+    expect(await handlers.get("auth:clear")!(event, payload)).toBe(true);
+    expect(log.info).toHaveBeenCalledWith("[AuthDiagnostic]", expect.objectContaining({
+      eventId: "auth-test-1", stage: "clear-received", disposition: "accepted",
+      requestPath: "/api/user/*", status: 401, source: "web-request", reason: "http-401",
+    }));
+    expect(log.info).toHaveBeenCalledWith("[AuthDiagnostic]", expect.objectContaining({
+      eventId: "auth-test-1", stage: "clear-completed", success: true,
+    }));
+    expect(JSON.stringify(vi.mocked(log.info).mock.calls)).not.toContain("private-");
+    expect(await handlers.get("auth:clear")!(event, payload)).toBe(false);
+    expect(log.info).toHaveBeenCalledWith("[AuthDiagnostic]", expect.objectContaining({ disposition: "stale-document" }));
+  });
   it("开发覆盖地址带路径时，桥信任仍按 origin 判断", () => {
     settings.set("nuwax.webviewOverride", { origin: `${DEV_ORIGIN}/app/` });
     expect(handlers.get("auth:getContext")!(senderEvent(DEV_ORIGIN)))

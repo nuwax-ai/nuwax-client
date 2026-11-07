@@ -34,6 +34,14 @@ async function loadAt(href: string, allowlist: string | null = encodeURIComponen
 }
 
 describe("commercial guest preload origin guard", () => {
+  it("forwards optional logout diagnostics and retains no-argument callers", async () => {
+    await loadAt("https://business.example/home");
+    const bridge = expose.mock.calls.at(-1)![1];
+    const diagnostic = { eventId: "auth-test-1", source: "web-request", status: 401 };
+    await bridge.auth.clear(diagnostic);
+    await bridge.auth.clear();
+    expect(invoke.mock.calls).toEqual([["auth:clear", diagnostic], ["auth:clear", undefined]]);
+  });
   it.each([true, false])("私有深链恢复仅在主窗口 guest 标记存在时运行：%s", async (mainGuest) => {
     const page = await loadAt(buildSpaDocumentUrl(new URL("https://business.example/repo/doc/a?q=%25#anchor")), undefined, mainGuest);
     if (mainGuest) expect(page.history.replaceState).toHaveBeenCalledWith(null, "", "/repo/doc/a?q=%25#anchor");
