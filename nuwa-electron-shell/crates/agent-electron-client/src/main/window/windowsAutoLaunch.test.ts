@@ -58,7 +58,7 @@ function startupFixture(badName: string) {
 }
 
 describe("Windows product startup ownership", () => {
-  it.each(["broken-calendar.lnk", "denied-editor.lnk"])(
+  it.each(["broken-calendar.lnk", "denied-editor.lnk", "NuwaClaw.lnk", "女娲 NuwaClaw.lnk"])(
     "an unrelated unreadable %s does not prevent removing the product Run entry and shortcut",
     async (badName) => {
       const fixture = startupFixture(badName);
