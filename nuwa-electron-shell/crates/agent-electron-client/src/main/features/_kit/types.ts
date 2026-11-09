@@ -61,6 +61,7 @@ export interface FeatureMcpServerEntry {
 }
 
 export interface FeatureAgent {
+  getProcessEnv?(): Record<string, string>;
   /** Resolve the business conversation of a host-owned native session; ambiguity returns null. */
   resolveConversationId?(sessionId: string): string | null;
   /** 登记（entry）或移除（null）本地 MCP 条目，并同步到运行中的 MCP Proxy。 */

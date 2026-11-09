@@ -36,6 +36,7 @@ export const computerUseFeature: DesktopFeature = {
     configureComputerUseHost({
       isAuthenticated: () => ctx.session.isAuthenticated(),
       developmentProfile: ctx.developmentProfile,
+      getProcessEnv: () => ctx.agent.getProcessEnv?.() ?? {},
       getConversationId: () => conversation.get(),
       dataHome: ctx.dataDir,
       readSetting: (key) => ctx.settings.read(key),
@@ -123,6 +124,8 @@ export const computerUseFeature: DesktopFeature = {
       return { success: true };
     }), { success: false, error: "untrustedSender" });
     ctx.hostIpc.handle("cua:getStatus", () => cua.getCuaStatus(), null);
+    ctx.hostIpc.handle("cua:setEngine", async (_event: IpcMainInvokeEvent, engine: unknown): Promise<{ success: boolean; error?: string; status?: cua.CuaStatus }> =>
+      ctx.session.isAuthenticated() ? cua.setCuaEngine(engine) : { success: false, error: "loginRequired" }, { success: false, error: "untrustedSender" });
     ctx.hostIpc.handle("cua:setEnabled", async (event: IpcMainInvokeEvent, enabled: boolean) => {
       if (enabled === true && !ctx.session.isAuthenticated()) return { success: false, error: "untrusted sender" };
       return cua.setCuaEnabled(enabled === true);

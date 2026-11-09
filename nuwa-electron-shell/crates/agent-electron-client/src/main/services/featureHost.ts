@@ -7,6 +7,7 @@
 import log from "electron-log";
 import { getDb } from "../db";
 import { getNodeBinPathWithFallback } from "./system/binaryLocator";
+import { getAppEnv } from "./system/dependencies";
 import type { FeatureMcpServerEntry } from "../features";
 import type { McpServerEntry } from "./packages/mcp";
 import { agentService } from "./engines/unifiedAgent";
@@ -38,6 +39,7 @@ function readMcpLocalConfig(): McpLocalConfig {
 
 export function createFeatureAgentHost() {
   return {
+    getProcessEnv: () => getAppEnv(),
     resolveConversationId(sessionId: string): string | null {
       const sessions = agentService.listAllSessionsDetailed().filter(session => session.id === sessionId);
       // Native IDs may collide across engines. Never guess from the latest active task.

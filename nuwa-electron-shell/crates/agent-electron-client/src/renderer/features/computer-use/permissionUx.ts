@@ -2,6 +2,7 @@ import type { ComputerUseStatus } from "@shared/features/computer-use/contract";
 
 /** 设置页可映射到 i18n 的 CU 错误码；未知或带前缀的安装/签名失败收成可读种类。 */
 const KNOWN_CUA_ERRORS = new Set([
+  "engineBusy", "engineNotInstalled", "engineCapabilityUnsupported", "invalidEngine",
   "permissionsRequired",
   "permissionHostFailed",
   "timeout",

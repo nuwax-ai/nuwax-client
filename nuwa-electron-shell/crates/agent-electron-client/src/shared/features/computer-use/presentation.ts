@@ -16,7 +16,7 @@ export function cuaRuntimeForConversation(state: CuaRuntime, conversationId: str
 /** Initial placement is inset from the conversation area's right edge and below its toolbar. */
 export const CUA_CONTROL_INITIAL_POSITION = { right: 24, top: 72 } as const;
 
-export type CuaLiveHint = { controlPending?: boolean; reason?: string | null };
+export type CuaLiveHint = { controlPending?: boolean; reason?: string | null; previewAvailable?: boolean };
 
 /**
  * Live overlay / tray / PiP: running work, plus the emergency-stop tail.
@@ -39,7 +39,7 @@ export function canShowCuaOverlay(runtime: CuaLiveHint & {
 
 /** Unbound tasks belong in the task center, not the window preview stack. */
 export const canPreviewCuaTask = (task: CuaLiveHint & { phase: string; scope?: CuaScope }) =>
-  isCuaLivePhase(task.phase, task) && task.scope?.kind === "window" && task.scope.pid > 0 && task.scope.windowId > 0;
+  task.previewAvailable !== false && isCuaLivePhase(task.phase, task) && task.scope?.kind === "window" && task.scope.pid > 0 && task.scope.windowId > 0;
 
 export const CUA_REASON_KEYS = ["userPaused", "screenLocked", "toolFailed", "toolTimeout", "stepLimit", "timeLimit",
   "repeatedAction", "connectionClosed", "daemonNotReady", "permissionsRequired", "policyNotActive", "helperStillRunning",
