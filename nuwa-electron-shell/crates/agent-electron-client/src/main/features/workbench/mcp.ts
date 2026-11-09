@@ -111,9 +111,13 @@ export class WorkbenchMcp {
           const grant = authorize();
           const signal = AbortSignal.any([extra.signal, grant.abort.signal]);
           const args = z.object(schema).strict().parse(input);
+          if (operation === "preset" && args.action !== "list" &&
+              (typeof args.name !== "string" || args.expectedRevision === undefined || typeof args.expectedVersion !== "string"))
+            throw new Error("Layout name, catalog revision and current layout version are required");
           let value: unknown;
           if (operation === "bind") value = await this.ports.open(grant.conversationId!, signal);
           else if (operation === "plugins") value = await this.ports.plugins("list", {}, signal);
+          else if (operation === "plugin-configure") value = await this.ports.plugins("configure", args, signal);
           else value = await this.ports.command(grant.conversationId!, operation, args, signal);
           signal.throwIfAborted();
           authorize();
@@ -126,6 +130,13 @@ export class WorkbenchMcp {
     tool("workbench_open", "Open the DSH plugin workbench for this ACP conversation's local workspace. The host determines session and directory ownership.", {}, "bind");
     tool("workbench_state", "Read the actual mounted session and open plugin panels. Open this conversation's workbench first.", {}, "state");
     tool("workbench_plugins", "List the native DSH bundles and their actual installed and enabled state in the workbench profile.", {}, "plugins");
+    tool("workbench_plugin_configure", "Update an installed workbench plugin's public settings using its namespace and revision from workbench_plugins. Private settings and core runtime configuration are protected.", {
+      target: z.string().min(1).max(200), expectedRevision: z.number().int().nonnegative(), patch: z.record(z.unknown()),
+    }, "plugin-configure");
+    tool("workbench_layout_preset", "Save, list, restore or delete named layouts for this conversation. List returns the saved-layout revision; save, apply and remove require expectedRevision (null only before the first state write) and expectedVersion from workbench_state. Restore preserves existing resources and reopens closed panels. User layout locks take precedence.", {
+      action: z.enum(["list", "save", "apply", "remove"]), name: z.string().trim().min(1).max(80).optional(),
+      expectedRevision: z.string().uuid().nullable().optional(), expectedVersion: z.string().uuid().optional(),
+    }, "preset");
     tool("workbench_open_panel", "Open a registered DSH panel in this conversation. Files and terminal are supplied by DSH; browser uses the Nuwax desktop provider.", {
       expectedVersion: z.string().uuid(), kind: z.string().min(1).max(160), params: z.object({ url: z.string().url().max(4096).optional() }).strict().optional(),
     }, "open");
@@ -133,9 +144,10 @@ export class WorkbenchMcp {
     tool("workbench_close_panel", "Close a tab owned by this conversation, using its tabId from workbench_state.", { expectedVersion: z.string().uuid(), tabId: z.string().min(1).max(200) }, "close");
     tool("workbench_set_visible", "Expand or collapse this conversation's plugin sidebar. Hiding preserves the underlying resource lifetime.", { expectedVersion: z.string().uuid(), visible: z.boolean() }, "visibility");
     tool("workbench_layout", "Move, float, resize, dock or split native DSH panels and undo/redo layout changes. Read the actual layout and layoutVersion first. User layout locks take precedence.", {
-      expectedVersion: z.string().uuid(), action: z.enum(["float", "dock", "move", "resize", "split", "undo", "redo"]),
+      expectedVersion: z.string().uuid(), action: z.enum(["float", "dock", "move", "resize", "resize-split", "split", "undo", "redo"]),
       tabId: z.string().min(1).max(200).optional(), paneId: z.string().min(1).max(200).optional(),
-      zone: z.enum(["center", "left", "right", "top", "bottom"]).optional(),
+      splitId: z.string().min(1).max(200).optional(), sizes: z.array(z.number().min(0.2).max(0.8)).length(2).optional(),
+      zone: z.enum(["center", "left", "right"]).optional(),
       rect: z.object({ x: z.number().min(0).max(10000), y: z.number().min(0).max(10000), width: z.number().min(200).max(10000), height: z.number().min(120).max(10000) }).strict().optional(),
     }, "layout");
     tool("workbench_browser", "Read or operate this conversation's actual browser page. Use state to discover tab IDs. User takeover blocks Agent actions until the user releases control.", {
