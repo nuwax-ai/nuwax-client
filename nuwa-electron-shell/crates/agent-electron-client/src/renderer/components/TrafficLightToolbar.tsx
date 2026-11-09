@@ -272,7 +272,9 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         onClick={onClick}
         style={{
           // 不可用时置灰（antd 禁用文字色），比仅禁点更直观
-          color: disabled ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0.65)",
+          color: disabled
+            ? "var(--nuwax-text-disabled, rgba(0,0,0,0.25))"
+            : "var(--nuwax-text-secondary, rgba(0,0,0,0.65))",
           fontSize: 16, // 放大图标（antd icon 继承按钮字号）
           ...NO_DRAG,
         }}

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { configurePackagePayload, preparePackagePayload, verifyPackagePayload } from './client/package-payload.mjs';
 import { packagedResources } from './prepare-release-updater.mjs';
+import { writeDshResourcesFixture } from './test-support/fixtures.mjs';
 
 const cli = fileURLToPath(new URL('./client/package-payload.mjs', import.meta.url));
 function temporary(t) {
@@ -65,6 +66,7 @@ test('read-only packaged scan rejects cache roots but keeps nested runtime index
   for (const [platform, arch] of [['win32', 'x64'], ['darwin', 'arm64'], ['linux', 'arm64']]) {
     const output = path.join(root, platform);
     const resources = packagedResources(output, platform, arch);
+    writeDshResourcesFixture(resources, platform, arch);
     write(path.join(resources, 'git/bin/git.exe'));
     write(path.join(resources, 'git/share/.cache/runtime-index'));
     write(path.join(resources, 'git/LICENSE.txt'));
@@ -82,9 +84,43 @@ test('verification CLI fails on absent output and validates the current platform
   const root = temporary(t);
   assert.throws(() => verifyPackagePayload(root), /resource directory/i);
   const resources = packagedResources(root, process.platform, process.arch);
+  writeDshResourcesFixture(resources, process.platform, process.arch);
   write(path.join(resources, 'git/bin/git.exe'));
   const run = spawnSync(process.execPath, [cli, '--verify-output', root, '--arch', process.arch], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /no build caches/i);
+  assert.match(run.stdout, /DS Bot runtime admitted/);
   assert.equal(spawnSync(process.execPath, [cli, '--package', '/absent', '--verify-output', root]).status, 1);
+});
+
+test('package admission rejects absent, incomplete and wrong-target DS Bot resources on every release target', (t) => {
+  const root = temporary(t);
+  for (const [platform, arch] of [['win32', 'x64'], ['darwin', 'arm64'], ['darwin', 'x64'], ['linux', 'x64'], ['linux', 'arm64']]) {
+    const output = path.join(root, platform + '-' + arch);
+    const resources = packagedResources(output, platform, arch);
+    fs.mkdirSync(resources, { recursive: true });
+    assert.throws(() => verifyPackagePayload(output, { platform, arch }), /missing runtime resource/i);
+    const rejected = spawnSync(process.execPath, [cli, '--verify-output', output, '--platform', platform, '--arch', arch], { encoding: 'utf8' });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /missing runtime resource/i);
+    writeDshResourcesFixture(resources, platform, arch);
+    assert.equal(verifyPackagePayload(output, { platform, arch }).dsh.bot, '0.2.7');
+    const marker = path.join(resources, 'dsh-runtime/nuwax-runtime.json');
+    const originalMarker = fs.readFileSync(marker, 'utf8');
+    write(marker, JSON.stringify({ ...JSON.parse(originalMarker), bot: '0.0.0' }));
+    assert.throws(() => verifyPackagePayload(output, { platform, arch }), /runtime version mismatch/i);
+    write(marker, originalMarker);
+    const host = path.join(resources, 'dsh-runtime/host.mjs');
+    fs.unlinkSync(host);
+    assert.throws(() => verifyPackagePayload(output, { platform, arch }), /missing runtime resource.*host[.]mjs/i);
+    write(host);
+    const office = path.join(resources, 'dsh-office/primary-runtime/runtime.json');
+    write(office, JSON.stringify({ platform, arch: arch === 'x64' ? 'arm64' : 'x64' }));
+    assert.throws(() => verifyPackagePayload(output, { platform, arch }), /runtime target mismatch/i);
+    write(office, JSON.stringify({ platform, arch }));
+    const license = path.join(resources, 'dsh-office/LICENSES.txt');
+    write(license, '');
+    assert.throws(() => verifyPackagePayload(output, { platform, arch }), /missing runtime resource.*LICENSES/i);
+    assert.equal(fs.readFileSync(license, 'utf8'), '', 'admission must not repair signed output');
+  }
 });

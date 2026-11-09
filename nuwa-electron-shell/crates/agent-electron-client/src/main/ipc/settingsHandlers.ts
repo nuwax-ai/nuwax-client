@@ -8,12 +8,15 @@ import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_S
 import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refreshDesktopBrowserWindows } from '../features';
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
 import { IM_MESSAGE_SOUND_SETTING } from '@shared/types/imReceiver';
+import { UPDATE_CHANNEL_SETTING_KEY, UPDATE_CHANNEL_SWITCH_SETTING_KEY, isUpdateChannel } from '@shared/types/updateChannel';
+import { THEME_PREVIEW_SETTING, THEME_PREVIEW_STATE } from '@shared/features/themes/contract';
 import { BROWSER_SETTING, BROWSER_FEATURE_SETTING } from '@shared/features/browser/contract';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {
   // Settings
   ipcMain.handle('settings:get', (_, key: string) => {
+    if (key === THEME_PREVIEW_STATE) return import('../services/loopbackGateway').then(({ getThemePreviewState }) => getThemePreviewState());
     const db = getDb();
     if (!db) return null;
     const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
@@ -24,6 +27,12 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('settings:set', (_, key: string, value: unknown) => {
     const db = getDb();
     if (!db) return false;
+    if (key === THEME_PREVIEW_STATE || key === UPDATE_CHANNEL_SWITCH_SETTING_KEY) return false;
+    if (key === THEME_PREVIEW_SETTING) {
+      if (typeof value !== 'boolean') return false;
+      const enabled = value;
+      return import('../services/loopbackGateway').then(({ setThemePreviewEnabled }) => setThemePreviewEnabled(enabled));
+    }
     const persist = (next: unknown) => {
       if (next === null || next === undefined) {
         db.prepare('DELETE FROM settings WHERE key = ?').run(key);
@@ -31,6 +40,12 @@ export function registerSettingsHandlers(): void {
         db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, JSON.stringify(next));
       }
     };
+    if (key === UPDATE_CHANNEL_SETTING_KEY) {
+      if (!isUpdateChannel(value)) return false;
+      const next = value;
+      return import('../services/autoUpdater').then(({ changeUpdateChannel }) =>
+        changeUpdateChannel(next, () => persist(next)));
+    }
     if (key === LOCAL_FILES_ENABLED_SETTING && value != null && typeof value !== 'boolean') return false;
     if (key === IM_MESSAGE_SOUND_SETTING && value != null && typeof value !== 'boolean') return false;
     if (key === BROWSER_SETTING && value != null && value !== 'in-app' && value !== 'system') return false;

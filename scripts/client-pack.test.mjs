@@ -10,6 +10,7 @@ import * as core from './client/core.mjs';
 import { builderConfig, pack, prepareComputerUse, unsignedEnv, localVersion, validateOutput } from './client/pack.mjs';
 import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { packagedResources } from './prepare-release-updater.mjs';
+import { writeDshResourcesFixture } from './test-support/fixtures.mjs';
 
 test('pack resource selection excludes tool download caches without changing their source or runtime payload', async (t) => {
   const client = process.env.NUWAX_TEST_BUILDER_CLIENT_DIR
@@ -200,6 +201,7 @@ test('source pack builds fresh frontend before builder and does not edit base pa
       assert.equal(generated.extraResources.find((entry) => entry.to === 'nuwax-dist').from, path.join(p.frontend, 'dist'));
       const resources = packagedResources(generated.directories.output, 'darwin', 'arm64');
       fs.mkdirSync(resources, { recursive: true });
+      writeDshResourcesFixture(resources, 'darwin', 'arm64');
       fs.writeFileSync(path.join(resources, 'app-update.yml'), updater.configBytes(config.product.feedBase));
       return { status: 0, stdout: '', stderr: '' };
     },

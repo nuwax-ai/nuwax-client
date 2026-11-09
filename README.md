@@ -135,8 +135,8 @@ nuwax-client/（main = 商业产品壳）
 git clone https://github.com/nuwax-ai/nuwax-client.git && cd nuwax-client
 npm run doctor -- --json
 npm run dev
-# 前端改动即时生效：
-npm run dev -- --frontend source --port 3000
+# 客户端内调试当前前端源码：本地生产构建 + 同源 Cookie 网关：
+npm run dev -- --frontend source
 # 单独生成前端生产资源，保留在 nuwax/dist：
 npm run frontend:build
 # 当前平台无签名商业安装包；源码模式将当前前端改动打入包：
@@ -148,7 +148,7 @@ npm run pack -- --frontend source
 |---|---|
 | `npm run frontend:build` | 安装前端依赖并运行 `build:prod`，输出 `nuwax/dist`，报告源码 SHA 与版本戳 |
 | `npm run dev` | 自动准备并启动客户端，loopback 网关默认使用 `nuwax-dist` pin |
-| `npm run dev -- --frontend source` | 自动准备前端依赖，启动 UMI 热更新、壳 Vite 和 Electron |
+| `npm run dev -- --frontend source` | 构建当前前端源码到客户端私有缓存，启动壳 Vite 和 Electron，通过同源网关使用 Cookie 登录 |
 | `npm run pack` | 默认使用产物 pin，生成当前平台无签名 Nuwax 包；`--frontend source` 先构建当前前端源码 |
 | `npm run sub:update` | 更新源码、构建、提交并推送产物仓、提交外层双 pin |
 | `npm run release -- --version X.Y.Z[-beta.N]` | 完整版本推导通道；stable 默认停在签名/Draft，验收后 `--stage sync`；beta 五平台成功后自动同步公开。`--channel` 仅校验一致性，`--tag` 续跑已存在的历史发布 |
@@ -162,7 +162,7 @@ npm run pack -- --frontend source
 
 首次接入时，若 `resources/nuwax-file-server` 或 `resources/claude-code-acp-ts` 已存在普通旧产物，脚本会在新资源构建成功后将原目录移到 `.cache/client-toolchain/legacy-resources/<name>-<UUID>/` 并报告备份路径。资源目录中的 Git 检出、工具链产物中的本地修改仍会阻止覆盖；后续只更新归属明确且内容未被修改的产物。
 
-开发会检查占用端口、等待 HTTP 就绪，记录 `logs/frontend-dev.log`（源码模式）、`logs/vite-dev.log` 和 `logs/electron-dev.log`，退出时清理本轮启动的进程树。本机服务与主进程的完整日志仍在 `~/.nuwax/logs/`。已有前端源码改动请用 `--frontend source`；默认 dist 模式要求当前源码、产物 HEAD 与已提交双 pin 一致。
+开发会检查占用端口、等待 HTTP 就绪，记录 `logs/vite-dev.log` 和 `logs/electron-dev.log`，退出时清理本轮启动的进程树。开发档案日志在 `~/.nuwax-dev/logs/`。`--frontend source` 调用前端已有的 `build:prod`，将构建结果移入客户端临时缓存并恢复原 `nuwax/dist`，不会启动或占用 PC Web 的 UMI 开发服务。源码修改后重启该命令以重建；主题包关联目录仍支持实时更新。PC Web 同事继续在前端仓库使用原 `npm run dev` 和 Token 登录，不受此入口影响。默认 dist 模式要求当前源码、产物 HEAD 与已提交双 pin 一致。
 
 本地打包使用独立商业配置，输出到 `release/<version>/`；默认版本来自最近可达的发布 tag 并加 `-dev`，无 tag 时用 `0.0.0-dev`。可用 `--version X.Y.Z`、`--output <目录>` 覆盖，`--dir` 只生成解包应用目录；输出目标不得占用仓库根、源码/子模块目录或工具链缓存，符号链接也会核对真实目标。配置不改壳内 `package.json`，包含商业品牌、前端载荷及 Computer Use helper，不发布资产。
 
@@ -233,10 +233,11 @@ npm run release -- --tag v3.0.11 --stage sync
 
 发布入口验证已提交说明文件、版本/tag、外层目标 SHA 与子模块远端可达性，跟踪相同 tag/SHA 的 CI run；失败后重跑会根据远端状态继续。stable 的 Windows 签名使用 `client.config.mjs` 中的签名机配置；Certum SimplySign 手机认证由人工完成，认证后可续跑。收口检查签名、S3/OSS 资产哈希、更新指针和 GitHub Release 公开状态。
 
-1. 提交 `release-notes/vX.Y.Z.md`（beta 使用 `release-notes/vX.Y.Z-beta.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
+1. 提交 `release-notes/vX.Y.Z.md`（Beta 使用 `release-notes/vX.Y.Z-beta.N.md`，Dev 使用 `release-notes/vX.Y.Z-alpha.N.md`）。完整版本推导通道，`--channel` 可选且只校验一致性。
 2. `npm run release -- --version 3.0.10 --dry-run` 预检，随后正式运行；不可变 tag push 触发对应 Actions，先校验版本，再跑商业、前端和脚本门禁和五平台矩阵。macOS 必须签名、公证，Windows 初始产出 unsigned 包。stable 默认停在 Draft 签名阶段。
 3. 完成 Windows SimplySign 签名和真实安装包验收后，运行 `npm run release -- --tag v3.0.10 --stage sync`：验证来源和哈希，同步镜像、推进 stable 及较旧 beta 指针，最后公开 Release。
 4. beta 五平台全部成功后自动同步 beta 指针并公开 prerelease。可以多轮 beta 后同号转正，也可直接或连续发 stable；正式 tag 创建后关闭同号 beta。序号从 1 开始，已有 tag/Draft 占用版本，源码变更必须升号。
+5. Dev 使用 `X.Y.Z-alpha.N`，复用预发布矩阵，独立发布到 Dev 指针。用户先开启 Beta，再开启 Dev；Dev 只接收 Dev 更新，关闭后回 Beta。Beta/Stable 发布不会覆盖 Dev，切换通道不自动降级。
 
 旧 tag 和资产目录保留，使用 `--tag` 续跑同 SHA。首次上线已完成 `v3.0.10` 兼容正式版与 `v3.0.11-beta.4` 的 beta 链路；当前候选 `v3.0.11-beta.6` 纳入已合入的前端双 pin；`beta.5` 保留旧 tag/SHA，不替换源码。完整规范见 [发布与更新通道](./docs/release-channels.md)，Windows 签名见 [签名指南](./docs/sign-windows.md)，验收见 [发布验收模板](./docs/release-acceptance-template.md)。
 

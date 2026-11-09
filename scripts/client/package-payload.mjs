@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as core from './core.mjs';
 import { packagedResources } from '../prepare-release-updater.mjs';
+import { verifyDshResources } from './dsh-resources.mjs';
 
 const toolNames = ['node', 'git', 'uv', 'ripgrep'];
 const toolRoot = /(?:^|\/)resources\/(?:node|git|uv|ripgrep)$/;
@@ -68,7 +69,8 @@ export function verifyPackagePayload(output, { platform = process.platform, arch
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     throw new Error(`[package-payload] Published build cache found: ${relative}`);
   }
-  return { resources, checkedCacheRoots: cacheRoots.length };
+  const dsh = verifyDshResources(resources, { platform, arch });
+  return { resources, checkedCacheRoots: cacheRoots.length, dsh };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -88,6 +90,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else {
       const result = verifyPackagePayload(options['--verify-output'], { platform: options['--platform'], arch: options['--arch'] });
       console.log(`[package-payload] No build caches in unpacked resources (${result.checkedCacheRoots} roots checked)`);
+      console.log(`[package-payload] DS Bot runtime admitted: ${result.dsh.platform}-${result.dsh.arch}`);
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

@@ -1,3 +1,4 @@
+import type { HostThemeSnapshot } from '@shared/types/hostBridge';
 import {
   BROWSER_TOOLBAR_HEIGHT,
   BROWSER_AUXILIARY_BAR_HEIGHT,
@@ -5,7 +6,11 @@ import {
   type BrowserState,
   type BrowserWindowBridge,
 } from "@shared/features/browser/contract";
-import "./toolbar.css";
+export async function startBrowserToolbar(createThemeApplicator: (root: HTMLElement, surface: 'shell') => {
+  apply(snapshot: HostThemeSnapshot): boolean;
+  dispose(): void;
+}) {
+  await import('./toolbar.css');
 document.documentElement.style.setProperty(
   "--toolbar-height",
   `${BROWSER_TOOLBAR_HEIGHT}px`,
@@ -18,6 +23,12 @@ const bridge = (window as unknown as { browserWindow: BrowserWindowBridge })
   .browserWindow;
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+let themeApplicator = createThemeApplicator(document.documentElement, 'shell');
+for (const [id, part] of [['toolbar', 'browser-toolbar'], ['address', 'browser-address'], ['findbar', 'browser-find']]) {
+  document.getElementById(id)?.setAttribute('data-theme-part', part);
+}
+let disposed = false;
+let notified = false;
 let current: BrowserState | null = null;
 const run = (command: BrowserCommand) => {
   void bridge.command(command).catch(() => {});
@@ -30,12 +41,22 @@ const label = (id: string, value: string) => {
   node.setAttribute("aria-label", value);
 };
 function render(state: BrowserState) {
+  if (disposed) return;
+  if (!state.themeSnapshot && current?.themeSnapshot) {
+    themeApplicator.dispose();
+    themeApplicator = createThemeApplicator(document.documentElement, 'shell');
+  }
+  if (state.themeSnapshot) {
+    try { themeApplicator.apply(state.themeSnapshot); } catch { /* keep chrome usable for recovery */ }
+  }
   const wasFinding = current?.finding;
-  const findFocusRequested = current?.findFocusRequest !== state.findFocusRequest;
+  const findFocusRequested =
+    current?.findFocusRequest !== state.findFocusRequest;
   const wasAddressOpen = current?.addressOpen;
   current = state;
   document.title = state.title || "Nuwax";
-  document.body.classList.toggle("dark", state.dark);
+  document.body.classList.toggle("dark", state.themeSnapshot?.mode === 'dark' || (!state.themeSnapshot && state.dark));
+  document.body.dataset.theme = state.themeSnapshot?.mode ?? (state.dark ? 'dark' : 'light');
   document.body.dataset.platform = state.platform;
   element("windowControls").hidden = state.platform === "darwin";
   const restored = state.maximized || state.fullscreen;
@@ -57,6 +78,9 @@ function render(state: BrowserState) {
   element("loadingText").textContent = state.labels.loading;
   element("errorMessage").textContent = state.error;
   element("findbar").hidden = !state.finding;
+  // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
+  if (!state.finding && wasFinding)
+    element<HTMLInputElement>("query").value = "";
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
   for (const [id, key] of Object.entries({
@@ -130,11 +154,14 @@ element("query").addEventListener("keydown", (event) => {
 button("previous", () => find(false, true));
 button("next", () => find(true, true));
 button("closefind", () => run({ type: "find-close" }));
-const unsubscribe = bridge.onState(render);
-window.addEventListener("unload", unsubscribe, { once: true });
+const unsubscribe = bridge.onState((state) => { notified = true; render(state); });
+window.addEventListener("unload", () => { disposed = true; unsubscribe(); themeApplicator.dispose(); }, { once: true });
 void bridge
   .getState()
   .then((state) => {
-    if (state) render(state);
+    // A live notification takes precedence over the initial request, including theme state.
+    if (state && !notified) render(state);
   })
   .catch(() => {});
+
+}

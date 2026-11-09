@@ -7,6 +7,7 @@ import {
   createBrowserWindows,
   type BrowserPageOptions,
   type BrowserPage,
+  type BrowserAppearance,
 } from "./windows";
 
 let active: {
@@ -27,13 +28,13 @@ export function createDesktopBrowserPage(
 ): BrowserPage | null {
   return isDesktopBrowserAvailable() ? active!.windows.open(options) : null;
 }
-export const browserFeature: DesktopFeature = {
+export function createBrowserFeature(appearance?: BrowserAppearance): DesktopFeature { return {
   id: "browser",
   products: ["nuwax"],
   enabledByDefault: true,
   bridge: { namespaces: ["browser"] },
   register(ctx) {
-    const windows = createBrowserWindows(ctx);
+    const windows = createBrowserWindows(ctx, appearance);
     const instance = {
       windows,
       available: () => ctx.settings.read(BROWSER_FEATURE_SETTING) !== false,
@@ -65,4 +66,5 @@ export const browserFeature: DesktopFeature = {
       },
     };
   },
-};
+}; }
+export const browserFeature = createBrowserFeature();

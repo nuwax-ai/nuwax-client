@@ -35,13 +35,20 @@ import type {
   FeatureWindows,
   FeatureWorkspaceServices,
   FeaturePermissionServices,
+  FeaturePlatform,
+  FeatureLocale,
 } from "./_kit/types";
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { openSourceNoticesFeature } from "./open-source-notices";
-import { browserFeature } from "./browser";
+import { themesFeature, getDesktopThemeSnapshot, subscribeDesktopThemeSnapshot, getThemeService, themeAuthoringContext } from "./themes";
+import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract";
+import { createBrowserFeature } from "./browser";
+import { createDshRuntimeFeature, manageDshPlugins } from "./dsh-runtime";
+import { createShellCapabilitiesFeature, getShellMcpEntry, subscribeShellMcp } from "./shell-capabilities";
 import { androidFeature } from "./android";
 import { localFilesFeature } from "./local-files";
+import { workbenchFeature } from "./workbench";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
 export type { FeatureMcpServerEntry } from "./_kit/types";
@@ -52,7 +59,12 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   openSourceNoticesFeature,
   localFilesFeature,
-  browserFeature,
+  createBrowserFeature({getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot}),
+  themesFeature,
+  createShellCapabilitiesFeature({ themes: getThemeService, themeAuthoring: themeAuthoringContext,
+    linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode }, plugins: manageDshPlugins }),
+  createDshRuntimeFeature({ shellMcp: getShellMcpEntry, subscribeShellMcp }),
+  workbenchFeature,
   androidFeature,
 ];
 
@@ -60,6 +72,7 @@ export const desktopFeatures: readonly DesktopFeature[] = [
 export const FEATURES_REGISTERED_IPC = "features:registered";
 
 export interface FeatureHostServices {
+  platform?: FeaturePlatform;
   settings: FeatureSettings;
   session: FeatureSession;
   windows: FeatureWindows;
@@ -67,6 +80,7 @@ export interface FeatureHostServices {
 }
 
 export interface StartFeaturesOptions {
+  locale?: FeatureLocale;
   developmentProfile?: boolean;
   product: string;
   ipcMain: IpcMainLike;
@@ -160,6 +174,8 @@ export function startDesktopFeatures(
     dataDir: nodePath.join(options.dataDir, feature.id),
     log: options.log,
     translate: options.translate,
+    locale: options.locale,
+    platform: host.platform,
     settings: host.settings,
     session: host.session,
     windows: host.windows,
@@ -324,3 +340,5 @@ export { routeCaptureShortcut } from "./capture/shortcutRouting";
 export { applyCuaCapabilityNotice } from "./computer-use/cuaSessionNotice";
 
 export { createDesktopBrowserPage, isDesktopBrowserAvailable, refreshDesktopBrowserWindows } from "./browser";
+
+export type { FeaturePlatform, FeatureAccountScope } from "./_kit/types";

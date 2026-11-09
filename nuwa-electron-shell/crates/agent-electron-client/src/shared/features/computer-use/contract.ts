@@ -11,6 +11,7 @@ export type CuaPhase = "idle" | "running" | "paused" | "stopped" | "failed" | "c
 export type CuaScope = { kind: "desktop" } | { kind: "window"; pid: number; windowId: number; label: string };
 export type CuaWindow = { pid: number; windowId: number; label: string };
 export type CuaExecutionMode = "background" | "foreground";
+export type CuaServiceState = "disabled" | "starting" | "ready" | "reconfiguring" | "recovering" | "waitingPermission" | "degraded";
 export interface CuaTaskRuntime extends Omit<CuaRuntime, "tasks" | "multiwindow"> {
   taskId: string;
   bindingId: string;
@@ -41,6 +42,9 @@ export interface CuaStats {
 }
 
 export interface CuaRuntime {
+  serviceState?: CuaServiceState;
+  desiredConfigRevision?: number;
+  appliedConfigRevision?: number;
   /** Display metadata from the host session, never a model-supplied authorization. */
   conversationId?: string | null;
   presentationConversationId?: string | null;
@@ -79,6 +83,9 @@ export interface CuaControlResult {
 
 /** 宿主壳设置/状态接口（electronAPI.computerUse）；实现在 preload/features/computer-use。 */
 export interface ComputerUseStatus {
+  serviceState?: CuaServiceState;
+  desiredConfigRevision?: number;
+  appliedConfigRevision?: number;
   supported: boolean;
   installed: boolean;
   /** 随包 Resources 有 helper 但未安装（首用安装流输入）。 */
@@ -87,7 +94,7 @@ export interface ComputerUseStatus {
   enabled: boolean;
   /** 一次性确认已接受，待系统授权后可在设置页继续。 */
   consentPending?: boolean;
-  /** `cua` MCP 条目已写入 mcp_local_config（功能闭环就绪标志）。 */
+  /** `cua` MCP 条目已注册；执行仍需开启功能、服务就绪且权限有效。 */
   mcpInjected?: boolean;
   /** 模拟光标 overlay；缺省开。与 Background 投递独立。 */
   agentCursor?: boolean;

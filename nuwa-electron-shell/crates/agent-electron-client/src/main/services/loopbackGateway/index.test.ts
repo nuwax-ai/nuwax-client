@@ -364,17 +364,18 @@ describe("loopbackGateway runtime key carries backend", () => {
   });
 
   it.each([
-    { packaged: false, profile: "1", override: "http://localhost:3000", enabled: true },
-    { packaged: false, profile: "", override: "http://localhost:3000", enabled: false },
-    { packaged: true, profile: "1", override: "http://localhost:3000", enabled: false },
-    { packaged: false, profile: "1", override: "file:///app", enabled: false },
-  ])("source development owns a backend gateway without changing saved direct mode ($packaged, $profile, $override)", async ({ packaged, profile, override, enabled }) => {
+    { packaged: false, profile: "1", mode: "source", enabled: true },
+    { packaged: false, profile: "", mode: "source", enabled: false },
+    { packaged: true, profile: "1", mode: "source", enabled: false },
+    { packaged: false, profile: "1", mode: "remote", enabled: false },
+  ])("source development owns a same-origin Cookie gateway without changing saved direct mode ($packaged, $profile, $mode)", async ({ packaged, profile, mode, enabled }) => {
     const { session, webContents } = await import("electron");
     mocks.app.isPackaged = packaged;
     mocks.store.set("step1_config", { nuwaxLoadMode: "direct", serverHost: "https://a.example.com" });
     vi.stubEnv("NUWAX_DEV_PROFILE", profile);
-    vi.stubEnv("NUWAX_WEBVIEW_ORIGIN", override);
-    vi.mocked(webContents.fromId).mockReturnValue({ getURL: () => "http://localhost:3000/login" } as Electron.WebContents);
+    vi.stubEnv("NUWAX_DEV_FRONTEND_MODE", mode);
+    vi.stubEnv("NUWAX_WEBVIEW_ORIGIN", "");
+    vi.mocked(webContents.fromId).mockReturnValue({ getURL: () => "http://127.0.0.1:46800/login" } as Electron.WebContents);
     const mod = await importFresh();
     try {
       expect(mod.isLoopbackGatewayEnabled()).toBe(enabled);
@@ -386,9 +387,9 @@ describe("loopbackGateway runtime key carries backend", () => {
         const [, listener] = vi.mocked(session.defaultSession.webRequest.onBeforeRequest).mock.calls.at(-1)!;
         if (typeof listener !== "function") throw new Error("normalizer missing");
         const callback = vi.fn();
-        listener({ webContentsId: 1, resourceType: "xhr", url: "https://a.example.com/api/user/passwordLogin",
-          frame: { url: "http://localhost:3000/login" } } as Parameters<typeof listener>[0], callback);
-        expect(callback).toHaveBeenCalledWith({ redirectURL: "http://127.0.0.1:46800/__backend/a.example.com/api/user/passwordLogin" });
+        listener({ webContentsId: 1, resourceType: "xhr", url: "http://127.0.0.1:46800/api/user/passwordLogin",
+          frame: { url: "http://127.0.0.1:46800/login" } } as Parameters<typeof listener>[0], callback);
+        expect(callback).toHaveBeenCalledWith({});
       } else {
         expect(mocks.startGateway).not.toHaveBeenCalled();
       }

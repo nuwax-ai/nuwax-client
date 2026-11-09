@@ -3,16 +3,16 @@
 # 商业测试不注入构建身份。
 name: CI (gates)
 
-# main 与 release 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
+# main、alpha/** 与 release/** 分支的 push、PR 及发布 workflow 的 workflow_call 均跑门禁；
 # 普通 feat/** 分支仅在 PR 时执行，避免每次推送都触发全量测试。
 # 仅修改发布说明 Markdown 时不重复占用整组 runner；tag 的 workflow_call 仍跑完整门禁。
 on:
   workflow_call:
   push:
-    branches: [main, 'release/**']
+    branches: [main, 'alpha/**', 'release/**']
     paths-ignore: ['release-notes/*.md']
   pull_request:
-    branches: [main, 'release/**']
+    branches: [main, 'alpha/**', 'release/**']
     paths-ignore: ['release-notes/*.md']
 
 permissions:
@@ -57,6 +57,7 @@ jobs:
         run: >-
           pnpm -C nuwa-electron-shell/crates/agent-electron-client exec vitest run
           src/main/features/local-files src/main/features/computer-use
+          tests/shell-capabilities.test.ts
           src/main/services/commercialAutoUpdater.test.ts
           src/main/ipc/settingsHandlers.hostActivity.test.ts
           src/preload/features/local-files.test.ts
@@ -95,6 +96,45 @@ jobs:
       - name: Regress WinPTY on the current Windows runner
         if: runner.os == 'Windows'
         run: node scripts/acceptance/terminal-compat.mjs
+
+  dsh-runtime:
+    name: DSH runtime resources (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-26-intel, windows-latest, ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nuwa-electron-shell/crates/dsh-runtime/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: .cache/dsh-office
+          key: dsh-office-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('nuwa-electron-shell/crates/dsh-runtime/vendor/primary-runtime.lock.json') }}
+      - name: Install locked runtime dependencies
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test model authorization and owned process lifecycle
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: npm test
+      - name: Exercise real DSH sessions and Plugin Manager
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: |
+          npm run smoke
+          node test/plugin-smoke.mjs
+          node test/plugin-smoke.mjs --shell
+      - name: Prepare and admit native speech and Office resources
+        run: |
+          npm --prefix nuwa-electron-shell/crates/agent-electron-client run prepare:dsh
+          node scripts/check-dsh-resources.mjs
+      - name: Create, edit, render and recalculate Office documents
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: node test/office-smoke.mjs
 
   commercial:
     name: commercial gate (test:commercial)
@@ -140,11 +180,18 @@ jobs:
       - name: Prepare test resources (mcp-proxy)
         run: node scripts/run-shell.cjs --no-inject -- bash -c "cd crates/agent-electron-client && npm run prepare:mcp-proxy"
 
+      - name: Install locked DSH dependencies for the Agent theme integration test
+        working-directory: nuwa-electron-shell/crates/dsh-runtime
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: Guard scripts self-test
         run: npm run test:scripts
 
       - name: Check host bridge contract snapshot
         run: npm run host-bridge:check
+
+      - name: Check shared theme core snapshot
+        run: npm run theme-core:check
 
       - name: Check Electron source boundaries and app directory literals
         run: |

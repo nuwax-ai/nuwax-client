@@ -6,6 +6,11 @@
  * - `hostFeatureNamespaces`：给宿主壳渲染进程（`window.electronAPI.*`）。
  */
 
+import { DSH_IPC, DSH_LAUNCHER_OPEN, DSH_LAUNCHER_STATE, DSH_PLUGINS_IPC, type DshBridge } from "@shared/features/dsh-runtime/contract";
+import type { HostDshLauncherBridge } from "@shared/types/hostBridge";
+import type { HostWorkbenchBridge } from "@shared/types/hostBridge";
+import { WORKBENCH_IPC, WORKBENCH_OPEN_IPC, type WorkbenchBridge } from "@shared/features/workbench/contract";
+import { SHELL_CAPABILITIES_IPC, type ShellCapabilitiesBridge } from "@shared/features/shell-capabilities/contract";
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
 import type { NoticesBridge } from "@shared/features/open-source-notices/contract";
@@ -14,16 +19,24 @@ import { createCaptureBridge, captureCapabilityProbe } from "./capture";
 import { createNoticesBridge } from "./open-source-notices";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
+import { createThemesBridge, themesCapabilityProbe } from "./themes";
 import { createBrowserBridge } from './browser';
 import { createAndroidBridge } from './android';
 
 export interface FeatureNamespaces {
+  workbench: HostWorkbenchBridge;
+  dshRuntime: HostDshLauncherBridge;
+  themes: ReturnType<typeof createThemesBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   capture: CaptureBridge;
   localFiles: ReturnType<typeof createLocalFilesBridge>;
 }
 
 export interface HostFeatureNamespaces {
+  workbench: WorkbenchBridge;
+  shellCapabilities: ShellCapabilitiesBridge;
+  dshRuntime: DshBridge;
+  themes: ReturnType<typeof createThemesBridge>;
   android: ReturnType<typeof createAndroidBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   notices: NoticesBridge;
@@ -35,15 +48,27 @@ export interface HostFeatureNamespaces {
 export function featureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): FeatureNamespaces {
-  return { browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc) };
+  return {
+    workbench: { open: conversationId => ipc.invoke(WORKBENCH_OPEN_IPC, conversationId) },
+    dshRuntime: { getState: () => ipc.invoke(DSH_LAUNCHER_STATE), open: () => ipc.invoke(DSH_LAUNCHER_OPEN) },
+    themes: createThemesBridge(ipc), browser: createBrowserBridge(ipc), capture: createCaptureBridge(ipc), localFiles: createLocalFilesBridge(ipc),
+  };
 }
 
 export function hostFeatureNamespaces(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): HostFeatureNamespaces {
   return {
-    android: createAndroidBridge(ipc),
+    workbench: { control: (action, enabled) => ipc.invoke(WORKBENCH_IPC, action, enabled) },
+    shellCapabilities: {
+      getState: () => ipc.invoke(SHELL_CAPABILITIES_IPC, "state"),
+      setAccess: access => ipc.invoke(SHELL_CAPABILITIES_IPC, "access", access),
+      restoreTheme: (historyId, expectedRevision) => ipc.invoke(SHELL_CAPABILITIES_IPC, "restore", { historyId, expectedRevision }),
+    },
+    themes: createThemesBridge(ipc, true),
     browser: createBrowserBridge(ipc, true),
+    android: createAndroidBridge(ipc),
+    dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids), plugins: (operation, input) => ipc.invoke(DSH_PLUGINS_IPC, operation, input) },
     notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
     features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },
@@ -71,6 +96,7 @@ export type CapabilityProbe = (
 ) => Promise<boolean>;
 
 const FEATURE_PROBES: Record<string, CapabilityProbe> = {
+  themes: themesCapabilityProbe as CapabilityProbe,
   capture: captureCapabilityProbe as CapabilityProbe,
   localFiles: localFilesCapabilityProbe as CapabilityProbe,
 };

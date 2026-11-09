@@ -1,0 +1,16 @@
+{
+  "name": "@nuwax-ai/dsh-nuwax-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "model-provider.mjs",
+  "exports": {
+    ".": "./model-provider.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT"
+}

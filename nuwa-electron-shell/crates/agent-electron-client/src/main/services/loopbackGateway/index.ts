@@ -21,7 +21,9 @@ import * as net from "net";
 import * as path from "path";
 import { randomBytes } from "node:crypto";
 import { readSetting, writeSetting } from "../../db";
-import { DEFAULT_SERVER_HOST } from "@shared/constants";
+import { APP_NAME_IDENTIFIER, DEFAULT_SERVER_HOST, IS_DEV_PROFILE } from "@shared/constants";
+import { getReleaseChannel } from "@shared/types/updateChannel";
+import { THEME_PREVIEW_SETTING, type ThemePreviewState } from "@shared/features/themes/contract";
 import { currentTicket, mirrorGatewaySetCookies, ticketEpoch, setLoopbackTicketOrigin, advanceTicketEpoch, abortGatewayTicketMirror } from "../commercialTicketSession";
 import { getConfiguredPorts } from "../startupPorts";
 import { getLocalPortManager } from "../localPorts";
@@ -100,10 +102,31 @@ export function syncWebviewOverrideFromEnv(): void {
   }
 }
 
-/** 本地前端与后端跨站；开发档案也必须经网关接收服务端 ticket。 */
+/** 客户端源码预览使用本地生产资源和同源 Cookie 网关，不加载 PC Web dev server。 */
 function usesSourceDevFrontend(): boolean {
   return !app.isPackaged && process.env.NUWAX_DEV_PROFILE === "1" &&
-    httpOrigin(resolveWebviewOverrideFromEnv()) !== null;
+    process.env.NUWAX_DEV_FRONTEND_MODE === "source";
+}
+
+function themePreviewAvailable(): boolean {
+  return APP_NAME_IDENTIFIER === "nuwax" && (app.isPackaged
+    ? getReleaseChannel(app.getVersion()) === "dev"
+    : IS_DEV_PROFILE);
+}
+
+function themePreviewEnabled(): boolean {
+  return themePreviewAvailable() && readSetting(THEME_PREVIEW_SETTING) === true;
+}
+
+export function getThemePreviewState(): ThemePreviewState {
+  const runtime = readSetting(LOOPBACK_RUNTIME_KEY) as { error?: string } | null;
+  return {
+    available: themePreviewAvailable(),
+    enabled: themePreviewEnabled(),
+    sourceForced: usesSourceDevFrontend(),
+    assetsReady: distDirAvailable(),
+    ...(themePreviewEnabled() && runtime?.error ? { error: runtime.error } : {}),
+  };
 }
 
 interface Step1GatewayFields {
@@ -124,7 +147,7 @@ function enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
 
 /** 网关是否处于启用态（step1 配置或 env 强制）。 */
 export function isLoopbackGatewayEnabled(): boolean {
-  if (usesSourceDevFrontend()) return true;
+  if (usesSourceDevFrontend() || themePreviewEnabled()) return true;
   // 显式配置优先（设置里「本地化加速」开关落此键）；env 仅作未配置时的缺省
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   if (step1?.nuwaxLoadMode) return step1.nuwaxLoadMode === "gateway";
@@ -195,7 +218,7 @@ function distDirAvailable(): boolean {
 
 /** dist 模式开关：显式 env（dev 验收）或 nuwaxLoadMode='gateway' 且 dist 就绪。 */
 function isDistModeEnabled(): boolean {
-  if (usesSourceDevFrontend()) return true;
+  if (usesSourceDevFrontend() || themePreviewEnabled()) return true;
   if (process.env.NUWAX_LOOPBACK_DIST === "1") return true;
   const step1 = readSetting("step1_config") as Step1GatewayFields | null;
   return step1?.nuwaxLoadMode === "gateway" && distDirAvailable();
@@ -506,4 +529,23 @@ export function stopLoopbackGateway(): Promise<void> {
 
 export function refreshLoopbackGateway(): Promise<void> {
   return enqueueLifecycle(refreshLoopbackGatewayNow);
+}
+
+/** The Dev preview is an override; never migrate the user's acceleration preference. */
+export function setThemePreviewEnabled(enabled: boolean): Promise<boolean> {
+  return enqueueLifecycle(async () => {
+    const state = getThemePreviewState();
+    if (!state.available || state.sourceForced || typeof enabled !== "boolean" || (enabled && !state.assetsReady)) return false;
+    const previous = readSetting(THEME_PREVIEW_SETTING);
+    if (!writeSetting(THEME_PREVIEW_SETTING, enabled)) throw new Error("Could not save theme preview preference");
+    try {
+      await refreshLoopbackGatewayNow();
+      return true;
+    } catch (error) {
+      if (!writeSetting(THEME_PREVIEW_SETTING, previous)) throw new Error("Could not restore theme preview preference");
+      try { await refreshLoopbackGatewayNow(); }
+      catch (recoveryError) { log.warn("[ThemePreview] Original frontend recovery failed", recoveryError); }
+      throw error;
+    }
+  });
 }

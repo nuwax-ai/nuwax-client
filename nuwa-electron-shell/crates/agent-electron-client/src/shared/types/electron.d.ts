@@ -476,9 +476,17 @@ export interface LogEntry {
   message: string;
 }
 
+export interface LogExportResult {
+  success: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  error?: string;
+}
+
 export interface LogAPI {
   getDir: () => Promise<string>;
   openDir: () => Promise<{ success: boolean; error?: string }>;
+  exportZip: () => Promise<LogExportResult>;
   list: (count?: number, offset?: number) => Promise<LogEntry[]>;
   write: (
     level: "info" | "warn" | "error",
@@ -509,8 +517,8 @@ export interface AppAPI {
       gitHash?: string;
     } | null;
   }>;
-  downloadUpdate: () => Promise<{ success: boolean; error?: string }>;
-  installUpdate: () => Promise<{ success: boolean; error?: string }>;
+  downloadUpdate: () => Promise<{ success: boolean; error?: string; canceled?: boolean }>;
+  installUpdate: () => Promise<{ success: boolean; error?: string; canceled?: boolean }>;
   getUpdateState: () => Promise<UpdateState>;
   openReleasesPage: () => Promise<{ success: boolean }>;
   getUpdateDebugInfo: () => Promise<{
@@ -716,6 +724,8 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  shellCapabilities: import('../features/shell-capabilities/contract').ShellCapabilitiesBridge;
+  dshRuntime: import('../features/dsh-runtime/contract').DshBridge;
   android: import('../features/android/contract').AndroidBridge;
   browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;

@@ -28,7 +28,7 @@ export { DEV_FORCE_ENGINE_HARNESS, DEV_FORCE_ENGINE_SETTING_KEY };
 const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
 
 /**
- * 是否放行强制覆盖：本地开发构建，或 beta 通道包。
+ * 是否放行强制覆盖：本地开发构建，或 Beta / Dev 订阅。
  *
  * 打包构建的 NODE_ENV 恒为 production（pack.mjs 注入），beta 必须按通道放行，
  * 否则 beta 用户拨了开关也不生效。stable 两个条件都不满足，一律不放行——即使
@@ -38,7 +38,7 @@ export function isEngineOverrideAllowed(input: {
   nodeEnv: string | undefined;
   updateChannel: unknown;
 }): boolean {
-  return input.nodeEnv === "development" || input.updateChannel === "beta";
+  return input.nodeEnv === "development" || input.updateChannel === "beta" || input.updateChannel === "dev";
 }
 
 /** 强制目标命令：env NUWACLAW_FORCE_ENGINE 优先，其次开关持久化的设置值。 */

@@ -19,11 +19,11 @@ on:
         required: true
         type: string
       platforms:
-        description: Private acceptance targets (signed Mac ARM64/Intel, Windows EXE only)
+        description: Private acceptance targets (signed Mac, Windows EXE, Linux AppImage)
         required: true
         type: choice
         default: both
-        options: [both, mac-arm64, mac-x64, windows-x64]
+        options: [both, all, mac-arm64, mac-x64, windows-x64, linux-x64, linux-arm64]
       upgrade_from_tag:
         description: Optional existing lower Beta/Stable tag for the same-source Mac upgrade pair
         required: false
@@ -133,6 +133,11 @@ jobs:
           echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
           command -v nasm >/dev/null || brew install nasm
           command -v pkg-config >/dev/null || brew install pkgconf
+      - name: Setup Linux capture and helper compilers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config nasm clang libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Restore admitted unsigned native resource caches
         uses: ./.github/actions/native-build-cache
         with:

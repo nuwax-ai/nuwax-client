@@ -3,6 +3,8 @@ import log from "electron-log";
 
 export const CUA_PREFERENCES_KEY = "computerUsePreferences.v1";
 const LEGACY_KEY = "step1_config";
+const RUNTIME_KEYS = new Set(["computerUseEnabled", "computerUseScopeKind", "computerUseMultiwindow",
+  "computerUseAuthMode", "computerUseBlacklist", "computerUseAgentCursor"]);
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
@@ -19,10 +21,14 @@ export function readCuaPreferences(): Record<string, unknown> {
   return migrated;
 }
 
-export function writeCuaPreferences(patch: Record<string, unknown>): boolean {
+export function writeCuaPreferences(patch: Record<string, unknown>, forceRevision = false): boolean {
   if (Object.keys(patch).some(key => !key.startsWith("computerUse"))) return false;
   const host = computerUseHost();
-  const next = { ...readCuaPreferences(), ...patch };
+  const previous = readCuaPreferences();
+  if (!forceRevision && Object.entries(patch).every(([key, value]) => JSON.stringify(previous[key]) === JSON.stringify(value))) return true;
+  const affectsRuntime = Object.entries(patch).some(([key, value]) => RUNTIME_KEYS.has(key) && JSON.stringify(previous[key]) !== JSON.stringify(value));
+  const revision = Number.isSafeInteger(previous.computerUseConfigRevision) && Number(previous.computerUseConfigRevision) >= 0 ? Number(previous.computerUseConfigRevision) : 0;
+  const next = { ...previous, ...patch, computerUseConfigRevision: revision + Number(affectsRuntime || forceRevision) };
   if (!host.writeSetting(CUA_PREFERENCES_KEY, next)) return false;
   // Compatibility projection for older clients. Only the separate record is authoritative.
   if (!host.writeSetting(LEGACY_KEY, { ...record(host.readSetting(LEGACY_KEY)), ...next }))

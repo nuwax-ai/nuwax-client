@@ -293,11 +293,11 @@ const updater = {
     return ipcRenderer.invoke("updater:check");
   },
   /** 下载更新；installAfterDownload 策略由主进程继续安装并重启。 */
-  download(): Promise<{ success: boolean; error?: string }> {
+  download(): Promise<{ success: boolean; error?: string; canceled?: boolean }> {
     return ipcRenderer.invoke("updater:download");
   },
   /** 重启并安装；一键策略按需补齐下载，其他宿主须先下载。 */
-  install(): Promise<{ success: boolean; error?: string }> {
+  install(): Promise<{ success: boolean; error?: string; canceled?: boolean }> {
     return ipcRenderer.invoke("updater:install");
   },
 };
@@ -454,6 +454,9 @@ if (bridgeAllowed) {
     perf,
     auth,
     native,
+    themes: businessFeatures.themes,
+    dshRuntime: businessFeatures.dshRuntime,
+    workbench: businessFeatures.workbench,
     localFiles: businessFeatures.localFiles,
     updater,
     events,

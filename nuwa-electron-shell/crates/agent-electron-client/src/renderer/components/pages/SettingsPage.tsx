@@ -3,7 +3,7 @@
  *
  * 功能：
  * - 服务（服务域名、工作区目录）
- * - 系统（开机自启、本地化加速、主题）
+ * - 系统（开机自启、本地化加速、休眠控制）
  * - 目录（应用数据、日志）
  *
  * 交互语义（与旧「表单编辑解锁」版对齐，仅范式变化）：
@@ -15,7 +15,6 @@ import React, { useState, useEffect, useCallback, Suspense } from "react";
 import {
   AutoComplete,
   Button,
-  Space,
   Input,
   Select,
   Spin,
@@ -31,10 +30,10 @@ import {
   I18N_KEYS,
   TEST_SERVER_HOST,
 } from "@shared/constants";
-import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
+import { SettingsRow } from "../settings/SettingsRow";
 import { BrowserSettings } from '../../features/browser';
 import { AndroidSettings } from '../../features/android';
 import { setupService, type Step1Config } from "../../services/core/setup";
@@ -45,7 +44,6 @@ import {
 import { t } from "../../services/core/i18n";
 
 import styles from "../../styles/components/SettingsPage.module.css";
-import { useTheme, type ThemeMode } from "../../App";
 
 // Dev tools: 开发模式或 beta 通道展示（stable 正式版不展示）。
 // 必须无条件 lazy import：打包后 import.meta.env.DEV 恒为 false，按它条件加载
@@ -55,40 +53,8 @@ const DevToolsPanel = React.lazy(() => import("../dev/DevToolsPanel"));
 
 /** 「允许锁屏运行」档位（与 shared/types/electron.d.ts PowerPolicyMode 对齐） */
 type PowerPolicyMode = "off" | "keepAwake" | "keepDisplayOn";
-// 行式列表的单行：左标签+描述、右控件
-function SettingsRow(props: {
-  label: React.ReactNode;
-  desc?: React.ReactNode;
-  descMono?: boolean;
-  control?: React.ReactNode;
-}) {
-  const { label, desc, descMono, control } = props;
-  return (
-    <div className={styles.row}>
-      <div className={styles.rowInfo}>
-        <div className={styles.rowLabel}>{label}</div>
-        {desc != null && (
-          <div
-            className={
-              descMono
-                ? `${styles.rowDesc} ${styles.rowDescMono}`
-                : styles.rowDesc
-            }
-          >
-            {desc}
-          </div>
-        )}
-      </div>
-      {control != null && <div className={styles.rowControl}>{control}</div>}
-    </div>
-  );
-}
-
 export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorization?: () => void } = {}) {
   const isMacPlatform = /mac/i.test(navigator.platform);
-
-  // 主题
-  const { themeMode, setThemeMode } = useTheme();
 
   // 服务配置（config 为已保存值；draft 为行内未提交输入）
   const [loading, setLoading] = useState(true);
@@ -208,7 +174,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       ?.get(UPDATE_CHANNEL_SETTING_KEY)
       .then((saved) => {
         // 旧版本未写过该键，按 stable 处理（与 AboutPage 一致）
-        if (active && saved === "beta") setDevToolsVisible(true);
+        if (active && (saved === "beta" || saved === "dev")) setDevToolsVisible(true);
       })
       .catch(() => undefined);
     return () => {
@@ -580,34 +546,6 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
             />
           )}
 
-          {/* 主题设置（暗黑模式经环境变量关闭时恒浅色，外观项无意义随之隐藏） */}
-          {FEATURES.DARK_THEME && (
-            <SettingsRow
-              label={t("Claw.Settings.system.theme")}
-              desc={t("Claw.Settings.system.themeDesc")}
-              control={
-                <Select
-                  style={{ width: 140 }}
-                  value={themeMode}
-                  onChange={(value) => setThemeMode(value as ThemeMode)}
-                  options={[
-                    {
-                      value: "system",
-                      label: t("Claw.Settings.system.themeSystem"),
-                    },
-                    {
-                      value: "light",
-                      label: t("Claw.Settings.system.themeLight"),
-                    },
-                    {
-                      value: "dark",
-                      label: t("Claw.Settings.system.themeDark"),
-                    },
-                  ]}
-                />
-              }
-            />
-          )}
         </div>
       </div>
 

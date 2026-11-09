@@ -43,6 +43,12 @@ export interface FeatureSession {
   isAuthenticated(): boolean;
 }
 
+/** 宿主统一语言；特性只读取和订阅，不另存一份产品语言偏好。 */
+export interface FeatureLocale {
+  current(): string;
+  subscribe(listener: (language: string) => void): () => void;
+}
+
 export interface FeatureWindows {
   /** 宿主主窗口；未创建或已销毁时为 null。 */
   getMain(): BrowserWindow | null;
@@ -84,9 +90,20 @@ export interface FeaturePermissionServices {
   }): () => void;
 }
 
+export interface FeatureAccountScope { accountId: string; origin: string; epoch: number; }
+export interface FeaturePlatform {
+  scope(): FeatureAccountScope | null;
+  request(scope: FeatureAccountScope, route: string, method?: string, data?: unknown): Promise<unknown>;
+  environment(): Record<string, string>;
+  allocatePort(): Promise<number>;
+  releasePort(port: number): Promise<void>;
+}
+
 export interface FeatureContext {
+  locale?: FeatureLocale;
   /** Host-owned development profile; features do not read application build globals. */
   developmentProfile?: boolean;
+  platform?: FeaturePlatform;
   /** 宿主产品标识（如 `nuwax`）。特性不应自行判断产品，门控看清单的 `products`。 */
   product: string;
   /** 面向业务页（受信顶层文档）的 IPC：sender 必须是当前受信的顶层业务文档。 */

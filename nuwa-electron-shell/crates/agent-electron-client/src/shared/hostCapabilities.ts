@@ -23,6 +23,9 @@ export const HOST_CAPABILITY_METHODS = {
   im: ['setNotificationEnabled', 'getUnreadSnapshot', 'onUnreadChanged'],
   capture: ['getCapabilities', 'screenshot', 'record', 'cancel', 'onStateChange', 'readChunk', 'release', 'copy'],
   browser: ['getCapabilities'],
+  themes: ['getState', 'install', 'linkDirectory', 'exportPackage', 'select', 'remove', 'openDirectory', 'onChanged'],
+  dshRuntime: ['getState', 'open'],
+  workbench: ['open'],
 } as const satisfies MethodLists;
 
 const VARIANTS = {

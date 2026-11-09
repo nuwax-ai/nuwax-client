@@ -9,6 +9,21 @@
   flex: 1;
 }
 
+.intro {
+  margin: 0 0 16px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cardContent {
+  padding: 20px;
+}
+
+.cardContent h3:first-child {
+  margin-top: 0;
+}
+
 /* ========== 分组 ========== */
 .group {
   margin-bottom: 20px;

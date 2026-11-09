@@ -1,3 +1,4 @@
+import { useDesktopThemes, packageTheme, createShellThemeApplicator } from './features/themes';
 import { CLIENT_SERVICE_KEYS } from "@shared/serviceNames";
 import React, {
   useState,
@@ -33,6 +34,8 @@ import {
   RocketOutlined,
   CloseOutlined,
   CameraOutlined,
+  SkinOutlined,
+  ExperimentOutlined,
 } from "@ant-design/icons";
 import {
   setupService,
@@ -53,6 +56,7 @@ import {
   DEFAULT_SERVER_HOST,
   APP_NAME_IDENTIFIER,
   MIN_SPLASH_MS,
+  I18N_KEYS,
   normalizeAgentEngine,
 } from "@shared/constants";
 import {
@@ -77,6 +81,8 @@ import { PageLoadRecovery } from "./components/PageLoadRecovery";
 import { observeServiceReadiness, type ServiceGateActivity } from "./services/serviceReadiness";
 import ClientPage from "./components/pages/ClientPage";
 import SettingsPage from "./components/pages/SettingsPage";
+import ThemesPage from "./components/pages/ThemesPage";
+import ExtensionsPage from "./components/pages/ExtensionsPage";
 import DependenciesPage from "./components/pages/DependenciesPage";
 import AboutPage from "./components/pages/CommercialAboutPage";
 import LogViewer from "./components/pages/LogViewer";
@@ -99,6 +105,7 @@ import { createLogger } from "./services/utils/rendererLog";
 import styles from "./styles/components/App.module.css";
 import {
   lightTheme,
+  rootTheme,
   darkTheme,
   applyShellTheme,
   type ShellThemePayload,
@@ -153,6 +160,8 @@ type TabKey =
   | "sessions"
   | "mcp"
   | "settings"
+  | "themes"
+  | "extensions"
   | "capture"
   | "dependencies"
   | "permissions"
@@ -259,6 +268,9 @@ function App() {
   // ============================================
   // 主题状态
   // ============================================
+  const desktopThemes = useDesktopThemes();
+  const themesAvailable = !!desktopThemes || FEATURES.DARK_THEME;
+  const packageSnapshot = desktopThemes?.snapshot;
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [systemIsDark, setSystemIsDark] = useState(false);
 
@@ -266,12 +278,13 @@ function App() {
   // 暗黑模式经环境变量关闭（FEATURES.DARK_THEME，默认 false）：恒浅色，
   // 与 nuwax 女娲主题（亮色体系）保持统一基调，外观设置项随之隐藏。
   const isDarkMode = useMemo(() => {
+    if (packageSnapshot) return packageSnapshot.mode === "dark";
     if (!FEATURES.DARK_THEME) return false;
     if (themeMode === "system") {
       return systemIsDark;
     }
     return themeMode === "dark";
-  }, [themeMode, systemIsDark]);
+  }, [themeMode, systemIsDark, packageSnapshot]);
 
   // ============================================
   // nuwax 女娲主题 → 壳原生 UI 统一
@@ -324,11 +337,11 @@ function App() {
   }, []);
 
   // nuwax 设置入口（web 用户区「客户端设置」按钮，仅 nuwax 宿主渲染）→ 打开壳
-  // 设置弹窗并落到 settings tab（与 menu:settings 同链路；壳顶行设置按钮在
-  // nuwax 宿主下移除，入口由 web 承担）。
+  // 设置弹窗；Bot 原生入口直达扩展页，普通入口落到通用设置。
   useEffect(() => {
-    const onOpenClientSettings = () => {
-      setActiveTab("settings");
+    const onOpenClientSettings = (payload: unknown) => {
+      const tab = (payload as { tab?: unknown } | null)?.tab;
+      setActiveTab(tab === "extensions" && APP_NAME_IDENTIFIER === "nuwax" ? "extensions" : "settings");
       setSettingsModalOpen(true);
     };
     window.electronAPI?.on(
@@ -357,6 +370,7 @@ function App() {
   // CSS 变量叠加（inline 优先级高于 index.css 的亮/暗定义，removeProperty 即回落）。
   // 与 antd tokens 同步加暗色守卫：壳深色时不叠加，避免米白变量染坏暗色 UI。
   useEffect(() => {
+    if (packageSnapshot) return;
     const root = document.documentElement;
     const active = shellTheme?.active === true && !isDarkMode;
     const vars: Array<[string, string | undefined]> = [
@@ -383,15 +397,27 @@ function App() {
       if (value) root.style.setProperty(name, value);
       else root.style.removeProperty(name);
     });
-  }, [shellTheme, isDarkMode]);
+  }, [shellTheme, isDarkMode, packageSnapshot]);
 
   const currentTheme = useMemo(() => {
+    if (packageSnapshot) return packageTheme(packageSnapshot, rootTheme);
     const base = isDarkMode ? darkTheme : lightTheme;
     // 女娲主题是亮色体系：仅在壳非深色且 nuwax 报告 active 时叠加
     return !isDarkMode && shellTheme?.active
       ? applyShellTheme(base, shellTheme)
       : base;
-  }, [isDarkMode, shellTheme]);
+  }, [isDarkMode, shellTheme, packageSnapshot]);
+
+  const themeApplicator = useRef<ReturnType<typeof createShellThemeApplicator> | null>(null);
+  useEffect(() => {
+    themeApplicator.current = createShellThemeApplicator(document);
+    return () => { themeApplicator.current?.dispose(); themeApplicator.current = null; };
+  }, []);
+  useEffect(() => {
+    if (!packageSnapshot) return;
+    try { themeApplicator.current?.apply(packageSnapshot); }
+    catch (error) { console.warn('[Themes] Could not apply shell appearance', error); }
+  }, [packageSnapshot]);
 
   // ============================================
   // i18n 语言状态（响应式，供 Context 下发）
@@ -1739,12 +1765,14 @@ function App() {
         icon: <SettingOutlined />,
         label: t("Claw.Menu.settings"),
       },
-      {
-        key: "dependencies",
-        icon: <FolderOutlined />,
-        label: t("Claw.Menu.dependencies"),
-      },
     ];
+    if (themesAvailable) {
+      items.push({ key: "themes", icon: <SkinOutlined />, label: t(I18N_KEYS.SettingsNavigation.themes) });
+    }
+    if (APP_NAME_IDENTIFIER === "nuwax") {
+      items.push({ key: "extensions", icon: <ExperimentOutlined />, label: t(I18N_KEYS.SettingsNavigation.extensions) });
+    }
+    items.push({ key: "dependencies", icon: <FolderOutlined />, label: t("Claw.Menu.dependencies") });
     if (permissionGuideAvailable) {
       items.push({
         key: "permissions",
@@ -1764,7 +1792,7 @@ function App() {
       },
     );
     return items;
-  }, [i18nLang, captureAvailable, permissionGuideAvailable]);
+  }, [i18nLang, captureAvailable, permissionGuideAvailable, themesAvailable]);
 
   // ============================================
   // i18n Context value
@@ -1868,7 +1896,7 @@ function App() {
       destroyOnHidden
     >
       <div
-        className={styles.configPane}
+        className={styles.configPane} data-theme-part="settings"
         style={{
           display: "flex",
           height: "100%", // 撑满 body 固定高度，左菜单/右内容各自内部滚动
@@ -1930,7 +1958,7 @@ function App() {
               </button>
             ))}
         </div>
-        <div className="app-content">
+        <div className="app-content" data-theme-part="content">
           <div className="app-content-titlebar">
             <span className="app-content-title">
               {menuItems.find((item) => item.key === activeTab)
@@ -1989,6 +2017,8 @@ function App() {
               <MCPSettings isOpen={activeTab === "mcp"} />
             </div>
             {activeTab === "settings" && <SettingsPage onOpenAuthorization={permissionGuideAvailable ? () => openPermissionOnboarding("overview") : undefined} />}
+            {activeTab === "themes" && <ThemesPage />}
+            {activeTab === "extensions" && APP_NAME_IDENTIFIER === "nuwax" && <ExtensionsPage />}
             {activeTab === "capture" && <div ref={setCapturePanelTarget} />}
             {activeTab === "dependencies" && <DependenciesPage />}
             {activeTab === "permissions" && permissionGuideAvailable && <PermissionsPage target={permissionTarget} onClose={() => { setSettingsModalOpen(false); void window.electronAPI?.permissionOnboarding?.hideDragChip?.().catch(() => undefined); }} />}
@@ -2010,7 +2040,7 @@ function App() {
       <I18nContext.Provider value={i18nContextValue}>
         <ConfigProvider theme={currentTheme}>
           <ThemeContext.Provider value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}>
-            <div className="app-container">
+            <div className="app-container" data-theme-part="app">
               <TrafficLightToolbar
                 menuCollapsed={false} menuAvailable={false}
                 canGoBack={false} canGoForward={false}
@@ -2044,7 +2074,7 @@ function App() {
         <ThemeContext.Provider
           value={{ themeMode, isDarkMode, setThemeMode: handleSetThemeMode }}
         >
-          <div className="app-container">
+          <div className="app-container" data-theme-part="app">
             {APP_NAME_IDENTIFIER === "nuwax" && permissionGuideAvailable && <PermissionOnboardingEntry ready={mainUiActive} onOpen={openPermissionOnboarding} />}
             {APP_NAME_IDENTIFIER === "nuwax" && <CuaControls api={window.electronAPI?.computerUse} t={t} />}
 
@@ -2210,7 +2240,7 @@ function App() {
             />
 
             {/* 主体部分：平台 webview 常驻挂载，切换时仅隐藏不重载 */}
-            <div className="app-body">
+            <div className="app-body" data-theme-part="body">
               <div
                 className={`app-content app-content-fullwidth ${styles.platformPane}`}
                 style={{

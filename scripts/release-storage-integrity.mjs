@@ -1,3 +1,4 @@
+import { releaseAssetPrefix } from './release-version.mjs';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
@@ -131,7 +132,7 @@ async function awsReadHash(url, prefix) {
 
 export async function verifyDirectory(directory) {
   const provenance = JSON.parse(await readFile(path.join(directory, 'release-provenance.json'), 'utf8'));
-  const prefix = `${process.env.RELEASE_ROOT}/${process.env.RELEASE_CHANNEL === 'beta' ? 'beta-build/' : ''}${process.env.RELEASE_TAG}`;
+  const prefix = `${process.env.RELEASE_ROOT}/${releaseAssetPrefix({ channel: process.env.RELEASE_CHANNEL, tag: process.env.RELEASE_TAG })}`;
   const base = `${process.env.S3_CDN_BASE}/${prefix}`;
   const entries = await readdir(directory);
   await mapLimit(entries, VERIFY_CONCURRENCY, async (name) => {

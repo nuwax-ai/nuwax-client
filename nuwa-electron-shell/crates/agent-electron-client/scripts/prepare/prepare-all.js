@@ -184,6 +184,7 @@ async function main() {
     'prepare:mcp-proxy',
     'prepare:nuwaxcode',
     'prepare:harness',
+    'prepare:dsh',
     'prepare:nuwax-file-server',
     'prepare:claude-code-acp-ts',
   ];

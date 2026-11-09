@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import config from '../../client.config.mjs';
 import { run, git, withLock } from './core.mjs';
-import { parseReleaseVersion, parseReleaseTag, releaseSequenceFindings, compareReleaseVersions } from '../release-version.mjs';
+import { channelPointerFolder, releaseAssetPrefix, parseReleaseVersion, parseReleaseTag, releaseSequenceFindings, compareReleaseVersions } from '../release-version.mjs';
 import { hashResponse, mapLimit, verifyS3Asset, VERIFY_CONCURRENCY } from '../release-storage-integrity.mjs';
 import { readBetaChannelReplacement, allowsBetaChannelReplacement } from '../beta-channel-replacement.mjs';
 
@@ -282,7 +282,7 @@ async function releaseView(tools, settings, identity) {
   const response = await tools.gh(['api', `repos/${settings.repo}/releases?per_page=100`]);
   const value = Array.isArray(response) ? response.find((entry) => entry.tag_name === identity.tag) : response;
   if (!value) throw new Error(`未找到 Release ${identity.tag}`);
-  if (value.tag_name !== identity.tag || Boolean(value.prerelease) !== (identity.channel === 'beta')) throw new Error('Release tag/通道状态不匹配');
+  if (value.tag_name !== identity.tag || Boolean(value.prerelease) !== (identity.channel !== 'stable')) throw new Error('Release tag/通道状态不匹配');
   return value;
 }
 
@@ -299,7 +299,7 @@ async function manifestsFromRelease(tools, identity, view, source) {
 }
 
 async function pointers(tools, settings, identity) {
-  const folder = identity.channel === 'stable' ? 'latest' : 'beta';
+  const folder = channelPointerFolder(identity);
   const [s3, oss] = await Promise.all([settings.s3Base, settings.ossBase].map((base) => tools.fetchBytes(`${base}/${folder}/latest.json`)));
   if (!Buffer.from(s3).equals(Buffer.from(oss))) throw new Error('S3/OSS 通道指针字节不一致');
   const value = JSON.parse(Buffer.from(s3).toString());
@@ -308,7 +308,7 @@ async function pointers(tools, settings, identity) {
 }
 
 export async function preventPointerDowngrade(tools, settings, identity, replacement = readBetaChannelReplacement(identity)) {
-  const folder = identity.channel === 'stable' ? 'latest' : 'beta';
+  const folder = channelPointerFolder(identity);
   await Promise.all([settings.s3Base, settings.ossBase].map(async (base) => {
     let bytes;
     try { bytes = await tools.fetchBytes(`${base}/${folder}/latest.json`); }
@@ -326,7 +326,7 @@ export async function preventPointerDowngrade(tools, settings, identity, replace
 export async function verifyMirrors(tools, settings, identity, view, source) {
   if (view.draft) throw new Error('Release 尚未公开');
   const { value, bytes } = await pointers(tools, settings, identity);
-  const prefix = identity.channel === 'beta' ? `beta-build/${identity.tag}` : identity.tag;
+  const prefix = releaseAssetPrefix(identity);
   const base = `${settings.s3Base}/${prefix}`;
   const provenanceAsset = view.assets.find((asset) => asset.name === 'release-provenance.json');
   if (!provenanceAsset) throw new Error('Release 缺少最终 release-provenance.json');
@@ -372,7 +372,7 @@ export async function verifyMirrors(tools, settings, identity, view, source) {
 export async function release(root, options = {}, injected = {}) {
   const identity = releaseIdentity(options.channel, options.version, options.tag);
   const stage = options.stage ?? (identity.channel === 'stable' ? 'sign' : undefined);
-  if (stage === 'sign' && identity.channel !== 'stable') throw new Error('--stage sign 仅适用 stable（beta 不做 Windows 签名）');
+  if (stage === 'sign' && identity.channel !== 'stable') throw new Error('--stage sign 仅适用 stable（Dev / Beta 不做 Windows 签名）');
   const settings = { ...config.release, ...(options.settings ?? {}),
     signHost: process.env.RELEASE_SIGN_HOST ?? options.settings?.signHost ?? config.release.signHost,
     signGhPath: process.env.SIGN_GH_PATH ?? options.settings?.signGhPath ?? config.release.signGhPath };
@@ -382,7 +382,7 @@ export async function release(root, options = {}, injected = {}) {
     `跟踪 ${identity.buildWorkflow} 同 tag/SHA 的 push run`, '校验五平台来源及安装资产',
     ...(identity.channel === 'stable' && stage !== 'sync' ? [`在 ${settings.signHost} 使用当前已提交的签名工具下载、签名、上传；SimplySign 手机认证须人工完成`] : []),
     ...(stage === 'sign' ? ['仅签名阶段（--stage sign）：不同步 OSS/S3']
-      : identity.channel === 'stable' ? ['dispatch 同步 workflow，固定当前分支 ref'] : ['跟踪自动 beta 同步；同步失败可重跑续接']),
+      : identity.channel === 'stable' ? ['dispatch 同步 workflow，固定当前分支 ref'] : ['跟踪自动预发布同步；同步失败可重跑续接']),
     ...(stage === 'sign' ? [] : ['验证公开 Release、GitHub/S3/OSS SHA256 与通道指针'])];
   if (options.dryRun) {
     const result = { dryRun: true, ok: state.findings.length === 0, tag: identity.tag, source: state.source, branch: state.branch, notes: state.notes,
@@ -425,8 +425,8 @@ export async function release(root, options = {}, injected = {}) {
   else if (buildResult.conclusion !== 'success') {
     const result = buildResult.jobs ? buildResult : await tools.gh(['run', 'view', String(build.databaseId), '--repo', settings.repo, '--json', 'jobs']);
     if (!hasSuccessfulBetaBuilds(result.jobs))
-      throw new Error(`beta 五平台构建未全部成功：run ${build.databaseId}`);
-    tools.log('[release] beta 构建完成，自动同步失败；继续同步重试');
+      throw new Error(`预发布五平台构建未全部成功：run ${build.databaseId}`);
+    tools.log('[release] 预发布构建完成，自动同步失败；继续同步重试');
   }
   let view = await releaseView(tools, settings, identity);
   const manifests = await manifestsFromRelease(tools, identity, view, state.source);
@@ -452,7 +452,7 @@ export async function release(root, options = {}, injected = {}) {
   const criteria = { tag: identity.tag, sha: state.automationSha, event: 'workflow_dispatch', title, branch: state.branch };
   const successfulSync = selectRun(syncRuns.filter((entry) => entry.status === 'completed' && entry.conclusion === 'success'), criteria);
   let verified;
-  if (!view.draft && (successfulSync || (identity.channel === 'beta' && buildResult.conclusion === 'success'))) {
+  if (!view.draft && (successfulSync || (identity.channel !== 'stable' && buildResult.conclusion === 'success'))) {
     try { verified = await verifyMirrors(tools, settings, identity, view, state.source); }
     catch (error) { tools.log(`[release] 发布验证未就绪：${error.message}`); }
   }

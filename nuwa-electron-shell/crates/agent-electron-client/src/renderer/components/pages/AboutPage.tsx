@@ -21,6 +21,11 @@ import {
 import { APP_DISPLAY_NAME } from "@shared/constants";
 import { t } from "../../services/core/i18n";
 import type { UpdateState } from "@shared/types/updateTypes";
+import {
+  UPDATE_CHANNEL_SETTING_KEY,
+  normalizeUpdateChannel,
+  type UpdateChannel,
+} from "@shared/types/updateChannel";
 import styles from "../../styles/components/AboutPage.module.css";
 
 /** 官网地址，用于关于页「官网」链接 */
@@ -32,8 +37,12 @@ const SIMULATED_PROGRESS_CAP = 90;
 const SIMULATED_PROGRESS_INTERVAL_MS = 500;
 /** 预计下载时长（ms），用于计算每 tick 的增量，约 45s 内从 0 到 SIMULATED_PROGRESS_CAP */
 const SIMULATED_DURATION_MS = 45_000;
-type UpdateChannel = "stable" | "beta";
-const UPDATE_CHANNEL_SETTING_KEY = "update_channel";
+
+const CHANNEL_SUCCESS_KEYS: Record<UpdateChannel, string> = {
+  stable: "Claw.About.switchedToStable",
+  beta: "Claw.About.switchedToBeta",
+  dev: "Claw.About.switchedToDev",
+};
 
 export interface AboutPageProps {
   /** webview 前端启动时上报的构建信息（界面版本行展示；未上报时显示未知）。 */
@@ -122,7 +131,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
     window.electronAPI?.settings
       .get(UPDATE_CHANNEL_SETTING_KEY)
       .then((saved) => {
-        setUpdateChannel(saved === "beta" ? "beta" : "stable");
+        if (active) setUpdateChannel(normalizeUpdateChannel(saved));
       })
       .catch(() => {
         setUpdateChannel("stable");
@@ -178,60 +187,44 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
   }, []);
 
   const handleChangeUpdateChannel = useCallback(
-    async (checked: boolean) => {
-      const nextChannel: UpdateChannel = checked ? "beta" : "stable";
-      if (nextChannel === updateChannel) return;
-
-      // 切换到 beta 时：弹出二次确认
-      if (nextChannel === "beta") {
+    async (nextChannel: UpdateChannel) => {
+      if (nextChannel === updateChannel || channelLoading) return;
+      const save = async () => {
+        setChannelLoading(true);
+        try {
+          const saved = await window.electronAPI?.settings.set(
+            UPDATE_CHANNEL_SETTING_KEY,
+            nextChannel,
+          );
+          if (!saved) throw new Error("Update channel was not saved");
+          setUpdateChannel(nextChannel);
+          message.success(t(CHANNEL_SUCCESS_KEYS[nextChannel]));
+          await handleCheckUpdate();
+        } catch {
+          message.error(t("Claw.About.channelSwitchFailed"));
+        } finally {
+          setChannelLoading(false);
+        }
+      };
+      const enablingBeta = updateChannel === "stable" && nextChannel === "beta";
+      if (enablingBeta || nextChannel === "dev") {
         Modal.confirm({
           title: t("Claw.About.channelSwitching"),
           content: (
             <div>
-              <p>{t("Claw.About.betaWarning")}</p>
+              <p>{t(nextChannel === "dev" ? "Claw.About.devWarning" : "Claw.About.betaWarning")}</p>
               <p>{t("Claw.About.confirmSwitch")}</p>
             </div>
           ),
           okText: t("Claw.About.confirmSwitchBtn"),
           cancelText: t("Claw.Common.cancel"),
-          onOk: async () => {
-            setChannelLoading(true);
-            try {
-              await window.electronAPI?.settings.set(
-                UPDATE_CHANNEL_SETTING_KEY,
-                "beta",
-              );
-              setUpdateChannel("beta");
-              message.success(t("Claw.About.switchedToBeta"));
-              // 确认后自动触发一次 beta 通道的升级检查
-              await handleCheckUpdate();
-            } catch {
-              message.error(t("Claw.About.channelSwitchFailed"));
-            } finally {
-              setChannelLoading(false);
-            }
-          },
+          onOk: save,
         });
-        return;
-      }
-
-      // 切换回 stable：直接切换，无确认弹框，重新检查 stable 通道
-      setChannelLoading(true);
-      try {
-        await window.electronAPI?.settings.set(
-          UPDATE_CHANNEL_SETTING_KEY,
-          "stable",
-        );
-        setUpdateChannel("stable");
-        message.success(t("Claw.About.switchedToStable"));
-        await handleCheckUpdate();
-      } catch {
-        message.error(t("Claw.About.channelSwitchFailed"));
-      } finally {
-        setChannelLoading(false);
+      } else {
+        await save();
       }
     },
-    [updateChannel, handleCheckUpdate],
+    [updateChannel, channelLoading, handleCheckUpdate],
   );
 
   // macOS/Linux：Squirrel 不发送 download-progress，用定时器模拟进度使进度条有变化
@@ -275,6 +268,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
     }));
     try {
       const result = await window.electronAPI?.app?.downloadUpdate?.();
+      if (result?.canceled) return;
       if (!result || !result.success) {
         message.error(result?.error || t("Claw.About.downloadFailed"));
         setUpdateState((prev) => ({ ...prev, status: "available" }));
@@ -289,6 +283,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
     setInstalling(true);
     try {
       const result = await window.electronAPI?.app?.installUpdate?.();
+      if (result?.canceled) { setInstalling(false); return; }
       if (!result || !result.success) {
         message.error(result?.error || t("Claw.About.installFailed"));
         setInstalling(false);
@@ -566,12 +561,30 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
             <div className={styles.rowControl}>
               <Switch
                 size="small"
-                checked={updateChannel === "beta"}
+                checked={updateChannel !== "stable"}
                 loading={channelLoading}
-                onChange={handleChangeUpdateChannel}
+                disabled={["downloading", "installing"].includes(updateState.status)}
+                onChange={(checked) => handleChangeUpdateChannel(checked ? "beta" : "stable")}
               />
             </div>
           </div>
+          {updateChannel !== "stable" && (
+            <div className={styles.row}>
+              <div className={styles.rowInfo}>
+                <div className={styles.rowLabel}>{t("Claw.About.devChannel")}</div>
+                <div className={styles.rowDesc}>{t("Claw.About.devDisclaimer")}</div>
+              </div>
+              <div className={styles.rowControl}>
+                <Switch
+                  size="small"
+                  checked={updateChannel === "dev"}
+                  loading={channelLoading}
+                  disabled={["downloading", "installing"].includes(updateState.status)}
+                  onChange={(checked) => handleChangeUpdateChannel(checked ? "dev" : "beta")}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

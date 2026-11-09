@@ -20,15 +20,15 @@ import { closeDb, initDatabase, readSetting, writeSetting } from "./db";
 
 describe("packaged update subscription defaults", () => {
   beforeEach(() => { closeDb(); state.settings.clear(); });
-  it.each([["3.0.10", "stable"], ["3.0.11-beta.1", "beta"], ["3.0.11-beta.10", "beta"]])(
+  it.each([["3.0.11-alpha.1", "stable"], ["3.0.10", "stable"], ["3.0.11-beta.1", "beta"], ["3.0.11-beta.10", "beta"]])(
     "first installation of %s defaults to %s", (version, channel) => {
       state.version = version; initDatabase();
       expect(readSetting("update_channel")).toBe(channel);
     },
   );
-  it.each(["stable", "beta"])("retains saved %s through beta upgrade, promotion and restart", (saved) => {
+  it.each(["stable", "beta", "dev"])("retains saved %s through beta upgrade, promotion and restart", (saved) => {
     state.version = "3.0.11-beta.1"; initDatabase(); writeSetting("update_channel", saved);
-    for (const version of ["3.0.11-beta.2", "3.0.11", "3.0.12"]) {
+    for (const version of ["3.0.11-alpha.2", "3.0.11-beta.2", "3.0.11", "3.0.12"]) {
       closeDb(); state.version = version; initDatabase();
       expect(readSetting("update_channel")).toBe(saved);
     }

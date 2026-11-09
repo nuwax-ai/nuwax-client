@@ -66,14 +66,3 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
     },
   };
 }
-
-/** A cloud diagnostic must not warn on direct mode, proxy mode or another document. */
-export function shouldShowDistSnapshotNotice(snapshot: DistHandshakeView | null, guestUrl: string): boolean {
-  if (!snapshot || !["different", "behind"].includes(snapshot.relation) || snapshot.gateway?.mode !== "dist"
-    || !snapshot.bundled || !snapshot.cloud || snapshot.checkedAt === null) return false;
-  try {
-    const guest = new URL(guestUrl), gateway = new URL(snapshot.gateway.origin);
-    return ["http:", "https:"].includes(guest.protocol) && !guest.username && !guest.password
-      && guest.origin === gateway.origin;
-  } catch { return false; }
-}

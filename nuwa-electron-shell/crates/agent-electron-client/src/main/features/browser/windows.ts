@@ -1,3 +1,4 @@
+import type { HostThemeSnapshot } from '@shared/types/hostBridge';
 import {
   BrowserWindow,
   Menu,
@@ -121,7 +122,14 @@ export function isBrowserToolbar(
   }
 }
 
-export function createBrowserWindows(ctx: FeatureContext) {
+export interface BrowserAppearance {
+  getSnapshot(): HostThemeSnapshot | null;
+  subscribe(listener: () => void): () => void;
+}
+export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserAppearance = {
+  getSnapshot: () => null, subscribe: () => () => undefined,
+}) {
+  const {getSnapshot: getDesktopThemeSnapshot, subscribe: subscribeDesktopThemeSnapshot} = appearance;
   const entries = new Map<number, Entry>();
   let disposed = false;
   const publicUrl = (value: string) => ctx.windows.toExternalUrl
@@ -161,10 +169,14 @@ export function createBrowserWindows(ctx: FeatureContext) {
     entry.state.maximized = entry.window.isMaximized();
     entry.state.fullscreen = entry.window.isFullScreen();
     entry.state.labels = labels();
+    entry.state.themeSnapshot = getDesktopThemeSnapshot();
+    const background = entry.state.themeSnapshot?.tokens['app.bg'];
+    if (typeof background === 'string') entry.window.setBackgroundColor(background);
     const theme = ctx.settings.read("theme_mode") ?? "system";
     entry.state.dark =
       theme === "dark" ||
       (theme === "system" && nativeTheme.shouldUseDarkColors);
+    if (entry.state.themeSnapshot) entry.state.dark = entry.state.themeSnapshot.mode === 'dark';
     if (entry.toolbarReady)
       entry.window.webContents.send(BROWSER_IPC.changed, entry.state);
   };
@@ -252,7 +264,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
         wc.stop();
         break;
       case "copy": {
-        const url = webUrl(entry.state.url);
+        // 与系统浏览器交接共用业务地址，不能把仅本机可用的网关链接放进剪贴板。
+        const url = publicUrl(entry.state.url);
         if (!url) return false;
         clipboard.writeText(url);
         break;
@@ -400,6 +413,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
   const refresh = () => {
     for (const entry of entries.values()) push(entry);
   };
+  const unsubscribeThemes = subscribeDesktopThemeSnapshot(refresh);
   try {
     ipcMain.handle(BROWSER_IPC.state, (event) => {
       const entry = owned(event);
@@ -422,6 +436,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     );
     nativeTheme.on("updated", refresh);
   } catch (error) {
+    unsubscribeThemes();
     ipcMain.removeHandler(BROWSER_IPC.state);
     ipcMain.removeHandler(BROWSER_IPC.command);
     throw error;
@@ -444,6 +459,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     const win = new BrowserWindow({
       ...windowOptions,
       show: false,
+      backgroundColor: String(getDesktopThemeSnapshot()?.tokens['app.bg'] ?? '#f8f8f8'),
       ...browserWindowChrome(),
       webPreferences: {
         partition: "nuwax-browser-ui",
@@ -646,6 +662,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      unsubscribeThemes();
       closeAll();
       nativeTheme.removeListener("updated", refresh);
       ipcMain.removeHandler(BROWSER_IPC.state);

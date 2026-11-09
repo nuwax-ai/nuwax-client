@@ -44,6 +44,7 @@ export class LocalPortManager {
   readonly host = "127.0.0.1";
   private endpoints = new Map<LocalServiceId, LocalEndpoint>();
   private reservations = new Map<LocalServiceId, Reservation>();
+  private privatePorts = new Set<number>();
   private saved: Partial<Record<LocalServiceId, number>>;
   private queue: Promise<unknown> = Promise.resolve();
   private starts = new Map<LocalServiceId, Promise<LocalStartResult>>();
@@ -111,7 +112,7 @@ export class LocalPortManager {
       if (!excluded.has(existing?.port ?? 0) &&
           (this.reservations.has(service) || existing?.status === "ready")) return existing!.port;
       await this.closeReservation(service);
-      const occupied = new Set([...excluded, ...[...this.endpoints.values()]
+      const occupied = new Set([...excluded, ...this.privatePorts, ...[...this.endpoints.values()]
         .filter((value) => value.service !== service && value.status !== "stopped" && value.status !== "failed")
         .map((value) => value.port)]);
       let skipped = 0;
@@ -137,6 +138,29 @@ export class LocalPortManager {
 
   async prepare(services: LocalServiceId[], signal?: AbortSignal): Promise<void> {
     for (const service of services) await this.reserve(service, signal);
+  }
+  /** Private feature listeners share allocation but never enter endpoint publication. */
+  allocatePrivate(): Promise<number> {
+    const signal = this.controller.signal;
+    return this.serial(async () => {
+      const occupied = new Set([...this.privatePorts, ...[...this.endpoints.values()]
+        .filter(value => value.status !== "stopped" && value.status !== "failed").map(value => value.port)]);
+      for (const [min, max] of this.policy.ranges) for (let port = min; port <= max; port++) {
+        signal.throwIfAborted();
+        if (occupied.has(port)) continue;
+        let probe: Reservation;
+        try { probe = await (this.policy.bind ?? bindPort)(port, this.host); }
+        catch (error) { if (!portError(error)) throw error; continue; }
+        await probe.close();
+        signal.throwIfAborted();
+        this.privatePorts.add(port);
+        return port;
+      }
+      throw new Error("No private loopback port is available");
+    });
+  }
+  releasePrivate(port: number): Promise<void> {
+    return this.serial(async () => { this.privatePorts.delete(port); });
   }
   private async closeReservation(service: LocalServiceId): Promise<void> {
     const reservation = this.reservations.get(service);
@@ -230,6 +254,7 @@ export class LocalPortManager {
     this.invalidateBusiness();
     this.gatewayController.abort();
     for (const service of this.endpoints.keys()) await this.release(service);
+    this.privatePorts.clear();
   }
 }
 

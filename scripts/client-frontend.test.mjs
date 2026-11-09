@@ -96,6 +96,7 @@ test('frontend build uses configured memory only when the user has not supplied 
   t.after(() => { if (previous === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previous; });
   delete process.env.NODE_OPTIONS;
   await f.run();
+  assert.equal(f.state.buildEnv.NODE_ENV, 'production');
   assert.equal(f.state.buildEnv.NODE_OPTIONS, config.frontend.buildNodeOptions);
   process.env.NODE_OPTIONS = '--max-old-space-size=2048 --trace-warnings';
   await f.run();

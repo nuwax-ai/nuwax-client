@@ -96,3 +96,7 @@ tmp/
 .zcode/
 .claude/cache/
 crates/agent-kit/pnpm-lock.yaml
+
+crates/agent-electron-client/resources/dsh-runtime/
+crates/agent-electron-client/resources/dsh-runtime.*/
+crates/agent-electron-client/resources/dsh-office/

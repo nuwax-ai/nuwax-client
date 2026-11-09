@@ -1,12 +1,16 @@
 # 客户端发布与更新通道
 
-新发布标签统一为 `vX.Y.Z`（stable）、`vX.Y.Z-beta.N`（beta）。应用版本去掉 v 后完整保留 beta 后缀，安装包文件名、来源清单和 latest.json 使用同一版本。数字无前导零；beta 从 1 开始，每次取已占用最大序号加一。`beta.2 < beta.10 < stable`。
+新发布标签统一为 `vX.Y.Z`（stable）、`vX.Y.Z-beta.N`（beta）、`vX.Y.Z-alpha.N`（Dev）。应用版本去掉 v 后完整保留 beta 后缀，安装包文件名、来源清单和 latest.json 使用同一版本。数字无前导零；beta 从 1 开始，每次取已占用最大序号加一。`alpha.2 < alpha.10 < beta.1 < stable`（同基础版本）。Dev 与 Beta 序号分别递增，均从 1 开始。
 
 Beta 序号按完整 `X.Y.Z` 分别递增：存在 `3.1.1-beta.N` 标签时，`3.1.0-beta.N` 仍可使用自身的下一序号。新建标签与公开更新通道分别校验；同步时仍拒绝将已公开的较高版本降级，明确切换维护线须使用下文的通道替换记录。
 
-可以直接发布 stable，也可以多轮 beta 后同号转正。正式 tag 创建即关闭同号 beta；Draft 也占用版本。失败重试使用同一 tag/SHA，修代码要升号，历史 tag 不移动。
+可以直接发布 stable，也可以多轮 beta 后同号转正。正式 tag 创建即关闭同号 Dev / beta；Draft 也占用版本。失败重试使用同一 tag/SHA，修代码要升号，历史 tag 不移动。
 
 ## 发布入口
+
+客户端以带版本号的 `alpha/v3.1.0` 分支集成 Dev 体验功能，前端源码仓也以 `alpha/v3.1.0` 分支作为对应消费线；客户端仍固定引用具体 gitlink，不随前端分支自动追新。PC Web 已有的 `dev` 部署分支保持原职责。成熟功能经独立 PR 回主干，主干和发布线修复按需回灌对应 Alpha 分支。分支版本表示维护线，安装包版本仍按发布版本规则独立校验。
+
+推送 `alpha/**` 或向其提交 PR 运行 CI 门禁；正式 Dev 发布仍须创建 `vX.Y.Z-alpha.N` 标签，分支名称不会触发出包或更新订阅指针。产品中的通道名称保持 Dev。
 
 ```bash
 npm run release -- --version 3.0.11-beta.6 --dry-run
@@ -24,18 +28,20 @@ npm run release -- --tag electron-v3.0.9 --stage sync
 
 当前客户端默认 direct，加载业务线上页面；打包前端用于显式 gateway 模式的本地承载，不因线上加载失败自动切换。发布 pin 无须追到远端最新，但必须在声明消费线历史中可达，源码/产物版本戳一致且兼容宿主接口。每个 tag 固定这些输入，打包期间不追新提交。
 
+本集成分支为 Dev 提供独立的完整主题预览：默认关闭，由用户在「主题」页启用，使用该 Dev 包的固定前端源码构建。预览仅覆盖本次 Dev 运行的加载策略，不联动保存的本地加速配置；关闭后遵循原配置。Beta / Stable 保持原加载行为。Dev CI 从源码 pin 构建，不能用旧 `nuwax-dist` 产物是否含新主题来判断 Dev 包内容。
+
 CLI 按预检时捕获的消费分支 SHA 核对历史关系，允许远端比 pin 更新，不把分支尖端替换成构建输入。`--tag` 续跑从目标发布提交的 `.gitmodules` 读取 URL 与消费分支，工具工作区换线不会改变历史目标。doctor/prepare 继续核对本地 HEAD 与已提交 pin、工作树及产物戳；这些检查不要求远端最新。
 
-stable 打包 workflow 匹配 v* 并排除 v*-beta.*；beta workflow 匹配 v*-beta.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名由发布入口显式传入 `SIGN_RELEASE_TAG`，历史 tag 格式仅在续跑指定目标时解析。
+stable 打包 workflow 匹配 v* 并排除 v*-beta.* / v*-alpha.*；预发布 workflow 匹配 v*-beta.* / v*-alpha.*。两者先校验规范版本再运行门禁和五平台矩阵。分支 push/PR 只运行现有检查，失败通过原 run 重试。beta 全平台成功后自动公开 prerelease；stable 默认入口先保留 Draft 并完成签名，Windows 签名和安装包验收后显式同步。Windows 签名由发布入口显式传入 `SIGN_RELEASE_TAG`，历史 tag 格式仅在续跑指定目标时解析。
 
 ## CI 路由与脚本责任
 
 | 入口 | 正式发布触发 | 成功后的行为 |
 | --- | --- | --- |
-| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
-| `release-electron-dev.yml` | tag push `v*-beta.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台 → 自动调用同步，公开 prerelease |
-| `sync-electron-to-oss.yml` | beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
-| `ci.yml` | main/release 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
+| `release-electron.yml` | tag push `v*`，排除 `v*-beta.*` / `v*-alpha.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台；保留 stable Draft，等待 win-pc 签名与安装验收 |
+| `release-electron-dev.yml` | tag push `v*-beta.*` / `v*-alpha.*` | 校验身份 → 商业/前端/脚本门禁 → 五平台 → 自动调用同步，公开 prerelease |
+| `sync-electron-to-oss.yml` | Dev / beta 自动调用；stable 或失败续跑手动 dispatch 原 tag | 最新工具与目标源码分别检出，校验签名/来源/哈希，上传版本目录，再事务更新指针与公开 Release |
+| `ci.yml` | main、alpha/**、release/** 分支 push、对应 PR、发布 workflow 调用 | 社区、商业、前端检查，无正式安装包发布 |
 
 仅修改 `release-notes/*.md` 的分支 push/PR 不触发 `ci.yml`，避免发布说明在 PR、合并、tag 三个入口重复占用 runner。改动包含源码、workflow、pin 或 `.channel.json` 时仍执行完整分支/PR 门禁；tag 发布调用 `ci.yml` 不受路径过滤影响，始终运行全部检查。
 
@@ -59,9 +65,19 @@ macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆
 
 ## 更新订阅
 
+Dev 是独立的新功能体验通道，发布频率可以低于 Beta。设置中先开启 Beta 才显示 Dev 开关；主动开启 Dev 后只读取 `dev/latest.json`，仅接收 Dev 发布。Beta/Stable 发布不推进 Dev 指针，因此不会把用户从 Dev 新功能体验切走。关闭 Dev 回 Beta；关闭 Beta 同时退出 Dev，再次开启 Beta 不恢复 Dev。订阅选择跨重启和升级保留，Dev 包首次安装不自动启用 Dev。
+
+下载/安装期间暂不可切换；其他时机切换会丢弃旧候选、重新检查并禁用旧包的退出安装。Dev 入口不可用时保留订阅并报告检查错误，不回退 Beta。
+
+普通更新检查继续禁止降级。主动切换订阅时，主进程保存绑定当前安装版本和目标通道的切换意图；只有基础版本相同、实际发布通道不同的较低版本才可作为候选。候选须匹配固定版本清单，安装前展示当前版本和目标版本并确认；较低版本不会在退出时自动安装，取消确认保留已下载状态。跨基础版本、同一通道回滚和已失效的切换意图均不放行。
+
+旧版不会因发布新通道而自动获得切换能力。Beta.6 已开启 Dev 时，先关闭 Dev、保持 Beta 开启，升级到包含本修复的 Beta.7，再重新开启 Dev；Dev 订阅不会接收用于引导升级的 Beta 补丁。Beta.7 的前端消费发布基线上的 `codex/beta-channel-switch` 固定 pin，只回灌更新取消反馈，不追入 Alpha 的主题和 DS Bot 页面。
+
+Dev 版本为 `X.Y.Z-alpha.N`，发布入口为 `npm run release -- --version X.Y.Z-alpha.N --dry-run`；正式执行时去掉 `--dry-run`。Dev 复用 Beta 的五平台源码 pin 构建与来源核验、macOS 签名/公证和 Windows unsigned 策略，版本资产独立放在 `nuwax-electron/dev-build/<dev-tag>/`。`--channel dev` 只校验推导结果，`--stage sign` 仅支持 Stable。
+
 stable 用户只读取 `latest/latest.json`；beta 用户读取 `beta/latest.json`，其中可指向 beta 或正式版。用户升级到正式包后仍保留 beta 订阅；切回 stable 不自动降级，等待正式版本追上。
 
-beta 发布只推进 beta 指针。stable 发布推进 stable 指针，在版本更高时也提升 beta 指针；已有更高 beta 时保留它。同步工作流共用并发锁，在版本目录和来源哈希验证后读取两镜像原指针，拒绝不一致、同版本换来源和降级；写入后回读核对，失败恢复已写指针。镜像尚无指针时视为首次发布。
+beta 发布只推进 beta 指针。stable 发布推进 stable 指针，在版本更高时也提升 beta 指针；已有更高 beta 时保留它。三个通道的同步工作流共用并发锁，在版本目录和来源哈希验证后读取两镜像原指针，拒绝不一致、同版本换来源和降级；写入后回读核对，失败恢复已写指针。镜像尚无指针时视为首次发布。
 
 明确切换 Beta 维护线时，可在目标发布提交中增加 `release-notes/<tag>.channel.json`，固定目标 Beta tag、原 Beta 版本和原指针完整 SHA256，并说明原因。CLI 与指针事务只允许该目标替换两镜像中完全匹配的旧指针；stable、其他 tag、旧指针被推进或改写时仍拒绝降级，失败仍回滚。3.0.20 的 Beta 候选使用此记录从 `3.1.0-beta.5` 切回 3.0 维护线；`beta.1`、`beta.2` 已停止且未发布，后续源码使用下一可用 Beta 编号。已经安装 3.1 Beta 的客户端需手动安装 3.0 Beta。
 
