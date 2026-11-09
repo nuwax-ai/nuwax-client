@@ -6,6 +6,7 @@ export function createComputerUseBridge(
   ipc: Pick<IpcRenderer, "invoke">,
 ): ComputerUseAPI {
   return {
+    setEngine: (engine) => ipc.invoke("cua:setEngine", engine),
     getTaskHistory: () => ipc.invoke("cua:getTaskHistory"),
     clearTaskHistory: () => ipc.invoke("cua:clearTaskHistory"),
     showTaskPreview: (id) => ipc.invoke("cua:showTaskPreview", id),

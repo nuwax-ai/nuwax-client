@@ -92,7 +92,9 @@ npm --prefix nuwa-electron-shell/crates/agent-electron-client run test:run -- <�
 | `check:boundaries` / `check:appdir` | 源码导入及应用数据目录检查 |
 | `clean:release` / `clean:electron-cache` | 清理相应生成物与缓存 |
 
-当前 Computer Use 使用 CUA helper。旧 GUI MCP、本地沙箱和壳目录独立 Makefile 已移除；开发、资源准备和打包统一使用仓库根入口。资源覆盖和缓存规则见根 README。
+Computer Use 设置支持选择 CUA Driver（默认）或 Agent Desktop（实验性），任务空闲时可切换。`setup/dev/pack` 会准备固定版本的 Agent Desktop 原生资源；单独准备可从根运行 `node scripts/client/agent-desktop-resources.mjs`。Agent Desktop 首版支持无障碍控件操作，能力范围及原生验证入口见 [工程边界](./architecture.md#computer-use-执行引擎)。
+
+旧 GUI MCP、本地沙箱和壳目录独立 Makefile 已移除；开发、资源准备和打包统一使用仓库根入口。资源覆盖和缓存规则见根 README。
 
 ## 发布与签名
 

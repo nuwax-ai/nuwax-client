@@ -11,6 +11,7 @@ export type CuaPhase = "idle" | "running" | "paused" | "stopped" | "failed" | "c
 export type CuaScope = { kind: "desktop" } | { kind: "window"; pid: number; windowId: number; label: string };
 export type CuaWindow = { pid: number; windowId: number; label: string };
 export type CuaExecutionMode = "background" | "foreground";
+export type ComputerUseEngine = "cua-driver" | "agent-desktop";
 export type CuaServiceState = "disabled" | "starting" | "ready" | "reconfiguring" | "recovering" | "waitingPermission" | "degraded";
 export interface CuaTaskRuntime extends Omit<CuaRuntime, "tasks" | "multiwindow"> {
   taskId: string;
@@ -42,6 +43,8 @@ export interface CuaStats {
 }
 
 export interface CuaRuntime {
+  engine?: ComputerUseEngine;
+  previewAvailable?: boolean;
   serviceState?: CuaServiceState;
   desiredConfigRevision?: number;
   appliedConfigRevision?: number;
@@ -83,6 +86,8 @@ export interface CuaControlResult {
 
 /** 宿主壳设置/状态接口（electronAPI.computerUse）；实现在 preload/features/computer-use。 */
 export interface ComputerUseStatus {
+  engine?: ComputerUseEngine;
+  engineBusy?: boolean;
   serviceState?: CuaServiceState;
   desiredConfigRevision?: number;
   appliedConfigRevision?: number;
@@ -116,6 +121,7 @@ export interface CuaTaskHistory {
 }
 
 export interface ComputerUseAPI {
+  setEngine: (engine: ComputerUseEngine) => Promise<{ success: boolean; error?: string; status?: ComputerUseStatus }>;
   getTaskHistory: () => Promise<CuaTaskHistory[]>;
   clearTaskHistory: () => Promise<{ success: boolean }>;
 

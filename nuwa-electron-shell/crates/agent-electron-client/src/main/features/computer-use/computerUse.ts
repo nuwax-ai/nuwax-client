@@ -33,6 +33,9 @@ import { CuaMcpGateway, CUA_STDIO_RELAY } from "./mcpGateway";
 import { computerUseHost } from "./ports";
 import { readCuaPreferences, writeCuaPreferences } from "./preferences";
 import { readCuaToolCatalog } from "./toolCatalog";
+import { AgentDesktopAdapter, AGENT_DESKTOP_TOOLS } from "./agentDesktop";
+import { createDesktopRunner } from "./agentDesktopProcess";
+import type { ComputerUseEngine } from "@shared/features/computer-use/contract";
 import { CuaRuntimeRecovery } from "./runtimeRecovery";
 import { cuaSessionAuthority } from "./sessionAuthority";
 import type { CuaRuntime, CuaControlResult, CuaCheck, CuaScope, CuaWindow } from "@shared/features/computer-use/contract";
@@ -44,6 +47,59 @@ const pexec = promisify(execFile);
 const IS_MAC = process.platform === "darwin";
 const IS_WIN = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
+let activeEngine: ComputerUseEngine | undefined;
+let switchingEngine = false;
+let desktopAdapter: AgentDesktopAdapter | undefined;
+let desktopPermissionAttempt: { epoch: number; controller: AbortController; promise: Promise<CuaPermissionsResult> } | undefined;
+function selectedEngine(): ComputerUseEngine {
+  return activeEngine ?? (readCuaPreferences().computerUseEngine === "agent-desktop" ? "agent-desktop" : "cua-driver");
+}
+function desktopExecutable(): string | null {
+  const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "resources");
+  const file = path.join(root, "agent-desktop", `${process.platform}-${process.arch}`, `agent-desktop-${process.platform}-${process.arch}${IS_WIN ? ".exe" : ""}`);
+  try { return fs.lstatSync(file).isFile() && !fs.lstatSync(file).isSymbolicLink() ? file : null; } catch { return null; }
+}
+async function verifyDesktopResources(): Promise<void> {
+  const executable = desktopExecutable();
+  if (!executable) throw new Error("engineNotInstalled");
+  const directory = path.dirname(executable);
+  const manifestPath = path.join(directory, "source.json");
+  try {
+    if (!fs.lstatSync(manifestPath).isFile() || fs.lstatSync(manifestPath).isSymbolicLink()) throw new Error("invalidManifest");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (manifest.version !== "1.2.0" || manifest.integrity !== "sha512-sp8hHs8JfnuZe8ZQwiKZrqSOlu26SSeZXkjDog4KsU31L09G3uZJa8pITGN2vORif9uuh0iOSJHD146CEyTqag==") throw new Error("invalidSource");
+    const names = [path.basename(executable), ...(IS_MAC ? [`agent-desktop-macos-helper-darwin-${process.arch}`] : []),
+      ...(IS_LINUX ? [`agent-desktop-linux-clipboard-owner-linux-${process.arch}`] : [])];
+    for (const name of names) {
+      const file = path.join(directory, name), stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink() || !/^[a-f0-9]{64}$/.test(manifest.files?.[name])) throw new Error("invalidPayload");
+      if (IS_MAC && app.isPackaged) {
+        await pexec("codesign", ["--verify", "--strict", file], { timeout: 3000, maxBuffer: 65536 });
+        const signature = await pexec("codesign", ["-dv", "--verbose=2", file], { timeout: 3000, maxBuffer: 65536 });
+        if (!new RegExp(`^TeamIdentifier=${HELPER_TEAM_ID}$`, "m").test(signature.stderr ?? "")) throw new Error("untrustedSigner");
+      } else if (!app.isPackaged && createHash("sha256").update(fs.readFileSync(file)).digest("hex") !== manifest.files[name]) {
+        throw new Error("invalidDigest");
+      }
+    }
+  } catch { throw new Error("helperIdentityUnverified"); }
+}
+function agentDesktop() {
+  if (!desktopAdapter) {
+    const file = desktopExecutable();
+    if (!file) throw new Error("engineNotInstalled");
+    desktopAdapter = new AgentDesktopAdapter(createDesktopRunner(file, () => computerUseHost().getProcessEnv?.() ?? {}, verifyDesktopResources),
+      path.join(computerUseHost().dataHome, "agent-desktop", computerUseHost().developmentProfile ? "dev" : "production"));
+  }
+  return desktopAdapter;
+}
+function engineBusy() {
+  return switchingEngine || cuaLifecycleBusy || pendingControls > 0 || preparingRuntime || consentPending() ||
+    !!desktopPermissionAttempt && !desktopPermissionAttempt.controller.signal.aborted ||
+    !!permissionAttempt && !permissionAttempt.controller.signal.aborted ||
+    ["starting", "reconfiguring"].includes(serviceState) ||
+    (multiwindow ? windowTasks.list().some(task => ["running", "paused"].includes(task.phase) || task.controlPending)
+      : ["running", "paused"].includes(cuaTasks.snapshot().phase));
+}
 
 const HELPER_APP_NAME = "Nuwax Computer Use.app";
 const HELPER_EXEC_NAME = "Nuwax Computer Use";
@@ -123,7 +179,7 @@ function publishService(state: typeof serviceState, error: string | null = null)
   serviceState = state; lastCuaError = error; cuaTasks.notify();
 }
 function runtimeAllowed() {
-  return cuaHostActive && !explicitDisabled && !recoveryBlocked && readEnabled() && (computerUseHost().isAuthenticated?.() ?? true);
+  return !switchingEngine && cuaHostActive && !explicitDisabled && !recoveryBlocked && readEnabled() && (computerUseHost().isAuthenticated?.() ?? true);
 }
 const recovery = new CuaRuntimeRecovery({
   allowed: runtimeAllowed,
@@ -160,7 +216,9 @@ function initializeScopePreference() {
   // Native IDs are not durable. A previous window scope must never widen on restart.
   if (!multiwindow && saved?.computerUseScopeKind === "window") cuaScope = { kind: "window", pid: 0, windowId: 0, label: "" };
 }
-export const getCuaRuntime = (): CuaRuntime => ({ serviceState, desiredConfigRevision: desiredConfigRevision(), appliedConfigRevision, ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
+export const getCuaRuntime = (): CuaRuntime => ({ engine: selectedEngine(), serviceState, desiredConfigRevision: desiredConfigRevision(), appliedConfigRevision, ...(multiwindow ? windowTasks.snapshot() : cuaTasks.snapshot()),
+  previewAvailable: selectedEngine() === "cua-driver",
+  ...(multiwindow ? { tasks: windowTasks.list().map(task => ({ ...task, engine: selectedEngine(), previewAvailable: selectedEngine() === "cua-driver" })) } : {}),
   presentationConversationId: computerUseHost().getConversationId?.() ?? null,
   ...(!multiwindow ? { scope: structuredClone(cuaScope) } : {}), revision: runtimeRevision,
   recoverable: runtimeSuspended && readEnabled() && !explicitDisabled,
@@ -183,13 +241,16 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
   const socketPath = IS_WIN ? `${selected.socketPath}-gateway` : path.join(path.dirname(selected.socketPath), "g");
   if (!cuaGateway) {
     cuaGateway = new CuaMcpGateway({
+      engineInstructions: () => selectedEngine() === "agent-desktop" ?
+        "Nuwax Computer Use uses Agent Desktop. List windows, then observe an exact window with get_window_state. Act only on snapshot_id and element_index returned by the latest observation, and observe after each action. The host binds each task to a validated window and enforces session authorization, blacklists, sensitive targets and confirmation. Only semantic accessibility input is supported; browser tools, raw coordinates, keyboard shortcuts, clipboard, physical input, cursor overlays and visual previews are unavailable. Never work around a refusal or pause. Never replay an uncertain action; wait for the user to resume and observe its effect first." : undefined,
       catalog: async () => {
+        if (selectedEngine() === "agent-desktop") return AGENT_DESKTOP_TOOLS;
         const root = findBundledHelper() ?? findHelperApp() ?? helperRoot;
         const signature = await verifyHelperSignature(root);
         if (!signature.ok) throw new Error("helperProtocolInvalid");
         return readCuaToolCatalog(helperExecutable(root));
       },
-      unavailable: () => !cuaHostActive || !(computerUseHost().isAuthenticated?.() ?? true) ? "sessionRequired"
+      unavailable: () => switchingEngine ? "engineBusy" : !cuaHostActive || !(computerUseHost().isAuthenticated?.() ?? true) ? "sessionRequired"
         : explicitDisabled || !readEnabled() ? "disabled" : runtimeSuspended ? "serviceRecovering"
         : IS_MAC && (!lastPermissionHint.accessibility || !lastPermissionHint.screenRecording) ? "permissionsRequired" : null,
       configurationRevision: desiredConfigRevision,
@@ -264,7 +325,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         if (owner && outcome === "ok") confirmationGate.observe(owner, tool, args, structured);
         cuaElements.remember(owner ?? "", tool, outcome, structured);
       },
-      agentCursor: () => readAgentCursorEnabled(),
+      agentCursor: () => selectedEngine() === "cua-driver" && readAgentCursorEnabled(),
       requireConfirmation: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) === "ask"
         && confirmationGate.requires(owner, tool, args, false),
       confirmDispatch: (tool, args, owner) => readCuaAuthMode(readStep1().computerUseAuthMode) !== "ask"
@@ -294,7 +355,7 @@ async function ensureCuaGateway(helperRoot: string): Promise<string> {
         if (["get_window_state", "get_desktop_state", "get_accessibility_tree", "get_browser_state"].includes(tool))
           sanitizeCuaObservation(result);
       },
-      launch: () => spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
+      launch: () => selectedEngine() === "agent-desktop" ? agentDesktop().transport() : spawn(helperExecutable(helperRoot), ["mcp", "--socket", selected.socketPath], {
         env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: "false", [ENDPOINT_TOKEN_ENV]: selected.tokenFile }, stdio: ["pipe", "pipe", "pipe"],
       }),
       onFailure: (reason, owner) => {
@@ -463,16 +524,19 @@ function helperCandidates(): Array<{ kind: "installed" | "bundled"; root: string
 
 /** 已安装（可直接拉起 daemon）的 helper 路径；bundled 态不算已安装（须先走首装流）。 */
 function findHelperApp(): string | null {
+  if (selectedEngine() === "agent-desktop") return desktopExecutable();
   return helperCandidates().find((c) => c.kind === "installed")?.root ?? null;
 }
 
 /** 随包 Resources 里有 helper 但未安装（首用安装流的输入）。 */
 function findBundledHelper(): string | null {
+  if (selectedEngine() === "agent-desktop") return null;
   return helperCandidates().find((c) => c.kind === "bundled")?.root ?? null;
 }
 
 /** daemon serve 用的可执行文件（mac=.app 内可执行；win=exe 本体；linux=二进制本体）。 */
 function helperExecutable(helperRoot: string): string {
+  if (selectedEngine() === "agent-desktop") return helperRoot;
   if (IS_MAC) {
     return path.join(helperRoot, "Contents", "MacOS", HELPER_EXEC_NAME);
   }
@@ -480,6 +544,7 @@ function helperExecutable(helperRoot: string): string {
 }
 
 async function isDaemonAlive(): Promise<boolean> {
+  if (selectedEngine() === "agent-desktop") return desktopAdapter?.running === true;
   const reply = await requestDaemon("metadata");
   return reply?.ok === true && typeof reply.result?.driver_version === "string";
 }
@@ -491,6 +556,7 @@ interface DaemonReply {
 }
 
 async function requestDaemon(method: string, name?: string, args?: Record<string, unknown>, maxResponseBytes = 65536): Promise<DaemonReply | null> {
+  if (selectedEngine() === "agent-desktop") return desktopAdapter?.request(method, name, args) ?? null;
   return new Promise((resolve) => {
     let selected: CuaEndpoint;
     try { selected = endpoint(); }
@@ -561,6 +627,7 @@ async function probeDaemonPermissions(): Promise<{
   screenRecording: boolean | null;
 }> {
   const unknown = { accessibility: null, screenRecording: null };
+  if (selectedEngine() === "agent-desktop") return desktopAdapter ? desktopAdapter.permissions().catch(() => unknown) : unknown;
   if (!IS_MAC) return unknown;
   const reply = await requestDaemon("call", "check_permissions", { prompt: false });
   const sc = reply?.result?.structuredContent as Record<string, unknown> | undefined;
@@ -679,6 +746,11 @@ function prepareCuaPolicy(): { path: string; sha256: string } {
 }
 
 async function verifyDaemonAuthorization(expectedSha256: string): Promise<boolean> {
+  if (selectedEngine() === "agent-desktop") {
+    multiwindowCapable = desktopAdapter?.running === true; previewCapable = false;
+    if (multiwindowCapable) windowTasks.setAvailable(true);
+    return multiwindowCapable;
+  }
   const reply = await requestDaemon("authorization_status");
   const status = reply?.result;
   if (multiwindow) {
@@ -749,6 +821,7 @@ async function reclaimStaleDaemonSocket(): Promise<void> {
 
 /** 拉起 daemon（幂等：先探活）。mac 走 LaunchServices（TCC 归 helper .app）；win/linux 直跑二进制。 */
 async function launchDaemon(helperRoot: string): Promise<string> {
+  if (selectedEngine() === "agent-desktop") { await verifyDesktopResources(); agentDesktop().start(); nativeGeneration++; return "agent-desktop-host-policy"; }
   const policy = prepareCuaPolicy();
   if (await isDaemonAlive()) return policy.sha256;
   await reclaimStaleDaemonSocket();
@@ -793,6 +866,10 @@ async function launchDaemon(helperRoot: string): Promise<string> {
  * 导出供退出清理链消费（commercialAuth.stopExtras 与 will-quit 钩子双触发，幂等）。
  */
 export async function stopDaemon(preservePermissionLinger = false): Promise<void> {
+  if (selectedEngine() === "agent-desktop") {
+    if (!preservePermissionLinger) cancelCuaPermissionRequest();
+    await desktopAdapter?.stop(); return;
+  }
   const development = computerUseHost().developmentProfile === true;
   if (!preservePermissionLinger) cancelCuaPermissionRequest();
   const helperPath = findHelperApp();
@@ -1002,7 +1079,9 @@ export async function syncCuaMcpConfig(enabled: boolean): Promise<void> {
 }
 
 /** Same subject used by installation, native permission requests and drag-add. */
-export function getCuaHelperAppPath(): string | null { return findHelperApp(); }
+export function getCuaHelperAppPath(): string | null {
+  return selectedEngine() === "agent-desktop" && IS_MAC ? path.resolve(app.getPath("exe"), "../../..") : findHelperApp();
+}
 
 export async function getCuaStatus(): Promise<CuaStatus> {
   const helperPath = findHelperApp();
@@ -1028,6 +1107,7 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     : running && IS_MAC && (!permissions.accessibility || !permissions.screenRecording) ? "permissionsRequired" : lastCuaError;
   return {
     serviceState, desiredConfigRevision: desiredConfigRevision(), appliedConfigRevision,
+    engine: selectedEngine(), engineBusy: engineBusy(),
     supported: IS_MAC || IS_WIN || IS_LINUX,
     installed: !!helperPath,
     installable: !helperPath && !!findBundledHelper(),
@@ -1035,7 +1115,7 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     enabled: readEnabled() && !explicitDisabled,
     consentPending: consentPending(),
     mcpInjected: isMcpInjected(),
-    agentCursor: readAgentCursorEnabled(),
+    agentCursor: selectedEngine() === "cua-driver" && readAgentCursorEnabled(),
     authMode: readCuaAuthMode(readStep1().computerUseAuthMode),
     blacklist: readCuaBlacklist(readStep1().computerUseBlacklist),
     screenshotHome: cuaScreenshotHome(cuaDataHome()),
@@ -1044,6 +1124,40 @@ export async function getCuaStatus(): Promise<CuaStatus> {
     ...permissions,
     error: observedError,
   };
+}
+
+export async function setCuaEngine(value: unknown): Promise<{ success: boolean; error?: string; status: CuaStatus }> {
+  if (value !== "cua-driver" && value !== "agent-desktop") return { success: false, error: "invalidEngine", status: await getCuaStatus() };
+  if (!(computerUseHost().isAuthenticated?.() ?? true)) return { success: false, error: "loginRequired", status: await getCuaStatus() };
+  if (switchingEngine) return { success: false, error: "engineBusy", status: await getCuaStatus() };
+  if (value === selectedEngine()) return { success: true, status: await getCuaStatus() };
+  if (engineBusy()) return { success: false, error: "engineBusy", status: await getCuaStatus() };
+  switchingEngine = true;
+  recovery.cancel();
+  const epoch = ++cuaDisableEpoch;
+  runtimeSuspended = true; cuaTasks.setAvailable(false); windowTasks.setAvailable(false);
+  cuaGateway?.cancelPending("configChanged"); cuaGateway?.pauseTransports("configChanged");
+  try {
+    await serializeCua(async () => {
+      await stopDaemon();
+      if (!(await waitForDaemonStopped(3000))) throw new Error("helperStillRunning");
+      await cuaGateway?.close(); cuaGateway = null; cuaGatewayRoot = null;
+      desktopAdapter = undefined;
+      cuaBindings.clear(); cuaElements.forget(); confirmationGate.clear();
+      cuaTasks.invalidateObservations(); windowTasks.invalidateObservations();
+      if (epoch !== cuaDisableEpoch || !(computerUseHost().isAuthenticated?.() ?? true)) throw new Error("operationCancelled");
+      if (!writeCuaPreferences({ computerUseEngine: value }, true)) throw new Error("configSaveFailed");
+      activeEngine = value; forceNativeRestart = true; multiwindowCapable = false; previewCapable = false;
+      lastPermissionHint = { accessibility: null, screenRecording: null }; lastCuaError = null;
+      publishCuaCapabilityNotice(`Computer Use engine changed to ${value}. Reload the tool list and take a fresh window observation. Old refs and interrupted actions must not be reused or replayed.`);
+      await ensureCuaOnBootUnlocked(epoch);
+    });
+    return { success: true, status: { ...await getCuaStatus(), engineBusy: false } };
+  } catch (error) {
+    lastCuaError = error instanceof Error ? error.message : "operationFailed";
+    publishService("degraded", lastCuaError);
+    return { success: false, error: lastCuaError, status: await getCuaStatus() };
+  } finally { switchingEngine = false; cuaTasks.notify(); }
 }
 
 let lastCuaError: string | null = null;
@@ -1408,6 +1522,11 @@ function recoverInterruptedHelperInstall(): void {
  * 系统授权仅在用户显式开启时请求，安装本身不弹权限窗。
  */
 export async function installCuaHelper(): Promise<CuaInstallResult> {
+  if (selectedEngine() === "agent-desktop") {
+    const file = desktopExecutable();
+    try { await verifyDesktopResources(); return { success: true, installedPath: file }; }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : "helperIdentityUnverified" }; }
+  }
   try {
     recoverInterruptedHelperInstall();
   } catch (e) {
@@ -1718,7 +1837,7 @@ export async function setCuaScope(requested: unknown): Promise<CuaControlResult>
   return reconfigureRuntime("scopeChanged", () => { scopeInitialized = true; cuaScope = next; });
 }
 
-export function getCuaTasks() { return multiwindow ? windowTasks.list() : []; }
+export function getCuaTasks() { return multiwindow ? getCuaRuntime().tasks ?? [] : []; }
 
 function taskResult(success: boolean, error?: string): CuaControlResult {
   return { success, ...(error ? { error } : {}), runtime: getCuaRuntime() };
@@ -1839,6 +1958,7 @@ export async function bindWindowTask(id: string, target: unknown): Promise<CuaCo
   return taskResult(true);
 }
 export async function setWindowTaskMode(id: string, mode: unknown): Promise<CuaControlResult> {
+  if (selectedEngine() === "agent-desktop" && mode === "foreground") return taskResult(false, "engineCapabilityUnsupported");
   if (!multiwindow || !windowTasks.byId(id) || !["foreground", "background"].includes(String(mode)))
     return taskResult(false, "scopeViolation");
   if (mode === "foreground") {
@@ -1899,6 +2019,8 @@ export async function selfTestCua(): Promise<CuaCheck[]> {
 // ========== TCC 授权（仅 mac；win 无此概念） ==========
 
 export interface CuaStatus {
+  engine?: ComputerUseEngine;
+  engineBusy?: boolean;
   serviceState?: import("@shared/features/computer-use/contract").CuaServiceState;
   desiredConfigRevision?: number;
   appliedConfigRevision?: number;
@@ -1999,9 +2121,11 @@ function cancelPermissionLinger(): boolean {
 
 /** Cancels the in-flight request and any post-timeout linger; never kills a daemon. */
 export function cancelCuaPermissionRequest(): boolean {
+  const desktopAttempt = desktopPermissionAttempt;
+  desktopAttempt?.controller.abort();
   const attempt = permissionAttempt;
   const linger = permissionLinger;
-  if (!attempt && !linger) return false;
+  if (!attempt && !linger && !desktopAttempt) return false;
   lastPermissionHint = emptyPermissionHint();
   // Revoke the host's private result-file lease before OS process cleanup.
   if (attempt) {
@@ -2069,6 +2193,36 @@ function finishPermissionAttempt(attempt: PermissionAttempt, result: CuaPermissi
 
 /** Only an explicit enable action enters this single-flight, cancellable request. */
 export function requestCuaPermissions(): Promise<CuaPermissionsResult> {
+  if (selectedEngine() === "agent-desktop") {
+    if (desktopPermissionAttempt?.epoch === cuaDisableEpoch && !desktopPermissionAttempt.controller.signal.aborted) return desktopPermissionAttempt.promise;
+    const attempt = { epoch: cuaDisableEpoch, controller: new AbortController(), promise: undefined! as Promise<CuaPermissionsResult> };
+    const valid = () => !attempt.controller.signal.aborted && attempt.epoch === cuaDisableEpoch && selectedEngine() === "agent-desktop"
+      && (computerUseHost().isAuthenticated?.() ?? true);
+    const cancelled = (): CuaPermissionsResult => ({ success: false, error: "operationCancelled", accessibility: null, screenRecording: null });
+    desktopPermissionAttempt = attempt;
+    attempt.promise = (async () => {
+      try {
+        await verifyDesktopResources();
+        if (!valid()) return cancelled();
+        let hint = await agentDesktop().permissions();
+        if (!valid()) return cancelled();
+        if (!hint.accessibility || !hint.screenRecording) {
+          await agentDesktop().permissions(true);
+          if (!valid()) return cancelled();
+          hint = await agentDesktop().permissions();
+        }
+        if (!valid()) return cancelled();
+        lastPermissionHint = hint;
+        return { success: hint.accessibility === true && hint.screenRecording === true, ...hint,
+          ...(!hint.accessibility || !hint.screenRecording ? { error: "permissionsRequired" } : {}) };
+      } catch (error) {
+        if (!valid()) return cancelled();
+        return { success: false, error: error instanceof Error && ["engineNotInstalled", "helperIdentityUnverified"].includes(error.message)
+          ? error.message : "permissionHostFailed", accessibility: null, screenRecording: null };
+      } finally { if (desktopPermissionAttempt === attempt) desktopPermissionAttempt = undefined; }
+    })();
+    return attempt.promise;
+  }
   if (permissionAttempt && !permissionAttempt.controller.signal.aborted && permissionAttempt.epoch === cuaDisableEpoch)
     return permissionAttempt.promise;
   // 新一轮检查替换超时续看，避免双宿主；hint 由本次探测重写。
@@ -2181,7 +2335,7 @@ export async function takeOverCua(): Promise<CuaControlResult> {
   return pauseCuaTask("userTakingControl");
 }
 export async function takeOverWindowTask(id: string): Promise<CuaControlResult> {
-  if (!previewCapable || !getCuaPreviewIdentity(id)) return taskResult(false, "helperUpgradeRequired");
+  if ((!previewCapable && selectedEngine() !== "agent-desktop") || !getCuaPreviewIdentity(id)) return taskResult(false, "helperUpgradeRequired");
   const result = await pauseWindowTask(id, "userTakingControl");
   if (!result.success) return result;
   return serializeTask(id, async () => {

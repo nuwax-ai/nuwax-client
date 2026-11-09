@@ -9,6 +9,7 @@
 import type { FeatureMcpServerEntry } from "../_kit/types";
 
 export interface ComputerUseHostPorts {
+  getProcessEnv?(): Record<string, string>;
   developmentProfile?: boolean;
   isAuthenticated?(): boolean;
   getConversationId?(): string | null;

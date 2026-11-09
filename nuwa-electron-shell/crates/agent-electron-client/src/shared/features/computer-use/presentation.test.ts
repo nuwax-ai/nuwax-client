@@ -33,6 +33,7 @@ describe("Computer Use overlay liveness and notices", () => {
   it("previews only bound window tasks, including the stop tail", () => {
     const bound = { scope: { kind: "window" as const, pid: 1, windowId: 2, label: "A" } };
     expect(canPreviewCuaTask({ phase: "paused", ...bound })).toBe(true);
+    expect(canPreviewCuaTask({ phase: "paused", ...bound, previewAvailable: false })).toBe(false);
     expect(canPreviewCuaTask({ phase: "stopped", controlPending: true, ...bound })).toBe(true);
     expect(canPreviewCuaTask({ phase: "running", scope: { kind: "desktop" } })).toBe(false);
     expect(canPreviewCuaTask({ phase: "paused", scope: { kind: "window", pid: 0, windowId: 0, label: "" } })).toBe(false);

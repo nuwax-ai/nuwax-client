@@ -278,6 +278,31 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
       <section className={styles.cluster} data-cluster="setup">
         <h3 className={styles.clusterTitle}>{t("Claw.Settings.computerUse.setupSection")}</h3>
       <Row
+        label={t("Claw.Settings.computerUse.engine")}
+        desc={<span>{t("Claw.Settings.computerUse.engineDesc")}
+          {cuaStatus?.engineBusy && <span className={styles.nextAction}>{t("Claw.Settings.computerUse.engineBusy")}</span>}
+          {cuaStatus?.engine === "agent-desktop" && <span className={styles.nextAction}>
+            {t(cuaStatus.installed ? "Claw.Settings.computerUse.engineDesktopHint" : "Claw.Settings.computerUse.engineMissing")}
+          </span>}
+        </span>}
+        control={<Select size="small" style={{ width: 240 }}
+          value={cuaStatus?.engine ?? "cua-driver"}
+          disabled={!api?.setEngine || !cuaStatus || cuaStatus.engineBusy || cuaApplying || cuaInstalling || cuaPermChecking || pending}
+          options={[
+            { value: "cua-driver", label: t("Claw.Settings.computerUse.engineCua") },
+            { value: "agent-desktop", label: t("Claw.Settings.computerUse.engineDesktop") },
+          ]}
+          onChange={async engine => {
+            setCuaApplying(true);
+            try {
+              const result = await api!.setEngine(engine);
+              if (result.status) setCuaStatus(result.status);
+              if (!result.success) message.error(cuaErrorText(t, result.error));
+            } catch { message.error(t("Claw.Toast.Error.configSaveFailed")); }
+            finally { setCuaApplying(false); }
+          }} />}
+      />
+      <Row
         label={t("Claw.Settings.computerUse.enable")}
         desc={
           <span>
@@ -336,7 +361,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
               {" · "}
               {t("Claw.Settings.computerUse.permSr")}
               <PermDot ok={cuaStatus?.screenRecording} />
-              <span className={styles.permHint}>{t("Claw.Settings.computerUse.permTargetHint")}</span>
+              <span className={styles.permHint}>{t(cuaStatus?.engine === "agent-desktop" ? "Claw.Settings.computerUse.enginePermissionHint" : "Claw.Settings.computerUse.permTargetHint")}</span>
               {cuaStatus?.error === "timeout" && (
                 <span className={styles.permHint}>{t("Claw.Settings.computerUse.permWatching")}</span>
               )}
@@ -390,7 +415,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
         control={
           <Switch
             checked={cuaStatus?.agentCursor !== false}
-            disabled={!api?.setAgentCursor}
+            disabled={!api?.setAgentCursor || cuaStatus?.engine === "agent-desktop"}
             onChange={(checked) => {
               void api?.setAgentCursor?.(checked).then((r) => {
                 if (r?.status) setCuaStatus(r.status);
@@ -456,7 +481,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
         </>}
       />
       </section>
-      <details className={styles.advancedDiagnostics}>
+      {cuaStatus?.engine !== "agent-desktop" && <details className={styles.advancedDiagnostics}>
       <summary className={styles.advancedSummary}>{t("Claw.Settings.computerUse.advancedDiagnostics")}</summary>
       <Row
         label={t("Claw.Settings.computerUse.vlmModel")}
@@ -535,7 +560,7 @@ export function ComputerUseSettings({ t, Row, api }: { t: T; Row: Row; api?: Com
           </Button>
         }
       />
-      </details>
+      </details>}
     </>
   );
 }
