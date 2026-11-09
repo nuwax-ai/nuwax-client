@@ -20,6 +20,10 @@ export function verifyDesktopArchive(bytes) {
   if (bytes.length > 32 * 1024 * 1024 || 'sha512-' + createHash('sha512').update(bytes).digest('base64') !== AGENT_DESKTOP_INTEGRITY)
     throw new Error('Agent Desktop archive integrity mismatch');
 }
+export async function extractDesktopFiles(directory, files) {
+  // Git Bash's GNU tar treats C:/... archive arguments as remote addresses.
+  await exec('tar', ['-xzf', 'archive.tgz', ...files.flatMap(name => [`package/bin/${name}`, `package/bin/${name}.sha256`])], { cwd: directory });
+}
 export async function prepareAgentDesktop(root, { platform = process.platform, arch = process.env.TARGET_ARCH || process.arch, fetcher } = {}) {
   const files = desktopResourceFiles(platform, arch);
   const destination = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/resources/agent-desktop', `${platform}-${arch}`);
@@ -48,7 +52,7 @@ export async function prepareAgentDesktop(root, { platform = process.platform, a
         '--connect-timeout', '20', '--max-time', '120', '--max-filesize', String(32 * 1024 * 1024), '--output', archive, source], { timeout: 180_000 });
     }
     verifyDesktopArchive(fs.readFileSync(archive));
-    await exec('tar', ['-xzf', archive, '-C', stage, ...files.flatMap(name => [`package/bin/${name}`, `package/bin/${name}.sha256`])]);
+    await extractDesktopFiles(stage, files);
     const payload = path.join(stage, 'payload'); fs.mkdirSync(payload);
     const hashes = {};
     for (const name of files) {
