@@ -1,7 +1,7 @@
 [submodule "nuwax"]
 	path = nuwax
 	url = https://github.com/nuwax-ai/nuwax.git
-	branch = codex/beta-channel-switch
+	branch = feat-2026.11
 [submodule "nuwax-dist"]
 	path = nuwax-dist
 	url = https://github.com/nuwax-ai/nuwax-dist.git
