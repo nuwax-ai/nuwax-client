@@ -54,9 +54,9 @@ export class ShellMcpGateway {
   private server: net.Server | null = null;
   private clients = new Set<net.Socket>();
   private protocols = new Set<McpServer>();
-  constructor(private createServer: () => McpServer) {}
+  constructor(private createServer: (token: string) => McpServer) {}
   get ready() { return this.server?.listening === true; }
-  async listen(address: string, token: string) {
+  async listen(address: string, token: string | ((secret: string) => boolean)) {
     const server = net.createServer(socket => {
       if (this.clients.size >= 16) { socket.destroy(); return; }
       this.clients.add(socket);
@@ -73,12 +73,17 @@ export class ShellMcpGateway {
         let incoming: unknown;
         try { incoming = JSON.parse(buffer.slice(0, end)); } catch { socket.destroy(); return; }
         const secret = (incoming as { token?: unknown } | null)?.token;
-        if (typeof secret !== "string" || Buffer.byteLength(secret) !== Buffer.byteLength(token) ||
-            !timingSafeEqual(Buffer.from(secret), Buffer.from(token))) { socket.destroy(); return; }
+        if (typeof secret !== "string") { socket.destroy(); return; }
+        let accepted = false;
+        try {
+          accepted = typeof token === "function" ? token(secret) : Buffer.byteLength(secret) === Buffer.byteLength(token) &&
+            timingSafeEqual(Buffer.from(secret), Buffer.from(token));
+        } catch { /* A revoked authority rejects the transport. */ }
+        if (!accepted) { socket.destroy(); return; }
         clearTimeout(timeout);
         socket.pause(); socket.removeListener("data", authenticate);
         let protocol: McpServer;
-        try { protocol = this.createServer(); } catch { socket.destroy(); return; }
+        try { protocol = this.createServer(secret); } catch { socket.destroy(); return; }
         this.protocols.add(protocol);
         socket.once("close", () => { this.protocols.delete(protocol); void protocol.close().catch(() => undefined); });
         void protocol.connect(new SocketTransport(socket, buffer.slice(end + 1))).catch(() => socket.destroy());
