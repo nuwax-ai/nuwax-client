@@ -18,6 +18,7 @@ async function setup() {
   const lifecycle = createFeatureLifecycle();
   const open = vi.fn(async (conversationId: string, _signal: AbortSignal) => ({ conversationId }));
   const command = vi.fn(async () => ({ tabs: [] }));
+  const plugins = vi.fn(async (_operation: string, _input: unknown) => ({ bundles: [] }));
   const mcp = new WorkbenchMcp({
     product: "nuwax", log: { warn: vi.fn() }, lifecycle,
     session: { isAuthenticated: () => true }, platform: { scope: () => scope },
@@ -27,7 +28,7 @@ async function setup() {
       resolveConversationId: id => id === "native-one" ? "conversation-one" : id === "native-two" ? "conversation-two" : null,
       setLocalMcpServer: async (_name, value) => { entry = value; },
     },
-  } as unknown as FeatureContext, { allowed: () => allowed, open, command, plugins: async () => ({ bundles: [] }) });
+  } as unknown as FeatureContext, { allowed: () => allowed, open, command, plugins });
   cleanup.push(() => mcp.dispose());
   await vi.waitFor(() => expect(entry).not.toBeNull());
   const connect = async (configuration: FeatureMcpServerEntry) => {
@@ -47,10 +48,33 @@ async function setup() {
     const client = await connect({ command: server.command!, args: server.args!, env: Object.fromEntries(server.env!.map(row => [row.name, row.value])) });
     return { participant, client };
   };
-  return { entry: entry!, connect, session, scope, open, command, deny: () => { allowed = false; mcp.revokeTurns(); } };
+  return { entry: entry!, connect, session, scope, open, command, plugins, deny: () => { allowed = false; mcp.revokeTurns(); } };
 }
 
 describe("workbench ACP authority", () => {
+  it("routes layout presets through the owning conversation and rejects incomplete writes", async () => {
+    const fixture = await setup();
+    const { client } = await fixture.session("native-one");
+    expect((await client.callTool({ name: "workbench_layout_preset", arguments: { action: "list" } })).isError).not.toBe(true);
+    expect(fixture.command).toHaveBeenLastCalledWith("conversation-one", "preset", { action: "list" }, expect.any(AbortSignal));
+    expect((await client.callTool({ name: "workbench_layout_preset", arguments: { action: "save", name: "Review" } })).isError).toBe(true);
+    expect(fixture.command).toHaveBeenCalledTimes(1);
+    const args = { action: "save", name: "Review", expectedRevision: null, expectedVersion: "11111111-1111-4111-8111-111111111111" };
+    expect((await client.callTool({ name: "workbench_layout_preset", arguments: args })).isError).not.toBe(true);
+    expect(fixture.command).toHaveBeenLastCalledWith("conversation-one", "preset", args, expect.any(AbortSignal));
+    expect((await client.callTool({ name: "workbench_layout_preset", arguments: { ...args, sessionId: "another-session" } })).isError).toBe(true);
+  });
+
+  it("uses native revisioned configuration and revokes configuration calls when the turn ends", async () => {
+    const fixture = await setup();
+    const { client, participant } = await fixture.session("native-one");
+    const args = { target: "third-party-settings", expectedRevision: 2, patch: { enabled: true } };
+    expect((await client.callTool({ name: "workbench_plugin_configure", arguments: args })).isError).not.toBe(true);
+    expect(fixture.plugins).toHaveBeenCalledWith("configure", args, expect.any(AbortSignal));
+    participant.finish("native-one", 1, false);
+    expect((await client.callTool({ name: "workbench_plugin_configure", arguments: args })).isError).toBe(true);
+    expect(fixture.plugins).toHaveBeenCalledTimes(1);
+  });
   it("binds each session transport to its host-owned conversation and rejects caller-supplied identity", async () => {
     const fixture = await setup();
     const first = await fixture.session("native-one"), second = await fixture.session("native-two");

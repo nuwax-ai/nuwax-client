@@ -15,6 +15,8 @@ if (origin && location.origin === origin) {
       ready: () => invoke('workbench-ready'),
       closed: () => invoke('workbench-closed'),
       reply: (id, result) => invoke('workbench-reply', id, result),
+      readLayouts: sessionId => invoke('workbench-layout-read', sessionId),
+      writeLayouts: (sessionId, revision, raw) => invoke('workbench-layout-write', sessionId, revision, raw),
       onCommand(listener) {
         const receive = (_event, request) => listener(request)
         ipcRenderer.on('nuwax-workbench:command', receive)

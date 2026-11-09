@@ -6,6 +6,14 @@
 
 工作台独立启动，提供文件预览、终端和共享浏览器。Agent 可以发现原生组件，打开或关闭面板，调整显隐、分栏、浮动和尺寸，并撤销或重做布局。修改先读取 `workbench_state` 的 `layoutVersion`，工具携带 `expectedVersion`，用户修改造成冲突时重新读取。用户可以在工作台锁定 Agent 布局调整。浏览器接管会阻断 Agent 控制并断开已有 CDP 连接。
 
+工作台提供命名布局的保存、恢复和删除入口，MCP 使用同一套 `workbench_layout_preset` 操作。先用 `action: "list"` 读取方案修订号；写入、恢复或删除时同时提供 `expectedRevision` 和当前布局的 `expectedVersion`。尚未写入状态时修订号为 `null`；空列表也可能已有修订号，例如用户曾设置布局锁。每个会话最多保存 20 个方案。方案包含面板及打开时的导航配置、分栏比例、浮动位置和尺寸；恢复复用仍打开的面板，重新打开已关闭的面板，额外面板保留。缺少插件时恢复失败，原生布局应用失败时尝试撤销到之前的状态，并报告回退结果。
+
+命名方案和用户布局锁由主进程写入当前账号档案的 `workbench-layouts/<会话哈希>.json`。此存储不依赖临时 HTTP 端口，重启后仍可读取方案及锁；恢复方案由用户或已授权 Agent 发起。文件写入检查修订号并原子替换；写入失败或数据损坏不会覆盖原数据。入口只接受宿主已经绑定的会话，沿用顶层文档及账号代次授权。
+
+`workbench_state.layoutCapabilities` 返回锁定版本实际支持的区域和栏数。DSH 0.2.1-rc.5 原生侧栏最多两个停靠栏，支持左、右和居中移动及浮动；上下停靠尚未提供。`workbench_layout` 的 `resize-split` 调整两栏比例，`sizes` 为两个合计为 1 的数值，各自在 0.2–0.8 之间。无效的面板或区域返回错误，原生操作未改变布局时返回 `changed: false`。
+
+已安装第三方插件的公开配置由 `workbench_plugins` 返回描述和修订号，Agent 使用 `workbench_plugin_configure` 更新；底层沿用原生 DSH Settings 服务的验证与并发检查，核心和私有配置继续受保护。
+
 第三方包由原生 Plugins 页面管理。当前锁定 DSH 0.2.1-rc.5，better-sidebar 使用 `dsh-better-sidebar@0.28.2`。布局适配绑定该版本的 Sidebar Controller/store 接口，升级 DSH 时须一起运行真实 Electron 验收。
 
 本批交付覆盖 V0 兼容原型、首批 V1 面板和 V2 基础编排。临时生成插件、自动诊断修复、更多业务页面迁移分别安排在 V3–V5。深度依赖模型循环的插件按原生 DSH 能力单独验收。

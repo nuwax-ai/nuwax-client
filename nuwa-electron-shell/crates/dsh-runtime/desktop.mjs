@@ -4,6 +4,7 @@ import { BotBrowserGuests } from './vendor/bot-browser.mjs'
 import { BotViews, isBotId } from './vendor/bot-views.mjs'
 import { dshLanguage } from './locale.mjs'
 import { WorkbenchChannel } from './workbench-channel.mjs'
+import { WorkbenchPresetFiles } from './workbench-presets.mjs'
 
 /** The original plugin consumes this desktop protocol; no business bridge enters the page. */
 export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port, launchUrl, current, language = () => 'zh-CN', openSettings, mode = 'bot' }) {
@@ -38,6 +39,8 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
   })
   const channels = []
   const heldBrowsers = new Set()
+  const knownSessions = new Set()
+  const presetFiles = new WorkbenchPresetFiles(scopeDir, () => !disposing && current())
   const handle = (name, action) => {
     const channel = prefix + name
     channels.push(channel)
@@ -56,6 +59,12 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
     handle('workbench-ready', () => workbench.activate())
     handle('workbench-closed', () => workbench.reset())
     handle('workbench-reply', (_event, id, result) => workbench.reply(id, result))
+    const ownedSession = sessionId => {
+      if (!knownSessions.has(sessionId)) throw new Error('Open this conversation in the workbench first')
+      return sessionId
+    }
+    handle('workbench-layout-read', (_event, sessionId) => presetFiles.read(ownedSession(sessionId)))
+    handle('workbench-layout-write', (_event, sessionId, revision, raw) => presetFiles.write(ownedSession(sessionId), revision, raw))
   }
   handle('locale', () => ({ languages: [language()], preference: dshLanguage(language()) }))
   handle('settings', () => { if (!openSettings) throw new Error('Nuwax settings unavailable'); openSettings() })
@@ -113,6 +122,7 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
     },
     workbench(operation, input, signal) {
       if (!workbench) return Promise.reject(new Error('Workbench window required'))
+      if (operation === 'bind') knownSessions.add(identity(input.sessionId))
       return workbench.request(operation, input, signal)
     },
     async browser(input) {
@@ -137,6 +147,7 @@ export function createDesktop({ electron, runtimeDir, scopeDir, namespace, port,
     },
     dispose() {
       disposing = true; documentToken = undefined
+      knownSessions.clear()
       workbench?.reset()
       views.dispose()
       if (window && !window.isDestroyed()) window.destroy()
