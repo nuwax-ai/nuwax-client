@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Button, Checkbox, Modal, Space, Switch, message } from "antd";
 import { DshPluginsSettings } from "./DshPluginsSettings";
-import { WorkbenchSettings } from "../workbench/WorkbenchSettings";
 import type { DshAction, DshModel, DshReply, DshStatus } from "@shared/features/dsh-runtime/contract";
 
 export function DshSettings({ Row, t }: {
@@ -35,7 +34,6 @@ export function DshSettings({ Row, t }: {
   const enabled = status?.enabled ?? status?.phase === "ready";
   const modelsDialog = async () => { const value = await call("catalog"); setModels(value.models ?? []); setSelected([]); };
   return <>
-    <WorkbenchSettings Row={Row} t={t} />
     <Row label={t("Claw.Dsh.title")} desc={<>{t("Claw.Dsh.description")}{status && <div>{t("Claw.Dsh.status." + status.phase)}{status.error ? ": " + status.error : ""}</div>}</>} control={
       <Space wrap>
         <Switch aria-label={t("Claw.Dsh.enabled")} checked={enabled} loading={busy} onChange={on => void perform(async () => {

@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { FeatureAccountScope, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
 import type { AgentSessionParticipant } from "../_kit/agentSessions";
-import { ShellMcpGateway, SHELL_STDIO_RELAY } from "../shell-capabilities/transport";
+import { ShellMcpGateway, SHELL_STDIO_RELAY } from "../_kit/mcpTransport";
 import { WORKBENCH_MCP } from "@shared/features/workbench/contract";
 
 export interface WorkbenchPorts {
