@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { DesktopFeature, FeatureContext, FeatureMcpServerEntry } from "../_kit/types";
 import { shellError } from "./ports";
 import { SHELL_ACCESS_SETTING, SHELL_CAPABILITIES_IPC, SHELL_MCP_SERVER, type ShellAccess, type ShellCapabilitiesState, type ShellDomain, type ShellChange } from "@shared/features/shell-capabilities/contract";
-import { ShellMcpGateway, SHELL_STDIO_RELAY } from "./transport";
+import { ShellMcpGateway, SHELL_STDIO_RELAY } from "../_kit/mcpTransport";
 import { createShellMcpServer, type ShellToolPorts } from "./tools";
 
 const accessSchema = z.object({ themes: z.boolean(), settings: z.boolean(), extensions: z.boolean() }).strict();

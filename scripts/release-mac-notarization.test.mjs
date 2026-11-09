@@ -83,6 +83,21 @@ test('bad signatures, ad-hoc identity and changed resume CDHash never submit', a
   for (const f of [bad, adhoc, changed]) assert.equal(f.calls.filter(c => c.args[0] === 'notarytool').length, 0);
 });
 
+test('large signed runtime trees get a bounded deep-verification budget without weakening signature checks', async t => {
+  const f = fixture(t, (command, args, calls) => {
+    if (command === 'codesign' && args[0] === '--verify' && calls.at(-1).options.timeout < 600000)
+      return { status: 1, stderr: 'spawnSync codesign ETIMEDOUT' };
+  });
+  await notarizeSignedApp(f.options);
+  const checks = f.calls.filter(call => call.command === 'codesign' && call.args[0] === '--verify');
+  assert.equal(checks.length, 3);
+  for (const check of checks) {
+    assert.deepEqual(check.args.slice(0, 3), ['--verify', '--deep', '--strict']);
+    assert.equal(check.options.timeout, 600000);
+  }
+  assert.ok(f.calls.filter(call => call.args[0] === '-d').every(call => call.options.timeout === 120000));
+});
+
 test('pending processing is bounded and preserves the ID for a later resume', async t => {
   const f = fixture(t, (_command, args) => args[1] === 'info' ? { status: 0, stdout: JSON.stringify({ id, status: 'In Progress' }) } : undefined);
   await assert.rejects(notarizeSignedApp({ ...f.options, maxPolls: 2 }), /polling limit/);

@@ -33,7 +33,8 @@ async function command(tools, executable, args, { stage, retry = false, wait, ti
 }
 
 async function signature(app, tools) {
-  await command(tools, 'codesign', ['--verify', '--deep', '--strict', app], { stage: 'signature verification' });
+  // DSH includes signed Python/Office trees; the complete deep walk can exceed two minutes on Intel runners.
+  await command(tools, 'codesign', ['--verify', '--deep', '--strict', app], { stage: 'signature verification', timeout: 600000 });
   const result = await command(tools, 'codesign', ['-d', '--verbose=4', app], { stage: 'signature identity' });
   const text = `${result.stdout}\n${result.stderr}`;
   const cdhash = /^CDHash=([a-f0-9]{40})$/im.exec(text)?.[1].toLowerCase();

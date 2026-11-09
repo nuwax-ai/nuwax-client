@@ -16,6 +16,8 @@ export function writeDshResourcesFixture(resources, platform, arch) {
   write('dsh-office/primary-runtime/runtime.json', JSON.stringify({ platform, arch }));
   for (const relative of [
     'dsh-runtime/host.mjs', 'dsh-runtime/controller.mjs', 'dsh-runtime/desktop.mjs',
+    'dsh-runtime/workbench-host.mjs', 'dsh-runtime/workbench-channel.mjs', 'dsh-runtime/workbench-presets.mjs',
+    'dsh-runtime/workbench/host.mjs', 'dsh-runtime/workbench/client.js',
     'dsh-runtime/node_modules/@deepseek-ai/dsh/lib/profile-boot.js',
     'dsh-runtime/node_modules/ds-bot/index.js', 'dsh-runtime/node_modules/ds-bot/client.js',
     'dsh-runtime/node_modules/@deepseek-ai/libreoffice-kit/lib/index.js',
