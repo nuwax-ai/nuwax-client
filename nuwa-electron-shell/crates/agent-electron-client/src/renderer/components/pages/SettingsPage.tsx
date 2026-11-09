@@ -35,6 +35,7 @@ import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
 import { SettingsRow } from "../settings/SettingsRow";
 import { BrowserSettings } from '../../features/browser';
+import { AndroidSettings } from '../../features/android';
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
   modifyWorkspaceDir,
@@ -560,6 +561,15 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
               Row={SettingsRow}
               api={window.electronAPI?.computerUse}
             />
+          </div>
+        </div>
+      )}
+
+      {registeredFeatures.includes("android") && (
+        <div className={styles.group}>
+          <div className={styles.groupTitle}>{t("Claw.Android.title")}</div>
+          <div className={styles.groupCard}>
+            <AndroidSettings t={t} Row={SettingsRow} api={window.electronAPI?.android} />
           </div>
         </div>
       )}

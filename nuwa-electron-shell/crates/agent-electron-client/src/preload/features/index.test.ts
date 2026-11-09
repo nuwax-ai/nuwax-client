@@ -17,7 +17,7 @@ describe("命名空间汇总", () => {
   });
 
   it("宿主壳通过独立通道提供 notices/computerUse/features/capture", () => {
-    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["workbench", "shellCapabilities", "themes", "browser", "dshRuntime", "notices", "computerUse", "features", "capture"]);
+    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["workbench", "shellCapabilities", "themes", "browser", "android", "dshRuntime", "notices", "computerUse", "features", "capture"]);
     expect(Object.keys(featureNamespaces(ipc).dshRuntime)).toEqual(["getState", "open"]);
     expect("shellCapabilities" in featureNamespaces(ipc)).toBe(false);
   });

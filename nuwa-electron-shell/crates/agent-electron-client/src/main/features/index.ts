@@ -46,6 +46,7 @@ import { BROWSER_SETTING, linkOpenMode } from "@shared/features/browser/contract
 import { createBrowserFeature } from "./browser";
 import { createDshRuntimeFeature, manageDshPlugins } from "./dsh-runtime";
 import { createShellCapabilitiesFeature, getShellMcpEntry, subscribeShellMcp } from "./shell-capabilities";
+import { androidFeature } from "./android";
 import { localFilesFeature } from "./local-files";
 import { workbenchFeature } from "./workbench";
 
@@ -64,6 +65,7 @@ export const desktopFeatures: readonly DesktopFeature[] = [
     linkPreference: { key: BROWSER_SETTING, normalize: linkOpenMode }, plugins: manageDshPlugins }),
   createDshRuntimeFeature({ shellMcp: getShellMcpEntry, subscribeShellMcp }),
   workbenchFeature,
+  androidFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */

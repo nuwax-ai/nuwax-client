@@ -21,6 +21,7 @@ import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files
 import { createComputerUseBridge } from "./computer-use";
 import { createThemesBridge, themesCapabilityProbe } from "./themes";
 import { createBrowserBridge } from './browser';
+import { createAndroidBridge } from './android';
 
 export interface FeatureNamespaces {
   workbench: HostWorkbenchBridge;
@@ -36,6 +37,7 @@ export interface HostFeatureNamespaces {
   shellCapabilities: ShellCapabilitiesBridge;
   dshRuntime: DshBridge;
   themes: ReturnType<typeof createThemesBridge>;
+  android: ReturnType<typeof createAndroidBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   notices: NoticesBridge;
   capture: HostCaptureBridge;
@@ -65,6 +67,7 @@ export function hostFeatureNamespaces(
     },
     themes: createThemesBridge(ipc, true),
     browser: createBrowserBridge(ipc, true),
+    android: createAndroidBridge(ipc),
     dshRuntime: { control: (action, ids) => ipc.invoke(DSH_IPC, action, ids), plugins: (operation, input) => ipc.invoke(DSH_PLUGINS_IPC, operation, input) },
     notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
