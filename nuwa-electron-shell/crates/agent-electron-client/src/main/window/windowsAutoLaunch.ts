@@ -140,7 +140,7 @@ export function createWindowsStartupStore(
 ): WindowsStartupStore {
   const observedProductLinks = new Set<string>();
   const suspectedProductLink = (name: string, file: string) =>
-    ["nuwax", "女娲nuwax", "nuwaclaw", "女娲nuwaclaw", APP_ID.toLowerCase()].includes(
+    [APP_NAME_IDENTIFIER.toLowerCase(), `女娲${APP_NAME_IDENTIFIER.toLowerCase()}`, APP_ID.toLowerCase()].includes(
       name.replace(/\.lnk$/i, "").toLowerCase().replace(/\s+/g, ""),
     ) || observedProductLinks.has(file.toLowerCase());
   return {
