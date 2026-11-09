@@ -18,10 +18,14 @@ export function stripTicketCookie(cookie: string): string | undefined {
 // 仅登录签发类入口不借用旧 ticket。/api/user/code/send 不在此列：设置页「重置密码/绑定邮箱」
 // 是登录态发码，后端凭 ticket 判登录并跳过验证码；剥掉会被当匿名而报「校验参数异常」，
 // 匿名登录发码本无 ticket（失效 ticket 后端亦按匿名处理）。
+// 扫码创建不借用旧登录态，轮询仅凭 sceneId + pollToken；确认签发 Cookie 走新登录代次。
+// 手机端 scan/confirm 仍使用当前账号鉴权，不能把整个 qrcode 前缀都当匿名入口。
 export function isPublicAuthPath(pathname: string): boolean {
   return [
     "/api/user/passwordLogin",
     "/api/user/codeLogin",
+    "/api/user/qrcode/create",
+    "/api/user/qrcode/status",
   ].includes(pathname.replace(/\/+$/, ""));
 }
 

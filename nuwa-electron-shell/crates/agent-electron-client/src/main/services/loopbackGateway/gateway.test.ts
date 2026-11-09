@@ -231,6 +231,49 @@ describe("loopback gateway（透明反代）", () => {
     }
   });
 
+  it("扫码创建与轮询不借用旧账号，只有确认签发 Cookie 才按新登录同步", async () => {
+    const requests: Array<{ url: string; cookie?: string; auth?: string }> = [];
+    let status = "WAITING";
+    const up = await startUpstream((req, res) => {
+      requests.push({ url: req.url!, cookie: req.headers.cookie, auth: req.headers.authorization });
+      const pathname = new URL(req.url!, "http://upstream").pathname.replace(/\/+$/, "");
+      if (pathname === "/api/user/qrcode/status" && status === "CONFIRMED")
+        res.setHeader("set-cookie", "ticket=qr-account; Path=/; HttpOnly");
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ code: "0000", data: { status } }));
+    });
+    const secret = "trusted-frame-secret";
+    const onSetCookie = vi.fn(async () => true);
+    const gw = await startLoopbackGateway({
+      targetOrigin: up.origin, getTicket: () => "old-account", ticketEpoch: () => 4,
+      trustedRequestSecret: secret, onSetCookie, fixedPort: 0,
+    });
+    gateways.push(gw);
+    const headers = { cookie: "preference=kept; ticket=page-account", authorization: "Bearer stale",
+      [GATEWAY_REQUEST_HEADER]: secret };
+    for (const prefix of ["", `/__backend/${new URL(up.origin).host}`]) {
+      const created = await fetch(`${gw.origin}${prefix}/api/user/qrcode/create`, { method: "POST", headers });
+      await created.json();
+      expect(requests.at(-1)).toEqual({ url: "/api/user/qrcode/create", cookie: "preference=kept", auth: undefined });
+      const polls = onSetCookie.mock.calls.length;
+      for (const value of ["WAITING", "SCANNED", "EXPIRED", "CONFIRMED"]) {
+        status = value;
+        const pathname = "/api/user/qrcode/status/?sceneId=scene%2Fa&pollToken=poll%2Ba";
+        const response = await fetch(`${gw.origin}${prefix}${pathname}`, { headers });
+        expect(await response.json()).toMatchObject({ code: "0000", data: { status: value } });
+        expect(requests.at(-1)).toEqual({ url: pathname, cookie: "preference=kept", auth: undefined });
+        if (value === "CONFIRMED") {
+          expect(onSetCookie).toHaveBeenLastCalledWith(["ticket=qr-account; Path=/; HttpOnly"], 4, true);
+          expect(response.headers.getSetCookie()).toEqual(["ticket=qr-account; Path=/; SameSite=Lax; HttpOnly"]);
+        } else expect(onSetCookie).toHaveBeenCalledTimes(polls);
+      }
+      for (const action of ["scan", "confirm"]) {
+        await (await fetch(`${gw.origin}${prefix}/api/user/qrcode/${action}/scene-a`, { method: "POST", headers })).json();
+        expect(requests.at(-1)?.cookie).toBe("preference=kept; ticket=old-account");
+      }
+    }
+  });
+
   it("routes namespace before local assets/SPA, preserves query and restores upstream referer", async () => {
     const up = await startUpstream((req, res, cap) => {
       cap.path = req.url;
@@ -657,7 +700,7 @@ describe("loopback gateway（透明反代）", () => {
     expect(onSetCookie).toHaveBeenCalledTimes(1);
   });
 
-  it("holds HTTP response headers and login body until the ticket mirror completes", async () => {
+  it.each(["/api/user/passwordLogin", "/api/user/qrcode/status?sceneId=scene-a&pollToken=poll-a"])("holds %s response headers and login body until the ticket mirror completes", async (pathname) => {
     const raw = ["ticket=logged-in; Path=/; SameSite=None", "lang=zh-CN; Path=/"];
     const up = await startUpstream((_req, res) => {
       res.writeHead(200, { "set-cookie": raw });
@@ -679,7 +722,7 @@ describe("loopback gateway（透明反代）", () => {
     });
     gateways.push(gw);
     let headersReceived = false;
-    const pendingResponse = fetch(`${gw.origin}/api/user/passwordLogin`, {
+    const pendingResponse = fetch(`${gw.origin}${pathname}`, {
       headers: { [GATEWAY_REQUEST_HEADER]: "secret" },
     }).then((response) => {
       headersReceived = true;

@@ -84,6 +84,24 @@ describe("business cookie session boundary", () => {
     expect(applySessionAuthHeaders(request({ url: `${businessOrigin}/api/user/passwordLogin`, requestHeaders: headers }), context).Cookie).toBe("a=1");
     expect(applySessionAuthHeaders(request({ frame: { url: "https://external.example/embed" }, requestHeaders: headers }), context).Cookie).toBe("a=1");
   });
+  it.each([
+    ["/api/user/qrcode/create", "POST"],
+    ["/api/user/qrcode/status/?sceneId=scene-a&pollToken=poll-a", "GET"],
+  ])("扫码登录 %s 在直连下不携带旧账号 Cookie 或 Bearer", (pathname, method) => {
+    const headers = applySessionAuthHeaders(request({
+      url: businessOrigin + pathname, method,
+      requestHeaders: { Cookie: "ticket=old-account; theme=dark", Authorization: "Bearer old-account" },
+    }));
+    expect(headers.Cookie).toBe("theme=dark");
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers["x-client-type"]).toBe(APP_NAME_IDENTIFIER);
+  });
+  it.each(["scan", "confirm"])("手机端扫码 %s 继续携带当前账号 Cookie", (action) => {
+    expect(applySessionAuthHeaders(request({
+      url: `${businessOrigin}/api/user/qrcode/${action}/scene-a`, method: "POST",
+      requestHeaders: { Cookie: "ticket=current-account; theme=dark" },
+    })).Cookie).toBe("ticket=current-account; theme=dark");
+  });
   it("keeps ticket on login-state code/send from trusted frames (settings reset password / bind)", () => {
     const url = `${businessOrigin}/api/user/code/send`;
     expect(applySessionAuthHeaders(request({ url, requestHeaders: { Cookie: "ticket=new; a=1" } }), context).Cookie).toBe("ticket=new; a=1");
