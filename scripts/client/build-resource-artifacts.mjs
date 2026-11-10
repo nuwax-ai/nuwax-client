@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as core from './core.mjs';
 import { output, report } from './resource-report.mjs';
+import sourceCache from './prepared-source-cache.cjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const client = 'nuwa-electron-shell/crates/agent-electron-client';
@@ -21,6 +22,9 @@ const arch = process.env.TARGET_ARCH || process.arch;
 const maxBytes = 2 * 1024 ** 3;
 
 function roots(kind) {
+  if (Object.hasOwn(sourceCache.sources, kind)) return [`${client}/resources/${sourceCache.sources[kind].name}`];
+  if (kind === 'agent-desktop') return [`${client}/resources/agent-desktop/${process.platform}-${arch}`];
+  if (kind === 'dsh-download') return ['.cache/dsh-office'];
   if (kind === 'helper') return ['.cache/client-toolchain/cua-helper'];
   if (kind === 'capture') return [
     `resources/capture/${process.platform}-${arch}`, 'resources/capture/sources',
@@ -53,6 +57,7 @@ function owner(kind, file) {
   if (kind === 'helper' && !/^[a-f0-9]{64}\.(?:bin|json)$/.test(file.slice(owned.length + 1))) {
     throw new Error('Helper cache accepts compiler output and its hash record only');
   }
+  if (kind === 'dsh-download' && !/^[a-f0-9]{64}$/.test(file.slice(owned.length + 1))) throw new Error('Office cache accepts hash-addressed archives only');
   return owned;
 }
 
@@ -128,6 +133,10 @@ async function producer() {
 }
 
 async function stage(kind, key) {
+  if (Object.hasOwn(sourceCache.sources, kind)) {
+    const record = core.readJson(path.join(root, roots(kind)[0], sourceCache.marker));
+    if (record.key !== key || !commit.test(record.revision || '') || !sha.test(record.lockSha256 || '')) throw new Error('Prepared source is not locked to this cache identity');
+  }
   let prior;
   try { prior = core.readJson(stateFile(kind, key)); } catch { prior = { hit: false }; }
   if (prior.hit) { output({ ready: false }); return 'already restored; no duplicate upload'; }
@@ -152,6 +161,7 @@ async function stage(kind, key) {
     if (bytes > maxBytes || files.length >= 20000) throw new Error('Resource cache exceeds size limits');
     if (kind === 'capture' && /(?:resource|koffi)\.json$/.test(file) && core.readJson(full).signing) throw new Error('Signed capture records are not cacheable');
     const digest = await hash(full);
+    if (kind === 'dsh-download' && digest !== path.basename(file)) throw new Error('Office download SHA256 differs from its address');
     files.push({ path: file, sha256: digest, bytes: stat.size, mode: kind === 'bundled' ? 0o644 : (stat.mode & 0o111 ? 0o755 : 0o644) });
   }
   for (const base of roots(kind)) await collect(base);
@@ -163,7 +173,9 @@ async function stage(kind, key) {
     for (const file of files) {
       if (!fs.existsSync(path.join(blobs, file.sha256))) fs.copyFileSync(path.join(root, file.path), path.join(blobs, file.sha256));
     }
-    core.atomicJson(path.join(directory, 'manifest.json'), { ...identity(kind), key, producer: source, files });
+    const manifest = { ...identity(kind), key, producer: source, files };
+    if (Buffer.byteLength(JSON.stringify(manifest, null, 2) + '\n') > 4 * 1024 ** 2) throw new Error('Resource manifest exceeds the download admission limit');
+    core.atomicJson(path.join(directory, 'manifest.json'), manifest);
     output({ ready: true, path: directory, name: `${prefix(kind, key)}-a${source.attempt}` });
   } catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error; }
   return `${files.length} files, ${bytes} bytes; producer run ${source.runId}, job ${source.jobId}`;
@@ -260,6 +272,7 @@ async function install(kind, key, artifact, run, unpacked) {
     if (bytes > maxBytes || !fs.lstatSync(blob).isFile() || fs.statSync(blob).size !== file.bytes || await hash(blob) !== file.sha256) {
       throw new Error('Resource file SHA256 or size mismatch');
     }
+    if (kind === 'dsh-download' && file.sha256 !== path.posix.basename(file.path)) throw new Error('Office download SHA256 differs from its address');
     noLinks(file.path);
     if (kind === 'capture' && /(?:resource|koffi)\.json$/.test(file.path) && core.readJson(blob).signing) throw new Error('Signed capture cache rejected');
   }
@@ -351,38 +364,44 @@ function bundledKey() {
   return `bundled-v5-${process.platform}-${arch}-${core.fingerprint({ recipe })}`;
 }
 
-const [command, kind, key, ...args] = process.argv.slice(2);
-const started = Date.now();
-if (command === 'bundled-key') output({ key: bundledKey() });
-else if (command === 'measure' && key === '--' && args.length) {
-  roots(kind);
-  const result = core.run(args[0], args.slice(1), { allowFailure: true });
-  report(kind, result.status === 0 ? 'preparation/admission completed' : 'preparation failed', started);
-  process.exitCode = result.status;
-} else {
-  try {
+async function main() {
+  const [command, kind, key, ...args] = process.argv.slice(2);
+  const started = Date.now();
+  if (command === 'bundled-key') output({ key: bundledKey() });
+  else if (command === 'measure' && key === '--' && args.length) {
     roots(kind);
-    if (!/^[a-zA-Z0-9._-]{1,180}$/.test(key || '')) throw new Error('Exact resource key unavailable');
-    if (command === 'restore') {
-      const result = await restore(kind, key);
-      report(kind, result.hit ? 'HIT (artifact verified)' : 'MISS', started, result.detail);
-    } else if (command === 'invalidate') {
-      const reason = args[0] || 'unspecified';
-      if (!/^[a-zA-Z0-9._-]{1,80}$/.test(reason)) throw new Error('Invalid cache invalidation reason');
-      const detail = invalidateRestoredState(kind, key, reason);
-      output({ invalidated: true });
-      report(kind, 'invalidated', started, detail);
-    } else if (command === 'save') report(kind, 'cache staging', started, await stage(kind, key));
-    else throw new Error('Unknown resource operation');
-  } catch (error) {
-    // Caching is optional. Never convert a network/permission/validation miss
-    // into a failed release, or skip the original resource preparation.
-    if (command === 'invalidate') {
-      console.error(`[build-resource] ${kind || 'unknown'}: cache invalidation failed: ${error.message}`);
-      process.exitCode = 1;
-    } else {
-      output({ hit: false, ready: false });
-      report(kind || 'unknown', 'MISS / cache unavailable', started, error.message);
+    const result = core.run(args[0], args.slice(1), { allowFailure: true });
+    report(kind, result.status === 0 ? 'preparation/admission completed' : 'preparation failed', started);
+    process.exitCode = result.status;
+  } else {
+    try {
+      roots(kind);
+      if (!/^[a-zA-Z0-9._-]{1,180}$/.test(key || '')) throw new Error('Exact resource key unavailable');
+      if (command === 'restore') {
+        const result = await restore(kind, key);
+        report(kind, result.hit ? 'HIT (artifact verified)' : 'MISS', started, result.detail);
+      } else if (command === 'invalidate') {
+        const reason = args[0] || 'unspecified';
+        if (!/^[a-zA-Z0-9._-]{1,80}$/.test(reason)) throw new Error('Invalid cache invalidation reason');
+        const detail = invalidateRestoredState(kind, key, reason);
+        output({ invalidated: true });
+        report(kind, 'invalidated', started, detail);
+      } else if (command === 'save') report(kind, 'cache staging', started, await stage(kind, key));
+      else throw new Error('Unknown resource operation');
+    } catch (error) {
+      // Caching is optional. Never convert a network/permission/validation miss
+      // into a failed release, or skip the original resource preparation.
+      if (command === 'invalidate') {
+        console.error(`[build-resource] ${kind || 'unknown'}: cache invalidation failed: ${error.message}`);
+        process.exitCode = 1;
+      } else {
+        output({ hit: false, ready: false });
+        report(kind || 'unknown', 'MISS / cache unavailable', started, error.message);
+      }
     }
   }
+
 }
+
+export { roots as resourceRoots, owner as resourceOwner, install as installResource };
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

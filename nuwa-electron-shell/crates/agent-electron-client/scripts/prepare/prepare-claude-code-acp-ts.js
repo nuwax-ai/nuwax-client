@@ -21,17 +21,19 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
 
 const projectRoot = getProjectRoot();
 const electronClientRoot = projectRoot;
+const sourceCache = require(path.resolve(projectRoot, '../../../scripts/client/prepared-source-cache.cjs'));
+const frozenSource = sourceCache.sourceIdentity('claude-acp');
 
 // 从 package.json 读取源码地址
 const pkgJson = JSON.parse(fs.readFileSync(path.join(electronClientRoot, 'package.json'), 'utf8'));
 const { url: GIT_REPO, branch: GIT_BRANCH } = pkgJson.bundledSources['claude-code-acp-ts'];
 
-const SOURCE_DIR = path.join(electronClientRoot, 'sources', 'claude-code-acp-ts');
+const SOURCE_DIR = path.join(electronClientRoot, frozenSource ? '.cache/bundled-sources' : 'sources', 'claude-code-acp-ts');
 const destDir = path.join(electronClientRoot, 'resources', 'claude-code-acp-ts');
 const CLAUDE_AGENT_SDK_DIR = path.join(
   'node_modules',
@@ -227,6 +229,10 @@ function maybeFixDarwinX64BundledSdk(baseDir) {
 }
 
 function main() {
+  if (sourceCache.preparedSourceReady('claude-acp', destDir)) {
+    console.log('[prepare-claude-code-acp-ts] 复用已核验的固定源码产物');
+    return;
+  }
   const crossArchDarwinX64 = needsDarwinX64CrossArchBundling();
   if (crossArchDarwinX64) {
     console.log(
@@ -237,7 +243,7 @@ function main() {
   // 0. 版本检查：若源码已存在且目标版本匹配，跳过全部工作
   const srcPkgPath = path.join(SOURCE_DIR, 'package.json');
   const destPkgPath = path.join(destDir, 'package.json');
-  if (fs.existsSync(srcPkgPath) && fs.existsSync(destPkgPath)) {
+  if (!frozenSource && fs.existsSync(srcPkgPath) && fs.existsSync(destPkgPath)) {
     try {
       const srcPkg = JSON.parse(fs.readFileSync(srcPkgPath, 'utf8'));
       const destPkg = JSON.parse(fs.readFileSync(destPkgPath, 'utf8'));
@@ -253,11 +259,23 @@ function main() {
     } catch { /* 版本文件损坏，继续执行 */ }
   }
 
-  const hasBuild = fs.existsSync(path.join(SOURCE_DIR, 'dist'));
-  const hasNodeModules = fs.existsSync(path.join(SOURCE_DIR, 'node_modules'));
+  const hasBuild = !frozenSource && fs.existsSync(path.join(SOURCE_DIR, 'dist'));
+  const hasNodeModules = !frozenSource && fs.existsSync(path.join(SOURCE_DIR, 'node_modules'));
 
   // 1. 克隆或更新源码（已有 dist 时跳过 git pull，避免 CI 二次 prepare 时 pull 失败）
-  if (!fs.existsSync(path.join(SOURCE_DIR, '.git'))) {
+  if (frozenSource) {
+    const options = { cwd: SOURCE_DIR, stdio: 'inherit' };
+    const created = !fs.existsSync(SOURCE_DIR);
+    if (created) {
+      fs.mkdirSync(path.dirname(SOURCE_DIR), { recursive: true });
+      execFileSync('git', ['clone', '--no-checkout', GIT_REPO, SOURCE_DIR], { stdio: 'inherit' });
+    }
+    const git = args => execFileSync('git', args, { cwd: SOURCE_DIR, encoding: 'utf8' }).trim();
+    if (git(['remote', 'get-url', 'origin']) !== GIT_REPO || (!created && git(['status', '--porcelain', '--untracked-files=no']))) throw new Error('Unowned Claude ACP source cache');
+    execFileSync('git', ['fetch', 'origin', frozenSource.revision], options);
+    if (git(['rev-parse', 'FETCH_HEAD']) !== frozenSource.revision) throw new Error('Frozen Claude ACP source mismatch');
+    execFileSync('git', ['checkout', '--detach', frozenSource.revision], options);
+  } else if (!fs.existsSync(path.join(SOURCE_DIR, '.git'))) {
     console.log('[prepare-claude-code-acp-ts] 克隆源码...');
     execGit(`clone --branch ${GIT_BRANCH} --depth 1 ${GIT_REPO} "${SOURCE_DIR}"`);
   } else if (!hasBuild || !hasNodeModules) {
@@ -299,7 +317,8 @@ function main() {
     }
 
     console.log('[prepare-claude-code-acp-ts] 安装依赖...');
-    exec('npm install --ignore-scripts', { cwd: SOURCE_DIR });
+    exec(frozenSource ? sourceCache.lockedInstallCommand(SOURCE_DIR) : 'npm install --ignore-scripts', { cwd: SOURCE_DIR,
+      ...(frozenSource ? { env: { ...process.env, COREPACK_ENABLE_PROJECT_SPEC: '0', COREPACK_ENABLE_AUTO_PIN: '0' } } : {}) });
 
     console.log('[prepare-claude-code-acp-ts] 构建项目...');
     exec('npx tsc', { cwd: SOURCE_DIR });
@@ -337,6 +356,7 @@ function main() {
 
   // 4. 仅 macOS x64 交叉编译：在最终产物里替换 Claude SDK 平台包
   maybeFixDarwinX64BundledSdk(destDir);
+  sourceCache.recordPreparedSource('claude-acp', SOURCE_DIR, destDir);
 
   console.log(`[prepare-claude-code-acp-ts] ✓ resources/claude-code-acp-ts/ (${srcPkg.version})`);
 }
