@@ -984,6 +984,21 @@ export async function createAcpConnection(
       if (backend.apiProtocol) {
         env.NUWAX_API_PROTOCOL = backend.apiProtocol;
       }
+      // GLM-5.3 家族（5.3 / 5.3-Flash / 5.3-FlashX）官方档位只有 low/high/max，
+      // OpenAI/Responses 线上引擎的默认 effort=medium 会被 vendor 目录档位门
+      // fail-fast 拒绝（"effort tiers ... do not include `medium`"，2026-11-10
+      // 智谱官方 Responses 协议实测）。与 anthropic 分支同理播种 low；5.2 会把
+      // medium 映射成 high 所以无需处理。后端显式下发或要求关闭思考时不覆盖。
+      if (
+        !env.NUWAX_DISABLE_THINKING &&
+        !env.NUWAX_MODEL_REASONING_EFFORT &&
+        /^glm-5\.3/i.test(model ?? "")
+      ) {
+        log.info(
+          "[AcpClient] codex: GLM-5.3 family on the OpenAI wire defaults effort to low (catalog tiers low/high/max)",
+        );
+        env.NUWAX_MODEL_REASONING_EFFORT = "low";
+      }
     }
     // 后端可以通过 agent_config.env 下发 NUWAX_MODEL_CONTEXT_WINDOW（或旧拼写
     // CODEX_MODEL_CONTEXT_WINDOW），这里的默认值不得覆盖它：2026-11-09 事故里
