@@ -57,6 +57,14 @@ macOS 的 stable、beta 与 QA 使用 `ELECTRON_BUILDER_COMPRESSION_LEVEL=1` 覆
 
 版本解析由 `release-version.mjs` 共用，CLI 编排在 `client/release.mjs`，来源核验在 `release-provenance.mjs`，镜像指针事务在 `publish-release-pointers.mjs`。签名机只处理安装包，安装验收和镜像发布由外层负责。
 
+## 固定依赖与安装器并行
+
+Stable / Beta / Dev 的发布 workflow 在 prepare:all 前后复用独立的依赖资源：file-server、Claude ACP、Agent Desktop，以及存在 DSH 时的 Office 下载。辅助源码先解析固定 Git SHA，使用提交内的 npm/pnpm 锁文件安装；源码、补丁、准备脚本、Node/包管理器或目标平台变化使该资源失效，应用版本和普通界面改动不入键。Windows 自建 Agent Desktop 额外绑定工具镜像和编译环境。Office 只缓存按 SHA256 寻址的下载，每次仍按锁文件核验并准备运行目录。
+
+这些资源继续经过同仓成功发布 job、不可变 tag、祖先关系、路径白名单和逐文件哈希校验；没有可用的精确匹配缓存时运行原准备流程。保存发生在应用签名之前，不复用旧签名应用。CUA helper / capture 的配方与缓存身份不变。
+
+Windows 安装器仅从私有工具缓存的复制和空间计量中排除 winCodeSign 的 darwin/linux 子目录，避免其中的非 Windows 符号链接使 MSI/NSIS 意外串行。应用和其余工具仍拒绝链接，磁盘空间不足或无法测量时仍串行。第三方补丁强制 LF，防止 Windows checkout 转换后无法应用。
+
 ## 更新订阅
 
 Dev 是独立的新功能体验通道，发布频率可以低于 Beta。设置中先开启 Beta 才显示 Dev 开关；主动开启 Dev 后只读取 `dev/latest.json`，仅接收 Dev 发布。Beta/Stable 发布不推进 Dev 指针，因此不会把用户从 Dev 新功能体验切走。关闭 Dev 回 Beta；关闭 Beta 同时退出 Dev，再次开启 Beta 不恢复 Dev。订阅选择跨重启和升级保留，Dev 包首次安装不自动启用 Dev。
