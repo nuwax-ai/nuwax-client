@@ -461,6 +461,8 @@ export interface AcpConnectionConfig {
   baseUrl?: string;
   model?: string;
   apiProtocol?: string;
+  /** Provider 配置名（含 "-responses" 时直连 Responses 线，见 createAcpConnection） */
+  providerName?: string;
   env?: Record<string, string>;
   /** Engine type for process registry tracking */
   engineType?: "claude-code" | "nuwaxcode" | "codex" | "codex-cli";
@@ -959,6 +961,13 @@ export async function createAcpConnection(
     if (backend.reasoningEffort) {
       env.NUWAX_MODEL_REASONING_EFFORT = backend.reasoningEffort;
     }
+    // 本地联调开关（2026-11-10）：provider 名含 "-responses"（如
+    // "glm-5.3-flash-responses"）时，即使 api_protocol=openai 也直接走引擎原生
+    // Responses 线——用名称临时声明该端点本就是 Responses 协议（如智谱官方
+    // open.bigmodel.cn/api/v1），绕开默认的 chat 翻译路径，便于测试引擎逻辑。
+    // 优先级最低：后端显式下发 NUWAX_WIRE_API / NUWAX_API_PROTOCOL 时仍以后端为准。
+    const providerName = (config.providerName || "").toLowerCase();
+    const nameSignalsResponses = providerName.includes("-responses");
     // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
     // NUWAX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
@@ -979,6 +988,11 @@ export async function createAcpConnection(
       if (!env.NUWAX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
         env.NUWAX_MODEL_REASONING_EFFORT = "low";
       }
+    } else if (nameSignalsResponses && !backend.wireApi && !backend.apiProtocol) {
+      // 名称声明 Responses 且后端未显式选择协议线：直连 Responses。
+      log.info(
+        `[AcpClient] codex: provider "${config.providerName}" signals the Responses wire by name; skipping the chat translation default`,
+      );
     } else {
       env.NUWAX_WIRE_API = backend.wireApi || "chat";
       if (backend.apiProtocol) {
