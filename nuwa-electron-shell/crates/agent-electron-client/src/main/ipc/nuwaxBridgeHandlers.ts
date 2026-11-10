@@ -53,6 +53,7 @@ import { normalizeComputerSandboxId } from "@shared/types/computerServiceState";
 import { initSessionAuthInjection, trustInitialBusinessNavigation } from "../services/sessionAuthInjection";
 import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
+import { sanitizeAuthClearDiagnostic } from "../services/auth/diagnostics";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
 import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
@@ -253,6 +254,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     },
     () => {
       // 注册接口也能发现登录失效；不依赖页面恰好发起下一次业务请求。
+      log.info("[AuthDiagnostic]", { stage: "session-expired", source: "shell-registration",
+        generation: authGeneration, ticketEpoch: ticketEpoch(), hadTicket: !!currentTicket(), phase: serviceState.phase });
       // token 失效 ≠ 注销设备：保留注册凭据（reg 仍要 savedKey），用户重新
       // 登录即可闭环；换账号登录由 persistToken 的账号切换检测清除。
       authGeneration++;
@@ -679,8 +682,10 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     let ticket = currentTicket();
     if (!ticket) return false;
     const requestEpoch = ticketEpoch();
-    const expire = async () => {
+    const expire = async (reason: string, status?: number, code?: string) => {
       if (generation !== authGeneration) return;
+      log.info("[AuthDiagnostic]", { stage: "session-expired", source: "shell-sync-session", reason,
+        status, code, generation: authGeneration, ticketEpoch: ticketEpoch(), hadTicket: !!currentTicket(), phase: serviceState.phase });
       authGeneration++;
       stopIMReceiver();
       cancelTransfers();
@@ -703,13 +708,13 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       await mirrorNativeResponseTicket(response, businessOrigin, requestEpoch);
       if (response.status === 401) {
         emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin, status: 401 });
-        await expire();
+        await expire("http-401", response.status);
         return false;
       }
       ticket = currentTicket();
       if (!ticket) {
         emitRegistrationTrace({ stage: "sync-session-no-cookie", origin: businessOrigin });
-        await expire();
+        await expire("missing-ticket-after-response", response.status);
         return false;
       }
       const payload = await response.json();
@@ -718,7 +723,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         emitRegistrationTrace({ stage: "sync-session-validation-failed", origin: businessOrigin,
           status: response.status, code: registrationTraceCode(payload?.code) });
         if (["4010", "4011"].includes(payload?.code)) {
-          await expire();
+          await expire("business-code", response.status, payload.code);
           return false;
         }
         throw new Error("Cookie session validation unavailable");
@@ -766,9 +771,15 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     return true;
   });
 
-  ipcMain.handle("auth:clear", async (event) => {
-    if (!isTrustedSender(event) || !isCurrentDocument(event)) return false;
-    if (authClearHandled) return true;
+  ipcMain.handle("auth:clear", async (event, payload: unknown) => {
+    if (!isTrustedSender(event)) return false;
+    const diagnostic = sanitizeAuthClearDiagnostic(payload);
+    const disposition = !isCurrentDocument(event) ? "stale-document" : authClearHandled ? "duplicate" : "accepted";
+    log.info("[AuthDiagnostic]", { ...diagnostic, stage: "clear-received", disposition,
+      generation: authGeneration, ticketEpoch: ticketEpoch(), hadTicket: !!currentTicket(),
+      phase: serviceState.phase, hostVisible: getHostActivitySnapshot().visible, senderId: event.sender.id });
+    if (disposition === "stale-document") return false;
+    if (disposition === "duplicate") return true;
     authClearHandled = true;
     const hadTicket = !!currentTicket();
     authGeneration++;
@@ -790,9 +801,17 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     ctx
       .getMainWindow()
       ?.webContents.send("nuwax:authChanged", { loggedIn: false });
-    if (hadTicket) await clearSiteStorage(scopes);
-    const stopped = await stopping;
-    return stopped.success;
+    try {
+      if (hadTicket) await clearSiteStorage(scopes);
+      const stopped = await stopping;
+      log.info("[AuthDiagnostic]", { eventId: diagnostic.eventId, stage: "clear-completed",
+        success: stopped.success, generation: authGeneration, ticketEpoch: ticketEpoch(), hadTicket: !!currentTicket() });
+      return stopped.success;
+    } catch (error) {
+      log.warn("[AuthDiagnostic]", { eventId: diagnostic.eventId, stage: "clear-failed",
+        generation: authGeneration, ticketEpoch: ticketEpoch() });
+      throw error;
+    }
   });
 
   // ---- auth：企业登录（切换后端域名，客户端重新初始化） ----

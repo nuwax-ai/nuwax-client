@@ -50,11 +50,11 @@ export function isOwnedStartupEntry(
   const target = localExe(entry.target);
   if (!target) return false;
   const identity = entry.kind === "run" ? entry.name : entry.appId;
-  if (identity?.toLowerCase() === APP_ID) return true;
+  if (identity?.toLowerCase() === APP_ID.toLowerCase()) return true;
   if (entry.kind === "shortcut" && identity) return false;
-  const name = entry.name.replace(/\.lnk$/i, "").toLowerCase();
+  const name = entry.name.replace(/\.lnk$/i, "").toLowerCase().replace(/\s+/g, "");
   return (
-    ["nuwax", "女娲nuwax"].includes(name) &&
+    ["nuwax", "女娲nuwax", "nuwaclaw", "女娲nuwaclaw"].includes(name) &&
     knownExecutables.some((exe) => localExe(exe) === target)
   );
 }
@@ -140,8 +140,8 @@ export function createWindowsStartupStore(
 ): WindowsStartupStore {
   const observedProductLinks = new Set<string>();
   const suspectedProductLink = (name: string, file: string) =>
-    ["nuwax", "女娲nuwax", APP_ID].includes(
-      name.replace(/\.lnk$/i, "").toLowerCase(),
+    [APP_NAME_IDENTIFIER.toLowerCase(), `女娲${APP_NAME_IDENTIFIER.toLowerCase()}`, APP_ID.toLowerCase()].includes(
+      name.replace(/\.lnk$/i, "").toLowerCase().replace(/\s+/g, ""),
     ) || observedProductLinks.has(file.toLowerCase());
   return {
     async list() {
@@ -252,7 +252,14 @@ export function createWindowsStartupStore(
 }
 
 export async function cleanupWindowsAutoLaunch(): Promise<void> {
-  const names = ["Nuwax", "女娲Nuwax"];
+  const names = [
+    "Nuwax",
+    "女娲Nuwax",
+    "女娲 Nuwax",
+    "NuwaClaw",
+    "女娲NuwaClaw",
+    "女娲 NuwaClaw",
+  ];
   const roots = [
     process.env.ProgramFiles,
     process.env["ProgramFiles(x86)"],
@@ -262,7 +269,10 @@ export async function cleanupWindowsAutoLaunch(): Promise<void> {
   const known = [
     app.getPath("exe"),
     ...roots.flatMap((root) =>
-      names.map((name) => path.win32.join(root, name, "Nuwax.exe")),
+      names.flatMap((name) => [
+        path.win32.join(root, name, "Nuwax.exe"),
+        path.win32.join(root, name, "NuwaClaw.exe"),
+      ]),
     ),
   ];
   const folders = [

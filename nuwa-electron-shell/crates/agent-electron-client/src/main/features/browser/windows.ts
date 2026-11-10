@@ -21,6 +21,7 @@ import {
 } from "@shared/features/browser/contract";
 import type { FeatureContext } from "../_kit/types";
 import { PageView } from "./vendor/pageView";
+import { confirmBrowserCertificates } from "./certificates";
 
 export interface BrowserPageOptions {
   windowOptions: BrowserWindowConstructorOptions;
@@ -479,6 +480,12 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
       throw error;
     }
     const wc = page.webContents;
+    const disposeCertificatePrompts = confirmBrowserCertificates(
+      win,
+      wc,
+      (key) => ctx.translate?.(key) ?? key,
+      options.initialUrl,
+    );
     const entry: Entry = {
       window: win,
       contents: wc,
@@ -632,6 +639,7 @@ export function createBrowserWindows(ctx: FeatureContext, appearance: BrowserApp
       }
     });
     const cleanup = () => {
+      disposeCertificatePrompts();
       entries.delete(toolbarId);
       page.destroy();
       if (!win.isDestroyed()) win.destroy();
