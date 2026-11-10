@@ -4,7 +4,7 @@ import log from "electron-log";
 export const CUA_PREFERENCES_KEY = "computerUsePreferences.v1";
 const LEGACY_KEY = "step1_config";
 const RUNTIME_KEYS = new Set(["computerUseEnabled", "computerUseScopeKind", "computerUseMultiwindow",
-  "computerUseAuthMode", "computerUseBlacklist", "computerUseAgentCursor"]);
+  "computerUseAuthMode", "computerUseBlacklist", "computerUseAgentCursor", "computerUseEngine"]);
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 

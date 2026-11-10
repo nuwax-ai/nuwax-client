@@ -90,7 +90,13 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['nuwaxcode', [path.join(r, 'nuwaxcode', platform === 'win32' ? `windows-${arch}` : key, 'bin', `nuwaxcode${exe}`)]],
     ['harness', [path.join(r, 'nuwax-harness-acp-ts/dist/index.js')]],
     ['dsh', [path.join(r, 'dsh-runtime/host.mjs'), path.join(r, 'dsh-runtime/nuwax-runtime.json'), path.join(r, 'dsh-office/primary-runtime/runtime.json')]],
+    ['agent-desktop', [path.join(r, 'agent-desktop', key, `agent-desktop-${key}${exe}`), path.join(r, 'agent-desktop', key, 'source.json')]],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
+  const root = path.resolve(client, '../../..');
+  specs.find(spec => spec.name === 'agent-desktop').inputs = [
+    'scripts/client/agent-desktop-resources.mjs', 'scripts/client/agent-desktop-windows.mjs',
+    'third-party/patches/agent-desktop-windows-no-focus.patch',
+  ].map(file => path.join(root, file));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
   }
@@ -301,7 +307,8 @@ export async function prepare(root, options = {}) {
     for (const spec of resourceSpecs(p.client, opt.platform, opt.arch)) {
       const specKey = spec.name === 'dsh' ? tools.fingerprint([opt.platform, opt.arch,
         inputDigest([path.join(p.base, 'crates/dsh-runtime')], { excludeNames: ['test'] }),
-        inputDigest([path.join(root, 'scripts/prepare-dsh-resources.mjs'), path.join(root, 'scripts/client/dsh-resources.mjs')])]) : resourceKey;
+        inputDigest([path.join(root, 'scripts/prepare-dsh-resources.mjs'), path.join(root, 'scripts/client/dsh-resources.mjs')])])
+        : spec.inputs ? tools.fingerprint([resourceKey, inputDigest(spec.inputs)]) : resourceKey;
       const ready = () => spec.files.every(fileReady) && (!spec.check || spec.check());
       if (state.resources[spec.name]?.key === specKey && state.resources[spec.name]?.artifact === inputDigest(spec.files) && (ready() || state.resources[spec.name]?.skipped && spec.optional)) {
         console.log(`[prepare] 复用 ${spec.name}`);

@@ -185,6 +185,7 @@ async function main() {
     'prepare:nuwaxcode',
     'prepare:harness',
     'prepare:dsh',
+    'prepare:agent-desktop',
     'prepare:nuwax-file-server',
     'prepare:claude-code-acp-ts',
   ];

@@ -59,6 +59,22 @@ test('browser source notices do not alter native capture-only artifact bytes or 
   for (const file of ['third-party-notices.json', 'licenses/native-capture.txt']) assert.deepEqual(fs.readFileSync(path.join(root, 'native', file)), fs.readFileSync(path.join(root, 'packaged', file)));
 });
 
+test('independent desktop binaries retain license admission without admitting undeclared payloads', t => {
+  const root = tmp(t);
+  write(path.join(root, 'third-party/desktop.txt'), APACHE);
+  write(path.join(root, 'third-party/manifest.json'), { schema: 1, npmRoots: [], resources: {} });
+  write(path.join(root, 'third-party/source-components.json'), { schema: 1, components: {
+    'agent-desktop': { id: 'agent-desktop', resourceDirectory: 'agent-desktop', name: 'Agent Desktop', version: '1.2.0', license: 'Apache-2.0', licenseFile: 'third-party/desktop.txt', sourceUrl: 'https://github.com/vercel-labs/agent-desktop', checkIntegrity: true },
+  } });
+  const options = { outDir: path.join(root, 'out'), resourcePaths: { 'agent-desktop': path.join(root, 'desktop') }, strict: true };
+  const result = generatePackagedNotices(root, options);
+  assert.equal(result.document.components[0].kind, 'binary');
+  assert.equal(fs.readFileSync(path.join(root, 'out/licenses/agent-desktop.txt'), 'utf8'), APACHE);
+  assert.throws(() => generatePackagedNotices(root, { ...options, resourcePaths: { ...options.resourcePaths, unknown: '/unknown' } }), /UNDECLARED_RESOURCE/);
+  fs.unlinkSync(path.join(root, 'third-party/desktop.txt'));
+  assert.throws(() => generatePackagedNotices(root, options), /MISSING_LICENSE_TEXT/);
+});
+
 test('detectLicense recognises common license texts and refuses to guess', () => {
   assert.equal(detectLicense(MIT), 'MIT');
   assert.equal(detectLicense(MIT.replaceAll(' ', '\n  ')), 'MIT');

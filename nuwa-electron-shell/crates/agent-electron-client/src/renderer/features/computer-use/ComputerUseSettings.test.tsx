@@ -8,6 +8,7 @@ const harness = vi.hoisted(() => ({
   effects: [] as any[],
   switches: [] as any[],
   buttons: [] as any[],
+  selects: [] as any[],
   confirm: vi.fn(),
 }));
 
@@ -37,9 +38,10 @@ vi.mock("antd", async () => {
     },
     Input,
     Modal: { confirm: harness.confirm },
-    Select: ({ options, placeholder }: any) => (
-      <span>{placeholder} {(options ?? []).map((option: any) => option.label).join(" ")}</span>
-    ),
+    Select: (props: any) => {
+      harness.selects.push(props);
+      return <span>{props.placeholder} {(props.options ?? []).map((option: any) => option.label).join(" ")}</span>;
+    },
     Space: ({ children }: any) => <span>{children}</span>,
     Switch: (props: any) => {
       harness.switches.push(props);
@@ -80,6 +82,7 @@ const Row = ({ label, desc, control }: any) => (
 
 const api = {
   setEnabled: vi.fn(),
+  setEngine: vi.fn(),
   setAgentCursor: vi.fn(),
   setAuthMode: vi.fn(),
   setBlacklist: vi.fn(),
@@ -105,6 +108,7 @@ beforeEach(() => {
   harness.effects = [];
   harness.switches = [];
   harness.buttons = [];
+  harness.selects = [];
   seed();
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   vi.stubGlobal("window", Object.assign(new EventTarget(), {
@@ -185,5 +189,24 @@ describe("ComputerUseSettings", () => {
     const html = render();
     expect(html).not.toContain("Claw.Settings.computerUse.permissions");
     expect(html).toContain("Claw.Settings.computerUse.setupSection");
+  });
+  it("selects the new engine through the host API and displays its supported scope", async () => {
+    render();
+    const select = harness.selects.find(select => select.options?.some((option: any) => option.value === "agent-desktop"));
+    expect(select.disabled).toBeFalsy();
+    api.setEngine.mockResolvedValue({ success: true, status: { ...installedOff, engine: "agent-desktop" } });
+    await select.onChange("agent-desktop");
+    expect(api.setEngine).toHaveBeenCalledWith("agent-desktop");
+    harness.cursor = 0;
+    const html = render();
+    expect(html).toContain("Claw.Settings.computerUse.engineDesktopHint");
+    expect(html).not.toContain("Claw.Settings.computerUse.advancedDiagnostics");
+    expect(harness.switches.at(-1).disabled).toBe(true);
+  });
+  it("disables engine selection while the host reports an active task", () => {
+    seed({ ...installedOff, engineBusy: true } as any); render();
+    const select = harness.selects.find(select => select.options?.some((option: any) => option.value === "agent-desktop"));
+    expect(select.disabled).toBe(true);
+    expect(api.setEngine).not.toHaveBeenCalled();
   });
 });
