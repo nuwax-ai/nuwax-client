@@ -889,6 +889,18 @@ export const I18N_KEYS = {
 
 /** Computer Use product controls and diagnostics. */
 export const CUA_I18N_KEYS = {
+  ENGINE_ENGINE: "Claw.Settings.computerUse.engine",
+  ENGINE_ENGINEDESC: "Claw.Settings.computerUse.engineDesc",
+  ENGINE_ENGINECUA: "Claw.Settings.computerUse.engineCua",
+  ENGINE_ENGINEDESKTOP: "Claw.Settings.computerUse.engineDesktop",
+  ENGINE_ENGINEBUSY: "Claw.Settings.computerUse.engineBusy",
+  ENGINE_ENGINEDESKTOPHINT: "Claw.Settings.computerUse.engineDesktopHint",
+  ENGINE_ENGINEMISSING: "Claw.Settings.computerUse.engineMissing",
+  ENGINE_ENGINEPERMISSIONHINT: "Claw.Settings.computerUse.enginePermissionHint",
+  ENGINE_ERROR_ENGINEBUSY: "Claw.Settings.computerUse.errors.engineBusy",
+  ENGINE_ERROR_ENGINENOTINSTALLED: "Claw.Settings.computerUse.errors.engineNotInstalled",
+  ENGINE_ERROR_ENGINECAPABILITYUNSUPPORTED: "Claw.Settings.computerUse.errors.engineCapabilityUnsupported",
+  ENGINE_ERROR_INVALIDENGINE: "Claw.Settings.computerUse.errors.invalidEngine",
   SERVICE_LABEL: "Claw.Cua.service.label",
   SERVICE_APPLIED: "Claw.Cua.service.applied",
   SERVICE_PENDING: "Claw.Cua.service.pending",

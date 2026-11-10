@@ -21,6 +21,18 @@
 
 文件服务的回环绑定、真实监听错误与健康实例标识由产品源码补丁固化；开发和 CI 在一次性源码副本中应用补丁并记录摘要。开发者 `sources/` 与工具链源码缓存不接受补丁写入。
 
+## Computer Use 执行引擎
+
+设置中的执行引擎按本机保存在 `computerUsePreferences.v1.computerUseEngine`，缺省为 CUA Driver。活跃或暂停中的任务及配置操作期间拒绝切换。切换会撤销旧连接和观察引用；失败的输入不自动重放，也不自动改选另一引擎。
+
+Agent Desktop 固定使用 `1.2.0`。macOS/Linux 资源验证 npm 归档 SHA512 与原生文件 SHA256；Windows 从锁定的上游提交编译，应用 `third-party/patches/agent-desktop-windows-no-focus.patch` 关闭 UI Automation 对 Invoke/SetValue 的自动焦点，`source.json` 记录源码归档、补丁、工具链和二进制摘要。仅 Agent Desktop 的准备缓存随这些输入失效，CUA/capture 缓存配方保持独立。它经内部适配器进入现有 `CuaMcpGateway`，共用会话授权、窗口范围、黑名单、敏感操作确认和任务预算；官方完整 MCP 及任意进程启动能力不直接暴露给模型。原生引用仅保留在对应连接的观察记录中，模型继续使用宿主返回的快照和元素编号。
+
+原生调用成功且报告 `delivered_unverified` 时，适配层保留“已送达、须观察效果”的语义，退休本次快照，允许重新读取；不能据此声称业务效果已验证或重放输入。`delivery_uncertain`、缺失投递证明、传输中断和原生错误仍按未知结果暂停。任务清理后的重复撤销会再次确认租约已排空，不重新激活输入。
+
+首版适配无障碍观察与控件操作，暂不提供视觉定位、浏览器专用工具、物理键鼠、模拟光标和实时预览。暂停/停止等待本实例拥有的原生进程树退出，随后清理连接私有的原生快照目录。开发/安装身份使用各自产品数据目录；macOS 权限主体由启动 Agent Desktop 的宿主确定，设置中的授权提示以所选引擎为准。
+
+macOS 原生冒烟验证从根运行 `node scripts/acceptance/agent-desktop-engine.cjs`，只创建和操作临时测试应用；跨平台安装包和完整业务任务另行验收。
+
 ## 变更落点与门禁
 
 - 客户端能力直接修改 `nuwa-electron-shell/`；构建和发布编排修改根 `scripts/`、`.github/`；前端业务界面修改 `nuwax/`，完成后更新前端源码/产物双 pin。

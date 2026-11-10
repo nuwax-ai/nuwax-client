@@ -30,7 +30,8 @@ function connect(){
    if(restoreId!==undefined&&m.id===restoreId){
     restoreId=undefined;
     if(m.error){s.destroy();return;}
-    initializedResult=m.result;ready=true;attempt=0;s.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+    initializedResult=m.result;toolsResult=undefined;ready=true;attempt=0;s.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+    emit({jsonrpc:'2.0',method:'notifications/tools/list_changed'});
     const init=initialization&&pending.get(key(initialization.id));
     if(init){pending.delete(key(init.id));emit({...m,id:init.id});}
     continue;

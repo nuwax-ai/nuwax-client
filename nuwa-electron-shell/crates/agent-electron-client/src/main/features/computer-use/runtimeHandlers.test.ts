@@ -34,7 +34,7 @@ vi.mock("./computerUse", () => ({
   suspendCua: vi.fn().mockResolvedValue(undefined), cancelCuaPermissionRequest: vi.fn(),
   ensureCuaOnBoot: vi.fn().mockResolvedValue(undefined),
   getCuaStatus: vi.fn(), getCuaHelperAppPath: vi.fn(() => "/owned/Nuwax Computer Use.app"),
-  setCuaEnabled: vi.fn(), requestCuaPermissions: vi.fn(), installCuaHelper: vi.fn(),
+  setCuaEnabled: vi.fn(), setCuaEngine: vi.fn(), requestCuaPermissions: vi.fn(), installCuaHelper: vi.fn(),
   getVlmConfig: vi.fn(), setVlmConfig: vi.fn(), testVlm: vi.fn(),
   getCuaDiagnostics: vi.fn(), listCuaWindows: vi.fn(), setCuaScope: vi.fn(),
   getCuaTasks: vi.fn().mockReturnValue([]), bindWindowTask: vi.fn(), pauseWindowTask: mocks.taskPause,
@@ -46,6 +46,7 @@ vi.mock("./conversationContext", () => ({ observeCuaConversation: () => ({ get: 
 vi.mock("./controlWindow", () => ({ createCuaControlWindow: () => () => {} }));
 import { computerUseFeature } from "./index";
 import { createTrustedIpc } from "../_kit/trustedIpc";
+import { setCuaEngine } from "./computerUse";
 
 beforeEach(() => {
   vi.clearAllMocks(); mocks.handlers.clear(); mocks.events.clear(); mocks.activities.length = 0;
@@ -131,7 +132,7 @@ describe("Computer Use trusted controls", () => {
   });
   it("rejects foreign callers before any control, observation or clear action", async () => {
     register();
-    for (const name of ["pause", "resume", "stop", "recover", "selfTest", "clearHistory"]) {
+    for (const name of ["pause", "resume", "stop", "recover", "selfTest", "clearHistory", "setEngine"]) {
       expect((await mocks.handlers.get(`cua:${name}`)!({})).success).toBe(false);
     }
     expect(mocks.handlers.get("cua:getRuntime")!({})).toBeNull();
@@ -142,6 +143,8 @@ describe("Computer Use trusted controls", () => {
     expect((await mocks.handlers.get("cua:resume")!({ trusted: true })).error).toBe("loginRequired");
     expect((await mocks.handlers.get("cua:recover")!({ trusted: true })).error).toBe("loginRequired");
     expect((await mocks.handlers.get("cua:stop")!({ trusted: true })).success).toBe(true);
+    expect((await mocks.handlers.get("cua:setEngine")!({ trusted: true }, "agent-desktop")).error).toBe("loginRequired");
+    expect(setCuaEngine).not.toHaveBeenCalled();
   });
   it("reports unavailable shortcuts and pauses on lock without auto-resuming on unlock", () => {
     register();

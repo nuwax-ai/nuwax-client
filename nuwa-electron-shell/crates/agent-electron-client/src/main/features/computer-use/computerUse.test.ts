@@ -361,6 +361,66 @@ beforeEach(async () => {
 });
 afterEach(async () => { mocks.daemonReady = false; await cuaModule.suspendCua("appQuit"); });
 
+describe("Computer Use engine selection", () => {
+  it("defaults to CUA and persists an explicit selection without enabling desktop execution", async () => {
+    expect((await getCuaStatus()).engine).toBe("cua-driver");
+    const result = await cuaModule.setCuaEngine("agent-desktop");
+    expect(result.success).toBe(true);
+    expect(result.status).toMatchObject({ engine: "agent-desktop", engineBusy: false, enabled: false, running: false });
+    expect(mocks.settings.get("computerUsePreferences.v1")).toMatchObject({ computerUseEngine: "agent-desktop", computerUseConfigRevision: 1 });
+    expect(cuaModule.getCuaRuntime().engine).toBe("agent-desktop");
+    expect(mocks.spawnCalls).toHaveLength(0);
+    expect((await cuaModule.setCuaEngine("cua-driver")).status.engine).toBe("cua-driver");
+  });
+  it("rejects invalid selections and failed persistence without silently choosing another engine", async () => {
+    expect((await cuaModule.setCuaEngine("shell-command")).error).toBe("invalidEngine");
+    mocks.settingFailure = true;
+    const result = await cuaModule.setCuaEngine("agent-desktop");
+    expect(result).toMatchObject({ success: false, error: "configSaveFailed", status: { engine: "cua-driver" } });
+    expect(mocks.settings.has("computerUsePreferences.v1")).toBe(false);
+  });
+  it("admits only the pinned desktop payload before any native execution", async () => {
+    await cuaModule.setCuaEngine("agent-desktop");
+    const directory = path.join(process.resourcesPath, "agent-desktop", `darwin-${process.arch}`);
+    fs.mkdirSync(directory, { recursive: true });
+    const files = [`agent-desktop-darwin-${process.arch}`, `agent-desktop-macos-helper-darwin-${process.arch}`];
+    for (const name of files) fs.writeFileSync(path.join(directory, name), "fixture");
+    const manifest = { version: "1.2.0", integrity: "sha512-sp8hHs8JfnuZe8ZQwiKZrqSOlu26SSeZXkjDog4KsU31L09G3uZJa8pITGN2vORif9uuh0iOSJHD146CEyTqag==",
+      files: Object.fromEntries(files.map(name => [name, createHash("sha256").update("fixture").digest("hex")])) };
+    fs.writeFileSync(path.join(directory, "source.json"), JSON.stringify(manifest));
+    expect((await cuaModule.installCuaHelper()).success).toBe(true);
+    fs.writeFileSync(path.join(directory, "source.json"), JSON.stringify({ ...manifest, version: "unreviewed" }));
+    expect(await cuaModule.installCuaHelper()).toMatchObject({ success: false, error: "helperIdentityUnverified" });
+    expect(mocks.spawnCalls).toHaveLength(0);
+  });
+  it("keeps running and paused tasks on their original engine", async () => {
+    makeHelperApp(path.join(process.resourcesPath as string, "computer-use")); mocks.autoReady = true; mocks.permissionGranted = true;
+    expect((await cuaModule.setCuaEnabled(true)).success).toBe(true);
+    const controller = mocks.gatewayOptions.controller;
+    expect(controller.begin("owner", "get_window_state", { pid: 42, window_id: 7 }).error).toBeUndefined();
+    expect((await cuaModule.setCuaEngine("agent-desktop")).error).toBe("engineBusy");
+    controller.pause("userPaused");
+    expect((await cuaModule.setCuaEngine("agent-desktop")).error).toBe("engineBusy");
+    expect((await getCuaStatus()).engine).toBe("cua-driver");
+  });
+  it("cancels a desktop permission request during source verification before any native prompt", async () => {
+    await cuaModule.setCuaEngine("agent-desktop");
+    const directory = path.join(process.resourcesPath, "agent-desktop", `darwin-${process.arch}`);
+    fs.mkdirSync(directory, { recursive: true });
+    const files = [`agent-desktop-darwin-${process.arch}`, `agent-desktop-macos-helper-darwin-${process.arch}`];
+    for (const name of files) fs.writeFileSync(path.join(directory, name), "fixture");
+    fs.writeFileSync(path.join(directory, "source.json"), JSON.stringify({ version: "1.2.0", integrity: "sha512-sp8hHs8JfnuZe8ZQwiKZrqSOlu26SSeZXkjDog4KsU31L09G3uZJa8pITGN2vORif9uuh0iOSJHD146CEyTqag==",
+      files: Object.fromEntries(files.map(name => [name, createHash("sha256").update("fixture").digest("hex")])) }));
+    let finish!: () => void; mocks.installGate = new Promise<void>(resolve => { finish = resolve; });
+    const first = cuaModule.requestCuaPermissions();
+    expect(cuaModule.requestCuaPermissions()).toBe(first);
+    expect((await cuaModule.setCuaEngine("cua-driver")).error).toBe("engineBusy");
+    expect(cuaModule.cancelCuaPermissionRequest()).toBe(true); finish();
+    expect(await first).toMatchObject({ success: false, error: "operationCancelled" });
+    expect(mocks.spawnCalls).toHaveLength(0);
+  });
+});
+
 describe("cua MCP 条目注入", () => {
   it("开关开→upsert cua stdio 条目并同步 Proxy", async () => {
     makeHelperApp(path.dirname(stableHelperPath()));

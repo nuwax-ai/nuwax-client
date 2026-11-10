@@ -34,6 +34,7 @@
     "prepare:mcp-proxy": "node scripts/prepare/prepare-mcp-proxy.js",
     "prepare:nuwaxcode": "node scripts/prepare/prepare-nuwaxcode.js",
     "prepare:harness": "node scripts/prepare/prepare-harness.js",
+    "prepare:agent-desktop": "node scripts/prepare/prepare-agent-desktop.js",
     "prepare:all": "node scripts/prepare/prepare-all.js",
     "prepare:nuwax-file-server": "node scripts/prepare/prepare-nuwax-file-server.js",
     "prepare:claude-code-acp-ts": "node scripts/prepare/prepare-claude-code-acp-ts.js",
@@ -175,6 +176,11 @@
       }
     ],
     "extraResources": [
+      {
+        "from": "resources/agent-desktop",
+        "to": "agent-desktop",
+        "filter": ["**/*"]
+      },
       {
         "from": "src/shared/locales",
         "to": "locales",

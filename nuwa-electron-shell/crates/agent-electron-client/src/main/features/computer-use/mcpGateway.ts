@@ -1,6 +1,6 @@
 import net from "node:net";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { CuaDriverTransport } from "./driverTransport";
 import { CuaTaskController, CUA_FINAL_REASONS, CUA_PAUSING_LIMITS, type CuaPermit } from "./taskController";
 import { classifyReply, CUA_READS, type CuaOutcome } from "./cuaOutcome";
 import { CUA_AGENT_CURSOR_ENABLE, CUA_REFUSED_HINT, cuaMergeInstructions, cuaRejectionText, cuaToolDescription } from "./cuaGuidance";
@@ -26,7 +26,7 @@ type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string;
 type Pending = { method?: string; permit?: CuaPermit; call?: { tool: string; args: unknown }; timer: ReturnType<typeof setTimeout>;
   release?: () => void; aborted?: boolean; held?: boolean; replied?: boolean; dispatched?: boolean; revision?: number;
   complete?: (error?: Error) => void };
-type Connection = { id: string; socket: net.Socket; child: ChildProcessWithoutNullStreams | null;
+type Connection = { id: string; socket: net.Socket; child: CuaDriverTransport | null;
   grant?: unknown; owner?: string;
   initialization?: Rpc; initialized: boolean; generation: number;
   warmingPromise?: Promise<void>;
@@ -52,7 +52,7 @@ function nativeElementArgs(raw: unknown): unknown {
   return native;
 }
 
-function stopDriver(child: ChildProcessWithoutNullStreams | null) {
+function stopDriver(child: CuaDriverTransport | null) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   child.kill();
   const kill = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 2000);
@@ -68,7 +68,7 @@ export class CuaMcpGateway {
   private watchdog: ReturnType<typeof setInterval> | null = null;
   constructor(private options: {
     controller: CuaTaskController | CuaTaskRegistry;
-    launch: () => ChildProcessWithoutNullStreams;
+    launch: () => CuaDriverTransport;
     allowedTools: readonly string[];
     onFailure: (reason: string, owner?: string) => void;
     timeoutMs?: number;
@@ -98,6 +98,7 @@ export class CuaMcpGateway {
     beforeCall?: (owner: string, call: { tool: string; args: unknown }) => Promise<{ tool: string; args: unknown }>;
     /** Protocol discovery is available even when native execution is disabled. */
     catalog?: () => Promise<CuaTool[]>;
+    engineInstructions?: () => string | undefined;
     unavailable?: () => string | null;
     configurationRevision?: () => number;
     onTransportFailure?: (owner: string | undefined, uncertain: boolean) => void;
@@ -248,8 +249,8 @@ export class CuaMcpGateway {
           if (pending.method === "initialize" && !message.error) {
             connection.initialized = true;
             if (message.result) {
-              message.result.instructions = this.options.tasks ? CUA_TASK_GUIDANCE
-                : cuaMergeInstructions(this.scope(connection.owner), message.result.instructions);
+              message.result.instructions = this.options.engineInstructions?.() ?? (this.options.tasks ? CUA_TASK_GUIDANCE
+                : cuaMergeInstructions(this.scope(connection.owner), message.result.instructions));
               line = JSON.stringify(message);
             }
           }
@@ -264,7 +265,7 @@ export class CuaMcpGateway {
             const scope = this.scope(currentOwner);
             message.result.tools = message.result.tools
               .filter((tool) => this.options.allowedTools.includes(tool.name) && visible.includes(tool.name))
-              .map((tool) => ({ ...tool, description: this.options.tasks
+              .map((tool) => ({ ...tool, description: this.options.engineInstructions?.() ? tool.description : this.options.tasks
                 ? CUA_TASK_GUIDANCE + "\n\n" + (tool.description ?? "") : cuaToolDescription(scope, tool.name, tool.description) }));
             line = JSON.stringify(message);
           }
@@ -492,10 +493,10 @@ export class CuaMcpGateway {
         const requested = (message.params as Record<string, unknown> | undefined)?.protocolVersion;
         result = { protocolVersion: typeof requested === "string" && SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: true } }, serverInfo: { name: "nuwax-computer-use", version: "1.0.0" },
-          instructions: cuaMergeInstructions(this.scope(connection.owner), "Configuration may change during this conversation. Obey the host's current execution policy and observe again after recovery.") };
+          instructions: this.options.engineInstructions?.() ?? cuaMergeInstructions(this.scope(connection.owner), "Configuration may change during this conversation. Obey the host's current execution policy and observe again after recovery.") };
       } else {
         result = { tools: tools.map(tool => ({ ...tool,
-          description: this.options.tasks ? CUA_TASK_GUIDANCE + "\n\n" + (tool.description ?? "")
+          description: this.options.engineInstructions?.() ? tool.description : this.options.tasks ? CUA_TASK_GUIDANCE + "\n\n" + (tool.description ?? "")
             : cuaToolDescription(this.scope(connection.owner), tool.name, tool.description) })) };
       }
       connection.socket.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
