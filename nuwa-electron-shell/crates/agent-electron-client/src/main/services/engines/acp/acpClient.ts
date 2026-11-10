@@ -56,6 +56,44 @@ import {
   resolveOpenAICompatModel,
 } from "./openAICompatRouting";
 
+export interface AcpProcessErrorMetadata {
+  code?: string;
+  errno?: number | string;
+  syscall?: string;
+}
+
+const processErrors = new WeakMap<ChildProcess, AcpProcessErrorMetadata>();
+
+// Only retain system error tokens, never messages, paths or arbitrary properties.
+function safeProcessError(error: Error): AcpProcessErrorMetadata {
+  const { code, errno, syscall } = error as NodeJS.ErrnoException;
+  const metadata: AcpProcessErrorMetadata = {};
+  if (typeof code === "string" && /^E[A-Z0-9_]{1,63}$/.test(code)) {
+    metadata.code = code;
+  }
+  if (typeof errno === "number" && Number.isFinite(errno)) {
+    metadata.errno = errno;
+  } else if (typeof errno === "string" && /^E[A-Z0-9_]{1,63}$/.test(errno)) {
+    metadata.errno = errno;
+  }
+  // Node can report e.g. "spawn /private/path/to/binary".
+  if (typeof syscall === "string") {
+    const call = /^([a-z][a-z0-9_]{0,63})(?:\s|$)/i.exec(syscall);
+    if (call) metadata.syscall = call[1];
+  }
+  return metadata;
+}
+
+export function getAcpProcessSnapshot(proc: ChildProcess | null) {
+  return {
+    pid: proc?.pid ?? null,
+    exitCode: proc?.exitCode ?? null,
+    signalCode: proc?.signalCode ?? null,
+    killed: proc?.killed ?? false,
+    processError: proc ? { ...processErrors.get(proc) } : {},
+  };
+}
+
 function extractSessionIdFromLine(line: string): string | undefined {
   try {
     const obj = JSON.parse(line) as {
@@ -1176,6 +1214,8 @@ export async function createAcpConnection(
   });
 
   proc.on("error", (error) => {
+    processErrors.set(proc, safeProcessError(error));
+    log.error("[AcpClient] Process error diagnostics", getAcpProcessSnapshot(proc));
     log.error("[AcpClient] Process error:", error);
   });
 
@@ -1282,6 +1322,7 @@ export async function createAcpConnection(
       engine: config.engineType ?? "unknown",
     });
   } catch (e) {
+    log.error("[AcpClient] Post-spawn setup failure diagnostics", getAcpProcessSnapshot(proc));
     // Post-spawn setup failed — kill the spawned process to prevent orphan
     log.error("[AcpClient] Post-spawn setup failed, killing process:", e);
     if (proc.pid) {

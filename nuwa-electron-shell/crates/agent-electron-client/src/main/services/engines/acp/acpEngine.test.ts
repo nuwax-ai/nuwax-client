@@ -531,6 +531,43 @@ describe("AcpEngine.init", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([false, true])("records init failure before destroy (exited=%s)", async (exited) => {
+    const log = (await import("electron-log")).default;
+    const { firstTokenTrace } = await import("../perf/firstTokenTrace");
+    const trace = vi.spyOn(firstTokenTrace, "trace");
+    const engine = new AcpEngine("nuwaxcode");
+    const failure = new Error("initialize failed");
+    const proc = { on: vi.fn(), pid: 390, exitCode: exited ? 9 : null, signalCode: exited ? "SIGTERM" : null, killed: false } as any;
+    const snapshot = { pid: 390, exitCode: proc.exitCode, signalCode: proc.signalCode, killed: false, processError: { code: "EPIPE", errno: -32, syscall: "write" } };
+    vi.spyOn(acpClient, "getAcpProcessSnapshot").mockReturnValue(snapshot);
+    vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({ binPath: "test-agent", binArgs: [], isNative: false });
+    vi.spyOn(acpClient, "createAcpConnection").mockResolvedValue({
+      connection: { initialize: vi.fn().mockRejectedValue(failure) }, process: proc, isolatedHome: null, cleanup: vi.fn(),
+    } as any);
+    vi.spyOn(acpClient, "loadAcpSdk").mockResolvedValue({ PROTOCOL_VERSION: "1.0.0" } as any);
+    const events: unknown[] = [];
+    engine.on("error", (error) => events.push(error));
+    let beforeDestroy: { logged: boolean; traced: boolean; events: unknown[]; snapshotCalls: unknown[][] } | undefined;
+    const destroy = vi.spyOn(engine, "destroy").mockImplementation(async () => {
+      beforeDestroy = {
+        logged: vi.mocked(log.error).mock.calls.some(([message, data]) =>
+          String(message).includes("Init failure diagnostics") && data === snapshot),
+        traced: trace.mock.calls.some(([name, , data]) =>
+          name === "acp.init.failed" && JSON.stringify(data) === JSON.stringify({ error: "initialize failed", ...snapshot })),
+        events: [...events],
+        snapshotCalls: vi.mocked(acpClient.getAcpProcessSnapshot).mock.calls,
+      };
+      proc.killed = true;
+    });
+    expect(await engine.init({ engine: "nuwaxcode", workspaceDir: "/tmp" } as any)).toEqual({ ok: false, error: "initialize failed" });
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(beforeDestroy).toMatchObject({ logged: true, traced: true, events: [] });
+    expect(beforeDestroy?.snapshotCalls).toContainEqual([proc]);
+    expect(trace).toHaveBeenCalledWith("acp.init.failed", { engine: "nuwaxcode" }, { error: "initialize failed", ...snapshot });
+    expect(events).toEqual([failure]);
+    expect(snapshot.killed).toBe(false);
+  });
+
   it("nuwaxcode init 应注入 MCP 配置", async () => {
     const engine = new AcpEngine("nuwaxcode");
     let capturedEnv: Record<string, string> | undefined;

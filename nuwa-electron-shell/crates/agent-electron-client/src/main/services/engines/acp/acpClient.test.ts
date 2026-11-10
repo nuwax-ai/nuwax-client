@@ -225,3 +225,65 @@ describe("resolveAcpBinary — custom node agent", () => {
     expect(mockResolveCustomAgentBinary).toHaveBeenCalledWith("node");
   });
 });
+
+
+vi.mock("./acpProcess", () => ({ spawnAcpProcess: vi.fn() }));
+vi.mock("../../system/processRegistry", () => ({
+  processRegistry: { register: vi.fn(), unregister: vi.fn() },
+}));
+vi.mock("../../utils/processTree", () => ({ killProcessTreeGraceful: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../../utils/shellProfile", () => ({ writeBundledDevShellProfiles: vi.fn() }));
+vi.mock("./isolatedHomePaths", () => ({
+  resolveIsolatedHomePath: () => ({ homeDir: `/private/tmp/nw390-client-test-${process.pid}`, runId: "test-run" }),
+}));
+
+describe("ACP process failure diagnostics", () => {
+  it.each([
+    [{ code: "ENOENT", errno: -2, syscall: "spawn /secret/binary" }, { code: "ENOENT", errno: -2, syscall: "spawn" }],
+    [{ code: "EPIPE", errno: "EPIPE", syscall: "write" }, { code: "EPIPE", errno: "EPIPE", syscall: "write" }],
+    [{ code: "/secret", errno: "secret-token", syscall: "C:\\secret\\binary" }, {}],
+  ])("captures safe original errors and terminal state before setup cleanup: %j", async (fields, expected) => {
+    const { EventEmitter } = await import("events");
+    const { PassThrough, Writable } = await import("stream");
+    const fs = await import("fs");
+    const log = (await import("electron-log")).default;
+    const { spawnAcpProcess } = await import("./acpProcess");
+    const { killProcessTreeGraceful } = await import("../../utils/processTree");
+    const { createAcpConnection, getAcpProcessSnapshot } = await import("./acpClient");
+    const proc = Object.assign(new EventEmitter(), {
+      pid: 390, exitCode: 7, signalCode: null, killed: false,
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+      unref: vi.fn(), kill: vi.fn(),
+    });
+    vi.mocked(spawnAcpProcess).mockReturnValue(proc as any);
+    const failure = new Error("setup failed /secret credential");
+    const bridge = vi.spyOn(Writable, "toWeb").mockImplementation(() => {
+      expect(proc.listenerCount("error")).toBe(1);
+      proc.emit("error", Object.assign(new Error("original /secret credential"), fields));
+      throw failure;
+    });
+    let diagnosticBeforeKill: unknown;
+    vi.mocked(killProcessTreeGraceful).mockImplementationOnce(async () => {
+      diagnosticBeforeKill = vi.mocked(log.error).mock.calls
+        .filter(([message]) => message === "[AcpClient] Post-spawn setup failure diagnostics")
+        .at(-1)?.[1];
+      proc.killed = true;
+    });
+    try {
+      await expect(createAcpConnection({ binPath: "test-agent", binArgs: [], workspaceDir: "/private/tmp" } as any, {} as any)).rejects.toBe(failure);
+      expect(log.error).toHaveBeenCalledWith("[AcpClient] Process error diagnostics", {
+        pid: 390, exitCode: 7, signalCode: null, killed: false, processError: expected,
+      });
+      expect(diagnosticBeforeKill).toEqual({
+        pid: 390, exitCode: 7, signalCode: null, killed: false, processError: expected,
+      });
+      const snapshot = getAcpProcessSnapshot(proc as any);
+      expect(snapshot.processError).toEqual(expected);
+      snapshot.processError.code = "MUTATED";
+      expect(getAcpProcessSnapshot(proc as any).processError).toEqual(expected);
+    } finally {
+      bridge.mockRestore();
+      fs.rmSync(`/private/tmp/nw390-client-test-${process.pid}`, { recursive: true, force: true });
+    }
+  });
+});

@@ -41,6 +41,7 @@ import {
 import {
   createAcpConnection,
   getMcpTransportSnapshot,
+  getAcpProcessSnapshot,
   loadAcpSdk,
   resolveAcpBinary,
   type AcpClientSideConnection,
@@ -867,11 +868,13 @@ export class AcpEngine extends EventEmitter {
           : typeof error === "object"
             ? safeStringify(error)
             : String(error);
+      const processSnapshot = getAcpProcessSnapshot(this.acpProcess);
+      log.error(`${this.logTag} Init failure diagnostics`, processSnapshot);
       log.error(`${this.logTag} Init failed:`, error);
       firstTokenTrace.trace(
         "acp.init.failed",
         { engine: this.engineName },
-        { error: reason },
+        { error: reason, ...processSnapshot },
       );
       // Ensure spawned process is cleaned up on init failure
       await this.destroy().catch(() => {});
