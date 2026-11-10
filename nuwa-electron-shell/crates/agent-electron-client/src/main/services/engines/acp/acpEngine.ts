@@ -73,6 +73,11 @@ import {
   executePromptWithRetry,
 } from "./acpPromptRetry";
 import {
+  readSessionFailureMeta,
+  requestsNewSession,
+  shouldFailTurn,
+} from "./acpSessionFailure";
+import {
   recordUserMessageToMemory,
   buildMemoryEnhancedPrompt,
 } from "./acpChatMemory";
@@ -219,6 +224,43 @@ interface AcpSession extends SessionWorkspaceRef {
 // Session counter removed — ACP protocol UUID is used as canonical session.id
 
 export class AcpEngine extends EventEmitter {
+  /**
+   * nuwax-harness 在上下文压不动时会把 `_meta.codex.sessionFailure` 挂在
+   * prompt 结果上（fork-codex-acp-ts 的 legacy 元数据通道）。这里只做透出：
+   * 渲染层/上层据此提示用户或换新会话。自动换会话会丢掉用户正在看的对话，
+   * 属于产品决策，不在引擎层静默执行。
+   */
+  private reportSessionFailureSignal(
+    sessionId: string,
+    meta: Record<string, unknown> | undefined,
+  ): { needsNewSession: boolean; shouldFail: boolean; message?: string } | null {
+    const signal = readSessionFailureMeta(meta);
+    if (!signal) return null;
+    const needsNewSession = requestsNewSession(signal);
+    const shouldFail = shouldFailTurn(signal);
+    log.warn(`${this.logTag} acp.prompt.session_failure`, {
+      sessionId,
+      category: signal.category,
+      actions: signal.actions,
+      message: signal.message,
+      needsNewSession,
+    });
+    this.emit("computer:progress", {
+      sessionId,
+      acpSessionId: sessionId,
+      messageType: "agentSessionUpdate",
+      subType: "session_context_exhausted",
+      data: {
+        category: signal.category,
+        actions: signal.actions,
+        message: signal.message ?? null,
+        needsNewSession,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    return { needsNewSession, shouldFail, message: signal.message };
+  }
+
   private readonly agentSessions = createDesktopAgentSessions();
   private config: AgentConfig | null = null;
   private _ready = false;
@@ -1494,7 +1536,10 @@ export class AcpEngine extends EventEmitter {
         engine: this.engineName,
       });
 
-      const result = await new Promise<{ stopReason: string }>(
+      const result = await new Promise<{
+        stopReason: string;
+        _meta?: Record<string, unknown>;
+      }>(
         (resolve, reject) => {
           this.activePromptRejects.set(sessionId, reject);
 
@@ -1551,6 +1596,17 @@ export class AcpEngine extends EventEmitter {
       // Some adapters report an upstream failure as an update, then resolve end_turn.
       // Only end_turn is a successful completion; limits/refusal must reach the error sink.
       promptResolved = true;
+      const sessionFailure = this.reportSessionFailureSignal(sessionId, result._meta);
+      // nuwax-harness 判定该会话的历史已无法压缩：这一轮虽然以 end_turn 返回，
+      // 但内容只是错误文本。让它走失败分支，用户才能看到"需要新会话"而不是
+      // 一条看似成功的回复（2026-11-09 review P2-5）。
+      if (sessionFailure?.shouldFail) {
+        // 会话保留：用户可以在同一会话里重试、缩短输入，或换成窗口更大的模型。
+        throw new Error(
+          sessionFailure.message ??
+            "The request did not fit the model's context window; retry, shorten the input, or switch to a model with a larger window.",
+        );
+      }
       if (upstreamError) throw upstreamError;
       switch (result.stopReason) {
         case "end_turn":
