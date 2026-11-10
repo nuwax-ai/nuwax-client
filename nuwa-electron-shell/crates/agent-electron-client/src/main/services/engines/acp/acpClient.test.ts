@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
@@ -233,8 +235,9 @@ vi.mock("../../system/processRegistry", () => ({
 }));
 vi.mock("../../utils/processTree", () => ({ killProcessTreeGraceful: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("../../utils/shellProfile", () => ({ writeBundledDevShellProfiles: vi.fn() }));
+const diagnosticTestHome = join(tmpdir(), `nw390-client-test-${process.pid}`);
 vi.mock("./isolatedHomePaths", () => ({
-  resolveIsolatedHomePath: () => ({ homeDir: `/private/tmp/nw390-client-test-${process.pid}`, runId: "test-run" }),
+  resolveIsolatedHomePath: () => ({ homeDir: diagnosticTestHome, runId: "test-run" }),
 }));
 
 describe("ACP process failure diagnostics", () => {
@@ -270,7 +273,7 @@ describe("ACP process failure diagnostics", () => {
       proc.killed = true;
     });
     try {
-      await expect(createAcpConnection({ binPath: "test-agent", binArgs: [], workspaceDir: "/private/tmp" } as any, {} as any)).rejects.toBe(failure);
+      await expect(createAcpConnection({ binPath: "test-agent", binArgs: [], workspaceDir: tmpdir() } as any, {} as any)).rejects.toBe(failure);
       expect(log.error).toHaveBeenCalledWith("[AcpClient] Process error diagnostics", {
         pid: 390, exitCode: 7, signalCode: null, killed: false, processError: expected,
       });
@@ -283,7 +286,7 @@ describe("ACP process failure diagnostics", () => {
       expect(getAcpProcessSnapshot(proc as any).processError).toEqual(expected);
     } finally {
       bridge.mockRestore();
-      fs.rmSync(`/private/tmp/nw390-client-test-${process.pid}`, { recursive: true, force: true });
+      fs.rmSync(diagnosticTestHome, { recursive: true, force: true });
     }
   });
 });
