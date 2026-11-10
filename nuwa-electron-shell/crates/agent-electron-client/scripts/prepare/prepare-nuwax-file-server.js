@@ -22,6 +22,8 @@ const { execSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
 const productRoot = path.resolve(__dirname, '../../../../..');
 const sourcePatches = require(path.join(productRoot, 'scripts/source-patches.cjs'));
+const sourceCache = require(path.join(productRoot, 'scripts/client/prepared-source-cache.cjs'));
+const frozenSource = sourceCache.sourceIdentity('file-server');
 
 const projectRoot = getProjectRoot();
 const electronClientRoot = projectRoot;
@@ -127,6 +129,12 @@ function ensureSourceRepo() {
  * @returns {string}
  */
 function fetchRemoteCommitHash() {
+  if (frozenSource) {
+    execSync(`git fetch origin ${frozenSource.revision}`, { cwd: SOURCE_DIR, stdio: 'inherit' });
+    const revision = git(SOURCE_DIR, 'rev-parse FETCH_HEAD');
+    if (revision !== frozenSource.revision) throw new Error('Frozen file-server source mismatch');
+    return revision;
+  }
   console.log(`[prepare-nuwax-file-server] 拉取远程 ${GIT_BRANCH}...`);
   git(SOURCE_DIR, `fetch origin ${GIT_BRANCH}`);
   return git(SOURCE_DIR, `rev-parse origin/${GIT_BRANCH}`);
@@ -141,8 +149,8 @@ function hardResetToRemote(remoteHash) {
   console.log(
     `[prepare-nuwax-file-server] 对齐远程 origin/${GIT_BRANCH} (${remoteHash.slice(0, 8)})...`,
   );
-  git(SOURCE_DIR, `checkout -B ${GIT_BRANCH} origin/${GIT_BRANCH}`);
-  git(SOURCE_DIR, `reset --hard origin/${GIT_BRANCH}`);
+  git(SOURCE_DIR, `checkout --detach ${remoteHash}`);
+  git(SOURCE_DIR, `reset --hard ${remoteHash}`);
   // -fd：删除未跟踪文件/目录，防止与远程新增同名路径冲突
   git(SOURCE_DIR, 'clean -fd');
 }
@@ -160,7 +168,8 @@ function installAndBuild() {
 
   console.log('[prepare-nuwax-file-server] 安装依赖...');
   // Windows 的临时副本可能与仓库不在同一盘符，cwd 必须由子进程设置。
-  exec('npm install --ignore-scripts', { cwd: buildSourceDir });
+  exec(frozenSource ? sourceCache.lockedInstallCommand(buildSourceDir) : 'npm install --ignore-scripts', { cwd: buildSourceDir,
+    ...(frozenSource ? { env: { ...process.env, COREPACK_ENABLE_PROJECT_SPEC: '0', COREPACK_ENABLE_AUTO_PIN: '0' } } : {}) });
 
   console.log('[prepare-nuwax-file-server] 构建项目...');
   exec('npm run build', { cwd: buildSourceDir });
@@ -213,6 +222,10 @@ function copyToResources(remoteHash) {
 }
 
 function main() {
+  if (sourceCache.preparedSourceReady('file-server', destDir)) {
+    console.log('[prepare-nuwax-file-server] 复用已核验的固定源码产物');
+    return;
+  }
   ensureSourceRepo();
 
   const remoteHash = fetchRemoteCommitHash();
@@ -220,7 +233,7 @@ function main() {
   const destReady = hasDestBuild();
 
   // 缓存命中：远程未变 + resources 产物齐全 → 整段跳过
-  if (cachedHash && cachedHash === remoteHash && destReady && (!sourcePatch || readTrimmedFile(patchMarker) === sourcePatch.hash)) {
+  if (!frozenSource && cachedHash && cachedHash === remoteHash && destReady && (!sourcePatch || readTrimmedFile(patchMarker) === sourcePatch.hash)) {
     let version = 'unknown';
     try {
       version = JSON.parse(
@@ -256,6 +269,7 @@ function main() {
     installAndBuild();
     copyToResources(remoteHash);
     if (sourcePatch) fs.writeFileSync(patchMarker, `${sourcePatch.hash}\n`);
+    sourceCache.recordPreparedSource('file-server', SOURCE_DIR, destDir);
   } finally { patched?.dispose(); }
 }
 

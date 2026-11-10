@@ -6,7 +6,7 @@ inputs:
     description: restore or save
   kind:
     required: true
-    description: helper, capture or bundled
+    description: Exact allowlisted unsigned native, download or prepared dependency resource kind
   key:
     required: true
     description: Exact source, recipe, platform and toolchain identity
