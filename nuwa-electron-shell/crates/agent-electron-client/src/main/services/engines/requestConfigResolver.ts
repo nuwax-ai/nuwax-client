@@ -339,6 +339,9 @@ export function buildEffectiveConfig(args: {
     baseUrl: mp?.base_url || base.baseUrl,
     model,
     apiProtocol: mp?.api_protocol || base.apiProtocol,
+    // Provider 配置名（含 "-responses" 时 acpClient 直连 Responses 线，见
+    // acpClient.createAcpConnection 的名称开关；2026-11-10 本地联调）
+    providerName: mp?.name,
     env: mergedEnv,
     mcpServers: freshMcpServers,
   };

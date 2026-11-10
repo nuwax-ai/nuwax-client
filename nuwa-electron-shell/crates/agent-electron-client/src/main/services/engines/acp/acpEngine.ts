@@ -783,6 +783,7 @@ export class AcpEngine extends EventEmitter {
           baseUrl: config.baseUrl,
           model: config.model,
           apiProtocol: config.apiProtocol,
+          providerName: config.providerName,
           env: spawnEnv,
           engineType: this.engineName,
           purpose: config.purpose ?? "engine",
