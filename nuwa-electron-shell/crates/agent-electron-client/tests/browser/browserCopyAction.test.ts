@@ -85,6 +85,7 @@ function open(
     log: { warn: vi.fn() },
   } as unknown as FeatureContext;
   const contents = Object.assign(new EventEmitter(), {
+    session: {},
     getURL: () => url,
     getTitle: () => "Document",
     isDestroyed: () => false,
