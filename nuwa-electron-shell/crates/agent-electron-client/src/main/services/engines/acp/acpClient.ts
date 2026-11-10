@@ -21,6 +21,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { app } from "electron";
 import log from "electron-log";
+import { resolveCodexRoute, takeAliasedEnv } from "./acpEnvAliases";
 import {
   getAppEnv,
   applySharedPackageManagerCacheEnv,
@@ -89,6 +90,13 @@ interface McpTransportTelemetry {
   lastReconnectAt?: number;
   lastSignal?: string;
 }
+
+/**
+ * 后端未按模型下发上下文窗口时的兜底值。仅当 NUWAX_MODEL_CONTEXT_WINDOW /
+ * CODEX_MODEL_CONTEXT_WINDOW 都没设置时使用；后端下发值优先（2026-11-09 事故复盘）。
+ * 对外只暴露 NUWAX_ 前缀：日志与进程环境里不应出现上游引擎的名字。
+ */
+const DEFAULT_NUWAX_MODEL_CONTEXT_WINDOW = "200000";
 
 const mcpTransportTelemetry = new WeakMap<
   ChildProcess,
@@ -856,6 +864,18 @@ export async function createAcpConnection(
       "[AcpClient] ⚠️ config.model not set, engine will use built-in default model (not recommended)",
     );
   }
+  // Per-source route capture BEFORE any merging (2026-11-09 review P1):
+  // merging config.env into env first could weld the backend's OPENAI_BASE_URL
+  // to the process env's OPENAI_API_KEY, presenting two gateways as one route.
+  const processEnvRoute = {
+    baseUrl: appEnv.OPENAI_BASE_URL,
+    apiKey: appEnv.OPENAI_API_KEY,
+  };
+  const backendEnvRoute = {
+    baseUrl: config.env?.OPENAI_BASE_URL,
+    apiKey: config.env?.OPENAI_API_KEY,
+  };
+
   if (config.env) Object.assign(env, config.env);
 
   // nuwaxcode runs on opencode and prefers OPENCODE_MODEL.
@@ -870,36 +890,77 @@ export async function createAcpConnection(
   // harness adapter 使用 CODEX_* 配置模型、端点与认证。
   const codexResolvedModel = resolveOpenAICompatModel({
     model: config.model,
-    envModel: env.OPENCODE_MODEL || env.ANTHROPIC_MODEL || env.CODEX_MODEL,
+    envModel:
+      env.OPENCODE_MODEL ||
+      env.ANTHROPIC_MODEL ||
+      env.NUWAX_MODEL ||
+      env.CODEX_MODEL,
   });
   applyOpenAICompatibleEnv(config, env);
 
   if (config.engineType === "codex" || config.engineType === "codex-cli") {
-    if (config.apiKey) {
-      env.CODEX_API_KEY = config.apiKey;
+    // 先把 NUWAX_/CODEX_ 两种拼写收敛成一份（NUWAX_ 优先，来自后端 agent_config.env
+    // 或进程环境），再按明确优先级写回唯一拼写：适配器遇到"两种拼写、两个取值"
+    // 会直接启动失败（2026-11-09 review P1）。
+    const backend = {
+      model: takeAliasedEnv(env, "MODEL"),
+      baseUrl: takeAliasedEnv(env, "BASE_URL"),
+      apiKey: takeAliasedEnv(env, "API_KEY"),
+      providerId: takeAliasedEnv(env, "PROVIDER_ID"),
+      wireApi: takeAliasedEnv(env, "WIRE_API"),
+      apiProtocol: takeAliasedEnv(env, "API_PROTOCOL"),
+      disableThinking: takeAliasedEnv(env, "DISABLE_THINKING"),
+      reasoningEffort: takeAliasedEnv(env, "MODEL_REASONING_EFFORT"),
+      contextWindow: takeAliasedEnv(env, "MODEL_CONTEXT_WINDOW"),
+    };
+
+    const route = resolveCodexRoute({
+      configBaseUrl: config.baseUrl,
+      configApiKey: config.apiKey,
+      envBaseUrl: processEnvRoute.baseUrl,
+      envApiKey: processEnvRoute.apiKey,
+      backendEnvBaseUrl: backendEnvRoute.baseUrl,
+      backendEnvApiKey: backendEnvRoute.apiKey,
+      backendBaseUrl: backend.baseUrl,
+      backendApiKey: backend.apiKey,
+    });
+    if (route.apiKey) {
+      env.NUWAX_API_KEY = route.apiKey;
+    } else {
+      // Keyless route: drop every spelling the adapter would borrow from so a
+      // credential from another source can never reach this endpoint.
+      delete env.NUWAX_API_KEY;
+      delete env.CODEX_API_KEY;
+      delete env.OPENAI_API_KEY;
+    }
+    if (config.apiKey && route.apiKey === config.apiKey) {
       env.OPENAI_API_KEY = config.apiKey;
-    } else if (env.OPENAI_API_KEY) {
-      env.CODEX_API_KEY = env.OPENAI_API_KEY;
     }
-    if (codexResolvedModel?.providerModel) {
-      env.CODEX_MODEL = codexResolvedModel.providerModel;
+    const model = codexResolvedModel?.providerModel || backend.model;
+    if (model) {
+      env.NUWAX_MODEL = model;
     }
-    const finalBaseUrl = env.OPENAI_BASE_URL || config.baseUrl;
-    if (finalBaseUrl) {
-      env.CODEX_BASE_URL = finalBaseUrl;
+    if (route.baseUrl) {
+      env.NUWAX_BASE_URL = route.baseUrl;
     }
-    env.CODEX_PROVIDER_ID = "zhipu-glm-5";
+    // 后端显式下发过 provider id 就尊重它；否则沿用历史默认值。
+    env.NUWAX_PROVIDER_ID = backend.providerId || "zhipu-glm-5";
     // 后端 agent_config.env 用 claude-code 的拼写下发「关闭思考」
     // （CLAUDE_CODE_DISABLE_THINKING），而适配器只认 NUWAX_/CODEX_ 前缀
     // （isThinkingDisabled 读 CODEX_DISABLE_THINKING/NUWAX_DISABLE_THINKING）。
     // 不映射的话这个意图直接丢失，适配器按自己的默认力度请求——模型平台
     // 会拒绝不匹配的组合（如「该模型始终思考，不支持关闭思考」）。
     // 后端未要求关闭时不下发，适配器便不 pin none，走模型默认力度。
-    if (env.CLAUDE_CODE_DISABLE_THINKING && !env.CODEX_DISABLE_THINKING) {
-      env.CODEX_DISABLE_THINKING = env.CLAUDE_CODE_DISABLE_THINKING;
+    const disableThinking =
+      backend.disableThinking ?? env.CLAUDE_CODE_DISABLE_THINKING;
+    if (disableThinking) {
+      env.NUWAX_DISABLE_THINKING = disableThinking;
+    }
+    if (backend.reasoningEffort) {
+      env.NUWAX_MODEL_REASONING_EFFORT = backend.reasoningEffort;
     }
     // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
-    // CODEX_WIRE_API=chat 强制 Chat→Responses 翻译。
+    // NUWAX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
     // NUWAX_API_PROTOCOL 选择，且不得携带 WIRE_API（适配器启动即拒绝）。
     const isAnthropicProtocol =
@@ -913,15 +974,22 @@ export async function createAcpConnection(
       // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，
       // 这也是不同环境结论不同的原因。这里播种两代都接受的 low。
       // 后端显式下发 NUWAX_MODEL_REASONING_EFFORT 时优先用它——哪个模型/版本该用
-      // 哪档只有后端知道；后端要求关闭思考时（上方已映射 CODEX_DISABLE_THINKING）
+      // 哪档只有后端知道；后端要求关闭思考时（上方已映射 NUWAX_DISABLE_THINKING）
       // 不设，让 none 生效。
-      if (!env.CODEX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
+      if (!env.NUWAX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
         env.NUWAX_MODEL_REASONING_EFFORT = "low";
       }
     } else {
-      env.CODEX_WIRE_API = "chat";
+      env.NUWAX_WIRE_API = backend.wireApi || "chat";
+      if (backend.apiProtocol) {
+        env.NUWAX_API_PROTOCOL = backend.apiProtocol;
+      }
     }
-    env.CODEX_MODEL_CONTEXT_WINDOW = "200000";
+    // 后端可以通过 agent_config.env 下发 NUWAX_MODEL_CONTEXT_WINDOW（或旧拼写
+    // CODEX_MODEL_CONTEXT_WINDOW），这里的默认值不得覆盖它：2026-11-09 事故里
+    // 200000 把后端按模型下发的窗口盖掉，压缩阈值随之算错。
+    env.NUWAX_MODEL_CONTEXT_WINDOW =
+      backend.contextWindow || DEFAULT_NUWAX_MODEL_CONTEXT_WINDOW;
     env.CODEX_LOG_DIR = path.join(
       app.getPath("home"),
       APP_DATA_DIR_NAME,
@@ -1012,19 +1080,19 @@ export async function createAcpConnection(
           Math.min(8, Math.floor(env.OPENCODE_OPENAI_API_KEY.length / 2)),
         ) + "..."
       : "(not set)",
-    CODEX_MODEL: env.CODEX_MODEL || "(not set)",
-    CODEX_BASE_URL: env.CODEX_BASE_URL || "(not set)",
-    CODEX_PROVIDER_ID: env.CODEX_PROVIDER_ID || "(not set)",
-    CODEX_WIRE_API: env.CODEX_WIRE_API || "(not set)",
-    CODEX_MODEL_CONTEXT_WINDOW: env.CODEX_MODEL_CONTEXT_WINDOW || "(not set)",
+    NUWAX_MODEL: env.NUWAX_MODEL || "(not set)",
+    NUWAX_BASE_URL: env.NUWAX_BASE_URL || "(not set)",
+    NUWAX_PROVIDER_ID: env.NUWAX_PROVIDER_ID || "(not set)",
+    NUWAX_WIRE_API: env.NUWAX_WIRE_API || "(not set)",
+    NUWAX_MODEL_CONTEXT_WINDOW: env.NUWAX_MODEL_CONTEXT_WINDOW || "(not set)",
     CODEX_LOG_DIR: env.CODEX_LOG_DIR || "(not set)",
     CODEX_HOME: env.CODEX_HOME || "(not set)",
     CODEX_SQLITE_HOME: env.CODEX_SQLITE_HOME || "(not set)",
     RUST_LOG: env.RUST_LOG || "(not set)",
-    CODEX_API_KEY: env.CODEX_API_KEY
-      ? env.CODEX_API_KEY.slice(
+    NUWAX_API_KEY: env.NUWAX_API_KEY
+      ? env.NUWAX_API_KEY.slice(
           0,
-          Math.min(8, Math.floor(env.CODEX_API_KEY.length / 2)),
+          Math.min(8, Math.floor(env.NUWAX_API_KEY.length / 2)),
         ) + "..."
       : "(not set)",
   });

@@ -15,12 +15,13 @@ $(error DEV_WEBVIEW must be loopback or dev)
 endif
 
 .DEFAULT_GOAL := dev
-.PHONY: help dev dev-direct setup frontend-build pack doctor release submodules submodules-latest
+.PHONY: help dev dev-direct setup frontend-build pack doctor release submodules submodules-latest harness-local
 
 help:
 	@$(CLIENT_CLI) help
 
 dev:
+	@if [ -z "$$HARNESS_LOCAL" ]; then node scripts/sync-local-harness.mjs --restore --quiet 2>/dev/null || true; fi
 	@$(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
 
 # Lightweight commercial dev: the shell in commercial identity against the production
@@ -58,3 +59,14 @@ submodules:
 # Source update, frontend build, artifact push and pin commit form one chain.
 submodules-latest:
 	@$(CLIENT_CLI) sub:update $(ARGS)
+
+# Local harness integration: build the fork's nuwax-harness engine from source,
+# swap it into the dev resources, then start dev WITH that local engine — one
+# command to test unreleased engine changes, no npm publish needed.
+# Plain `make dev` always auto-restores the released engine first, so the two
+# modes never interfere.
+# HARNESS_PROFILE=dev builds much faster (debug); HARNESS_VERSION=0.18.33-dev stamps.
+harness-local:
+	@node scripts/sync-local-harness.mjs --ensure-frontend
+	@node scripts/sync-local-harness.mjs
+	@HARNESS_LOCAL=1 $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
