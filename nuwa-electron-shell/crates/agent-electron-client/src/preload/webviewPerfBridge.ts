@@ -217,8 +217,8 @@ const auth = {
     return ipcRenderer.invoke("auth:persistToken", token);
   },
   /** 业务登出联动：清除宿主会话并停止对应服务。 */
-  clear(): Promise<boolean> {
-    return ipcRenderer.invoke("auth:clear");
+  clear(diagnostic?: unknown): Promise<boolean> {
+    return ipcRenderer.invoke("auth:clear", diagnostic);
   },
   /**
    * 企业登录：切换客户端后端域名并重新初始化（写业务域名配置 + 立即停全部

@@ -249,6 +249,9 @@ export async function restoreTicketSession(gatewayOrigin: string | null): Promis
     });
     const observedVersion = ++directEventVersion;
     if (removed) {
+      log.info("[AuthDiagnostic]", { stage: "ticket-cookie-removed", source: "shell-cookie",
+        cause: String(cause), ticketEpoch: epoch, hadTicket: !!currentTicket(),
+        expired: !!(cookie.expirationDate && cookie.expirationDate <= Date.now() / 1000) });
       // A replacement emits an overwrite removal followed by an insertion.
       // Explicit login/logout clearing has already invalidated the mirror.
       if (cause === "overwrite" || !currentTicket()) return;
