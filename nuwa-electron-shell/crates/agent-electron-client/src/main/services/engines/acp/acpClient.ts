@@ -976,18 +976,11 @@ export async function createAcpConnection(
       (config.apiProtocol || "").trim().toLowerCase() === "anthropic";
     if (isAnthropicProtocol) {
       env.NUWAX_API_PROTOCOL = "anthropic";
-      // 适配器对网关自定义模型（不在引擎内置表里的，如 GLM-5.3-Flash）兜底
-      // effort=medium（适配器 createModelId 的 `?? "medium"`），桥把它作为
-      // output_config.effort 发给上游。GLM-5.3 / 5.3-Flash / 5.3-FlashX 官方只接受
-      // max/high/low（docs.bigmodel.cn 的 reasoning_effort 说明），medium 会拿到
-      // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，
-      // 这也是不同环境结论不同的原因。这里播种两代都接受的 low。
-      // 后端显式下发 NUWAX_MODEL_REASONING_EFFORT 时优先用它——哪个模型/版本该用
-      // 哪档只有后端知道；后端要求关闭思考时（上方已映射 NUWAX_DISABLE_THINKING）
-      // 不设，让 none 生效。
-      if (!env.NUWAX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
-        env.NUWAX_MODEL_REASONING_EFFORT = "low";
-      }
+      // Fork (2026-11-10)：不再按模型名播种 effort。适配器的 medium 兜底已
+      // 结构性移除——无显式档位时身份串走 `[default]` 哨兵、引擎在 wire 上省略
+      // 该字段，厂商按自己的默认执行（GLM-5.3 官方默认 max）。按模型名猜档位
+      // 是第二策略源，已删除；确需低成本默认时由后端统一下发
+      // NUWAX_MODEL_REASONING_EFFORT（单一策略源）。
     } else if (nameSignalsResponses && !backend.wireApi && !backend.apiProtocol) {
       // 名称声明 Responses 且后端未显式选择协议线：直连 Responses。
       log.info(
@@ -998,21 +991,8 @@ export async function createAcpConnection(
       if (backend.apiProtocol) {
         env.NUWAX_API_PROTOCOL = backend.apiProtocol;
       }
-      // GLM-5.3 家族（5.3 / 5.3-Flash / 5.3-FlashX）官方档位只有 low/high/max，
-      // OpenAI/Responses 线上引擎的默认 effort=medium 会被 vendor 目录档位门
-      // fail-fast 拒绝（"effort tiers ... do not include `medium`"，2026-11-10
-      // 智谱官方 Responses 协议实测）。与 anthropic 分支同理播种 low；5.2 会把
-      // medium 映射成 high 所以无需处理。后端显式下发或要求关闭思考时不覆盖。
-      if (
-        !env.NUWAX_DISABLE_THINKING &&
-        !env.NUWAX_MODEL_REASONING_EFFORT &&
-        /^glm-5\.3/i.test(model ?? "")
-      ) {
-        log.info(
-          "[AcpClient] codex: GLM-5.3 family on the OpenAI wire defaults effort to low (catalog tiers low/high/max)",
-        );
-        env.NUWAX_MODEL_REASONING_EFFORT = "low";
-      }
+      // Fork (2026-11-10)：同 anthropic 分支——medium 兜底已在适配器侧结构性
+      // 移除，此处不再按模型名播种 low。
     }
     // 后端可以通过 agent_config.env 下发 NUWAX_MODEL_CONTEXT_WINDOW（或旧拼写
     // CODEX_MODEL_CONTEXT_WINDOW），这里的默认值不得覆盖它：2026-11-09 事故里
