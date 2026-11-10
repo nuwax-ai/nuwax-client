@@ -158,6 +158,12 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     write(path.join(app,'resources','app-update.yml'),'provider: generic');
     write(path.join(app,'resources','uninstall.json'),'uninstall inventory');
     write(path.join(job.cache,'winCodeSign','rcedit.exe'),'warmed compiler');
+    if (process.env.FIXTURE_FOREIGN_CACHE) {
+      const foreign = path.join(job.cache,'winCodeSign','winCodeSign-2.6.0','darwin','10.12','lib');
+      write(path.join(foreign,'payload','fixture'),'unused Darwin tool');
+      fs.symlinkSync(path.join(foreign,'payload'),path.join(foreign,'libcrypto.dylib'),process.platform==='win32'?'junction':'dir');
+      write(path.join(job.cache,'winCodeSign','winCodeSign-2.6.0','linux','fixture'),'unused Linux tool');
+    }
     write(job.receipt,JSON.stringify({output:job.output,appOutDir:app})); return;
   }
   if (fs.readFileSync(path.join(job.cache,'winCodeSign','rcedit.exe'),'utf8') !== 'warmed compiler') throw Error('cache was not warmed');
@@ -226,6 +232,28 @@ test('real child processes overlap only after one app build, using physical app 
   assert.equal(fs.readFileSync(path.join(fixture.dir, 'original-cache/seed'), 'utf8'), 'unchanged source');
   assert.ok(fs.existsSync(path.join(result.work, 'nsis/o/builder-debug.yml')), 'diagnostics are kept outside the uploaded directory');
   assert.equal(fs.readFileSync(path.join(states[0].app, 'Nuwax.exe'), 'utf8'), 'signed-app');
+});
+
+test('winCodeSign foreign-platform links do not disable parallel Windows installers or enter their caches', async t => {
+  const fixture = pipelineFixture(t, { FIXTURE_FOREIGN_CACHE: '1' });
+  const result = await helper().orchestrateInstallers(fixture.options, fixture.dependencies);
+  assert.equal(result.mode, 'parallel');
+  for (const stage of ['msi', 'nsis']) {
+    const state = JSON.parse(fs.readFileSync(path.join(fixture.dir, 'barrier', stage + '.json')));
+    assert.equal(fs.existsSync(path.join(state.cache, 'winCodeSign/winCodeSign-2.6.0/darwin')), false);
+    assert.equal(fs.existsSync(path.join(state.cache, 'winCodeSign/winCodeSign-2.6.0/linux')), false);
+    assert.equal(fs.readFileSync(path.join(state.cache, 'winCodeSign/rcedit.exe'), 'utf8'), 'warmed compiler');
+  }
+  assert.ok(fs.lstatSync(path.join(result.work, 'app/c/winCodeSign/winCodeSign-2.6.0/darwin/10.12/lib/libcrypto.dylib')).isSymbolicLink());
+});
+
+test('unrelated tool-cache links are still refused before any installer can run', async t => {
+  const fixture = pipelineFixture(t);
+  const directory = path.join(fixture.dir, 'foreign');
+  fs.mkdirSync(directory);
+  fs.symlinkSync(directory, path.join(fixture.options.env.ELECTRON_BUILDER_CACHE, 'unsafe'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(helper().orchestrateInstallers(fixture.options, fixture.dependencies), /Cannot isolate symbolic link/);
+  assert.equal(fs.existsSync(fixture.output), false);
 });
 
 for (const [name, statfs] of [

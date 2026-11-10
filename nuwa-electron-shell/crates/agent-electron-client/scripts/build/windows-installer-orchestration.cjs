@@ -37,12 +37,22 @@ function parallelSpaceRequirement(appBytes, cacheBytes) {
     + PARALLEL_CACHE_COPY_COUNT * cacheBytes + PARALLEL_DISK_RESERVE_BYTES;
 }
 
-function directoryBytes(directory) {
+// winCodeSign ships Apple/Linux signing tools alongside the Windows binaries.
+// Its Darwin dylib links are unused by MSI/NSIS, and must not enter the private
+// Windows caches (or make the disk guard abandon concurrency). Never follow
+// links in the actual application or in the remaining Windows tool cache.
+function windowsCacheEntry(base, file) {
+  const relative = path.relative(base, file).split(path.sep).join('/');
+  return !/^winCodeSign\/winCodeSign-[^/]+\/(?:darwin|linux)(?:\/|$)/i.test(relative);
+}
+
+function directoryBytes(directory, include = () => true) {
   let bytes = 0n;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
+    if (!include(file)) continue;
     const stat = fs.lstatSync(file, { bigint: true });
-    if (stat.isDirectory()) bytes += directoryBytes(file);
+    if (stat.isDirectory()) bytes += directoryBytes(file, include);
     else if (stat.isFile()) bytes += stat.size;
     else throw new Error(`unsupported entry while measuring ${file}`);
   }
@@ -51,7 +61,7 @@ function directoryBytes(directory) {
 
 function inspectParallelSpace(app, cache, volumePath, statfs) {
   try {
-    const appBytes = directoryBytes(app), cacheBytes = directoryBytes(cache);
+    const appBytes = directoryBytes(app), cacheBytes = directoryBytes(cache, file => windowsCacheEntry(cache, file));
     const stats = statfs(volumePath, { bigint: true });
     const blocks = BigInt(stats.bavail), blockSize = BigInt(stats.bsize);
     if (blocks < 0n || blockSize <= 0n) throw new Error('invalid statfs free-disk values');
@@ -152,12 +162,13 @@ async function runBuilderJob(job) {
   fs.writeFileSync(job.receipt, JSON.stringify({ output: job.output, appOutDir }));
 }
 
-function copyTree(source, destination) {
+function copyTree(source, destination, cache = false) {
   if (!fs.existsSync(source)) return;
   // Windows runtime payloads/inventories reject symlinks already. Fail closed
   // here too, so target writes cannot follow a link back into a shared source.
   fs.cpSync(source, destination, { recursive: true, errorOnExist: true, force: false,
     filter(file) {
+      if (cache && !windowsCacheEntry(source, file)) return false;
       if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`${PREFIX} Cannot isolate symbolic link: ${file}`);
       return true;
     } });
@@ -243,7 +254,7 @@ async function orchestrateInstallers({ projectRoot, output, arch, env = process.
     // Seed a private cache read-only; target processes then inherit its warmed
     // contents and only download their distinct missing WiX / NSIS tools.
     const sourceCache = env.ELECTRON_BUILDER_CACHE || path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'electron-builder', 'Cache');
-    copyTree(sourceCache, app.cache);
+    copyTree(sourceCache, app.cache, true);
     fs.mkdirSync(app.cache, { recursive: true });
     const prepared = await runChild(app, env, workerFile);
     if (path.resolve(prepared.appOutDir) !== path.join(app.output, 'win-unpacked')) throw new Error(`${PREFIX} Unexpected prepared application directory`);
@@ -256,7 +267,7 @@ async function orchestrateInstallers({ projectRoot, output, arch, env = process.
       targetJobs = [msi, nsis];
       for (const job of targetJobs) {
         copyTree(prepared.appOutDir, job.app);
-        copyTree(app.cache, job.cache);
+        copyTree(app.cache, job.cache, true);
       }
       // allSettled is intentional: on failure no process may still write while
       // callers clean up or the next CI step examines the final output.

@@ -1,0 +1,47 @@
+name: Share fixed desktop dependencies
+description: Reuse locked source builds and unsigned runtime/download resources across release tags
+inputs:
+  operation:
+    description: restore before prepare-all, save before signing
+    default: restore
+  arch:
+    description: Target architecture
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Freeze dependency sources and independent cache identities
+      if: inputs.operation == 'restore'
+      shell: bash
+      env:
+        TARGET_ARCH: ${{ inputs.arch }}
+        GH_TOKEN: ${{ github.token }}
+      run: node scripts/client/fixed-dependency-cache.mjs
+    - uses: ./.github/actions/build-resource-artifact
+      if: env.NUWAX_FILE_SERVER_CACHE_KEY != ''
+      with:
+        operation: ${{ inputs.operation }}
+        kind: file-server
+        key: ${{ env.NUWAX_FILE_SERVER_CACHE_KEY }}
+        arch: ${{ inputs.arch }}
+    - uses: ./.github/actions/build-resource-artifact
+      if: env.NUWAX_CLAUDE_ACP_CACHE_KEY != ''
+      with:
+        operation: ${{ inputs.operation }}
+        kind: claude-acp
+        key: ${{ env.NUWAX_CLAUDE_ACP_CACHE_KEY }}
+        arch: ${{ inputs.arch }}
+    - uses: ./.github/actions/build-resource-artifact
+      if: env.NUWAX_AGENT_DESKTOP_CACHE_KEY != ''
+      with:
+        operation: ${{ inputs.operation }}
+        kind: agent-desktop
+        key: ${{ env.NUWAX_AGENT_DESKTOP_CACHE_KEY }}
+        arch: ${{ inputs.arch }}
+    - uses: ./.github/actions/build-resource-artifact
+      if: env.NUWAX_DSH_DOWNLOAD_CACHE_KEY != ''
+      with:
+        operation: ${{ inputs.operation }}
+        kind: dsh-download
+        key: ${{ env.NUWAX_DSH_DOWNLOAD_CACHE_KEY }}
+        arch: ${{ inputs.arch }}
