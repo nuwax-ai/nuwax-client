@@ -268,11 +268,11 @@ function main() {
     const created = !fs.existsSync(SOURCE_DIR);
     if (created) {
       fs.mkdirSync(path.dirname(SOURCE_DIR), { recursive: true });
-      execFileSync('git', ['clone', '--no-checkout', GIT_REPO, SOURCE_DIR], { stdio: 'inherit' });
+      execFileSync('git', ['clone', '--no-checkout', '--depth', '1', '--branch', GIT_BRANCH, GIT_REPO, SOURCE_DIR], { stdio: 'inherit' });
     }
     const git = args => execFileSync('git', args, { cwd: SOURCE_DIR, encoding: 'utf8' }).trim();
     if (git(['remote', 'get-url', 'origin']) !== GIT_REPO || (!created && git(['status', '--porcelain', '--untracked-files=no']))) throw new Error('Unowned Claude ACP source cache');
-    execFileSync('git', ['fetch', 'origin', frozenSource.revision], options);
+    execFileSync('git', ['fetch', '--depth', '1', 'origin', frozenSource.revision], options);
     if (git(['rev-parse', 'FETCH_HEAD']) !== frozenSource.revision) throw new Error('Frozen Claude ACP source mismatch');
     execFileSync('git', ['checkout', '--detach', frozenSource.revision], options);
   } else if (!fs.existsSync(path.join(SOURCE_DIR, '.git'))) {

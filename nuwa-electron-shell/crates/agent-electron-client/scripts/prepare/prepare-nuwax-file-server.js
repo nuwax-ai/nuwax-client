@@ -121,7 +121,7 @@ function ensureSourceRepo() {
     // 半成品目录（无 .git）会挡住 clone
     throw new Error('Unowned directory in bundled source cache');
   }
-  exec(`git clone --branch ${GIT_BRANCH} ${GIT_REPO} "${SOURCE_DIR}"`);
+  exec(`git clone ${frozenSource ? '--depth 1 ' : ''}--branch ${GIT_BRANCH} ${GIT_REPO} "${SOURCE_DIR}"`);
 }
 
 /**
@@ -130,7 +130,7 @@ function ensureSourceRepo() {
  */
 function fetchRemoteCommitHash() {
   if (frozenSource) {
-    execSync(`git fetch origin ${frozenSource.revision}`, { cwd: SOURCE_DIR, stdio: 'inherit' });
+    execSync(`git fetch --depth 1 origin ${frozenSource.revision}`, { cwd: SOURCE_DIR, stdio: 'inherit' });
     const revision = git(SOURCE_DIR, 'rev-parse FETCH_HEAD');
     if (revision !== frozenSource.revision) throw new Error('Frozen file-server source mismatch');
     return revision;
