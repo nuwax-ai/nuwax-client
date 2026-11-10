@@ -106,6 +106,17 @@ test('preparation orders agent-kit before workspace and reuses unchanged inputs'
   assert.ok(f.calls.some((call) => call.includes('-e')), 'actual SQLite probe runs on cache reuse');
 });
 
+test('Agent Desktop patch changes refresh only that resource on a warm preparation', async (t) => {
+  const f = fixture(t);
+  const options = { tools: f.tools, platform: f.platform, arch: f.arch };
+  await prepare(f.root, options);
+  f.calls.length = 0;
+  write(path.join(f.root, 'third-party/patches/agent-desktop-windows-no-focus.patch'), 'updated patch');
+  await prepare(f.root, options);
+  assert.deepEqual(f.calls.filter(call => call[0] === 'npm').map(call => call[2]), ['prepare:agent-desktop']);
+  assert.equal(f.calls.filter(call => call[0] === 'pnpm').length, 0);
+});
+
 test('agent-kit uses frozen install when its own lock exists', async (t) => {
   const f = fixture(t);
   write(path.join(f.kit, 'pnpm-lock.yaml'), 'standalone lock');

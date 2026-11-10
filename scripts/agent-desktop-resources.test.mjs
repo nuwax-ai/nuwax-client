@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { prepareAgentDesktop, desktopResourceFiles, extractDesktopFiles } from './client/agent-desktop-resources.mjs';
+import { windowsDesktopRecipe, verifyWindowsDesktopSource } from './client/agent-desktop-windows.mjs';
+import { AGENT_DESKTOP_INTEGRITY } from './client/agent-desktop-resources.mjs';
+import { createHash } from 'node:crypto';
 
 test('untrusted Agent Desktop archives cannot reach extraction or replace existing resources', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-admission-'));
@@ -34,4 +37,39 @@ test('native tar extracts only selected desktop payload from a directory with sp
   assert.equal(fs.readFileSync(path.join(root, 'package/bin', name), 'utf8'), 'native binary fixture');
   assert.equal(fs.readFileSync(path.join(root, 'package/bin', name + '.sha256'), 'utf8'), 'digest fixture');
   assert.equal(fs.existsSync(path.join(root, 'package/bin/unselected')), false);
+});
+
+test('Windows source archive integrity is checked before compilation', () => {
+  assert.throws(() => verifyWindowsDesktopSource(Buffer.from('changed source')), /source integrity mismatch/);
+});
+
+test('Windows resources require the current patch recipe and intact binary; failed refresh preserves old resources', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-windows-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const patch = path.join(root, 'third-party/patches/agent-desktop-windows-no-focus.patch');
+  fs.mkdirSync(path.dirname(patch), { recursive: true }); fs.writeFileSync(patch, 'patch v1');
+  const recipe = windowsDesktopRecipe(root, 'x64');
+  const destination = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/resources/agent-desktop/win32-x64');
+  fs.mkdirSync(destination, { recursive: true });
+  const name = desktopResourceFiles('win32', 'x64')[0], binary = path.join(destination, name);
+  fs.writeFileSync(binary, 'built binary fixture');
+  const manifest = { integrity: AGENT_DESKTOP_INTEGRITY, nativeBuild: { recipe }, files: { [name]: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') } };
+  fs.writeFileSync(path.join(destination, 'source.json'), JSON.stringify(manifest));
+  let fetched = false;
+  const fetcher = async () => { fetched = true; throw new Error('refresh requested'); };
+  assert.equal(await prepareAgentDesktop(root, { platform: 'win32', arch: 'x64', fetcher }), destination);
+  assert.equal(fetched, false);
+  fs.writeFileSync(patch, 'patch v2');
+  await assert.rejects(prepareAgentDesktop(root, { platform: 'win32', arch: 'x64', fetcher }), /refresh requested/);
+  assert.equal(fetched, true);
+  assert.equal(fs.readFileSync(binary, 'utf8'), 'built binary fixture');
+  fs.writeFileSync(patch, 'patch v1');
+  fs.writeFileSync(binary, 'tampered'); fetched = false;
+  await assert.rejects(prepareAgentDesktop(root, { platform: 'win32', arch: 'x64', fetcher }), /refresh requested/);
+  assert.equal(fetched, true);
+  fs.writeFileSync(binary, 'built binary fixture');
+  delete manifest.nativeBuild; fs.writeFileSync(path.join(destination, 'source.json'), JSON.stringify(manifest));
+  fetched = false;
+  await assert.rejects(prepareAgentDesktop(root, { platform: 'win32', arch: 'x64', fetcher }), /refresh requested/);
+  assert.equal(fetched, true, 'Unpatched npm binary must not satisfy the Windows cache');
 });

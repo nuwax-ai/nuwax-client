@@ -91,6 +91,11 @@ export function resourceSpecs(client, platform = process.platform, arch = proces
     ['harness', [path.join(r, 'nuwax-harness-acp-ts/dist/index.js')]],
     ['agent-desktop', [path.join(r, 'agent-desktop', key, `agent-desktop-${key}${exe}`), path.join(r, 'agent-desktop', key, 'source.json')]],
   ].map(([name, files, optional = false]) => ({ name, script: `prepare:${name}`, files, optional }));
+  const root = path.resolve(client, '../../..');
+  specs.find(spec => spec.name === 'agent-desktop').inputs = [
+    'scripts/client/agent-desktop-resources.mjs', 'scripts/client/agent-desktop-windows.mjs',
+    'third-party/patches/agent-desktop-windows-no-focus.patch',
+  ].map(file => path.join(root, file));
   if (platform === 'win32') {
     specs.splice(1, 0, { name: 'git', script: 'prepare:git', files: [path.join(r, 'git/cmd/git.exe'), path.join(r, 'git/bin/bash.exe')] });
   }
@@ -299,8 +304,9 @@ export async function prepare(root, options = {}) {
     const resourceKey = tools.fingerprint([workspaceKey, scriptsKey, opt.platform, opt.arch]);
     state.resources ??= {};
     for (const spec of resourceSpecs(p.client, opt.platform, opt.arch)) {
+      const key = spec.inputs ? tools.fingerprint([resourceKey, inputDigest(spec.inputs)]) : resourceKey;
       const ready = () => spec.files.every(fileReady) && (!spec.check || spec.check());
-      if (state.resources[spec.name]?.key === resourceKey && state.resources[spec.name]?.artifact === inputDigest(spec.files) && (ready() || state.resources[spec.name]?.skipped && spec.optional)) {
+      if (state.resources[spec.name]?.key === key && state.resources[spec.name]?.artifact === inputDigest(spec.files) && (ready() || state.resources[spec.name]?.skipped && spec.optional)) {
         console.log(`[prepare] 复用 ${spec.name}`);
         continue;
       }
@@ -309,7 +315,7 @@ export async function prepare(root, options = {}) {
       if (!ready() && !spec.optional) throw new Error(`[prepare] ${spec.script} 返回成功但产物缺失: ${spec.files.join(', ')}`);
       const skipped = !ready();
       if (skipped) console.warn(`[prepare] ${spec.name} 当前平台未提供资源，相关功能不可用`);
-      state.resources[spec.name] = { key: resourceKey, skipped, artifact: inputDigest(spec.files) };
+      state.resources[spec.name] = { key, skipped, artifact: inputDigest(spec.files) };
       save();
     }
     let captureDir = null;

@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CuaTaskRegistry } from "./taskRegistry";
+import { CuaTaskController } from "./taskController";
+import { classifyReply } from "./cuaOutcome";
 
 const nativeWindow = { pid: 42, id: "w-7", process_instance: "process-a", app_name: "Fixture", title: "Example", accessible: true, visible: true, is_focused: false };
 function fixture() {
@@ -83,14 +85,43 @@ describe("Agent Desktop adapter", () => {
     expect((await call("launch_app", { command: "sh" })).structuredContent.code).toBe("toolNotAllowed");
     expect(run.mock.calls.some(([args]) => args[0] === "launch")).toBe(false);
   });
-  it("classifies unverified writes as uncertain and never replays them", async () => {
+  it("allows a host observation after confirmed delivery without replaying the consumed action", async () => {
     const { connect, target, state, run } = setup(), call = connect();
+    const controller = new CuaTaskController(); controller.setAvailable(true);
+    const read = controller.begin("owner", "get_window_state", target).permit!;
     const observed = (await call("get_window_state", target)).structuredContent;
+    controller.finish(read, "ok", observed);
     state.delivery = "delivered_unverified";
     const args = { ...target, snapshot_id: observed.snapshot_id, element_index: 1 };
-    expect((await call("click", args)).structuredContent.status).toBe("uncertain");
+    const write = controller.begin("owner", "click", args).permit!;
+    const result = await call("click", args);
+    expect(result).toMatchObject({ structuredContent: { status: "ok", effect: "delivered_unverified", retryable: false, needsObservation: true } });
+    controller.finish(write, classifyReply("click", { result }), result.structuredContent);
+    expect(controller.snapshot()).toMatchObject({ phase: "running", resultObserved: false });
+    expect((await call("click", args)).structuredContent.code).toBe("staleObservation");
+    const verify = controller.begin("owner", "get_window_state", target).permit!;
+    expect(verify).toBeDefined();
+    const after = (await call("get_window_state", target)).structuredContent;
+    controller.finish(verify, "ok", after);
+    expect(controller.snapshot()).toMatchObject({ phase: "running", resultObserved: true });
+    expect(run.mock.calls.filter(([args]) => args[0] === "click")).toHaveLength(1);
+  });
+  it.each(["delivery_uncertain", "unknown", "missing"])("keeps %s delivery paused and never replays it", async delivery => {
+    const { connect, target, state, run } = setup(), call = connect();
+    const observed = (await call("get_window_state", target)).structuredContent;
+    state.delivery = delivery;
+    const args = { ...target, snapshot_id: observed.snapshot_id, element_index: 1 };
+    const result = await call("click", args);
+    expect(classifyReply("click", { result })).toBe("uncertain");
     expect((await call("click", args)).structuredContent.code).toBe("staleObservation");
     expect(run.mock.calls.filter(([args]) => args[0] === "click")).toHaveLength(1);
+  });
+  it("does not hide an upstream failure after partial delivery", async () => {
+    const { connect, target, run } = setup(), call = connect();
+    const observed = (await call("get_window_state", target)).structuredContent;
+    run.mockResolvedValueOnce({ ok: true, data: [nativeWindow] });
+    run.mockResolvedValueOnce({ ok: false, error: { code: "verification_failed", disposition: { delivery: "delivered_unverified" } } });
+    expect((await call("click", { ...target, snapshot_id: observed.snapshot_id, element_index: 1 })).structuredContent.status).toBe("uncertain");
   });
   it("revokes in-flight task input, waits for cancellation, and refuses further use", async () => {
     const { adapter, connect, target, run } = setup(), call = connect();
@@ -116,6 +147,16 @@ describe("Agent Desktop adapter", () => {
     expect((await adapter.request("nuwax_task", "bind", { ...target, task_id: "a", binding_id: "b", host_pid: -1, epoch: 1, mode: "background" })).ok).toBe(false);
     const observed = (await call("get_window_state", target)).structuredContent;
     expect((await call("click", { ...target, snapshot_id: observed.snapshot_id, element_index: 1, delivery_mode: "foreground" })).structuredContent.code).toBe("engineCapabilityUnsupported");
+  });
+  it("acknowledges a repeated drain after forget without rearming the old input lease", async () => {
+    const { adapter, connect, target, run } = setup(), call = connect();
+    const context = { ...target, task_id: "finished-task", binding_id: "binding", host_pid: process.pid, epoch: 1, mode: "background" };
+    await adapter.request("nuwax_task", "bind", context);
+    const observed = (await call("get_window_state", { ...target, _nuwax_task: context })).structuredContent;
+    expect((await adapter.request("nuwax_task", "forget", context)).ok).toBe(true);
+    expect(await adapter.request("nuwax_task", "revoke", { ...context, epoch: 2 })).toMatchObject({ ok: true, result: { drained: true } });
+    expect((await call("click", { ...target, _nuwax_task: context, snapshot_id: observed.snapshot_id, element_index: 1 })).isError).toBe(true);
+    expect(run.mock.calls.some(([args]) => args[0] === "click")).toBe(false);
   });
   it("drains and resumes the real host task epochs without rearming a revoked generation", async () => {
     const { adapter, connect, target } = setup();

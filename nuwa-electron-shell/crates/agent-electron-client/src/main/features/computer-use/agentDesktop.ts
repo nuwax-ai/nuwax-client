@@ -146,6 +146,8 @@ export class AgentDesktopAdapter {
       }
       // Host pause/stop advances the task epoch before requesting native drain.
       // A newer revoke retires every older lease; it never re-arms the binding.
+      // Connection teardown may repeat a revoke after a completed task was forgotten.
+      if (name === "revoke" && !old) return { ok: true, result: await this.revoke(context.task_id) };
       if (name === "revoke" && old && this.sameBinding(old.context, context) && context.epoch >= old.context.epoch) {
         old.context = { ...context };
         return { ok: true, result: await this.revoke(context.task_id) };
@@ -248,8 +250,10 @@ export class AgentDesktopAdapter {
       const reply = await this.invoke(argv, lease, input);
       const delivery = (reply.ok ? reply.data?.disposition : reply.error?.disposition)?.delivery;
       if (delivery === "not_delivered") return refused(reply.error?.code ?? "actionRefused");
-      if (!reply.ok || delivery !== "delivered_verified") return uncertain();
-      return success({ status: "ok", effect: "delivered_verified" });
+      if (!reply.ok || !["delivered_verified", "delivered_unverified"].includes(delivery)) return uncertain();
+      // A successful AXPress confirms delivery, not its application-level effect.
+      // Keep the consumed snapshot retired and let the next observation verify it.
+      return success({ status: "ok", effect: delivery, retryable: false, needsObservation: true });
     } catch (error) {
       return write ? uncertain() : refused(error instanceof Error ? error.message : "operationFailed");
     }

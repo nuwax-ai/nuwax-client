@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { buildWindowsDesktop, windowsDesktopRecipe } from './agent-desktop-windows.mjs';
 
 const exec = promisify(execFile);
 export const AGENT_DESKTOP_VERSION = '1.2.0';
@@ -28,9 +29,10 @@ export async function prepareAgentDesktop(root, { platform = process.platform, a
   const files = desktopResourceFiles(platform, arch);
   const destination = path.join(root, 'nuwa-electron-shell/crates/agent-electron-client/resources/agent-desktop', `${platform}-${arch}`);
   const manifest = path.join(destination, 'source.json');
+  const windowsRecipe = platform === 'win32' ? windowsDesktopRecipe(root, arch) : undefined;
   try {
     const previous = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    if (previous.integrity === AGENT_DESKTOP_INTEGRITY && files.every(name =>
+    if (previous.integrity === AGENT_DESKTOP_INTEGRITY && previous.nativeBuild?.recipe === windowsRecipe && files.every(name =>
       fs.lstatSync(path.join(destination, name)).isFile() && !fs.lstatSync(path.join(destination, name)).isSymbolicLink() &&
       createHash('sha256').update(fs.readFileSync(path.join(destination, name))).digest('hex') === previous.files[name])) return destination;
   } catch { /* Missing or changed payload is rebuilt from the pinned archive. */ }
@@ -62,7 +64,10 @@ export async function prepareAgentDesktop(root, { platform = process.platform, a
       if (hash !== fs.readFileSync(from + '.sha256', 'utf8').trim()) throw new Error('Agent Desktop binary digest mismatch');
       hashes[name] = hash; fs.copyFileSync(from, path.join(payload, name)); fs.chmodSync(path.join(payload, name), 0o755);
     }
-    fs.writeFileSync(path.join(payload, 'source.json'), JSON.stringify({ version: AGENT_DESKTOP_VERSION, source, integrity: AGENT_DESKTOP_INTEGRITY, files: hashes }, null, 2) + '\n');
+    const nativeBuild = platform === 'win32'
+      ? await buildWindowsDesktop(root, path.join(payload, files[0]), { arch }) : undefined;
+    if (nativeBuild) hashes[files[0]] = createHash('sha256').update(fs.readFileSync(path.join(payload, files[0]))).digest('hex');
+    fs.writeFileSync(path.join(payload, 'source.json'), JSON.stringify({ version: AGENT_DESKTOP_VERSION, source, integrity: AGENT_DESKTOP_INTEGRITY, nativeBuild, files: hashes }, null, 2) + '\n');
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.rmSync(destination, { recursive: true, force: true }); fs.cpSync(payload, destination, { recursive: true });
     return destination;
