@@ -61,6 +61,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
   const [configText, setConfigText] = useState("{}");
   const [configTextError, setConfigTextError] = useState<string>("");
   const [status, setStatus] = useState<McpProxyStatus>({ running: false });
+  const [computerUseEnabled, setComputerUseEnabled] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showExportWarning, setShowExportWarning] = useState(false);
@@ -221,6 +222,33 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
       loadAll();
     }
   }, [isOpen, loadAll]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const api = window.electronAPI;
+    let active = true;
+    let generation = 0;
+    setComputerUseEnabled(null);
+    const refresh = async () => {
+      const current = ++generation;
+      try {
+        const snapshot = await api?.computerUse?.getStatus();
+        if (active && current === generation) {
+          setComputerUseEnabled(snapshot?.enabled ?? null);
+        }
+      } catch {
+        if (active && current === generation) setComputerUseEnabled(null);
+      }
+    };
+    api?.on("cua:runtime", refresh);
+    window.addEventListener("focus", refresh);
+    void refresh();
+    return () => {
+      active = false;
+      api?.off("cua:runtime", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [isOpen]);
 
   const refreshStatus = async () => {
     try {
@@ -396,11 +424,14 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
   const currentConfig = getCurrentConfigForUi();
   const currentServers = currentConfig?.mcpServers ?? {};
   const serverEntries = Object.entries(currentServers);
+  // 仅同步显示；不能把功能开关写回 entry.enabled，否则会撤掉 Agent 的稳定 MCP 入口。
+  const isServerEnabled = (serverId: string, entry: McpServerEntry) =>
+    isComputerUseManagedServerId(serverId) ? computerUseEnabled === true : !!entry.enabled;
   const enabledCount = serverEntries.filter(
-    ([, entry]) => !!entry.enabled,
+    ([serverId, entry]) => isServerEnabled(serverId, entry),
   ).length;
 
-  // cua 条目跟随设置页「Computer Use」开关联动，此处一律拒绝手动改动。
+  // cua 入口由宿主管理，实际功能开关只能在 Computer Use 设置中修改。
   const warnIfCuaManaged = (serverId: string): boolean => {
     if (isComputerUseManagedServerId(serverId)) {
       message.warning(t("Claw.MCP.list.computerUseManagedNotice"));
@@ -446,7 +477,7 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
     }
     const nextServers: Record<string, McpServerEntry> = {};
     for (const [serverId, entry] of Object.entries(latest.mcpServers)) {
-      // cua 跟随设置页「Computer Use」开关联动，同样不参与「全部停用」
+      // 保留宿主管理的 cua MCP 入口；不影响 Computer Use 实际开关。
       if (isComputerUseManagedServerId(serverId)) {
         nextServers[serverId] = { ...entry, enabled: true };
         continue;
@@ -742,7 +773,8 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                             >
                               <span>
                                 <Switch
-                                  checked={isManagedCua ? true : !!entry.enabled}
+                                  checked={isServerEnabled(serverId, entry)}
+                                  loading={isManagedCua && computerUseEnabled === null}
                                   disabled={isManagedCua}
                                   checkedChildren={t("Claw.MCP.switch.enable")}
                                   unCheckedChildren={t("Claw.MCP.switch.disable")}
