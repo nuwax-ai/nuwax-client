@@ -10,12 +10,10 @@ const h = vi.hoisted(() => ({
   cleanups: [] as Array<() => void>,
   switches: [] as any[],
   buttons: [] as any[],
-  listeners: new Map<string, () => Promise<void>>(),
   getStatus: vi.fn(),
   getConfig: vi.fn(),
   setConfig: vi.fn(),
   setEnabled: vi.fn(),
-  off: vi.fn(),
 }));
 
 vi.mock("react", async (original) => ({
@@ -44,7 +42,8 @@ vi.mock("antd", () => {
     Card: ({ title, extra, children }: any) => <div>{title}{extra}{children}</div>,
     Space: Wrap, Tag: Wrap, Tooltip: Wrap,
     Typography: { Text: Wrap },
-    Badge: () => null, Segmented: () => null, Empty: () => null,
+    Badge: () => null, Segmented: () => null,
+    Empty: ({ description }: any) => <div>{description}</div>,
     Alert: () => null, Spin: () => null, Modal: () => null,
     List,
     Button: (props: any) => {
@@ -95,8 +94,7 @@ function mount() {
 }
 async function ready() {
   await vi.waitFor(() => {
-    render();
-    expect(h.switches).toHaveLength(2);
+    expect(render()).toContain("enabled=");
   });
 }
 function button(label: string) {
@@ -106,19 +104,16 @@ function button(label: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.states = []; h.cursor = 0; h.mounted = false;
-  h.effects = []; h.cleanups = []; h.listeners.clear();
+  h.effects = []; h.cleanups = [];
   h.getStatus.mockReset().mockResolvedValue({ enabled: false, running: false, mcpInjected: true });
   h.getConfig.mockResolvedValue(structuredClone(config));
   h.setConfig.mockResolvedValue({ success: true });
-  h.off.mockImplementation((channel: string) => h.listeners.delete(channel));
   vi.stubGlobal("document", { body: { getAttribute: () => "light" } });
   vi.stubGlobal("MutationObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("window", Object.assign(new EventTarget(), {
     electronAPI: {
       mcp: { getConfig: h.getConfig, setConfig: h.setConfig, status: async () => ({ running: true }) },
       computerUse: { getStatus: h.getStatus, setEnabled: h.setEnabled },
-      on: (channel: string, callback: () => Promise<void>) => h.listeners.set(channel, callback),
-      off: h.off,
     },
   }));
 });
@@ -127,30 +122,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("MCP Computer Use status display", () => {
-  it("shows Computer Use off and excludes it from the enabled count while retaining its saved MCP entry", async () => {
+describe("MCP managed entry visibility", () => {
+  it.each([true, false])("hides cua from the list and count with Computer Use enabled=%s, retaining the saved entry", async (enabled) => {
+    h.getStatus.mockResolvedValue({ enabled });
     mount(); await ready();
-    expect(h.switches[0]).toMatchObject({ checked: false, disabled: true, loading: false });
-    expect(h.switches[1].checked).toBe(true);
-    expect(render()).toContain("enabled=1/2");
+    expect(h.switches).toHaveLength(1);
+    expect(h.switches[0].checked).toBe(true);
+    const html = render();
+    expect(html).not.toContain(">cua<");
+    expect(html).not.toContain("cua-stdio-relay.cjs");
+    expect(html).toContain(">other<");
+    expect(html).toContain("enabled=1/1");
     expect(h.setConfig).not.toHaveBeenCalled();
     await button("Claw.Common.save").onClick();
     expect(h.setConfig).toHaveBeenCalledWith(config);
+    expect(h.getStatus).not.toHaveBeenCalled();
     expect(h.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("follows live switch changes without overwriting an unsaved MCP draft or changing Agent configuration", async () => {
+  it("preserves the hidden MCP entry when editing another server", async () => {
     mount(); await ready();
-    h.switches[1].onChange(false);
-    render();
-    h.getStatus.mockResolvedValue({ enabled: true, running: false, mcpInjected: true });
-    await h.listeners.get("cua:runtime")!();
-    expect(render()).toContain("enabled=1/2");
-    expect(h.switches[0]).toMatchObject({ checked: true, disabled: true });
-    expect(h.switches[1].checked).toBe(false);
-    h.getStatus.mockResolvedValue({ enabled: false, running: false, mcpInjected: true });
-    await h.listeners.get("cua:runtime")!();
-    expect(render()).toContain("enabled=0/2");
+    h.switches[0].onChange(false);
+    expect(render()).toContain("enabled=0/1");
     expect(h.setConfig).not.toHaveBeenCalled();
     await button("Claw.Common.save").onClick();
     expect(h.setConfig).toHaveBeenCalledWith({ mcpServers: {
@@ -160,34 +153,40 @@ describe("MCP Computer Use status display", () => {
     expect(h.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("ignores a stale status response and removes the runtime listener on unmount", async () => {
-    let resolveOld!: (status: { enabled: boolean }) => void;
-    h.getStatus.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }));
+  it.each([true, false])("leaves the hidden entry unchanged during Disable All with cua.enabled=%s", async (enabled) => {
+    const saved = structuredClone(config);
+    saved.mcpServers.cua.enabled = enabled;
+    h.getConfig.mockResolvedValue(saved);
     mount(); await ready();
-    expect(h.switches[0].loading).toBe(true);
-    h.getStatus.mockResolvedValue({ enabled: true });
-    const refresh = h.listeners.get("cua:runtime")!;
-    await refresh();
-    resolveOld({ enabled: false });
-    await Promise.resolve();
-    render();
-    expect(h.switches[0]).toMatchObject({ checked: true, loading: false });
-    h.cleanups.splice(0).forEach(cleanup => cleanup());
-    expect(h.off).toHaveBeenCalledWith("cua:runtime", refresh);
-    expect(h.listeners.has("cua:runtime")).toBe(false);
+    button("Claw.MCP.list.disableAll").onClick();
+    expect(render()).toContain("enabled=0/1");
+    await button("Claw.Common.save").onClick();
+    expect(h.setConfig).toHaveBeenCalledWith({ mcpServers: {
+      cua: saved.mcpServers.cua,
+      other: { ...saved.mcpServers.other, enabled: false },
+    } });
+    expect(h.setEnabled).not.toHaveBeenCalled();
   });
 
-  it("keeps an unreadable switch in loading state and refreshes it on window focus", async () => {
-    h.getStatus.mockRejectedValueOnce(new Error("status unavailable"));
+  it("shows an empty user list when only the managed entry exists, while preserving it on save", async () => {
+    h.getConfig.mockResolvedValue({ mcpServers: { " CUA ": config.mcpServers.cua } });
     mount(); await ready();
-    expect(h.switches[0]).toMatchObject({ disabled: true, loading: true });
-    h.getStatus.mockResolvedValue({ enabled: true });
-    window.dispatchEvent(new Event("focus"));
-    await vi.waitFor(() => {
-      render();
-      expect(h.switches[0]).toMatchObject({ checked: true, loading: false });
-    });
-    expect(h.setConfig).not.toHaveBeenCalled();
+    const html = render();
+    expect(html).toContain("Claw.MCP.serverManagement.noServers");
+    expect(html).toContain("enabled=0/0");
+    expect(h.switches).toHaveLength(0);
+    await button("Claw.Common.save").onClick();
+    expect(h.setConfig).toHaveBeenCalledWith({ mcpServers: { " CUA ": config.mcpServers.cua } });
+    expect(h.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hidden entry when the last visible server is deleted", async () => {
+    mount(); await ready();
+    h.buttons.find(props => props.danger && props.onClick)?.onClick();
+    render();
+    expect(h.switches).toHaveLength(0);
+    await button("Claw.Common.save").onClick();
+    expect(h.setConfig).toHaveBeenCalledWith({ mcpServers: { cua: config.mcpServers.cua } });
     expect(h.setEnabled).not.toHaveBeenCalled();
   });
 });
