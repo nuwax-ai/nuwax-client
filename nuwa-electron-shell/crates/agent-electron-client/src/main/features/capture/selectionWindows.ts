@@ -1,6 +1,7 @@
 import { BrowserWindow, desktopCapturer, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import {
   CAPTURE_WINDOW_CHANNELS as CH, DEFAULT_CAPTURE_WINDOW_LABELS,
@@ -260,25 +261,39 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     if (signal.aborted || disposed) return null;
     if (pending) throw new Error('a capture selector is already open');
     const initialAction = mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action;
-    const displays = screen.getAllDisplays();
     const preferredDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id;
-    // Freeze every display before any overlay exists, so the overlays cannot enter the screenshot.
-    const requests = new Map<string, ReturnType<typeof desktopCapturer.getSources>>();
     const sizeFor = (display: Electron.Display) => ({ width: Math.round(display.size.width * display.scaleFactor), height: Math.round(display.size.height * display.scaleFactor) });
-    for (const display of displays) {
-      const requested = sizeFor(display); const key = `${requested.width}x${requested.height}`;
-      if (!requests.has(key)) requests.set(key, desktopCapturer.getSources({ types: ['screen'], thumbnailSize: requested }));
+    const freezeDesktop = async () => {
+      const displays = screen.getAllDisplays();
+      // Freeze every display before any overlay exists, so the overlays cannot enter the screenshot.
+      const requests = new Map<string, ReturnType<typeof desktopCapturer.getSources>>();
+      for (const display of displays) {
+        const requested = sizeFor(display); const key = `${requested.width}x${requested.height}`;
+        if (!requests.has(key)) requests.set(key, desktopCapturer.getSources({ types: ['screen'], thumbnailSize: requested }));
+      }
+      // Reuse equal-resolution requests without resampling mixed-DPI or native capture pixels.
+      const [sourceGroups, allSources] = await Promise.all([
+        Promise.all([...requests].map(async ([key, request]) => [key, await request] as const)),
+        desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false }),
+      ]);
+      const sourcesBySize = new Map(sourceGroups);
+      return { allSources, snapshots: displays.map(display => {
+        const requested = sizeFor(display);
+        return { display, source: sourcesBySize.get(`${requested.width}x${requested.height}`)?.find(entry => entry.display_id === String(display.id)) };
+      }) };
+    };
+    let { snapshots, allSources } = await freezeDesktop();
+    if (signal.aborted || disposed) return null;
+    if (snapshots.some(({ source }) => !source || source.thumbnail.isEmpty())) {
+      // A first native snapshot may have no display/frame yet. Recover once within
+      // this request, refreshing every display before opening any selector.
+      try { await delay(150, undefined, { signal }); }
+      catch (error) { if (!signal.aborted) throw error; }
+      if (signal.aborted || disposed) return null;
+      ({ snapshots, allSources } = await freezeDesktop());
+      if (signal.aborted || disposed) return null;
     }
-    // Reuse equal-resolution requests without resampling mixed-DPI or native capture pixels.
-    // All snapshots and window thumbnails finish before any selector can enter a captured frame.
-    const [sourceGroups, allSources] = await Promise.all([
-      Promise.all([...requests].map(async ([key, request]) => [key, await request] as const)),
-      desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false }),
-    ]);
-    const sourcesBySize = new Map(sourceGroups);
-    const frozen = displays.map((display) => {
-      const requested = sizeFor(display);
-      const source = sourcesBySize.get(`${requested.width}x${requested.height}`)?.find(entry => entry.display_id === String(display.id));
+    const frozen = snapshots.map(({ display, source }) => {
       if (!source || source.thumbnail.isEmpty()) throw new Error('screen capture returned no matching display');
       return { display, source, size: source.thumbnail.getSize() };
     });
