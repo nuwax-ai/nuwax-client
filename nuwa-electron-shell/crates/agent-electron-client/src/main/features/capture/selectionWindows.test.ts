@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { desktopCapturer } from 'electron';
 import { CAPTURE_WINDOW_CHANNELS as CH, type CaptureSelection } from '@shared/features/capture/windowContract';
 import { createCaptureService } from './captureService';
 import { createNativeImageEncoder } from './stillEncoder';
@@ -65,7 +66,86 @@ const service = () => createCaptureService({
   results: { put: vi.fn(), putFile: vi.fn(), readChunk: () => null, release: vi.fn(), releaseAll: vi.fn(), copyTo: () => false }, log: { warn: vi.fn(), error: vi.fn() },
 });
 beforeEach(() => { mock.windows.length = 0; mock.displays.splice(0, mock.displays.length, mock.display); mock.cursor.x = 20; mock.cursor.y = 20; mock.timeline.length = 0; mock.handlers.clear(); mock.requests.length = 0; mock.windowSources.length = 0; mock.settings.loadError = null; mock.settings.clampOnShow = false; vi.clearAllMocks(); windows = createCaptureWindows({ platform: 'win32', portal: false, log: mock.log }); });
-afterEach(() => windows.dispose());
+afterEach(() => { windows.dispose(); vi.restoreAllMocks(); });
+
+describe('screen snapshot readiness', () => {
+  function screenResponses(transform: (sources: Electron.DesktopCapturerSource[], round: number) => Electron.DesktopCapturerSource[]) {
+    const original = desktopCapturer.getSources;
+    let round = 0;
+    return vi.spyOn(desktopCapturer, 'getSources').mockImplementation(async options => {
+      expect(mock.windows).toHaveLength(0);
+      const sources = await original(options);
+      return options.types.includes('screen') ? transform(sources, ++round) : sources;
+    });
+  }
+
+  it.each(['missing', 'unmatched', 'empty'])('recovers a %s first snapshot within the same screenshot request', async invalid => {
+    const sources = screenResponses((entries, round) => {
+      if (round > 1) return entries;
+      if (invalid === 'missing') return [];
+      return entries.map(entry => invalid === 'unmatched'
+        ? { ...entry, display_id: '' }
+        : { ...entry, thumbnail: { ...entry.thumbnail, isEmpty: () => true } });
+    });
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    expect(sources.mock.calls.filter(([options]) => options.types.includes('screen'))).toHaveLength(2);
+    expect(mock.requests).toEqual([{ width: 2400, height: 1600 }, { width: 2400, height: 1600 }]);
+    const owned = mock.windows[0];
+    expect(mock.handlers.get(CH.init)!({ sender: owned.webContents, senderFrame: owned.webContents.mainFrame }))
+      .toMatchObject({ image: { selection: { sourceId: 'screen:1', displayId: '1', sourceSize: { width: 2400, height: 1600 } } } });
+    abort.abort(); expect(await pending).toBeNull();
+  });
+
+  it('refreshes the display list and every mixed-DPI frame before opening recording selectors', async () => {
+    const second = { ...mock.display, id: 2, scaleFactor: 1, bounds: { ...mock.display.bounds, x: 1200 } };
+    mock.displays.push(second);
+    screenResponses((entries, round) => {
+      if (round === 1) {
+        mock.displays[1] = { ...second, id: 3 };
+        return [];
+      }
+      return entries;
+    });
+    const abort = new AbortController();
+    const pending = windows.select('record', abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(2));
+    expect(mock.requests).toEqual([
+      { width: 2400, height: 1600 }, { width: 1200, height: 800 },
+      { width: 2400, height: 1600 }, { width: 1200, height: 800 },
+    ]);
+    const owned = mock.windows[1];
+    expect(mock.handlers.get(CH.init)!({ sender: owned.webContents, senderFrame: owned.webContents.mainFrame }))
+      .toMatchObject({ image: { selection: { sourceId: 'screen:3', displayId: '3', sourceSize: { width: 1200, height: 800 } } } });
+    abort.abort(); expect(await pending).toBeNull();
+  });
+
+  it('stops after one retry and never substitutes an unrelated display', async () => {
+    const sources = screenResponses(entries => entries.map(entry => ({ ...entry, display_id: 'another-display' })));
+    await expect(windows.captureStill(new AbortController().signal)).rejects.toThrow('screen capture returned no matching display');
+    expect(sources.mock.calls.filter(([options]) => options.types.includes('screen'))).toHaveLength(2);
+    expect(mock.windows).toHaveLength(0);
+  });
+
+  it.each(['cancel', 'dispose'])('does not start another acquisition or open selectors after %s during recovery', async action => {
+    const sources = screenResponses(() => []);
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(sources).toHaveBeenCalledTimes(2));
+    if (action === 'cancel') abort.abort(); else windows.dispose();
+    expect(await pending).toBeNull();
+    expect(sources).toHaveBeenCalledTimes(2);
+    expect(mock.windows).toHaveLength(0);
+  });
+
+  it('preserves capture API errors without retrying them', async () => {
+    const sources = screenResponses(() => { throw new Error('permission denied'); });
+    await expect(windows.captureStill(new AbortController().signal)).rejects.toThrow('permission denied');
+    expect(sources.mock.calls.filter(([options]) => options.types.includes('screen'))).toHaveLength(1);
+    expect(mock.windows).toHaveLength(0);
+  });
+});
 
 describe('saving a still from the selection toolbar (2696)', () => {
   const payload = { crop: { x: 0, y: 0, width: 2400, height: 1600 }, png: 'data:image/png;base64,fixture', save: true };
