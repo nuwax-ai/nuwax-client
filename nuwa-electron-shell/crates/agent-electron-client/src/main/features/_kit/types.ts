@@ -46,6 +46,8 @@ export interface FeatureSession {
 export interface FeatureWindows {
   /** 宿主主窗口；未创建或已销毁时为 null。 */
   getMain(): BrowserWindow | null;
+  /** Actual host appearance, including build-time theme availability and user preference. */
+  isDarkMode?(): boolean;
   /** 宿主将本机业务路由转换为可交给系统浏览器的地址；无安全目标时返回 null。 */
   toExternalUrl?(value: string): string | null;
 }

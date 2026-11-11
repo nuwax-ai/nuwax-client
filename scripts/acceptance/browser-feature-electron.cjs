@@ -179,10 +179,12 @@ if (!process.versions.electron) {
             "utf8",
           ),
         );
+        let hostDark = false;
         const controller = createBrowserWindows({
           settings: { read: (key) => key === 'step1_config' ? {serverHost:'https://business.example'} : key === 'nuwax.loopback' ? {origin} : 'light' },
           windows: {
             getMain: () => win,
+            isDarkMode: () => hostDark,
             toExternalUrl: (value) => publicWebUrl(value, { businessOrigin: 'https://business.example', gatewayOrigin: origin }),
           },
           translate: (key) => messages[key],
@@ -653,7 +655,7 @@ if (!process.versions.electron) {
             const node = document.querySelector(${JSON.stringify(selector)});
             node.scrollIntoView({block: 'nearest', inline: 'nearest'});
             const r = node.getBoundingClientRect();
-            return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)};
+            return {x: Math.round(${selector.endsWith('.selectTab') ? 'r.right - 8' : 'r.x + r.width / 2'}), y: Math.round(r.y + r.height / 2)};
           })()`);
           firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...point});
           for (const type of ["mouseDown", "mouseUp"])
@@ -675,11 +677,14 @@ if (!process.versions.electron) {
           const icon = tab.querySelector('.tabIcon');
           const c = close.getBoundingClientRect(), i = icon.getBoundingClientRect();
           return {close: getComputedStyle(close).opacity, icon: getComputedStyle(icon).opacity,
+            background: getComputedStyle(tab).backgroundColor,
             replacesIcon: Math.abs(c.x + c.width / 2 - i.x - i.width / 2) <= 2};
         })()`);
         firstTab.window.webContents.sendInputEvent({type: "mouseMove", x: 5, y: 100});
         await waitFor(async () => (await hoverState()).close === "0");
         assert.equal((await hoverState()).icon, "1");
+        const idleTabBackground = (await hoverState()).background;
+        assert.equal(await firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width"), 0);
         const tabHoverPoint = await firstTab.window.webContents.executeJavaScript(`(() => {
           const r = document.querySelector('.browserTab').getBoundingClientRect();
           return {x: Math.round(r.x + 20), y: Math.round(r.y + r.height / 2)};
@@ -688,10 +693,26 @@ if (!process.versions.electron) {
         await waitFor(async () => (await hoverState()).close === "1");
         assert.equal((await hoverState()).icon, "0");
         assert.equal((await hoverState()).replacesIcon, true);
+        await waitFor(async () => (await hoverState()).background !== idleTabBackground);
+        const activeHoverPoint = await firstTab.window.webContents.executeJavaScript(`(() => {
+          const r = document.getElementById('pageIdentity').getBoundingClientRect();
+          return {x: Math.round(r.x + 60), y: Math.round(r.y + r.height / 2)};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...activeHoverPoint});
+        await waitFor(() => firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width === 30"));
+        assert.equal(await firstTab.window.webContents.executeJavaScript("getComputedStyle(document.getElementById('pageIcon')).opacity"), "0");
+        for (const dark of [true, false]) {
+          hostDark = dark;
+          controller.refresh();
+          await waitFor(() => firstTab.window.webContents.executeJavaScript(`document.body.classList.contains('dark') === ${dark}`));
+          assert.equal(await firstTab.window.webContents.executeJavaScript(`getComputedStyle(document.getElementById('pageIdentity')).backgroundColor !== getComputedStyle(document.getElementById('toolbar')).backgroundColor`), true);
+        }
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", x: 5, y: 100});
+        await waitFor(() => firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width === 0"));
         assert.equal(await firstTab.window.webContents.executeJavaScript(`(() => {
           const inactive = document.querySelector('.browserTab').getBoundingClientRect();
           const active = document.getElementById('pageIdentity').getBoundingClientRect();
-          return inactive.width <= 160 && active.width <= 220;
+          return inactive.width >= 120 && inactive.width <= 160 && active.width <= 220;
         })()`), true, "two tabs must remain compact even with long page titles");
         assert.deepEqual(await navigation(firstTab.window), {visible: false, back: false, forward: false});
         await firstTab.contents.executeJavaScript("document.title = '<img src=x onerror=alert(1)>'; void 0");
@@ -745,6 +766,12 @@ if (!process.versions.electron) {
           const actions = document.getElementById('pageActions').getBoundingClientRect();
           return tabs.length === 9 && [...tabs].every(node => node.getBoundingClientRect().width <= 65) && strip.right <= actions.left;
         })()`));
+        assert.equal((await hoverState()).replacesIcon, true, "collapsed tab close must still replace the centered icon");
+        assert.equal(await firstTab.window.webContents.executeJavaScript(`(() => {
+          const tab = document.querySelector('.browserTab');
+          const r = tab.getBoundingClientRect(), i = tab.querySelector('.tabIcon').getBoundingClientRect();
+          return getComputedStyle(tab.querySelector('.tabTitle')).display === 'none' && Math.abs(r.x + r.width / 2 - i.x - i.width / 2) <= 1;
+        })()`), true);
         for (const tab of crowdedTabs) tab.destroy();
         firstTab.window.setSize(1100, 740);
         assert.equal((await tabState()).tabs.length, 1);

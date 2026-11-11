@@ -36,7 +36,7 @@ export function createTabStrip(run: (command: BrowserCommand) => void) {
           select.append(icon, title);
           const close = document.createElement("button");
           close.className = "closeTab";
-          close.textContent = "×";
+          close.append(document.getElementById("closeTab")!.firstElementChild!.cloneNode(true));
           close.addEventListener("click", () => run({ type: "tab-close", id: tab.id }));
           node.append(select, close);
           inactive.set(tab.id, node);

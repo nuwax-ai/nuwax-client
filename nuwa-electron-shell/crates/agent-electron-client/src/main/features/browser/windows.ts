@@ -186,10 +186,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
     entry.state.maximized = entry.window.isMaximized();
     entry.state.fullscreen = entry.window.isFullScreen();
     entry.state.labels = labels();
-    const theme = ctx.settings.read("theme_mode") ?? "system";
-    entry.state.dark =
-      theme === "dark" ||
-      (theme === "system" && nativeTheme.shouldUseDarkColors);
+    // The host may deliberately disable dark mode even on a dark OS.
+    entry.state.dark = ctx.windows.isDarkMode?.() ?? false;
   };
   const snapshot = (group: WindowEntry): BrowserState | null => {
     if (!group.active || group.disposed) return null;

@@ -25,9 +25,10 @@
  * 桥前端：preload/webviewPerfBridge.ts（商业版只注入当前受信业务页）。
  * 注册入口：ipc/index.ts 的 registerAllHandlers。
  */
-import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session } from "electron";
+import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session, nativeTheme } from "electron";
 import type { IpcMainInvokeEvent, BrowserWindowConstructorOptions } from "electron";
 import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
+import { FEATURES } from "@shared/featureFlags";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -345,6 +346,11 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       session: { isAuthenticated: () => !!currentTicket() },
       windows: {
         getMain: () => ctx.getMainWindow(),
+        isDarkMode: () => {
+          if (!FEATURES.DARK_THEME) return false;
+          const mode = readSetting("theme_mode") ?? "system";
+          return mode === "dark" || (mode === "system" && nativeTheme.shouldUseDarkColors);
+        },
         toExternalUrl: (value) => {
           const config = readSetting("step1_config") as { serverHost?: string } | null;
           const gateway = readSetting("nuwax.loopback") as { origin?: string } | null;

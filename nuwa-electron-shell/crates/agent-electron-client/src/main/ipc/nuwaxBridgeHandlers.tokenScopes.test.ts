@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow, session, nativeTheme } from "electron";
 import log from "electron-log";
 import { disposeDesktopFeatures } from "../features";
 
@@ -108,6 +108,7 @@ vi.mock("electron", () => ({
   shell: { openExternal: mocks.openExternal },
   app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
+  nativeTheme: { shouldUseDarkColors: false },
   ipcMain: {
     removeHandler: (channel: string) => handlers.delete(channel),
     handle: (
@@ -981,6 +982,33 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 });
 
 describe("trusted runtime auth context and window navigation", () => {
+  it('browser appearance follows the same dark-mode gate, setting and OS policy as the host', async () => {
+    const flags = (await import('@shared/featureFlags')).FEATURES as {DARK_THEME: boolean};
+    const initialGate = flags.DARK_THEME;
+    const systemTheme = nativeTheme as {shouldUseDarkColors: boolean};
+    const initialSystem = systemTheme.shouldUseDarkColors;
+    const start = vi.spyOn(desktopFeatures, 'startDesktopFeatures');
+    try {
+      registerNuwaxBridgeHandlers({getMainWindow: () => null} as never);
+      const isDarkMode = start.mock.lastCall![0].host!.windows.isDarkMode!;
+      systemTheme.shouldUseDarkColors = true;
+      flags.DARK_THEME = false;
+      for (const mode of ['dark', 'light', 'system']) {
+        settings.set('theme_mode', mode);
+        expect(isDarkMode()).toBe(false);
+      }
+      flags.DARK_THEME = true;
+      settings.set('theme_mode', 'light'); expect(isDarkMode()).toBe(false);
+      settings.set('theme_mode', 'dark'); expect(isDarkMode()).toBe(true);
+      settings.set('theme_mode', 'system'); expect(isDarkMode()).toBe(true);
+      systemTheme.shouldUseDarkColors = false; expect(isDarkMode()).toBe(false);
+    } finally {
+      flags.DARK_THEME = initialGate;
+      systemTheme.shouldUseDarkColors = initialSystem;
+      start.mockRestore();
+    }
+  });
+
   const windowEvent = (frameOrigin = GW_ORIGIN, topOrigin = GW_ORIGIN) => ({
     senderFrame: { url: `${frameOrigin}/home` },
     sender: { getURL: () => `${topOrigin}/home`, once: vi.fn(), removeListener: vi.fn() },
