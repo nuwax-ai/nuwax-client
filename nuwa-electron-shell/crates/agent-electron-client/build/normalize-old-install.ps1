@@ -287,6 +287,7 @@ function Read-Manifest([string]$ManifestPath) {
   Assert-NoRecoveryRedirect $plain
   $records = New-Object 'System.Collections.Generic.List[object]'
   foreach ($line in [System.IO.File]::ReadAllLines($ManifestPath, $utf8)) {
+    Assert-RecoveryCleanupMayContinue
     if (-not [string]::IsNullOrWhiteSpace($line)) {
       $records.Add(($line | ConvertFrom-Json))
     }
@@ -412,15 +413,31 @@ if ($statePathFull.StartsWith($root + '\', $pathComparison)) {
 
 $marker = Get-MarkerPath $root
 $extendedMarker = Get-ExtendedPath $marker
-$recoveryMutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)))
+$recoveryMutexName = 'Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)
+$recoveryMutex = [Threading.Mutex]::new($false, $recoveryMutexName)
+# Foreground operations announce themselves before waiting for the data lock.
+# Cleanup retains that lock for safety, but yields during scans and hashing.
+$script:recoveryForegroundMutex = [Threading.Mutex]::new($false, ($recoveryMutexName + '-foreground'))
+$foregroundHeld = $false
 $mutexHeld = $false
-try { $mutexHeld = $recoveryMutex.WaitOne(30000) }
-catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
-if (-not $mutexHeld) { $recoveryMutex.Dispose(); throw 'Another recovery operation is active for this installation.' }
 try {
+if ($Action -ne 'Cleanup') {
+  try { $foregroundHeld = $script:recoveryForegroundMutex.WaitOne(30000) }
+  catch [Threading.AbandonedMutexException] { $foregroundHeld = $true }
+  if (-not $foregroundHeld) { throw 'Another recovery operation is active for this installation.' }
+}
+try { $mutexHeld = $recoveryMutex.WaitOne($(if ($Action -eq 'Cleanup') { 30000 } else { 1000 })) }
+catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
+if (-not $mutexHeld -and $Action -ne 'Cleanup') {
+  Stop-LegacyRecoveryRetention $root
+  try { $mutexHeld = $recoveryMutex.WaitOne(30000) }
+  catch [Threading.AbandonedMutexException] { $mutexHeld = $true }
+}
+if (-not $mutexHeld) { throw 'Another recovery operation is active for this installation.' }
 
 if ($Action -eq 'Cleanup') {
-  Invoke-RecoveryRetention $root
+  try { Invoke-RecoveryRetention $root }
+  catch [OperationCanceledException] { Write-Output 'Backup retention yielded to an installation operation; remaining backups were retained.' }
   exit 0
 }
 
@@ -979,8 +996,10 @@ try {
 
 Write-Output "Preserved $($plans.Count) old installation entries in $recoveryDir"
 } finally {
+  if ($foregroundHeld) { $script:recoveryForegroundMutex.ReleaseMutex() }
   if ($mutexHeld) { $recoveryMutex.ReleaseMutex() }
   $recoveryMutex.Dispose()
+  $script:recoveryForegroundMutex.Dispose()
   if ($CleanupRuntime) {
     try { Remove-RecoveryRetentionRuntime ([IO.Path]::GetDirectoryName($script:recoveryRuntimePath)) $root }
     catch { Write-Output ('Cleanup runtime retained: ' + $_.Exception.Message) }

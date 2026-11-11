@@ -16,7 +16,7 @@ function Hash([string]$path) {
   try { return [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-', '').ToLowerInvariant() }
   finally { $sha.Dispose() }
 }
-function Run([string]$action, [string]$install, [string]$state, [string]$inventory = '') {
+function Run([string]$action, [string]$install, [string]$state, [string]$inventory = '', [switch]$NoWait) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
   $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $RecoveryScript + '" -Action ' + $action + ' -InstallDir "' + $install + '" -StatePath "' + $state + '"'
@@ -25,6 +25,7 @@ function Run([string]$action, [string]$install, [string]$state, [string]$invento
   $psi.WorkingDirectory = $fixture
   $p = [Diagnostics.Process]::Start($psi)
   $stdout = $p.StandardOutput.ReadToEndAsync(); $stderr = $p.StandardError.ReadToEndAsync()
+  if ($NoWait) { return @{ process = $p; stdout = $stdout; stderr = $stderr } }
   if (!$p.WaitForExit(30000)) { $p.Kill(); throw 'Recovery test exceeded 30 seconds' }
   return @{ code = $p.ExitCode; output = $stdout.Result + $stderr.Result }
 }
@@ -113,6 +114,97 @@ Put "$($active.parent)\Nuwax-installer-recovery-active-$rootHash.txt" $active.ba
 $result = Run 'Cleanup' $active.install $active.state
 Assert ($result.code -eq 0 -and [IO.Directory]::Exists($active.backup)) 'Active recovery removed'
 $rows += @{ case = 'active-recovery'; passed = $true }
+$busy = Seed 'foreground-priority' 30; $latest = Seed 'foreground-priority' 1
+$manifest = "$($busy.backup)\manifest.jsonl"
+$originalManifest = [IO.File]::ReadAllText($manifest)
+# Keep a real cleanup busy parsing synthetic history until Inspect requests
+# the same installation. No production paths, processes or registry are used.
+$lines = $originalManifest -split [Environment]::NewLine
+Put $manifest (($lines[0..($lines.Count - 2)] -join [Environment]::NewLine) + [Environment]::NewLine +
+  ((('{"status":"fixture-history"}' + [Environment]::NewLine) * 20000)) + $lines[-1])
+$sha = [Security.Cryptography.SHA256]::Create()
+try { $rootHash = [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($busy.install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
+finally { $sha.Dispose() }
+$mutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-Nuwax-installer-recovery-active-' + $rootHash))
+$worker = Run 'Cleanup' $busy.install $busy.state '' -NoWait
+try {
+  $deadline = [DateTime]::UtcNow.AddSeconds(10); $observedBusy = $false
+  do {
+    $held = $mutex.WaitOne(0)
+    if ($held) { $mutex.ReleaseMutex(); Start-Sleep -Milliseconds 10 } else { $observedBusy = $true }
+  } while (!$observedBusy -and !$worker.process.HasExited -and [DateTime]::UtcNow -lt $deadline)
+  Assert $observedBusy 'Cleanup never acquired the fixture recovery lock'
+  $elapsed = [Diagnostics.Stopwatch]::StartNew()
+  $result = Run 'Inspect' $busy.install $busy.state
+  Assert ($result.code -eq 0 -and $elapsed.Elapsed.TotalSeconds -lt 10) ('Cleanup blocked foreground inspection: ' + $result.output)
+  Assert ($worker.process.WaitForExit(5000)) 'Cleanup did not release its lock after yielding'
+  $cleanupOutput = $worker.stdout.Result + $worker.stderr.Result
+  Assert ($worker.process.ExitCode -eq 0 -and $cleanupOutput.Contains('yielded to an installation operation')) $cleanupOutput
+  Assert ([IO.File]::Exists("$($busy.backup)\entry-000000")) 'Yielding cleanup changed preserved payload'
+  Assert ([IO.File]::ReadAllText("$($busy.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') 'Yielding cleanup changed current install'
+} finally {
+  if (!$worker.process.HasExited) { $worker.process.Kill(); $worker.process.WaitForExit() }
+  $worker.process.Dispose(); $mutex.Dispose()
+}
+$rows += @{ case = 'foreground-inspection-preempts-cleanup'; passed = $true }
+Put $manifest $originalManifest
+$result = Run 'Cleanup' $busy.install $busy.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($busy.backup)) ('Cleanup did not resume after foreground work: ' + $result.output)
+$rows += @{ case = 'cleanup-resumes-after-foreground'; passed = $true }
+function Start-LegacyCleanupFixture([string]$install, [switch]$InvalidOwner) {
+  $runtime = Join-Path ([IO.Path]::GetTempPath()) ('Nuwax-backup-cleanup-' + [Guid]::NewGuid().ToString('N'))
+  Assert (![IO.Directory]::Exists($runtime)) 'Legacy fixture runtime already exists'
+  [IO.Directory]::CreateDirectory($runtime) | Out-Null
+  $owner = @{ kind = $(if ($InvalidOwner) { 'Unrelated task' } else { 'Nuwax backup cleanup' }); installDir = $install }
+  [IO.File]::WriteAllText("$runtime\owner.json", ($owner | ConvertTo-Json -Compress), $utf8)
+  [IO.File]::WriteAllText("$runtime\normalize-old-install.ps1", @'
+param([string]$Action, [switch]$CleanupRuntime, [string]$StatePath, [string]$InstallDir)
+if (([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'owner.json')) | ConvertFrom-Json).kind -ne 'Nuwax backup cleanup') {
+  [IO.File]::WriteAllText(($StatePath + '.ready'), 'ready')
+  while ($true) { Start-Sleep -Milliseconds 100 }
+}
+$sha = [Security.Cryptography.SHA256]::Create()
+try { $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($InstallDir.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
+finally { $sha.Dispose() }
+$mutex = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-Nuwax-installer-recovery-active-' + $hash))
+if (!$mutex.WaitOne(0)) { exit 2 }
+try {
+  [IO.File]::WriteAllText(($StatePath + '.ready'), 'ready')
+  while ($true) { Start-Sleep -Milliseconds 100 }
+} finally { $mutex.ReleaseMutex(); $mutex.Dispose() }
+'@, $utf8)
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runtime + '\normalize-old-install.ps1" -Action Cleanup -CleanupRuntime -StatePath "' + $runtime + '\state.txt" -InstallDir "' + $install + '"'
+  $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+  return @{ process = [Diagnostics.Process]::Start($psi); runtime = $runtime; ready = "$runtime\state.txt.ready" }
+}
+$legacy = Seed 'legacy-cleanup' 30; $other = Seed 'other-installation' 30
+Put "$($legacy.install)\workspace\sentinel.txt" 'PERSONAL DATA MUST STAY'
+$legacyWorker = Start-LegacyCleanupFixture $legacy.install
+$otherWorker = Start-LegacyCleanupFixture $other.install
+$unownedWorker = Start-LegacyCleanupFixture $legacy.install -InvalidOwner
+try {
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  while ((!([IO.File]::Exists($legacyWorker.ready)) -or !([IO.File]::Exists($otherWorker.ready)) -or !([IO.File]::Exists($unownedWorker.ready))) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+  Assert ([IO.File]::Exists($legacyWorker.ready) -and [IO.File]::Exists($otherWorker.ready) -and [IO.File]::Exists($unownedWorker.ready)) 'Legacy fixture workers were not ready'
+  $elapsed = [Diagnostics.Stopwatch]::StartNew()
+  $result = Run 'Inspect' $legacy.install $legacy.state
+  Assert ($result.code -eq 0 -and $result.output.Trim() -eq 'NO_PENDING_RECOVERY' -and $elapsed.Elapsed.TotalSeconds -lt 15) ('Legacy cleanup blocked upgrade or altered installer protocol: ' + $result.output)
+  Assert ($legacyWorker.process.WaitForExit(5000)) 'Owned legacy cleanup did not stop'
+  Assert (!$otherWorker.process.HasExited) 'Another installation cleanup was stopped'
+  Assert (!$unownedWorker.process.HasExited) 'A process without verified cleanup ownership was stopped'
+  Assert ([IO.File]::ReadAllText("$($legacy.install)\workspace\sentinel.txt") -eq 'PERSONAL DATA MUST STAY') 'Legacy handoff modified workspace data'
+  Assert ([IO.Directory]::Exists($legacy.backup)) 'Legacy handoff removed a backup'
+} finally {
+  foreach ($worker in @($legacyWorker, $otherWorker, $unownedWorker)) {
+    if (!$worker.process.HasExited) { $worker.process.Kill(); $worker.process.WaitForExit() }
+    $worker.process.Dispose()
+    foreach ($file in @('normalize-old-install.ps1', 'owner.json', 'state.txt.ready')) { [IO.File]::Delete((Join-Path $worker.runtime $file)) }
+    [IO.Directory]::Delete($worker.runtime, $false)
+  }
+}
+$rows += @{ case = 'legacy-cleanup-handoff-and-installation-isolation'; passed = $true }
 $expiredTransactionBackup = Seed 'transaction' 30
 $transaction = Join-Path $fixture 'transaction'
 $install = "$transaction\installation"; $state = "$transaction\state.txt"
