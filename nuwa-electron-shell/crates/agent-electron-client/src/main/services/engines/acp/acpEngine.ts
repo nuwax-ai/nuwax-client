@@ -364,9 +364,16 @@ export class AcpEngine extends EventEmitter {
 
     try {
       if (plan.method === "unstable_setSessionModel") {
+        // GLM-5.3 家族目录档位只有 low/high/max，引擎默认 medium 会被档位门
+        // 拒绝；mid-session 切换时 spawn env 的 effort 播种不一定覆盖到该模型，
+        // 这里给无显式 effort 的目标补 [low]（适配器 ModelId 格式 model[effort]）。
+        const modelId =
+          /^glm-5\.3/i.test(plan.targetModelId) && !plan.targetModelId.includes("[")
+            ? `${plan.targetModelId}[low]`
+            : plan.targetModelId;
         await connection.unstable_setSessionModel?.({
           sessionId: acpSessionId,
-          modelId: plan.targetModelId,
+          modelId,
         });
         log.info(
           `${this.logTag} setSessionModel: ${plan.currentModelId || "(unknown)"} → ${plan.targetModelId}`,
@@ -776,6 +783,7 @@ export class AcpEngine extends EventEmitter {
           baseUrl: config.baseUrl,
           model: config.model,
           apiProtocol: config.apiProtocol,
+          providerName: config.providerName,
           env: spawnEnv,
           engineType: this.engineName,
           purpose: config.purpose ?? "engine",
@@ -1997,6 +2005,9 @@ export class AcpEngine extends EventEmitter {
             model: this.resolveModelForReinit(request.model_provider),
             apiProtocol:
               request.model_provider.api_protocol || this.config.apiProtocol,
+            // Provider 名（如 "glm-5.3-flash-responses"）供 acpClient 的
+            // 名称→Responses 线开关识别（2026-11-10 本地联调）。
+            providerName: request.model_provider.name,
           };
           await this.destroy();
           const initResult = await this.init(newConfig);

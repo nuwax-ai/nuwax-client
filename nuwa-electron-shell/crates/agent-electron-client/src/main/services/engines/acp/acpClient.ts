@@ -461,6 +461,8 @@ export interface AcpConnectionConfig {
   baseUrl?: string;
   model?: string;
   apiProtocol?: string;
+  /** Provider 配置名（含 "-responses" 时直连 Responses 线，见 createAcpConnection） */
+  providerName?: string;
   env?: Record<string, string>;
   /** Engine type for process registry tracking */
   engineType?: "claude-code" | "nuwaxcode" | "codex" | "codex-cli";
@@ -959,6 +961,13 @@ export async function createAcpConnection(
     if (backend.reasoningEffort) {
       env.NUWAX_MODEL_REASONING_EFFORT = backend.reasoningEffort;
     }
+    // 本地联调开关（2026-11-10）：provider 名含 "-responses"（如
+    // "glm-5.3-flash-responses"）时，即使 api_protocol=openai 也直接走引擎原生
+    // Responses 线——用名称临时声明该端点本就是 Responses 协议（如智谱官方
+    // open.bigmodel.cn/api/v1），绕开默认的 chat 翻译路径，便于测试引擎逻辑。
+    // 优先级最低：后端显式下发 NUWAX_WIRE_API / NUWAX_API_PROTOCOL 时仍以后端为准。
+    const providerName = (config.providerName || "").toLowerCase();
+    const nameSignalsResponses = providerName.includes("-responses");
     // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
     // NUWAX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
@@ -967,23 +976,23 @@ export async function createAcpConnection(
       (config.apiProtocol || "").trim().toLowerCase() === "anthropic";
     if (isAnthropicProtocol) {
       env.NUWAX_API_PROTOCOL = "anthropic";
-      // 适配器对网关自定义模型（不在引擎内置表里的，如 GLM-5.3-Flash）兜底
-      // effort=medium（适配器 createModelId 的 `?? "medium"`），桥把它作为
-      // output_config.effort 发给上游。GLM-5.3 / 5.3-Flash / 5.3-FlashX 官方只接受
-      // max/high/low（docs.bigmodel.cn 的 reasoning_effort 说明），medium 会拿到
-      // 400/1210——抓包与官方文档双向证实。5.2 会把 medium 映射成 high 所以不报，
-      // 这也是不同环境结论不同的原因。这里播种两代都接受的 low。
-      // 后端显式下发 NUWAX_MODEL_REASONING_EFFORT 时优先用它——哪个模型/版本该用
-      // 哪档只有后端知道；后端要求关闭思考时（上方已映射 NUWAX_DISABLE_THINKING）
-      // 不设，让 none 生效。
-      if (!env.NUWAX_DISABLE_THINKING && !env.NUWAX_MODEL_REASONING_EFFORT) {
-        env.NUWAX_MODEL_REASONING_EFFORT = "low";
-      }
+      // Fork (2026-11-10)：不再按模型名播种 effort。适配器的 medium 兜底已
+      // 结构性移除——无显式档位时身份串走 `[default]` 哨兵、引擎在 wire 上省略
+      // 该字段，厂商按自己的默认执行（GLM-5.3 官方默认 max）。按模型名猜档位
+      // 是第二策略源，已删除；确需低成本默认时由后端统一下发
+      // NUWAX_MODEL_REASONING_EFFORT（单一策略源）。
+    } else if (nameSignalsResponses && !backend.wireApi && !backend.apiProtocol) {
+      // 名称声明 Responses 且后端未显式选择协议线：直连 Responses。
+      log.info(
+        `[AcpClient] codex: provider "${config.providerName}" signals the Responses wire by name; skipping the chat translation default`,
+      );
     } else {
       env.NUWAX_WIRE_API = backend.wireApi || "chat";
       if (backend.apiProtocol) {
         env.NUWAX_API_PROTOCOL = backend.apiProtocol;
       }
+      // Fork (2026-11-10)：同 anthropic 分支——medium 兜底已在适配器侧结构性
+      // 移除，此处不再按模型名播种 low。
     }
     // 后端可以通过 agent_config.env 下发 NUWAX_MODEL_CONTEXT_WINDOW（或旧拼写
     // CODEX_MODEL_CONTEXT_WINDOW），这里的默认值不得覆盖它：2026-11-09 事故里
