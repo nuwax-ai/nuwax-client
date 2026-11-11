@@ -32,6 +32,10 @@ export async function callLlmApi(
   // Determine API protocol:
   // Only use apiProtocol field to determine the protocol
   // If apiProtocol is not provided, default to OpenAI-compatible format
+  // TODO(2026-11-11): api_protocol 新增 'responses' 后此处尚未支持——记忆提取
+  // 会拿 Responses 端点的 baseUrl 按 chat 格式打 /chat/completions；纯 Responses
+  // 端点（如智谱官方直连）会 404。代理端点双格式均支持时不受影响，接纯
+  // Responses 端点前须补 Responses 分支（主链路见 acpClient apiProtocol 处理）。
   const isAnthropic = apiProtocol?.toLowerCase() === 'anthropic';
   log.info('[llmClient] apiProtocol=' + (apiProtocol ?? 'undefined') + ' -> isAnthropic=' + isAnthropic);
 
