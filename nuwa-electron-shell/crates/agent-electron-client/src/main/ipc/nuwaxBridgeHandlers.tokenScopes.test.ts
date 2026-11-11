@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { session } from "electron";
+import { BrowserWindow, session } from "electron";
 import log from "electron-log";
 import { disposeDesktopFeatures } from "../features";
 
@@ -138,6 +138,7 @@ vi.mock("electron", () => ({
     };
     private destroyed = false;
     on = vi.fn();
+    removeListener = vi.fn();
     show = vi.fn();
     focus = vi.fn();
     loadURL = mocks.loadURL;
@@ -1021,6 +1022,41 @@ describe("trusted runtime auth context and window navigation", () => {
     expect(mocks.loadURL).toHaveBeenCalledWith('https://external.example/legacy-cashier');
     expect(mocks.openExternal).not.toHaveBeenCalled();
     expect(handlers.get('native:openWindow')!(windowEvent(), { path: '/home', purpose: 'invalid' })).toEqual({ success: false, error: 'invalid window purpose' });
+  });
+
+  it.each([
+    {path: `${HOST_ORIGIN}/instant-message`, purpose: undefined, isolated: false},
+    {path: 'https://external.example/legacy', purpose: undefined, isolated: false},
+    {path: 'https://external.example/cashier', purpose: 'payment', isolated: true},
+  ])('Nuwax routes legacy/page/payment calls through the same custom browser: $path', ({path: target, purpose, isolated}) => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const available = vi.spyOn(desktopFeatures, 'isDesktopBrowserAvailable').mockReturnValue(true);
+    const create = vi.spyOn(desktopFeatures, 'createDesktopBrowserPage').mockImplementation(({windowOptions}) => {
+      const window = new BrowserWindow(windowOptions);
+      return {window, contents: window.webContents, destroy: () => window.destroy(), hide: vi.fn()};
+    });
+    try {
+      expect(handlers.get('native:openWindow')!(windowEvent(), {path: target, purpose})).toEqual({success: true});
+      expect(create).toHaveBeenCalledOnce();
+      expect(Boolean(create.mock.calls[0][0].isolated)).toBe(isolated);
+      expect(mocks.openExternal).not.toHaveBeenCalled();
+    } finally { create.mockRestore(); available.mockRestore(); product.mockRestore(); }
+  });
+
+  it('payment descendants keep an isolated window even for unmarked relative business links', async () => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const create = vi.spyOn(desktopFeatures, 'createDesktopBrowserPage').mockImplementation(({windowOptions}) => {
+      const window = new BrowserWindow(windowOptions);
+      return {window, contents: window.webContents, destroy: () => window.destroy(), hide: vi.fn()};
+    });
+    try {
+      const event = windowEvent();
+      const {markDedicatedPage} = await import('../services/system/webviewPolicy');
+      markDedicatedPage(event.sender as never);
+      expect(handlers.get('native:openWindow')!(event, {path: '/payment/result'})).toEqual({success: true});
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({isolated: true}));
+      expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/payment/result?_shell=1`);
+    } finally { create.mockRestore(); product.mockRestore(); }
   });
 
   it("keeps native windows hidden until a real document is ready, then shows and focuses once", () => {

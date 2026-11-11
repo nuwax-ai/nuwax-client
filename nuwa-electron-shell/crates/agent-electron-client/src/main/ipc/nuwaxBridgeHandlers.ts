@@ -55,7 +55,7 @@ import { nativeTicketHeaders } from "../services/nativeTicketCapability";
 import { matchesBusinessOrigin } from "../services/auth/requestPolicy";
 import { sanitizeAuthClearDiagnostic } from "../services/auth/diagnostics";
 import { getGatewayRequestContext } from "../services/loopbackGateway/requestContext";
-import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
+import { destroyTrustedBusinessPopups, trackPopupWindow, loadPopupDocument, openOrdinaryWebLink, markDedicatedPage, isDedicatedPage, createBusinessReadingPage } from "../services/system/webviewPolicy";
 import { businessBridgeOrigins, httpOrigin } from "../services/auth/businessOrigins";
 import { publicWebUrl } from "@shared/utils/publicWebUrl";
 import { currentTicket, syncTicketFromJar, restoreTicketSession, invalidateTicketSession, clearTicketCookies,
@@ -936,6 +936,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         return { success: false, error: "invalid path" };
       }
       if (opts.purpose != null && opts.purpose !== 'page' && opts.purpose !== 'payment') return { success: false, error: 'invalid window purpose' };
+      const isolated = opts.purpose === 'payment' || isDedicatedPage(event.sender);
       const base = event.senderFrame?.url || event.sender?.getURL?.() || "";
       if (!base) return { success: false, error: "sender url missing" };
       let target: URL;
@@ -954,7 +955,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
         const step1 = readSetting("step1_config") as {
           secondaryPages?: "same-window" | "new-window";
         } | null;
-        if (step1?.secondaryPages !== "new-window" && opts.purpose !== 'payment') {
+        if (step1?.secondaryPages !== "new-window" && !isolated) {
           ctx.getMainWindow()?.webContents.send("nuwax:open-same-window", {
             url: target.href,
           });
@@ -972,8 +973,8 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       const loopback = readSetting("nuwax.loopback") as { enabled?: boolean; origin?: string } | null;
       const businessWindow = !target.username && !target.password &&
         trustedOrigins().includes(target.origin);
-      // Unmarked calls from older frontends keep native.openWindow's dedicated-window contract.
-      if (APP_NAME_IDENTIFIER === 'nuwax' && !businessWindow && opts.purpose === 'page') return openOrdinaryWebLink(target.href, event.sender);
+      // Legacy ordinary calls and same-origin links share the tabbed browser.
+      if (APP_NAME_IDENTIFIER === 'nuwax' && !businessWindow && !isolated) return openOrdinaryWebLink(target.href, event.sender);
       // Absolute same-origin links also open a standalone window. Its frontend
       // must use the standalone layout, regardless of the secondary-page setting.
       if (businessWindow) target.searchParams.set("_shell", "1");
@@ -1003,18 +1004,20 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
           sandbox: true,
         },
       };
-      const readingPage = APP_NAME_IDENTIFIER === 'nuwax' && businessWindow && opts.purpose === 'page'
-        ? createBusinessReadingPage(windowOptions, target.href) : null;
+      const readingPage = APP_NAME_IDENTIFIER === 'nuwax'
+        ? createBusinessReadingPage(windowOptions, target.href, undefined, isolated) : null;
       const win = readingPage?.window ?? new BrowserWindow(windowOptions);
       const contents = readingPage?.contents ?? win.webContents;
-      trackPopupWindow(win, event.sender, contents);
-      if (opts.purpose === 'payment' || (!businessWindow && opts.purpose == null)) markDedicatedPage(contents);
-      shellWindows.add(win);
-      businessShellWindows.add(win);
-      win.on("closed", () => {
-        shellWindows.delete(win);
-        businessShellWindows.delete(win);
-      });
+      trackPopupWindow(win, event.sender, contents, { page: readingPage ?? undefined, closeWithOpener: readingPage ? isolated : undefined });
+      if (isolated) markDedicatedPage(contents);
+      if (!shellWindows.has(win)) {
+        shellWindows.add(win);
+        businessShellWindows.add(win);
+        win.on("closed", () => {
+          shellWindows.delete(win);
+          businessShellWindows.delete(win);
+        });
+      }
       if (businessWindow) {
         trustInitialBusinessNavigation(contents, target.href);
       }

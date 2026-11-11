@@ -70,7 +70,9 @@ vi.mock("electron", () => ({
     destroyed = false;
     destroy = vi.fn(() => { this.destroyed = true; });
     isDestroyed = () => this.destroyed;
-    webContents = { session: undefined as unknown, getURL: vi.fn(() => ""), on: vi.fn(), once: vi.fn(), removeListener: vi.fn() };
+    webContents = { session: undefined as unknown, isDestroyed: () => false, getURL: vi.fn(() => ""), on: vi.fn(), once: vi.fn(), removeListener: vi.fn() };
+    hide = vi.fn();
+    removeListener = vi.fn();
     constructor(public options: unknown) {
       const configured = options as { webPreferences?: { session?: unknown; partition?: string }; webContents?: typeof this.webContents };
       if (configured.webContents) this.webContents = configured.webContents;
@@ -162,7 +164,10 @@ beforeEach(async () => {
   mocks.createBrowserPage.mockReset();
   mocks.openExternal.mockClear();
   const { BrowserWindow } = await import("electron");
-  mocks.createBrowserPage.mockImplementation(({ windowOptions }) => { const window = new BrowserWindow(windowOptions); return { window, contents: window.webContents }; });
+  mocks.createBrowserPage.mockImplementation(({ windowOptions }) => {
+    const window = new BrowserWindow(windowOptions);
+    return { window, contents: window.webContents, destroy: () => window.destroy(), hide: () => window.hide() };
+  });
   settings.clear();
   settings.set("step1_config", { serverHost: business });
   mocks.appOn.mockClear();
@@ -254,6 +259,14 @@ describe("standalone page unload confirmation", () => {
 });
 
 describe("window.open session boundary", () => {
+  it.each(['/home', '/instant-message', '/agent/example'])("same-origin IM links use the custom tabbed browser without a referrer: %s", async (route) => {
+    const handler = webviewPopupHandler(await setup(), `${business}/instant-message`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
+    const result = handler(popup(`${business}${route}`, ''));
+    result.createWindow!(result.overrideBrowserWindowOptions!);
+    expect(mocks.createBrowserPage).toHaveBeenCalledWith(expect.objectContaining({initialUrl: `${business}${route}`, isolated: false}));
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+  });
+
   it.each(['/repo/doc/saved-fixture', '/repo/share/saved-fixture'])("ordinary library popups retain their business session: %s", async (route) => {
     const handler = webviewPopupHandler(await setup(), `${business}/home`) as (details: unknown) => import('electron').WindowOpenHandlerResponse;
     const result = handler(popup(`${business}${route}`, ''));
@@ -288,7 +301,7 @@ describe("window.open session boundary", () => {
     const post = handler({ ...(popup(target, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } });
     expect(post.action).toBe('allow');
     post.createWindow!(post.overrideBrowserWindowOptions!);
-    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+    expect(mocks.createBrowserPage).toHaveBeenCalledWith(expect.objectContaining({ initialUrl: target, isolated: false }));
   });
   it.each(['available', 'disabled', 'failed'])('explicit business readers stay readable when browser is %s', async (mode) => {
     await setup();
@@ -329,18 +342,61 @@ describe("window.open session boundary", () => {
     expect(mocks.popupWindows.at(-1)!.show).not.toHaveBeenCalled();
   });
 
-  it('keeps POST and payment descendants in dedicated windows even with system-browser preference', async () => {
+  it('isolates payment descendants while ordinary POST pages use tabs, even with system-browser preference', async () => {
     const created = await setup();
     settings.set('nuwax.linkOpenMode', 'system');
     const opener = fakeContents('window', `${external}/cashier`);
     const { markDedicatedPage } = await import('./webviewPolicy');
     markDedicatedPage(opener as never); created({}, opener);
     const handler = opener.setWindowOpenHandler.mock.lastCall![0];
-    expect(handler(popup(`${external}/payment`, external)).action).toBe('allow');
-    expect(handler(popup(`${business}/repo/doc/payment-result`, external)).action).toBe('allow');
+    for (const url of [`${external}/payment`, `${business}/repo/doc/payment-result`]) {
+      const result = handler(popup(url, external));
+      expect(result.action).toBe('allow');
+      const child = result.createWindow(result.overrideBrowserWindowOptions);
+      expect(mocks.createBrowserPage).toHaveBeenLastCalledWith(expect.objectContaining({initialUrl: url, isolated: true}));
+      const {isDedicatedPage} = await import('./webviewPolicy');
+      expect(isDedicatedPage(child)).toBe(true);
+    }
     const ordinary = webviewPopupHandler(created, `${business}/home`);
-    expect(ordinary({ ...(popup(`${external}/post`, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } }).action).toBe('allow');
+    const post = ordinary({ ...(popup(`${external}/post`, business) as object), postBody: { data: [], contentType: 'application/x-www-form-urlencoded' } }) as import('electron').WindowOpenHandlerResponse;
+    expect(post.action).toBe('allow');
+    post.createWindow!(post.overrideBrowserWindowOptions!);
+    expect(mocks.createBrowserPage).toHaveBeenLastCalledWith(expect.objectContaining({isolated: false}));
     expect(mocks.openExternal).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('opener cleanup is page-scoped and only payment follows its opener (payment: %s)', async (payment) => {
+    await setup();
+    const {trackPopupWindow} = await import('./webviewPolicy');
+    const {BrowserWindow} = await import('electron');
+    const win = new BrowserWindow({});
+    const contents = fakeContents('window', 'about:blank');
+    const opener = fakeContents('window', `${business}/home`);
+    const page = {destroy: vi.fn(), hide: vi.fn()};
+    trackPopupWindow(win, opener as never, contents as never, {page, closeWithOpener: payment});
+    const close = opener.once.mock.calls.find(([name]) => name === 'destroyed')?.[1];
+    expect(Boolean(close)).toBe(payment);
+    close?.();
+    expect(page.destroy).toHaveBeenCalledTimes(payment ? 1 : 0);
+    expect(win.destroy).not.toHaveBeenCalled();
+  });
+
+  it.each(['completed', 'cancelled', 'interrupted'])('an empty download cleans only its tab after %s', async (state) => {
+    await setup();
+    const {trackPopupWindow} = await import('./webviewPolicy');
+    const {BrowserWindow} = await import('electron');
+    const win = new BrowserWindow({});
+    const contents = fakeContents('window', 'about:blank');
+    const page = {destroy: vi.fn(), hide: vi.fn()};
+    trackPopupWindow(win, undefined, contents as never, {page});
+    const download = {getFilename: () => 'fixture.zip', getTotalBytes: () => 42, getSavePath: () => '/tmp/fixture.zip', on: vi.fn(), once: vi.fn()};
+    const listener = mocks.defaultSession.on.mock.calls.find(([name]) => name === 'will-download')![1];
+    listener({}, download, contents);
+    expect(page.hide).toHaveBeenCalledOnce();
+    download.once.mock.calls.find(([name]) => name === 'done')![1]({}, state);
+    expect(page.destroy).toHaveBeenCalledOnce();
+    expect(win.destroy).not.toHaveBeenCalled();
+    expect(win.hide).not.toHaveBeenCalled();
   });
   it.each([
     ["webview", business],

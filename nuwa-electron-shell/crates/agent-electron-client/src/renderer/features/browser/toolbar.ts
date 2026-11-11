@@ -6,6 +6,7 @@ import {
   type BrowserWindowBridge,
 } from "@shared/features/browser/contract";
 import "./toolbar.css";
+import { createTabStrip } from "./tabStrip";
 document.documentElement.style.setProperty(
   "--toolbar-height",
   `${BROWSER_TOOLBAR_HEIGHT}px`,
@@ -20,9 +21,11 @@ const element = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let current: BrowserState | null = null;
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
+let lastFeedbackId = 0;
 const run = (command: BrowserCommand) => {
   void bridge.command(command).catch(() => {});
 };
+const renderTabs = createTabStrip(run);
 const button = (id: string, action: () => void) =>
   element(id).addEventListener("click", action);
 const label = (id: string, value: string) => {
@@ -31,12 +34,13 @@ const label = (id: string, value: string) => {
   node.setAttribute("aria-label", value);
 };
 function render(state: BrowserState) {
-  const previousFeedback = current?.copyFeedback?.id;
+  const tabChanged = current?.activeTabId !== state.activeTabId;
   const wasFinding = current?.finding;
   const findFocusRequested =
     current?.findFocusRequest !== state.findFocusRequest;
   const wasAddressOpen = current?.addressOpen;
   current = state;
+  renderTabs(state);
   document.title = state.title || "Nuwax";
   document.body.classList.toggle("dark", state.dark);
   document.body.dataset.platform = state.platform;
@@ -65,6 +69,11 @@ function render(state: BrowserState) {
   // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
   if (!state.finding && wasFinding)
     element<HTMLInputElement>("query").value = "";
+  if (tabChanged) {
+    element<HTMLInputElement>("query").value = state.findText ?? "";
+    clearTimeout(feedbackTimer);
+    element("feedback").hidden = true;
+  }
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
   for (const [id, key] of Object.entries({
@@ -79,6 +88,7 @@ function render(state: BrowserState) {
     search: "find",
     minimize: "minimize",
     closeWindow: "close",
+    closeTab: "close",
   }))
     label(id, l[key]);
   element("location").title = `${l.url}: ${state.url}`;
@@ -91,7 +101,8 @@ function render(state: BrowserState) {
   for (const id of ["retry", "external", "copy"])
     element(id).textContent = l[id];
   label("closeAddress", l.close);
-  if (state.copyFeedback && state.copyFeedback.id !== previousFeedback) {
+  if (state.copyFeedback && state.copyFeedback.id > lastFeedbackId) {
+    lastFeedbackId = state.copyFeedback.id;
     clearTimeout(feedbackTimer);
     element("feedbackText").textContent =
       l[state.copyFeedback.success ? "copyDone" : "copyFailed"];
@@ -101,11 +112,11 @@ function render(state: BrowserState) {
       element("feedback").hidden = true;
     }, 2200);
   }
-  if (state.finding && (!wasFinding || findFocusRequested)) {
+  if (state.finding && (tabChanged || !wasFinding || findFocusRequested)) {
     element<HTMLInputElement>("query").focus();
     element<HTMLInputElement>("query").select();
   }
-  if (state.addressOpen && !wasAddressOpen) {
+  if (state.addressOpen && (tabChanged || !wasAddressOpen)) {
     element<HTMLInputElement>("url").focus();
     element<HTMLInputElement>("url").select();
   } else if (
@@ -128,6 +139,9 @@ button("retry", () => run({ type: "reload" }));
 button("external", () => run({ type: "external" }));
 button("copy", () => run({ type: "copy" }));
 button("copyLink", () => run({ type: "copy" }));
+button("closeTab", () => {
+  if (current) run({ type: "tab-close", id: current.activeTabId });
+});
 button("search", () => run({ type: "find-open" }));
 button("location", () =>
   run({ type: current?.addressOpen ? "address-close" : "address-open" }),

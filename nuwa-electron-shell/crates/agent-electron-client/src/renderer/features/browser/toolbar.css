@@ -107,11 +107,73 @@ nav {
   gap: 2px;
   flex-shrink: 0;
 }
+#tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+#tabs::-webkit-scrollbar {
+  display: none;
+}
+.browserTab {
+  display: flex;
+  align-items: center;
+  flex: 0 1 160px;
+  min-width: 64px;
+  max-width: 160px;
+  container-type: inline-size;
+  height: 34px;
+  padding: 1px 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+#toolbar .selectTab {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 0 7px;
+  justify-content: flex-start;
+  font-size: 12px;
+  text-align: left;
+  overflow: hidden;
+}
+.tabTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#toolbar .tabIcon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  color: var(--muted);
+}
+@container (max-width: 90px) {
+  .tabTitle {
+    display: none;
+  }
+}
+#toolbar .closeTab,
+#toolbar #closeTab {
+  width: 24px;
+  min-width: 24px;
+}
+#toolbar #closeTab svg {
+  width: 14px;
+  height: 14px;
+}
 #pageIdentity {
   display: flex;
   align-items: center;
-  flex: 0 1 300px;
-  min-width: 110px;
+  flex: 0 1 220px;
+  max-width: 220px;
+  min-width: 180px;
   height: 34px;
   padding: 1px 3px;
   border: 1px solid var(--line);

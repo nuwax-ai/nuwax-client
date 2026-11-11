@@ -22,8 +22,9 @@
           </svg></button
         >
       </nav>
-      <div id="pageIdentity">
-        <button id="location" aria-controls="address" aria-expanded="false">
+      <div id="tabs" role="tablist">
+      <div id="pageIdentity" role="presentation">
+        <button id="location" role="tab" aria-selected="true" aria-controls="address" aria-expanded="false">
           <svg id="pageIcon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="9" />
             <path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18" />
@@ -44,6 +45,10 @@
             <path d="M7.5 12h.01M12 12h.01M16.5 12h.01" />
           </svg>
         </button>
+        <button id="closeTab">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M7 17 17 7" /></svg>
+        </button>
+      </div>
       </div>
       <div id="toolbarSpace"></div>
       <div id="feedback" role="status" aria-live="polite" aria-atomic="true" hidden>
