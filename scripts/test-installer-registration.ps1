@@ -33,6 +33,7 @@ try {
     $key = $hive.CreateSubKey($keyName)
     try {
       $key.SetValue('InstallLocation', $install)
+      $key.SetValue('KeepShortcuts', 'true')
       $key.SetValue('UninstallString', ('"' + $install + '\Uninstall Nuwax.exe" /currentuser'))
       $key.SetValue('NoModify', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
       $key.SetValue('FixtureMultiString', [string[]]@('first', 'second'), [Microsoft.Win32.RegistryValueKind]::MultiString)
@@ -41,6 +42,10 @@ try {
   [IO.File]::WriteAllText((Join-Path $install 'Uninstall Nuwax.exe'), 'not an executable')
   [IO.File]::WriteAllText((Join-Path $install 'Nuwax.exe'), 'old app')
   $prepared = Run 'Prepare'; Assert ($prepared.code -eq 0) $prepared.output
+  Assert ([IO.File]::ReadAllText($state + '.keep-shortcuts') -eq 'false') 'Fresh preservation adopted an unrelated old policy'
+  $resumed = Run 'Prepare' '-AllowMissingUninstaller'
+  Assert ($resumed.code -eq 0 -and [IO.File]::ReadAllText($state + '.keep-shortcuts') -eq 'true') 'Prepared recovery lost shortcut policy with no executable'
+  $cases += 'pending-shortcuts-survive-missing-executable'
   $backup = [IO.File]::ReadAllText($state).Trim()
   $snapshot = Join-Path $backup 'registration.json'
   Assert ([IO.File]::Exists($snapshot)) 'Registration snapshot missing'
@@ -62,12 +67,18 @@ try {
     [IO.File]::WriteAllText($snapshot, ($modified | ConvertTo-Json -Depth 8))
     [IO.File]::AppendAllText($manifest, ((@{status='registration-snapshot-recorded';sha256=(Proof)}|ConvertTo-Json -Compress) + "`r`n"))
     $rejected = Run 'Inspect'; Assert ($rejected.code -ne 0) ('Inspect accepted ' + $variant)
+    $rejected = Run 'Prepare' '-AllowMissingUninstaller'
+    Assert ($rejected.code -ne 0) ('Shortcut policy accepted ' + $variant)
     $cases += ('inspect-rejects-' + $variant)
   }
   [IO.File]::WriteAllText($snapshot, $originalSnapshot)
   [IO.File]::AppendAllText($manifest, ((@{status='registration-snapshot-recorded';sha256=(Proof)}|ConvertTo-Json -Compress) + "`r`n"))
   $detached = Run 'Detach'; Assert ($detached.code -eq 0) $detached.output
   $hive.DeleteSubKeyTree($private); $hive.DeleteSubKeyTree($uninstall)
+  $resumed = Run 'Prepare' '-AllowMissingUninstaller -RequireRegistrationSnapshot'
+  Assert ($resumed.code -eq 0 -and [IO.File]::ReadAllText($state + '.keep-shortcuts') -eq 'true') 'Pending recovery lost shortcut policy after registration removal'
+  Assert (-not [IO.File]::Exists((Join-Path $install 'Nuwax.exe'))) 'Policy recovery unexpectedly restored the old executable'
+  $cases += 'pending-shortcuts-survive-missing-registration'
   # Model extraction failing after the legacy uninstaller removed registration.
   [IO.File]::WriteAllText((Join-Path $install 'Nuwax.exe'), 'partial new app must not be overwritten')
   $restored = Run 'RestoreRegistration'; Assert ($restored.code -eq 0) $restored.output
@@ -93,6 +104,15 @@ try {
   $cases += 'pending-recovery-rejects-reappeared-registration'
   [IO.File]::WriteAllText($snapshot, $originalSnapshot + ' ')
   $rejected = Run 'RestoreRegistration'; Assert ($rejected.code -ne 0) 'Changed snapshot was accepted'
+  $finished = Run 'Restore'; Assert ($finished.code -eq 0) $finished.output
+  $key = $hive.OpenSubKey($private, $true)
+  try { $key.SetValue('KeepShortcuts', 'false') } finally { $key.Dispose() }
+  $next = Run 'Prepare' '-AllowMissingUninstaller'
+  Assert ($next.code -eq 0 -and [IO.File]::ReadAllText($state + '.keep-shortcuts') -eq 'false') 'Completed recovery overrode the current registration or reused a stale policy report'
+  $cases += 'completed-recovery-does-not-override-current-shortcut-policy'
+  $next = Run 'Prepare' '-AllowMissingUninstaller'
+  Assert ($next.code -eq 0 -and [IO.File]::ReadAllText($state + '.keep-shortcuts') -eq 'false') 'Recovery invented shortcut preservation without the recorded compatibility flag'
+  $cases += 'pending-recovery-without-keep-flag-is-not-promoted'
   [pscustomobject]@{ passed = $true; fixtureRoot = $root; cases = $cases; productionRegistryTouched = $false } | ConvertTo-Json
 } finally {
   # The prefix was generated in this process and never names an application.

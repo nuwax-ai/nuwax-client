@@ -255,9 +255,22 @@ Var windowsCommandLineInstallPath
     ${if} $R8 != ""
       StrCpy ${RESULT} $R8
       StrCpy ${STATUS} "resolved"
+      StrCpy $R9 "1"
+      !ifmacrodef nuwaxInspectRecovery
+        ; Pending recovery owns the saved registration. Rewriting metadata here
+        ; would invalidate its surviving-value proof before Prepare can read it.
+        !insertmacro nuwaxInspectRecovery $R8
+        StrCpy $R2 $R1 19
+        ${if} $R0 != 0
+        ${orif} $R2 != "NO_PENDING_RECOVERY"
+          StrCpy $R9 "0"
+        ${endif}
+      !endif
       ; An unelevated outer installer may not write HKLM. Keep the resolved
       ; path in memory; the elevated instance repeats the registration repair.
-      !insertmacro windowsWriteRegisteredPath ${ROOT_KEY} $R8
+      ${if} $R9 == "1"
+        !insertmacro windowsWriteRegisteredPath ${ROOT_KEY} $R8
+      ${endif}
     ${endif}
   ${endif}
   ClearErrors

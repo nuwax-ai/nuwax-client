@@ -461,11 +461,36 @@ export function resolveBundledHarnessEnginePath(): string | null {
   if (bundledDir) {
     const vendorRoot = path.join(bundledDir, "vendor", "nuwax-harness");
     try {
-      const hit = fs
+      const metadata = JSON.parse(
+        fs.readFileSync(path.join(bundledDir, "package.json"), "utf-8"),
+      ) as { harnessEngineVersion?: unknown };
+      const version = metadata.harnessEngineVersion;
+      if (version !== undefined) {
+        if (
+          typeof version !== "string" ||
+          !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)
+        ) {
+          log.warn("[BinaryLocator] bundled harness engine version is invalid");
+          return null;
+        }
+        const candidate = path.join(vendorRoot, version, binaryName);
+        if (fs.existsSync(candidate)) return candidate;
+        log.warn(`[BinaryLocator] bundled harness engine ${version} is missing`);
+        return null;
+      }
+      // Legacy resources have no version declaration. Preserve the unambiguous
+      // single-engine case, but never guess among upgrade leftovers.
+      const candidates = fs
         .readdirSync(vendorRoot)
         .map((ver) => path.join(vendorRoot, ver, binaryName))
-        .find((candidate) => fs.existsSync(candidate));
-      if (hit) return hit;
+        .filter((candidate) => fs.existsSync(candidate));
+      if (candidates.length === 1) return candidates[0] ?? null;
+      if (candidates.length > 1) {
+        log.warn(
+          "[BinaryLocator] legacy harness resources contain multiple engine versions",
+        );
+        return null;
+      }
     } catch {
       log.warn(
         "[BinaryLocator] harness vendor dir unreadable, falling back to npm cache",

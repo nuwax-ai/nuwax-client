@@ -66,6 +66,7 @@ const config = {
   win: { target: ['nsis'], signAndEditExecutable: false },
   nsis: { guid, include: path.join(source, 'qa-include.nsh'), oneClick: false, perMachine: false,
     allowToChangeInstallationDirectory: true, deleteAppDataOnUninstall: false, runAfterFinish: false,
+    createDesktopShortcut: true,
     shortcutName: identity, artifactName: 'RecoveryQA-Setup.exe', warningsAsErrors: false },
   publish: null,
 };
