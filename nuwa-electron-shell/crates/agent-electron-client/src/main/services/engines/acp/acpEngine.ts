@@ -779,7 +779,6 @@ export class AcpEngine extends EventEmitter {
           baseUrl: config.baseUrl,
           model: config.model,
           apiProtocol: config.apiProtocol,
-          providerName: config.providerName,
           env: spawnEnv,
           engineType: this.engineName,
           purpose: config.purpose ?? "engine",
@@ -2001,9 +2000,6 @@ export class AcpEngine extends EventEmitter {
             model: this.resolveModelForReinit(request.model_provider),
             apiProtocol:
               request.model_provider.api_protocol || this.config.apiProtocol,
-            // Provider 名（如 "glm-5.3-flash-responses"）供 acpClient 的
-            // 名称→Responses 线开关识别（2026-11-10 本地联调）。
-            providerName: request.model_provider.name,
           };
           await this.destroy();
           const initResult = await this.init(newConfig);

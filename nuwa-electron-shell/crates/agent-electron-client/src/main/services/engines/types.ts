@@ -10,8 +10,6 @@ export type AgentEngineType = "nuwaxcode" | "claude-code" | "codex-cli";
 import type { IsolatedHomeScope } from "./acp/isolatedHomePaths";
 
 export interface AgentConfig {
-  /** Provider 配置名（"-responses" 后缀仅在 HARNESS_LOCAL=1 时影响协议线选择） */
-  providerName?: string;
   engine: AgentEngineType;
   /** Custom agent command (when engine type is unknown, use this as the binary command) */
   customEngineCommand?: string;
