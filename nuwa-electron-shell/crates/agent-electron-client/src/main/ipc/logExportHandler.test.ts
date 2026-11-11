@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import path from "node:path";
 import type { HandlerContext } from "@shared/types/ipc";
 
@@ -55,6 +55,7 @@ beforeEach(() => {
   mocks.archive.mockResolvedValue(undefined);
   registerLogExportHandler(ctx);
 });
+afterEach(() => vi.useRealTimers());
 
 describe("shell log ZIP export IPC", () => {
   it("只能由壳主框架导出；网页、子框架和远程导航均不能触发保存", async () => {
@@ -86,6 +87,8 @@ describe("shell log ZIP export IPC", () => {
   });
 
   it("主进程固定当前产品的 logs，忽略调用者的路径并提供 ZIP 默认文件名", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 11, 17, 33, 0, 714));
     expect(await run(event, "/other-product/logs")).toEqual({
       success: true,
       filePath: "/downloads/feedback.zip",
@@ -96,9 +99,7 @@ describe("shell log ZIP export IPC", () => {
     );
     const [parent, options] = mocks.save.mock.calls[0];
     expect(parent).toBe(host);
-    expect(path.basename(options.defaultPath)).toMatch(
-      new RegExp(`^${APP_NAME_IDENTIFIER}-logs-.*[.]zip$`),
-    );
+    expect(path.basename(options.defaultPath)).toBe(`${APP_NAME_IDENTIFIER}-logs-2026-11-11_17-33-00-714.zip`);
     expect(options.filters).toEqual([{ name: "ZIP", extensions: ["zip"] }]);
   });
 

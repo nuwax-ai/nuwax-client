@@ -27,6 +27,7 @@ import { resolveCapturePlatform } from './platforms';
 import { createScratchDir } from '../_kit/scratchDir';
 import { createCaptureClipboard } from './clipboard';
 import { canCopyCaptureFiles, createCaptureClipboardPlatform } from './platforms/clipboard';
+import { formatLocalFileTimestamp } from '@shared/utils/fileTimestamp';
 
 const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const UNTRUSTED: CaptureResult = { success: false, code: "untrusted" };
@@ -296,7 +297,7 @@ export const captureFeature: DesktopFeature = {
         const extension = EXTENSIONS[owner.result.mime];
         if (!extension) return { success: false, error: "unsupported capture file type" };
         try {
-          const options = { defaultPath: `Nuwax-${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`,
+          const options = { defaultPath: `Nuwax-${formatLocalFileTimestamp()}.${extension}`,
             filters: [{ name: extension.toUpperCase(), extensions: [extension] }] };
           const parent = BrowserWindow.fromWebContents(event.sender);
           const saved = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
