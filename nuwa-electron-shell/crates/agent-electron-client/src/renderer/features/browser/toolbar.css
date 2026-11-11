@@ -120,6 +120,7 @@ nav {
   display: none;
 }
 .browserTab {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 0 1 160px;
@@ -161,14 +162,35 @@ nav {
 }
 #toolbar .closeTab,
 #toolbar #closeTab {
+  position: absolute;
+  left: 7px;
+  top: 4px;
+  z-index: 1;
   width: 24px;
   min-width: 24px;
+  height: 24px;
+  opacity: 0;
+  pointer-events: none;
+}
+#toolbar .browserTab:hover .closeTab,
+#toolbar .browserTab:focus-within .closeTab,
+#pageIdentity:hover #closeTab,
+#pageIdentity:focus-within #closeTab {
+  opacity: 1;
+  pointer-events: auto;
+}
+.browserTab:hover .tabIcon,
+.browserTab:focus-within .tabIcon,
+#pageIdentity:hover #pageIcon,
+#pageIdentity:focus-within #pageIcon {
+  opacity: 0;
 }
 #toolbar #closeTab svg {
   width: 14px;
   height: 14px;
 }
 #pageIdentity {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 0 1 220px;

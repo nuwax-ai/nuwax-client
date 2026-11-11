@@ -655,6 +655,7 @@ if (!process.versions.electron) {
             const r = node.getBoundingClientRect();
             return {x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2)};
           })()`);
+          firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...point});
           for (const type of ["mouseDown", "mouseUp"])
             firstTab.window.webContents.sendInputEvent({type, ...point, button: "left", clickCount: 1});
         };
@@ -668,6 +669,25 @@ if (!process.versions.electron) {
         await waitFor(async () => (await tabState()).tabs.length === 2);
         assert.equal((await tabState()).activeTabId, secondTab.contents.id);
         assert.equal((await tabState()).finding, false);
+        const hoverState = () => firstTab.window.webContents.executeJavaScript(`(() => {
+          const tab = document.querySelector('.browserTab');
+          const close = tab.querySelector('.closeTab');
+          const icon = tab.querySelector('.tabIcon');
+          const c = close.getBoundingClientRect(), i = icon.getBoundingClientRect();
+          return {close: getComputedStyle(close).opacity, icon: getComputedStyle(icon).opacity,
+            replacesIcon: Math.abs(c.x + c.width / 2 - i.x - i.width / 2) <= 2};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", x: 5, y: 100});
+        await waitFor(async () => (await hoverState()).close === "0");
+        assert.equal((await hoverState()).icon, "1");
+        const tabHoverPoint = await firstTab.window.webContents.executeJavaScript(`(() => {
+          const r = document.querySelector('.browserTab').getBoundingClientRect();
+          return {x: Math.round(r.x + 20), y: Math.round(r.y + r.height / 2)};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...tabHoverPoint});
+        await waitFor(async () => (await hoverState()).close === "1");
+        assert.equal((await hoverState()).icon, "0");
+        assert.equal((await hoverState()).replacesIcon, true);
         assert.equal(await firstTab.window.webContents.executeJavaScript(`(() => {
           const inactive = document.querySelector('.browserTab').getBoundingClientRect();
           const active = document.getElementById('pageIdentity').getBoundingClientRect();
