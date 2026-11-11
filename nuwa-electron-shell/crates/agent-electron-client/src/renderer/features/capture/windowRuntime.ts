@@ -683,7 +683,7 @@ export async function mountCaptureWindow(
       if (current.moved && active) history.replace(current.index, active);
       active = null;
       if (!current.moved && current.original.tool === 'text') beginText(current.original, current.index);
-    } else if (active) { selectedIndex = history.values().length; history.push(active); active = null; tool = 'select'; }
+    } else if (active) { selectedIndex = history.values().length; history.push(active); active = null; }
     if (crop && (crop.width < 1 || crop.height < 1)) crop = null;
     if (crop && !tool) tool = 'select';
     magnifier.hidden = true; draw();
