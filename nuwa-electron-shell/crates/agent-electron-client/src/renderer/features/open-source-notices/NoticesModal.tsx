@@ -160,6 +160,10 @@ export function OpenSourceNoticesModal(props: OpenSourceNoticesModalProps): Reac
               size="small"
               rowKey="id"
               columns={columns}
+              expandable={{
+                rowExpandable: (component) => !!component.notes,
+                expandedRowRender: (component) => <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{component.notes}</p>,
+              }}
               dataSource={rows}
               pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
               scroll={{ y: 420 }}

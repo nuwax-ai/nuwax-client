@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { sourceBuildKey, dependencyKey, desktopBuildKey, officeDownloadKey } from './client/fixed-dependency-cache.mjs';
 import sourceCache from './client/prepared-source-cache.cjs';
+import { bundledResourceKey } from './client/build-resource-artifacts.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const client = 'nuwa-electron-shell/crates/agent-electron-client';
@@ -40,6 +41,23 @@ test('Windows checkout keeps third-party patches byte-identical with autocrlf en
   f.git(['-c','user.name=Fixture','-c','user.email=fixture@localhost','-c','commit.gpgsign=false','-c','core.hooksPath=/dev/null','commit','-qm','patch']);
   f.git(['-c','core.autocrlf=true','checkout-index','--all','--prefix='+path.join(f.dir,'checkout')+path.sep]);
   assert.equal(fs.readFileSync(path.join(f.dir,'checkout',patch),'utf8'),bytes);
+});
+
+test('fixed download archives ignore unrelated engines, transport and application edits while tracking their actual preparation inputs', t => {
+  const f = fixture(t);
+  for (const name of ['node', 'git', 'uv', 'ripgrep', 'nuwaxcode']) {
+    const file = client + '/scripts/prepare/prepare-' + name + '.js';
+    f.write(file, fs.readFileSync(path.join(root, file)));
+  }
+  const before = bundledResourceKey(f.dir);
+  f.write(client + '/scripts/prepare/prepare-agent-desktop.js', '// engine update');
+  f.write(client + '/scripts/prepare/prepare-harness.js', '// adapter update');
+  f.write('scripts/client/build-resource-artifacts.mjs', '// transport/reporting change');
+  f.write('scripts/client/core.mjs', '// unrelated lifecycle change');
+  assert.equal(bundledResourceKey(f.dir), before);
+  const node = client + '/scripts/prepare/prepare-node.js';
+  f.write(node, fs.readFileSync(path.join(f.dir, node), 'utf8').replace("'24.14.0'", "'24.14.1'"));
+  assert.notEqual(bundledResourceKey(f.dir), before);
 });
 
 test('source identity survives application version and unrelated UI changes but invalidates source, patch, runtime and target changes', t => {

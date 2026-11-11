@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildNotices, generateThirdPartyNotices as generateNativeNotices, writeNotices } from './third-party-notices.mjs';
+import { expandAgentDesktopNotices } from './agent-desktop-notices.mjs';
 
 export function generateThirdPartyNotices(root, options = {}) {
   if (options.captureOnly) return generateNativeNotices(root, options);
@@ -27,14 +28,19 @@ export function generateThirdPartyNotices(root, options = {}) {
   }
   const selected = Object.fromEntries(Object.entries(sourceManifest.components).filter(([name, entry]) =>
     !entry.resourceDirectory || !paths || Object.hasOwn(paths, name)));
-  const sources = buildNotices({ root, manifest: { resources: selected }, npmComponents: [], platform: options.platform ?? process.platform });
+  if (selected['agent-desktop']?.licenseInventory) selected['agent-desktop'] = expandAgentDesktopNotices(root, selected['agent-desktop'], {
+    platform: options.platform, arch: options.arch, resourcePath: paths?.['agent-desktop'] ?? path.join(resourcesDir, 'agent-desktop'),
+  });
+  const binaryIds = new Set(Object.entries(selected).filter(([id]) => independent.has(id))
+    .flatMap(([id, entry]) => [entry.id ?? id, ...(entry.components ?? []).map(component => component.id)]));
+  const sources = buildNotices({ root, manifest: { resources: selected, allow: sourceManifest.allow }, npmComponents: [], platform: options.platform ?? process.platform });
   if (options.strict && sources.problems.length) throw new Error('[third-party] Vendored source admission failed: ' + sources.problems.map(problem => `${problem.code}:${problem.id}`).join(', '));
   const result = generateNativeNotices(root, { ...options, ...(paths ? { resourcePaths: Object.fromEntries(Object.entries(paths).filter(([name]) => !independent.has(name))) } : {}) });
   const ids = new Set(result.components.map(component => component.id));
   for (const component of sources.components) {
     if (ids.has(component.id)) throw new Error('[third-party] Duplicate vendored-source component: ' + component.id);
     ids.add(component.id);
-    result.components.push({ ...component, kind: independent.has(component.id) ? 'binary' : 'framework' });
+    result.components.push({ ...component, kind: binaryIds.has(component.id) ? 'binary' : 'framework' });
   }
   result.problems.push(...sources.problems);
   result.document = writeNotices(result, result.outDir);

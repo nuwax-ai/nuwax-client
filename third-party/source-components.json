@@ -20,11 +20,19 @@
       "usedBy": "computer-use",
       "license": "Apache-2.0",
       "licenseFile": "third-party/licenses/agent-desktop.txt",
-      "sourceUrl": "https://github.com/vercel-labs/agent-desktop/tree/v1.2.0",
+      "sourceUrl": "https://github.com/vercel-labs/agent-desktop/tree/2b0a7334fc111730454b726e6800aa41cdafc093",
       "modified": true,
       "checkIntegrity": true,
       "notes": "Pinned npm release on macOS/Linux, verified by archive SHA512 and per-file SHA256. Windows is built from pinned upstream revision 2b0a7334fc111730454b726e6800aa41cdafc093 with third-party/patches/agent-desktop-windows-no-focus.patch to disable UI Automation's implicit focus changes. source.json records source archive, patch, toolchain and binary digests.",
-      "resourceDirectory": "agent-desktop"
+      "resourceDirectory": "agent-desktop",
+      "licenseInventory": "third-party/agent-desktop/inventory.json",
+      "licenseInventorySha256": "b52e27bccc455da60e91edbf673ddcf9c9f98d26b3b6ed4bb970fe87c26fbce8"
     }
-  }
+  },
+  "allow": [
+    {
+      "id": "agent-desktop-crate-unicode-ident-1.0.24",
+      "reason": "Verified (MIT OR Apache-2.0) AND Unicode-3.0 from pinned Cargo.lock; package LICENSE-MIT, LICENSE-APACHE and LICENSE-UNICODE are all preserved. Unicode-3.0 is permissive but the native capture classifier predates it; this exact reviewed component is admitted only by the packaging-layer manifest."
+    }
+  ]
 }

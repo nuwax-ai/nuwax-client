@@ -19,7 +19,7 @@ import { usesCapturePortal } from './linuxEnvironment';
 import { resolveCaptureWindowPolicy, type CaptureSelectorWindowPolicy, type CaptureWindowPolicy } from './platforms/windowing';
 import { desktopSource, portalSource, type CaptureSourceStrategy } from './platforms/sources';
 import { createNativeWindowLister, physicalDisplayBounds, projectWindowsToDisplay, type NativeWindowInfo, type NativeWindowLister } from './windowRegions';
-import { formatLocalFileTimestamp } from '@shared/utils/fileTimestamp';
+import { formatLocalFileTimestamp } from '../_kit/fileTimestamp';
 
 export interface CaptureWindows extends StillEngine {
   select(mode: 'record', signal: AbortSignal): Promise<CaptureSelection | null>;
