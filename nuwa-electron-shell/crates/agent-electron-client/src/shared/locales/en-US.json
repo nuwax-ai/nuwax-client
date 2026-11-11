@@ -1459,6 +1459,7 @@
   "Claw.Browser.retry": "Retry",
   "Claw.Browser.externalFailed": "Unable to open the default browser. Try again or copy the link.",
   "Claw.Browser.copyDone": "Link copied",
+  "Claw.Browser.copyFailed": "Could not copy the link. Please try again.",
   "Claw.Browser.printFailed": "Unable to print this webpage.",
   "Claw.Browser.url": "Current page address",
   "Claw.Browser.settingsTitle": "Default webpage opening method",

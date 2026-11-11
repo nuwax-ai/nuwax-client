@@ -19,6 +19,7 @@ const bridge = (window as unknown as { browserWindow: BrowserWindowBridge })
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let current: BrowserState | null = null;
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 const run = (command: BrowserCommand) => {
   void bridge.command(command).catch(() => {});
 };
@@ -30,6 +31,7 @@ const label = (id: string, value: string) => {
   node.setAttribute("aria-label", value);
 };
 function render(state: BrowserState) {
+  const previousFeedback = current?.copyFeedback?.id;
   const wasFinding = current?.finding;
   const findFocusRequested =
     current?.findFocusRequest !== state.findFocusRequest;
@@ -50,6 +52,7 @@ function render(state: BrowserState) {
   element<HTMLInputElement>("url").value = state.url;
   element<HTMLButtonElement>("back").disabled = !state.canGoBack;
   element<HTMLButtonElement>("forward").disabled = !state.canGoForward;
+  element("navigation").hidden = !state.canGoBack && !state.canGoForward;
   element("reloadIcon").toggleAttribute("hidden", state.loading);
   element("stopIcon").toggleAttribute("hidden", !state.loading);
   element("pin").setAttribute("aria-pressed", String(state.pinned));
@@ -58,6 +61,7 @@ function render(state: BrowserState) {
   element("loadingText").textContent = state.labels.loading;
   element("errorMessage").textContent = state.error;
   element("findbar").hidden = !state.finding;
+  element("search").setAttribute("aria-expanded", String(state.finding));
   // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
   if (!state.finding && wasFinding)
     element<HTMLInputElement>("query").value = "";
@@ -72,6 +76,7 @@ function render(state: BrowserState) {
     closefind: "close",
     location: "url",
     copyLink: "copy",
+    search: "find",
     minimize: "minimize",
     closeWindow: "close",
   }))
@@ -86,6 +91,16 @@ function render(state: BrowserState) {
   for (const id of ["retry", "external", "copy"])
     element(id).textContent = l[id];
   label("closeAddress", l.close);
+  if (state.copyFeedback && state.copyFeedback.id !== previousFeedback) {
+    clearTimeout(feedbackTimer);
+    element("feedbackText").textContent =
+      l[state.copyFeedback.success ? "copyDone" : "copyFailed"];
+    element("feedbackSuccess").hidden = !state.copyFeedback.success;
+    element("feedback").hidden = false;
+    feedbackTimer = setTimeout(() => {
+      element("feedback").hidden = true;
+    }, 2200);
+  }
   if (state.finding && (!wasFinding || findFocusRequested)) {
     element<HTMLInputElement>("query").focus();
     element<HTMLInputElement>("query").select();
@@ -104,12 +119,16 @@ function render(state: BrowserState) {
 button("back", () => run({ type: "back" }));
 button("forward", () => run({ type: "forward" }));
 button("reload", () => run({ type: current?.loading ? "stop" : "reload" }));
-button("menu", () => run({ type: "menu" }));
+button("menu", () => {
+  const { x } = element("pageIdentity").getBoundingClientRect();
+  run({ type: "menu", x });
+});
 button("pin", () => run({ type: "pin" }));
 button("retry", () => run({ type: "reload" }));
 button("external", () => run({ type: "external" }));
 button("copy", () => run({ type: "copy" }));
 button("copyLink", () => run({ type: "copy" }));
+button("search", () => run({ type: "find-open" }));
 button("location", () =>
   run({ type: current?.addressOpen ? "address-close" : "address-open" }),
 );
@@ -135,7 +154,10 @@ button("previous", () => find(false, true));
 button("next", () => find(true, true));
 button("closefind", () => run({ type: "find-close" }));
 const unsubscribe = bridge.onState(render);
-window.addEventListener("unload", unsubscribe, { once: true });
+window.addEventListener("unload", () => {
+  clearTimeout(feedbackTimer);
+  unsubscribe();
+}, { once: true });
 void bridge
   .getState()
   .then((state) => {

@@ -11,7 +11,7 @@
   </head>
   <body>
     <header id="toolbar">
-      <nav>
+      <nav id="navigation" hidden>
         <button id="back">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19 12H5m7-7-7 7 7 7" />
@@ -20,7 +20,17 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M5 12h14m-7-7 7 7-7 7" />
           </svg></button
-        ><button id="reload">
+        >
+      </nav>
+      <div id="pageIdentity">
+        <button id="location" aria-controls="address" aria-expanded="false">
+          <svg id="pageIcon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18" />
+          </svg>
+          <strong id="title"></strong>
+        </button>
+        <button id="reload">
           <svg id="reloadIcon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.9 1 6.7 2.6L21 8M21 3v5h-5" />
           </svg>
@@ -28,25 +38,40 @@
             <path d="m6 6 12 12M6 18 18 6" />
           </svg>
         </button>
-      </nav>
-      <button id="location" aria-controls="address" aria-expanded="false">
-        <strong id="title"></strong><span id="domain"></span></button
-      ><button id="copyLink">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="8" y="8" width="12" height="13" rx="2" />
-          <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
-        </svg></button
-      ><button id="pin">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M8 3h8l-2 5v3l3 3v2H7v-2l3-3V8zm4 13v6" />
-        </svg></button
-      ><button id="menu">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="5" cy="12" r="1" />
-          <circle cx="12" cy="12" r="1" />
-          <circle cx="19" cy="12" r="1" />
+        <button id="menu" aria-haspopup="menu">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M7.5 12h.01M12 12h.01M16.5 12h.01" />
+          </svg>
+        </button>
+      </div>
+      <div id="toolbarSpace"></div>
+      <div id="feedback" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <svg id="feedbackSuccess" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m5 12 4 4L19 6" />
         </svg>
-      </button>
+        <span id="feedbackText"></span>
+      </div>
+      <div id="pageActions">
+        <button id="search" aria-controls="findbar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="7" />
+            <path d="m16 16 5 5" />
+          </svg>
+        </button>
+        <span class="actionDivider" aria-hidden="true"></span>
+        <button id="copyLink">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="8" y="8" width="12" height="13" rx="2" />
+            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+          </svg>
+        </button>
+        <button id="pin" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3h8l-2 5v3l3 3v2H7v-2l3-3V8zm4 13v6" />
+          </svg>
+        </button>
+      </div>
       <div id="windowControls" hidden>
         <button id="minimize">
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -71,6 +96,7 @@
     </header>
     <div id="address" hidden>
       <label id="urlLabel" class="sr-only" for="url"></label>
+      <span id="domain"></span>
       <input id="url" readonly /><button id="closeAddress">×</button>
     </div>
     <div id="findbar" hidden>

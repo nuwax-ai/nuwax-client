@@ -346,7 +346,7 @@ if (!process.versions.electron) {
         await managed.contents.loadURL(origin + "/toolbar-next");
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
-        assert.equal(bounds().y, 86);
+        assert.equal(bounds().y, 90);
         assert.equal(
           await managed.window.webContents.executeJavaScript(
             "document.querySelector(':modal') === null",
@@ -363,7 +363,7 @@ if (!process.versions.electron) {
           () => managed.contents.getURL() === origin + "/toolbar-next",
         );
         await waitFor(async () => !(await getState()).loading);
-        let copied, menu;
+        let copied, menu, menuPosition;
         const writeText = clipboard.writeText;
         const buildMenu = Menu.buildFromTemplate;
         try {
@@ -373,25 +373,55 @@ if (!process.versions.electron) {
             copied = text;
           };
           Menu.buildFromTemplate = (template) => ({
-            popup: () => {
+            popup: (position) => {
               menu = template;
+              menuPosition = position;
             },
           });
           await click("copyLink");
-          await waitFor(() => copied === origin + "/toolbar-next");
+          await waitFor(() => typeof copied === "string");
+          assert.equal(copied, "https://business.example/toolbar-next");
+          const feedback = () => managed.window.webContents.executeJavaScript(`({
+            visible: !document.getElementById('feedback').hidden,
+            text: document.getElementById('feedbackText').textContent,
+            success: !document.getElementById('feedbackSuccess').hidden,
+            bottom: document.getElementById('feedback').getBoundingClientRect().bottom,
+          })`);
+          await waitFor(async () => (await feedback()).visible);
+          assert.equal((await feedback()).text, messages["Claw.Browser.copyDone"]);
+          assert.equal((await feedback()).success, true);
+          assert.ok((await feedback()).bottom <= bounds().y);
+          if (process.env.NUWAX_BROWSER_SCREENSHOT)
+            fs.writeFileSync(
+              process.env.NUWAX_BROWSER_SCREENSHOT.replace(/\.png$/, "-copy-toast.png"),
+              (await managed.window.capturePage({x: 0, y: 0, width: 1100, height: 48})).toPNG(),
+            );
           await click("menu");
           await waitFor(() => menu);
           assert.equal(
             menu.some((item) => item.label === messages["Claw.Browser.copy"]),
-            false,
+            true,
           );
+          assert.equal(menuPosition.y, 48);
+          assert.equal(menuPosition.x, await managed.window.webContents.executeJavaScript(
+            "Math.round(document.getElementById('pageIdentity').getBoundingClientRect().x)",
+          ));
+          const previousCopy = (await getState()).copyFeedback.id;
+          menu.find((item) => item.label === messages["Claw.Browser.copy"]).click();
+          await waitFor(async () => (await getState()).copyFeedback.id > previousCopy);
+          assert.equal((await feedback()).text, messages["Claw.Browser.copyDone"]);
+          clipboard.writeText = () => { throw new Error("Clipboard unavailable"); };
+          await click("copyLink");
+          await waitFor(async () => (await feedback()).text === messages["Claw.Browser.copyFailed"]);
+          assert.equal((await feedback()).success, false);
+          await waitFor(async () => !(await feedback()).visible);
         } finally {
           clipboard.writeText = writeText;
           Menu.buildFromTemplate = buildMenu;
         }
         await click("closeAddress");
         await waitFor(async () => !(await getState()).addressOpen);
-        assert.equal(bounds().y, 44);
+        assert.equal(bounds().y, 48);
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
         managed.window.webContents.sendInputEvent({
@@ -416,8 +446,9 @@ if (!process.versions.electron) {
           assert.equal(
             await managed.window.webContents.executeJavaScript(`(() => {
             const controls = document.getElementById('windowControls').getBoundingClientRect();
-            const menu = document.getElementById('menu').getBoundingClientRect();
-            return controls.width === 120 && controls.height === 44 && controls.right === innerWidth && menu.right <= controls.left;
+            const actions = document.getElementById('pageActions').getBoundingClientRect();
+            const capsule = document.getElementById('pageIdentity').getBoundingClientRect();
+            return controls.width === 120 && controls.height === 48 && controls.right === innerWidth && actions.right <= controls.left && capsule.right <= actions.left;
           })()`),
             true,
           );
@@ -434,15 +465,15 @@ if (!process.versions.electron) {
         assert.equal(managed.window.isAlwaysOnTop(), false);
         await command({ type: "find-open" });
         await command({ type: "address-open" });
-        assert.equal(bounds().y, 128);
+        assert.equal(bounds().y, 132);
         await command({ type: "address-close" });
-        assert.equal(bounds().y, 86);
+        assert.equal(bounds().y, 90);
         const found = once(managed.contents, "found-in-page");
         await command({ type: "find", text: "Browser" });
         await found;
         assert.equal((await getState()).matches, 1);
         await command({ type: "find-close" });
-        assert.equal(bounds().y, 44);
+        assert.equal(bounds().y, 48);
         // Exercise actual Chromium keyboard/input behavior, including iframe
         // focus. IPC-only find commands cannot establish shortcut usability.
         await managed.contents.loadURL(origin + "/find-fixture");
@@ -479,7 +510,7 @@ if (!process.versions.electron) {
           shortcut(managed.window.webContents, "Escape");
           await waitFor(async () => !(await getState()).finding);
           assert.equal((await getState()).matches, 0);
-          assert.equal(bounds().y, 44);
+          assert.equal(bounds().y, 48);
           console.log(`PASS ${modifier}+F: iframe input focus, 4 matches, next/previous, Enter/Shift+Enter, repeated shortcut from address input, Esc`);
         }
         await managed.contents.loadURL(origin + "/company/");
@@ -556,6 +587,7 @@ if (!process.versions.electron) {
               "zoom",
               "native pin",
               "URL row + mouse navigation/copy/menu + Escape",
+              "copy toast success, menu copy, clipboard failure and automatic dismissal",
               "Windows/Linux toolbar layout at 800px (renderer only)",
               "find",
               "close preserves beforeunload cancellation",
