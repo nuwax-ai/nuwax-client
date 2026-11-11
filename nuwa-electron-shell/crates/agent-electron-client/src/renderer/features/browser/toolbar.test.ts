@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BrowserState } from "@shared/features/browser/contract";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 async function setup(
   initial: Promise<BrowserState | null> = Promise.resolve(null),
@@ -18,6 +21,7 @@ async function setup(
       select: ReturnType<typeof vi.fn>;
       setAttribute: ReturnType<typeof vi.fn>;
       toggleAttribute: ReturnType<typeof vi.fn>;
+      getBoundingClientRect: () => { x: number };
       addEventListener: (
         type: string,
         handler: (event: unknown) => void,
@@ -39,6 +43,7 @@ async function setup(
       select: vi.fn(),
       setAttribute: vi.fn(),
       toggleAttribute: vi.fn(),
+      getBoundingClientRect: () => ({ x: 88 }),
       events,
       addEventListener: (name, fn) => events.set(name, fn),
     });
@@ -71,7 +76,11 @@ async function setup(
     findFocusRequest: 0,
     matches: 0,
     activeMatch: 0,
-    labels: {},
+    copyFeedback: null,
+    labels: {
+      copyDone: "链接已复制",
+      copyFailed: "复制失败，请重试",
+    },
   } as BrowserState;
   return {
     elements,
@@ -129,5 +138,48 @@ describe("browser toolbar find state", () => {
     expect(f.elements.get("title")!.textContent).toBe("Current document");
     expect(f.elements.get("findbar")!.hidden).toBe(false);
     expect(f.elements.get("query")!.value).toBe("new term");
+  });
+});
+
+describe("browser toolbar actions and feedback", () => {
+  it("shows a success toast only for a successful copy result, then dismisses it", async () => {
+    const f = await setup();
+    vi.useFakeTimers();
+    f.update({ copyFeedback: { id: 1, success: true } });
+    expect(f.elements.get("feedbackText")!.textContent).toBe("链接已复制");
+    expect(f.elements.get("feedback")!.hidden).toBe(false);
+    expect(f.elements.get("feedbackSuccess")!.hidden).toBe(false);
+    vi.advanceTimersByTime(2200);
+    expect(f.elements.get("feedback")!.hidden).toBe(true);
+    // Navigation/loading updates must not replay an expired toast.
+    f.update({ loading: true, copyFeedback: { id: 1, success: true } });
+    expect(f.elements.get("feedback")!.hidden).toBe(true);
+  });
+
+  it("refreshes the toast duration on repeated copies and reports a failed copy", async () => {
+    const f = await setup();
+    vi.useFakeTimers();
+    f.update({ copyFeedback: { id: 1, success: true } });
+    vi.advanceTimersByTime(1800);
+    f.update({ copyFeedback: { id: 2, success: false } });
+    vi.advanceTimersByTime(400);
+    expect(f.elements.get("feedback")!.hidden).toBe(false);
+    expect(f.elements.get("feedbackText")!.textContent).toBe("复制失败，请重试");
+    expect(f.elements.get("feedbackSuccess")!.hidden).toBe(true);
+    vi.advanceTimersByTime(1800);
+    expect(f.elements.get("feedback")!.hidden).toBe(true);
+  });
+
+  it("routes direct actions and anchors the menu beneath the title capsule", async () => {
+    const f = await setup();
+    for (const [id, command] of [
+      ["copyLink", { type: "copy" }],
+      ["copy", { type: "copy" }],
+      ["search", { type: "find-open" }],
+      ["menu", { type: "menu", x: 88 }],
+    ] as const) {
+      f.elements.get(id)!.events.get("click")!({});
+      expect(f.command).toHaveBeenLastCalledWith(command);
+    }
   });
 });

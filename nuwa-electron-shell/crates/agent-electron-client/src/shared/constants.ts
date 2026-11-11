@@ -373,6 +373,7 @@ export const I18N_KEYS = {
     retry: "Claw.Browser.retry",
     externalFailed: "Claw.Browser.externalFailed",
     copyDone: "Claw.Browser.copyDone",
+    copyFailed: "Claw.Browser.copyFailed",
     printFailed: "Claw.Browser.printFailed",
     url: "Claw.Browser.url",
     settingsTitle: "Claw.Browser.settingsTitle",

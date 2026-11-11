@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
   writeText: vi.fn(),
   openExternal: vi.fn(async () => {}),
+  send: vi.fn(),
 }));
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -21,7 +22,7 @@ vi.mock("electron", async () => {
         isDestroyed: () => false,
         getURL: () => this.webContents.mainFrame.url,
         setWindowOpenHandler: vi.fn(),
-        send: vi.fn(),
+        send: state.send,
       });
       loadURL = async (url: string) => {
         this.webContents.mainFrame.url = url;
@@ -30,6 +31,8 @@ vi.mock("electron", async () => {
       isAlwaysOnTop = () => false;
       isMaximized = () => false;
       isFullScreen = () => false;
+      show = vi.fn();
+      focus = vi.fn();
       destroy() {
         this.destroyed = true;
         this.emit("closed");
@@ -100,6 +103,7 @@ function open(
     guest: contents as never,
   });
   const sender = page.window.webContents;
+  sender.emit("did-finish-load");
   const event = { sender, senderFrame: sender.mainFrame };
   return (type: "copy" | "external") =>
     state.handlers.get(BROWSER_IPC.command)!(event, { type });
@@ -114,6 +118,10 @@ describe("browser copy action", () => {
     expect(state.writeText).toHaveBeenCalledWith(
       "https://business.example/repo/doc/one?hide_sheet=true#section"
     );
+    expect(state.send).toHaveBeenLastCalledWith(
+      BROWSER_IPC.changed,
+      expect.objectContaining({ copyFeedback: { id: 1, success: true } }),
+    );
     expect(await run("external")).toBe(true);
     expect(state.openExternal).toHaveBeenCalledWith(
       state.writeText.mock.calls[0][0]
@@ -123,6 +131,24 @@ describe("browser copy action", () => {
     const run = open("http://127.0.0.1:45678/repo/doc/one", "");
     expect(await run("copy")).toBe(false);
     expect(state.writeText).not.toHaveBeenCalled();
+    expect(state.send).toHaveBeenLastCalledWith(
+      BROWSER_IPC.changed,
+      expect.objectContaining({ copyFeedback: { id: 1, success: false } }),
+    );
+  });
+  it("reports clipboard failures and allows a later retry to succeed", async () => {
+    const run = open("https://external.example/doc");
+    state.writeText.mockImplementationOnce(() => { throw new Error("Clipboard unavailable"); });
+    expect(await run("copy")).toBe(false);
+    expect(state.send).toHaveBeenLastCalledWith(
+      BROWSER_IPC.changed,
+      expect.objectContaining({ copyFeedback: { id: 1, success: false } }),
+    );
+    expect(await run("copy")).toBe(true);
+    expect(state.send).toHaveBeenLastCalledWith(
+      BROWSER_IPC.changed,
+      expect.objectContaining({ copyFeedback: { id: 2, success: true } }),
+    );
   });
   it("keeps normal external links and their share parameters", async () => {
     const url = "https://external.example/doc?share=read-only#section";
