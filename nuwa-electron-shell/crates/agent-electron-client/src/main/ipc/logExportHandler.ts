@@ -12,7 +12,7 @@ import { getAppDataDir } from "../services/system/appPaths";
 import { t } from "../services/i18n";
 import { exportLogArchive } from "../services/utils/logArchive";
 import { isHostRendererSender } from "./bridgeTrust";
-import { formatLocalFileTimestamp } from "@shared/utils/fileTimestamp";
+import { formatLocalFileTimestamp } from "../features";
 
 export function registerLogExportHandler(ctx: HandlerContext): void {
   let exporting = false;

@@ -27,7 +27,7 @@ import { resolveCapturePlatform } from './platforms';
 import { createScratchDir } from '../_kit/scratchDir';
 import { createCaptureClipboard } from './clipboard';
 import { canCopyCaptureFiles, createCaptureClipboardPlatform } from './platforms/clipboard';
-import { formatLocalFileTimestamp } from '@shared/utils/fileTimestamp';
+import { formatLocalFileTimestamp } from '../_kit/fileTimestamp';
 
 const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 const UNTRUSTED: CaptureResult = { success: false, code: "untrusted" };
