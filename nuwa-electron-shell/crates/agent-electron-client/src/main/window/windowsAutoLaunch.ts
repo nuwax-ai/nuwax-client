@@ -51,6 +51,14 @@ export function isOwnedStartupEntry(
   if (!target) return false;
   const identity = entry.kind === "run" ? entry.name : entry.appId;
   if (identity?.toLowerCase() === APP_ID.toLowerCase()) return true;
+  if (entry.kind === "run") {
+    // Electron used these names before the explicit application ID was set.
+    const legacyName = entry.name.toLowerCase().replace(/\s+/g, "");
+    if (
+      legacyName === `electron.app.${APP_NAME_IDENTIFIER}` ||
+      legacyName === `electron.app.女娲${APP_NAME_IDENTIFIER}`
+    ) return true;
+  }
   if (entry.kind === "shortcut" && identity) return false;
   const name = entry.name.replace(/\.lnk$/i, "").toLowerCase().replace(/\s+/g, "");
   return (

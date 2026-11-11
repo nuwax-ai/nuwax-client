@@ -78,7 +78,7 @@ Section
   StrCpy $isTryToKeepShortcuts "false"
   StrCpy $keepShortcuts "false"
   !insertmacro nuwaxApplyPreparedShortcutState
-  !insertmacro expect false manual-repair-retains-default-policy
+  !insertmacro expect true manual-overwrite-preserves-deletion
   StrCpy $isTryToKeepShortcuts "true"
   StrCpy $INSTDIR "$fixtureRoot\\other"
   StrCpy $keepShortcuts "false"

@@ -147,6 +147,8 @@ describe("Windows product startup ownership", () => {
     const owned = [
       item(),
       item({ hive: "LocalMachine", view: "Registry32" }),
+      item({ name: "electron.app.Nuwax" }),
+      item({ name: "electron.app.女娲 Nuwax" }),
       item({
         kind: "shortcut",
         name: "custom.lnk",
@@ -159,6 +161,9 @@ describe("Windows product startup ownership", () => {
     const others = [
       item({ name: "Other", target: current }),
       item({ name: "com.nuwax-ai.nuwax.dev" }),
+      item({ name: "electron.app.Nuwax.dev" }),
+      item({ name: "electron.app.NuwaClaw", target: "C:\\Program Files\\NuwaClaw\\NuwaClaw.exe" }),
+      item({ name: "electron.app.Nuwax", target: "D:\\Other\\Other.exe" }),
       item({ target: "D:\\Old\\NuwaClaw.exe" }),
       item({ target: "\\\\server\\Nuwax.exe" }),
       item({ name: "Nuwax" }),

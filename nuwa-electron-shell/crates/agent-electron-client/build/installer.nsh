@@ -262,10 +262,9 @@ Var nuwaxKeepShortcutsBeforePrepare
 !macroend
 
 !macro nuwaxApplyPreparedShortcutState
-  ; Builder has now computed its policy: manual repair/fresh installs retain
-  ; their default link creation. Only restore a prepared update's lost evidence.
-  ${if} $isTryToKeepShortcuts == "true"
-  ${andif} $nuwaxKeepShortcutsBeforePrepare == "true"
+  ; Both updater and manual overwrites preserve the registered installation's
+  ; shortcut choices. Fresh installs have no captured executable/registration.
+  ${if} $nuwaxKeepShortcutsBeforePrepare == "true"
   ${andif} $nuwaxShortcutStatePath == $INSTDIR
     StrCpy $keepShortcuts "true"
   ${endif}
