@@ -364,16 +364,12 @@ export class AcpEngine extends EventEmitter {
 
     try {
       if (plan.method === "unstable_setSessionModel") {
-        // GLM-5.3 家族目录档位只有 low/high/max，引擎默认 medium 会被档位门
-        // 拒绝；mid-session 切换时 spawn env 的 effort 播种不一定覆盖到该模型，
-        // 这里给无显式 effort 的目标补 [low]（适配器 ModelId 格式 model[effort]）。
-        const modelId =
-          /^glm-5\.3/i.test(plan.targetModelId) && !plan.targetModelId.includes("[")
-            ? `${plan.targetModelId}[low]`
-            : plan.targetModelId;
+        // Fork (2026-11-10)：不再按模型名补 [low]。适配器已无 medium 兜底，
+        // 无显式档位走 [default] 哨兵、厂商按自身默认档执行（GLM-5.3 默认
+        // max），不会触发档位门拒绝；effort 策略保持后端单一来源。
         await connection.unstable_setSessionModel?.({
           sessionId: acpSessionId,
-          modelId,
+          modelId: plan.targetModelId,
         });
         log.info(
           `${this.logTag} setSessionModel: ${plan.currentModelId || "(unknown)"} → ${plan.targetModelId}`,
