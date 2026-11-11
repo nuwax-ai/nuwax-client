@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import * as path from 'path';
 import { readFileSync } from 'fs';
+import { randomBytes } from 'node:crypto';
 import branding from './scripts/build/branding-defines.cjs';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
@@ -35,6 +36,24 @@ export default defineConfig(({ mode, command }) => {
   return {
   plugins: [
     react(),
+    {
+      name: 'browser-dev-style-csp',
+      apply: 'serve',
+      transformIndexHtml(html, context) {
+        if (path.basename(context.filename) !== 'browser.html') return;
+        // Vite injects CSS as inline style tags in dev. Authorize only this
+        // response's styles; packaged pages keep their file-only CSP.
+        const nonce = randomBytes(18).toString('base64');
+        return {
+          html: html.replace("style-src 'self';", `style-src 'self' 'nonce-${nonce}';`),
+          tags: [{
+            tag: 'meta',
+            attrs: { property: 'csp-nonce', nonce },
+            injectTo: 'head-prepend',
+          }],
+        };
+      },
+    },
     {
       name: 'configure-server',
       configureServer(server) {

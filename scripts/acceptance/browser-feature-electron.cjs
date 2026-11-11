@@ -190,8 +190,8 @@ if (!process.versions.electron) {
                 nodeIntegration: false,
               },
             },
-            toolbarUrl: pathToFileURL(path.join(client, "dist/browser.html"))
-              .href,
+            toolbarUrl: process.env.NUWAX_BROWSER_DEV_URL ||
+              pathToFileURL(path.join(client, "dist/browser.html")).href,
             preloadPath: path.join(client, "dist/preload/browserWindow.js"),
           });
         const openedAt = performance.now();
@@ -286,6 +286,19 @@ if (!process.versions.electron) {
             .getBounds();
         assert.equal((await getState()).url, origin + "/toolbar-page");
         assert.equal((await getState()).initialLoading, false);
+        assert.equal(
+          await managed.window.webContents.executeJavaScript(
+            "getComputedStyle(document.getElementById('toolbar')).display",
+          ),
+          "flex",
+          "toolbar CSS must be applied in both Vite dev and packaged builds",
+        );
+        const toolbarCsp = await managed.window.webContents.executeJavaScript(
+          "document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]').content",
+        );
+        assert.ok(toolbarCsp.includes("script-src 'self';"));
+        assert.ok(!toolbarCsp.includes("'unsafe-inline'"));
+        assert.equal(toolbarCsp.includes("'nonce-"), Boolean(process.env.NUWAX_BROWSER_DEV_URL));
         const navigation = (target = managed.window) => target.webContents.executeJavaScript(`({
           visible: !document.getElementById('navigation').hidden,
           back: !document.getElementById('back').disabled,
