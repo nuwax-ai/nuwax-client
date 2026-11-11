@@ -64,7 +64,7 @@ async function main() {
   assert.equal(observed.elements.find(element => element.name === 'Fixture input')?.value, 'native-smoke');
   const button = observed.elements.find(element => element.name === 'Apply fixture'); assert.ok(button);
   action = await call('click', { ...args, snapshot_id: observed.snapshot_id, element_index: button.element_index });
-  assert.ok(['ok', 'uncertain'].includes(action.structuredContent.status), JSON.stringify(action));
+  assert.equal(action.structuredContent.status, 'ok', JSON.stringify(action));
   observed = await observe();
   assert.ok(observed.elements.some(element => element.value === 'applied:native-smoke'), 'Click must update the native fixture label');
   await adapter.stop();

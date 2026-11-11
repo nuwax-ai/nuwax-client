@@ -21,9 +21,9 @@
       "license": "Apache-2.0",
       "licenseFile": "third-party/licenses/agent-desktop.txt",
       "sourceUrl": "https://github.com/vercel-labs/agent-desktop/tree/v1.2.0",
-      "modified": false,
+      "modified": true,
       "checkIntegrity": true,
-      "notes": "Pinned npm release; native binaries and platform helpers are verified against the archive SHA512 and per-file SHA256 before packaging.",
+      "notes": "Pinned npm release on macOS/Linux, verified by archive SHA512 and per-file SHA256. Windows is built from pinned upstream revision 2b0a7334fc111730454b726e6800aa41cdafc093 with third-party/patches/agent-desktop-windows-no-focus.patch to disable UI Automation's implicit focus changes. source.json records source archive, patch, toolchain and binary digests.",
       "resourceDirectory": "agent-desktop"
     }
   }
