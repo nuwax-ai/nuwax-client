@@ -15,7 +15,14 @@ export const BROWSER_IPC = {
 export interface BrowserCapabilities {
   available: boolean;
 }
+export interface BrowserTab {
+  id: number;
+  title: string;
+  loading: boolean;
+}
 export interface BrowserState {
+  tabs: BrowserTab[];
+  activeTabId: number;
   title: string;
   url: string;
   domain: string;
@@ -31,6 +38,7 @@ export interface BrowserState {
   addressOpen: boolean;
   error: string | null;
   finding: boolean;
+  findText: string;
   /** An explicit Find command must focus the query even if the bar is already open. */
   findFocusRequest: number;
   matches: number;
@@ -62,6 +70,7 @@ export type BrowserCommand =
         | "window-close";
     }
   | { type: "find"; text: string; forward?: boolean; next?: boolean }
+  | { type: "tab-activate" | "tab-close"; id: number }
   | { type: "menu"; x?: number };
 export interface BrowserWindowBridge {
   getState(): Promise<BrowserState | null>;

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BrowserState } from "@shared/features/browser/contract";
+vi.mock("./tabStrip", () => ({ createTabStrip: () => vi.fn() }));
 
 afterEach(() => {
   vi.useRealTimers();
@@ -71,12 +72,15 @@ async function setup(
   await import("./toolbar");
   const state = {
     title: "Document",
+    tabs: [{ id: 12, title: "Document", loading: false }],
+    activeTabId: 12,
     url: "https://business.example/doc",
     domain: "business.example",
     platform: "darwin",
     canGoBack: false,
     canGoForward: false,
     finding: false,
+    findText: "",
     findFocusRequest: 0,
     matches: 0,
     activeMatch: 0,

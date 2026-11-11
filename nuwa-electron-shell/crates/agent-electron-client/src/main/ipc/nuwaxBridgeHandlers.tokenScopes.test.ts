@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { session } from "electron";
+import { BrowserWindow, session, nativeTheme } from "electron";
 import log from "electron-log";
 import { disposeDesktopFeatures } from "../features";
 
@@ -108,6 +108,7 @@ vi.mock("electron", () => ({
   shell: { openExternal: mocks.openExternal },
   app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
   powerMonitor: { on: vi.fn() },
+  nativeTheme: { shouldUseDarkColors: false },
   ipcMain: {
     removeHandler: (channel: string) => handlers.delete(channel),
     handle: (
@@ -138,6 +139,7 @@ vi.mock("electron", () => ({
     };
     private destroyed = false;
     on = vi.fn();
+    removeListener = vi.fn();
     show = vi.fn();
     focus = vi.fn();
     loadURL = mocks.loadURL;
@@ -980,6 +982,33 @@ describe("语言同步（webview 多语言 → 壳）", () => {
 });
 
 describe("trusted runtime auth context and window navigation", () => {
+  it('browser appearance follows the same dark-mode gate, setting and OS policy as the host', async () => {
+    const flags = (await import('@shared/featureFlags')).FEATURES as {DARK_THEME: boolean};
+    const initialGate = flags.DARK_THEME;
+    const systemTheme = nativeTheme as {shouldUseDarkColors: boolean};
+    const initialSystem = systemTheme.shouldUseDarkColors;
+    const start = vi.spyOn(desktopFeatures, 'startDesktopFeatures');
+    try {
+      registerNuwaxBridgeHandlers({getMainWindow: () => null} as never);
+      const isDarkMode = start.mock.lastCall![0].host!.windows.isDarkMode!;
+      systemTheme.shouldUseDarkColors = true;
+      flags.DARK_THEME = false;
+      for (const mode of ['dark', 'light', 'system']) {
+        settings.set('theme_mode', mode);
+        expect(isDarkMode()).toBe(false);
+      }
+      flags.DARK_THEME = true;
+      settings.set('theme_mode', 'light'); expect(isDarkMode()).toBe(false);
+      settings.set('theme_mode', 'dark'); expect(isDarkMode()).toBe(true);
+      settings.set('theme_mode', 'system'); expect(isDarkMode()).toBe(true);
+      systemTheme.shouldUseDarkColors = false; expect(isDarkMode()).toBe(false);
+    } finally {
+      flags.DARK_THEME = initialGate;
+      systemTheme.shouldUseDarkColors = initialSystem;
+      start.mockRestore();
+    }
+  });
+
   const windowEvent = (frameOrigin = GW_ORIGIN, topOrigin = GW_ORIGIN) => ({
     senderFrame: { url: `${frameOrigin}/home` },
     sender: { getURL: () => `${topOrigin}/home`, once: vi.fn(), removeListener: vi.fn() },
@@ -1021,6 +1050,41 @@ describe("trusted runtime auth context and window navigation", () => {
     expect(mocks.loadURL).toHaveBeenCalledWith('https://external.example/legacy-cashier');
     expect(mocks.openExternal).not.toHaveBeenCalled();
     expect(handlers.get('native:openWindow')!(windowEvent(), { path: '/home', purpose: 'invalid' })).toEqual({ success: false, error: 'invalid window purpose' });
+  });
+
+  it.each([
+    {path: `${HOST_ORIGIN}/instant-message`, purpose: undefined, isolated: false},
+    {path: 'https://external.example/legacy', purpose: undefined, isolated: false},
+    {path: 'https://external.example/cashier', purpose: 'payment', isolated: true},
+  ])('Nuwax routes legacy/page/payment calls through the same custom browser: $path', ({path: target, purpose, isolated}) => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const available = vi.spyOn(desktopFeatures, 'isDesktopBrowserAvailable').mockReturnValue(true);
+    const create = vi.spyOn(desktopFeatures, 'createDesktopBrowserPage').mockImplementation(({windowOptions}) => {
+      const window = new BrowserWindow(windowOptions);
+      return {window, contents: window.webContents, destroy: () => window.destroy(), hide: vi.fn()};
+    });
+    try {
+      expect(handlers.get('native:openWindow')!(windowEvent(), {path: target, purpose})).toEqual({success: true});
+      expect(create).toHaveBeenCalledOnce();
+      expect(Boolean(create.mock.calls[0][0].isolated)).toBe(isolated);
+      expect(mocks.openExternal).not.toHaveBeenCalled();
+    } finally { create.mockRestore(); available.mockRestore(); product.mockRestore(); }
+  });
+
+  it('payment descendants keep an isolated window even for unmarked relative business links', async () => {
+    const product = vi.spyOn(bridgeConstants, 'APP_NAME_IDENTIFIER', 'get').mockReturnValue('nuwax');
+    const create = vi.spyOn(desktopFeatures, 'createDesktopBrowserPage').mockImplementation(({windowOptions}) => {
+      const window = new BrowserWindow(windowOptions);
+      return {window, contents: window.webContents, destroy: () => window.destroy(), hide: vi.fn()};
+    });
+    try {
+      const event = windowEvent();
+      const {markDedicatedPage} = await import('../services/system/webviewPolicy');
+      markDedicatedPage(event.sender as never);
+      expect(handlers.get('native:openWindow')!(event, {path: '/payment/result'})).toEqual({success: true});
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({isolated: true}));
+      expect(mocks.loadURL).toHaveBeenCalledWith(`${GW_ORIGIN}/payment/result?_shell=1`);
+    } finally { create.mockRestore(); product.mockRestore(); }
   });
 
   it("keeps native windows hidden until a real document is ready, then shows and focuses once", () => {

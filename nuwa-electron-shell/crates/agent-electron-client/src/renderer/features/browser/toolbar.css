@@ -4,10 +4,14 @@
   background: #fafafa;
   color-scheme: light;
   --surface: #fafafa;
-  --capsule: #fff;
-  --hover: #e8e8e8;
-  --line: #e4e4e4;
+  --capsule: #ededed;
+  --tab-hover: #f0f0f0;
+  --hover: #e5e5e5;
+  --pressed: #d9d9d9;
+  --line: #eeeeee;
+  --selected-line: #dedede;
   --muted: #777;
+  --tab-text: #616161;
 }
 * {
   box-sizing: border-box;
@@ -40,6 +44,9 @@ button {
 button:hover {
   background: var(--hover);
 }
+button:active {
+  background: var(--pressed);
+}
 button:focus-visible,
 input:focus-visible {
   outline: 2px solid #5276ca;
@@ -48,6 +55,7 @@ input:focus-visible {
 button:disabled {
   opacity: 0.3;
   cursor: default;
+  background: transparent;
 }
 #toolbar {
   position: relative;
@@ -69,6 +77,7 @@ button:disabled {
   width: 30px;
   min-width: 30px;
   padding: 0;
+  transition: background-color 80ms ease;
 }
 #toolbar svg {
   width: 19px;
@@ -107,17 +116,140 @@ nav {
   gap: 2px;
   flex-shrink: 0;
 }
-#pageIdentity {
+#tabs {
   display: flex;
   align-items: center;
-  flex: 0 1 300px;
-  min-width: 110px;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+#tabs::-webkit-scrollbar {
+  display: none;
+}
+.browserTab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 160px;
+  width: 160px;
+  min-width: 64px;
+  max-width: 160px;
+  container-type: inline-size;
+  height: 34px;
+  padding: 1px 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--tab-text);
+  transition: background-color 80ms ease;
+}
+.browserTab:hover {
+  background: var(--tab-hover);
+}
+#toolbar .selectTab {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 0 7px;
+  justify-content: flex-start;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  overflow: hidden;
+}
+#toolbar .selectTab:hover,
+#toolbar .selectTab:active,
+#toolbar #location:hover,
+#toolbar #location:active {
+  background: transparent;
+}
+.tabTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#toolbar .tabIcon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 5px;
+  color: var(--muted);
+}
+@container (max-width: 90px) {
+  .tabTitle {
+    display: none;
+  }
+  #toolbar .browserTab .selectTab {
+    justify-content: center;
+  }
+  #toolbar .browserTab .tabIcon {
+    margin-right: 0;
+  }
+  #toolbar .browserTab .closeTab {
+    left: calc(50% - 15px);
+  }
+}
+#toolbar .closeTab,
+#toolbar #closeTab {
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  z-index: 1;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  opacity: 0;
+  pointer-events: none;
+}
+#toolbar .browserTab:hover .closeTab,
+#toolbar .browserTab:focus-within .closeTab,
+#pageIdentity:hover #closeTab,
+#pageIdentity:focus-within #closeTab {
+  opacity: 1;
+  pointer-events: auto;
+}
+.browserTab:hover .tabIcon,
+.browserTab:focus-within .tabIcon,
+#pageIdentity:hover #pageIcon,
+#pageIdentity:focus-within #pageIcon {
+  opacity: 0;
+}
+#toolbar .closeTab svg,
+#toolbar #closeTab svg {
+  width: 19px;
+  height: 19px;
+}
+#pageIdentity {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 220px;
+  max-width: 220px;
+  min-width: 180px;
   height: 34px;
   padding: 1px 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--capsule);
+  border-color: var(--selected-line);
   gap: 1px;
+}
+#toolbar #reload {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+#pageIdentity:hover #reload,
+#pageIdentity:focus-within #reload,
+#pageIdentity[data-loading="true"] #reload {
+  width: 30px;
+  min-width: 30px;
+  opacity: 1;
+  pointer-events: auto;
 }
 #toolbarSpace {
   flex: 1;
@@ -275,6 +407,10 @@ nav {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  #toolbar button,
+  .browserTab {
+    transition: none;
+  }
   #loadingState::before {
     animation: none;
   }
@@ -288,11 +424,15 @@ body.dark {
   color: #e5e5e5;
   background: #242424;
   color-scheme: dark;
-  --surface: #242424;
-  --capsule: #303030;
-  --hover: #383838;
-  --line: #414141;
-  --muted: #aaa;
+  --surface: #1f1f1f;
+  --capsule: #050505;
+  --tab-hover: #292929;
+  --hover: #343434;
+  --pressed: #414141;
+  --line: #292929;
+  --selected-line: #383838;
+  --muted: #a0a0a0;
+  --tab-text: #bcbcbc;
 }
 
 button svg {

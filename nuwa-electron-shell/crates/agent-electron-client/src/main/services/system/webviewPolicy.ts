@@ -56,12 +56,15 @@ type PopupWindowState = {
   hasDocument: boolean;
   downloads: number;
   keepFailedDocument?: boolean;
+  destroy(): void;
+  hide(): void;
 };
 const popupWindows = new WeakMap<WebContents, PopupWindowState>();
 let downloadMainWindow: () => BrowserWindow | null = () => null;
 const dedicatedContents = new WeakSet<WebContents>();
 const unloadContents = new WeakSet<WebContents>();
 export function markDedicatedPage(contents: WebContents): void { dedicatedContents.add(contents); }
+export function isDedicatedPage(contents: WebContents): boolean { return dedicatedContents.has(contents); }
 
 /** Close popups whose preload captured the previous business-origin allowlist. */
 export function destroyTrustedBusinessPopups(): void {
@@ -253,24 +256,25 @@ function buildPopupWindowOptions(
 
 function registerTrustedPopup(win: BrowserWindow, contents: WebContents = win.webContents): void {
   if (APP_NAME_IDENTIFIER !== "nuwax" ||
-      contents.session !== electronSession.defaultSession ||
-      trustedBusinessPopups.has(win)) return;
-  trustedBusinessPopups.add(win);
-  win.on("closed", () => trustedBusinessPopups.delete(win));
+      contents.session !== electronSession.defaultSession) return;
+  if (!trustedBusinessPopups.has(win)) {
+    trustedBusinessPopups.add(win);
+    win.on("closed", () => trustedBusinessPopups.delete(win));
+  }
   if (contents === win.webContents) attachHostActivityBusinessWindow(win);
   else attachHostActivityBusinessWindow(win, contents);
 }
 
 /** Caller must admit the business URL first. Reader failure keeps the shared-session window. */
-export function createBusinessReadingPage(windowOptions: BrowserWindowConstructorOptions, url: string, guest?: WebContents): NonNullable<ReturnType<typeof createDesktopBrowserPage>> {
+export function createBusinessReadingPage(windowOptions: BrowserWindowConstructorOptions, url: string, guest?: WebContents, isolated = false): NonNullable<ReturnType<typeof createDesktopBrowserPage>> {
   try {
-    const page = createDesktopBrowserPage({ windowOptions, guest, initialUrl: url });
+    const page = createDesktopBrowserPage({ windowOptions, guest, initialUrl: url, isolated });
     if (page) return page;
   } catch {
     log.warn('[WebviewPolicy] Reader unavailable, using native business window');
   }
   const window = new BrowserWindow(windowOptions);
-  return { window, contents: window.webContents };
+  return { window, contents: window.webContents, destroy: () => window.destroy(), hide: () => window.hide() };
 }
 
 /** Shared ordinary-link entry; dedicated business/payment windows do not use it. */
@@ -281,7 +285,7 @@ export function openOrdinaryWebLink(value: string, opener?: WebContents): { succ
   try {
     const page = createDesktopBrowserPage({ windowOptions: buildPopupWindowOptions(''), initialUrl: url });
     if (!page) return openSystemWebLink(url);
-    trackPopupWindow(page.window, opener, page.contents);
+    trackPopupWindow(page.window, opener, page.contents, { page, closeWithOpener: false });
     registerTrustedPopup(page.window, page.contents);
     loadPopupDocument(page.window, url, undefined, page.contents);
     return { success: true };
@@ -291,12 +295,24 @@ export function openOrdinaryWebLink(value: string, opener?: WebContents): { succ
 }
 
 /** 附件不提交页面；等待真实文档后显示，并只清理下载专用窗口。 */
-export function trackPopupWindow(win: BrowserWindow, opener?: WebContents, contents: WebContents = win.webContents): void {
-  const state: PopupWindowState = { window: win, opener, hasDocument: false, downloads: 0, keepFailedDocument: contents !== win.webContents };
+export function trackPopupWindow(
+  win: BrowserWindow, opener?: WebContents, contents: WebContents = win.webContents,
+  options: { page?: { destroy(): void; hide(): void }; closeWithOpener?: boolean } = {},
+): void {
+  const destroy = () => {
+    if (contents.isDestroyed()) return;
+    if (options.page) options.page.destroy();
+    else if (!win.isDestroyed()) win.destroy();
+  };
+  const state: PopupWindowState = {
+    window: win, opener, hasDocument: false, downloads: 0,
+    keepFailedDocument: contents !== win.webContents,
+    destroy,
+    hide: () => options.page ? options.page.hide() : win.hide(),
+  };
   configurePopupUnloadConfirmation(win, contents);
   popupWindows.set(contents, state);
   configureDownloads(contents.session);
-  const destroy = () => { if (!win.isDestroyed()) win.destroy(); };
   let shown = false;
   // 主文档提交后即需保留；慢图片/iframe 可能让 did-finish-load 晚于下载完成。
   contents.on("did-navigate", (_event, url) => {
@@ -326,11 +342,14 @@ export function trackPopupWindow(win: BrowserWindow, opener?: WebContents, conte
     destroy();
   });
   // createWindow 的原生 link 路径不会安装默认 opener 生命周期。
-  opener?.once("destroyed", destroy);
-  win.on("closed", () => {
+  if (options.closeWithOpener ?? !options.page) opener?.once("destroyed", destroy);
+  const cleanup = () => {
     popupWindows.delete(contents);
     opener?.removeListener("destroyed", destroy);
-  });
+    win.removeListener("closed", cleanup);
+  };
+  contents.once("destroyed", cleanup);
+  if (!options.page) win.on("closed", cleanup);
 }
 
 export function loadPopupDocument(win: BrowserWindow, url: string, details?: HandlerDetails, contents: WebContents = win.webContents): void {
@@ -350,7 +369,7 @@ export function loadPopupDocument(win: BrowserWindow, url: string, details?: Han
   void loading.catch((error: { code?: string }) => {
     // loadURL 对下载与中止也会 reject，不能留下未处理的 Promise。
     const state = popupWindows.get(contents);
-    if (!win.isDestroyed() && state && !state.keepFailedDocument && !state.hasDocument && state.downloads === 0) win.destroy();
+    if (!win.isDestroyed() && state && !state.keepFailedDocument && !state.hasDocument && state.downloads === 0) state.destroy();
     if (error.code !== "ERR_ABORTED")
       log.warn("[WebviewPolicy] Popup navigation failed", { code: error.code });
   });
@@ -385,7 +404,7 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     target.pathname.startsWith("/api/f/s3/") && hasOnlyBusinessFrames(opener);
   // Authenticated business pages must stay in the app even with system preference.
   const ordinaryLink = APP_NAME_IDENTIFIER === 'nuwax' && !isTrustedBusinessUrl(url) && !details.postBody && !dedicatedContents.has(opener);
-  const businessReader = trustedBusiness && target.pathname.startsWith('/repo/') && !details.postBody && !dedicatedContents.has(opener);
+  const isolated = dedicatedContents.has(opener);
   const browser = ordinaryLink && prefersDesktopBrowser();
   if (ordinaryLink && !browser) { openSystemPopupLink(target.href); return { action: 'deny' }; }
   const options = buildPopupWindowOptions(features ?? "");
@@ -400,7 +419,7 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
     createWindow: (windowOptions) => {
       const guest = (windowOptions as BrowserWindowConstructorOptions & { webContents?: WebContents }).webContents;
       let managed: ReturnType<typeof createDesktopBrowserPage> = null;
-      if (businessReader) managed = createBusinessReadingPage(windowOptions, target.href, guest);
+      if (!ordinaryLink) managed = createBusinessReadingPage(windowOptions, target.href, guest, isolated);
       else if (browser) {
         try { managed = createDesktopBrowserPage({ windowOptions, guest, initialUrl: target.href }); }
         catch { log.warn('[WebviewPolicy] Browser creation failed, using system browser'); }
@@ -419,8 +438,8 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
       }
       const win = managed?.window ?? new BrowserWindow(windowOptions);
       const contents = managed?.contents ?? win.webContents;
-      if (dedicatedContents.has(opener) || details.postBody) markDedicatedPage(contents);
-      trackPopupWindow(win, opener, contents);
+      if (isolated) markDedicatedPage(contents);
+      trackPopupWindow(win, opener, contents, { page: managed ?? undefined, closeWithOpener: isolated });
       registerTrustedPopup(win, contents);
       if (trustedBusiness || authenticatedDownload) {
         // 必须早于首个请求；自定义 createWindow 不会触发 did-create-window。
@@ -561,7 +580,7 @@ function configureDownloads(ses: Session): void {
       // A slow ordinary URL may have displayed its loading toolbar before the
       // response proved to be a download. Hide it until terminal cleanup.
       if (!popup.hasDocument && contents !== popup.window.webContents && !popup.window.isDestroyed())
-        popup.window.hide();
+        popup.hide();
     }
     const filename = item.getFilename();
     log.info(
@@ -583,7 +602,7 @@ function configureDownloads(ses: Session): void {
       if (popup) {
         popup.downloads--;
         if (!popup.hasDocument && popup.downloads === 0 && !popup.window.isDestroyed())
-          popup.window.destroy();
+          popup.destroy();
       }
       if (state === "completed") {
         log.info(

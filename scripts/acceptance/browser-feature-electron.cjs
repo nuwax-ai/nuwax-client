@@ -45,6 +45,10 @@ if (!process.versions.electron) {
   const http = require("node:http");
   const { once } = require("node:events");
   const dir = process.argv[2];
+  process.on("uncaughtException", (error) => {
+    console.error(error);
+    app.exit(1);
+  });
   app.setPath("userData", path.join(dir, "profile"));
   app
     .whenReady()
@@ -59,6 +63,12 @@ if (!process.versions.electron) {
       });
       const server = http.createServer((req, res) => {
         res.setHeader("content-type", "text/html");
+        if (req.url === "/payment-post") {
+          let body = "";
+          req.on("data", (chunk) => { body += chunk; });
+          req.on("end", () => res.end(`<title>Payment POST</title><p id="receipt">${req.method}:${body}</p>`));
+          return;
+        }
         if (req.url === "/find-fixture") {
           res.end('<title>Find fixture</title><input id="pageInput" value="editable"><p>needle one</p><p>needle two</p><p>needle three</p><iframe src="/find-frame"></iframe>');
           return;
@@ -169,17 +179,20 @@ if (!process.versions.electron) {
             "utf8",
           ),
         );
+        let hostDark = false;
         const controller = createBrowserWindows({
           settings: { read: (key) => key === 'step1_config' ? {serverHost:'https://business.example'} : key === 'nuwax.loopback' ? {origin} : 'light' },
           windows: {
             getMain: () => win,
+            isDarkMode: () => hostDark,
             toExternalUrl: (value) => publicWebUrl(value, { businessOrigin: 'https://business.example', gatewayOrigin: origin }),
           },
           translate: (key) => messages[key],
           log: console,
         });
-        const openManaged = () =>
+        const openManaged = (extra = {}) =>
           controller.open({
+            isolated: true,
             windowOptions: {
               width: 1100,
               height: 740,
@@ -193,6 +206,7 @@ if (!process.versions.electron) {
             toolbarUrl: process.env.NUWAX_BROWSER_DEV_URL ||
               pathToFileURL(path.join(client, "dist/browser.html")).href,
             preloadPath: path.join(client, "dist/preload/browserWindow.js"),
+            ...extra,
           });
         const openedAt = performance.now();
         const managed = openManaged();
@@ -624,6 +638,193 @@ if (!process.versions.electron) {
         const gone = once(managed.contents, "destroyed");
         await command({ type: "window-close" });
         await gone;
+
+        // Ordinary links share a window while every tab owns its native page,
+        // history/find state and close lifecycle. Exercise the rendered strip.
+        const firstTab = openManaged({ isolated: false });
+        firstTab.window.show = () => {};
+        await Promise.all([
+          once(firstTab.window.webContents, "did-finish-load"),
+          firstTab.contents.loadURL(origin + "/first"),
+        ]);
+        await firstTab.contents.loadURL(origin + "/find-fixture");
+        const tabState = () => firstTab.window.webContents.executeJavaScript("window.browserWindow.getState()");
+        const tabCommand = (cmd) => firstTab.window.webContents.executeJavaScript(`window.browserWindow.command(${JSON.stringify(cmd)})`);
+        const clickTabControl = async (selector) => {
+          const point = await firstTab.window.webContents.executeJavaScript(`(() => {
+            const node = document.querySelector(${JSON.stringify(selector)});
+            node.scrollIntoView({block: 'nearest', inline: 'nearest'});
+            const r = node.getBoundingClientRect();
+            return {x: Math.round(${selector.endsWith('.selectTab') ? 'r.right - 8' : 'r.x + r.width / 2'}), y: Math.round(r.y + r.height / 2)};
+          })()`);
+          firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...point});
+          for (const type of ["mouseDown", "mouseUp"])
+            firstTab.window.webContents.sendInputEvent({type, ...point, button: "left", clickCount: 1});
+        };
+        await tabCommand({ type: "find-open" });
+        await tabCommand({ type: "find", text: "needle" });
+        await waitFor(async () => (await tabState()).matches === 4);
+        const secondTab = openManaged({ isolated: false });
+        assert.equal(firstTab.window, secondTab.window);
+        assert.notEqual(firstTab.contents, secondTab.contents);
+        await secondTab.contents.loadURL(origin + "/second");
+        await waitFor(async () => (await tabState()).tabs.length === 2);
+        assert.equal((await tabState()).activeTabId, secondTab.contents.id);
+        assert.equal((await tabState()).finding, false);
+        const hoverState = () => firstTab.window.webContents.executeJavaScript(`(() => {
+          const tab = document.querySelector('.browserTab');
+          const close = tab.querySelector('.closeTab');
+          const icon = tab.querySelector('.tabIcon');
+          const c = close.getBoundingClientRect(), i = icon.getBoundingClientRect();
+          return {close: getComputedStyle(close).opacity, icon: getComputedStyle(icon).opacity,
+            background: getComputedStyle(tab).backgroundColor,
+            replacesIcon: Math.abs(c.x + c.width / 2 - i.x - i.width / 2) <= 2};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", x: 5, y: 100});
+        await waitFor(async () => (await hoverState()).close === "0");
+        assert.equal((await hoverState()).icon, "1");
+        const idleTabBackground = (await hoverState()).background;
+        assert.equal(await firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width"), 0);
+        const tabHoverPoint = await firstTab.window.webContents.executeJavaScript(`(() => {
+          const r = document.querySelector('.browserTab').getBoundingClientRect();
+          return {x: Math.round(r.x + 20), y: Math.round(r.y + r.height / 2)};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...tabHoverPoint});
+        await waitFor(async () => (await hoverState()).close === "1");
+        assert.equal((await hoverState()).icon, "0");
+        assert.equal((await hoverState()).replacesIcon, true);
+        await waitFor(async () => (await hoverState()).background !== idleTabBackground);
+        const activeHoverPoint = await firstTab.window.webContents.executeJavaScript(`(() => {
+          const r = document.getElementById('pageIdentity').getBoundingClientRect();
+          return {x: Math.round(r.x + 60), y: Math.round(r.y + r.height / 2)};
+        })()`);
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", ...activeHoverPoint});
+        await waitFor(() => firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width === 30"));
+        assert.equal(await firstTab.window.webContents.executeJavaScript("getComputedStyle(document.getElementById('pageIcon')).opacity"), "0");
+        for (const dark of [true, false]) {
+          hostDark = dark;
+          controller.refresh();
+          await waitFor(() => firstTab.window.webContents.executeJavaScript(`document.body.classList.contains('dark') === ${dark}`));
+          assert.equal(await firstTab.window.webContents.executeJavaScript(`getComputedStyle(document.getElementById('pageIdentity')).backgroundColor !== getComputedStyle(document.getElementById('toolbar')).backgroundColor`), true);
+        }
+        firstTab.window.webContents.sendInputEvent({type: "mouseMove", x: 5, y: 100});
+        await waitFor(() => firstTab.window.webContents.executeJavaScript("document.getElementById('reload').getBoundingClientRect().width === 0"));
+        assert.equal(await firstTab.window.webContents.executeJavaScript(`(() => {
+          const inactive = document.querySelector('.browserTab').getBoundingClientRect();
+          const active = document.getElementById('pageIdentity').getBoundingClientRect();
+          return inactive.width >= 120 && inactive.width <= 160 && active.width <= 220;
+        })()`), true, "two tabs must remain compact even with long page titles");
+        assert.deepEqual(await navigation(firstTab.window), {visible: false, back: false, forward: false});
+        await firstTab.contents.executeJavaScript("document.title = '<img src=x onerror=alert(1)>'; void 0");
+        await waitFor(() => firstTab.window.webContents.executeJavaScript(
+          `document.querySelector('[data-tab-id="${firstTab.contents.id}"] .tabTitle')?.textContent === '<img src=x onerror=alert(1)>'`,
+        ));
+        assert.equal(await firstTab.window.webContents.executeJavaScript("document.querySelector('#tabs img') === null"), true);
+        await clickTabControl(`[data-tab-id="${firstTab.contents.id}"] .selectTab`);
+        await waitFor(async () => (await tabState()).activeTabId === firstTab.contents.id);
+        assert.equal((await tabState()).findText, "needle");
+        assert.equal((await tabState()).matches, 4);
+        assert.equal(await firstTab.window.webContents.executeJavaScript("document.getElementById('query').value"), "needle");
+        assert.equal((await tabState()).canGoBack, true);
+        const viewVisible = (tab) => tab.window.contentView.children.find((view) => view.webContents === tab.contents).getVisible();
+        assert.equal(viewVisible(firstTab), true);
+        assert.equal(viewVisible(secondTab), false);
+        await tabCommand({type: "back"});
+        await waitFor(() => firstTab.contents.getURL() === origin + "/first" && !firstTab.contents.isLoading());
+        assert.equal(secondTab.contents.getURL(), origin + "/second");
+
+        const otherOrigin = http.createServer((_req, res) => res.end("<title>Other origin</title><p>Other origin</p>"));
+        otherOrigin.listen(0, "127.0.0.1");
+        await once(otherOrigin, "listening");
+        try {
+          const thirdTab = openManaged({isolated: false});
+          assert.equal(thirdTab.window, firstTab.window);
+          await thirdTab.contents.loadURL(`http://127.0.0.1:${otherOrigin.address().port}/third`);
+          assert.equal((await tabState()).tabs.length, 3);
+          const secondGone = once(secondTab.contents, "destroyed");
+          await clickTabControl(`[data-tab-id="${secondTab.contents.id}"] .closeTab`);
+          await secondGone;
+          assert.equal(firstTab.window.isDestroyed(), false);
+          assert.equal(firstTab.contents.isDestroyed(), false);
+          assert.equal((await tabState()).activeTabId, thirdTab.contents.id);
+          thirdTab.hide();
+          assert.equal((await tabState()).activeTabId, firstTab.contents.id);
+          assert.equal(viewVisible(firstTab), true);
+          thirdTab.destroy();
+          assert.equal(firstTab.window.isDestroyed(), false);
+        } finally {
+          otherOrigin.close();
+          otherOrigin.closeAllConnections();
+        }
+
+        const crowdedTabs = Array.from({length: 9}, () => openManaged({isolated: false}));
+        await Promise.all(crowdedTabs.map((tab, i) => tab.contents.loadURL(origin + `/crowded-${i}`)));
+        firstTab.window.setSize(800, 600);
+        await waitFor(() => firstTab.window.webContents.executeJavaScript(`(() => {
+          const tabs = document.querySelectorAll('.browserTab');
+          const strip = document.getElementById('tabs').getBoundingClientRect();
+          const actions = document.getElementById('pageActions').getBoundingClientRect();
+          return tabs.length === 9 && [...tabs].every(node => node.getBoundingClientRect().width <= 65) && strip.right <= actions.left;
+        })()`));
+        assert.equal((await hoverState()).replacesIcon, true, "collapsed tab close must still replace the centered icon");
+        assert.equal(await firstTab.window.webContents.executeJavaScript(`(() => {
+          const tab = document.querySelector('.browserTab');
+          const r = tab.getBoundingClientRect(), i = tab.querySelector('.tabIcon').getBoundingClientRect();
+          return getComputedStyle(tab.querySelector('.tabTitle')).display === 'none' && Math.abs(r.x + r.width / 2 - i.x - i.width / 2) <= 1;
+        })()`), true);
+        for (const tab of crowdedTabs) tab.destroy();
+        firstTab.window.setSize(1100, 740);
+        assert.equal((await tabState()).tabs.length, 1);
+
+        // Adopt Chromium's form popup rather than recreating a GET navigation:
+        // preserve its POST body, shared cookies, opener and payment callback.
+        await session.defaultSession.cookies.set({url: origin, name: "fixture", value: "shared"});
+        let payment;
+        firstTab.contents.setWindowOpenHandler(() => ({action: "allow", createWindow: (options) => {
+          payment = openManaged({isolated: true, guest: options.webContents, windowOptions: options});
+          payment.window.show = () => {};
+          return payment.contents;
+        }}));
+        await firstTab.contents.executeJavaScript(`(() => {
+          window.paymentResult = null;
+          window.addEventListener('message', event => { window.paymentResult = event.data; });
+          const form = document.createElement('form');
+          form.method = 'POST'; form.target = '_blank'; form.rel = 'opener'; form.action = ${JSON.stringify(origin + "/payment-post")};
+          const input = document.createElement('input'); input.name = 'order'; input.value = 'fixture'; form.append(input);
+          document.body.append(form); form.submit();
+        })()`, true);
+        await waitFor(() => payment && !payment.contents.isLoading() && payment.contents.getURL() === origin + "/payment-post");
+        assert.notEqual(payment.window, firstTab.window);
+        assert.equal(payment.contents.session, firstTab.contents.session);
+        assert.equal(await payment.contents.executeJavaScript("document.getElementById('receipt').textContent"), "POST:order=fixture");
+        assert.equal(await payment.contents.executeJavaScript("document.cookie.includes('fixture=shared')"), true);
+        assert.equal(await payment.contents.executeJavaScript("Boolean(window.opener)"), true);
+        await waitFor(() => payment.window.webContents.executeJavaScript("Boolean(window.browserWindow)"));
+        assert.equal(await tabCommand({type: "tab-activate", id: payment.contents.id}), false);
+        assert.equal(await tabCommand({type: "tab-close", id: payment.contents.id}), false);
+        const otherPayment = openManaged({isolated: true});
+        otherPayment.window.show = () => {};
+        assert.notEqual(otherPayment.window, payment.window);
+        assert.notEqual(otherPayment.window, firstTab.window);
+        otherPayment.destroy();
+        await payment.contents.executeJavaScript("opener.postMessage('payment-complete', '*'); void 0");
+        await waitFor(() => firstTab.contents.executeJavaScript("window.paymentResult === 'payment-complete'"));
+        const paymentGone = once(payment.contents, "destroyed");
+        await payment.contents.executeJavaScript("window.close(); void 0").catch(() => {});
+        await paymentGone;
+        assert.equal(payment.window.isDestroyed(), true);
+        assert.equal(firstTab.window.isDestroyed(), false);
+        await firstTab.contents.executeJavaScript("window.onbeforeunload = () => false; void 0");
+        const tabPrevented = once(firstTab.contents, "will-prevent-unload");
+        await tabCommand({type: "tab-close", id: firstTab.contents.id});
+        await tabPrevented;
+        assert.equal(firstTab.contents.isDestroyed(), false);
+        await firstTab.contents.executeJavaScript("window.onbeforeunload = null");
+        const lastTabGone = once(firstTab.contents, "destroyed");
+        await clickTabControl("#closeTab");
+        await lastTabGone;
+        assert.equal(firstTab.window.isDestroyed(), true);
+        console.log("PASS shared tabs: same/cross-origin reuse, rendered switch/close, safe titles, history/find isolation, page-only download cleanup; payment: separate windows, original POST/cookies/opener/callback/close");
         controller.dispose();
         console.log(
           JSON.stringify({
@@ -648,6 +849,7 @@ if (!process.versions.electron) {
               "find",
               "close preserves beforeunload cancellation",
               "close",
+              "shared tabs and isolated payment windows with POST/opener/callback",
             ],
           }),
         );

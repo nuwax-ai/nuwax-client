@@ -29,20 +29,41 @@ export interface BrowserPageOptions {
   guest?: WebContents;
   toolbarUrl?: string;
   preloadPath?: string;
+  /** Payment flows need their own window; ordinary pages share a tabbed window. */
+  isolated?: boolean;
 }
 export interface BrowserPage {
   window: BrowserWindow;
   contents: WebContents;
+  /** Host cleanup must affect this page rather than sibling tabs. */
+  destroy(): void;
+  hide(): void;
 }
-type Entry = BrowserPage & {
-  page: PageView;
+type WindowEntry = {
+  window: BrowserWindow;
   toolbarUrl: string;
-  state: BrowserState;
-  showing: boolean;
+  tabs: Entry[];
+  active: Entry | null;
   toolbarReady: boolean;
+  showing: boolean;
+  isolated: boolean;
+  closing: boolean;
+  disposed: boolean;
+  feedbackSequence: number;
+  baseListenerLimit: number;
+};
+type Entry = {
+  window: BrowserWindow;
+  contents: WebContents;
+  group: WindowEntry;
+  page: PageView;
+  state: BrowserState;
   hasDocument: boolean;
   findRequest: number;
   query: string;
+  suppressed: boolean;
+  shortcuts?: (event: Electron.Event, input: Electron.Input) => void;
+  dispose(): void;
 };
 const LABELS = [
   "back",
@@ -72,7 +93,7 @@ const LABELS = [
   "url",
 ] as const;
 
-/** Match the host's immersive chrome without changing dedicated payment windows. */
+/** Ordinary tabs and isolated payment windows use the same window chrome. */
 export function browserWindowChrome(
   platform: NodeJS.Platform = process.platform,
 ): BrowserWindowConstructorOptions {
@@ -106,7 +127,7 @@ function webUrl(value: string): string | null {
 /** Only the locally owned toolbar main frame can control its associated page. */
 export function isBrowserToolbar(
   event: IpcMainInvokeEvent,
-  entry: BrowserPage & { toolbarUrl: string },
+  entry: { window: BrowserWindow; toolbarUrl: string },
 ): boolean {
   try {
     const toolbar = entry.window.webContents;
@@ -124,11 +145,12 @@ export function isBrowserToolbar(
 }
 
 export function createBrowserWindows(ctx: FeatureContext) {
-  const entries = new Map<number, Entry>();
+  const windows = new Map<number, WindowEntry>();
+  let shared: WindowEntry | null = null;
   let disposed = false;
   const publicUrl = (value: string) => ctx.windows.toExternalUrl
     ? ctx.windows.toExternalUrl(value) : webUrl(value);
-  const labels = () => ({
+  const labels = (): Record<string, string> => ({
     loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
     ...Object.fromEntries(
       LABELS.map((key) => [key, ctx.translate?.(`Claw.Browser.${key}`) ?? key]),
@@ -140,7 +162,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       ]),
     ),
   });
-  const push = (entry: Entry) => {
+  const updateState = (entry: Entry) => {
     if (entry.window.isDestroyed() || entry.contents.isDestroyed()) return;
     const wc = entry.contents;
     const url = wc.getURL();
@@ -158,32 +180,57 @@ export function createBrowserWindows(ctx: FeatureContext) {
     entry.state.loading = wc.isLoading();
     entry.state.initialLoading =
       entry.state.loading && !entry.hasDocument && !entry.state.error;
+    entry.state.findText = entry.query;
     entry.state.zoom = Math.round(wc.getZoomFactor() * 100);
     entry.state.pinned = entry.window.isAlwaysOnTop();
     entry.state.maximized = entry.window.isMaximized();
     entry.state.fullscreen = entry.window.isFullScreen();
     entry.state.labels = labels();
-    const theme = ctx.settings.read("theme_mode") ?? "system";
-    entry.state.dark =
-      theme === "dark" ||
-      (theme === "system" && nativeTheme.shouldUseDarkColors);
-    if (entry.toolbarReady)
-      entry.window.webContents.send(BROWSER_IPC.changed, entry.state);
+    // The host may deliberately disable dark mode even on a dark OS.
+    entry.state.dark = ctx.windows.isDarkMode?.() ?? false;
+  };
+  const snapshot = (group: WindowEntry): BrowserState | null => {
+    if (!group.active || group.disposed) return null;
+    updateState(group.active);
+    return {
+      ...group.active.state,
+      activeTabId: group.active.contents.id,
+      tabs: group.tabs.map((tab) => ({
+        id: tab.contents.id,
+        title: tab.state.title || tab.state.domain || tab.state.labels.loading,
+        loading: tab.state.loading,
+      })),
+    };
+  };
+  const push = (entry: Entry) => {
+    updateState(entry);
+    const group = entry.group;
+    const state = snapshot(group);
+    if (state && group.toolbarReady && !group.window.isDestroyed())
+      group.window.webContents.send(BROWSER_IPC.changed, state);
   };
   const show = (entry: Entry) => {
+    const group = entry.group;
     if (
-      !entry.showing &&
-      entry.toolbarReady &&
+      group.active === entry &&
+      !entry.suppressed &&
+      !group.showing &&
+      group.toolbarReady &&
       !entry.window.isDestroyed() &&
       !entry.contents.isDestroyed() &&
       (entry.hasDocument ||
         entry.state.error ||
         (entry.state.loading && webUrl(entry.state.url)))
     ) {
-      entry.showing = true;
+      group.showing = true;
       entry.window.show();
       entry.window.focus();
     }
+  };
+  const visible = (entry: Entry) => {
+    entry.page.view.setVisible(
+      entry.group.active === entry && entry.hasDocument && !entry.state.error,
+    );
   };
   const layout = (entry: Entry) => {
     entry.page.toolbarHeight =
@@ -191,6 +238,19 @@ export function createBrowserWindows(ctx: FeatureContext) {
       BROWSER_AUXILIARY_BAR_HEIGHT *
         (Number(entry.state.finding) + Number(entry.state.addressOpen));
     entry.page.invalidateLayout();
+  };
+  const activate = (entry: Entry, focus = true) => {
+    const group = entry.group;
+    entry.suppressed = false;
+    group.active = entry;
+    for (const tab of group.tabs) visible(tab);
+    layout(entry);
+    push(entry);
+    show(entry);
+    if (focus && !entry.contents.isDestroyed()) {
+      if (entry.state.finding || entry.state.addressOpen) group.window.webContents.focus();
+      else entry.contents.focus();
+    }
   };
   const findOpen = (entry: Entry, enabled: boolean) => {
     entry.state.finding = enabled;
@@ -245,7 +305,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         const pendingUrl =
           (entry.state.error || !entry.hasDocument) && webUrl(entry.state.url);
         entry.state.error = null;
-        entry.page.view.setVisible(entry.hasDocument);
+        visible(entry);
         if (pendingUrl) void wc.loadURL(pendingUrl).catch(() => {});
         else wc.reload();
         break;
@@ -266,7 +326,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
           ctx.log.warn("[Browser] Clipboard write failed");
         }
         entry.state.copyFeedback = {
-          id: (entry.state.copyFeedback?.id ?? 0) + 1,
+          id: ++entry.group.feedbackSequence,
           success,
         };
         push(entry);
@@ -326,6 +386,15 @@ export function createBrowserWindows(ctx: FeatureContext) {
         // Keep the host's remote-page beforeunload/download cleanup path.
         entry.window.close();
         return true;
+      case "tab-activate":
+      case "tab-close": {
+        if (!Number.isSafeInteger(command.id)) return false;
+        const tab = entry.group.tabs.find((item) => item.contents.id === command.id);
+        if (!tab || tab.contents.isDestroyed()) return false;
+        if (command.type === "tab-activate") activate(tab);
+        else tab.contents.close({ waitForBeforeUnload: true });
+        return true;
+      }
       case "find": {
         if (typeof command.text !== "string" || command.text.length > 4096)
           return false;
@@ -420,23 +489,26 @@ export function createBrowserWindows(ctx: FeatureContext) {
     return true;
   };
   const owned = (event: IpcMainInvokeEvent) => {
-    const entry = entries.get(event.sender.id);
-    return entry && isBrowserToolbar(event, entry) ? entry : null;
+    const group = windows.get(event.sender.id);
+    return group && isBrowserToolbar(event, group) ? group : null;
   };
   const refresh = () => {
-    for (const entry of entries.values()) push(entry);
+    for (const group of windows.values()) {
+      for (const tab of group.tabs) updateState(tab);
+      if (group.active) push(group.active);
+    }
   };
   try {
     ipcMain.handle(BROWSER_IPC.state, (event) => {
-      const entry = owned(event);
-      if (!entry) return null;
-      push(entry);
-      return entry.state;
+      const group = owned(event);
+      if (!group?.active) return null;
+      push(group.active);
+      return snapshot(group);
     });
     ipcMain.handle(
       BROWSER_IPC.command,
       async (event, command: BrowserCommand) => {
-        const entry = owned(event);
+        const entry = owned(event)?.active;
         if (!entry) return false;
         try {
           return await execute(entry, command);
@@ -453,13 +525,15 @@ export function createBrowserWindows(ctx: FeatureContext) {
     throw error;
   }
 
-  const open = (options: BrowserPageOptions): BrowserPage => {
-    if (disposed) throw new Error("Browser feature is disposed");
-    const parentEntry = ctx.windows.getMain()?.webContents.getURL();
-    const toolbarUrl =
-      options.toolbarUrl ??
-      (parentEntry ? new URL("./browser.html", parentEntry).href : "");
-    if (!toolbarUrl) throw new Error("Browser toolbar entry unavailable");
+  const closeNext = (group: WindowEntry) => {
+    const tab = group.active;
+    if (!tab) {
+      if (!group.window.isDestroyed()) group.window.destroy();
+      return;
+    }
+    tab.contents.close({ waitForBeforeUnload: true });
+  };
+  const createWindow = (options: BrowserPageOptions, toolbarUrl: string): WindowEntry => {
     const {
       webPreferences,
       webContents: _guest,
@@ -481,11 +555,94 @@ export function createBrowserWindows(ctx: FeatureContext) {
           path.join(__dirname, "..", "preload", "browserWindow.js"),
       },
     });
+    const group: WindowEntry = {
+      window: win,
+      toolbarUrl,
+      tabs: [],
+      active: null,
+      toolbarReady: false,
+      showing: false,
+      isolated: options.isolated === true,
+      closing: false,
+      disposed: false,
+      feedbackSequence: 0,
+      baseListenerLimit: win.getMaxListeners(),
+    };
+    const toolbarId = win.webContents.id;
+    windows.set(toolbarId, group);
+    if (!group.isolated) shared = group;
+    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    win.webContents.on("will-navigate", (event) => event.preventDefault());
+    win.webContents.on("will-redirect", (event) => event.preventDefault());
+    win.webContents.once("did-finish-load", () => {
+      group.toolbarReady = true;
+      if (group.active) {
+        push(group.active);
+        show(group.active);
+      }
+    });
+    const update = () => {
+      if (group.active) push(group.active);
+    };
+    win.on("maximize", update);
+    win.on("unmaximize", update);
+    win.on("enter-full-screen", update);
+    win.on("leave-full-screen", update);
+    win.webContents.on("before-input-event", (event, input) => group.active?.shortcuts?.(event, input));
+    win.on("close", (event) => {
+      if (!group.tabs.length) return;
+      event.preventDefault();
+      if (group.closing) return;
+      group.closing = true;
+      closeNext(group);
+    });
+    win.once("closed", () => {
+      group.disposed = true;
+      windows.delete(toolbarId);
+      if (shared === group) shared = null;
+      for (const tab of [...group.tabs]) tab.dispose();
+    });
+    void win.loadURL(toolbarUrl).catch(() => {
+      if (win.isDestroyed()) return;
+      ctx.log.warn("[Browser] Toolbar failed to load");
+      // A payment or authenticated business page must not fall out to the OS.
+      void dialog.showMessageBox(win, {
+        type: "error",
+        message: labels().failed,
+        buttons: [labels().close],
+      }).catch(() => {}).finally(() => {
+        if (!win.isDestroyed()) win.destroy();
+      });
+    });
+    return group;
+  };
+
+  const open = (options: BrowserPageOptions): BrowserPage => {
+    if (disposed) throw new Error("Browser feature is disposed");
+    const parentEntry = ctx.windows.getMain()?.webContents.getURL();
+    const toolbarUrl = options.toolbarUrl ??
+      (parentEntry ? new URL("./browser.html", parentEntry).href : "");
+    if (!toolbarUrl) throw new Error("Browser toolbar entry unavailable");
+    const reused = !options.isolated && shared && !shared.disposed &&
+      !shared.closing && !shared.window.isDestroyed() && shared.toolbarUrl === toolbarUrl
+      ? shared : null;
+    const group = reused ?? createWindow(options, toolbarUrl);
+    const win = group.window;
+    // Each live tab owns certificate, host-activity and popup cleanup listeners.
+    // Keep the diagnostic limit proportional to live tabs and restore it on close.
+    const listenerLimit = () => {
+      if (group.baseListenerLimit !== 0)
+        win.setMaxListeners(group.baseListenerLimit + group.tabs.length * 4);
+    };
+    if (group.baseListenerLimit !== 0)
+      win.setMaxListeners(group.baseListenerLimit + (group.tabs.length + 1) * 4);
+    const webPreferences = options.windowOptions.webPreferences;
     let page: PageView;
     try {
       page = new PageView(win, { webContents: options.guest, webPreferences });
     } catch (error) {
-      win.destroy();
+      listenerLimit();
+      if (!reused) win.destroy();
       throw error;
     }
     const wc = page.webContents;
@@ -498,14 +655,16 @@ export function createBrowserWindows(ctx: FeatureContext) {
     const entry: Entry = {
       window: win,
       contents: wc,
+      group,
       page,
-      toolbarUrl,
-      toolbarReady: false,
-      showing: false,
       hasDocument: !!webUrl(wc.getURL()),
       query: "",
       findRequest: -1,
+      suppressed: false,
+      dispose: () => {},
       state: {
+        tabs: [],
+        activeTabId: wc.id,
         title: "",
         url: options.initialUrl ?? "",
         domain: "",
@@ -526,6 +685,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         addressOpen: false,
         error: null,
         finding: false,
+        findText: "",
         findFocusRequest: 0,
         matches: 0,
         activeMatch: 0,
@@ -536,17 +696,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
     };
     // The native page sits above the toolbar renderer. Keep about:blank hidden
     // so the local loading UI can paint while the server has not responded.
-    page.view.setVisible(entry.hasDocument);
-    const toolbarId = win.webContents.id;
-    entries.set(toolbarId, entry);
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    win.webContents.on("will-navigate", (event) => event.preventDefault());
-    win.webContents.on("will-redirect", (event) => event.preventDefault());
-    win.webContents.once("did-finish-load", () => {
-      entry.toolbarReady = true;
-      push(entry);
-      show(entry);
-    });
+    page.view.setVisible(false);
+    group.tabs.push(entry);
     wc.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
       if (webUrl(url)) entry.state.url = url;
@@ -555,7 +706,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         entry.query = "";
         entry.findRequest = -1;
         entry.state.matches = entry.state.activeMatch = 0;
-        page.view.setVisible(entry.hasDocument);
+        visible(entry);
       }
       push(entry);
       show(entry);
@@ -563,7 +714,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     wc.on("did-navigate", () => {
       if (!webUrl(wc.getURL())) return;
       entry.hasDocument = true;
-      page.view.setVisible(true);
+      visible(entry);
       push(entry);
       show(entry);
     });
@@ -571,10 +722,6 @@ export function createBrowserWindows(ctx: FeatureContext) {
       push(entry);
       show(entry);
     };
-    win.on("maximize", update);
-    win.on("unmaximize", update);
-    win.on("enter-full-screen", update);
-    win.on("leave-full-screen", update);
     wc.on("did-start-loading", update);
     wc.on("did-stop-loading", update);
     wc.on("page-title-updated", update);
@@ -585,7 +732,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     });
     wc.on("did-finish-load", () => {
       entry.hasDocument ||= !!webUrl(wc.getURL());
-      page.view.setVisible(entry.hasDocument && !entry.state.error);
+      visible(entry);
       push(entry);
       show(entry);
     });
@@ -613,6 +760,19 @@ export function createBrowserWindows(ctx: FeatureContext) {
       if (input.type !== "keyDown") return;
       let type: BrowserCommand["type"] | undefined;
       const key = input.key.toLowerCase();
+      if ((input.control || input.meta) && !input.alt && key === "w") {
+        event.preventDefault();
+        void execute(entry, { type: "tab-close", id: entry.contents.id }).catch(() => {});
+        return;
+      }
+      if (input.control && !input.alt && key === "tab") {
+        event.preventDefault();
+        const index = group.tabs.indexOf(entry);
+        const next = (index + (input.shift ? -1 : 1) + group.tabs.length) % group.tabs.length;
+        const tab = group.tabs[next];
+        if (tab) activate(tab);
+        return;
+      }
       if ((input.control || input.meta) && !input.alt)
         type = (
           {
@@ -641,37 +801,61 @@ export function createBrowserWindows(ctx: FeatureContext) {
       }
     };
     wc.on("before-input-event", shortcuts);
-    win.webContents.on("before-input-event", shortcuts);
-    win.on("close", (event) => {
-      if (!wc.isDestroyed()) {
-        event.preventDefault();
-        wc.close({ waitForBeforeUnload: true });
-      }
+    entry.shortcuts = shortcuts;
+    wc.on("will-prevent-unload", (event) => {
+      if (group.active !== entry) activate(entry, false);
+      // The host's synchronous leave/stay handler runs on the same event.
+      // Staying must also release the pending whole-window close request.
+      setImmediate(() => {
+        if (!event.defaultPrevented) group.closing = false;
+      });
     });
+    let cleaned = false;
     const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       disposeCertificatePrompts();
-      entries.delete(toolbarId);
+      const index = group.tabs.indexOf(entry);
+      if (index >= 0) group.tabs.splice(index, 1);
       page.destroy();
-      if (!win.isDestroyed()) win.destroy();
+      listenerLimit();
+      if (group.disposed) return;
+      if (group.active === entry) group.active = group.tabs[Math.max(0, index - 1)] ?? null;
+      if (!group.active) {
+        if (!win.isDestroyed()) win.destroy();
+      } else if (group.closing) {
+        activate(group.active, false);
+        closeNext(group);
+      } else {
+        activate(group.active, false);
+      }
     };
+    entry.dispose = cleanup;
     wc.once("destroyed", cleanup);
-    win.once("closed", cleanup);
-    void win.loadURL(toolbarUrl).catch(() => {
-      if (win.isDestroyed() || wc.isDestroyed()) return;
-      ctx.log.warn("[Browser] Toolbar failed to load");
-      const url = publicUrl(entry.state.url);
-      if (url)
-        void shell
-          .openExternal(url)
-          .catch(() =>
-            ctx.log.warn("[Browser] System-browser fallback failed"),
-          );
-      cleanup();
-    });
-    return { window: win, contents: wc };
+    activate(entry, false);
+    if (reused && group.toolbarReady) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+    return {
+      window: win,
+      contents: wc,
+      destroy: cleanup,
+      hide() {
+        entry.suppressed = true;
+        const previous = group.tabs.find((tab) => tab !== entry && !tab.suppressed);
+        if (group.active !== entry) return;
+        if (previous) activate(previous, false);
+        else {
+          group.showing = false;
+          win.hide();
+        }
+      },
+    };
   };
   const closeAll = () => {
-    for (const entry of [...entries.values()]) entry.window.destroy();
+    for (const group of [...windows.values()]) group.window.destroy();
   };
   return {
     open,

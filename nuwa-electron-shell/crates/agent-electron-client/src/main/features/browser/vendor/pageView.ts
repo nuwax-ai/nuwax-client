@@ -9,7 +9,7 @@ import {
 } from "electron";
 import { BROWSER_TOOLBAR_HEIGHT } from "@shared/features/browser/contract";
 
-/** Upstream Tab's view ownership/layout, reduced to one page per window. */
+/** One page view owns its Chromium contents and layout within a host window. */
 export class PageView {
   readonly view: WebContentsView;
   readonly webContents: WebContents;
