@@ -9,12 +9,14 @@ const toolRoot = /(?:^|\/)resources\/(?:node|git|uv|ripgrep)$/;
 const explicitCache = /(?:^|\/)resources\/(?:node|git|uv|ripgrep)\/\.cache(?:\/|$)/;
 const cacheFilter = '!.cache{,/**/*}';
 const projectCacheFilters = toolNames.map(name => `!resources/${name}/.cache{,/**/*}`);
+const noticeRoot = /^(?:resources\/)?third-party(?:\/|$)/;
+const projectNoticeFilters = ['!third-party{,/**/*}', '!resources/third-party{,/**/*}'];
 const normalized = value => String(value ?? '').replaceAll('\\', '/').replace(/\/+$/, '');
 const array = value => value == null ? [] : Array.isArray(value) ? value : [value];
 
 function resourceMappings(entries) {
   if (entries == null) return entries;
-  const items = array(entries);
+  const items = array(entries).filter(entry => !noticeRoot.test(normalized(typeof entry === 'string' ? entry : entry?.to ?? entry?.from)));
   const result = items.map(entry => {
     if (!entry || typeof entry !== 'object') return entry;
     const source = normalized(entry.from);
@@ -22,7 +24,7 @@ function resourceMappings(entries) {
     // of silently publishing a download archive through a second mapping.
     if (explicitCache.test(source)) throw new Error('[package-payload] Explicit build cache resource is not publishable');
     const exclusions = toolRoot.test(source) ? [cacheFilter]
-      : !source || source === '.' ? projectCacheFilters : [];
+      : !source || source === '.' ? [...projectCacheFilters, ...projectNoticeFilters] : [];
     if (!exclusions.length) return entry;
     const filters = array(entry.filter);
     if (filters.some(value => typeof value !== 'string')) throw new Error('[package-payload] Expected string resource filters');
@@ -31,12 +33,12 @@ function resourceMappings(entries) {
   // String patterns share a project-root matcher. Do not create a new matcher
   // for object-only configurations: ignore-only patterns imply "copy all".
   if (items.some(entry => typeof entry === 'string')) {
-    for (const filter of projectCacheFilters) if (!result.includes(filter)) result.push(filter);
+    for (const filter of [...projectCacheFilters, ...projectNoticeFilters]) if (!result.includes(filter)) result.push(filter);
   }
   return result;
 }
 
-/** Only tool download caches are excluded. Runtime archives and nested indexes stay intact. */
+/** Exclude download caches and standalone notices; preserve runtime files. */
 export function configurePackagePayload(build) {
   const result = { ...build };
   if (build.extraResources != null) result.extraResources = resourceMappings(build.extraResources);
@@ -68,6 +70,11 @@ export function verifyPackagePayload(output, { platform = process.platform, arch
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     throw new Error(`[package-payload] Published build cache found: ${relative}`);
   }
+  for (const relative of ['third-party', 'resources/third-party']) {
+    try { fs.lstatSync(path.join(resources, relative)); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    throw new Error(`[package-payload] Standalone notices found: ${relative}`);
+  }
   return { resources, checkedCacheRoots: cacheRoots.length };
 }
 
@@ -84,10 +91,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (options['--package']) {
       if (options['--platform'] || options['--arch']) throw new Error('[package-payload] Package preparation applies to every platform');
       preparePackagePayload(options['--package']);
-      console.log('[package-payload] Tool download caches excluded from published resources');
+      console.log('[package-payload] Tool download caches and standalone notices excluded from published resources');
     } else {
       const result = verifyPackagePayload(options['--verify-output'], { platform: options['--platform'], arch: options['--arch'] });
-      console.log(`[package-payload] No build caches in unpacked resources (${result.checkedCacheRoots} roots checked)`);
+      console.log(`[package-payload] No build caches or standalone notices in unpacked resources (${result.checkedCacheRoots} cache roots checked)`);
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
