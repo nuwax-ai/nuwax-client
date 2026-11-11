@@ -10,7 +10,7 @@
  *
  * 产物（resources/nuwax-harness-acp-ts/）：
  *   ├── dist/index.js                          adapter bundle（自包含）
- *   ├── package.json                           精简（name/version/bin/main）
+ *   ├── package.json                           精简，含配套引擎版本
  *   └── vendor/nuwax-harness/<ver>/            引擎文件集（按 requiredBundleFiles 选择性复制）
  *
  * 运行时 adapter 不再按包相对路径找引擎：只认 NUWAX_PATH/CODEX_PATH env，兜底
@@ -184,6 +184,9 @@ async function main() {
   const slimPkg = {
     name: srcPkg.name,
     version: srcPkg.version,
+    // Installation recovery may retain older vendor directories. Runtime must
+    // select the adapter's dependency, not the first directory it encounters.
+    harnessEngineVersion: engineVer,
     type: 'module',
     bin: {
       'nuwax-harness-acp-ts': './dist/index.js',

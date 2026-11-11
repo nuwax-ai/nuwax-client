@@ -65,6 +65,16 @@ function currentVendorDir() {
     fs.existsSync(path.join(VENDOR_ROOT, v, "nuwax-harness")),
   );
   if (versions.length === 0) fail(`vendor 下没有引擎版本目录(先跑 make setup/pnpm install)`);
+  const metadataPath = path.join(VENDOR_ROOT, "../..", "package.json");
+  const metadata = fs.existsSync(metadataPath)
+    ? JSON.parse(fs.readFileSync(metadataPath, "utf8")) : {};
+  if (metadata.harnessEngineVersion !== undefined) {
+    if (!versions.includes(metadata.harnessEngineVersion)) {
+      fail("配套引擎版本目录缺失,请先重新准备资源");
+    }
+    return path.join(VENDOR_ROOT, metadata.harnessEngineVersion);
+  }
+  if (versions.length > 1) fail("旧资源含多个引擎版本且没有配套版本声明,请先重新准备资源");
   return path.join(VENDOR_ROOT, versions[0]);
 }
 
