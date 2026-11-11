@@ -8,8 +8,6 @@ import { buildFrontend } from './frontend.mjs';
 import { prepare, commercialEnv, fileReady, inputDigest } from './prepare.mjs';
 import { captureSourceLockFile, inspectCaptureResource } from './capture-resources.mjs';
 import { CAPTURE_RESOURCE_FILES, captureWindowSourceLockFile, inspectCaptureWindowResource } from './capture-window-resources.mjs';
-import { shippedResourcePaths } from './third-party-notices.mjs';
-import { generateThirdPartyNotices } from './source-notices.mjs';
 import { terminalCompatLockFile, inspectTerminalCompatResource } from './terminal-compat-resources.mjs';
 import { verifyUpdaterOutput } from '../prepare-release-updater.mjs';
 import updater from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
@@ -63,7 +61,7 @@ export function validateOutput(root, output, tools = core) {
   return output;
 }
 
-export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, captureDir, noticesDir, platform = process.platform, arch = process.arch, env = process.env, builderVersions }) {
+export function builderConfig(packageJson, { frontendDist, output, version, product = config.product, helperDir, captureDir, platform = process.platform, arch = process.arch, env = process.env, builderVersions }) {
   if (version && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('[pack] version 必须是有效的 semver 版本');
   const result = structuredClone(packageJson.build ?? {});
   result.extends = null;
@@ -88,7 +86,6 @@ export function builderConfig(packageJson, { frontendDist, output, version, prod
   }
   if (helperDir) result.extraResources.push({ from: helperDir, to: 'computer-use', filter: ['**/*'] });
   if (captureDir) result.extraResources.push({ from: captureDir, to: `capture/${path.basename(captureDir)}`, filter: CAPTURE_RESOURCE_FILES });
-  if (noticesDir) result.extraResources.push({ from: noticesDir, to: 'third-party', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] });
   result.mac ??= {};
   result.mac.identity = null;
   result.mac.hardenedRuntime = false;
@@ -181,12 +178,10 @@ export async function pack(root, options = {}) {
       throw new Error('[pack] capture 窗口识别资源尚未通过 SHA256 核验，运行 npm run prepare:capture');
     }
   }
-  const noticesDir = path.join(p.cache, 'third-party', `${platform}-${arch}`);
   if (platform === 'win32' && fs.existsSync(terminalCompatLockFile(root)) && !inspectTerminalCompatResource(root, { platform, arch, tools })) {
     throw new Error('[pack] Windows 10 1511 terminal resources are missing or changed; run npm run prepare:terminal-compat');
   }
-  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, noticesDir, platform, arch, builderVersions });
-  await (options.generateNotices ?? generateThirdPartyNotices)(root, { strict: true, outDir: noticesDir, resourcePaths: shippedResourcePaths(generated, p.client, platform), platform, arch });
+  const generated = builderConfig(pkg, { frontendDist: frontend.distDir, output, version, helperDir, captureDir, platform, arch, builderVersions });
   fs.mkdirSync(p.cache, { recursive: true });
   const configFile = path.join(p.cache, `electron-builder-${platform}-${arch}.json`);
   tools.atomicJson(configFile, generated);

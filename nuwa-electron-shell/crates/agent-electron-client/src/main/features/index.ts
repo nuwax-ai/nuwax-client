@@ -38,7 +38,6 @@ import type {
 } from "./_kit/types";
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
-import { openSourceNoticesFeature } from "./open-source-notices";
 import { browserFeature } from "./browser";
 import { localFilesFeature } from "./local-files";
 
@@ -49,7 +48,6 @@ export type { FeatureMcpServerEntry } from "./_kit/types";
 export const desktopFeatures: readonly DesktopFeature[] = [
   computerUseFeature,
   captureFeature,
-  openSourceNoticesFeature,
   localFilesFeature,
   browserFeature,
 ];

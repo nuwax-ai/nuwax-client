@@ -16,7 +16,7 @@ for (const arch of ['arm64', 'x64']) test(`private ${arch} Mac build signs helpe
   const result = await packSignedValidationMac('/root', { platform: 'darwin', arch, output: '/output' }, {
     tools, env,
     packFn: async (_root, opts) => { assert.equal(opts.dir, true); return { configFile: '/isolated-config.json' }; },
-    captureFn: async (_root, opts) => { assert.equal(opts.macSigning, true); calls.push(['capture']); return { captureDir: '/signed-capture', noticesDir: '/notices' }; },
+    captureFn: async (_root, opts) => { assert.equal(opts.macSigning, true); calls.push(['capture']); return { captureDir: '/signed-capture' }; },
     notarizeFn: async opts => { calls.push(['notarize']); assert.equal(opts.app, `/output/${arch === 'arm64' ? 'mac-arm64' : 'mac'}/Nuwax.app`); },
     packageFn: async opts => {
       calls.push(['package']); assert.equal(opts.configFile, '/isolated-config.json');

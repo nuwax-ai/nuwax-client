@@ -625,12 +625,6 @@ jobs:
           rm -rf release node_modules/.cache
           echo "Cleaned release and cache directories"
 
-      - name: Prepare complete application open-source notices
-        shell: bash
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: node scripts/prepare-release-notices.mjs --arch "$TARGET_ARCH"
-
       - name: Build Electron app
         shell: bash
         working-directory: nuwa-electron-shell/crates/agent-electron-client
@@ -710,13 +704,6 @@ jobs:
           fi
           node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
           echo "output_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Verify complete packaged open-source notices
-        shell: bash
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
-        run: node scripts/prepare-release-notices.mjs --arch "$TARGET_ARCH" --verify-output "$OUT_DIR"
 
       - name: Verify packaged updater configuration
         shell: bash

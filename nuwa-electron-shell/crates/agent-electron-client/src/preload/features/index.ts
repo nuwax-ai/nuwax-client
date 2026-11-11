@@ -8,10 +8,8 @@
 
 import type { IpcRenderer } from "electron";
 import { HOST_CAPTURE_IPC, HOST_CAPTURE_SAVE_IPC, HOST_CAPTURE_MENU_IPC, type CaptureBridge, type HostCaptureBridge, type CaptureMenuAction } from "@shared/features/capture/contract";
-import type { NoticesBridge } from "@shared/features/open-source-notices/contract";
 import type { ComputerUseAPI } from "@shared/features/computer-use/contract";
 import { createCaptureBridge, captureCapabilityProbe } from "./capture";
-import { createNoticesBridge } from "./open-source-notices";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
 import { createBrowserBridge } from './browser';
@@ -24,7 +22,6 @@ export interface FeatureNamespaces {
 
 export interface HostFeatureNamespaces {
   browser: ReturnType<typeof createBrowserBridge>;
-  notices: NoticesBridge;
   capture: HostCaptureBridge;
   computerUse: ComputerUseAPI;
   features: { registered: () => Promise<string[]> };
@@ -41,7 +38,6 @@ export function hostFeatureNamespaces(
 ): HostFeatureNamespaces {
   return {
     browser: createBrowserBridge(ipc, true),
-    notices: createNoticesBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
     features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },
     capture: {
