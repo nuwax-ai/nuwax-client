@@ -16,6 +16,7 @@ async function setup(
     {
       value: string;
       hidden: boolean;
+      disabled: boolean;
       textContent: string;
       focus: ReturnType<typeof vi.fn>;
       select: ReturnType<typeof vi.fn>;
@@ -38,6 +39,7 @@ async function setup(
     elements.set(id, {
       value: "",
       hidden: false,
+      disabled: false,
       textContent: "",
       focus: vi.fn(),
       select: vi.fn(),
@@ -72,6 +74,8 @@ async function setup(
     url: "https://business.example/doc",
     domain: "business.example",
     platform: "darwin",
+    canGoBack: false,
+    canGoForward: false,
     finding: false,
     findFocusRequest: 0,
     matches: 0,
@@ -142,6 +146,27 @@ describe("browser toolbar find state", () => {
 });
 
 describe("browser toolbar actions and feedback", () => {
+  it("shows navigation only when the current page can go back or forward", async () => {
+    const f = await setup();
+    for (const [canGoBack, canGoForward] of [
+      [false, false],
+      [true, false],
+      [true, true],
+      [false, true],
+      [false, false],
+    ]) {
+      f.update({ canGoBack, canGoForward });
+      expect(f.elements.get("navigation")!.hidden).toBe(!canGoBack && !canGoForward);
+      expect(f.elements.get("back")!.disabled).toBe(!canGoBack);
+      expect(f.elements.get("forward")!.disabled).toBe(!canGoForward);
+    }
+    f.update({ canGoBack: true, canGoForward: true });
+    f.elements.get("back")!.events.get("click")!({});
+    expect(f.command).toHaveBeenLastCalledWith({ type: "back" });
+    f.elements.get("forward")!.events.get("click")!({});
+    expect(f.command).toHaveBeenLastCalledWith({ type: "forward" });
+  });
+
   it("shows a success toast only for a successful copy result, then dismisses it", async () => {
     const f = await setup();
     vi.useFakeTimers();

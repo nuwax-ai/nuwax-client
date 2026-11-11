@@ -286,6 +286,12 @@ if (!process.versions.electron) {
             .getBounds();
         assert.equal((await getState()).url, origin + "/toolbar-page");
         assert.equal((await getState()).initialLoading, false);
+        const navigation = (target = managed.window) => target.webContents.executeJavaScript(`({
+          visible: !document.getElementById('navigation').hidden,
+          back: !document.getElementById('back').disabled,
+          forward: !document.getElementById('forward').disabled,
+        })`);
+        assert.deepEqual(await navigation(), { visible: false, back: false, forward: false });
         assert.equal(
           managed.window.contentView.children
             .find((view) => view.webContents === managed.contents)
@@ -344,6 +350,13 @@ if (!process.versions.electron) {
         // Native page views sit above the local renderer: URL UI must reserve
         // real view bounds instead of opening an obscured modal/backdrop.
         await managed.contents.loadURL(origin + "/toolbar-next");
+        await waitFor(async () => (await navigation()).back);
+        assert.deepEqual(await navigation(), { visible: true, back: true, forward: false });
+        if (process.env.NUWAX_BROWSER_SCREENSHOT)
+          fs.writeFileSync(
+            process.env.NUWAX_BROWSER_SCREENSHOT.replace(/\.png$/, "-history-navigation.png"),
+            (await managed.window.capturePage({x: 0, y: 0, width: 1100, height: 48})).toPNG(),
+          );
         await click("location");
         await waitFor(async () => (await getState()).addressOpen);
         assert.equal(bounds().y, 90);
@@ -358,11 +371,40 @@ if (!process.versions.electron) {
           () => managed.contents.getURL() === origin + "/toolbar-page",
         );
         await waitFor(async () => !(await getState()).loading);
+        assert.deepEqual(await navigation(), { visible: true, back: false, forward: true });
         await click("forward");
         await waitFor(
           () => managed.contents.getURL() === origin + "/toolbar-next",
         );
         await waitFor(async () => !(await getState()).loading);
+        assert.deepEqual(await navigation(), { visible: true, back: true, forward: false });
+        // A second page must own its history; another page's available back
+        // entry cannot make these controls appear or navigate that other page.
+        const isolatedPage = openManaged();
+        isolatedPage.window.show = () => {};
+        const isolatedToolbar = once(isolatedPage.window.webContents, "did-finish-load");
+        await isolatedPage.contents.loadURL(origin + "/isolated-history-a");
+        await isolatedToolbar;
+        await waitFor(async () => (await isolatedPage.window.webContents.executeJavaScript(
+          "window.browserWindow.getState()",
+        )).initialLoading === false);
+        assert.deepEqual(await navigation(isolatedPage.window), { visible: false, back: false, forward: false });
+        await isolatedPage.contents.loadURL(origin + "/isolated-history-b");
+        await waitFor(async () => (await navigation(isolatedPage.window)).back);
+        await isolatedPage.window.webContents.executeJavaScript(
+          "window.browserWindow.command({type: 'back'})",
+        );
+        await waitFor(() => isolatedPage.contents.getURL() === origin + "/isolated-history-a");
+        await waitFor(async () => (await navigation(isolatedPage.window)).forward);
+        assert.equal(managed.contents.getURL(), origin + "/toolbar-next");
+        assert.deepEqual(await navigation(), { visible: true, back: true, forward: false });
+        await isolatedPage.window.webContents.executeJavaScript(
+          "window.browserWindow.command({type: 'forward'})",
+        );
+        await waitFor(() => isolatedPage.contents.getURL() === origin + "/isolated-history-b");
+        assert.equal(managed.contents.getURL(), origin + "/toolbar-next");
+        isolatedPage.window.destroy();
+        console.log("PASS page history: conditional navigation controls and independent back/forward stacks");
         let copied, menu, menuPosition;
         const writeText = clipboard.writeText;
         const buildMenu = Menu.buildFromTemplate;
@@ -579,6 +621,7 @@ if (!process.versions.electron) {
               "show toolbar before delayed first response",
               "stop/retry and close before first response",
               "history",
+              "navigation visibility and per-page history isolation",
               "reload",
               "popup guest adoption/opener",
               "dispose",
