@@ -39,7 +39,7 @@ describe('annotation selection and editing geometry', () => {
     expect(painter.hitTest(ctx, annotation(tool), { x: 200, y: 130 }, 5)).toBe(true);
     expect(painter.hitTest(ctx, annotation(tool), { x: 400, y: 130 }, 5)).toBe(false);
   });
-  it.each(['arrow', 'pen'] as const)('selects %s strokes rather than their empty bounding-box corners', tool => {
+  it.each(['line', 'arrow', 'pen'] as const)('selects %s strokes rather than their empty bounding-box corners', tool => {
     expect(painter.hitTest(ctx, annotation(tool), { x: 200, y: 130 }, 5)).toBe(true);
     expect(painter.hitTest(ctx, annotation(tool), { x: 110, y: 170 }, 5)).toBe(false);
   });
@@ -58,6 +58,23 @@ describe('annotation selection and editing geometry', () => {
   });
 });
 describe('annotation geometry', () => {
+  it.each([
+    [{ x: 120, y: 80 }, { x: 30, y: 80 }],
+    [{ x: 30, y: 80 }, { x: 30, y: 20 }],
+    [{ x: 120, y: 80 }, { x: 30, y: 20 }],
+  ])('draws a straight segment with no arrowhead, including horizontal and vertical lines', (a, b) => {
+    const calls: unknown[][] = [];
+    const ctx = new Proxy({}, { get: (_target, key) => (...args: unknown[]) => calls.push([key, ...args]), set: () => true }) as CanvasRenderingContext2D;
+    const painter = createAnnotationPainter();
+    const line: CaptureAnnotation = { tool: 'line', points: [a, b], width: 4, color: '#ff0000' };
+    painter.draw(ctx, line);
+    expect(calls.filter(call => call[0] === 'moveTo' || call[0] === 'lineTo')).toEqual([
+      ['moveTo', a.x, a.y], ['lineTo', b.x, b.y],
+    ]);
+    expect(calls).toContainEqual(['stroke']);
+    expect(painter.hitTest(ctx, line, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, 0)).toBe(true);
+    expect(painter.hitTest(ctx, line, { x: a.x + 100, y: a.y + 100 }, 5)).toBe(false);
+  });
   it('normalizes reverse rectangle drags and preserves physical pixels', () => {
     const calls: unknown[][] = [];
     const ctx = new Proxy({}, { get: (_target, key) => (...args: unknown[]) => calls.push([key, ...args]), set: () => true }) as CanvasRenderingContext2D;

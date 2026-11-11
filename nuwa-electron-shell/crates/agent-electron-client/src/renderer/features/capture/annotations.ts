@@ -1,6 +1,6 @@
 export interface AnnotationPoint { x: number; y: number }
 export interface CaptureAnnotation {
-  tool: 'rectangle' | 'ellipse' | 'arrow' | 'pen' | 'text' | 'mosaic';
+  tool: 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'pen' | 'text' | 'mosaic';
   points: AnnotationPoint[];
   color: string;
   width: number;
@@ -32,7 +32,7 @@ export function createAnnotationPainter() {
       const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy || 1)));
       return Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
     };
-    if (annotation.tool === 'arrow' || annotation.tool === 'pen') {
+    if (annotation.tool === 'line' || annotation.tool === 'arrow' || annotation.tool === 'pen') {
       const points = annotation.points;
       const limit = tolerance + annotation.width / 2;
       if (points.length === 1) return distance(points[0], points[0]) <= limit;
@@ -75,6 +75,7 @@ export function createAnnotationPainter() {
     ctx.beginPath();
     if (tool === 'rectangle') ctx.rect(x, y, w, h);
     else if (tool === 'ellipse') ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    else if (tool === 'line') { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
     else if (tool === 'arrow') {
       const angle = Math.atan2(b.y - a.y, b.x - a.x);
       const head = Math.max(width * 4, 12);
