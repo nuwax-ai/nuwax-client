@@ -39,10 +39,18 @@ app.whenReady().then(async () => {
   } as Electron.Display));
   screen.getAllDisplays = () => displays;
   screen.getDisplayNearestPoint = () => displays[0];
-  desktopCapturer.getSources = async opts => opts.types.includes('screen') ? displays.map(display => ({
-    id: `screen:${display.id}`, name: 'Synthetic display', display_id: String(display.id), thumbnail: image, appIcon: null,
-  })) : [];
-  const windows = createCaptureWindows({ preloadPath: path.resolve('dist/preload/captureWindow.js') });
+  let windowCatalogRequests = 0;
+  desktopCapturer.getSources = async opts => {
+    if (opts.types.includes('screen')) return displays.map(display => ({
+      id: `screen:${display.id}`, name: 'Synthetic display', display_id: String(display.id), thumbnail: image, appIcon: null,
+    }));
+    windowCatalogRequests++;
+    return [{ id: 'window:fixture', name: 'Synthetic app', display_id: '', thumbnail: image, appIcon: null }];
+  };
+  const windows = createCaptureWindows({
+    preloadPath: process.env.NUWAX_CAPTURE_WINDOW_PRELOAD || path.resolve('dist/preload/captureWindow.js'),
+    captureWindowFrame: async () => ({ png: image.toPNG(), ...image.getSize(), hdrToneMapped: false }),
+  });
   const prepared = async () => {
     while (BrowserWindow.getAllWindows().length !== 3) await delay();
     const selectors = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id);
@@ -498,6 +506,25 @@ app.whenReady().then(async () => {
     assert.equal(BrowserWindow.getAllWindows().length, 0, '右键应关闭全部屏幕的选区窗口');
   }
   console.log('PASS right-click cancels empty, text-editing and recording selections across all synthetic displays');
+
+  assert.equal(windowCatalogRequests, 0, '区域和整屏截图不能预先采集窗口缩略图');
+  const pickerAbort = new AbortController();
+  const pickerCapture = windows.captureStill(pickerAbort.signal);
+  const pickerSelectors = await prepared();
+  const picker = pickerSelectors[0];
+  await tool(picker, 'window');
+  await script(picker, `new Promise(resolve=>{const check=()=>document.querySelector('.source[data-source="window:fixture"]')?resolve(true):setTimeout(check,10);check()})`);
+  assert.equal(windowCatalogRequests, 1, '点击窗口入口才加载缩略图');
+  await script(picker, `document.querySelector('.source[data-source="window:fixture"]').click()`);
+  await script(picker, `new Promise(resolve=>{const check=()=>document.querySelector('.sourceGrid').hidden&&!document.querySelector('[data-action=confirm]').disabled?resolve(true):setTimeout(check,10);check()})`);
+  await tool(picker, 'region');
+  await tool(pickerSelectors[1], 'window');
+  await script(pickerSelectors[1], `new Promise(resolve=>{const check=()=>document.querySelector('.source[data-source="window:fixture"]')?resolve(true):setTimeout(check,10);check()})`);
+  assert.equal(windowCatalogRequests, 1, '同次截图跨屏复用窗口列表');
+  pickerAbort.abort();
+  assert.equal(await pickerCapture, null);
+  assert.equal(BrowserWindow.getAllWindows().length, 0);
+  console.log('PASS on-demand window picker: deferred thumbnails, source selection, screen restoration and shared multi-display catalog');
 
   // 只创建隔离的控制条/区域边框，不开启媒体流或真实录屏。
   const recordingActions: string[] = [];

@@ -33,6 +33,7 @@ const mock = vi.hoisted(() => {
       setTimeout(() => { if (!this.destroyed) { this.bounds = {x:this.options.x,y:this.options.y,width:this.options.width,height:this.options.height}; this.emit('enter-full-screen'); } },30);
     });
     isDestroyed() { return this.destroyed; }
+    getMediaSourceId() { return `window:selector-${this.webContents.id}`; }
     destroy() { if (this.destroyed) return; this.destroyed = true; this.emit('closed'); }
     loadURL(url: string) { this.webContents.mainFrame.url = url; return settings.loadError ? Promise.reject(settings.loadError) : Promise.resolve(); }
     setAlwaysOnTop = vi.fn(); setVisibleOnAllWorkspaces = vi.fn(); setIgnoreMouseEvents() {} setFocusable() {} show() { if (settings.clampOnShow) this.bounds = {...this.bounds,x:this.options.x + 66,y:this.options.y + 32,height:this.options.height - 32}; focusedId = this.webContents.id; timeline.push('show'); } focus() { focusedId = this.webContents.id; } showInactive() { if (settings.clampOnShow) this.bounds = {...this.bounds,x:this.options.x + 66,y:this.options.y + 32,height:this.options.height - 32}; timeline.push('inactive'); } setContentProtection = vi.fn(); hide = vi.fn();
@@ -66,7 +67,7 @@ const service = () => createCaptureService({
   results: { put: vi.fn(), putFile: vi.fn(), readChunk: () => null, release: vi.fn(), releaseAll: vi.fn(), copyTo: () => false }, log: { warn: vi.fn(), error: vi.fn() },
 });
 beforeEach(() => { mock.windows.length = 0; mock.displays.splice(0, mock.displays.length, mock.display); mock.cursor.x = 20; mock.cursor.y = 20; mock.timeline.length = 0; mock.handlers.clear(); mock.requests.length = 0; mock.windowSources.length = 0; mock.settings.loadError = null; mock.settings.clampOnShow = false; vi.clearAllMocks(); windows = createCaptureWindows({ platform: 'win32', portal: false, log: mock.log }); });
-afterEach(() => { windows.dispose(); vi.restoreAllMocks(); });
+afterEach(() => { windows.dispose(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('screen snapshot readiness', () => {
   function screenResponses(transform: (sources: Electron.DesktopCapturerSource[], round: number) => Electron.DesktopCapturerSource[]) {
@@ -132,10 +133,10 @@ describe('screen snapshot readiness', () => {
     const sources = screenResponses(() => []);
     const abort = new AbortController();
     const pending = windows.captureStill(abort.signal);
-    await vi.waitFor(() => expect(sources).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(sources).toHaveBeenCalledTimes(1));
     if (action === 'cancel') abort.abort(); else windows.dispose();
     expect(await pending).toBeNull();
-    expect(sources).toHaveBeenCalledTimes(2);
+    expect(sources).toHaveBeenCalledTimes(1);
     expect(mock.windows).toHaveLength(0);
   });
 
@@ -144,6 +145,68 @@ describe('screen snapshot readiness', () => {
     await expect(windows.captureStill(new AbortController().signal)).rejects.toThrow('permission denied');
     expect(sources.mock.calls.filter(([options]) => options.types.includes('screen'))).toHaveLength(1);
     expect(mock.windows).toHaveLength(0);
+  });
+});
+
+describe('on-demand window picker', () => {
+  const eventFor = (window: any) => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
+  async function start() {
+    const abort = new AbortController();
+    const pending = windows.captureStill(abort.signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(mock.displays.length));
+    return { abort, pending, event: eventFor(mock.windows[0]) };
+  }
+  it.each(['darwin', 'win32'] as const)('opens the %s selector without acquiring any window thumbnails', async platform => {
+    windows.dispose(); windows = createCaptureWindows({ platform, portal: false, log: mock.log });
+    const sources = vi.spyOn(desktopCapturer, 'getSources');
+    const f = await start();
+    expect(sources.mock.calls.every(([options]) => options.types.length === 1 && options.types[0] === 'screen')).toBe(true);
+    expect(mock.handlers.get(CH.init)!(f.event)).toMatchObject({ kind: 'selection', sources: [] });
+    f.abort.abort(); expect(await f.pending).toBeNull();
+  });
+  it('loads one shared catalog across displays and excludes the capture overlays', async () => {
+    mock.displays.push({ ...mock.display, id: 2 });
+    const f = await start();
+    mock.windowSources.push(
+      { id: 'window:app', name: 'App', thumbnail: mock.thumbnail },
+      { id: mock.windows[0].getMediaSourceId(), name: 'Capture overlay', thumbnail: mock.thumbnail },
+    );
+    const sources = vi.spyOn(desktopCapturer, 'getSources');
+    const read = (event: unknown) => mock.handlers.get(CH.sources)!(event);
+    const catalogs = await Promise.all([read(f.event), read(eventFor(mock.windows[1]))]);
+    expect(catalogs).toEqual(Array(2).fill([{ id: 'window:app', name: 'App', thumbnail: 'data:image/png;base64,fixture', kind: 'window' }]));
+    expect(sources).toHaveBeenCalledOnce();
+    expect(await read(f.event)).toEqual(catalogs[0]);
+    expect(sources).toHaveBeenCalledOnce();
+    f.abort.abort(); await f.pending;
+  });
+  it('rejects untrusted frames and discards a catalog that completes after cancellation', async () => {
+    const f = await start();
+    const read = (event: unknown) => mock.handlers.get(CH.sources)!(event);
+    let complete!: (sources: Electron.DesktopCapturerSource[]) => void;
+    const sources = vi.spyOn(desktopCapturer, 'getSources').mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    expect(await read({ ...f.event, senderFrame: {} })).toEqual([]);
+    expect(sources).not.toHaveBeenCalled();
+    const late = read(f.event);
+    f.abort.abort(); await f.pending;
+    complete([{ id: 'window:stale', name: 'Stale', thumbnail: mock.thumbnail } as Electron.DesktopCapturerSource]);
+    expect(await late).toEqual([]);
+    sources.mockRestore();
+    mock.windows.length = 0;
+    const next = await start();
+    expect(await mock.handlers.get(CH.source)!(next.event, 'window:stale')).toBeNull();
+    next.abort.abort(); await next.pending;
+  });
+  it('keeps the selector usable after catalog failure and retries on the next request', async () => {
+    const f = await start();
+    const sources = vi.spyOn(desktopCapturer, 'getSources')
+      .mockRejectedValueOnce(new Error('window enumeration failed'))
+      .mockResolvedValueOnce([{ id: 'window:app', name: 'App', thumbnail: mock.thumbnail } as Electron.DesktopCapturerSource]);
+    await expect(mock.handlers.get(CH.sources)!(f.event)).rejects.toThrow('window enumeration failed');
+    expect(mock.windows[0].destroyed).toBe(false);
+    expect(await mock.handlers.get(CH.sources)!(f.event)).toMatchObject([{ id: 'window:app' }]);
+    expect(sources).toHaveBeenCalledTimes(2);
+    f.abort.abort(); await f.pending;
   });
 });
 
@@ -164,9 +227,12 @@ describe('saving a still from the selection toolbar (2696)', () => {
     return { abort, pending, owned, event, finish };
   }
   it('writes the validated PNG only to the native dialog destination and completes capture', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const f = await start();
+    vi.setSystemTime(new Date(2026, 10, 11, 17, 37, 45, 400));
     expect(await f.finish()).toBe(true);
     expect(mock.saveDialog).toHaveBeenCalledOnce();
+    expect(mock.saveDialog).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: 'Nuwax-2026-11-11_17-37-45-400.png' }));
     expect(mock.writeFile).toHaveBeenCalledWith('/chosen/screenshot.png', Buffer.from('validated PNG'));
     expect(await f.pending).toMatchObject({ image: mock.thumbnail });
   });
@@ -423,7 +489,8 @@ describe('multi-display selector focus', () => {
     const ordered = order === 'preferred-first' ? [preferred, other] : [other, preferred];
     for (const window of ordered) window.webContents.emit('did-finish-load');
     expect(mock.focused()).toBe(preferred.webContents.id);
-    expect(mock.timeline.slice(0, 2)).toEqual(['freeze', 'catalog']);
+    expect(mock.timeline[0]).toBe('freeze');
+    expect(mock.timeline).not.toContain('catalog');
     expect(preferred.options.title).toBe('截图');
     const key = { preventDefault: vi.fn() };
     preferred.webContents.emit('before-input-event', key, { type: 'keyDown', key: 'Escape' });
@@ -454,7 +521,7 @@ describe('hover window detection', () => {
     windows.dispose(); windows = createCaptureWindows({ platform: 'darwin', portal: false, log: mock.log, listWindows });
     const abort = new AbortController(); const pending = windows.captureStill(abort.signal);
     await vi.waitFor(() => expect(mock.windows).toHaveLength(2));
-    expect(mock.timeline.slice(0, 4)).toEqual(['freeze', 'freeze', 'catalog', 'windows']);
+    expect(mock.timeline).toEqual(['freeze', 'freeze', 'windows']);
     expect(init(mock.windows[0]).regions).toEqual([{ x: 200, y: 100, width: 800, height: 600 }, { x: 2200, y: 0, width: 200, height: 400 }]);
     expect(init(mock.windows[1]).regions).toEqual([{ x: 0, y: 0, width: 200, height: 200 }]);
     expect(listWindows).toHaveBeenCalledOnce();
@@ -543,6 +610,8 @@ describe('capture sources on arbitrary displays', () => {
     await vi.waitFor(() => expect(mock.windows).toHaveLength(2));
     const owned = mock.windows[1]; const event = { sender: owned.webContents, senderFrame: owned.webContents.mainFrame };
     expect(await mock.handlers.get(CH.source)!(event, 'screen:1')).toBeNull();
+    expect(await mock.handlers.get(CH.source)!(event, 'window:fixture')).toBeNull();
+    expect(await mock.handlers.get(CH.sources)!(event)).toMatchObject([{ id: 'window:fixture' }]);
     const image = await mock.handlers.get(CH.source)!(event, 'window:fixture') as { selection: CaptureSelection };
     expect(image.selection.sourceSize).toEqual({ width: 1664, height: 936 });
     expect(mock.handlers.get(CH.finish)!(event, { crop: { x: 0, y: 0, width: 1664, height: 936 } })).toBe(true);

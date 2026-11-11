@@ -3,6 +3,7 @@ import { CAPTURE_WINDOW_CHANNELS as CH, type CaptureWindowBridge } from '@shared
 
 const bridge: CaptureWindowBridge = {
   init: () => ipcRenderer.invoke(CH.init),
+  sources: () => ipcRenderer.invoke(CH.sources),
   source: (id) => ipcRenderer.invoke(CH.source, id),
   finish: (payload) => ipcRenderer.invoke(CH.finish, payload),
   action: (action) => ipcRenderer.send(CH.action, action),

@@ -2,6 +2,7 @@ import type { CaptureMenuAction } from './contract';
 /** Internal native-window contract. Nothing here exposes general IPC or file access. */
 export const CAPTURE_WINDOW_CHANNELS = {
   init: 'capture-window:init',
+  sources: 'capture-window:sources',
   source: 'capture-window:source',
   finish: 'capture-window:finish',
   action: 'capture-window:action',
@@ -80,6 +81,7 @@ export type CaptureWindowConfiguration = {
 } | { kind: 'border' };
 export interface CaptureWindowBridge {
   init(): Promise<CaptureWindowConfiguration | null>;
+  sources(): Promise<CaptureWindowSource[]>;
   source(id: string): Promise<CaptureWindowImage | null>;
   finish(payload: { crop: CaptureRect; png?: string; action?: CaptureMenuAction; save?: boolean }): Promise<boolean>;
   action(action: 'cancel' | RecordingAction): void;

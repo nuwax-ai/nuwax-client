@@ -12,6 +12,7 @@ import { getAppDataDir } from "../services/system/appPaths";
 import { t } from "../services/i18n";
 import { exportLogArchive } from "../services/utils/logArchive";
 import { isHostRendererSender } from "./bridgeTrust";
+import { formatLocalFileTimestamp } from "@shared/utils/fileTimestamp";
 
 export function registerLogExportHandler(ctx: HandlerContext): void {
   let exporting = false;
@@ -30,7 +31,7 @@ export function registerLogExportHandler(ctx: HandlerContext): void {
       return { success: false, error: "Log export already in progress" };
     exporting = true;
     try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const timestamp = formatLocalFileTimestamp();
       const saved = await dialog.showSaveDialog(host!, {
         title: t(I18N_KEYS.Pages.LogViewer.EXPORT),
         defaultPath: path.join(

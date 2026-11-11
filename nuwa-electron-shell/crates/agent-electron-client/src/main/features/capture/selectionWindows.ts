@@ -19,6 +19,7 @@ import { usesCapturePortal } from './linuxEnvironment';
 import { resolveCaptureWindowPolicy, type CaptureSelectorWindowPolicy, type CaptureWindowPolicy } from './platforms/windowing';
 import { desktopSource, portalSource, type CaptureSourceStrategy } from './platforms/sources';
 import { createNativeWindowLister, physicalDisplayBounds, projectWindowsToDisplay, type NativeWindowInfo, type NativeWindowLister } from './windowRegions';
+import { formatLocalFileTimestamp } from '@shared/utils/fileTimestamp';
 
 export interface CaptureWindows extends StillEngine {
   select(mode: 'record', signal: AbortSignal): Promise<CaptureSelection | null>;
@@ -43,12 +44,16 @@ export interface CaptureWindowOptions {
   /** Desktop windows for hover detection; defaults to the native list on the host OS, never for portal sources. */
   listWindows?: NativeWindowLister;
 }
+interface WindowCatalog {
+  sources: CaptureWindowSource[];
+  pending?: Promise<CaptureWindowSource[]>;
+}
 interface ManagedWindow {
   window: BrowserWindow;
   id: number;
   url: string;
   config: CaptureWindowConfiguration;
-  sourceIds?: Set<string>;
+  catalog?: WindowCatalog;
   signal?: AbortSignal;
   finish?: (result: StillCapture | CaptureSelection | null) => void;
   onAction?: (action: RecordingAction, error?: Error) => void;
@@ -74,7 +79,6 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   const windows = new Map<number, ManagedWindow>();
   let disposed = false;
   let pending: ((result: null) => void) | null = null;
-  let sourceCatalog: CaptureWindowSource[] = [];
   let saving = false;
   let action: CaptureMenuAction = 'screenshot';
   let actions: CaptureMenuAction[] = [];
@@ -168,12 +172,31 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     owned.rendererInitialized = true;
     return owned.config;
   });
+  ipcMain.handle(CH.sources, async (event) => {
+    const owned = trusted(event);
+    const catalog = owned?.catalog;
+    if (!owned || !catalog || saving || owned.signal?.aborted || owned.config.kind !== 'selection') return [];
+    // Window thumbnails can take seconds. Only acquire them when the user opens
+    // the window picker; region/screen capture never waits for this catalog.
+    catalog.pending ??= desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false })
+      .then(sources => {
+        if (owned.signal?.aborted || trusted(event) !== owned) return [];
+        const ownIds = new Set([...windows.values()].map(entry => entry.window.getMediaSourceId()));
+        return sources.filter(source => !ownIds.has(source.id) && !source.thumbnail.isEmpty())
+          .map(source => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), kind: 'window' as const }));
+      }).catch(error => { catalog.pending = undefined; throw error; });
+    const sources = await catalog.pending;
+    if (owned.signal?.aborted || trusted(event) !== owned) return [];
+    catalog.sources = sources;
+    if (!sources.length) catalog.pending = undefined;
+    return sources;
+  });
   ipcMain.handle(CH.source, async (event, rawId: unknown) => {
     const owned = trusted(event);
-    if (!owned || saving || owned.config.kind !== 'selection' || owned.loading || typeof rawId !== 'string' || !owned.sourceIds?.has(rawId)) return null;
+    if (!owned || saving || owned.signal?.aborted || owned.config.kind !== 'selection' || owned.loading || typeof rawId !== 'string') return null;
     if (rawId === owned.config.image.selection.sourceId) { owned.chosen = undefined; return owned.config.image; }
     if (!options.captureWindowFrame) return null;
-    const source = sourceCatalog.find((entry) => entry.id === rawId);
+    const source = owned.catalog?.sources.find((entry) => entry.id === rawId);
     if (!source) return null;
     const thumbnail = nativeImage.createFromDataURL(source.thumbnail);
     owned.loading = true;
@@ -226,7 +249,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
         try {
           for (const selector of selectors) selector.window.hide();
           const saved = await dialog.showSaveDialog({ title: owned.config.kind === 'selection' ? owned.config.labels.save : '',
-            defaultPath: `Nuwax-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+            defaultPath: `Nuwax-${formatLocalFileTimestamp()}.png`,
             filters: [{ name: 'PNG', extensions: ['png'] }] });
           if (saved.canceled || !saved.filePath || owned.signal?.aborted || !trusted(event)) return false;
           writeFileSync(saved.filePath, result.toPNG());
@@ -272,17 +295,14 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
         if (!requests.has(key)) requests.set(key, desktopCapturer.getSources({ types: ['screen'], thumbnailSize: requested }));
       }
       // Reuse equal-resolution requests without resampling mixed-DPI or native capture pixels.
-      const [sourceGroups, allSources] = await Promise.all([
-        Promise.all([...requests].map(async ([key, request]) => [key, await request] as const)),
-        desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 480, height: 300 }, fetchWindowIcons: false }),
-      ]);
+      const sourceGroups = await Promise.all([...requests].map(async ([key, request]) => [key, await request] as const));
       const sourcesBySize = new Map(sourceGroups);
-      return { allSources, snapshots: displays.map(display => {
+      return displays.map(display => {
         const requested = sizeFor(display);
         return { display, source: sourcesBySize.get(`${requested.width}x${requested.height}`)?.find(entry => entry.display_id === String(display.id)) };
-      }) };
+      });
     };
-    let { snapshots, allSources } = await freezeDesktop();
+    let snapshots = await freezeDesktop();
     if (signal.aborted || disposed) return null;
     if (snapshots.some(({ source }) => !source || source.thumbnail.isEmpty())) {
       // A first native snapshot may have no display/frame yet. Recover once within
@@ -290,7 +310,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       try { await delay(150, undefined, { signal }); }
       catch (error) { if (!signal.aborted) throw error; }
       if (signal.aborted || disposed) return null;
-      ({ snapshots, allSources } = await freezeDesktop());
+      snapshots = await freezeDesktop();
       if (signal.aborted || disposed) return null;
     }
     const frozen = snapshots.map(({ display, source }) => {
@@ -300,7 +320,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     // Read the stacking order right after the freeze, before any overlay exists to appear in it.
     let desktopWindows: NativeWindowInfo[] | null = null;
     try { desktopWindows = listWindows(); } catch (error) { (options.log ?? console).error('[Capture] window detection failed', error); }
-    sourceCatalog = allSources.filter((source) => !source.thumbnail.isEmpty()).map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail.toDataURL(), kind: 'window' }));
+    const catalog: WindowCatalog = { sources: [] };
     if (signal.aborted || disposed) return null;
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -311,7 +331,6 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
         signal.removeEventListener('abort', abort);
         pending = null;
         for (const owned of sessionWindows) { owned.finish = undefined; owned.fail = undefined; close(owned); }
-        sourceCatalog = [];
         if (failure !== undefined) reject(failure); else resolve(result);
       };
       const abort = () => finish(null);
@@ -325,10 +344,10 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
           };
           const regions = desktopWindows
             ? { regions: projectWindowsToDisplay(desktopWindows, { bounds: display.bounds, physicalBounds: physicalDisplayBounds(display, platform) }, size) } : {};
-          const owned = create({ kind: 'selection', mode, labels, action: initialAction, ...(actions.length ? { actions: [...actions] } : {}), image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: sourceCatalog, workArea: display.workArea,
+          const owned = create({ kind: 'selection', mode, labels, action: initialAction, ...(actions.length ? { actions: [...actions] } : {}), image: { dataUrl: source.thumbnail.toDataURL(), ...size, selection }, sources: [], workArea: display.workArea,
             ...regions, ...recordingHint(mode) }, display.bounds, false, display.id === preferredDisplayId);
           owned.signal = signal; owned.finish = finish; owned.fail = (error) => finish(null, error);
-          owned.sourceIds = new Set([source.id, ...sourceCatalog.map((entry) => entry.id)]);
+          owned.catalog = catalog;
           sessionWindows.push(owned);
         }
         if (!sessionWindows.length || signal.aborted) finish(null);
@@ -356,7 +375,6 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
         owned = create({ kind: 'selection', mode, labels, action: mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action, ...(actions.length ? { actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation: 'preview',
           ...recordingHint(mode) }, viewport);
         owned.signal = signal; owned.finish = finish; owned.fail = error => finish(null, error);
-        owned.sourceIds = new Set([image.selection.sourceId]);
         if (signal.aborted) finish(null);
       } catch (raw) { finish(null, raw instanceof Error ? raw : new Error(String(raw))); }
     });
@@ -412,7 +430,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
     dispose() {
       if (disposed) return; disposed = true; pending?.(null);
       for (const owned of [...windows.values()]) { owned.finish = undefined; owned.onAction = undefined; owned.fail = undefined; close(owned); }
-      for (const channel of [CH.init, CH.source, CH.finish]) ipcMain.removeHandler(channel);
+      for (const channel of [CH.init, CH.sources, CH.source, CH.finish]) ipcMain.removeHandler(channel);
       ipcMain.removeListener(CH.action, actionHandler);
     },
   };

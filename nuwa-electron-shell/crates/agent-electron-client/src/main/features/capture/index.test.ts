@@ -157,7 +157,7 @@ beforeEach(() => {
   };
   handle = captureFeature.register(ctx);
 });
-afterEach(async () => { vi.restoreAllMocks(); await handle.dispose(); });
+afterEach(async () => { vi.restoreAllMocks(); vi.useRealTimers(); await handle.dispose(); });
 
 describe('native capture entry point security', () => {
   it.each([
@@ -461,8 +461,11 @@ describe('native capture entry point security', () => {
     expect(await pending).toEqual({ success: false, error: 'capture result expired' }); expect(mocks.copyTo).not.toHaveBeenCalled();
   });
   it('saves only a still-owned result and treats dialog cancellation as normal', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 11, 17, 37, 45, 400));
     const sender = host(); const result = await capture(sender, true);
     expect(await invoke(HOST_CAPTURE_SAVE_IPC, sender, result.resultId)).toEqual({ success: true });
+    expect(mocks.showSaveDialog.mock.calls[0].at(-1)).toMatchObject({ defaultPath: 'Nuwax-2026-11-11_17-37-45-400.png' });
     expect(mocks.copyTo).toHaveBeenCalledWith(result.resultId, '/fixture/saved.png');
     mocks.showSaveDialog.mockResolvedValueOnce({ canceled: true });
     expect(await invoke(HOST_CAPTURE_SAVE_IPC, sender, result.resultId)).toEqual({ success: false, canceled: true });

@@ -1,5 +1,5 @@
 import type { CaptureAnnotation, AnnotationPoint, createAnnotationPainter, createAnnotationHistory } from './annotations';
-import type { CaptureWindowBridge, CaptureRect, RecordingControlState } from '../../../shared/features/capture/windowContract';
+import type { CaptureWindowBridge, CaptureWindowSource, CaptureRect, RecordingControlState } from '../../../shared/features/capture/windowContract';
 
 /** All native-window UI runs inside this closure; no network, node or shared app state. */
 export async function mountCaptureWindow(
@@ -448,7 +448,8 @@ export async function mountCaptureWindow(
   }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
   button(modeGroup, 'screen', previewPresentation ? labels.entireSource : labels.screen, () => { void chooseDisplay('screen'); });
-  button(modeGroup, 'window', labels.window, () => { mode = 'window'; sourceError = config.sources.some((source) => source.kind === 'window') ? '' : labels.loadFailed; crop = null; clear(); sourceGrid.hidden = false; draw(); });
+  let sourcesLoaded = config.sources.length > 0;
+  button(modeGroup, 'window', labels.window, () => { void chooseWindows(); });
   if (config.presentation === 'preview') buttons.window.hidden = true;
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
   function chooseAction(action: typeof captureAction) {
@@ -544,22 +545,38 @@ export async function mountCaptureWindow(
   button(historyGroup, 'redo', labels.redo, () => stepHistory(true));
   for (const control of dock.querySelectorAll('button')) control.removeAttribute('title');
   sourceGrid.hidden = true;
-  for (const source of config.sources.filter((s) => s.kind === 'window')) {
-    const entry = node('button', 'source'); entry.dataset.source = source.id;
-    const thumb = node('img'); thumb.src = source.thumbnail;
-    entry.append(thumb, node('span', '', source.name));
-    entry.onclick = async () => {
-      if (busy) return;
-      busy = true; sourceError = ''; hint.textContent = labels.loading;
-      try {
-        const chosen = await bridge.source(source.id);
-        if (!chosen) { sourceError = labels.loadFailed; return; }
-        frame = chosen; sourceGrid.hidden = true;
-        await loadImage(); full();
-      } catch { sourceError = labels.loadFailed; }
-      finally { busy = false; draw(); }
-    };
-    sourceGrid.append(entry);
+  renderSources(config.sources);
+  function renderSources(sources: CaptureWindowSource[]) {
+    sourceGrid.replaceChildren();
+    for (const source of sources.filter(s => s.kind === 'window')) {
+      const entry = node('button', 'source'); entry.dataset.source = source.id;
+      const thumb = node('img'); thumb.src = source.thumbnail;
+      entry.append(thumb, node('span', '', source.name));
+      entry.onclick = async () => {
+        if (busy) return;
+        busy = true; sourceError = ''; hint.textContent = labels.loading;
+        try {
+          const chosen = await bridge.source(source.id);
+          if (!chosen) { sourceError = labels.loadFailed; return; }
+          frame = chosen; sourceGrid.hidden = true;
+          await loadImage(); full();
+        } catch { sourceError = labels.loadFailed; }
+        finally { busy = false; draw(); }
+      };
+      sourceGrid.append(entry);
+    }
+  }
+  async function chooseWindows() {
+    if (busy) return;
+    mode = 'window'; sourceError = ''; crop = null; clear(); sourceGrid.hidden = false;
+    if (sourcesLoaded) { draw(); return; }
+    busy = true; sourceError = labels.loading; draw();
+    try {
+      const sources = await bridge.sources();
+      renderSources(sources); sourcesLoaded = sources.length > 0;
+      sourceError = sourcesLoaded ? '' : labels.loadFailed;
+    } catch { sourceError = labels.loadFailed; }
+    finally { busy = false; draw(); }
   }
   function showMagnifier(e: MouseEvent, p: { x: number; y: number }) {
     const r = bounds();
