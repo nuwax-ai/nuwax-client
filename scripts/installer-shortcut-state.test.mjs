@@ -40,6 +40,7 @@ Var failures
 Var report
 ${productionMacro('nuwaxCaptureShortcutState')}
 ${productionMacro('nuwaxApplyPreparedShortcutState')}
+${productionMacro('nuwaxReadPreparedShortcutState')}
 !macro expect VALUE LABEL
   \${if} $keepShortcuts != "\${VALUE}"
     IntOp $failures $failures + 1
@@ -48,7 +49,17 @@ ${productionMacro('nuwaxApplyPreparedShortcutState')}
     FileWrite $report "PASS \${LABEL}$\\r$\\n"
   \${endif}
 !macroend
+!macro expectErrors LABEL
+  \${ifNot} \${Errors}
+    IntOp $failures $failures + 1
+    FileWrite $report "FAIL \${LABEL}$\\r$\\n"
+  \${else}
+    FileWrite $report "PASS \${LABEL}$\\r$\\n"
+  \${endif}
+  ClearErrors
+!macroend
 Section
+  InitPluginsDir
   StrCpy $fixtureRoot "$TEMP\\NuwaxShortcutPolicyQA-${identity}"
   StrCpy $INSTDIR "$fixtureRoot\\selected"
   CreateDirectory "$INSTDIR"
@@ -99,12 +110,52 @@ Section
   StrCpy $keepShortcuts "false"
   !insertmacro nuwaxApplyPreparedShortcutState
   !insertmacro expect false originally-missing-executable-is-not-promoted
+  FileOpen $0 "$PLUGINSDIR\\prepared.txt.keep-shortcuts" w
+  FileWrite $0 "true"
+  FileClose $0
+  !insertmacro nuwaxReadPreparedShortcutState prepared.txt
+  StrCpy $keepShortcuts "false"
+  !insertmacro nuwaxApplyPreparedShortcutState
+  !insertmacro expect true verified-recovery-preserves-deletion-without-executable
   DeleteRegKey HKCU "\${INSTALL_REGISTRY_KEY}"
   StrCpy $nuwaxShortcutStatePath ""
   !insertmacro nuwaxCaptureShortcutState HKCU $INSTDIR
   StrCpy $keepShortcuts "false"
   !insertmacro nuwaxApplyPreparedShortcutState
   !insertmacro expect false missing-registration-is-not-promoted
+  !insertmacro nuwaxReadPreparedShortcutState prepared.txt
+  !insertmacro nuwaxApplyPreparedShortcutState
+  !insertmacro expect true verified-recovery-preserves-deletion-without-registration
+  StrCpy $INSTDIR "$fixtureRoot\\other"
+  StrCpy $keepShortcuts "false"
+  !insertmacro nuwaxApplyPreparedShortcutState
+  !insertmacro expect false recovered-policy-cannot-cross-directories
+  StrCpy $INSTDIR "$fixtureRoot\\selected"
+  FileOpen $0 "$INSTDIR\\Nuwax.exe" w
+  FileClose $0
+  WriteRegStr HKCU "\${INSTALL_REGISTRY_KEY}" KeepShortcuts "true"
+  StrCpy $nuwaxShortcutStatePath ""
+  !insertmacro nuwaxCaptureShortcutState HKCU $INSTDIR
+  FileOpen $0 "$PLUGINSDIR\\prepared.txt.keep-shortcuts" w
+  FileWrite $0 "false"
+  FileClose $0
+  !insertmacro nuwaxReadPreparedShortcutState prepared.txt
+  StrCpy $keepShortcuts "false"
+  !insertmacro nuwaxApplyPreparedShortcutState
+  !insertmacro expect true ordinary-upgrade-retains-live-policy
+  StrCpy $nuwaxKeepShortcutsBeforePrepare "false"
+  FileOpen $0 "$PLUGINSDIR\\prepared.txt.keep-shortcuts" w
+  FileWrite $0 "unknown"
+  FileClose $0
+  !insertmacro nuwaxReadPreparedShortcutState prepared.txt
+  !insertmacro expectErrors invalid-policy-is-rejected
+  StrCpy $keepShortcuts "false"
+  !insertmacro nuwaxApplyPreparedShortcutState
+  !insertmacro expect false invalid-policy-is-not-promoted
+  Delete "$PLUGINSDIR\\prepared.txt.keep-shortcuts"
+  !insertmacro nuwaxReadPreparedShortcutState prepared.txt
+  !insertmacro expectErrors missing-policy-is-rejected
+  DeleteRegKey HKCU "\${INSTALL_REGISTRY_KEY}"
   StrCpy $nuwaxShortcutStatePath ""
   StrCpy $nuwaxKeepShortcutsBeforePrepare ""
   StrCpy $keepShortcuts "false"
@@ -113,13 +164,14 @@ Section
   FileClose $report
   RMDir /r "$fixtureRoot"
   FileOpen $0 "$EXEDIR\\shortcut-policy-result.json" w
-  FileWrite $0 '{"cases":9,"failed":$failures}$\\r$\\n'
+  FileWrite $0 '{"cases":__CASE_COUNT__,"failed":$failures}$\\r$\\n'
   FileClose $0
   SetErrorLevel $failures
 SectionEnd
 `;
   const input = path.join(directory, 'fixture.nsi');
-  fs.writeFileSync(input, script);
+  const cases = (script.match(/^\s*!insertmacro (?:expect|expectErrors)\b/gm) || []).length + 1;
+  fs.writeFileSync(input, script.replace('__CASE_COUNT__', String(cases)));
   execFileSync(compiler, ['-V2', input], { env: { ...process.env, NSISDIR: nsis }, stdio: 'pipe' });
   assert.ok(fs.statSync(executable).size > 0);
   if (process.env.NUWAX_SHORTCUT_POLICY_FIXTURE) {
@@ -130,7 +182,7 @@ SectionEnd
   }
   if (process.platform === 'win32') {
     execFileSync(executable, ['/S'], { timeout: 30000, stdio: 'pipe' });
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'shortcut-policy-result.json'))), { cases: 9, failed: 0 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'shortcut-policy-result.json'))), { cases, failed: 0 });
   } else {
     t.diagnostic('Compiled actual production macros; runtime behavior requires Windows.');
   }

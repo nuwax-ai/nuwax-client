@@ -270,6 +270,25 @@ Var nuwaxKeepShortcutsBeforePrepare
   ${endif}
 !macroend
 
+!macro nuwaxReadPreparedShortcutState STATE_FILE
+  Push $R8
+  Push $R9
+  StrCpy $R9 ""
+  ClearErrors
+  FileOpen $R8 "$PLUGINSDIR\${STATE_FILE}.keep-shortcuts" r
+  ${ifNot} ${Errors}
+    FileRead $R8 $R9
+    FileClose $R8
+  ${endif}
+  ${if} $R9 == "true"
+    StrCpy $nuwaxKeepShortcutsBeforePrepare "true"
+  ${elseif} $R9 != "false"
+    SetErrors
+  ${endif}
+  Pop $R9
+  Pop $R8
+!macroend
+
 !macro nuwaxPrepareOldInstall ROOT_KEY STATE_FILE
   StrCpy $R5 "$windowsRegisteredCurrentPath"
   StrCpy $R6 "CurrentUser"
@@ -291,6 +310,13 @@ Var nuwaxKeepShortcutsBeforePrepare
     StrCpy $R3 $R1 16
     ${if} $R3 == "RECOVERY_WARNING"
       StrCpy $nuwaxRecoveryWarning "1"
+    ${endif}
+    ${if} $R0 == 0
+      !insertmacro nuwaxReadPreparedShortcutState ${STATE_FILE}
+      ${if} ${Errors}
+        StrCpy $R0 2
+        StrCpy $R1 "Cannot verify the preserved shortcut policy; recovery state was retained."
+      ${endif}
     ${endif}
     ${if} $R0 != 0
       !insertmacro nuwaxLogRecoveryFailure Prepare

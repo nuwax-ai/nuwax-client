@@ -17,6 +17,11 @@ $install = Join-Path (Join-Path $root 'custom path with spaces') $m.identity
 $workspace = Join-Path $install 'workspace\owner.txt'
 $uninstaller = Join-Path $install ('Uninstall ' + $m.identity + '.exe')
 $exe = Join-Path $install ($m.identity + '.exe')
+$desktopRoot = if ($Scope -eq 'AllUsers') { [Environment]::GetFolderPath('CommonDesktopDirectory') } else { [Environment]::GetFolderPath('DesktopDirectory') }
+$programsRoot = if ($Scope -eq 'AllUsers') { [Environment]::GetFolderPath('CommonPrograms') } else { [Environment]::GetFolderPath('Programs') }
+$desktop = Join-Path $desktopRoot ($m.identity + '.lnk')
+$startMenu = Join-Path $programsRoot ($m.identity + '.lnk')
+$desktopOptedOut = $false
 $state = Join-Path $root 'prepared.txt'
 $helper = Join-Path $PackageRoot 'build\normalize-old-install.ps1'
 $cases = @()
@@ -44,6 +49,12 @@ function Assert-Installed {
   Assert ([IO.File]::Exists($workspace) -and [IO.File]::ReadAllText($workspace) -eq $m.guid) 'Workspace not restored'
   Assert ((Get-FileHash -LiteralPath $exe).Hash -ieq $m.executableSha256) 'Incomplete program payload'
   Assert ([IO.File]::Exists($uninstaller)) 'Missing retry uninstaller'
+  if ($desktopOptedOut) {
+    Assert (-not [IO.File]::Exists($desktop)) 'Deleted desktop shortcut was recreated during recovery'
+    Assert ([IO.File]::Exists($startMenu)) 'Start menu shortcut was lost during recovery'
+    $shell = New-Object -ComObject WScript.Shell
+    Assert ($shell.CreateShortcut($startMenu).TargetPath -ieq $exe) 'Recovered Start menu targets another installation'
+  }
   Assert (@(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($install)) -Filter 'Nuwax-installer-recovery-active-*.txt').Count -eq 0) 'Unfinished recovery reported success'
   foreach ($name in @('CurrentUser', 'LocalMachine')) {
     $hive = Open-Hive $name
@@ -92,6 +103,12 @@ try {
   Assert ((Run ($scopeFlag + ' --updated')) -eq 0) 'Update metadata repair lost the explicit original target'
   Assert-Installed
   $cases += 'unregistered-without-marker-update-metadata-repair'
+  Assert ([IO.File]::Exists($desktop)) 'Fresh synthetic package did not create its desktop shortcut'
+  [IO.File]::Delete($desktop)
+  $desktopOptedOut = $true
+  Assert ((Run $scopeFlag) -eq 0) 'Normal overwrite failed'
+  Assert-Installed
+  $cases += 'ordinary-overwrite-preserves-deleted-desktop-and-start-menu'
   Interrupt-AfterUninstall
   $manifest = Join-Path $backup 'manifest.jsonl'
   $manifestBytes = [IO.File]::ReadAllBytes($manifest)
@@ -126,6 +143,7 @@ try {
   Assert ((Run '/UNINSTALL') -eq 0) 'Unregistered repair-then-uninstall failed'
   Assert (-not [IO.File]::Exists($exe) -and -not [IO.File]::Exists($uninstaller)) 'Uninstall left program payload'
   Assert ([IO.File]::ReadAllText($workspace) -eq $m.guid) 'Repair-then-uninstall lost workspace'
+  Assert (-not [IO.File]::Exists($desktop) -and -not [IO.File]::Exists($startMenu)) 'Own QA shortcuts remain after uninstall'
   $hive = Open-Hive $scopeName
   try { $key = $hive.OpenSubKey($keys[1]); if ($key) { $key.Dispose(); throw 'Uninstall registration remains' } } finally { $hive.Dispose() }
   $cases += 'unregistered-repair-then-uninstall-preserves-workspace'

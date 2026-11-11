@@ -218,6 +218,32 @@ function Restore-RegistrationSnapshot {
   } finally { $base.Dispose() }
 }
 
+function Get-PendingShortcutPolicy {
+  if (-not $recoveryDir) { return 'false' }
+  $lastTerminal = -1
+  $lastChange = -1
+  for ($index = 0; $index -lt $records.Count; $index++) {
+    if ($records[$index].status -in @('restore-complete', 'rollback-complete')) {
+      $lastTerminal = $index
+    } elseif ($records[$index].status -in @('planned', 'moved', 'complete', 'rolled-back',
+        'workspace-restore-intent', 'workspace-restored', 'payload-restore-intent', 'payload-restored', 'restore-incomplete')) {
+      $lastChange = $index
+    }
+  }
+  # A completed transaction's old registration must not override a newer install.
+  if ($lastTerminal -gt $lastChange) { return 'false' }
+  $snapshot = Get-RegistrationSnapshot
+  if (-not $snapshot) { return 'false' }
+  $private = @($snapshot.keys | Where-Object { $_.path -eq $InstallRegistryKey -and $_.existed })
+  if ($private.Count -ne 1 -or -not @($private[0].values | Where-Object {
+      $_.name -eq 'KeepShortcuts' -and $_.kind -eq 'String' -and $_.value -eq 'true'
+    }).Count) { return 'false' }
+  # Bind the saved choice to the selected product, directory, scope and user,
+  # including the case where the old uninstaller already removed registration.
+  $null = Get-RegistrationSnapshot -RecordedScope
+  return 'true'
+}
+
 function Add-ManifestRecord([string]$ManifestPath, [object]$Record) {
   $line = ($Record | ConvertTo-Json -Compress) + [Environment]::NewLine
   $bytes = $utf8.GetBytes($line)
@@ -490,6 +516,14 @@ if ($recoveryDir) {
       $restoreIntents.Add([string]$record.original) | Out-Null
     }
   }
+}
+
+if ($Action -eq 'Prepare') {
+  # PLUGINSDIR does not survive an interrupted installer. Derive this report
+  # afresh from the durable, verified snapshot; NSIS reads it only on exit 0.
+  $shortcutPolicyPath = $statePathFull + '.keep-shortcuts'
+  Assert-NoRecoveryRedirect $shortcutPolicyPath
+  [IO.File]::WriteAllText((Get-ExtendedPath $shortcutPolicyPath), (Get-PendingShortcutPolicy), $utf8)
 }
 
 if ($Action -eq 'Inspect') {
