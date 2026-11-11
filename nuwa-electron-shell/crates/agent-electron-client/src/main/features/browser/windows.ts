@@ -67,6 +67,7 @@ const LABELS = [
   "retry",
   "externalFailed",
   "copyDone",
+  "copyFailed",
   "printFailed",
   "url",
 ] as const;
@@ -255,9 +256,21 @@ export function createBrowserWindows(ctx: FeatureContext) {
       case "copy": {
         // 与系统浏览器交接共用业务地址，不能把仅本机可用的网关链接放进剪贴板。
         const url = publicUrl(entry.state.url);
-        if (!url) return false;
-        clipboard.writeText(url);
-        break;
+        let success = false;
+        try {
+          if (url) {
+            clipboard.writeText(url);
+            success = true;
+          }
+        } catch {
+          ctx.log.warn("[Browser] Clipboard write failed");
+        }
+        entry.state.copyFeedback = {
+          id: (entry.state.copyFeedback?.id ?? 0) + 1,
+          success,
+        };
+        push(entry);
+        return success;
       }
       case "external":
         return external(entry);
@@ -343,13 +356,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
             accelerator: "CmdOrCtrl+R",
             click: action("reload"),
           },
-          { label: l.external, click: action("external") },
-          { type: "separator" },
-          {
-            label: l.find,
-            accelerator: "CmdOrCtrl+F",
-            click: action("find-open"),
-          },
+          { label: l.copy, click: action("copy") },
           {
             label: `${l.zoom} (${entry.state.zoom}%)`,
             submenu: [
@@ -371,20 +378,37 @@ export function createBrowserWindows(ctx: FeatureContext) {
             ],
           },
           {
+            label: l.find,
+            accelerator: "CmdOrCtrl+F",
+            click: action("find-open"),
+          },
+          {
             label: l.print,
             accelerator: "CmdOrCtrl+P",
             click: action("print"),
           },
           { type: "separator" },
+          { label: l.external, click: action("external") },
+          { type: "separator" },
           {
-            label: l.pin,
+            label: l[entry.window.isAlwaysOnTop() ? "unpin" : "pin"],
             type: "checkbox",
             checked: entry.window.isAlwaysOnTop(),
             click: action("pin"),
           },
         ]).popup({
           window: entry.window,
-          x: Math.max(0, entry.window.getContentSize()[0] - 240),
+          x: Math.round(
+            Math.max(
+              0,
+              Math.min(
+                typeof command.x === "number" && Number.isFinite(command.x)
+                  ? command.x
+                  : 96,
+                Math.max(0, entry.window.getContentSize()[0] - 240),
+              ),
+            ),
+          ),
           y: BROWSER_TOOLBAR_HEIGHT,
         });
         break;
@@ -507,6 +531,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         activeMatch: 0,
         labels: labels(),
         dark: false,
+        copyFeedback: null,
       },
     };
     // The native page sits above the toolbar renderer. Keep about:blank hidden

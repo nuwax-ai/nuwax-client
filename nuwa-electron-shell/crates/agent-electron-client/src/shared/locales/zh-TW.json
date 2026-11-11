@@ -1459,6 +1459,7 @@
   "Claw.Browser.retry": "重試",
   "Claw.Browser.externalFailed": "無法開啟預設瀏覽器，請重試或複製連結。",
   "Claw.Browser.copyDone": "已複製連結",
+  "Claw.Browser.copyFailed": "複製失敗，請重試",
   "Claw.Browser.printFailed": "無法列印此網頁。",
   "Claw.Browser.url": "目前頁面網址",
   "Claw.Browser.settingsTitle": "網頁連結預設開啟方式",

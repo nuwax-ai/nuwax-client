@@ -1459,6 +1459,7 @@
   "Claw.Browser.retry": "重试",
   "Claw.Browser.externalFailed": "无法打开默认浏览器，请重试或复制链接。",
   "Claw.Browser.copyDone": "链接已复制",
+  "Claw.Browser.copyFailed": "复制失败，请重试",
   "Claw.Browser.printFailed": "无法打印此网页。",
   "Claw.Browser.url": "当前页面网址",
   "Claw.Browser.settingsTitle": "网页链接默认打开方式",

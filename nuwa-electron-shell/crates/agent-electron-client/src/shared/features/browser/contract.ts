@@ -1,6 +1,6 @@
 export const BROWSER_SETTING = "nuwax.linkOpenMode";
 export const BROWSER_FEATURE_SETTING = "features.browser.enabled";
-export const BROWSER_TOOLBAR_HEIGHT = 44;
+export const BROWSER_TOOLBAR_HEIGHT = 48;
 export const BROWSER_AUXILIARY_BAR_HEIGHT = 42;
 export type LinkOpenMode = "in-app" | "system";
 export const linkOpenMode = (value: unknown): LinkOpenMode =>
@@ -37,6 +37,7 @@ export interface BrowserState {
   activeMatch: number;
   labels: Record<string, string>;
   dark: boolean;
+  copyFeedback: { id: number; success: boolean } | null;
 }
 export type BrowserCommand =
   | {
@@ -47,7 +48,6 @@ export type BrowserCommand =
         | "stop"
         | "copy"
         | "external"
-        | "menu"
         | "pin"
         | "print"
         | "zoom-in"
@@ -61,7 +61,8 @@ export type BrowserCommand =
         | "window-maximize"
         | "window-close";
     }
-  | { type: "find"; text: string; forward?: boolean; next?: boolean };
+  | { type: "find"; text: string; forward?: boolean; next?: boolean }
+  | { type: "menu"; x?: number };
 export interface BrowserWindowBridge {
   getState(): Promise<BrowserState | null>;
   command(command: BrowserCommand): Promise<boolean>;
