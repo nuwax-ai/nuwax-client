@@ -51,15 +51,15 @@ app.whenReady().then(async () => {
     preloadPath: process.env.NUWAX_CAPTURE_WINDOW_PRELOAD || path.resolve('dist/preload/captureWindow.js'),
     captureWindowFrame: async () => ({ png: image.toPNG(), ...image.getSize(), hdrToneMapped: false }),
   });
-  const prepared = async () => {
+  const prepared = async (frameWidths = [1920, 1920, 1920]) => {
     while (BrowserWindow.getAllWindows().length !== 3) await delay();
     const selectors = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id);
-    for (const selector of selectors) {
+    for (const [index, selector] of selectors.entries()) {
       // 三屏是配置隔离测试。隐藏窗口重叠放在真实屏内，避免输入测试依赖
       // 真机桌面的屏幕拓扑；保持各轮原始尺寸，不据此声称做了物理多屏验收。
       selector.setBounds({ x: fixtureOrigin.x, y: fixtureOrigin.y });
       while (selector.webContents.isLoadingMainFrame()) await delay();
-      await selector.webContents.executeJavaScript(`new Promise(resolve=>{const check=()=>document.querySelector('.frame')?.width===1920?resolve(true):setTimeout(check,10);check()})`);
+      await selector.webContents.executeJavaScript(`new Promise(resolve=>{const check=()=>document.querySelector('.frame')?.width===${frameWidths[index]}?resolve(true):setTimeout(check,10);check()})`);
       // 等待隐藏 renderer 的合成帧，使 Chromium 有可命中的输入 surface。
       await selector.webContents.capturePage();
       await selector.webContents.executeJavaScript(`window.__captureInputEvents=[];for(const type of ['pointermove','pointerleave','mousemove','mouseleave','blur'])window.addEventListener(type,event=>{window.__captureInputEvents.push({type,target:event.target?.className,x:event.clientX,y:event.clientY});if(window.__captureInputEvents.length>12)window.__captureInputEvents.shift()},true)`);
@@ -329,13 +329,24 @@ app.whenReady().then(async () => {
     const blank = await frame(shapeWindow);
     await tool(shapeWindow, name); await drag(shapeWindow, [100, 100], [220, 180]);
     const drawn = await frame(shapeWindow); assert.notEqual(drawn, blank, name);
+    const selectedTool = () => script(shapeWindow, `document.querySelector('.toolGroup button[aria-pressed=true]')?.dataset.action`);
+    assert.equal(await selectedTool(), name, `${name} 绘制后应保留当前工具`);
+    await drag(shapeWindow, [420, 100], [540, 180]);
+    const repeated = await frame(shapeWindow); assert.notEqual(repeated, drawn, `${name} 应无需再次选工具就能画第二个标注`);
+    assert.equal(await selectedTool(), name);
+    await tool(shapeWindow, 'undo'); assert.equal(await frame(shapeWindow), drawn, '第二个标注应可单独撤销');
+    await tool(shapeWindow, 'redo'); assert.equal(await frame(shapeWindow), repeated);
+    await tool(shapeWindow, 'undo'); assert.equal(await frame(shapeWindow), drawn);
     await drag(shapeWindow, [160, 140], [220, 190]);
     const moved = await frame(shapeWindow); assert.notEqual(moved, drawn, `${name} should move`);
+    assert.equal(await selectedTool(), name, `${name} 编辑已有标注后仍应保留当前工具`);
     await tool(shapeWindow, 'undo'); assert.equal(await frame(shapeWindow), drawn);
     await tool(shapeWindow, 'redo'); assert.equal(await frame(shapeWindow), moved);
+    await tool(shapeWindow, 'select');
     await click(shapeWindow, 220, 190);
     await drag(shapeWindow, [280, 230], [320, 270]);
     const resized = await frame(shapeWindow); assert.notEqual(resized, moved, `${name} should resize`);
+    assert.equal(await selectedTool(), 'select', '用户主动切换到选择工具后应保留该选择');
     await script(shapeWindow, `(()=>{const input=document.querySelector('input[type=range]');input.value='6';input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'));})()`);
     if (name !== 'mosaic') await script(shapeWindow, `(()=>{const input=document.querySelector('input[type=color]');input.value='#0088ff';input.dispatchEvent(new Event('input'));input.dispatchEvent(new Event('change'));})()`);
     const styled = await frame(shapeWindow); assert.notEqual(styled, resized, `${name} should update its style`);
@@ -426,7 +437,7 @@ app.whenReady().then(async () => {
   const adjustable = (await prepared())[0];
   await drag(adjustable, [120, 120], [400, 300]);
   await tool(adjustable, 'rectangle'); await drag(adjustable, [180, 160], [220, 190]);
-  await click(adjustable, 270, 220); // 取消标注选中，保留选择工具。
+  await tool(adjustable, 'select'); await click(adjustable, 270, 220);
   const annotated = await frame(adjustable);
   const adjustments: Array<{ from: [number, number]; to: [number, number]; size: string }> = [
     { from: [120, 120], to: [100, 100], size: '600 × 400 px' },
@@ -567,6 +578,41 @@ app.whenReady().then(async () => {
     recordingControls.dispose();
   }
   assert.equal(BrowserWindow.getAllWindows().length, 0, '控制条回归结束应关闭所有隔离窗口');
+  const previousDisplays = [...displays];
+  const previousGetSources = desktopCapturer.getSources;
+  try {
+    for (const scales of [[1, 1.25, 1.5], [2, 1.5, 1.25]]) {
+      displays.splice(0, displays.length, ...previousDisplays.map((display, index) => ({ ...display, scaleFactor: scales[index] })));
+      const sources = displays.map(display => {
+        const width = Math.round(display.size.width * display.scaleFactor), height = Math.round(display.size.height * display.scaleFactor);
+        const pixels = Buffer.alloc(width * height * 4, 255);
+        for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+          const offset = (y * width + x) * 4;
+          pixels[offset] = x % 256; pixels[offset + 1] = y % 256; pixels[offset + 2] = (x + y) % 256;
+        }
+        return { id: `screen:${display.id}`, name: 'Synthetic mixed-DPI display', display_id: String(display.id),
+          thumbnail: nativeImage.createFromBitmap(pixels, { width, height }), appIcon: null };
+      });
+      desktopCapturer.getSources = async () => sources;
+      for (const [index, scale] of scales.entries()) {
+        const capture = windows.captureStill(new AbortController().signal);
+        const selector = (await prepared(sources.map(source => source.thumbnail.getSize().width)))[index];
+        await drag(selector, [81, 83], [321, 263]);
+        const x = Math.round(81 * scale), y = Math.round(83 * scale);
+        const expected = { x, y, width: Math.round(321 * scale) - x, height: Math.round(263 * scale) - y };
+        assert.equal(await script(selector, `document.querySelector('.dimensions').textContent`), `${expected.width} × ${expected.height} px`, `${scale}x 尺寸提示应显示原图像素`);
+        await tool(selector, 'confirm');
+        const captured = await capture; assert.ok(captured);
+        const png = nativeImage.createFromBuffer(captured.image.toPNG());
+        assert.deepEqual(png.getSize(), { width: expected.width, height: expected.height }, `${scale}x PNG 尺寸应与选区一致`);
+        assert.ok(png.toBitmap().equals(sources[index].thumbnail.crop(expected).toBitmap()), `${scale}x 导出像素应与原图裁剪逐像素一致`);
+      }
+      console.log('PASS mixed-DPI source-pixel crop and PNG export', scales);
+    }
+  } finally {
+    displays.splice(0, displays.length, ...previousDisplays);
+    desktopCapturer.getSources = previousGetSources;
+  }
   windows.dispose(); clearTimeout(deadline);
   console.log('PASS capture UI: text re-edit/font presets, shape/color editing, undo/redo, PNG, narrow-screen layout, recording controls, synthetic three-display magnifier');
   removeProfile(); app.exit(0);
