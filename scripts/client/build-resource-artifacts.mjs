@@ -345,23 +345,22 @@ async function restore(kind, key) {
   return { hit: false, detail: `No admissible exact-key artifact within the latest 500 entries; ${rejected} rejected; cold preparation will run` };
 }
 
-function bundledKey() {
-  const inputs = ['scripts/client/build-resource-artifacts.mjs', 'scripts/client/core.mjs'];
-  for (const directory of [`${client}/scripts/prepare`, `${client}/scripts/utils`]) {
-    for (const entry of fs.readdirSync(path.join(root, directory)).sort()) {
-      if (/\.[cm]?js$/.test(entry) && fs.lstatSync(path.join(root, directory, entry)).isFile()) inputs.push(directory + '/' + entry);
-    }
-  }
+function bundledKey(sourceRoot = root) {
+  // These caches contain download archives only. Agent Desktop/Harness/source
+  // preparation, transport, reports and product UI cannot change those bytes.
+  const inputs = ['node', 'git', 'uv', 'ripgrep', 'nuwaxcode'].map(name => `${client}/scripts/prepare/prepare-${name}.js`);
+  inputs.push(`${client}/scripts/utils/project-paths.js`);
   // Do not include product package.version. Exact preparation source includes
   // pinned upstream versions/hashes; each run re-extracts/adopts downloads.
   const recipe = inputs.map(file => {
-    const digest = core.fileHash(path.join(root, file));
+    const digest = core.fileHash(path.join(sourceRoot, file));
     if (!digest) throw new Error('Missing bundled preparation input');
     return [file, digest];
   });
   // 基座已并入本仓，不再以子模块 pin 入键：配方文件字节已覆盖影响产物的输入，
   // 否则基座任意源码改动都会灭缓存。
-  return `bundled-v5-${process.platform}-${arch}-${core.fingerprint({ recipe })}`;
+  const sources = { nuwaxcode: process.env.NUWAXCODE_REPO || 'nuwax-ai/nuwaxcode', git: process.env.NUWAX_GIT_URL || null };
+  return `bundled-v6-${process.platform}-${arch}-${core.fingerprint({ recipe, sources })}`;
 }
 
 async function main() {
@@ -403,5 +402,5 @@ async function main() {
 
 }
 
-export { roots as resourceRoots, owner as resourceOwner, install as installResource };
+export { roots as resourceRoots, owner as resourceOwner, install as installResource, bundledKey as bundledResourceKey };
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

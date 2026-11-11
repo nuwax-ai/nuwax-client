@@ -1,10 +1,11 @@
 diff --git a/crates/windows/src/tree/automation.rs b/crates/windows/src/tree/automation.rs
 --- a/crates/windows/src/tree/automation.rs
 +++ b/crates/windows/src/tree/automation.rs
-@@ -191,6 +191,11 @@
+@@ -191,6 +191,12 @@
          let client: IUIAutomation2 = unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_ALL) }
              .map_err(|error| unbounded_client_error(error.code().0))?;
          unsafe {
++            // Modified by Nuwax: disable UIA implicit focus changes.
 +            // UIA otherwise focuses WinForms controls during Invoke/SetValue.
 +            // Headless delivery must leave foreground ownership with the user.
 +            client

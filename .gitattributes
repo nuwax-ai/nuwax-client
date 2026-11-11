@@ -9,3 +9,6 @@ third-party/licenses/winpty.txt text eol=lf
 # Keep bundled source patches byte-stable on Windows.
 resources/source-patches/*.patch text eol=lf whitespace=-blank-at-eol
 third-party/patches/*.patch text eol=lf whitespace=-blank-at-eol
+third-party/agent-desktop/** text eol=lf
+# Preserve upstream license whitespace; normalize only line endings above.
+third-party/agent-desktop/licenses/*.txt whitespace=-trailing-space
