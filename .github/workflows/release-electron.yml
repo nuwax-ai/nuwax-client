@@ -221,7 +221,11 @@ jobs:
 
       - name: Stage pinned nuwax frontend dist
         shell: bash
-        run: ./scripts/prepare-nuwax-dist.sh --pinned
+        run: |
+          # The frozen source pin may contain a historical dist/. This fresh CI
+          # checkout consumes nuwax-dist instead, matching the Beta staging flow.
+          rm -rf nuwax/dist
+          ./scripts/prepare-nuwax-dist.sh --pinned
 
       - name: Install setuptools for node-gyp (Python 3.12+)
         shell: bash
