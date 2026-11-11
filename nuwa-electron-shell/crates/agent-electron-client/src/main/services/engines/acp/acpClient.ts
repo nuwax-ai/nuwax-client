@@ -961,13 +961,17 @@ export async function createAcpConnection(
     if (backend.reasoningEffort) {
       env.NUWAX_MODEL_REASONING_EFFORT = backend.reasoningEffort;
     }
-    // 本地联调开关（2026-11-10）：provider 名含 "-responses"（如
-    // "glm-5.3-flash-responses"）时，即使 api_protocol=openai 也直接走引擎原生
-    // Responses 线——用名称临时声明该端点本就是 Responses 协议（如智谱官方
-    // open.bigmodel.cn/api/v1），绕开默认的 chat 翻译路径，便于测试引擎逻辑。
+    // 本地联调开关（2026-11-10，仅 make harness-local 生效）：provider 名含
+    // "-responses"（如 "glm-5.3-flash-responses"）时，即使 api_protocol=openai
+    // 也直接走引擎原生 Responses 线——用名称临时声明该端点本就是 Responses 协议
+    // （如智谱官方 open.bigmodel.cn/api/v1），绕开默认的 chat 翻译路径，便于测试
+    // 引擎逻辑。须 HARNESS_LOCAL=1（make harness-local 注入，随 dev 链继承到主
+    // 进程）才启用：正式包/普通 make dev 下 provider 命名不得影响协议选择。
     // 优先级最低：后端显式下发 NUWAX_WIRE_API / NUWAX_API_PROTOCOL 时仍以后端为准。
     const providerName = (config.providerName || "").toLowerCase();
-    const nameSignalsResponses = providerName.includes("-responses");
+    const harnessLocalDebug = process.env.HARNESS_LOCAL === "1";
+    const nameSignalsResponses =
+      harnessLocalDebug && providerName.includes("-responses");
     // OpenAI 族：harness 默认走 Responses，国内平台多只支持 Chat，
     // NUWAX_WIRE_API=chat 强制 Chat→Responses 翻译。
     // Anthropic 族（model_provider.api_protocol=anthropic）：协议族由
@@ -982,9 +986,9 @@ export async function createAcpConnection(
       // 是第二策略源，已删除；确需低成本默认时由后端统一下发
       // NUWAX_MODEL_REASONING_EFFORT（单一策略源）。
     } else if (nameSignalsResponses && !backend.wireApi && !backend.apiProtocol) {
-      // 名称声明 Responses 且后端未显式选择协议线：直连 Responses。
+      // 名称声明 Responses（仅 harness-local）且后端未显式选择协议线：直连 Responses。
       log.info(
-        `[AcpClient] codex: provider "${config.providerName}" signals the Responses wire by name; skipping the chat translation default`,
+        `[AcpClient] codex: provider "${config.providerName}" signals the Responses wire by name (harness-local); skipping the chat translation default`,
       );
     } else {
       env.NUWAX_WIRE_API = backend.wireApi || "chat";
