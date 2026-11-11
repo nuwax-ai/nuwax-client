@@ -1,10 +1,9 @@
-/** Merge independently shipped components only at the application-packaging boundary.
+/** Generate an offline inventory of independently shipped components.
  * Native capture recipes deliberately keep using third-party-notices.mjs unchanged.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildNotices, generateThirdPartyNotices as generateNativeNotices, writeNotices } from './third-party-notices.mjs';
-import { expandAgentDesktopNotices } from './agent-desktop-notices.mjs';
 
 export function generateThirdPartyNotices(root, options = {}) {
   if (options.captureOnly) return generateNativeNotices(root, options);
@@ -28,9 +27,6 @@ export function generateThirdPartyNotices(root, options = {}) {
   }
   const selected = Object.fromEntries(Object.entries(sourceManifest.components).filter(([name, entry]) =>
     !entry.resourceDirectory || !paths || Object.hasOwn(paths, name)));
-  if (selected['agent-desktop']?.licenseInventory) selected['agent-desktop'] = expandAgentDesktopNotices(root, selected['agent-desktop'], {
-    platform: options.platform, arch: options.arch, resourcePath: paths?.['agent-desktop'] ?? path.join(resourcesDir, 'agent-desktop'),
-  });
   const binaryIds = new Set(Object.entries(selected).filter(([id]) => independent.has(id))
     .flatMap(([id, entry]) => [entry.id ?? id, ...(entry.components ?? []).map(component => component.id)]));
   const sources = buildNotices({ root, manifest: { resources: selected, allow: sourceManifest.allow }, npmComponents: [], platform: options.platform ?? process.platform });

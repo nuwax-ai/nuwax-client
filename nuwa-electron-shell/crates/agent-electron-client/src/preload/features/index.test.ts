@@ -2,7 +2,7 @@
  * 单元测试: preload 特性命名空间汇总
  *
  * 覆盖：业务页命名空间含 capture/localFiles，宿主壳命名空间含
- * notices/computerUse/features/capture；canUse 特性侧探测按命名空间归属派发。
+ * computerUse/features/capture；canUse 特性侧探测按命名空间归属派发。
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -16,8 +16,8 @@ describe("命名空间汇总", () => {
     expect(Object.keys(featureNamespaces(ipc))).toEqual(["browser", "capture", "localFiles"]);
   });
 
-  it("宿主壳通过独立通道提供 notices/computerUse/features/capture", () => {
-    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["browser", "notices", "computerUse", "features", "capture"]);
+  it("宿主壳通过独立通道提供 computerUse/features/capture，不再暴露声明桥", () => {
+    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["browser", "computerUse", "features", "capture"]);
   });
 
   it("canUse 特性侧探测按命名空间归属派发，非特性命名空间返回 null", async () => {

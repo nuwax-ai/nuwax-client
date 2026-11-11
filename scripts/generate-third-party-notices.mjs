@@ -5,9 +5,9 @@
  * 用法：
  *   node scripts/generate-third-party-notices.mjs [--out <dir>] [--resources <dir>] [--strict]
  *
- * - 默认输出到 third-party/generated/（pack 前置步骤会再把它放进 extraResources）；
+ * - 默认输出到 third-party/generated/（仅供离线使用，不自动入包）；
  * - 非严格模式：问题只打印为警告（开发期不阻塞）；
- * - 严格模式（pack / 发版必须开）：任何问题都返回非零，未核实的条目进不了安装包。
+ * - 严格模式：任何未核实的问题都返回非零。
  */
 import fs from 'node:fs';
 import path from 'node:path';

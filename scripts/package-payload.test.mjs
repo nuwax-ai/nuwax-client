@@ -60,6 +60,26 @@ test('package CLI applies the same resource policy without rewriting identity or
   assert.deepEqual(fs.readFileSync(file), once);
 });
 
+test('standalone notices are excluded across platform mappings and broad project copies', () => {
+  const notices = [{ from: '/notices', to: 'third-party' }, { from: '/capture-notices', to: 'third-party/capture' }, 'third-party/**'];
+  const next = configurePackagePayload({
+    extraResources: [...notices, { from: '.', to: '.', filter: ['**/*'] }],
+    mac: { extraResources: notices }, win: { extraResources: notices }, linux: { extraResources: notices },
+  });
+  for (const platform of ['mac', 'win', 'linux']) assert.deepEqual(next[platform].extraResources, []);
+  assert.equal(next.extraResources.length, 1);
+  assert.ok(next.extraResources[0].filter.includes('!third-party{,/**/*}'));
+});
+
+test('packaged scan rejects standalone notices without deleting signed output', (t) => {
+  const root = temporary(t);
+  const resources = packagedResources(root, 'win32', 'x64');
+  const license = path.join(resources, 'third-party/licenses/component.txt');
+  write(license);
+  assert.throws(() => verifyPackagePayload(root, { platform: 'win32', arch: 'x64' }), /standalone notices/i);
+  assert.equal(fs.readFileSync(license, 'utf8'), 'fixture');
+});
+
 test('read-only packaged scan rejects cache roots but keeps nested runtime indexes, archives and licenses', (t) => {
   const root = temporary(t);
   for (const [platform, arch] of [['win32', 'x64'], ['darwin', 'arm64'], ['linux', 'arm64']]) {
