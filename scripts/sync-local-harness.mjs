@@ -22,12 +22,14 @@
  *   node scripts/sync-local-harness.mjs                 # 构建并替换
  *   HARNESS_PROFILE=dev node scripts/sync-local-harness.mjs   # debug 快很多
  *   node scripts/sync-local-harness.mjs --restore       # 还原为发布版
+ *   node scripts/sync-local-harness.mjs --verify        # 只报告当前跑的是哪个引擎
  *
  * 环境变量:
  *   FORK_REPO       fork 仓库路径(默认 /Volumes/zhitai/git_workspace/fork-nuwax-codex)
  *   HARNESS_PROFILE cargo profile:release|dev(默认 release)
  *   HARNESS_VERSION 可选,打点到二进制的版本号(默认不打点,显示 0.0.0)
  */
+import crypto from "node:crypto";
 import {spawnSync} from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -94,6 +96,60 @@ function restore() {
   if (restored === 0) {
     info("[sync-local-harness] 无本地构建需要还原");
   }
+  reportEngine("还原后的运行时引擎");
+}
+
+// 引擎"来源"比版本号可靠：本地构建的内嵌路径在 fork 仓库的 target 下，发布版则
+// 带 CI runner 路径。`--version` 两者可能相同（本地构建可打点成发布号），单看版本
+// 号分不出到底跑的是谁——2026-11-12 就是这么误判的。
+function buildOrigin(binaryPath) {
+  const MARKER = "codex-rs/target/";
+  let buffer;
+  try {
+    buffer = fs.readFileSync(binaryPath);
+  } catch {
+    return "未知（读不到二进制）";
+  }
+  const at = buffer.indexOf(MARKER);
+  if (at < 0) return "未知（二进制里没有构建路径）";
+  let start = at;
+  while (start > 0) {
+    const byte = buffer[start - 1];
+    if (byte === 0x00 || byte === 0x0a || byte === 0x22) break;
+    start -= 1;
+  }
+  const origin = buffer.subarray(start, at + MARKER.length).toString("utf8");
+  if (origin.startsWith(FORK_REPO)) return `本地源码构建 ${origin}`;
+  if (origin.includes("/runner/") || origin.includes("/cargo/registry")) {
+    return `发布版/CI 产物 ${origin}`;
+  }
+  return origin;
+}
+
+function sha256(binaryPath) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(binaryPath)).digest("hex");
+  } catch {
+    return "unreadable";
+  }
+}
+
+function engineVersion(binaryPath) {
+  const out = spawnSync(binaryPath, ["--version"], {encoding: "utf8", timeout: 20_000});
+  return (out.stdout || out.stderr || "").trim().split("\n")[0] || "unknown";
+}
+
+function reportEngine(label) {
+  const vendorDir = currentVendorDir();
+  const live = path.join(vendorDir, "nuwax-harness");
+  if (!fs.existsSync(live)) {
+    info(`[sync-local-harness] ${label}: 缺失 ${live}`);
+    return;
+  }
+  info(
+    `[sync-local-harness] ${label}: version=${engineVersion(live)} ` +
+      `sha256=${sha256(live).slice(0, 12)} ${buildOrigin(live)}`,
+  );
 }
 
 function stampVersion(version) {
@@ -166,6 +222,10 @@ async function ensureFrontend() {
 }
 
 async function main() {
+  if (process.argv.includes("--verify")) {
+    reportEngine("当前运行时引擎");
+    return;
+  }
   if (process.argv.includes("--restore")) {
     restore();
     return;
@@ -240,9 +300,21 @@ async function main() {
     fs.chmodSync(dest, 0o755);
   }
 
-  const versionOut = spawnSync(path.join(vendorDir, "nuwax-harness"), ["--version"], {encoding: "utf8"});
+  // 换入后必须验证：写盘成功不等于运行时用的是它（2026-11-12 出现过换入被资源
+  // 准备覆盖、会话其实跑发布版，而版本号看不出来）。
+  const sourceBin = path.join(targetDir, "codex");
+  const liveBin = path.join(vendorDir, "nuwax-harness");
+  const sourceSha = sha256(sourceBin);
+  const liveSha = sha256(liveBin);
+  if (sourceSha === "unreadable" || liveSha === "unreadable") {
+    fail(`换入校验失败：读不到 ${sourceBin} 或 ${liveBin}`);
+  }
+  if (sourceSha !== liveSha) {
+    fail(`换入校验失败：${liveBin} 与构建产物 ${sourceBin} 的 sha256 不一致`);
+  }
   info(`[sync-local-harness] 完成:${vendorDir}`);
-  info(`[sync-local-harness] 引擎 --version → ${(versionOut.stdout || "").trim() || versionOut.stderr}`);
+  reportEngine("换入后的运行时引擎");
+  info("[sync-local-harness] 期望来源为“本地源码构建”；若不是，请检查资源准备是否覆盖了 vendor");
 }
 
 await main();
