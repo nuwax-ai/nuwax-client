@@ -1,5 +1,59 @@
 # Dot-sourced by normalize-old-install.ps1. Ownership comes from the old
 # uninstaller's embedded build inventory, never from the newly installed app.
+function Assert-RecoveryCleanupMayContinue {
+  if ($Action -ne 'Cleanup') { return }
+  $held = $false
+  try {
+    try { $held = $script:recoveryForegroundMutex.WaitOne(0) }
+    catch [Threading.AbandonedMutexException] { $held = $true }
+    if (-not $held) { throw [OperationCanceledException]::new('An installation operation is waiting for backup cleanup.') }
+  } finally { if ($held) { $script:recoveryForegroundMutex.ReleaseMutex() } }
+}
+
+function Stop-LegacyRecoveryRetention([string]$InstallRoot) {
+  # Older releases cannot yield. Match only the detached runtime created by
+  # Start-RecoveryRetention, including its owner, exact arguments and process
+  # identity. Interrupting this worker can only leave old backups unfinished.
+  $pattern = '^"?(?<exe>[A-Za-z]:\\[^"\r\n]*?\\powershell\.exe)"?\s+-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "(?<script>[^"\r\n]+)" -Action Cleanup -CleanupRuntime -StatePath "(?<state>[^"\r\n]+)" -InstallDir "(?<root>[^"\r\n]+)"\s*$'
+  $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)
+  $executables = @("$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe", "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe")
+  foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue)) {
+    $match = [regex]::Match([string]$candidate.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success -or -not [string]::Equals($match.Groups['root'].Value, $InstallRoot, $pathComparison)) { continue }
+    $process = $null
+    try {
+      $scriptPath = [IO.Path]::GetFullPath($match.Groups['script'].Value)
+      $runtime = [IO.Path]::GetDirectoryName($scriptPath)
+      if (-not [string]::Equals([IO.Path]::GetDirectoryName($runtime), $tempParent, $pathComparison) -or
+          [IO.Path]::GetFileName($runtime) -notmatch '^Nuwax-backup-cleanup-[0-9a-f]{32}$' -or
+          [IO.Path]::GetFileName($scriptPath) -ine 'normalize-old-install.ps1' -or
+          -not [string]::Equals($match.Groups['state'].Value, (Join-Path $runtime 'state.txt'), $pathComparison) -or
+          $match.Groups['exe'].Value -notin $executables -or $candidate.ExecutablePath -notin $executables) { continue }
+      Assert-NoRecoveryRedirect $scriptPath
+      $ownerPath = Join-Path $runtime 'owner.json'
+      Assert-NoRecoveryRedirect $ownerPath
+      $owner = [IO.File]::ReadAllText($ownerPath, $utf8) | ConvertFrom-Json
+      if ($owner.kind -ne 'Nuwax backup cleanup' -or -not [string]::Equals([string]$owner.installDir, $InstallRoot, $pathComparison) -or
+          [IO.File]::ReadAllText($scriptPath, $utf8).Contains('recoveryForegroundMutex')) { continue }
+      $process = [Diagnostics.Process]::GetProcessById($candidate.ProcessId)
+      $null = $process.Handle
+      # CIM supports both bitnesses. MainModule cannot inspect a 64-bit worker
+      # from NSIS's 32-bit PowerShell, and System32 can redirect to SysWOW64.
+      # WMI truncates FILETIME's 100 ns precision to microseconds.
+      if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $candidate.CreationDate.ToUniversalTime()).Ticks) -ge 10) { continue }
+      $process.Kill()
+      if (-not $process.WaitForExit(5000)) { throw 'Legacy cleanup did not exit.' }
+      # Stdout is the NSIS Inspect/Prepare protocol. Keep diagnostics separate.
+      $event = @{ atUtc = [DateTime]::UtcNow.ToString('o'); action = 'LegacyCleanupInterrupted'; installDir = $InstallRoot; processId = $candidate.ProcessId }
+      try { [IO.File]::AppendAllText((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-installer-recovery-events.jsonl'), ($event | ConvertTo-Json -Compress) + [Environment]::NewLine) } catch { }
+    } catch {
+      $event = @{ atUtc = [DateTime]::UtcNow.ToString('o'); action = 'LegacyCleanupRetained'; installDir = $InstallRoot; error = $_.Exception.Message }
+      try { [IO.File]::AppendAllText((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-installer-recovery-events.jsonl'), ($event | ConvertTo-Json -Compress) + [Environment]::NewLine) } catch { }
+    }
+    finally { if ($process) { $process.Dispose() } }
+  }
+}
+
 function Remove-RecoveryRetentionRuntime([string]$RuntimeDirectory, [string]$InstallRoot) {
   $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char]92)
   if (-not [string]::Equals([IO.Path]::GetDirectoryName($RuntimeDirectory), $tempParent, $pathComparison) -or
@@ -61,18 +115,33 @@ function Save-RecoveryPayloadInventory([string]$InventoryPath) {
 }
 
 function Initialize-RecoveryRetentionIO {
-  if ('NuwaxRecoveryRetentionIO' -as [type]) { return }
+  if ('NuwaxRecoveryRetentionIO' -as [type]) {
+    [NuwaxRecoveryRetentionIO]::ForegroundMutex = $script:recoveryForegroundMutex
+    return
+  }
   Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.HashSet[string]].Assembly.Location) -TypeDefinition @'
 using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Threading;
 
 public static class NuwaxRecoveryRetentionIO {
+  public static Mutex ForegroundMutex;
+  static void CheckForeground() {
+    if (ForegroundMutex == null) return;
+    bool held = false;
+    try {
+      try { held = ForegroundMutex.WaitOne(0); }
+      catch (AbandonedMutexException) { held = true; }
+      if (!held) throw new OperationCanceledException("An installation operation is waiting for backup cleanup.");
+    } finally { if (held) ForegroundMutex.ReleaseMutex(); }
+  }
   static readonly HashSet<string> Controls = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
     "manifest.jsonl", "payload-inventory.json", "uninstaller-backup.exe", "registration.json"
   };
   static void Guard(string path) {
+    CheckForeground();
     for (string p = path; !String.IsNullOrEmpty(p); p = Path.GetDirectoryName(p)) {
       if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
         throw new IOException("Recovery path is redirected.");
@@ -82,8 +151,16 @@ public static class NuwaxRecoveryRetentionIO {
   public static string Hash(string path) {
     Guard(path);
     using (var sha = SHA256.Create())
-    using (var stream = File.OpenRead(path))
-      return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+    using (var stream = File.OpenRead(path)) {
+      var buffer = new byte[1024 * 1024];
+      int count;
+      while ((count = stream.Read(buffer, 0, buffer.Length)) != 0) {
+        CheckForeground();
+        sha.TransformBlock(buffer, 0, count, buffer, 0);
+      }
+      sha.TransformFinalBlock(buffer, 0, 0);
+      return BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+    }
   }
   public static bool ValidRelative(string path) {
     if (String.IsNullOrEmpty(path) || path.IndexOfAny(new char[] {'\\', ':'}) >= 0) return false;
@@ -131,6 +208,7 @@ public static class NuwaxRecoveryRetentionIO {
     // up by recursive removal; nonempty directories stop cleanup instead.
     foreach (var file in files) {
       if (Hash(file.Key) != file.Value) throw new IOException("Recovery file changed during cleanup.");
+      CheckForeground();
       File.Delete(file.Key);
     }
     directories.Sort((a,b) => b.Length.CompareTo(a.Length));
@@ -154,9 +232,11 @@ public static class NuwaxRecoveryRetentionIO {
   }
 }
 '@
+  [NuwaxRecoveryRetentionIO]::ForegroundMutex = $script:recoveryForegroundMutex
 }
 
 function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory = '') {
+  Assert-RecoveryCleanupMayContinue
   $recoveryParent = [IO.Path]::GetDirectoryName($InstallRoot)
   if (Test-EntryExists (Get-ExtendedPath (Get-MarkerPath $InstallRoot))) {
     Write-Output 'Backup retention skipped: an upgrade recovery is active.'
@@ -165,6 +245,7 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
   $candidates = New-Object 'System.Collections.Generic.List[object]'
   $protected = 0
   foreach ($folder in [IO.Directory]::GetDirectories((Get-ExtendedPath $recoveryParent), 'Nuwax-installer-recovery-*')) {
+    Assert-RecoveryCleanupMayContinue
     try {
       $name = [IO.Path]::GetFileName($folder)
       if ($name -notmatch '^Nuwax-installer-recovery-(\d{8}T\d{6}Z)-[0-9a-f]{32}$') { continue }
@@ -186,11 +267,12 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
       if ($terminal.completedAtUtc) { $finished = [DateTime]::Parse($terminal.completedAtUtc, [Globalization.CultureInfo]::InvariantCulture).ToUniversalTime() }
       if ($finished -lt $created) { $finished = $created }
       $candidates.Add([pscustomobject]@{ path = $plainFolder; extended = $folder; history = $history; finished = $finished })
-    } catch { $protected++ }
+    } catch { Assert-RecoveryCleanupMayContinue; $protected++ }
   }
   $ordered = @($candidates | Sort-Object -Property @{Expression='finished';Descending=$true}, @{Expression='path';Descending=$true})
   $deleted = 0
   for ($i = 0; $i -lt $ordered.Count; $i++) {
+    Assert-RecoveryCleanupMayContinue
     $candidate = $ordered[$i]
     if ($i -eq 0 -or [string]::Equals($candidate.path, $KeepDirectory, $pathComparison) -or
         $candidate.finished -gt [DateTime]::UtcNow.AddDays(-7)) {
@@ -209,6 +291,7 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
       if ($inventory.schemaVersion -ne 1 -or $inventory.executable -ne $appEntryNames[0] -or -not $inventory.fileHashes) { $protected++; continue }
       $hashes = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
       foreach ($file in $inventory.files) {
+        Assert-RecoveryCleanupMayContinue
         $digest = [string]$inventory.fileHashes.$file
         if (-not [NuwaxRecoveryRetentionIO]::ValidRelative($file) -or $digest -notmatch '^[a-f0-9]{64}$') { throw 'Invalid recovery payload hash.' }
         $hashes.Add($file, $digest)
@@ -216,10 +299,12 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
       if (-not $hashes.ContainsKey($appEntryNames[0])) { throw 'Incomplete recovery ownership inventory.' }
       $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
       foreach ($directory in $inventory.directories) {
+        Assert-RecoveryCleanupMayContinue
         if (-not [NuwaxRecoveryRetentionIO]::ValidRelative($directory) -or -not $directories.Add($directory)) { throw 'Invalid recovery payload directory.' }
       }
       $moves = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
       foreach ($record in $candidate.history) {
+        Assert-RecoveryCleanupMayContinue
         if ($record.status -ne 'planned') { continue }
         if (-not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.original), $InstallRoot, $pathComparison) -or
             -not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.backup), $candidate.path, $pathComparison) -or
@@ -239,7 +324,7 @@ function Invoke-RecoveryRetention([string]$InstallRoot, [string]$KeepDirectory =
       } else {
         $protected++; Write-Output ('Backup retained: ' + $candidate.path + '; reason=unknown-or-modified-content')
       }
-    } catch { $protected++; Write-Output ('Backup retained: ' + $candidate.path + ': ' + $_.Exception.Message) }
+    } catch { Assert-RecoveryCleanupMayContinue; $protected++; Write-Output ('Backup retained: ' + $candidate.path + ': ' + $_.Exception.Message) }
   }
   Write-Output "Backup retention: deleted=$deleted protected=$protected; keep latest=1, older backups expire after 7 days."
 }

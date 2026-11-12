@@ -2,7 +2,7 @@
  * 单元测试: features/index - 注册表与运行时
  *
  * electron 整体 mock（特性清单文件会 import 它，但这里只验证运行时接线）。
- * 覆盖：真实注册表 id 唯一且含 capture / open-source-notices；按产品与开关过滤；
+ * 覆盖：真实注册表 id 唯一且含 capture；按产品与开关过滤；
  * 上下文里有 ipc / hostIpc / 以 `<dataDir>/<id>` 为根的 scratch；重复启动幂等；
  * 登出/换域事件到达订阅者；退出时先发 quit 再逆序释放；关闭的特性零接触
  * （不注册 IPC、不创建上下文）。
@@ -59,10 +59,11 @@ afterEach(async () => {
 });
 
 describe("desktopFeatures 静态注册表", () => {
-  it("id 唯一，且包含 capture 与 open-source-notices，均仅限 nuwax", () => {
+  it("id 唯一，包含客户端特性且不注册已移除的声明模块，均仅限 nuwax", () => {
     const ids = desktopFeatures.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual(expect.arrayContaining(["computer-use", "capture", "open-source-notices", "local-files"]));
+    expect(ids).toEqual(expect.arrayContaining(["computer-use", "capture", "local-files"]));
+    expect(ids).not.toContain("open-source-notices");
     for (const f of desktopFeatures) expect(f.products).toEqual(["nuwax"]);
   });
 });

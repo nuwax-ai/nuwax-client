@@ -68,6 +68,6 @@ shared/features/<id>/     契约 contract.ts（IPC 通道名 + 公开类型）�
 
 ## 开源声明
 
-随包的非 npm 组件（`resources/*`）必须在 `third-party/manifest.json` 登记；`scripts/generate-third-party-notices.mjs` 从文件与包元数据读取许可证并生成声明，严格模式（`--strict`，pack / 发版必开）下，未登记、读不出许可证、缺源码地址、强 copyleft 许可证、GPL 构建的 ffmpeg 都会让构建失败。
+当前版本隐藏关于页的开源声明入口，不随安装包分发独立的 `third-party/` 声明目录、许可证副本和源码归档。本地 pack、正式版与 Dev 发布共用载荷策略，实际包扫描会拒绝残留声明目录；未来的网站入口另行接入。
 
-编译进应用 JavaScript 的第三方源码登记在 `third-party/source-components.json`，由打包阶段合并声明并携带许可证全文；不进入原生 helper/capture 的清单与缓存配方。`--capture-only` 的产物保持原有字节和准入规则。
+构建仍使用 `third-party/manifest.json`、源码锁、补丁和上游原始许可证核验资源。`scripts/generate-third-party-notices.mjs` 保留为离线生成工具，编译进 JavaScript 的第三方源码登记在 `third-party/source-components.json`；生成结果不再自动入包。原生 helper/capture 的清单、校验和缓存配方不变。

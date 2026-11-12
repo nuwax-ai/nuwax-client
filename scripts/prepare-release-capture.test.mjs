@@ -21,11 +21,6 @@ function fixture(t, platform = 'win32', arch = 'x64') {
   if (platform !== 'win32') fs.chmodSync(binary, 0o755);
   const record = { platform, arch, version: '8.1.3', sha256: sha256(binary) };
   core.atomicJson(path.join(captureDir, 'resource.json'), record);
-  fs.mkdirSync(path.join(files.noticesDir, 'licenses'), { recursive: true });
-  fs.mkdirSync(path.join(files.noticesDir, 'sources'), { recursive: true });
-  core.atomicJson(path.join(files.noticesDir, 'third-party-notices.json'), { schema: 1, components: [{ id: 'ffmpeg', usedBy: 'capture' }] });
-  fs.writeFileSync(path.join(files.noticesDir, 'licenses/ffmpeg.txt'), 'license fixture');
-  fs.writeFileSync(path.join(files.noticesDir, 'sources/ffmpeg.tar.xz'), 'exact source fixture');
   const output = path.join(root, 'output');
   const resources = platform === 'darwin' ? path.join(output, `mac-${arch}/Nuwax.app/Contents/Resources`) : path.join(output, `${platform === 'win32' ? 'win' : 'linux'}-unpacked/resources`);
   fs.mkdirSync(resources, { recursive: true });
@@ -34,21 +29,19 @@ function fixture(t, platform = 'win32', arch = 'x64') {
   const inspect = async () => admitted;
   const copy = (dir = captureDir) => {
     fs.cpSync(dir, path.join(resources, 'capture', `${platform}-${arch}`), { recursive: true });
-    fs.cpSync(files.noticesDir, path.join(resources, 'third-party/capture'), { recursive: true });
   };
   return { root, files, pkg, captureDir, admitted, inspect, output, resources, copy, platform, arch };
 }
 
-test('release injection preserves other resources, notices and signing, replacing all stale capture entries', () => {
+test('release injection preserves runtime resources and signing, removing stale capture and standalone notices', () => {
   const old = { mac: { identity: 'Developer ID', extraResources: [{ to: 'capture/darwin-x64' }] }, win: { extraResources: [{ to: 'capture/old' }, { to: 'git' }] }, extraResources: [{ to: 'third-party' }, { to: 'third-party/capture' }, { to: 'nuwax-dist' }] };
-  const result = injectReleaseCapture(old, { platform: 'win32', arch: 'x64', captureDir: '/verified/win32-x64', noticesDir: '/notices' });
+  const result = injectReleaseCapture(old, { platform: 'win32', arch: 'x64', captureDir: '/verified/win32-x64' });
   assert.equal(result.mac.identity, old.mac.identity);
   assert.deepEqual(result.win.extraResources, [{ to: 'git' }]);
   assert.deepEqual(result.mac.extraResources, []);
-  assert.deepEqual(result.extraResources.slice(0, 2), [{ to: 'third-party' }, { to: 'nuwax-dist' }]);
-  assert.deepEqual(result.extraResources.slice(2), [
+  assert.deepEqual(result.extraResources.slice(0, 1), [{ to: 'nuwax-dist' }]);
+  assert.deepEqual(result.extraResources.slice(1), [
     { from: '/verified/win32-x64', to: 'capture/win32-x64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json', 'koffi.node', 'koffi.json'] },
-    { from: '/notices', to: 'third-party/capture', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] },
   ]);
   assert.equal(old.win.extraResources.length, 2);
 });
@@ -60,21 +53,21 @@ test('release preparation admits exact resources before writing builder configur
       platform, arch, nativePlatform: platform, nativeArch: arch,
       configureWindows: async () => calls.push('toolchain'),
       prepare: async () => calls.push('prepare'), inspect: async () => { calls.push('inspect'); return f.admitted; },
-      notices: async (_root, { outDir }) => { calls.push('notices'); fs.mkdirSync(outDir, { recursive: true }); core.atomicJson(path.join(outDir, 'third-party-notices.json'), { components: [] }); },
     });
-    assert.deepEqual(calls, [...(platform === 'win32' ? ['toolchain'] : []), 'prepare', 'inspect', 'notices']);
+    assert.deepEqual(calls, [...(platform === 'win32' ? ['toolchain'] : []), 'prepare', 'inspect']);
     assert.equal(result.captureDir, f.captureDir);
-    assert.ok(core.readJson(f.files.packageFile).build.extraResources.some((entry) => entry.to === `capture/${platform}-${arch}`));
+    const resources = core.readJson(f.files.packageFile).build.extraResources;
+    assert.ok(resources.some((entry) => entry.to === `capture/${platform}-${arch}`));
+    assert.equal(resources.some((entry) => entry.to.startsWith('third-party')), false);
   }
 });
 
-test('wrong native runner and missing resource or notices fail before changing package config', async (t) => {
+test('wrong native runner and missing resource fail before changing package config', async (t) => {
   const f = fixture(t, 'darwin', 'x64');
   const before = fs.readFileSync(f.files.packageFile, 'utf8');
   await assert.rejects(prepareReleaseCapture(f.root, { platform: 'darwin', arch: 'x64', nativePlatform: 'darwin', nativeArch: 'arm64' }), /matching native runner/);
   const options = { platform: 'darwin', arch: 'x64', nativePlatform: 'darwin', nativeArch: 'x64', prepare: async () => {}, inspect: async () => null };
   await assert.rejects(prepareReleaseCapture(f.root, options), /Missing or unverified/);
-  await assert.rejects(prepareReleaseCapture(f.root, { ...options, inspect: f.inspect, notices: async () => {} }), /notices were not generated/);
   assert.equal(fs.readFileSync(f.files.packageFile, 'utf8'), before);
 });
 
@@ -94,11 +87,9 @@ test('post-build verification covers Windows, both macOS and both Linux runtime 
   }
 });
 
-test('Linux package cannot omit its encoder or OpenH264 redistribution evidence', async (t) => {
-  for (const relative of ['capture/linux-arm64/ffmpeg', 'capture/linux-arm64/resource.json', 'third-party/capture/licenses/openh264.txt', 'third-party/capture/sources/openh264.tar.gz']) {
+test('Linux package cannot omit its encoder or metadata', async (t) => {
+  for (const relative of ['capture/linux-arm64/ffmpeg', 'capture/linux-arm64/resource.json']) {
     const f = fixture(t, 'linux', 'arm64');
-    fs.writeFileSync(path.join(f.files.noticesDir, 'licenses/openh264.txt'), 'BSD-2-Clause fixture');
-    fs.writeFileSync(path.join(f.files.noticesDir, 'sources/openh264.tar.gz'), 'OpenH264 source fixture');
     f.copy(); fs.rmSync(path.join(f.resources, relative));
     await assert.rejects(verifyReleaseCaptureOutput(f.root, f.output, { platform: 'linux', arch: 'arm64', inspect: f.inspect }), /missing or changed/, relative);
   }
@@ -112,8 +103,8 @@ test('Unix packages cannot silently lose encoder execute permission despite matc
   }
 });
 
-test('post-build missing encoder, metadata, license or exact source fails closed', async (t) => {
-  for (const relative of ['capture/win32-x64/ffmpeg.exe', 'capture/win32-x64/resource.json', 'third-party/capture/third-party-notices.json', 'third-party/capture/licenses/ffmpeg.txt', 'third-party/capture/sources/ffmpeg.tar.xz']) {
+test('post-build missing encoder or metadata fails closed', async (t) => {
+  for (const relative of ['capture/win32-x64/ffmpeg.exe', 'capture/win32-x64/resource.json']) {
     const f = fixture(t); f.copy();
     fs.rmSync(path.join(f.resources, relative));
     await assert.rejects(verifyReleaseCaptureOutput(f.root, f.output, { platform: 'win32', arch: 'x64', inspect: f.inspect }), /missing or changed/, relative);
@@ -121,7 +112,7 @@ test('post-build missing encoder, metadata, license or exact source fails closed
 });
 
 test('post-build changed binary or metadata and resources at another architecture path are rejected', async (t) => {
-  for (const relative of ['capture/win32-x64/ffmpeg.exe', 'capture/win32-x64/resource.json', 'third-party/capture/sources/ffmpeg.tar.xz']) {
+  for (const relative of ['capture/win32-x64/ffmpeg.exe', 'capture/win32-x64/resource.json']) {
     const f = fixture(t); f.copy();
     fs.appendFileSync(path.join(f.resources, relative), 'changed');
     await assert.rejects(verifyReleaseCaptureOutput(f.root, f.output, { platform: 'win32', arch: 'x64', inspect: f.inspect }), /missing or changed/);
@@ -160,7 +151,7 @@ test('Mac pre-signing preserves Koffi provenance and packaged verification rejec
   assert.equal(record.signing.sourceHash, sourceHash);
   assert.equal(sha256(source), sourceHash);
   assert.equal(record.sha256, sha256(path.join(staged.dir, 'koffi.node')));
-  f.pkg.build = injectReleaseCapture(f.pkg.build, { captureDir: staged.dir, noticesDir: f.files.noticesDir, platform: 'darwin', arch: 'arm64', macPreSigned: true });
+  f.pkg.build = injectReleaseCapture(f.pkg.build, { captureDir: staged.dir, platform: 'darwin', arch: 'arm64', macPreSigned: true });
   core.atomicJson(f.files.packageFile, f.pkg); f.copy(staged.dir);
   await verifyReleaseCaptureOutput(f.root, f.output, { platform: 'darwin', arch: 'arm64', inspect: f.inspect, tools: signer.tools });
   fs.rmSync(path.join(f.resources, 'capture/darwin-arm64/koffi.node'));
@@ -186,21 +177,21 @@ test('Mac pre-signing records final bytes and unsigned provenance without changi
 test('Mac builder skip pattern matches only the pre-signed runtime binary and unsigned preparation removes stale capture skip', () => {
   for (const arch of ['arm64', 'x64']) {
     const old = { mac: { signIgnore: ['existing-plugin$', captureMacSignIgnore(arch === 'arm64' ? 'x64' : 'arm64')] } };
-    const signed = injectReleaseCapture(old, { platform: 'darwin', arch, captureDir: '/signed', noticesDir: '/notices', macPreSigned: true });
+    const signed = injectReleaseCapture(old, { platform: 'darwin', arch, captureDir: '/signed', macPreSigned: true });
     assert.deepEqual(signed.mac.signIgnore, ['existing-plugin$', captureMacSignIgnore(arch)]);
     // app-builder-lib 25.1.8 uses new RegExp(pattern).test(fullPath), and
     // osx-sign checks ignore before its --force pass over each Mach-O child.
     const skip = new RegExp(signed.mac.signIgnore.at(-1));
     assert.ok(skip.test(`/output/mac/Nuwax.app/Contents/Resources/capture/darwin-${arch}/ffmpeg`));
     for (const file of [`/output/mac/Nuwax.app/Contents/Resources/capture/darwin-${arch}/ffmpeg-other`, '/output/mac/Nuwax.app/Contents/MacOS/Nuwax', `/output/mac/Nuwax.app/Contents/Resources/other/darwin-${arch}/ffmpeg`]) assert.equal(skip.test(file), false);
-    const unsigned = injectReleaseCapture(signed, { platform: 'darwin', arch, captureDir: '/unsigned', noticesDir: '/notices' });
+    const unsigned = injectReleaseCapture(signed, { platform: 'darwin', arch, captureDir: '/unsigned' });
     assert.deepEqual(unsigned.mac.signIgnore, ['existing-plugin$']);
   }
 });
 
 test('Mac signed release preparation injects staging only after signing succeeds; unsigned release never requests signing', async (t) => {
   const f = fixture(t, 'darwin', 'arm64'), signer = fakeSigner();
-  const common = { platform: 'darwin', arch: 'arm64', nativePlatform: 'darwin', nativeArch: 'arm64', prepare: async () => {}, inspect: f.inspect, notices: async (_root, { outDir }) => { fs.mkdirSync(outDir, { recursive: true }); core.atomicJson(path.join(outDir, 'third-party-notices.json'), { components: [] }); } };
+  const common = { platform: 'darwin', arch: 'arm64', nativePlatform: 'darwin', nativeArch: 'arm64', prepare: async () => {}, inspect: f.inspect };
   const before = fs.readFileSync(f.files.packageFile, 'utf8');
   await assert.rejects(prepareReleaseCapture(f.root, { ...common, macSigning: true, signIdentity: '', tools: signer.tools }), /explicit signing identity/);
   await assert.rejects(prepareReleaseCapture(f.root, { ...common, macSigning: true, signIdentity: 'test', tools: { ...signer.tools, run: async (command, args) => {
@@ -220,7 +211,7 @@ test('Mac post-build verifies signed staging provenance and final signed bytes, 
   const f = fixture(t, 'darwin', 'arm64'), signer = fakeSigner();
   const staged = await stageSignedCaptureResource(f.root, f.admitted, { arch: 'arm64', identity: 'test', tools: signer.tools });
   const pkg = core.readJson(f.files.packageFile);
-  pkg.build = injectReleaseCapture(pkg.build, { captureDir: staged.dir, noticesDir: f.files.noticesDir, platform: 'darwin', arch: 'arm64', macPreSigned: true });
+  pkg.build = injectReleaseCapture(pkg.build, { captureDir: staged.dir, platform: 'darwin', arch: 'arm64', macPreSigned: true });
   core.atomicJson(f.files.packageFile, pkg);
   f.copy(staged.dir);
   const verify = () => verifyReleaseCaptureOutput(f.root, f.output, { platform: 'darwin', arch: 'arm64', inspect: f.inspect, tools: signer.tools });

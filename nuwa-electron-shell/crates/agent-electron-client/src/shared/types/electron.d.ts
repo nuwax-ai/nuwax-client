@@ -6,7 +6,6 @@ export type {
 // Type definitions for Electron API exposed via preload
 import type { HostBridgeContract } from './hostBridge';
 import type { HostCaptureBridge } from '../features/capture/contract';
-import type { NoticesBridge } from '../features/open-source-notices/contract';
 import type { ComputerUseAPI } from '../features/computer-use/contract';
 
 /** 业务 webview 契约来自前端 canonical 的生成快照，与宿主 renderer 的 ElectronAPI 分开。 */
@@ -726,7 +725,6 @@ export interface QuickInitAPI {
 export interface ElectronAPI {
   browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;
-  notices: NoticesBridge;
   /** 已注册的桌面特性 id（用于显示/隐藏宿主壳入口）。 */
   features: { registered: () => Promise<string[]> };
   versions: {

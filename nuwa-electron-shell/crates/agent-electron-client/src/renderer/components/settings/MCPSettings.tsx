@@ -395,12 +395,15 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
 
   const currentConfig = getCurrentConfigForUi();
   const currentServers = currentConfig?.mcpServers ?? {};
-  const serverEntries = Object.entries(currentServers);
+  // 仅隐藏普通列表和计数中的宿主入口；保存与编辑仍使用完整配置，保留 Agent 的 MCP 连接。
+  const serverEntries = Object.entries(currentServers).filter(
+    ([serverId]) => !isComputerUseManagedServerId(serverId),
+  );
   const enabledCount = serverEntries.filter(
     ([, entry]) => !!entry.enabled,
   ).length;
 
-  // cua 条目跟随设置页「Computer Use」开关联动，此处一律拒绝手动改动。
+  // cua 入口由宿主管理，实际功能开关只能在 Computer Use 设置中修改。
   const warnIfCuaManaged = (serverId: string): boolean => {
     if (isComputerUseManagedServerId(serverId)) {
       message.warning(t("Claw.MCP.list.computerUseManagedNotice"));
@@ -446,9 +449,9 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
     }
     const nextServers: Record<string, McpServerEntry> = {};
     for (const [serverId, entry] of Object.entries(latest.mcpServers)) {
-      // cua 跟随设置页「Computer Use」开关联动，同样不参与「全部停用」
+      // 保留宿主管理的 cua MCP 入口；不影响 Computer Use 实际开关。
       if (isComputerUseManagedServerId(serverId)) {
-        nextServers[serverId] = { ...entry, enabled: true };
+        nextServers[serverId] = entry;
         continue;
       }
       nextServers[serverId] = { ...entry, enabled: false };
@@ -729,30 +732,23 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                   <List
                     dataSource={serverEntries}
                     renderItem={([serverId, entry]) => {
-                      const isManagedCua = isComputerUseManagedServerId(serverId);
                       const isStdio = "command" in entry;
                       const { display: summary, full: summaryFull } =
                         formatMcpServerSummary(serverId, entry);
                       return (
                         <List.Item
                           actions={[
-                            <Tooltip
-                              key="enabled"
-                              title={isManagedCua ? t("Claw.MCP.list.computerUseManagedSwitchTooltip") : undefined}
-                            >
-                              <span>
-                                <Switch
-                                  checked={isManagedCua ? true : !!entry.enabled}
-                                  disabled={isManagedCua}
-                                  checkedChildren={t("Claw.MCP.switch.enable")}
-                                  unCheckedChildren={t("Claw.MCP.switch.disable")}
-                                  onChange={(checked) =>
-                                    handleToggleServerEnabled(serverId, checked)
-                                  }
-                                />
-                              </span>
-                            </Tooltip>,
-                            <>
+                            <span key="enabled">
+                              <Switch
+                                checked={!!entry.enabled}
+                                checkedChildren={t("Claw.MCP.switch.enable")}
+                                unCheckedChildren={t("Claw.MCP.switch.disable")}
+                                onChange={(checked) =>
+                                  handleToggleServerEnabled(serverId, checked)
+                                }
+                              />
+                            </span>,
+                            <span key="actions">
                               <Button
                                 key="test"
                                 size="small"
@@ -765,36 +761,22 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                 }
                                 onClick={() => handleTestServer(serverId)}
                               />
-                              <Tooltip
+                              <Button
                                 key="edit"
-                                title={isManagedCua ? t("Claw.MCP.list.computerUseManagedActionTooltip") : undefined}
-                              >
-                                <span>
-                                  <Button
-                                    size="small"
-                                    type="text"
-                                    icon={<EditOutlined />}
-                                    disabled={isManagedCua}
-                                    onClick={() => handleOpenEditorEdit(serverId)}
-                                  />
-                                </span>
-                              </Tooltip>
-                              <Tooltip
+                                size="small"
+                                type="text"
+                                icon={<EditOutlined />}
+                                onClick={() => handleOpenEditorEdit(serverId)}
+                              />
+                              <Button
                                 key="delete"
-                                title={isManagedCua ? t("Claw.MCP.list.computerUseManagedActionTooltip") : undefined}
-                              >
-                                <span>
-                                  <Button
-                                    danger
-                                    type="text"
-                                    loading={deletingServerId === serverId}
-                                    disabled={isManagedCua}
-                                    icon={<DeleteOutlined />}
-                                    onClick={() => handleDeleteServer(serverId)}
-                                  />
-                                </span>
-                              </Tooltip>
-                            </>,
+                                danger
+                                type="text"
+                                loading={deletingServerId === serverId}
+                                icon={<DeleteOutlined />}
+                                onClick={() => handleDeleteServer(serverId)}
+                              />
+                            </span>,
                           ]}
                         >
                           <List.Item.Meta
@@ -804,13 +786,6 @@ function MCPSettings({ isOpen = true }: MCPSettingsProps) {
                                 <Tag color={isStdio ? "blue" : "purple"}>
                                   {isStdio ? "stdio" : "remote"}
                                 </Tag>
-                                {isManagedCua ? (
-                                  <Tooltip title={t("Claw.MCP.list.computerUseManagedTagTooltip")}>
-                                    <Tag color="gold">
-                                      {t("Claw.MCP.list.computerUseManagedTag")}
-                                    </Tag>
-                                  </Tooltip>
-                                ) : null}
                               </Space>
                             }
                             description={

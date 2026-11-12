@@ -27,6 +27,7 @@ test('pack resource selection excludes tool download caches without changing the
     'resources/git/LICENSE.txt', 'resources/git/share/archive.zip',
     'resources/git/share/.cache/runtime-index', 'resources/node/node.exe',
     'resources/uv/bin/uv', 'resources/ripgrep/bin/rg', 'frontend/download.zip',
+    'third-party/licenses/standalone.txt', 'third-party/sources/source.tar.gz',
   ];
   const caches = ['git', 'node', 'uv', 'ripgrep'].map(name => `resources/${name}/.cache/download.zip`);
   for (const file of [...files, ...caches]) {
@@ -34,8 +35,8 @@ test('pack resource selection excludes tool download caches without changing the
     fs.writeFileSync(path.join(root, file), file);
   }
   const pkg = { build: {
-    extraResources: ['resources/ripgrep', ...['node', 'uv'].map(name => ({ from: `resources/${name}`, to: name }))],
-    win: { extraResources: [{ from: 'resources/git', to: 'git', filter: ['**/*'] }] },
+    extraResources: ['resources/ripgrep', 'third-party', { from: 'third-party', to: 'third-party' }, ...['node', 'uv'].map(name => ({ from: `resources/${name}`, to: name }))],
+    win: { extraResources: [{ from: 'resources/git', to: 'git', filter: ['**/*'] }, { from: 'third-party', to: 'third-party/capture' }] },
   } };
   const build = builderConfig(pkg, {
     frontendDist: path.join(root, 'frontend'), output, platform: 'win32',
@@ -55,6 +56,7 @@ test('pack resource selection excludes tool download caches without changing the
   for (const name of ['git', 'node', 'uv', 'resources/ripgrep']) {
     assert.equal(fs.existsSync(path.join(resources, name, '.cache')), false, `${name} download cache leaked into payload`);
   }
+  assert.equal(fs.existsSync(path.join(resources, 'third-party')), false);
   for (const file of caches) assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), file, 'development cache source must remain untouched');
 });
 
@@ -213,9 +215,8 @@ test('source pack builds fresh frontend before builder and does not edit base pa
       return { distDir, sourceSha: 'abcdefg' };
     },
     prepareComputerUse: async () => { events.push('helper'); return path.join(p.client, 'resources/computer-use'); },
-    generateNotices: async (_root, options) => { assert.equal(options.strict, true); assert.ok(options.resourcePaths['computer-use']); events.push('notices'); },
   });
-  assert.deepEqual(events, ['prepare', 'frontend', 'helper', 'notices', 'build', 'builder']);
+  assert.deepEqual(events, ['prepare', 'frontend', 'helper', 'build', 'builder']);
   assert.equal(fs.readFileSync(packageFile, 'utf8'), packageText);
 });
 
@@ -246,7 +247,6 @@ test('default pack consumes configured frontend pin and creates complete package
     },
     buildFrontend: async () => { assert.fail('default pack must consume its prepared pin'); },
     prepareComputerUse: async () => path.join(p.client, 'resources/computer-use'),
-    generateNotices: async (_root, options) => { assert.equal(options.strict, true); },
     verifyPackagePayload: async (output, options) => {
       assert.equal(output, path.join(root, config.pack.outputDir, '1.2.3'));
       assert.equal(options.platform, 'darwin');
@@ -260,11 +260,11 @@ test('default pack consumes configured frontend pin and creates complete package
   assert.equal(result.output, path.join(root, config.pack.outputDir, '1.2.3'));
 });
 
-test('capture and notices use independent commercial resource paths and include source archives', () => {
+test('capture keeps only runtime files and excludes standalone notices', () => {
   const pkg = { build: { extraResources: [{ from: 'stale', to: 'capture' }, { from: 'stale-notices', to: 'third-party' }] } };
-  const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', noticesDir: '/commercial/.cache/notices', frontendDist: '/frontend', output: '/output',
+  const result = builderConfig(pkg, { captureDir: '/commercial/resources/capture/darwin-arm64', frontendDist: '/frontend', output: '/output',
     builderVersions: { electronBuilder: '25.1.8', appBuilderLib: '25.1.8' } });
   assert.equal(result.extraResources.filter((entry) => entry.to.startsWith('capture')).length, 1);
   assert.deepEqual(result.extraResources.find((entry) => entry.to.startsWith('capture')), { from: '/commercial/resources/capture/darwin-arm64', to: 'capture/darwin-arm64', filter: ['ffmpeg', 'ffmpeg.exe', 'resource.json', 'koffi.node', 'koffi.json'] });
-  assert.deepEqual(result.extraResources.find((entry) => entry.to === 'third-party').filter, ['third-party-notices.json', 'licenses/**', 'sources/**']);
+  assert.equal(result.extraResources.some((entry) => entry.to === 'third-party'), false);
 });

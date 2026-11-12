@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-/** Release workflows use the same locked resource admission as local pack.
- * The notices under third-party/capture cover capture only, not the whole app. */
+/** Release workflows use the same locked resource admission as local pack. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as core from './client/core.mjs';
-import { assertCaptureWindowsToolchain, inspectCaptureResource, prepareCaptureResources, sha256, writeCaptureNotices } from './client/capture-resources.mjs';
+import { assertCaptureWindowsToolchain, inspectCaptureResource, prepareCaptureResources, sha256 } from './client/capture-resources.mjs';
 import { CAPTURE_RESOURCE_FILES } from './client/capture-window-resources.mjs';
 
 export const WINDOWS_RUNTIME_VERSION = '13.0.0.r354.g40ab95d18-1';
@@ -19,7 +18,6 @@ export const WINDOWS_RUNTIME_PACKAGES = [
 export function releaseCapturePaths(root, platform, arch) {
   return {
     packageFile: path.join(core.paths(root).client, 'package.json'),
-    noticesDir: path.join(core.paths(root).cache, 'release-capture-notices', `${platform}-${arch}`),
     signingDir: path.join(core.paths(root).cache, 'release-capture-signed', `${platform}-${arch}`),
   };
 }
@@ -58,7 +56,7 @@ export async function configureWindowsCaptureToolchain(root, { location, arch, t
 }
 
 function isCaptureEntry(entry) {
-  return typeof entry === 'object' && entry !== null && /^(?:capture(?:\/|$)|third-party\/capture(?:\/|$))/.test(entry.to ?? '');
+  return typeof entry === 'object' && entry !== null && /^(?:capture|third-party)(?:\/|$)/.test(entry.to ?? '');
 }
 
 export function captureMacSignIgnore(arch) {
@@ -101,9 +99,9 @@ export async function stageSignedCaptureResource(root, admitted, { arch, identit
   return { dir: signingDir, binary, record };
 }
 
-export function injectReleaseCapture(builder, { captureDir, noticesDir, platform, arch, macPreSigned = false }) {
+export function injectReleaseCapture(builder, { captureDir, platform, arch, macPreSigned = false }) {
   const result = structuredClone(builder ?? {});
-  // Remove stale platform-specific entries too; leave all other notices intact.
+  // Replace stale platform-specific capture mappings too.
   for (const config of [result, result.mac, result.win, result.linux]) {
     if (config?.extraResources) config.extraResources = config.extraResources.filter((entry) => !isCaptureEntry(entry));
   }
@@ -118,7 +116,6 @@ export function injectReleaseCapture(builder, { captureDir, noticesDir, platform
   result.extraResources ??= [];
   result.extraResources.push(
     { from: captureDir, to: `capture/${platform}-${arch}`, filter: CAPTURE_RESOURCE_FILES },
-    { from: noticesDir, to: 'third-party/capture', filter: ['third-party-notices.json', 'licenses/**', 'sources/**'] },
   );
   return result;
 }
@@ -126,7 +123,7 @@ export function injectReleaseCapture(builder, { captureDir, noticesDir, platform
 export async function prepareReleaseCapture(root, {
   platform = process.platform, arch = process.arch, nativePlatform = process.platform, nativeArch = process.arch,
   msys2Location = process.env.MSYS2_LOCATION, tools = core, prepare = prepareCaptureResources,
-  inspect = inspectCaptureResource, notices = writeCaptureNotices, configureWindows = configureWindowsCaptureToolchain,
+  inspect = inspectCaptureResource, configureWindows = configureWindowsCaptureToolchain,
   macSigning = process.env.NUWAX_CAPTURE_MAC_SIGNING === 'true', signIdentity = process.env.APPLE_SIGNING_IDENTITY,
   signKeychain = process.env.CSC_KEYCHAIN, stageSigned = stageSignedCaptureResource,
 } = {}) {
@@ -141,11 +138,7 @@ export async function prepareReleaseCapture(root, {
   const captureDir = platform === 'darwin' && macSigning
     ? (await stageSigned(root, admitted, { arch, identity: signIdentity, keychain: signKeychain, tools })).dir
     : admitted.dir;
-  // Fresh output prevents stale licenses/sources from an earlier target.
-  fs.rmSync(files.noticesDir, { recursive: true, force: true });
-  await notices(root, { platform, arch, outDir: files.noticesDir });
-  if (!fs.existsSync(path.join(files.noticesDir, 'third-party-notices.json'))) throw new Error('[release-capture] Capture notices were not generated');
-  pkg.build = injectReleaseCapture(pkg.build, { captureDir, noticesDir: files.noticesDir, platform, arch, macPreSigned: platform === 'darwin' && macSigning });
+  pkg.build = injectReleaseCapture(pkg.build, { captureDir, platform, arch, macPreSigned: platform === 'darwin' && macSigning });
   tools.atomicJson(files.packageFile, pkg);
   return { ...files, captureDir };
 }
@@ -169,21 +162,12 @@ function verifyCopy(source, target, { executable = false } = {}) {
   if (executable && process.platform !== 'win32' && !(fs.statSync(target).mode & 0o111)) throw new Error(`[release-capture] Packaged encoder is not executable: ${target}`);
 }
 
-function verifyTree(source, target) {
-  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    const from = path.join(source, entry.name), to = path.join(target, entry.name);
-    if (entry.isDirectory()) verifyTree(from, to);
-    else if (entry.isFile()) verifyCopy(from, to);
-    else throw new Error(`[release-capture] Unexpected notice symlink: ${from}`);
-  }
-}
-
 /** Check the real default runtime resource path after builder, before upload. */
 export async function verifyReleaseCaptureOutput(root, output, { platform = process.platform, arch = process.arch, inspect = inspectCaptureResource, tools = core } = {}) {
   const roots = resourceRoots(output);
   const admitted = await inspect(root, { platform, arch });
   if (!admitted) throw new Error('[release-capture] Source encoding resource is no longer verified');
-  const { noticesDir, signingDir, packageFile } = releaseCapturePaths(root, platform, arch);
+  const { signingDir, packageFile } = releaseCapturePaths(root, platform, arch);
   let expected = admitted;
   if (platform === 'darwin') {
     const builder = tools.readJson(packageFile).build;
@@ -200,8 +184,6 @@ export async function verifyReleaseCaptureOutput(root, output, { platform = proc
       expected = { dir: signingDir, binary, record };
     }
   }
-  const noticeFile = path.join(noticesDir, 'third-party-notices.json');
-  if (!fs.existsSync(noticeFile)) throw new Error('[release-capture] Expected capture notices are missing');
   for (const resources of roots) {
     const capture = path.join(resources, 'capture', `${platform}-${arch}`);
     verifyCopy(expected.binary, path.join(capture, platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'), { executable: platform !== 'win32' });
@@ -215,7 +197,6 @@ export async function verifyReleaseCaptureOutput(root, output, { platform = proc
       verifyCopy(native, path.join(capture, 'koffi.node'));
       verifyCopy(path.join(expected.dir, 'koffi.json'), path.join(capture, 'koffi.json'));
     }
-    verifyTree(noticesDir, path.join(resources, 'third-party/capture'));
   }
   return { roots, capture: true };
 }
@@ -232,7 +213,7 @@ async function main() {
   const options = { arch: option('--arch', process.arch) };
   const output = option('--verify-output', null);
   const result = output ? await verifyReleaseCaptureOutput(root, output, options) : await prepareReleaseCapture(root, options);
-  console.log(`[release-capture] ${output ? 'Verified packaged resources' : 'Prepared locked encoding resource and capture-only notices'}`);
+  console.log(`[release-capture] ${output ? 'Verified packaged resources' : 'Prepared locked encoding resource'}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error.message); process.exitCode = 1; });
