@@ -92,7 +92,11 @@ button.fontPreset.selected,button.fontPreset[aria-pressed=true]{color:#1456d9}
 .mask{cursor:crosshair}
 .hint{position:fixed;z-index:3;left:50%;transform:translateX(-50%);max-width:calc(100vw - 24px);padding:9px 13px;border:1px solid #ffffff1c;border-radius:8px;background:#151e29ee;color:#d7e1ec;line-height:1.5;text-align:center;box-shadow:0 4px 16px #0003;pointer-events:none}
 .dimensions{white-space:nowrap;position:fixed;z-index:4;padding:4px 8px;border:1px solid #ffffff24;border-radius:5px;background:#151e29ed;color:#e6edf5;font-size:11px;font-variant-numeric:tabular-nums;box-shadow:0 2px 8px #0003;pointer-events:none}
-.magnifier{position:fixed;z-index:4;width:160px;height:160px;border:2px solid #d6eee7;border-radius:8px;box-shadow:0 8px 28px #0007;pointer-events:none}
+.magnifier{position:fixed;z-index:4;width:184px;overflow:hidden;border:2px solid #d6eee7;border-radius:8px;background:#151e29;color:#edf1f7;box-shadow:0 8px 28px #0007;pointer-events:none;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.magnifierPreview{display:block;width:180px;height:180px}
+.pixelPosition{padding:7px 8px 3px;border-top:1px solid #ffffff24}
+.pixelColor{display:flex;align-items:center;gap:6px;padding:0 8px 7px}
+.pixelSwatch{width:11px;height:11px;flex-shrink:0;border:1px solid #ffffff70;border-radius:2px}
 .tooltip{position:fixed;z-index:20;max-width:calc(100vw - 16px);padding:6px 9px;border:1px solid #ffffff25;border-radius:6px;background:#101720fa;color:#e8eff7;font-size:11px;line-height:1.5;box-shadow:0 4px 14px #0004;pointer-events:none;white-space:normal}
 .sourceGrid{position:fixed;z-index:6;inset:76px clamp(12px,4vw,50px) 85px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:12px;align-content:start;overflow:auto;padding:clamp(12px,2vw,20px);border:1px solid #ffffff25;border-radius:14px;background:#18212af7;box-shadow:0 16px 48px #0005;scrollbar-width:thin;scrollbar-color:#4b5b6b transparent}
 button.source{min-width:0;min-height:160px;display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:10px;border:1px solid #ffffff12;border-radius:9px;background:#ffffff05;white-space:normal;overflow:hidden;text-align:left}

@@ -82,6 +82,7 @@ export async function mountCaptureWindow(
   let mode: 'screen' | 'window' | 'region' = 'region';
   let crop: CaptureRect | null = null;
   let tool: CaptureAnnotation['tool'] | 'select' | null = null;
+  const annotationTools = ['rectangle', 'ellipse', 'line', 'arrow', 'pen', 'text', 'mosaic'] as const;
   let active: CaptureAnnotation | null = null;
   let selectedIndex: number | null = null;
   let annotationDrag: { index: number; original: CaptureAnnotation; start: AnnotationPoint; handle: number | null; moved: boolean } | null = null;
@@ -122,7 +123,15 @@ export async function mountCaptureWindow(
   const hint = node('div', 'hint', labels.selectHint);
   const tooltip = node('div', 'tooltip'); tooltip.hidden = true; tooltip.setAttribute('role', 'tooltip');
   const dimensions = node('div', 'dimensions');
-  const magnifier = node('canvas', 'magnifier'); magnifier.width = 160; magnifier.height = 160;
+  const magnifier = node('div', 'magnifier');
+  const magnifierPreview = node('canvas', 'magnifierPreview'); magnifierPreview.width = 180; magnifierPreview.height = 180;
+  const pixelPosition = node('div', 'pixelPosition');
+  const pixelColor = node('div', 'pixelColor'), pixelSwatch = node('span', 'pixelSwatch'), pixelRgb = node('span', 'pixelRgb');
+  pixelColor.append(pixelSwatch, pixelRgb);
+  magnifier.append(magnifierPreview, pixelPosition, pixelColor);
+  // Read one original pixel, without allocating another full-resolution screen buffer.
+  const pixelSample = node('canvas'); pixelSample.width = pixelSample.height = 1;
+  const pixelContext = pixelSample.getContext('2d', { willReadFrequently: true })!;
   const textInput = node('textarea', 'textInput'); textInput.placeholder = labels.textHint;
   textInput.rows = 1; textInput.wrap = 'off'; textInput.setAttribute('aria-label', labels.textHint);
   textInput.style.userSelect = 'text';
@@ -144,7 +153,8 @@ export async function mountCaptureWindow(
     if (!button || !dock.contains(button) || button.disabled) { hideTooltip(); return; }
     const label = button.getAttribute('aria-label');
     if (!label) return;
-    const shortcut = button.dataset.action === 'confirm' ? 'Enter' : button.dataset.action === 'cancel' ? 'Esc' : '';
+    const shortcut = button.dataset.action === 'confirm' ? 'Enter' : button.dataset.action === 'cancel' ? 'Esc'
+      : button.dataset.action === 'line' ? labels.lineHint : '';
     tooltip.textContent = shortcut ? `${label} · ${shortcut}` : label;
     const display = displayFrame.selection.displayBounds;
     const area = previewPresentation ? { x: 0, y: 0, width: innerWidth, height: innerHeight }
@@ -221,7 +231,7 @@ export async function mountCaptureWindow(
   }
   function handles(annotation: CaptureAnnotation) {
     if (annotation.tool === 'text') return [];
-    if (annotation.tool === 'arrow') return [annotation.points[0], annotation.points[annotation.points.length - 1]];
+    if (annotation.tool === 'line' || annotation.tool === 'arrow') return [annotation.points[0], annotation.points[annotation.points.length - 1]];
     const b = painter.bounds(context, annotation);
     return [{ x: b.x, y: b.y }, { x: b.x + b.width, y: b.y }, { x: b.x + b.width, y: b.y + b.height }, { x: b.x, y: b.y + b.height }];
   }
@@ -352,7 +362,7 @@ export async function mountCaptureWindow(
       const chosen = Number(preset.dataset.size) === Number(fontSize.value);
       preset.classList.toggle('selected', chosen); preset.setAttribute('aria-pressed', String(chosen));
     }
-    for (const key of ['screen', 'window', 'region', 'select', 'rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic']) {
+    for (const key of ['screen', 'window', 'region', 'select', ...annotationTools]) {
       const selected = ['screen', 'window', 'region'].includes(key) ? mode === key : tool === key;
       buttons[key].classList.toggle('selected', selected); buttons[key].setAttribute('aria-pressed', String(selected));
     }
@@ -437,7 +447,7 @@ export async function mountCaptureWindow(
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); finishText(e.key === 'Enter'); }
   };
-  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; cropDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; }
+  function clear() { finishText(false); propertyChange = null; selectedIndex = null; annotationDrag = null; cropDrag = null; history.clear(); active = null; tool = null; hover = null; press = null; magnifier.hidden = true; }
   /** Hover detection runs only over this display's own frozen frame, before any selection exists. */
   function detecting() { return regions !== undefined && mode === 'region' && !crop && !drag && frame.selection.sourceId === displayFrame.selection.sourceId; }
   function updateHover(p: { x: number; y: number }) {
@@ -454,6 +464,7 @@ export async function mountCaptureWindow(
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
   function chooseAction(action: typeof captureAction) {
     if (busy || drag || cropDrag || annotationDrag || active) return;
+    magnifier.hidden = true;
     finishText(); finishPropertyChange(); tool = null; selectedIndex = null;
     captureAction = action; captureMode = action === 'screenshot' ? 'still' : 'record';
     if (action !== 'screenshot') recordingAction = action;
@@ -504,7 +515,7 @@ export async function mountCaptureWindow(
   buttonVisual(confirmButton, captureMode === 'record' ? null : 'confirm', captureMode === 'record' ? labels.record : labels.confirm, captureMode === 'record');
   buttons.confirm.classList.add('primary');
   button(toolGroup, 'select', labels.select, () => { finishText(); finishPropertyChange(); tool = 'select'; draw(); });
-  for (const key of ['rectangle', 'ellipse', 'arrow', 'pen', 'text', 'mosaic'] as const) {
+  for (const key of annotationTools) {
     button(toolGroup, key, labels[key], () => { finishText(); finishPropertyChange(); selectedIndex = null; tool = tool === key ? 'select' : key; draw(); });
   }
   const swatches = ['#ff3b52', '#f6c445', '#36d5ae', '#4d9fff', '#ffffff'].map(value => {
@@ -580,18 +591,38 @@ export async function mountCaptureWindow(
   }
   function showMagnifier(e: MouseEvent, p: { x: number; y: number }) {
     const r = bounds();
-    if (crop && !drag || e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) { magnifier.hidden = true; return; }
+    if (busy || crop && !drag && (captureMode !== 'still' || cropDrag || annotationDrag || active || pendingText)
+      || e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) { magnifier.hidden = true; return; }
+    const x = Math.max(0, Math.min(frame.width - 1, Math.floor(p.x)));
+    const y = Math.max(0, Math.min(frame.height - 1, Math.floor(p.y)));
+    pixelContext.clearRect(0, 0, 1, 1);
+    pixelContext.drawImage(image, x, y, 1, 1, 0, 0, 1, 1);
+    const [red, green, blue] = pixelContext.getImageData(0, 0, 1, 1).data;
+    const rgb = `rgb(${red}, ${green}, ${blue})`;
+    pixelPosition.textContent = `${labels.pixelPosition}: ${x}, ${y}`;
+    pixelRgb.textContent = `RGB: ${red}, ${green}, ${blue}`;
+    pixelSwatch.style.backgroundColor = rgb;
     magnifier.hidden = false;
-    magnifier.style.left = `${Math.max(0, Math.min(innerWidth - 170, e.clientX + 22))}px`;
-    magnifier.style.top = `${Math.max(54, Math.min(innerHeight - 170, e.clientY + 22))}px`;
-    const ctx = magnifier.getContext('2d')!; ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, 160, 160);
-    ctx.drawImage(image, p.x - 20, p.y - 20, 40, 40, 0, 0, 160, 160);
-    ctx.strokeStyle = '#36d5ae'; ctx.beginPath(); ctx.moveTo(80, 0); ctx.lineTo(80, 160); ctx.moveTo(0, 80); ctx.lineTo(160, 80); ctx.stroke();
+    const left = e.clientX + 22 + magnifier.offsetWidth <= innerWidth - 8 ? e.clientX + 22 : e.clientX - magnifier.offsetWidth - 22;
+    const top = e.clientY + 22 + magnifier.offsetHeight <= innerHeight - 8 ? e.clientY + 22 : e.clientY - magnifier.offsetHeight - 22;
+    magnifier.style.left = `${Math.max(8, Math.min(innerWidth - magnifier.offsetWidth - 8, left))}px`;
+    magnifier.style.top = `${Math.max(8, Math.min(innerHeight - magnifier.offsetHeight - 8, top))}px`;
+    const ctx = magnifierPreview.getContext('2d')!; ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, 180, 180);
+    // An odd 45-pixel sample puts the sampled pixel at the center of the crosshair.
+    ctx.drawImage(image, x - 22, y - 22, 45, 45, 0, 0, 180, 180);
+    ctx.strokeStyle = '#36d5ae'; ctx.beginPath(); ctx.moveTo(90, 0); ctx.lineTo(90, 88); ctx.moveTo(90, 92); ctx.lineTo(90, 180);
+    ctx.moveTo(0, 90); ctx.lineTo(88, 90); ctx.moveTo(92, 90); ctx.lineTo(180, 90); ctx.stroke();
+    ctx.strokeRect(88.5, 88.5, 3, 3);
+  }
+  function lineEnd(start: AnnotationPoint, end: AnnotationPoint, horizontalOrVertical: boolean) {
+    if (!horizontalOrVertical) return end;
+    return Math.abs(end.x - start.x) >= Math.abs(end.y - start.y) ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
   }
   mask.onpointerdown = (e) => {
     if (e.button !== 0 || busy || mode === 'window' && !sourceGrid.hidden) return;
     hideTooltip();
+    magnifier.hidden = true;
     // 阻止画布抢焦点，并在切换标注前提交当前编辑。
     e.preventDefault(); finishText(); finishPropertyChange();
     mask.setPointerCapture(e.pointerId);
@@ -636,8 +667,9 @@ export async function mountCaptureWindow(
       if (Math.hypot(p.x - start.x, p.y - start.y) > 2 * pixelScale()) annotationDrag.moved = true;
       if (annotationDrag.moved) {
         const b = painter.bounds(context, original), next = clipped(p);
-        if (handle !== null && original.tool === 'arrow') {
-          active = { ...original, points: original.points.map((point, index) => index === handle ? next : point) };
+        if (handle !== null && (original.tool === 'line' || original.tool === 'arrow')) {
+          const end = lineEnd(original.points[handle === 0 ? original.points.length - 1 : 0], next, original.tool === 'line' && e.shiftKey);
+          active = { ...original, points: original.points.map((point, index) => index === handle ? end : point) };
         } else if (handle !== null) {
           const opposite = handles(original)[(handle + 2) % 4];
           const target = rect(opposite, next);
@@ -654,7 +686,7 @@ export async function mountCaptureWindow(
     else if (active) {
       const next = clipped(p);
       if (active.tool === 'pen') active.points.push(next);
-      else active.points = [active.points[0], next];
+      else active.points = [active.points[0], lineEnd(active.points[0], next, active.tool === 'line' && e.shiftKey)];
     }
     if (drag || cropDrag || active) draw();
     if (!press && detecting()) updateHover(p);
