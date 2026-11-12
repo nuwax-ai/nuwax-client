@@ -28,6 +28,8 @@
  *   FORK_REPO       fork 仓库路径(默认 /Volumes/zhitai/git_workspace/fork-nuwax-codex)
  *   HARNESS_PROFILE cargo profile:release|dev(默认 release)
  *   HARNESS_VERSION 可选,打点到二进制的版本号(默认不打点,显示 0.0.0)
+ *   HARNESS_BUILD_JOBS 构建并发(默认 4;与 AGENTS.md 的限量并发约定一致)
+ *   CARGO_TARGET_DIR 若设置,构建与换入都使用它(不会再去读默认 target 目录)
  */
 import crypto from "node:crypto";
 import {spawnSync} from "node:child_process";
@@ -47,6 +49,12 @@ const VENDOR_ROOT = path.join(
   "nuwa-electron-shell/crates/agent-electron-client/resources/nuwax-harness-acp-ts/vendor/nuwax-harness",
 );
 const ENV_FILE = "/tmp/nuwax-v8.env";
+// 构建与换入必须用同一个 target 目录：接受 CARGO_TARGET_DIR 时，若换入仍读默认
+// 目录，会把上一次的旧产物装进去，sha 校验也拿旧文件自己跟自己比。
+const CARGO_TARGET_ROOT =
+  process.env.CARGO_TARGET_DIR || path.join(FORK_REPO, "codex-rs", "target");
+// 限量并发：两个 cargo 或按核数起 rustc 会把机器内存吃满（2026-11-12 事故）。
+const BUILD_JOBS = process.env.HARNESS_BUILD_JOBS || "4";
 const BACKUP_SUFFIX = ".released-orig";
 
 function fail(msg) {
@@ -268,13 +276,11 @@ async function main() {
     }
     const buildEnv = {
       cwd: path.join(FORK_REPO, "codex-rs"),
-      env: {...process.env, ...v8env,
-        CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || path.join(FORK_REPO, "codex-rs", "target"),
-      },
+      env: {...process.env, ...v8env, CARGO_TARGET_DIR: CARGO_TARGET_ROOT},
     };
-    run("cargo", ["build", ...profileArgs, "--manifest-path", manifest,
+    run("cargo", ["build", ...profileArgs, "-j", BUILD_JOBS, "--manifest-path", manifest,
       "-p", "codex-cli", "--bin", "codex"], buildEnv);
-    run("cargo", ["build", ...profileArgs, "--manifest-path", manifest,
+    run("cargo", ["build", ...profileArgs, "-j", BUILD_JOBS, "--manifest-path", manifest,
       "-p", "codex-code-mode-host"], buildEnv);
   } finally {
     if (unstamp) unstamp();
@@ -282,7 +288,7 @@ async function main() {
 
   // 3. 替换 vendor
   const vendorDir = currentVendorDir();
-  const targetDir = path.join(FORK_REPO, "codex-rs", "target", PROFILE === "release" ? "release" : "debug");
+  const targetDir = path.join(CARGO_TARGET_ROOT, PROFILE === "release" ? "release" : "debug");
   const pairs = [
     ["codex", "nuwax-harness"],
     ["codex-code-mode-host", "codex-code-mode-host"],
