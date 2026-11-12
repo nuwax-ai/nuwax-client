@@ -170,7 +170,7 @@
   "Claw.AutoUpdater.alreadyLatest": "目前已是最後版本",
   "Claw.AutoUpdater.unsupportedInstall": "目前安裝方式不支援自動更新，請前往官網下載頁下載最新安裝包。",
   "Claw.AutoUpdater.downloadInstallNow": "是否立即下載並安裝更新？",
-  "Claw.AutoUpdater.downloadNow": "立即更新",
+  "Claw.AutoUpdater.downloadNow": "下載並更新用戶端",
   "Claw.AutoUpdater.later": "稍後再說",
   "Claw.AutoUpdater.close": "關閉",
   "Claw.AutoUpdater.downloadPage": "前往下載頁",
