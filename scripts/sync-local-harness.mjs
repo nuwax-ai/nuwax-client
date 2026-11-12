@@ -51,8 +51,11 @@ const VENDOR_ROOT = path.join(
 const ENV_FILE = "/tmp/nuwax-v8.env";
 // 构建与换入必须用同一个 target 目录：接受 CARGO_TARGET_DIR 时，若换入仍读默认
 // 目录，会把上一次的旧产物装进去，sha 校验也拿旧文件自己跟自己比。
-const CARGO_TARGET_ROOT =
-  process.env.CARGO_TARGET_DIR || path.join(FORK_REPO, "codex-rs", "target");
+// cargo 的工作目录是 fork 的 codex-rs，所以相对的 CARGO_TARGET_DIR 必须按那里
+// 解析成绝对路径；否则脚本按自己的 cwd 读文件，两边指向不同目录。
+const CARGO_TARGET_ROOT = process.env.CARGO_TARGET_DIR
+  ? path.resolve(path.join(FORK_REPO, "codex-rs"), process.env.CARGO_TARGET_DIR)
+  : path.join(FORK_REPO, "codex-rs", "target");
 // 限量并发：两个 cargo 或按核数起 rustc 会把机器内存吃满（2026-11-12 事故）。
 const BUILD_JOBS = process.env.HARNESS_BUILD_JOBS || "4";
 const BACKUP_SUFFIX = ".released-orig";
