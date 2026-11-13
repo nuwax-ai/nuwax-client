@@ -9,6 +9,8 @@ Nuwax 客户端 → nuwax-harness-acp-ts → nuwax-harness app-server → 模型
 - 适配器：`@nuwax-ai/nuwax-harness-acp-ts`，入口 `dist/index.js`，由内置 Node 执行。
 - 引擎：适配器依赖的 `@nuwax-ai/nuwax-harness`；随包资源位于 `resources/nuwax-harness-acp-ts/vendor/nuwax-harness/<版本>/`。
 - `codex`、`codex-cli` 是既有引擎与会话标识；`nuwax-harness`、`nuwax-harness-acp-ts` 命令映射到相同实现。
+- 把该标识正名为 `nuwax-harness` 的提案（含改动清单与迁移风险）见
+  [engine-id-rename-codex-cli-to-nuwax-harness.md](engine-id-rename-codex-cli-to-nuwax-harness.md)，目前未开工。
 - ACP 继续承担会话、权限与消息通信。适配器解析失败直接报错。
 
 ## 资源准备
