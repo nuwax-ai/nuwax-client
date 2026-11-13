@@ -32,7 +32,12 @@ app.whenReady().then(async () => {
   BrowserWindow.prototype.show = function () {};
   BrowserWindow.prototype.showInactive = function () {};
   BrowserWindow.prototype.focus = function () {};
-  let image = nativeImage.createFromBitmap(Buffer.alloc(1920 * 1200 * 4, 255), { width: 1920, height: 1200 });
+  const initialPixels = Buffer.alloc(1920 * 1200 * 4, 255);
+  for (const [x, y, red, green, blue] of [[200, 200, 220, 214, 196], [400, 240, 12, 34, 56], [0, 0, 1, 2, 3], [1919, 1199, 98, 76, 54]]) {
+    const offset = (y * 1920 + x) * 4;
+    initialPixels[offset] = blue; initialPixels[offset + 1] = green; initialPixels[offset + 2] = red;
+  }
+  let image = nativeImage.createFromBitmap(initialPixels, { width: 1920, height: 1200 });
   const displays = [0, -960, 960].map((x, index) => ({
     id: index + 1, bounds: { x, y: 0, width: 960, height: 600 }, size: { width: 960, height: 600 }, scaleFactor: 2,
     workArea: { x, y: 0, width: 960, height: 600 },
@@ -66,9 +71,9 @@ app.whenReady().then(async () => {
     }
     return selectors;
   };
-  const mouse = async (selector: BrowserWindow, type: Electron.MouseInputEvent['type'], x: number, y: number) => {
+  const mouse = async (selector: BrowserWindow, type: Electron.MouseInputEvent['type'], x: number, y: number, modifiers: Electron.MouseInputEvent['modifiers'] = []) => {
     selector.webContents.focus();
-    selector.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1 });
+    selector.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1, modifiers });
     await delay();
   };
   const click = async (selector: BrowserWindow, x: number, y: number) => {
@@ -95,6 +100,12 @@ app.whenReady().then(async () => {
     else assert.ok(layout.scrollbarHeight >= 16, '超长单行必须保留占空间的原生滚动条进行验证');
   };
   const frame = (selector: BrowserWindow) => script(selector, `document.querySelector('.frame').toDataURL()`);
+  const pixelReading = (selector: BrowserWindow) => script(selector, `(()=>({
+    position:document.querySelector('.pixelPosition').textContent,rgb:document.querySelector('.pixelRgb').textContent,
+    swatch:document.querySelector('.pixelSwatch').style.backgroundColor,
+    center:[...document.querySelector('.magnifierPreview').getContext('2d').getImageData(90,90,1,1).data],
+    visible:!document.querySelector('.magnifier').hidden
+  }))()`);
   const drag = async (selector: BrowserWindow, from: [number, number], to: [number, number]) => {
     await mouse(selector, 'mouseDown', ...from); await mouse(selector, 'mouseMove', ...to); await mouse(selector, 'mouseUp', ...to);
   };
@@ -138,16 +149,41 @@ app.whenReady().then(async () => {
     const diagnostics = await Promise.all(selectors.map(async selector => ({ bounds: selector.getBounds(), contentBounds: selector.getContentBounds(),
       page: await script(selector, `({width:innerWidth,height:innerHeight,frame:document.querySelector('.frame').getBoundingClientRect().toJSON(),events:window.__captureInputEvents})`) })));
     assert.deepEqual(visible, selectors.map((_, index) => index === i), `跨屏后只能保留当前屏幕的放大框: ${JSON.stringify({ realDisplays, diagnostics })}`);
+    assert.deepEqual(await pixelReading(selectors[i]), {
+      position: '坐标: 200, 200', rgb: 'RGB: 220, 214, 196', swatch: 'rgb(220, 214, 196)', center: [220, 214, 196, 255], visible: true,
+    }, 'RGB、色块、中心像素与 2x 源像素坐标必须一致');
   }
   await script(selectors[2], `window.dispatchEvent(new Event('blur'))`);
   assert.equal(await script(selectors[2], `document.querySelector('.magnifier').hidden`), true);
 
   const current = selectors[0];
+  await mouse(current, 'mouseMove', 200, 120);
+  assert.equal((await pixelReading(current)).rgb, 'RGB: 12, 34, 56', '移动指针后颜色实时变化');
+  for (const [x, y, position, rgb] of [[0, 0, '0, 0', '1, 2, 3'], [959.75, 599.75, '1919, 1199', '98, 76, 54']] as const) {
+    // 亚 DIP 坐标补足真实整 DIP 输入不可达的最右下源像素。
+    await script(current, `document.querySelector('.mask').dispatchEvent(new PointerEvent('pointermove',{clientX:${x},clientY:${y}}))`);
+    const reading = await pixelReading(current);
+    assert.equal(reading.position, `坐标: ${position}`); assert.equal(reading.rgb, `RGB: ${rgb}`);
+    const layout = await script(current, `(()=>{const r=document.querySelector('.magnifier').getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:innerWidth,height:innerHeight}})()`);
+    assert.ok(layout.x >= 0 && layout.y >= 0 && layout.right <= layout.width && layout.bottom <= layout.height, '边缘取色面板须完整留在屏内');
+    assert.ok(!(x >= layout.x && x < layout.right && y >= layout.y && y < layout.bottom), '边缘翻转不得覆盖当前指针');
+  }
   // macOS 默认覆盖式滚动条不占高度；显式尺寸覆盖 Windows 等平台的经典滚动条。
   await current.webContents.insertCSS('.textInput::-webkit-scrollbar{width:16px;height:16px}');
   await mouse(current, 'mouseDown', 80, 80);
   await mouse(current, 'mouseMove', 700, 400);
+  assert.equal((await pixelReading(current)).visible, true, '拖框中仍显示实时 RGB');
   await mouse(current, 'mouseUp', 700, 400);
+  await mouse(current, 'mouseMove', 200, 120);
+  assert.equal((await pixelReading(current)).rgb, 'RGB: 12, 34, 56', '选区确认后也能移动取色');
+  await mouse(current, 'mouseMove', 30, 30);
+  assert.equal((await pixelReading(current)).rgb, 'RGB: 255, 255, 255', '取色读取原图，不读取选区外暗色遮罩');
+  if (process.env.NUWAX_CAPTURE_UI_SCREENSHOTS) {
+    const directory = path.resolve(process.env.NUWAX_CAPTURE_UI_SCREENSHOTS); mkdirSync(directory, { recursive: true });
+    writeFileSync(path.join(directory, 'rgb-magnifier.png'), (await current.webContents.capturePage()).toPNG());
+  }
+  await clickControl(current, '[data-action=line]');
+  assert.equal((await pixelReading(current)).visible, false, '进入工具栏时隐藏取色面板');
   await tool(current, 'text'); await click(current, 100, 100);
   assert.deepEqual(await editing(current), { focused: 'textInput', display: 'block', value: '' }, '真实点击后输入框必须保持焦点');
   await saveScreenshot(current, 'text-input-empty');
@@ -322,7 +358,7 @@ app.whenReady().then(async () => {
     checker[offset] = checker[offset + 1] = checker[offset + 2] = shade;
   }
   image = nativeImage.createFromBitmap(checker, { width: 1920, height: 1200 });
-  for (const name of ['rectangle', 'ellipse', 'arrow', 'pen', 'mosaic']) {
+  for (const name of ['rectangle', 'ellipse', 'line', 'arrow', 'pen', 'mosaic']) {
     pending = windows.captureStill(new AbortController().signal);
     const shapeWindow = (await prepared())[2];
     await tool(shapeWindow, 'screen'); await delay();
@@ -374,6 +410,38 @@ app.whenReady().then(async () => {
     console.log('PASS edit annotation', name);
   }
 
+  pending = windows.captureStill(new AbortController().signal);
+  const lineWindow = (await prepared())[0];
+  await tool(lineWindow, 'screen'); await delay(); await tool(lineWindow, 'line');
+  const lineBlank = await frame(lineWindow);
+  // Validate exported pixels without changing the composition canvas's readback mode.
+  const redAt = async (x: number, y: number) => {
+    const exported = nativeImage.createFromDataURL(await frame(lineWindow));
+    const offset = (y * exported.getSize().width + x) * 4, pixels = exported.toBitmap();
+    return pixels[offset] === 82 && pixels[offset + 1] === 59 && pixels[offset + 2] === 255;
+  };
+  for (const [start, end, on, off] of [
+    [[100, 100], [220, 110], [320, 200], [320, 210]],
+    [[350, 100], [360, 220], [700, 320], [710, 320]],
+  ] as const) {
+    await mouse(lineWindow, 'mouseDown', ...start);
+    await mouse(lineWindow, 'mouseMove', ...end, ['shift']);
+    await mouse(lineWindow, 'mouseUp', ...end, ['shift']);
+    assert.equal(await redAt(...on), true, 'Shift 绘制的线应严格水平或垂直');
+    assert.equal(await redAt(...off), false);
+    const drawn = await frame(lineWindow);
+    await tool(lineWindow, 'undo'); assert.equal(await frame(lineWindow) === lineBlank, true, `Shift line ${on}: undo should restore blank frame`);
+    await tool(lineWindow, 'redo'); assert.equal(await frame(lineWindow) === drawn, true, `Shift line ${on}: redo should restore segment`);
+    await tool(lineWindow, 'undo');
+  }
+  await drag(lineWindow, [100, 100], [220, 100]);
+  await drag(lineWindow, [220, 100], [260, 100]);
+  assert.equal(await redAt(500, 200), true, '水平线的端点应能继续沿水平方向调整');
+  await mouse(lineWindow, 'mouseMove', 160, 100);
+  assert.equal((await pixelReading(lineWindow)).rgb, 'RGB: 80, 80, 80', '已绘制标注不能污染原图取色');
+  await tool(lineWindow, 'confirm'); assert.ok(await pending);
+  console.log('PASS horizontal/vertical Shift lines, endpoint edits, undo/redo and original-frame RGB');
+
   // 独立的窄屏/底边选区场景，不改变前面原始图像尺寸与导出像素断言。
   for (const display of displays) {
     display.bounds.width = display.size.width = display.workArea.width = 480;
@@ -410,7 +478,10 @@ app.whenReady().then(async () => {
   await drag(interactive, [120, 120], [400, 300]);
   const selectedDimensions = await script(interactive, `document.querySelector('.dimensions').textContent`);
   assert.equal(await script(interactive, `document.querySelectorAll('.captureTabs button').length`), 2, '顶部只提供截图与录屏两个模式');
+  await mouse(interactive, 'mouseMove', 200, 200);
+  assert.equal((await pixelReading(interactive)).visible, true);
   await tool(interactive, 'mode-record');
+  assert.equal((await pixelReading(interactive)).visible, false, '切换录屏后隐藏截图取色面板');
   assert.equal(await visible(interactive, '.toolbar.tools'), false, '录屏模式隐藏标注工具');
   assert.equal(await script(interactive, `document.querySelector('[data-action=confirm]').textContent`), '开始录制');
   assert.equal(await visible(interactive, '.recordingPanel'), true);
@@ -528,6 +599,11 @@ app.whenReady().then(async () => {
   assert.equal(windowCatalogRequests, 1, '点击窗口入口才加载缩略图');
   await script(picker, `document.querySelector('.source[data-source="window:fixture"]').click()`);
   await script(picker, `new Promise(resolve=>{const check=()=>document.querySelector('.sourceGrid').hidden&&!document.querySelector('[data-action=confirm]').disabled?resolve(true):setTimeout(check,10);check()})`);
+  const fittedCenter = await script(picker, `(()=>{const r=document.querySelector('.frame').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  await script(picker, `document.querySelector('.mask').dispatchEvent(new PointerEvent('pointermove',{clientX:${fittedCenter.x},clientY:${fittedCenter.y}}))`);
+  const fittedPixel = await pixelReading(picker);
+  assert.equal(fittedPixel.position, '坐标: 960, 600', '窗口缩略展示须换算为来源原始像素');
+  assert.equal(fittedPixel.rgb, 'RGB: 80, 80, 80');
   await tool(picker, 'region');
   await tool(pickerSelectors[1], 'window');
   await script(pickerSelectors[1], `new Promise(resolve=>{const check=()=>document.querySelector('.source[data-source="window:fixture"]')?resolve(true):setTimeout(check,10);check()})`);
@@ -597,6 +673,11 @@ app.whenReady().then(async () => {
       for (const [index, scale] of scales.entries()) {
         const capture = windows.captureStill(new AbortController().signal);
         const selector = (await prepared(sources.map(source => source.thumbnail.getSize().width)))[index];
+        await mouse(selector, 'mouseMove', 101, 103);
+        const sampleX = Math.floor(101 * scale), sampleY = Math.floor(103 * scale);
+        const reading = await pixelReading(selector);
+        assert.equal(reading.position, `坐标: ${sampleX}, ${sampleY}`, `${scale}x RGB 使用源像素坐标`);
+        assert.equal(reading.rgb, `RGB: ${(sampleX + sampleY) % 256}, ${sampleY % 256}, ${sampleX % 256}`, `${scale}x RGB 须采样对应源像素`);
         await drag(selector, [81, 83], [321, 263]);
         const x = Math.round(81 * scale), y = Math.round(83 * scale);
         const expected = { x, y, width: Math.round(321 * scale) - x, height: Math.round(263 * scale) - y };
@@ -607,13 +688,13 @@ app.whenReady().then(async () => {
         assert.deepEqual(png.getSize(), { width: expected.width, height: expected.height }, `${scale}x PNG 尺寸应与选区一致`);
         assert.ok(png.toBitmap().equals(sources[index].thumbnail.crop(expected).toBitmap()), `${scale}x 导出像素应与原图裁剪逐像素一致`);
       }
-      console.log('PASS mixed-DPI source-pixel crop and PNG export', scales);
+      console.log('PASS mixed-DPI RGB, source-pixel crop and PNG export', scales);
     }
   } finally {
     displays.splice(0, displays.length, ...previousDisplays);
     desktopCapturer.getSources = previousGetSources;
   }
   windows.dispose(); clearTimeout(deadline);
-  console.log('PASS capture UI: text re-edit/font presets, shape/color editing, undo/redo, PNG, narrow-screen layout, recording controls, synthetic three-display magnifier');
+  console.log('PASS capture UI: straight/Shift lines, live RGB, text/shape editing, undo/redo, PNG, narrow-screen layout, recording controls, synthetic three-display magnifier');
   removeProfile(); app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

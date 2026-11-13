@@ -11,6 +11,7 @@ export function createCaptureIcon(name: string): SVGSVGElement {
     region: ['M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5', 'M8 8h8v8H8z'],
     rectangle: ['M4 5h16v14H4z'],
     ellipse: ['M21 12a9 7 0 1 1-18 0 9 7 0 1 1 18 0'],
+    line: ['M4 12h16'],
     arrow: ['M4 20 20 4M9 4h11v11'],
     pen: ['m4 16-1 5 5-1L20 8a2.8 2.8 0 0 0-4-4L4 16z', 'm14 6 4 4M4 16l4 4'],
     text: ['M4 7V4h16v3M12 4v16M8 20h8'],

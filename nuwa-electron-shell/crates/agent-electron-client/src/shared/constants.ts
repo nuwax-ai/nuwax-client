@@ -399,6 +399,9 @@ export const I18N_KEYS = {
     REFRESH: "Claw.About.distCheck.refresh",
   },
   Capture: {
+    LINE: "Claw.Capture.line",
+    LINE_HINT: "Claw.Capture.lineHint",
+    PIXEL_POSITION: "Claw.Capture.pixelPosition",
     RECORD_MODE: "Claw.Capture.recordMode",
     GIF_MODE: "Claw.Capture.gifMode",
     FORMAT: "Claw.Capture.format",
