@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import payload from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/uninstall-payload.cjs';
 import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 
@@ -60,4 +61,51 @@ test('actual Windows afterPack composes updater metadata and the embedded uninst
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dist/installer-uninstall/payload-x64.json')));
   assert.ok(manifest.files.includes('resources/app-update.yml'));
   assert.equal(fs.readdirSync(resources).length, 1, 'Inventory must not be a mutable shipped deletion authority');
+});
+
+test('NSIS embeds final payload hashes after EXE edits, signing and late helper injection', t => {
+  const cache = process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA, 'electron-builder/Cache')
+    : path.join(os.homedir(), 'Library/Caches/electron-builder');
+  const nsis = process.env.NUWAX_TEST_NSIS_ROOT ?? path.join(cache, 'nsis/nsis-3.0.4.1');
+  const compiler = path.join(nsis, process.platform === 'win32' ? 'Bin/makensis.exe' : 'mac/makensis');
+  if (!fs.existsSync(compiler)) return t.skip('Requires cached NSIS SDK');
+  const root = path.join(temporaryDirectory(t), "build's $ payload"), app = path.join(root, 'application');
+  fs.mkdirSync(path.join(app, 'resources'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'Nuwax.exe'), 'before rcedit');
+  fs.writeFileSync(path.join(app, 'resources', 'node.exe'), 'before signing');
+  const manifest = payload.writeUninstallPayload({ appOutDir: app, arch: 1,
+    packager: { projectDir: root, appInfo: { name: 'nuwax', productFilename: 'Nuwax' } } });
+  fs.writeFileSync(path.join(app, 'Nuwax.exe'), 'final icon, metadata and signature');
+  fs.writeFileSync(path.join(app, 'resources', 'node.exe'), 'final signed runtime');
+  fs.writeFileSync(path.join(app, 'resources', 'elevate.exe'), 'late NSIS helper');
+  const overlay = path.resolve(import.meta.dirname, '../nuwa-electron-shell/crates/agent-electron-client/build/uninstall-options.nsh');
+  const script = path.join(root, 'fixture.nsi');
+  fs.writeFileSync(script, `Unicode true
+Name InventoryQA
+OutFile "${path.join(root, 'fixture.exe')}"
+RequestExecutionLevel user
+SilentInstall silent
+!include "${overlay}"
+!define NUWAX_UNINSTALL_MANIFEST "${manifest}"
+Section
+InitPluginsDir
+!insertmacro nuwaxExtractUninstallInventory
+CopyFiles /SILENT "$PLUGINSDIR\\uninstall-payload.json" "$EXEDIR\\embedded-payload.json"
+SectionEnd
+`);
+  const compile = () => execFileSync(compiler, ['-V2', script], { env: { ...process.env, NSISDIR: nsis }, stdio: 'pipe' });
+  compile();
+  const inventory = JSON.parse(fs.readFileSync(manifest));
+  assert.deepEqual(inventory.files, ['Nuwax.exe', 'resources/elevate.exe', 'resources/node.exe']);
+  for (const file of inventory.files) {
+    assert.equal(inventory.fileHashes[file], createHash('sha256').update(fs.readFileSync(path.join(app, file))).digest('hex'), file);
+  }
+  if (process.platform === 'win32') {
+    execFileSync(path.join(root, 'fixture.exe'), ['/S'], { stdio: 'pipe' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'embedded-payload.json'))), inventory);
+  }
+  // A failed final scan must stop compilation rather than embed stale hashes.
+  fs.renameSync(path.join(app, 'Nuwax.exe'), path.join(app, 'missing.exe'));
+  assert.throws(compile);
 });

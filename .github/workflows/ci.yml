@@ -63,6 +63,14 @@ jobs:
           src/renderer/features/local-files/LocalFilesSettings.test.tsx
           src/renderer/features/computer-use/CuaControls.test.tsx
           src/renderer/features/computer-use/CuaTaskCenter.test.tsx
+      - name: Check Windows installer runtime capabilities
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-installer-runtime.ps1
+      - name: Check Windows installer result monitoring
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-installer-monitor.ps1
 
   terminal-compat:
     name: terminal compatibility protocol and WinPTY regression

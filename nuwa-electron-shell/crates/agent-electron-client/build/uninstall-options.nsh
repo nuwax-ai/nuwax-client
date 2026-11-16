@@ -104,6 +104,10 @@ Var nuwaxDataLocal
       !endif
     !endif
   !endif
+  !ifndef NUWAX_UNINSTALL_INVENTORY_FINALIZED
+    !include "${NUWAX_UNINSTALL_MANIFEST}.nsh"
+    !define NUWAX_UNINSTALL_INVENTORY_FINALIZED
+  !endif
   File /oname=$PLUGINSDIR\uninstall-payload.json "${NUWAX_UNINSTALL_MANIFEST}"
 !macroend
 

@@ -32,11 +32,14 @@ import {
   getReleaseChannel,
   type UpdateChannel,
 } from "@shared/types/updateChannel";
-import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "@shared/constants";
+import { APP_DATA_DIR_NAME, LOGS_DIR_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 import { compareVersions } from "./system/dependencyUtils";
 import { t } from "./i18n";
 import { installLinuxDeb } from "./linuxDebInstaller";
+import { checkWindowsInstallRuntime } from "./windowsInstallPreflight";
+import { prepareWindowsUpdate, inspectWindowsUpdate, windowsUpdateRoot as sessionRoot, type WindowsUpdateHandoff } from "./windowsUpdateSession";
+import { getAppEnv } from "./system/dependencies";
 import { sendToMainWindowGuests } from "./hostActivity";
 import {
   getWindowsDownloadUrl,
@@ -812,7 +815,7 @@ export function initAutoUpdater(
   updaterInitialized = true;
   autoUpdater.logger = log;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = canAutoUpdate();
+  autoUpdater.autoInstallOnAppQuit = canAutoUpdate() && !(process.platform === "win32" && usesOneClickUpdate());
   // deb 退出时安装会走 electron-updater 的同步 pkexec，授权框不可见时退出流程被冻结
   if (isLinuxDebInstall()) {
     autoUpdater.autoInstallOnAppQuit = false;
@@ -842,6 +845,9 @@ export function initAutoUpdater(
     log.info(
       "[AutoUpdater] Dev mode: using dev-app-update.yml (autoInstall disabled)",
     );
+  }
+  if (process.platform === "win32" && app.isPackaged) {
+    void inspectPreviousWindowsUpdate().catch(error => log.error("[AutoUpdater] Recovery inspection failed:", error));
   }
 
   // 自定义更新源覆盖（本地测试），直接走 electron-updater 的 generic provider
@@ -907,6 +913,7 @@ export function initAutoUpdater(
     downloadedVersion = info.version;
     downloadedUpdateFile = info.downloadedFile ?? null;
     autoUpdater.autoInstallOnAppQuit = app.isPackaged && canAutoUpdate() && !isLinuxDebInstall()
+      && !(process.platform === "win32" && usesOneClickUpdate())
       && compareVersions(info.version, app.getVersion()) >= 0;
     setState({
       status: updateTask ? "installing" : "downloaded",
@@ -1422,22 +1429,76 @@ async function applyDownloadedUpdate(): Promise<UpdateResult> {
     return installLinuxDebUpdate();
   }
 
+  let windowsHandoff: WindowsUpdateHandoff | undefined;
   try {
+    if (process.platform === "win32") {
+      await checkWindowsInstallRuntime(process.resourcesPath);
+      if (!downloadedUpdateFile || !downloadedVersion) throw new Error("No verified Windows update to install.");
+      windowsHandoff = await prepareWindowsUpdate({
+        root: windowsUpdateRoot(), resourcesPath: process.resourcesPath,
+        product: APP_NAME_IDENTIFIER,
+        installerPath: downloadedUpdateFile, currentExe: app.getPath("exe"),
+        fromVersion: app.getVersion(), targetVersion: downloadedVersion, env: getAppEnv(),
+        messages: {
+          title: t("Claw.AutoUpdater.recoveryTitle"),
+          failed: t("Claw.AutoUpdater.monitorFailed"),
+          unconfirmed: t("Claw.AutoUpdater.monitorUnconfirmed"),
+        },
+      });
+      // A previously registered SDK quit handler must not launch a second copy.
+      loadAutoUpdaterModule().autoUpdater.autoInstallOnAppQuit = false;
+      // Commit authorizes waiting for this process to exit, never an early install.
+      // A dead monitor must be detected before changing quit flags or services.
+      windowsHandoff.commit();
+    }
     await prepareForInstall();
+    if (windowsHandoff) {
+      app.quit();
+      return { success: true };
+    }
     const { autoUpdater } = loadAutoUpdaterModule();
     if (usesOneClickUpdate()) {
       autoUpdater.autoRunAppAfterInstall = true;
-      if (process.platform === "win32") {
-        // NSIS 升级正在使用的副本；macOS 由 Squirrel.Mac 管理 bundle 路径。
-        autoUpdater.installDirectory = path.win32.dirname(app.getPath("exe"));
-      }
     }
     autoUpdater.quitAndInstall(false, true);
     return { success: true };
   } catch (err: any) {
+    try { windowsHandoff?.cancel(); } catch (error) { log.error("[AutoUpdater] Cannot cancel Windows update handoff:", error); }
+    // A later ordinary quit must not silently retry a failed preflight.
+    if (process.platform === "win32") loadAutoUpdaterModule().autoUpdater.autoInstallOnAppQuit = false;
     log.error("[AutoUpdater] installUpdate error:", err.message);
     return { success: false, error: err.message };
   }
+}
+
+function windowsUpdateRoot(): string {
+  return sessionRoot(path.join(app.getPath("home"), APP_DATA_DIR_NAME), app.getPath("exe"));
+}
+
+async function inspectPreviousWindowsUpdate(): Promise<void> {
+  const issue = await inspectWindowsUpdate({
+    root: windowsUpdateRoot(), currentExe: app.getPath("exe"), currentVersion: app.getVersion(),
+  });
+  if (!issue) return;
+  // A newer user-initiated update can supersede an inspection that waited for
+  // the previous installer. Do not replace its progress with an old warning.
+  if (updateTask || downloadTask || ["downloading", "downloaded", "installing"].includes(currentState.status)) return;
+  const detail = t(issue.kind === "in-progress" ? "Claw.AutoUpdater.recoveryInProgress" : "Claw.AutoUpdater.recoveryDetail",
+    issue.targetVersion ?? "?", app.getVersion(), issue.directory);
+  log.warn(`[AutoUpdater] Previous Windows update: ${issue.kind}; diagnostics=${issue.directory}`);
+  setState({ status: "error", error: detail, canAutoUpdate: canAutoUpdate() });
+  if (issue.acknowledged) return;
+  const canDownload = issue.kind !== "in-progress";
+  const buttons = canDownload
+    ? [t("Claw.AutoUpdater.downloadPage"), t("Claw.AutoUpdater.openDiagnostics"), t("Claw.AutoUpdater.later")]
+    : [t("Claw.AutoUpdater.openDiagnostics"), t("Claw.AutoUpdater.later")];
+  const { response } = await showModal({
+    type: "warning", title: t("Claw.AutoUpdater.recoveryTitle"), message: detail,
+    buttons, defaultId: buttons.length - 1, cancelId: buttons.length - 1, noLink: true,
+  });
+  issue.acknowledge();
+  if (canDownload && response === 0) await openReleasesPage();
+  else if (response === (canDownload ? 1 : 0)) await shell.openPath(issue.directory);
 }
 
 async function prepareForInstall(): Promise<void> {

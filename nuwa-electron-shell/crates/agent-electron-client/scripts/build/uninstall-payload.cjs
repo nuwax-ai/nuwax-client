@@ -6,7 +6,7 @@ const { createHash } = require('node:crypto');
 
 // The NSIS uninstaller embeds this build-time inventory. A mutable installed
 // manifest must never authorize deleting arbitrary files during elevation.
-function writeUninstallPayload({ packager, appOutDir, arch }) {
+function writeUninstallPayload({ packager, appOutDir, arch }, finalize = false) {
   const architecture = { 0: 'ia32', 1: 'x64', 3: 'arm64' }[arch];
   const name = packager.appInfo.name;
   const executable = `${packager.appInfo.productFilename}.exe`;
@@ -49,7 +49,26 @@ function writeUninstallPayload({ packager, appOutDir, arch }) {
   const output = path.join(packager.projectDir, 'dist', 'installer-uninstall', `payload-${architecture}.json`);
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, `${JSON.stringify(manifest)}\n`);
+  if (!finalize) {
+    // afterPack precedes rcedit/signing, and NSIS adds elevate.exe even later.
+    // Rehash at the NSIS File instruction, after the application archive has
+    // been built, so recovery ownership describes the bytes actually shipped.
+    const source = Buffer.from(JSON.stringify({ appOutDir: path.resolve(appOutDir), arch,
+      projectDir: path.resolve(packager.projectDir), name, productFilename: packager.appInfo.productFilename })).toString('base64');
+    const quote = process.platform === 'win32'
+      ? value => `"${value}"`
+      : value => `'${value.replaceAll("'", "'\\''")}'`;
+    const command = `${quote(process.execPath)} ${quote(__filename)} --finalize ${source}`;
+    const escaped = command.replaceAll('`', '$\\`');
+    fs.writeFileSync(`${output}.nsh`, `!system \`${escaped}\` = 0\n`);
+  }
   return output;
 }
 
 module.exports = { writeUninstallPayload };
+
+if (require.main === module) {
+  if (process.argv.length !== 4 || process.argv[2] !== '--finalize') throw new Error('[uninstall] Expected --finalize source');
+  const { appOutDir, arch, projectDir, name, productFilename } = JSON.parse(Buffer.from(process.argv[3], 'base64').toString('utf8'));
+  writeUninstallPayload({ appOutDir, arch, packager: { projectDir, appInfo: { name, productFilename } } }, true);
+}
