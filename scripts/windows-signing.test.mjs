@@ -101,11 +101,14 @@ test('installer signing preserves the main file hash after inventory generation'
 test('CI input must match its hash, tag and source before any packaged code is trusted', () => fixture((dir, write) => {
   const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40) };
   const input = { schemaVersion: 1, tag: 'v3.1.4', source, builderVersion: signing.BUILDER_VERSION,
-    package: { name: 'nuwax' }, config: { productName: 'Nuwax', appId: 'com.nuwax-ai.nuwax' }, application: { 'Nuwax.exe': { pe: {} } } };
+    package: { name: 'nuwax' }, config: { productName: 'Nuwax', appId: 'com.nuwax-ai.nuwax' }, application: { 'Nuwax.exe': { pe: {} } },
+    compiledPrograms: { installer: {}, uninstaller: {} } };
   write('input.json', JSON.stringify(input)); const file = path.join(dir, 'input.json');
   const expected = { sha256: signing.hashFile(file), tag: input.tag, source }; signing.readInput(file, expected);
   assert.throws(() => signing.readInput(file, { ...expected, tag: 'v3.1.5' }));
   assert.throws(() => signing.readInput(file, { ...expected, source: { ...source, client: 'd'.repeat(40) } }));
   write('input.json', JSON.stringify({ ...input, source: { ...source, client: 'e'.repeat(40) } }));
   assert.throws(() => signing.readInput(file, expected), /does not match CI manifest/);
+  const { compiledPrograms, ...legacy } = input; write('input.json', JSON.stringify(legacy));
+  assert.throws(() => signing.readInput(file, { ...expected, sha256: signing.hashFile(file) }), /lacks compiled NSIS source proof/);
 }));

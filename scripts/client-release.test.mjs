@@ -10,7 +10,7 @@ import { release, releaseIdentity, committedSigningTools, remoteScript, selectRu
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const signingToolFiles = { 'sign-release-win-v2.sh': '#!/bin/bash\nexit 0', 'sign-win.js': '// committed signer',
-  'sign-windows-release.cjs': '// package signer', 'windows-signing.cjs': '// source proof', 'sign-windows-files.ps1': '# Authenticode checks' };
+  'sign-windows-release.cjs': '// package signer', 'windows-signing.cjs': '// source proof', 'nsis-provenance.cjs': '// compiled NSIS proof', 'sign-windows-files.ps1': '# Authenticode checks' };
 const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40), dist: 'd'.repeat(40) };
 const settings = { repo: 'example/client', signHost: 'win-fixture', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
 

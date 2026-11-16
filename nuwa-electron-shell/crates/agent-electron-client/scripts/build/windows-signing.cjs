@@ -8,6 +8,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const { nsisIdentity } = require('./nsis-provenance.cjs');
 const BUILDER_VERSION = '25.1.8';
 const INPUT_NAME = 'windows-signing-input.json';
 const REPORT_NAME = 'windows-signing-verification.json';
@@ -115,8 +116,19 @@ function unpack(installer, directory, tool = archiveTool()) {
   assert.equal(archives.length, 1, 'Expected one x64 NSIS application archive');
   extract(path.join(outer, archives[0]), app);
   extract(path.join(outer, 'Uninstall Nuwax.exe'), uninstall);
+  const applicationArchiveSha256 = hashFile(path.join(outer, archives[0]));
   fs.unlinkSync(path.join(outer, archives[0]));
-  return { outer, app, uninstall, useZip: archives[0].endsWith('.zip') };
+  return { outer, app, uninstall, applicationArchiveSha256, useZip: archives[0].endsWith('.zip') };
+}
+function compiledPrograms(installer, extracted, application, installerFiles, uninstallerFiles) {
+  const uninstaller = path.join(extracted.outer, 'Uninstall Nuwax.exe');
+  return {
+    installer: nsisIdentity(installer, { payloads: installerFiles,
+      special: [[extracted.applicationArchiveSha256, 'application-archive'], [hashFile(uninstaller), 'uninstaller']],
+      applicationSize: Object.values(application).reduce((total, file) => total + file.size, 0) }),
+    uninstaller: nsisIdentity(uninstaller, { payloads: uninstallerFiles,
+      special: [[hashFile(path.join(extracted.uninstall, '$PLUGINSDIR/uninstall-payload.json')), 'uninstall-inventory']] }),
+  };
 }
 function recordInput({ installer, project, source, tag, output }) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-signing-record-'));
@@ -134,6 +146,7 @@ function recordInput({ installer, project, source, tag, output }) {
       application: inventory(extracted.app), installer: inventory(extracted.outer, {}, ['Uninstall Nuwax.exe']),
       uninstaller: inventory(extracted.uninstall, {}, ['$PLUGINSDIR/uninstall-payload.json']),
       uninstallOwnership: JSON.parse(fs.readFileSync(path.join(extracted.uninstall, '$PLUGINSDIR/uninstall-payload.json'))) };
+    input.compiledPrograms = compiledPrograms(installer, extracted, input.application, input.installer, input.uninstaller);
     fs.writeFileSync(output, JSON.stringify(input) + '\n'); return input;
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 }
@@ -146,6 +159,7 @@ function readInput(file, { sha256, tag, source } = {}) {
   assert.equal(input.package.name, 'nuwax'); assert.equal(input.config.productName, 'Nuwax');
   assert.equal(input.config.appId, 'com.nuwax-ai.nuwax');
   assert(input.application['Nuwax.exe']?.pe, 'CI input lacks the application executable');
+  assert(input.compiledPrograms?.installer && input.compiledPrograms?.uninstaller, 'CI input lacks compiled NSIS source proof; rebuild signing inputs');
   return input;
 }
 function verifyUninstallInventory(actual, original, application) {
@@ -163,6 +177,9 @@ function verifyPackage(installer, input, { verifySignatures, directory } = {}) {
     const uninstallerFiles = verifyTree(extracted.uninstall, input.uninstaller, { exclude: ['$PLUGINSDIR/uninstall-payload.json'] });
     const inventoryFile = JSON.parse(fs.readFileSync(path.join(extracted.uninstall, '$PLUGINSDIR/uninstall-payload.json')));
     verifyUninstallInventory(inventoryFile, input.uninstallOwnership, application);
+    assert(input.compiledPrograms, 'CI input lacks compiled NSIS source proof; rebuild signing inputs');
+    assert.deepEqual(compiledPrograms(installer, extracted, application, installerFiles, uninstallerFiles), input.compiledPrograms,
+      'Compiled NSIS installer/uninstaller logic differs from CI');
     const own = [installer, path.join(extracted.outer, 'Uninstall Nuwax.exe'), path.join(extracted.app, 'Nuwax.exe')];
     for (const file of own) assert(peIdentity(fs.readFileSync(file))?.certificateSize > 0, 'Missing installer/application signature');
     const code = own.concat(...[extracted.app, extracted.outer, extracted.uninstall].map(folder => filesIn(folder).filter(name => {
@@ -174,11 +191,11 @@ function verifyPackage(installer, input, { verifySignatures, directory } = {}) {
     if (verifySignatures) verifySignatures([...new Set(code)], { changedPEs: [...new Set(changedPEs)] });
     return { schemaVersion: 1, tag: input.tag, source: input.source, installerSha256: hashFile(installer),
       unsignedSha256: input.unsignedSha256, verifiedCodeFiles: new Set(code).size, applicationCodeUnchanged: true,
-      uninstallHashesVerified: Object.keys(application).length };
+      uninstallHashesVerified: Object.keys(application).length, compiledNsisUnchanged: true };
   } finally { if (!directory) fs.rmSync(temporary, { recursive: true, force: true }); }
 }
 module.exports = { BUILDER_VERSION, INPUT_NAME, REPORT_NAME, RESOURCE_DIGESTS, hash, hashFile, filesIn, peIdentity,
-  scriptBody, inventory, verifyTree, refreshResourceDigests, archiveTool, unpack, recordInput, readInput, verifyUninstallInventory, verifyPackage };
+  scriptBody, inventory, verifyTree, refreshResourceDigests, archiveTool, unpack, compiledPrograms, recordInput, readInput, verifyUninstallInventory, verifyPackage };
 if (require.main === module) {
   const [command, tag, output] = process.argv.slice(2);
   assert(command === 'record' && /^(?:electron-)?v\d+\.\d+\.\d+$/.test(tag) && output, 'Expected record <stable-tag> <output-dir>');

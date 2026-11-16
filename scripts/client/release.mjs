@@ -91,7 +91,7 @@ export function verifyManifests(manifests, assets, identity, source) {
     throw new Error('Windows 构建清单缺少签名来源记录');
 }
 
-const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js', 'sign-windows-release.cjs', 'windows-signing.cjs', 'sign-windows-files.ps1'];
+const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js', 'sign-windows-release.cjs', 'windows-signing.cjs', 'nsis-provenance.cjs', 'sign-windows-files.ps1'];
 
 export async function committedSigningTools(tools, root, automationSha) {
   const pin = await tools.git(['rev-parse', `${automationSha}:nuwa-electron-shell`]);

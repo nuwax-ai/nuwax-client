@@ -4,7 +4,7 @@ param(
   [switch]$VerifyOnly
 )
 $ErrorActionPreference = 'Stop'
-$plan = Get-Content -LiteralPath $FilesJson -Raw | ConvertFrom-Json
+$plan = Get-Content -LiteralPath $FilesJson -Raw -Encoding UTF8 | ConvertFrom-Json
 $timestamp = if ($env:WINDOWS_TIMESTAMP_URL) { $env:WINDOWS_TIMESTAMP_URL } else { 'http://timestamp.sectigo.com' }
 $sha1 = if ($env:WINDOWS_CERTIFICATE_SHA1) { $env:WINDOWS_CERTIFICATE_SHA1 } else { $env:CS_CERT_SHA1 }
 $certPath = if ($env:WINDOWS_CERTIFICATE_PATH) { $env:WINDOWS_CERTIFICATE_PATH } else { $env:CS_CERT_PATH }
