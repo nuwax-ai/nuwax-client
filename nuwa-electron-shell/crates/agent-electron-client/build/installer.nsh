@@ -19,9 +19,17 @@
 !include "${BUILD_RESOURCES_DIR}\uninstall-options.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-path.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-space.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-installer-runtime.nsh"
 
 !macro preInit
   !ifndef BUILD_UNINSTALLER
+    ; Correlation only; no write target or recovery authority comes from this ID.
+    ${GetParameters} $R0
+    ${GetOptions} $R0 "/NUWAX-UPDATE-ID=" $nuwaxUpdateAttempt
+    ClearErrors
+    !insertmacro nuwaxInstallerPhase Initialize
+    !insertmacro nuwaxRequireInstallerRuntime
+    !insertmacro nuwaxInstallerPhase ResolvePath
     ; NSIS removes its /D tail from $CMDLINE before initMultiUser runs.
     ; Capture it from Windows before any scope callback resets INSTDIR.
     System::Call 'kernel32::GetCommandLineW() w .R0'
@@ -47,7 +55,10 @@
 !macroend
 
 !macro customHeader
+  ; WinVer's Windows 10 floor depends on an accurate supported-OS manifest.
+  ManifestSupportedOS all
   !ifndef BUILD_UNINSTALLER
+    !insertmacro nuwaxInstallerRuntimeFunctions
     !insertmacro nuwaxInstallSpaceFunctions
   !endif
   !include "${BUILD_RESOURCES_DIR}\windows-maintenance.nsh"
@@ -290,6 +301,7 @@ Var nuwaxKeepShortcutsBeforePrepare
 !macroend
 
 !macro nuwaxPrepareOldInstall ROOT_KEY STATE_FILE
+  !insertmacro nuwaxInstallerPhase Preserve
   StrCpy $R5 "$windowsRegisteredCurrentPath"
   StrCpy $R6 "CurrentUser"
   ${if} $installMode == "all"
@@ -330,6 +342,7 @@ Var nuwaxKeepShortcutsBeforePrepare
 !macroend
 
 !macro nuwaxRestoreOldInstall STATE_FILE
+  !insertmacro nuwaxInstallerPhase Restore
   ${if} ${FileExists} "$PLUGINSDIR\${STATE_FILE}"
     !insertmacro nuwaxRecoveryScripts
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Restore -StatePath "$PLUGINSDIR\${STATE_FILE}"`
@@ -387,10 +400,12 @@ Var nuwaxKeepShortcutsBeforePrepare
 
 !macro customUnInstallCheck
   !insertmacro nuwaxCheckOldUninstallResult nuwax-old-shell.txt
+  !insertmacro nuwaxInstallerPhase Extract
 !macroend
 
 !macro customUnInstallCheckCurrentUser
   !insertmacro nuwaxCheckOldUninstallResult nuwax-old-current.txt
+  !insertmacro nuwaxInstallerPhase Extract
 !macroend
 
 !macro customCheckAppRunning
@@ -401,6 +416,7 @@ Var nuwaxKeepShortcutsBeforePrepare
   !endif
   !ifndef BUILD_UNINSTALLER
     ; Scope callbacks can reparse /D; restore its full (possibly spaced) value.
+    !insertmacro nuwaxInstallerPhase Preflight
     !insertmacro windowsInitRegisteredPaths
     !insertmacro nuwaxRequireSafeInstallTarget
     !insertmacro nuwaxConfirmMaintenanceTarget
@@ -408,6 +424,9 @@ Var nuwaxKeepShortcutsBeforePrepare
     !insertmacro nuwaxRequireInstallSpace
   !endif
   ${if} $EXEFILE != "${APP_EXECUTABLE_FILENAME}"
+    !ifndef BUILD_UNINSTALLER
+      !insertmacro nuwaxInstallerPhase CloseApp
+    !endif
     !insertmacro nuwaxFindAppProcess $R0
     ${if} $R0 == 0
       ${ifNot} ${isUpdated}
@@ -563,6 +582,7 @@ Var nuwaxKeepShortcutsBeforePrepare
 ; and registry update. Restore every non-application entry at its old path;
 ; known Electron payload files remain in the persistent recovery directory.
 !macro customInstall
+  !insertmacro nuwaxInstallerPhase Restore
   !insertmacro nuwaxRestoreOldInstall nuwax-old-shell.txt
   ${if} $installMode == "all"
     !insertmacro nuwaxRestoreOldInstall nuwax-old-current.txt
@@ -576,4 +596,6 @@ Var nuwaxKeepShortcutsBeforePrepare
     MessageBox MB_OK|MB_ICONEXCLAMATION "当前安装已修复，现存文件已保留。上次备份已丢失或无法自动恢复，其中的旧文件无法保证找回，请核对您的文件。诊断记录保留在原安装目录旁。"
   ${endif}
   !insertmacro nuwaxMaintenanceComplete
+  !insertmacro nuwaxInstallerPhase Installed
+  !insertmacro nuwaxRecordUpdateCompletion
 !macroend

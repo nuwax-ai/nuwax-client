@@ -149,6 +149,16 @@ async function runBuilderJob(job) {
     platformPackager = new api.WinPackager(info);
     return platformPackager;
   };
+  if (job.stage === 'nsis' || job.stage === 'serial') {
+    // The NSIS input may be an isolated copy of the afterPack application.
+    // This callback runs after NSIS has added its helper and archived that
+    // exact copy, before compiling the embedded uninstall inventory.
+    options.effectiveOptionComputed = () => {
+      require('./uninstall-payload.cjs').writeUninstallPayload({
+        packager: platformPackager, appOutDir: job.app, arch: api.Arch.x64,
+      });
+    };
+  }
   // build() awaits PublishManager metadata writes and the configured standalone
   // blockmap hook. A receipt is never written for an incomplete target.
   await api.build(options);

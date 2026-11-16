@@ -78,6 +78,8 @@ Var nuwaxRecoveryWarning
 !macroend
 
 Function .onInstFailed
+  SetErrorLevel 2
+  !insertmacro nuwaxTraceInstaller Failed
   ; Legacy uninstallers can remove registration before a later extraction
   ; fails. Restore the original values independently of file conflicts.
   ${if} $installMode == "all"

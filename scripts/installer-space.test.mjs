@@ -56,7 +56,11 @@ test('pinned vendor installer and uninstaller compile with the complete commerci
         directories: { output: path.join(dir, 'out'), buildResources: resources },
         win: { signAndEditExecutable: false },
         nsis: { include, packElevateHelper: false, oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true, useZip: true, differentialPackage: false, warningsAsErrors: false }, publish: null } });
-    assert.ok(fs.readdirSync(path.join(dir, 'out')).some(file => file.endsWith('.exe')));
+    const installer = fs.readdirSync(path.join(dir, 'out')).find(file => file.endsWith('.exe'));
+    assert.ok(installer);
+    // Without the Win10 manifest GUID, WinVer may report a modern host as Win8
+    // and the installer would reject a supported OS before the first page.
+    assert.ok(fs.readFileSync(path.join(dir, 'out', installer)).includes(Buffer.from('{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}')));
   } finally { NsisTarget.prototype.computeScriptAndSignUninstaller = original; }
 });
 

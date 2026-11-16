@@ -358,6 +358,14 @@
       "icon": "public/icon.ico",
       "extraResources": [
         {
+          "from": "build/installer-runtime.ps1",
+          "to": "installer/installer-runtime.ps1"
+        },
+        {
+          "from": "build/installer-monitor.ps1",
+          "to": "installer/installer-monitor.ps1"
+        },
+        {
           "from": "resources/git",
           "to": "git",
           "filter": [

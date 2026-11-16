@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import updater from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/app-update-config.cjs';
 import { configureSystemAppName } from './client/system-app-name.mjs';
@@ -144,6 +146,44 @@ test('real pinned SDK receives dir then distinct prepackaged target maps with th
   // This calls the SDK's real early-return path: it must not touch filesystem,
   // dependencies, application hooks or signing when handed an isolated copy.
   await api.PlatformPackager.prototype.doPack.call({ packagerOptions: { prepackaged: '/fixture/a' } }, '/fixture/o', '/fixture/a', 'win32', api.Arch.x64, [], null);
+});
+
+test('prepackaged NSIS worker records the actual target copy including its late helper', t => {
+  const projectRoot = temporary(t), app = path.join(projectRoot, 'nsis-copy');
+  write(path.join(projectRoot, 'package.json'), JSON.stringify(standardBuild('D:/a/_temp/final')));
+  write(path.join(projectRoot, 'node_modules/electron-builder/package.json'), JSON.stringify({ name: 'electron-builder', version: '25.1.8' }));
+  write(path.join(projectRoot, 'node_modules/app-builder-lib/package.json'), JSON.stringify({ name: 'app-builder-lib', version: '25.1.8', main: 'index.cjs' }));
+  // Exercise the real worker with a build driver that performs NSIS's late
+  // helper write and pre-compiler callback, without producing an installer.
+  write(path.join(projectRoot, 'node_modules/app-builder-lib/index.cjs'), `
+const fs = require('node:fs'), path = require('node:path');
+const WINDOWS = { createTarget: () => new Map() };
+exports.Platform = { WINDOWS }; exports.Arch = { x64: 1 };
+exports.WinPackager = class {
+  constructor(info) { this.projectDir = info.projectDir; this.app = info.app; this.appInfo = { name: 'nuwax', productFilename: 'Nuwax' }; }
+  computeAppOutDir() { return this.app; }
+};
+exports.build = async options => {
+  options.platformPackagerFactory({ projectDir: options.projectDir, app: options.prepackaged }, WINDOWS);
+  fs.writeFileSync(path.join(options.prepackaged, 'resources/elevate.exe'), 'late NSIS helper');
+  if (!options.effectiveOptionComputed) throw Error('Missing final NSIS inventory callback');
+  await options.effectiveOptionComputed([{}, {}]);
+};
+`);
+  const payload = require(path.join(buildDir, 'uninstall-payload.cjs'));
+  const original = path.join(projectRoot, 'prepared-app');
+  write(path.join(original, 'Nuwax.exe'), 'original application');
+  const manifest = payload.writeUninstallPayload({ appOutDir: original, arch: 1,
+    packager: { projectDir: projectRoot, appInfo: { name: 'nuwax', productFilename: 'Nuwax' } } });
+  write(path.join(app, 'Nuwax.exe'), 'actual target copy');
+  fs.mkdirSync(path.join(app, 'resources'));
+  const job = { stage: 'nsis', arch: 'x64', projectRoot, app, output: path.join(projectRoot, 'out'), receipt: path.join(projectRoot, 'done.json') };
+  const file = path.join(projectRoot, 'job.json'); write(file, JSON.stringify(job));
+  execFileSync(process.execPath, [helperFile, '--job', file], { stdio: 'pipe' });
+  const inventory = JSON.parse(fs.readFileSync(manifest));
+  assert.deepEqual(inventory.files, ['Nuwax.exe', 'resources/elevate.exe']);
+  assert.equal(inventory.fileHashes['Nuwax.exe'], createHash('sha256').update('actual target copy').digest('hex'));
+  assert.equal(JSON.parse(fs.readFileSync(job.receipt)).appOutDir, app);
 });
 
 const fixtureWorker = String.raw`

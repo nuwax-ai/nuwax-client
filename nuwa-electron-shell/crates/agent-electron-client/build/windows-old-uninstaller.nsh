@@ -4,6 +4,7 @@
 !define NUWAX_OLD_UNINSTALLER_OVERRIDE
 !macroundef uninstallOldVersion
 !macro uninstallOldVersion ROOT_KEY
+  !insertmacro nuwaxInstallerPhase UninstallOld
   ${if} $nuwaxMaintenanceAction == "uninstall"
     ; Repair-before-uninstall must not create or rename default aliases that
     ; belong to another copy. This runs after the vendor computed this flag.
@@ -71,6 +72,7 @@
         StrCpy $R6 "LocalMachine"
       !endif
     ${endif}
+    !insertmacro nuwaxInstallerPhase Detach
     nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Detach -StatePath "$R4" -RegistryScope "$R6"`
     Pop $R0
     Pop $R1

@@ -31,8 +31,23 @@ const mockAppRelaunch = vi.fn();
 const mockAppQuit = vi.fn();
 const mockShowMessageBox = vi.fn();
 const mockInstallLinuxDeb = vi.fn();
+const mockWindowsInstallPreflight = vi.fn(async (..._args: unknown[]) => {});
+const mockWindowsCommit = vi.fn();
+const mockWindowsCancel = vi.fn();
+const mockPrepareWindowsUpdate = vi.fn(async (..._args: unknown[]) => ({ commit: mockWindowsCommit, cancel: mockWindowsCancel }));
+const mockInspectWindowsUpdate = vi.fn(async (..._args: unknown[]): Promise<any> => null);
 const mockPushGuestState = vi.fn();
 const mockShellOpenExternal = vi.fn();
+const mockShellOpenPath = vi.fn();
+
+beforeEach(() => {
+  mockWindowsCommit.mockClear();
+  mockWindowsCancel.mockClear();
+  mockPrepareWindowsUpdate.mockClear();
+  mockInspectWindowsUpdate.mockReset().mockResolvedValue(null);
+  mockAppQuit.mockClear();
+  mockShellOpenPath.mockClear();
+});
 
 vi.mock("./hostActivity", () => ({ sendToMainWindowGuests: (...args: unknown[]) => mockPushGuestState(...args) }));
 
@@ -45,6 +60,15 @@ vi.mock("fs", () => ({
 vi.mock("./linuxDebInstaller", () => ({
   installLinuxDeb: (...args: unknown[]) => mockInstallLinuxDeb(...args),
 }));
+vi.mock("./windowsInstallPreflight", () => ({
+  checkWindowsInstallRuntime: (...args: unknown[]) => mockWindowsInstallPreflight(...args),
+}));
+vi.mock("./windowsUpdateSession", () => ({
+  prepareWindowsUpdate: (...args: unknown[]) => mockPrepareWindowsUpdate(...args),
+  inspectWindowsUpdate: (...args: unknown[]) => mockInspectWindowsUpdate(...args),
+  windowsUpdateRoot: (directory: string) => directory + "/updates",
+}));
+vi.mock("./system/dependencies", () => ({ getAppEnv: () => ({ SystemRoot: "C:\\Windows" }) }));
 
 vi.mock("electron-log", () => ({
   default: {
@@ -71,7 +95,10 @@ vi.mock("electron", () => ({
     quit: (...args: unknown[]) => mockAppQuit(...args),
   },
   BrowserWindow: class {},
-  shell: { openExternal: (...args: unknown[]) => mockShellOpenExternal(...args) },
+  shell: {
+    openExternal: (...args: unknown[]) => mockShellOpenExternal(...args),
+    openPath: (...args: unknown[]) => mockShellOpenPath(...args),
+  },
   dialog: {
     showMessageBox: (...args: unknown[]) => mockShowMessageBox(...args),
   },
@@ -108,6 +135,7 @@ const fakeElectronUpdaterModule = () => ({
 
 vi.mock("@shared/constants", () => ({
   APP_DATA_DIR_NAME: ".nuwaclaw",
+  APP_NAME_IDENTIFIER: "nuwaclaw",
   LOGS_DIR_NAME: "logs",
 }));
 
@@ -1325,7 +1353,7 @@ describe("installUpdate — 安装前清理 await 语义", () => {
     mockUpdaterOn.mockClear();
   });
 
-  it("cleanup 未完成前不调 quitAndInstall，完成后才安装", async () => {
+  it("cleanup 未完成前不提交安装或退出，完成后才交接", async () => {
     vi.useFakeTimers();
     try {
       const { initAutoUpdater, installUpdate } =
@@ -1344,18 +1372,20 @@ describe("installUpdate — 安装前清理 await 语义", () => {
       );
 
       const downloaded = mockUpdaterOn.mock.calls.find(([event]) => event === "update-downloaded")![1] as (info: unknown) => void;
-      downloaded({ version: "0.9.5" });
+      downloaded({ version: "0.9.5", downloadedFile: "C:/cache/update.exe" });
       const pending = installUpdate();
       await Promise.resolve();
       // 清理挂起中：不得触发安装
       expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+      expect(mockAppQuit).not.toHaveBeenCalled();
       expect(cleanupFinished).toBe(false);
 
       resolveCleanup();
       const result = await pending;
       expect(result.success).toBe(true);
       expect(cleanupFinished).toBe(true);
-      expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+      expect(mockWindowsCommit).toHaveBeenCalledOnce();
+      expect(mockAppQuit).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
@@ -1374,14 +1404,16 @@ describe("installUpdate — 安装前清理 await 语义", () => {
       );
 
       const downloaded = mockUpdaterOn.mock.calls.find(([event]) => event === "update-downloaded")![1] as (info: unknown) => void;
-      downloaded({ version: "0.9.5" });
+      downloaded({ version: "0.9.5", downloadedFile: "C:/cache/update.exe" });
       const pending = installUpdate();
       await vi.advanceTimersByTimeAsync(9_999);
       expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+      expect(mockAppQuit).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       const result = await pending;
       expect(result.success).toBe(true);
-      expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+      expect(mockWindowsCommit).toHaveBeenCalledOnce();
+      expect(mockAppQuit).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
@@ -1589,15 +1621,33 @@ describe("Windows / macOS 可选一键更新策略", () => {
 
   async function setup(enabled = true, cleanup = vi.fn(async () => {})) {
     const mod = await importFreshWithUpdaterMock();
+    const markQuitting = vi.fn();
     mod.initAutoUpdater(
       () => null,
       cleanup,
-      () => {},
+      markQuitting,
       { installAfterDownload: enabled },
     );
     emit("update-available", { version: "0.9.5" });
-    return { mod, cleanup };
+    return { mod, cleanup, markQuitting };
   }
+
+  it("环境预检失败不关闭客户端、不清理服务、不在退出时重试，环境恢复可重新校验并安装", async () => {
+    const { mod, cleanup, markQuitting } = await setup();
+    mockWindowsInstallPreflight.mockRejectedValueOnce(new Error("PowerShell blocked by policy"));
+    expect(await mod.downloadUpdate()).toEqual({ success: false, error: "PowerShell blocked by policy" });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
+    expect(mod.getUpdateState()).toMatchObject({ status: "error", error: "PowerShell blocked by policy" });
+    expect(await mod.installUpdate()).toEqual({ success: true });
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledTimes(2);
+    expect(markQuitting).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(mockWindowsCommit).toHaveBeenCalledOnce();
+    expect(mockAppQuit).toHaveBeenCalledOnce();
+  });
 
   it("默认分步策略只下载，不自动清理或安装", async () => {
     const { mod, cleanup } = await setup(false);
@@ -1608,6 +1658,63 @@ describe("Windows / macOS 可选一键更新策略", () => {
     });
     expect(cleanup).not.toHaveBeenCalled();
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("监控器启动失败时不设置退出标志、不清理服务，保留错误", async () => {
+    const { mod, cleanup, markQuitting } = await setup();
+    mockPrepareWindowsUpdate.mockRejectedValueOnce(new Error("Signed monitor blocked"));
+    expect(await mod.downloadUpdate()).toMatchObject({ success: false, error: "Signed monitor blocked" });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(mockWindowsCommit).not.toHaveBeenCalled();
+    expect(mockAppQuit).not.toHaveBeenCalled();
+    expect(mod.getUpdateState()).toMatchObject({ status: "error", error: "Signed monitor blocked" });
+  });
+  it("监控器就绪后在提交前退出也不清理或关闭客户端", async () => {
+    const { mod, cleanup, markQuitting } = await setup();
+    mockWindowsCommit.mockImplementationOnce(() => { throw new Error("Monitor exited before commit"); });
+    expect(await mod.downloadUpdate()).toMatchObject({ success: false, error: "Monitor exited before commit" });
+    expect(mockWindowsCancel).toHaveBeenCalledOnce();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(mockAppQuit).not.toHaveBeenCalled();
+  });
+
+  it("启动时显示失败恢复提示，查看诊断后保留证据并记录已读", async () => {
+    const acknowledge = vi.fn();
+    mockInspectWindowsUpdate.mockResolvedValueOnce({
+      kind: "failed", directory: "C:\\Users\\user\\.nuwaclaw\\updates\\attempt",
+      targetVersion: "0.9.5", acknowledged: false, acknowledge,
+    });
+    mockShowMessageBox.mockResolvedValueOnce({ response: 1 });
+    await setup();
+    await vi.waitFor(() => expect(mockShellOpenPath).toHaveBeenCalledOnce());
+    expect(mockShowMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      type: "warning", title: "Claw.AutoUpdater.recoveryTitle", defaultId: 2, cancelId: 2,
+    }));
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(mockWindowsCommit).not.toHaveBeenCalled();
+    expect(mockAppQuit).not.toHaveBeenCalled();
+  });
+
+  it("安装仍进行时不提供并发安装入口，已读故障不重复弹窗", async () => {
+    mockInspectWindowsUpdate.mockResolvedValueOnce({
+      kind: "in-progress", directory: "C:\\diagnostics", targetVersion: "0.9.5",
+      acknowledged: false, acknowledge: vi.fn(),
+    });
+    await setup();
+    await vi.waitFor(() => expect(mockShowMessageBox).toHaveBeenCalledOnce());
+    expect(mockShowMessageBox.mock.calls[0][0].buttons).toEqual([
+      "Claw.AutoUpdater.openDiagnostics", "Claw.AutoUpdater.later",
+    ]);
+    mockShowMessageBox.mockClear();
+    mockInspectWindowsUpdate.mockResolvedValueOnce({
+      kind: "failed", directory: "C:\\diagnostics", targetVersion: "0.9.5",
+      acknowledged: true, acknowledge: vi.fn(),
+    });
+    await setup();
+    await Promise.resolve();
+    expect(mockShowMessageBox).not.toHaveBeenCalled();
   });
 
   it("已发现旧版本后再发布多个版本，下载前改用最新 feed 和发布说明", async () => {
@@ -1675,12 +1782,16 @@ describe("Windows / macOS 可选一键更新策略", () => {
   it("一次下载操作串起校验、清理、可见安装，并保留当前目录", async () => {
     const { mod, cleanup } = await setup();
     expect(await mod.downloadUpdate()).toEqual({ success: true });
+    expect(mockWindowsInstallPreflight).toHaveBeenCalled();
+    expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(false);
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(mockUpdaterQuitAndInstall).toHaveBeenCalledWith(false, true);
-    expect(lastFakeUpdater.installDirectory).toBe(
-      "C:\\Users\\user\\AppData\\Local\\Programs\\NuwaClaw",
-    );
-    expect(lastFakeUpdater.autoRunAppAfterInstall).toBe(true);
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+    expect(mockWindowsCommit).toHaveBeenCalledOnce();
+    expect(mockAppQuit).toHaveBeenCalledOnce();
+    expect(mockPrepareWindowsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      currentExe: "C:\\Users\\user\\AppData\\Local\\Programs\\NuwaClaw\\NuwaClaw.exe",
+      installerPath: "C:/cache/update.exe", targetVersion: "0.9.5",
+    }));
     expect(mod.getUpdateState()).toMatchObject({
       status: "installing",
       installAfterDownload: true,
@@ -1708,7 +1819,7 @@ describe("Windows / macOS 可选一键更新策略", () => {
     await Promise.all([first, second]);
     await mod.downloadUpdate();
     expect(mockUpdaterDownloadUpdate).toHaveBeenCalledTimes(1);
-    expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockWindowsCommit).toHaveBeenCalledOnce();
   });
 
   it("已有已校验缓存时，安装入口直接复用，不再次下载", async () => {
@@ -1719,7 +1830,7 @@ describe("Windows / macOS 可选一键更新策略", () => {
     });
     await mod.installUpdate();
     expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
-    expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockWindowsCommit).toHaveBeenCalledOnce();
   });
 
   it("下载或校验失败不清理、不安装，下一次点击可以重试", async () => {
@@ -1739,7 +1850,7 @@ describe("Windows / macOS 可选一键更新策略", () => {
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
     expect(await mod.downloadUpdate()).toEqual({ success: true });
     expect(mockUpdaterDownloadUpdate).toHaveBeenCalledTimes(2);
-    expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+    expect(mockWindowsCommit).toHaveBeenCalledOnce();
   });
 
   it("macOS 未启用策略时保持分步安装", async () => {
@@ -1831,7 +1942,13 @@ describe("Windows / macOS 可选一键更新策略", () => {
       });
       await mod.showUpdateDialogFlow();
       expect(mockShowMessageBox).toHaveBeenCalledTimes(1);
-      expect(mockUpdaterQuitAndInstall).toHaveBeenCalledTimes(1);
+      if (platform === "win32") {
+        expect(mockWindowsCommit).toHaveBeenCalledOnce();
+        expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+      } else {
+        expect(mockUpdaterQuitAndInstall).toHaveBeenCalledOnce();
+        expect(mockWindowsCommit).not.toHaveBeenCalled();
+      }
     },
   );
 
