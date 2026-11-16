@@ -45,6 +45,10 @@ function fixture({ tag = 'electron-v1.0.32', channel = 'stable' } = {}) {
   mkdirSync(assets);
   copyFileSync(original, join(scripts, 'release-provenance.mjs'));
   copyFileSync(new URL('./release-version.mjs', import.meta.url), join(scripts, 'release-version.mjs'));
+  const signingDir = join(root, 'nuwa-electron-shell/crates/agent-electron-client/scripts/build');
+  mkdirSync(signingDir, { recursive: true });
+  copyFileSync(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/windows-signing.cjs', import.meta.url), join(signingDir, 'windows-signing.cjs'));
+  copyFileSync(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/nsis-provenance.cjs', import.meta.url), join(signingDir, 'nsis-provenance.cjs'));
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('config', 'user.email', 'test@example.invalid');
@@ -226,10 +230,15 @@ test('current automation verifies a target source tree without tools in that tag
   const f = fixture({ tag: 'v1.0.32' });
   const automation = mkdtempSync(join(tmpdir(), 'release-automation-'));
   try {
-    copyFileSync(original, join(automation, 'release-provenance.mjs'));
-    copyFileSync(new URL('./release-version.mjs', import.meta.url), join(automation, 'release-version.mjs'));
+    mkdirSync(join(automation, 'scripts'));
+    copyFileSync(original, join(automation, 'scripts/release-provenance.mjs'));
+    copyFileSync(new URL('./release-version.mjs', import.meta.url), join(automation, 'scripts/release-version.mjs'));
+    const moduleDir = join(automation, 'nuwa-electron-shell/crates/agent-electron-client/scripts/build');
+    mkdirSync(moduleDir, { recursive: true });
+    copyFileSync(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/windows-signing.cjs', import.meta.url), join(moduleDir, 'windows-signing.cjs'));
+    copyFileSync(new URL('../nuwa-electron-shell/crates/agent-electron-client/scripts/build/nsis-provenance.cjs', import.meta.url), join(moduleDir, 'nsis-provenance.cjs'));
     rmSync(join(f.root, 'scripts'), { recursive: true });
-    const result = spawnSync(process.execPath, [join(automation, 'release-provenance.mjs'), 'verify', 'v1.0.32', f.assets, 'stable', '--source-root', f.root], { encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [join(automation, 'scripts/release-provenance.mjs'), 'verify', 'v1.0.32', f.assets, 'stable', '--source-root', f.root], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
   } finally {
     rmSync(f.root, { recursive: true, force: true });

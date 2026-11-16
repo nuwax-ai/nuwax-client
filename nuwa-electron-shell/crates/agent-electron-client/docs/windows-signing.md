@@ -10,9 +10,12 @@
 
 ## 实现位置
 
-- `scripts/build/sign-release-win-v2.sh`：当前签名主入口，负责下载/缓存核验、签名、验签与上传。
+- `scripts/build/sign-release-win-v2.sh`：命令兼容入口；商业版统一进入内层签名流程。
+- `scripts/build/sign-windows-release.cjs`：核对 CI 输入，签应用文件、重新生成并签名卸载器，再签安装包；上传前解包验签。
+- `scripts/build/windows-signing.cjs`：CI 输入记录、逐文件来源检查与最终卸载清单校验，供签名端和发布门禁共用。
+- `scripts/build/sign-windows-files.ps1`：SimplySign/signtool 签名和真实 Authenticode 验证；保留有效第三方签名。
 - `scripts/build/sign-win.js`：调用签名工具并处理证书、时间戳等参数。
-- `scripts/build/sign-release-win.sh`：保留的低层回退实现，不作为日常发布入口。
+- `scripts/build/sign-release-win.sh`：历史入口；商业版同样转入上述流程，避免退回仅签外层。
 
 这些路径相对于客户端 crate。仓库根的 `sign:win`、`verify:sign:win` 转发入口会补齐当前产品的仓库、资产前缀和目标身份，避免依赖低层脚本的历史缺省值。
 

@@ -16,7 +16,9 @@
    ```
 
 3. `gh auth login` 完成 GitHub CLI 登录（需对 `nuwax-ai/nuwax-client` 有 Release 写权限）。
-4. SSH 编排只需要签名机的 Git Bash、Node、gh 与签名工具/证书环境；无需 clone 应用仓库、安装 npm 依赖或额外同步源码。
+4. 签名机需要 Git Bash、Node/npm、gh、支持 NSIS 的完整 7-Zip 与签名工具/证书环境。
+   7-Zip 可安装到默认路径，或通过 `SIGN_7ZIP` 指向 `7z.exe`；`SIGNTOOL_PATH` 支持目录或 EXE。
+   无需 clone 应用仓库；脚本在任务私有目录安装固定版本 electron-builder，只重新封装 CI 原产应用。
    本地开发入口 `npm run sign:win` 仍可在已有开发检出中使用。
 
 ## stable 发版流程（每次）
@@ -48,13 +50,20 @@ npm run sign:win -- <version>
   `build.productName=Nuwax`，而本地客户端 package.json 的默认 productName 是
   社区版 `NuwaClaw`——脚本的自动派生在商业场景下取错值，务必带
   `SIGN_WIN_ARTIFACT_PREFIX="Nuwax"`。
-- 脚本流程：下载 unsigned EXE → signtool（`/sha1` 指纹 + RFC3161 时间戳）→
-  `signtool verify //pa //all` → 重命名 `Nuwax.Setup.{v}.exe` → 上传并删除
-  Release 上的 unsigned 资产。
-- CI 的 Windows 构建清单记录 unsigned EXE 的大小、SHA256 和签名不变 PE 字节摘要。
-  同步门禁在校验签名后，要求签名版 EXE 除 PE 校验和、证书目录及末尾新增证书外，
-  原始字节与该清单一致；即使 Release 已删 unsigned EXE，也能核对签名包来源。
-  缺少该记录的旧构建清单不能通过新同步门禁；需要重同步时须重新构建。
+- CI 同时生成 `windows-signing-input.json`，其 SHA256 锚定在 Windows 构建清单中，
+  记录应用与安装器内嵌文件的原始摘要、安装脚本和固定打包工具版本。
+- 脚本流程：核对 CI 输入 → 解包 unsigned EXE → 签主程序及所有内层 PE/PowerShell →
+  刷新资源摘要 → 按签后文件生成卸载清单 → 生成并签名卸载器 → 签最终安装包。
+  有效第三方签名保留；无效签名直接报错，不用重签掩盖异常。
+  NSIS 的模板 stub 保持原样，只签运行时插件及最终生成的卸载器、安装器。
+- 上传前重新解包最终 EXE，逐项验证应用、卸载器、插件和脚本的实际签名，核对代码与 CI
+  原文一致、卸载清单使用签后哈希。漏签、验签失败或清单不匹配均阻断上传，`--upload-only` 也执行同一检查。
+  同时核对安装器、卸载器的原生 stub 和编译后 NSIS 程序；文件重定位绑定到已验签的实际文件，
+  仅允许签名引起的强制覆盖文件时间、节大小及经实际应用字节数核对的空间估算变化。
+  未支持的 NSIS 布局或长度变化会阻断发布，须复核配方，不得跳过来源检查。
+- 签名包和 `windows-signing-verification.json` 都上传成功后，才清理 unsigned EXE。
+  同步门禁独立验证内层 PE 签名、CI 来源、文件集合及卸载边界；更新元数据使用最终 EXE 的哈希和大小。
+  历史外层签名包保留原来的 PE 来源校验；缺少内层签名输入的旧构建不能使用新签名流程，须先重新构建。
 - 排障（Release 资产名对照、gh 找不到等）见客户端 windows-signing.md 同名章节。
 
 ## SSH 远程签名：只下载、签名、上传
@@ -63,11 +72,15 @@ npm run sign:win -- <version>
 
 Windows 端只执行以下安装包步骤：
 
-1. 按目标 tag 下载 unsigned EXE；缓存和新下载的字节均须匹配 CI 清单 SHA256。
-2. 使用 Certum SimplySign 签名并以 signtool 验签；手机认证仍由用户完成。
-3. 上传签名 EXE 成功后才删除 Release 上的 unsigned 资产。失败保留安装包缓存，以原 tag/SHA 重跑。
+1. 按目标 tag 下载构建清单、签名输入及 unsigned EXE，核对来源 SHA 与每个输入的 CI SHA256。
+2. 在私有目录中按上述顺序完成内层签名、NSIS 封装和最终验签；SimplySign 手机认证仍由用户完成。
+3. 上传已验签 EXE 和验签记录后才删除 unsigned 资产。失败保留原始输入和部分签名进度；
+   同 tag/SHA 重跑时先逐文件比对 CI 原文，再跳过已有效签名的文件，不把缓存当作新基线。
 
-签名机不检出源码、不初始化子模块、不另行同步源码、不构建，也不清理任何开发 worktree。临时签名工具在该次任务结束时移除，安装包缓存保留在 `/c/tmp/nuwax-sign/<tag>-<source SHA 前12位>/`。来源校验、真实安装验收和 OSS/S3 同步属于外层发布流程。
+签名机不检出应用源码、不初始化子模块、不编译应用，也不清理开发 worktree。
+NSIS 使用 CI 输入中固定的安装脚本和工具版本重新封装，工具缓存为任务私有副本。
+临时编排工具结束后移除，安装包输入与验证记录保留在 `/c/tmp/nuwax-sign/<tag>-<source SHA 前12位>/`。
+真实安装验收和 OSS/S3 同步仍属于外层发布流程。
 
 ```bash
 npm run release -- --version 3.0.10 --stage sign

@@ -576,6 +576,9 @@ jobs:
             compgen -G "$OUT_DIR/*.dmg" >/dev/null || { echo '::error::macOS DMG missing'; exit 1; }
           fi
           node scripts/release-provenance.mjs record "${{ github.ref_name }}" "$PLATFORM" "${{ matrix.arch }}" "$OUT_DIR"
+          if [ "$PLATFORM" = windows ]; then
+            node nuwa-electron-shell/crates/agent-electron-client/scripts/build/windows-signing.cjs record "${{ github.ref_name }}" "$OUT_DIR"
+          fi
 
       - name: Upload artifacts to Release
         shell: bash
