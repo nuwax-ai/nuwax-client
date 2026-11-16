@@ -55,6 +55,7 @@ npm run sign:win -- <version>
 - 脚本流程：核对 CI 输入 → 解包 unsigned EXE → 签主程序及所有内层 PE/PowerShell →
   刷新资源摘要 → 按签后文件生成卸载清单 → 生成并签名卸载器 → 签最终安装包。
   有效第三方签名保留；无效签名直接报错，不用重签掩盖异常。
+  NSIS 的模板 stub 保持原样，只签运行时插件及最终生成的卸载器、安装器。
 - 上传前重新解包最终 EXE，逐项验证应用、卸载器、插件和脚本的实际签名，核对代码与 CI
   原文一致、卸载清单使用签后哈希。漏签、验签失败或清单不匹配均阻断上传，`--upload-only` 也执行同一检查。
 - 签名包和 `windows-signing-verification.json` 都上传成功后，才清理 unsigned EXE。

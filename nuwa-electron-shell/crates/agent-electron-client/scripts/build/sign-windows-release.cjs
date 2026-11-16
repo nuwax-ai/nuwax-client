@@ -36,6 +36,12 @@ function codeFiles(root) {
   return signing.filesIn(root).filter(name => /\.ps1$/i.test(name) || signing.peIdentity(fs.readFileSync(path.join(root, name))))
     .map(name => path.join(root, name));
 }
+function nsisSigningFiles(root) {
+  // Stubs are linker inputs. Signing them before makensis rewrites/appends the
+  // payload leaves a stale PE certificate directory in the generated EXE.
+  // Sign runtime plugins/tools here; sign generated installers via the hook.
+  return codeFiles(root).filter(file => !/^Stubs\//i.test(path.relative(root, file).split(path.sep).join('/')));
+}
 function safeRecipePath(name) {
   assert(/^(build\/[\w./-]+\.(nsh|ps1|ico|bmp)|public\/icon\.ico|scripts\/build\/uninstall-payload\.cjs)$/.test(name)
     && !name.split('/').includes('..'), 'Unsafe installer recipe path');
@@ -90,7 +96,7 @@ async function repackage(input, unsigned, work, tool) {
   const nsis = await NSIS_PATH();
   assert.equal(path.basename(nsis), 'nsis-3.0.4.1', 'Review signing recipe for a new NSIS toolchain');
   const resources = await getBinFromUrl('nsis-resources', '3.4.1', 'Dqd6g+2buwwvoG1Vyf6BHR1b+25QMmPcwZx40atOT57gH27rkjOei1L0JTldxZu4NFoEmW4kJgZ3DlSWVON3+Q==');
-  signFiles(codeFiles(extracted.app).concat(codeFiles(project), codeFiles(nsis), codeFiles(resources)),
+  signFiles(codeFiles(extracted.app).concat(codeFiles(project), nsisSigningFiles(nsis), nsisSigningFiles(resources)),
     { work, tool, force: [path.join(extracted.app, 'Nuwax.exe')] });
   signing.refreshResourceDigests(extracted.app, input.application);
   signing.verifyTree(extracted.app, input.application, { resourceDigests: true });
@@ -160,5 +166,5 @@ async function main(args = process.argv.slice(2)) {
   }
   console.log(JSON.stringify(report));
 }
-module.exports = { safeRecipePath, installerSignHook, codeFiles, signFiles, repackage, main };
+module.exports = { safeRecipePath, installerSignHook, codeFiles, nsisSigningFiles, signFiles, repackage, main };
 if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });

@@ -78,6 +78,14 @@ test('installer recipe paths cannot escape the isolated signing project', () => 
   signer.safeRecipePath('build/installer.nsh'); signer.safeRecipePath('scripts/build/uninstall-payload.cjs');
   for (const name of ['../package.json', 'build/../../outside.ps1', '/absolute.ps1', 'build/tool.exe']) assert.throws(() => signer.safeRecipePath(name));
 });
+test('NSIS signing leaves compiler stubs untouched while signing runtime plugins and tools', () => fixture((dir, write) => {
+  write('Stubs/zlib-x86-unicode', pe()); write('Plugins/x86-unicode/installer.dll', pe()); write('Bin/makensis.exe', pe());
+  const stub = path.join(dir, 'Stubs/zlib-x86-unicode'), original = fs.readFileSync(stub);
+  const selected = signer.nsisSigningFiles(dir);
+  assert.deepEqual(selected.map(file => path.relative(dir, file).split(path.sep).join('/')).sort(), ['Bin/makensis.exe', 'Plugins/x86-unicode/installer.dll']);
+  for (const file of selected) fs.writeFileSync(file, pe(true));
+  assert.deepEqual(fs.readFileSync(stub), original, 'makensis must receive the original unsigned PE template');
+}));
 test('installer signing preserves the main file hash after inventory generation', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-sign-hook-'));
   try {
