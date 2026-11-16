@@ -156,6 +156,18 @@ if [[ "$UPLOAD_ONLY" == "true" ]] && [[ "$SKIP_UPLOAD" == "true" ]]; then
     exit 1
 fi
 
+# Commercial releases sign the nested payload and the newly generated NSIS
+# uninstaller before signing the outer EXE. Never fall back to outer-only signing.
+if [[ "$ARTIFACT_PREFIX" == "Nuwax" ]]; then
+    WORK_DIR="${SIGN_WORK_DIR:-/c/tmp/nuwax-sign/$RELEASE_TAG}"
+    commercial_args=("$VERSION")
+    [[ "$SKIP_DOWNLOAD" == "true" ]] && commercial_args+=(--skip-download)
+    [[ "$SKIP_UPLOAD" == "true" ]] && commercial_args+=(--skip-upload)
+    [[ "$UPLOAD_ONLY" == "true" ]] && commercial_args+=(--upload-only)
+    export SIGN_WORK_DIR="$WORK_DIR" SIGN_RELEASE_TAG="$RELEASE_TAG" SIGN_RELEASE_REPO="$REPO"
+    exec node "$SCRIPT_DIR/sign-windows-release.cjs" "${commercial_args[@]}"
+fi
+
 resolve_gh() {
     # Allow manual override: GH_BIN can be set to a gh executable path
     if [[ -n "${GH_BIN:-}" ]]; then

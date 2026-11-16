@@ -9,6 +9,8 @@ import { run } from './client/core.mjs';
 import { release, releaseIdentity, committedSigningTools, remoteScript, selectRun, verifyManifests, verifyMirrors, retryGitHubRead } from './client/release.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const signingToolFiles = { 'sign-release-win-v2.sh': '#!/bin/bash\nexit 0', 'sign-win.js': '// committed signer',
+  'sign-windows-release.cjs': '// package signer', 'windows-signing.cjs': '// source proof', 'sign-windows-files.ps1': '# Authenticode checks' };
 const source = { client: 'a'.repeat(40), shell: 'b'.repeat(40), frontend: 'c'.repeat(40), dist: 'd'.repeat(40) };
 const settings = { repo: 'example/client', signHost: 'win-fixture', signGhPath: '/c/Program Files/GitHub CLI', s3Base: 'https://s3.invalid/client', ossBase: 'https://oss.invalid/client' };
 
@@ -61,13 +63,24 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true, root
     files.forEach((file) => data.set(file, Buffer.from(file)));
     const value = { schemaVersion: 1, tag: identity.tag, platform, arch, source: { client: source.client, shell: source.shell, frontend: source.frontend },
       frontend: { stamp: source.frontend.slice(0, 9), distSha256: 'e'.repeat(64) }, artifacts: Object.fromEntries(files.map((name) => [name, digest(data.get(name))])) };
-    if (platform === 'windows') value.windowsSigning = { unsignedSize: 10, signingIdentitySha256: 'f'.repeat(64) };
+    if (platform === 'windows') {
+      value.windowsSigning = { unsignedSize: 10, signingIdentitySha256: 'f'.repeat(64) };
+      if (channel === 'stable') {
+        data.set('windows-signing-input.json', Buffer.from('CI payload input'));
+        const inputHash = digest(data.get('windows-signing-input.json'));
+        value.artifacts['windows-signing-input.json'] = inputHash;
+        value.windowsSigning.input = { name: 'windows-signing-input.json', sha256: inputHash };
+      }
+    }
     manifests[key] = value;
     data.set(`build-manifest-${key}.json`, Buffer.from(JSON.stringify(value)));
   }
   let isSigned = signed || channel !== 'stable';
   function sign() {
-    if (channel === 'stable') { data.delete('Nuwax-Setup-1.2.3-unsigned.exe'); data.set(identity.windows, Buffer.from('signed exe fixture')); }
+    if (channel === 'stable') {
+      data.delete('Nuwax-Setup-1.2.3-unsigned.exe'); data.set(identity.windows, Buffer.from('signed exe fixture'));
+      data.set('windows-signing-verification.json', Buffer.from('actual package verified'));
+    }
     isSigned = true;
   }
   if (isSigned) sign();
@@ -93,7 +106,7 @@ function fixture({ channel = 'stable', signed = true, publicRelease = true, root
   const successfulSync = { databaseId: 20, headBranch: 'release-fixture', headSha: source.client, event: 'workflow_dispatch', displayTitle: `Sync ${channel} ${identity.tag}`, status: 'completed', conclusion: 'success' };
   const state = { remoteTag: source.client, remoteHead: source.client, syncRuns: publicRelease ? [successfulSync] : [], builds: [build], lookup: 0, releaseTags: '', sequenceReads: 0 };
   const adapters = {
-    signingTools: async (sha) => { calls.push(['signingTools', sha]); return { pin: source.shell, files: { 'sign-release-win-v2.sh': '#!/bin/bash\nexit 0', 'sign-win.js': '// committed signer' } }; },
+    signingTools: async (sha) => { calls.push(['signingTools', sha]); return { pin: source.shell, files: signingToolFiles }; },
     log: (message) => calls.push(['log', message]), sleep: async (ms) => calls.push(['sleep', ms]),
     git: async (args, directory) => {
       calls.push(['git', ...args]);
@@ -459,8 +472,8 @@ exit "\${FIXTURE_SIGN_STATUS:-0}"
 `;
     const state = { tag: 'v1.2.3', sha: source.client, version: '1.2.3' };
     const script = remoteScript(state, { ...settings, signGhPath: bin, windowsSignDir: directory }, {
-      unsignedSha256: digest(fs.readFileSync(downloaded)), pin: source.shell,
-      files: { 'sign-release-win-v2.sh': signer, 'sign-win.js': '// neutral committed tool' },
+      unsignedSha256: digest(fs.readFileSync(downloaded)), inputSha256: 'e'.repeat(64), pin: source.shell,
+      files: { ...signingToolFiles, 'sign-release-win-v2.sh': signer },
     });
     const execute = (env = {}) => spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: { ...process.env, FIXTURE_LOG: log, FIXTURE_DOWNLOAD: downloaded, ...env } });
     const cache = path.join(directory, 'v1.2.3-aaaaaaaaaaaa');
@@ -499,6 +512,14 @@ test('--stage sync refuses an unsigned stable release and dispatches for a signe
   assert.equal(result.version, '1.2.3');
   assert.equal(signed.calls.some(([type, command]) => type === 'exec' && command === 'ssh'), false);
   assert.equal(signed.calls.filter(([type, command, first]) => type === 'exec' && command === 'gh' && first === 'workflow').length, 1);
+});
+
+test('an outer EXE alone cannot satisfy a new CI inner-signing release', async () => {
+  const f = fixture(); f.data.delete('windows-signing-verification.json');
+  await assert.rejects(f.run({ stage: 'sync' }), /缺少签名资产/);
+  assert.ok(!f.calls.some(call => call[0] === 'exec' && call[1] === 'ssh'));
+  assert.throws(() => remoteScript({ tag: 'v1.2.3', sha: source.client, version: '1.2.3' }, settings,
+    { pin: source.shell, unsignedSha256: 'f'.repeat(64), files: signingToolFiles }), /清单 SHA256/);
 });
 
 test('--stage sign is refused for beta releases', async () => {

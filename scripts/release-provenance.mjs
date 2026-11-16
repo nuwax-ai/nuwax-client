@@ -7,6 +7,7 @@ import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync, wri
 import { basename, join, resolve } from 'node:path';
 
 import { parseReleaseTag } from './release-version.mjs';
+import windowsSigningTools from '../nuwa-electron-shell/crates/agent-electron-client/scripts/build/windows-signing.cjs';
 
 const argv = process.argv.slice(2);
 const sourceFlag = argv.indexOf('--source-root');
@@ -257,7 +258,22 @@ function verify([tag, assetsDir, channel = 'stable']) {
   }
   if (channel === 'stable') {
     const signedExe = join(dir, `Nuwax.Setup.${version}.exe`);
-    if (peSigningIdentity(signedExe, windowsSigning.unsignedSize).signingIdentitySha256 !==
+    if (windowsSigning.input) {
+      const tools = windowsSigningTools;
+      const input = tools.readInput(join(dir, tools.INPUT_NAME), { sha256: windowsSigning.input.sha256, tag, source });
+      const windowsManifest = manifests.find(value => value.platform === 'windows');
+      if (windowsManifest.artifacts[tools.INPUT_NAME] !== windowsSigning.input.sha256 ||
+          windowsManifest.artifacts[`Nuwax-Setup-${version}-unsigned.exe`] !== input.unsignedSha256) fail('Windows 签名输入未锚定到 CI 清单');
+      const report = JSON.parse(readFileSync(join(dir, tools.REPORT_NAME)));
+      if (report.installerSha256 !== sha256File(signedExe) || report.inputSha256 !== windowsSigning.input.sha256 ||
+          report.tag !== tag || JSON.stringify(report.source) !== JSON.stringify(source)) fail('Windows 内层验签记录与安装包或 CI 来源不一致');
+      tools.verifyPackage(signedExe, input, { verifySignatures: (_files, { changedPEs }) => {
+        // Windows verifies every PE/script against its Authenticode trust store.
+        // Linux independently verifies every newly signed PE plus both installers;
+        // preserved vendor signatures retain their exact CI bytes and Windows check.
+        for (const file of changedPEs) execFileSync('osslsigncode', ['verify', '-in', file], { stdio: 'pipe' });
+      } });
+    } else if (peSigningIdentity(signedExe, windowsSigning.unsignedSize).signingIdentitySha256 !==
         windowsSigning.signingIdentitySha256) {
       fail('签名版 EXE 的原始 PE 字节与 CI 未签名构建不一致');
     }

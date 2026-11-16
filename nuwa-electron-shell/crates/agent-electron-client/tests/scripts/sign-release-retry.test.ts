@@ -6,6 +6,23 @@ import { spawnSync } from "node:child_process";
 
 describe("signing upload recovery", () => {
   for (const name of ["sign-release-win.sh", "sign-release-win-v2.sh"]) {
+    it(`${name} refuses commercial upload-only without a verified inner package`, () => {
+      const root = mkdtempSync(join(tmpdir(), "commercial-sign-guard-"));
+      try {
+        const signed = join(root, "signed"), gh = join(root, "gh"), trace = join(root, "trace");
+        mkdirSync(signed); writeFileSync(join(signed, "Nuwax.Setup.3.1.4.exe"), "outer-only package");
+        writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SIGN_TEST_TRACE"\nexit 1\n`, { mode: 0o755 });
+        const result = spawnSync("bash", [resolve("scripts/build", name), "3.1.4", "--upload-only"], {
+          encoding: "utf8", env: { ...process.env, SIGN_WIN_ARTIFACT_PREFIX: "Nuwax", SIGN_RELEASE_TAG: "v3.1.4",
+            SIGN_RELEASE_REPO: "fixture/client", SIGN_WORK_DIR: root, GH_BIN: gh, SIGN_TEST_TRACE: trace },
+        });
+        expect(result.status).not.toBe(0);
+        const commands = existsSync(trace) ? readFileSync(trace, "utf8") : "";
+        expect(commands).not.toContain("release upload");
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+  for (const name of ["sign-release-win.sh", "sign-release-win-v2.sh"]) {
     it.each([false, true])(`${name} cleans the CI original only after successful upload (failure=%s)`, (failure) => {
       const root = mkdtempSync(join(tmpdir(), "sign-retry-"));
       try {
@@ -20,7 +37,7 @@ fi
 `, { mode: 0o755 });
         const result = spawnSync("bash", [resolve("scripts/build", name), "3.0.10", "--upload-only"], {
           encoding: "utf8", env: { ...process.env, PATH: `${root}:${process.env.PATH}`, GH_TOKEN: "fixture-invalid", GH_BIN: gh, SIGN_WORK_DIR: work,
-            SIGN_WIN_ARTIFACT_PREFIX: "Nuwax", SIGN_RELEASE_TAG: "v3.0.10", SIGN_SKIP_BLOCKMAP: "true",
+            SIGN_WIN_ARTIFACT_PREFIX: "NuwaClaw", SIGN_RELEASE_TAG: "v3.0.10", SIGN_SKIP_BLOCKMAP: "true",
             SIGN_TEST_TRACE: trace, SIGN_TEST_FAILURE: String(failure) },
         });
         const commands = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n") : [];

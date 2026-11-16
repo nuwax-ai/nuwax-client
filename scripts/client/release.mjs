@@ -91,7 +91,7 @@ export function verifyManifests(manifests, assets, identity, source) {
     throw new Error('Windows 构建清单缺少签名来源记录');
 }
 
-const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js'];
+const signingFiles = ['sign-release-win-v2.sh', 'sign-win.js', 'sign-windows-release.cjs', 'windows-signing.cjs', 'sign-windows-files.ps1'];
 
 export async function committedSigningTools(tools, root, automationSha) {
   const pin = await tools.git(['rev-parse', `${automationSha}:nuwa-electron-shell`]);
@@ -106,7 +106,7 @@ export async function committedSigningTools(tools, root, automationSha) {
 
 export function remoteScript(state, settings, signing) {
   const { tag, sha, version } = state;
-  if (!hashPattern.test(signing?.unsignedSha256 ?? '') || !shaPattern.test(signing?.pin ?? ''))
+  if (!hashPattern.test(signing?.unsignedSha256 ?? '') || !hashPattern.test(signing?.inputSha256 ?? '') || !shaPattern.test(signing?.pin ?? ''))
     throw new Error('签名需要构建清单 SHA256 和已提交工具 pin');
   const payload = signingFiles.map(name => {
     if (!signing.files?.[name]) throw new Error(`缺少签名工具 ${name}`);
@@ -133,7 +133,7 @@ toolwork="$(mktemp -d "$signwork/.tools-XXXXXX")"
 ${payload}
 echo ${quote(`[release] signing tools source tree ${signing.pin}; target ${tag} @ ${sha}`)}
 cd "$toolwork"
-SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true bash "$toolwork/sign-release-win-v2.sh" ${quote(version)} --skip-download
+SIGN_SOURCE_SHA=${quote(sha)} SIGN_INPUT_SHA256=${quote(signing.inputSha256)} SIGN_RELEASE_TAG=${quote(tag)} SIGN_RELEASE_REPO=${quote(settings.repo)} SIGN_WORK_DIR="$signwork" SIGN_WIN_ARTIFACT_PREFIX=Nuwax SIGN_SKIP_BLOCKMAP=true bash "$toolwork/sign-release-win-v2.sh" ${quote(version)} --skip-download
 `;
 }
 
@@ -430,16 +430,20 @@ export async function release(root, options = {}, injected = {}) {
   }
   let view = await releaseView(tools, settings, identity);
   const manifests = await manifestsFromRelease(tools, identity, view, state.source);
-  if (identity.channel === 'stable' && !view.assets.some((asset) => asset.name === identity.windows)) {
+  const signingInput = manifests['windows-x64'].windowsSigning.input;
+  const hasWindowsSignature = view.assets.some(asset => asset.name === identity.windows) &&
+    (!signingInput || view.assets.some(asset => asset.name === 'windows-signing-verification.json'));
+  if (identity.channel === 'stable' && !hasWindowsSignature) {
     if (stage === 'sync') throw new Error(`stable 同步前缺少签名资产 ${identity.windows}：先运行 --stage sign 完成签名`);
     tools.log(`[release] Windows 签名阶段：请确认 ${settings.signHost} SimplySign Desktop 已完成手机认证`);
     const signing = await tools.signingTools(state.automationSha);
     const script = remoteScript(state, settings,
-      { ...signing, unsignedSha256: manifests['windows-x64'].artifacts[`Nuwax-Setup-${identity.version}-unsigned.exe`] });
+      { ...signing, unsignedSha256: manifests['windows-x64'].artifacts[`Nuwax-Setup-${identity.version}-unsigned.exe`], inputSha256: signingInput?.sha256 });
     try { await tools.exec('ssh', [settings.signHost, "bash -lc 'bash -s'"], { input: script }); }
     catch (error) { throw new Error(`Windows 签名未完成。请检查 ${settings.signHost} 下载、工具及证书状态；需要时完成 SimplySign 手机认证，重跑同 tag/SHA 可续接。${error.message}`); }
     view = await releaseView(tools, settings, identity);
     if (!view.assets.some((asset) => asset.name === identity.windows)) throw new Error(`签名后仍缺少 ${identity.windows}`);
+    if (signingInput && !view.assets.some(asset => asset.name === 'windows-signing-verification.json')) throw new Error('签名后缺少 Windows 内层验签记录');
   }
   if (stage === 'sign') {
     tools.log(`[release] --stage sign 完成：${identity.windows} 已就位；OSS/S3 同步未执行（安装包验收后续跑 --stage sync）`);

@@ -347,16 +347,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
-          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets "$RELEASE_CHANNEL" --source-root release-source
           VERSION="${RELEASE_VERSION}"
           if [ "$RELEASE_CHANNEL" = stable ]; then
             EXPECTED_WIN="Nuwax.Setup.${VERSION}.exe"
             sudo apt-get update -qq
-            sudo apt-get install -y -qq osslsigncode
+            sudo apt-get install -y -qq osslsigncode p7zip-full
             osslsigncode verify -in "/tmp/release-assets/${EXPECTED_WIN}"
           else
             EXPECTED_WIN="Nuwax-Setup-${VERSION}-unsigned.exe"
           fi
+          node scripts/release-provenance.mjs verify "$RELEASE_TAG" /tmp/release-assets "$RELEASE_CHANNEL" --source-root release-source
           jq -e --arg filename "$EXPECTED_WIN" \
             '.platforms["windows-x86_64"].url | endswith("/" + $filename)' \
             /tmp/release-assets/latest.json >/dev/null

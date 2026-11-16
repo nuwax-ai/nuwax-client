@@ -31,6 +31,9 @@ WORK_DIR="${SIGN_WORK_DIR:-/c/tmp/nuwaclaw-sign}"
 UNSIGNED_DIR="$WORK_DIR/unsigned"
 SIGNED_DIR="$WORK_DIR/signed"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ "${SIGN_WIN_ARTIFACT_PREFIX:-}" == "Nuwax" ]]; then
+    exec bash "$SCRIPT_DIR/sign-release-win-v2.sh" "$@"
+fi
 
 # Defaults
 VERSION=""
