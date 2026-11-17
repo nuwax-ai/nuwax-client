@@ -89,4 +89,6 @@ try {
   }
   $cases | ForEach-Object { Write-Output ('PASS ' + $_) }
   Write-Output ('SPACE_FIXTURES_OK ' + $cases.Count)
+  # Expected failed child probes must not become the CI shell's final status.
+  $global:LASTEXITCODE = 0
 } finally { [IO.Directory]::Delete($root, $true) }

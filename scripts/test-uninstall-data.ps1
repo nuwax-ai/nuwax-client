@@ -1,5 +1,6 @@
 param([Parameter(Mandatory = $true)][string]$ScriptPath)
 $ErrorActionPreference = 'Stop'
+$ScriptPath = (Resolve-Path -LiteralPath $ScriptPath).ProviderPath
 $root = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-uninstall-data-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 [IO.File]::WriteAllText((Join-Path $root 'owner.txt'), 'Generated uninstall-data test only')
