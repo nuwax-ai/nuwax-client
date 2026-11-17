@@ -46,16 +46,20 @@ function nsisIdentity(file, { payloads, special = [], applicationSize }) {
     assert(strings <= languages && languages <= header.length && strings % 2 === 0, 'Invalid NSIS strings');
     // Display-only section sizes change when signatures enlarge embedded files.
     for (let i = 0; i < sectionCount; i++) header.fill(0, sectionOffset + i * SECTION_SIZE + 20, sectionOffset + i * SECTION_SIZE + 24);
-    // This constant is generated from the actual application byte count. Do not
-    // allow arbitrary numeric/string changes elsewhere in the program.
+    // Builder 25 uses ceil(bytes/1024) for UNPACKED_SIZE and round(bytes/1024)
+    // for ESTIMATED_SIZE. Both are bound to the verified application byte count;
+    // no other numeric/string changes are allowed in the program.
     if (applicationSize !== undefined) {
-      const value = Buffer.from(String(Math.ceil(applicationSize / 1024)) + '\0', 'utf16le');
-      const positions = [];
-      for (let at = strings; at + value.length <= languages; at += 2) {
-        if ((at === strings || header.readUInt16LE(at - 2) === 0) && header.subarray(at, at + value.length).equals(value)) positions.push(at);
+      assert(Number.isSafeInteger(applicationSize) && applicationSize > 0, 'Invalid verified application byte count');
+      for (const estimate of new Set([Math.ceil(applicationSize / 1024), Math.round(applicationSize / 1024)])) {
+        const value = Buffer.from(String(estimate) + '\0', 'utf16le');
+        const positions = [];
+        for (let at = strings; at + value.length <= languages; at += 2) {
+          if ((at === strings || header.readUInt16LE(at - 2) === 0) && header.subarray(at, at + value.length).equals(value)) positions.push(at);
+        }
+        assert.equal(positions.length, 1, 'Missing or ambiguous NSIS application size constant');
+        header.fill(0x30, positions[0], positions[0] + value.length - 2);
       }
-      assert.equal(positions.length, 1, 'Missing or ambiguous NSIS application size constant');
-      header.fill(0x30, positions[0], positions[0] + value.length - 2);
     }
     const allowed = new Map(Object.values(payloads).map(record => [record.sha256, payloadIdentity(record)]));
     for (const [sha256, identity] of special) allowed.set(sha256, identity);

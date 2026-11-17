@@ -12,11 +12,12 @@ function fixture(run) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nsis-proof-'));
   try { run(dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
-function installer({ payload = Buffer.from('original'), relocated = false, modifiedOpcode = false, destination = 'safe', stubChange = false, size = 1024, conditionalOverwrite = false } = {}) {
+function installer({ payload = Buffer.from('original'), relocated = false, modifiedOpcode = false, destination = 'safe', stubChange = false, size = 1024, estimatedSize = Math.round(size / 1024), conditionalOverwrite = false } = {}) {
   const stub = Buffer.alloc(512); stub.write('MZ'); stub.writeUInt32LE(64, 60); stub.write('PE\0\0', 64);
   stub.writeUInt16LE(0x14c, 68); stub.writeUInt16LE(1, 70); stub.writeUInt16LE(224, 84); stub.writeUInt16LE(0x10b, 88);
   stub.writeUInt32LE(512, 312 + 16); stub.writeUInt32LE(0, 312 + 20); if (stubChange) stub[450] = 42;
-  const entries = 300 + 16408, strings = entries + 56, text = Buffer.from(`${destination}\0${Math.ceil(size / 1024)}\0`, 'utf16le');
+  const ceil = Math.ceil(size / 1024);
+  const entries = 300 + 16408, strings = entries + 56, text = Buffer.from(`${destination}\0${ceil}\0${estimatedSize === ceil ? '' : estimatedSize + '\0'}`, 'utf16le');
   const header = Buffer.alloc(strings + text.length);
   for (const [index, offset, count] of [[0,300,0],[1,300,1],[2,entries,2],[3,strings,0],[4,header.length,0]]) {
     header.writeUInt32LE(offset, 4 + index * 8); header.writeUInt32LE(count, 8 + index * 8);
@@ -38,6 +39,25 @@ test('compiled NSIS proof accepts relocated, re-signed payload with refreshed si
     return nsis.nsisIdentity(file,{payloads:{file:{sha256:hash(bytes),pe:{normalizedSha256:'same-code'}}},applicationSize:options.size});
   };
   assert.deepEqual(compare('before.exe',{payload:before,size:1024},before), compare('after.exe',{payload:after,relocated:true,size:2048},after));
+}));
+test('compiled proof normalizes both SDK size estimates at their verified rounding boundaries', () => fixture(dir => {
+  const file=path.join(dir,'setup.exe');
+  const compare = size => {
+    fs.writeFileSync(file,installer({size}));
+    return nsis.nsisIdentity(file,{payloads:{file:{sha256:hash(Buffer.from('original'))}},applicationSize:size});
+  };
+  assert.deepEqual(compare(1025),compare(2049));
+  assert.deepEqual(compare(2376603960),compare(2382885226));
+}));
+test('missing, ambiguous or unverified size estimates cannot broaden the compiled source proof', () => fixture(dir => {
+  const file=path.join(dir,'setup.exe'),payloads={file:{sha256:hash(Buffer.from('original'))}};
+  for (const changes of [{estimatedSize:'wrong'},{destination:'1'}]) {
+    fs.writeFileSync(file,installer({size:1025,...changes}));
+    assert.throws(()=>nsis.nsisIdentity(file,{payloads,applicationSize:1025}),/Missing or ambiguous/);
+  }
+  fs.writeFileSync(file,installer());
+  for (const size of [0,-1,NaN,1.5,Number.MAX_SAFE_INTEGER+1])
+    assert.throws(()=>nsis.nsisIdentity(file,{payloads,applicationSize:size}),/Invalid verified application/);
 }));
 test('same extracted file set cannot hide modified delete instructions, destinations or native stub', () => fixture(dir => {
   const options={payloads:{file:{sha256:hash(Buffer.from('original'))}},applicationSize:1024};
