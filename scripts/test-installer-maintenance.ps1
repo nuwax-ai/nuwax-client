@@ -1,7 +1,8 @@
 # Real NSIS package, random QA identity, synthetic payload only. The caller
 # stages the complete generated package into a new owned local directory.
 param([Parameter(Mandatory = $true)][string]$PackageRoot,
-  [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser')
+  [ValidateSet('CurrentUser', 'AllUsers')][string]$Scope = 'CurrentUser',
+  [switch]$CleanupOnly)
 $ErrorActionPreference = 'Stop'
 $meta = [IO.File]::ReadAllText((Join-Path $PackageRoot 'qa-meta.json')) | ConvertFrom-Json
 if ($meta.kind -ne 'Synthetic Nuwax installer recovery QA' -or -not $meta.syntheticPayload -or -not $meta.nativeWindows -or
@@ -12,6 +13,11 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-maintenance-fixture-' + [Gu
 [IO.Directory]::CreateDirectory($root) | Out-Null
 [IO.File]::WriteAllText((Join-Path $root 'owner.txt'), $meta.guid)
 $install = Join-Path (Join-Path $root 'custom installation with spaces') $meta.identity
+if ($CleanupOnly) {
+  $programs = if ($Scope -eq 'AllUsers') { $env:ProgramFiles } else { Join-Path $env:LOCALAPPDATA 'Programs' }
+  $install = Join-Path $programs $meta.identity
+  if ([IO.Directory]::Exists($install)) { throw 'Refusing an existing QA installation directory' }
+}
 $exe = Join-Path $install ($meta.identity + '.exe')
 $uninstaller = Join-Path $install ('Uninstall ' + $meta.identity + '.exe')
 $privateKey = 'Software\' + $meta.guid
@@ -28,7 +34,8 @@ foreach ($key in @($privateKey, $uninstallKey)) {
 }
 function Assert($value, [string]$message) { if (-not $value) { throw $message } }
 function Put([string]$file, [string]$content) {
-  Assert ($file.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) 'Fixture path escaped'
+  Assert ($file.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    ($CleanupOnly -and $file.StartsWith($install + '\', [StringComparison]::OrdinalIgnoreCase))) 'Fixture path escaped'
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($file)) | Out-Null
   [IO.File]::WriteAllText($file, $content)
 }
@@ -48,14 +55,81 @@ function Assert-Installed {
   try { Assert ($key -and $key.GetValue('InstallLocation') -eq $install) 'Private install path is wrong' }
   finally { if ($key) { $key.Dispose() } }
 }
+function Wait-BackupCleanup {
+  $deadline = [DateTime]::UtcNow.AddSeconds(45)
+  do {
+    $remaining = @([IO.Directory]::GetDirectories([IO.Path]::GetDirectoryName($install), 'Nuwax-installer-recovery-*') |
+      Where-Object {
+        if ([IO.Path]::GetFileName($_) -notmatch '^Nuwax-installer-recovery-\d{8}T\d{6}Z-[0-9a-f]{32}$') { return $false }
+        try {
+          $start = ([IO.File]::ReadAllLines((Join-Path $_ 'manifest.jsonl')))[0] | ConvertFrom-Json
+          return $start.installDir -ieq $install
+        } catch { return $false }
+      })
+    if ($remaining.Count -eq 0) { return }
+    Start-Sleep -Milliseconds 100
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw 'Completed QA installation left program backups behind.'
+}
+function Run-Uninstaller {
+  $scopeArgument = if ($Scope -eq 'AllUsers') { '/allusers' } else { '/currentuser' }
+  # Run a private copy: _?= makes exit codes synchronous, but executing the
+  # installed EXE in place would prevent it from deleting its own retry entry.
+  $runner = Join-Path $root ('uninstall-runner-' + [Guid]::NewGuid().ToString('N') + '.exe')
+  [IO.File]::Copy($uninstaller, $runner, $false)
+  $p = Start-Process -FilePath $runner -ArgumentList ('/S ' + $scopeArgument + ' _?=' + $install) -PassThru
+  Assert ($p.WaitForExit(60000)) 'Own QA uninstaller did not exit'
+  return $p.ExitCode
+}
 function Marker {
   $sha = [Security.Cryptography.SHA256]::Create()
   try { $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
   finally { $sha.Dispose() }
   return Join-Path ([IO.Path]::GetDirectoryName($install)) ('Nuwax-installer-recovery-active-' + $hash + '.txt')
 }
+function Assert-CleanupAndUninstall {
+  Wait-BackupCleanup
+  Assert-Installed
+
+  $beforeUninstaller = (Get-FileHash -LiteralPath $uninstaller).Hash
+  $lockedPayload = [IO.File]::Open("$install\resources\app.asar", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+  try { Assert ((Run-Uninstaller) -ne 0) 'Locked uninstall reported success after backup cleanup' }
+  finally { $lockedPayload.Dispose() }
+  Assert ((Get-FileHash -LiteralPath $uninstaller).Hash -eq $beforeUninstaller) 'Failed uninstall lost its retry program'
+  $key = $hive.OpenSubKey($uninstallKey)
+  try { Assert ([bool]$key) 'Failed uninstall lost its registration' } finally { if ($key) { $key.Dispose() } }
+  Assert ((Run-Uninstaller) -eq 0) 'Uninstall retry failed after backup cleanup'
+  Assert ([IO.File]::ReadAllText("$install\workspace\keep.txt") -eq 'personal data') 'Uninstall retry lost workspace'
+  Assert ([IO.File]::ReadAllText("$install\resources\user-added.txt") -eq 'resource-directory personal data') 'Uninstall retry lost unknown file'
+
+  return @(@{ case = 'completed-installation-cleans-latest-backup'; passed = $true },
+    @{ case = 'uninstall-after-cleanup-failure-and-retry'; passed = $true })
+}
 $cases = @()
 try {
+  if ($CleanupOnly) {
+    Assert ((Run-Package) -eq 0) 'Fresh cleanup QA installation failed'
+    Assert-Installed
+    Put "$install\workspace\keep.txt" 'personal data'
+    Put "$install\resources\user-added.txt" 'resource-directory personal data'
+    Assert ((Run-Package) -eq 0) 'Cleanup QA upgrade failed'
+    Assert-Installed
+    $cases += @(Assert-CleanupAndUninstall)
+    # Keep the synthetic personal files in the evidence root after asserting
+    # the uninstaller preserved them. Remove only the now-empty QA folders.
+    foreach ($relative in @('workspace\keep.txt', 'resources\user-added.txt')) {
+      $destination = Join-Path (Join-Path $root 'preserved-user-files') $relative
+      [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)) | Out-Null
+      [IO.File]::Move((Join-Path $install $relative), $destination)
+    }
+    foreach ($directory in @('workspace', 'resources')) { [IO.Directory]::Delete((Join-Path $install $directory), $false) }
+    [IO.Directory]::Delete($install, $false)
+    $report = @{ passed = $true; cases = $cases; fixtureRoot = $root; productIdentity = $meta.identity; scope = $Scope;
+      signed = $meta.signed; syntheticPayload = $true; productionInstallationTouched = $false; cleanupOnly = $true } | ConvertTo-Json -Depth 5
+    [IO.File]::WriteAllText((Join-Path $root 'result.json'), $report)
+    $report
+    return
+  }
   $scopeArgument = if ($Scope -eq 'AllUsers') { '/allusers' } else { '/currentuser' }
   $rejected = Start-Process -FilePath $installer -ArgumentList ('/S ' + $scopeArgument + ' /D=C:\') -PassThru
   Assert ($rejected.WaitForExit(30000) -and $rejected.ExitCode -ne 0) 'Volume-root installation was accepted'
@@ -74,6 +148,9 @@ try {
   $cases += @{ case = 'forward-slash-directory'; passed = $true }
   Put "$install\workspace\keep.txt" 'personal data'
   Put "$install\resources\user-added.txt" 'resource-directory personal data'
+  $cases += @(Assert-CleanupAndUninstall)
+  Assert ((Run-Package) -eq 0) 'QA reinstall after standalone uninstall failed'
+  Assert-Installed
   [IO.File]::Copy((Join-Path $PackageRoot 'legacy-exit-2.exe'), $uninstaller, $true)
   Assert ((Run-Package) -eq 0) 'Broken legacy uninstaller blocked repair'
   Assert-Installed

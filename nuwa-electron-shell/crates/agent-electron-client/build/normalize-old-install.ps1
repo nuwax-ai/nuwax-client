@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('Inspect', 'Prepare', 'Reconcile', 'Detach', 'Restore', 'Rollback', 'RecordPayload', 'Cleanup', 'RestoreRegistration')][string]$Action = 'Prepare',
+  [ValidateSet('Inspect', 'Prepare', 'Reconcile', 'Detach', 'Restore', 'Rollback', 'RecordPayload', 'Complete', 'Cleanup', 'RestoreRegistration')][string]$Action = 'Prepare',
   [string]$InstallDir,
   [Alias('RecoveryPathFile')][Parameter(Mandatory = $true)][string]$StatePath,
   [string]$PayloadInventoryPath,
@@ -366,7 +366,7 @@ if (Test-EntryExists $stateFile) {
 $records = $null
 $recoveryDir = $fromState
 
-if ($Action -in @('Inspect', 'Prepare', 'Reconcile', 'RecordPayload', 'Cleanup')) {
+if ($Action -in @('Inspect', 'Prepare', 'Reconcile', 'RecordPayload', 'Complete', 'Cleanup')) {
   if (-not $InstallDir) {
     throw "$Action requires InstallDir."
   }
@@ -413,6 +413,22 @@ if ($statePathFull.StartsWith($root + '\', $pathComparison)) {
 
 $marker = Get-MarkerPath $root
 $extendedMarker = Get-ExtendedPath $marker
+# Dispatch only: waiting on recovery locks belongs to the detached worker,
+# never to the successful installer's foreground completion path.
+if ($Action -eq 'Complete') {
+  if (-not $PayloadInventoryPath) { throw 'Completed installation cleanup requires the embedded payload inventory.' }
+  foreach ($name in @($appEntryNames[0], $uninstallerName)) {
+    $file = [IO.Path]::Combine($extendedRoot, $name)
+    if (-not (Test-EntryExists $file) -or
+        ([IO.File]::GetAttributes($file) -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -ne 0) {
+      throw 'Completed installation cleanup requires the installed program and uninstaller.'
+    }
+  }
+  if (Test-EntryExists $extendedMarker) { throw 'Completed installation cleanup requires all recovery work to finish.' }
+  Start-RecoveryRetention $root $PayloadInventoryPath
+  exit 0
+}
+
 $recoveryMutexName = 'Global\NuwaxInstallerRecovery-' + [IO.Path]::GetFileNameWithoutExtension($marker)
 $recoveryMutex = [Threading.Mutex]::new($false, $recoveryMutexName)
 # Foreground operations announce themselves before waiting for the data lock.
@@ -436,8 +452,15 @@ if (-not $mutexHeld -and $Action -ne 'Cleanup') {
 if (-not $mutexHeld) { throw 'Another recovery operation is active for this installation.' }
 
 if ($Action -eq 'Cleanup') {
-  try { Invoke-RecoveryRetention $root }
-  catch [OperationCanceledException] { Write-Output 'Backup retention yielded to an installation operation; remaining backups were retained.' }
+  if (-not $PayloadInventoryPath) { throw 'Cleanup requires the successful installation payload inventory.' }
+  $cleanup = {
+    try { Invoke-RecoveryRetention $root }
+    catch [OperationCanceledException] { Write-Output 'Backup retention yielded to an installation operation; remaining backups were retained.' }
+  }
+  if ($CleanupRuntime) {
+    $log = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetFileNameWithoutExtension($marker) + '-cleanup.log')
+    & $cleanup *>&1 | Out-File -LiteralPath $log -Encoding utf8
+  } else { & $cleanup }
   exit 0
 }
 
@@ -823,8 +846,6 @@ if ($Action -eq 'Restore' -or $resumeRestoreBeforePrepare -or ($Action -eq 'Reco
   }
   Write-Output "Restored $restored non-application entries and $script:payloadRestored missing payload-directory entries; $script:payloadCollisions existing payload paths retained in $recoveryDir"
   if (-not $resumeRestoreBeforePrepare -or $Action -eq 'Reconcile') {
-    try { Start-RecoveryRetention $root }
-    catch { Write-Output ('Backup retention skipped: ' + $_.Exception.Message) }
     exit 0
   }
   if ([System.IO.File]::Exists($stateFile)) {
