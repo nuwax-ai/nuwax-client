@@ -910,10 +910,14 @@ export async function createAcpConnection(
       wireApi: takeAliasedEnv(env, "WIRE_API"),
       apiProtocol: takeAliasedEnv(env, "API_PROTOCOL"),
       disableThinking: takeAliasedEnv(env, "DISABLE_THINKING"),
+      // 解析顺序:宿主显式 > 平台按模型下发(OPENCODE_MAX_TOKENS) > 平台实验性上限
+      // (OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX——deepseek 系下发 384000)。
+      // 引擎侧会把超窗的输出预算钳到窗口一半,这里只需如实透传。
       maxOutputTokens:
         takeAliasedEnv(env, "MAX_OUTPUT_TOKENS") ||
         env["MAX_OUTPUT_TOKENS"] ||
-        env["OPENCODE_MAX_TOKENS"],
+        env["OPENCODE_MAX_TOKENS"] ||
+        env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"],
       reasoningEffort: takeAliasedEnv(env, "MODEL_REASONING_EFFORT"),
       // 解析顺序:宿主显式指定的 MODEL_CONTEXT_WINDOW 优先;其次平台按模型
       // 下发的 OPENCODE_MAX_CONTEXT_TOKENS(如 deepseek-flash 1M——2026-11-16
