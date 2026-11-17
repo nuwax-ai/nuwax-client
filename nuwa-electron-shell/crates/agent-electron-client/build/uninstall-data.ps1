@@ -15,9 +15,12 @@ $script:uninstallTarget = $InstallDir
 trap {
   $cause = $_.Exception
   while ($cause.InnerException) { $cause = $cause.InnerException }
+  $target = $script:uninstallTarget
+  if ($cause.Data.Contains('NuwaxTarget')) { $target = [string]$cause.Data['NuwaxTarget'] }
   $failure = [ordered]@{ atUtc = [DateTime]::UtcNow.ToString('o'); action = 'Uninstall';
     phase = $script:uninstallPhase; installDir = $InstallDir; scope = $RegistryScope;
-    target = $script:uninstallTarget; deleteLocalData = [bool]$DeleteLocalData;
+    target = $target; deleteLocalData = [bool]$DeleteLocalData;
+    readOnly = $cause.Data['NuwaxReadOnly']; nativeError = $cause.Data['NuwaxNativeError'];
     error = $cause.Message; exceptionType = $cause.GetType().FullName; errorId = $_.FullyQualifiedErrorId }
   try {
     [IO.File]::AppendAllText((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-uninstall-events.jsonl'),
@@ -27,6 +30,7 @@ trap {
   # Program removal has completed at this stage; a partial data cleanup must
   # retain its retry entry without claiming that every user file still exists.
   if ($script:uninstallPhase -eq 'LocalDataRemoval') { exit 3 }
+  if ($script:uninstallPhase -eq 'Preflight' -and $cause -is [UnauthorizedAccessException]) { exit 4 }
   exit 1
 }
 
@@ -40,8 +44,37 @@ Add-Type -ReferencedAssemblies @([Uri].Assembly.Location, [Collections.Generic.H
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 public static class NuwaxUninstallPaths {
+  [DllImport("kernel32.dll", EntryPoint="CreateFileW", CharSet=CharSet.Unicode, SetLastError=true)]
+  private static extern SafeFileHandle OpenForAccess(string path, uint access, uint sharing,
+    IntPtr security, uint disposition, uint flags, IntPtr template);
+
+  private static void CheckRemovalAccess(string file, FileAttributes attributes) {
+    // Opening an existing handle with DELETE access checks the actual token's
+    // permissions without deleting or marking the file for deletion. Read-only
+    // owned files also require permission to clear that one attribute later.
+    uint access = 0x00010000;
+    if ((attributes & FileAttributes.ReadOnly) != 0) access |= 0x00000100;
+    using (SafeFileHandle handle = OpenForAccess(file, access, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)) {
+      if (!handle.IsInvalid) return;
+      int code = Marshal.GetLastWin32Error();
+      if (code == 2 || code == 3) return; // Another pass may already have removed it.
+      Exception error = code == 5
+        ? (Exception)new UnauthorizedAccessException("No permission to remove owned program file: " + file)
+        : new IOException("Cannot preflight removal of program file: " + file + " (Win32=" + code + ")");
+      error.Data["NuwaxNativeError"] = code;
+      throw error;
+    }
+  }
+
+  private static void RecordFileFailure(Exception error, string file, FileAttributes? attributes) {
+    while (error.InnerException != null) error = error.InnerException;
+    error.Data["NuwaxTarget"] = file;
+    if (attributes.HasValue) error.Data["NuwaxReadOnly"] = (attributes.Value & FileAttributes.ReadOnly) != 0;
+  }
   public static void Progress(string phase, int count, int total) {
     try {
       File.AppendAllText(Path.Combine(Path.GetTempPath(), "Nuwax-uninstall-progress.log"),
@@ -86,13 +119,17 @@ public static class NuwaxUninstallPaths {
     int checkedFiles = 0;
     Progress("preflight-start", 0, files.Length);
     foreach (string file in files) {
-      AssertNoReparseAncestors(file);
-      FileAttributes? attributes = ExistingAttributes(file);
-      if (attributes.HasValue) {
-        if ((attributes.Value & FileAttributes.Directory) != 0)
-          throw new IOException("Payload file became a directory: " + file);
-        using (File.Open(file, FileMode.Open, FileAccess.Read, FileShare.None)) { }
-      }
+      FileAttributes? attributes = null;
+      try {
+        AssertNoReparseAncestors(file);
+        attributes = ExistingAttributes(file);
+        if (attributes.HasValue) {
+          if ((attributes.Value & FileAttributes.Directory) != 0)
+            throw new IOException("Payload file became a directory: " + file);
+          using (File.Open(file, FileMode.Open, FileAccess.Read, FileShare.None)) { }
+          CheckRemovalAccess(file, attributes.Value);
+        }
+      } catch (Exception error) { RecordFileFailure(error, file, attributes); throw; }
       if (++checkedFiles % 5000 == 0) Progress("preflight", checkedFiles, files.Length);
     }
     Progress("preflight-complete", checkedFiles, files.Length);
@@ -102,8 +139,12 @@ public static class NuwaxUninstallPaths {
     int checkedFiles = 0;
     Progress("delete-start", 0, files.Length);
     foreach (string file in files) {
-      AssertNoReparseAncestors(file);
-      if (ExistingAttributes(file).HasValue) File.Delete(file);
+      FileAttributes? attributes = null;
+      try {
+        AssertNoReparseAncestors(file);
+        attributes = ExistingAttributes(file);
+        if (attributes.HasValue) RemoveDataEntry(file, false);
+      } catch (Exception error) { RecordFileFailure(error, file, attributes); throw; }
       if (++checkedFiles % 5000 == 0) Progress("delete", checkedFiles, files.Length);
     }
     Progress("delete-complete", checkedFiles, files.Length);
@@ -113,8 +154,9 @@ public static class NuwaxUninstallPaths {
     FileAttributes? attributes = ExistingAttributes(path);
     if (!attributes.HasValue) return;
     // Git pack/index files in app-managed workspaces are commonly read-only.
-    // Only the explicitly selected local-data pass calls this helper. Links
-    // are unlinked without changing attributes on their destination.
+    // Used only for manifest-owned program files or explicitly selected local
+    // data. Unknown program files never reach this helper. Links are unlinked
+    // without changing attributes on their destination.
     bool readOnly = (attributes.Value & (FileAttributes.ReadOnly | FileAttributes.ReparsePoint)) == FileAttributes.ReadOnly;
     if (readOnly) {
       AssertNoReparseAncestors(path);
