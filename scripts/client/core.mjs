@@ -43,7 +43,12 @@ export function run(command, args = [], options = {}) {
   const output = { status: result.status ?? 1, stdout: result.stdout || '', stderr: result.stderr || '' };
   if (result.error) output.stderr ||= result.error.message;
   if (output.status !== 0 && !allowFailure) {
-    throw new Error(command + ' failed (' + output.status + ')' + (output.stderr ? ': ' + output.stderr.trim() : ''));
+    // A bare "npm failed (1)" told nobody which step died: name the command with
+    // its arguments and fall back to the stdout tail when stderr is empty (npm
+    // script failures usually print the reason on stdout).
+    const detail = (output.stderr.trim() || output.stdout.trim().split('\n').slice(-6).join('\n').trim());
+    const invocation = [command, ...argv].join(' ');
+    throw new Error(invocation + ' failed (' + output.status + ')' + (detail ? ': ' + detail : ''));
   }
   return output;
 }
