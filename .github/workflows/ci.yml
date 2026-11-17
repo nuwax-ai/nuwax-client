@@ -71,6 +71,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./scripts/test-installer-monitor.ps1
+      - name: Check successful-install backup cleanup and user file preservation
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-installer-backup-retention.ps1 -RecoveryScript ./nuwa-electron-shell/crates/agent-electron-client/build/normalize-old-install.ps1
 
   terminal-compat:
     name: terminal compatibility protocol and WinPTY regression

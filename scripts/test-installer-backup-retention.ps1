@@ -1,5 +1,6 @@
 param([Parameter(Mandatory = $true)][string]$RecoveryScript)
 $ErrorActionPreference = 'Stop'
+$RecoveryScript = [IO.Path]::GetFullPath($RecoveryScript)
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-backup-retention-test-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixture) | Out-Null
 [IO.File]::WriteAllText((Join-Path $fixture 'owner.txt'), 'Synthetic backups only')
@@ -20,6 +21,12 @@ function Run([string]$action, [string]$install, [string]$state, [string]$invento
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
   $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $RecoveryScript + '" -Action ' + $action + ' -InstallDir "' + $install + '" -StatePath "' + $state + '"'
+  if (-not $inventory -and $action -in @('Cleanup', 'Complete')) {
+    $inventory = Join-Path ([IO.Path]::GetDirectoryName($install)) 'current-embedded.json'
+    $current = Inventory (Join-Path $install 'Nuwax.exe')
+    $current.fileHashes['resources/app.asar'] = (Hash $script:commonPayload)
+    Put $inventory ($current | ConvertTo-Json -Depth 5 -Compress)
+  }
   if ($inventory) { $psi.Arguments += ' -PayloadInventoryPath "' + $inventory + '"' }
   $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
   $psi.WorkingDirectory = $fixture
@@ -67,6 +74,7 @@ function Seed([string]$case, [int]$days, [string]$mode = 'owned') {
   if ($mode -eq 'wrong-install') { $records[0].installDir = "$parent\other-install" }
   Put "$backup\manifest.jsonl" (($records | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join [Environment]::NewLine)
   if ($mode -eq 'unknown') { Put "$backup\entry-000001\user-collision.txt" 'PERSONAL DATA' }
+  if ($mode -eq 'modified-exe') { Put "$backup\entry-000000" 'EXE AFTER RCEDIT OR USER MODIFICATION' }
   if ($mode -eq 'modified') { Put "$backup\entry-000001\app.asar" 'USER MODIFIED OWNED FILE' }
   if ($mode -eq 'modified-uninstaller') { Put "$backup\uninstaller-backup.exe" 'USER MODIFIED UNINSTALLER' }
   if ($mode -eq 'tampered-inventory') { [IO.File]::AppendAllText("$backup\payload-inventory.json", ' ') }
@@ -79,21 +87,22 @@ function Seed([string]$case, [int]$days, [string]$mode = 'owned') {
   }
   return @{ install = $install; backup = $backup; state = "$parent\state.txt"; parent = $parent }
 }
+$script:commonPayload = Join-Path $fixture 'common-payload.txt'
+Put $script:commonPayload 'old owned payload'
+function Preserved($f) { return $f.backup.Replace('Nuwax-installer-recovery-', 'Nuwax-preserved-install-files-') }
 $rows = @()
-$old = Seed 'window' 20; $recent = Seed 'window' 3; $newest = Seed 'window' 1
+$old = Seed 'window' 20; $recent = Seed 'window' 3; $newest = Seed 'window' 0
 $result = Run 'Cleanup' $old.install $old.state
 Assert ($result.code -eq 0) $result.output
-Assert (![IO.Directory]::Exists($old.backup)) ('Expired owned backup retained: ' + $result.output)
-Assert ([IO.Directory]::Exists($recent.backup)) 'Backup younger than seven days removed'
-Assert ([IO.Directory]::Exists($newest.backup)) 'Newest backup removed'
+foreach ($f in @($old, $recent, $newest)) { Assert (![IO.Directory]::Exists($f.backup)) ('Completed backup retained: ' + $result.output) }
 Assert ([IO.File]::ReadAllText("$($old.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') 'Current install changed'
-$rows += @{ case = 'one-latest-and-seven-day-window'; passed = $true }
-$older = Seed 'latest-old' 40; $latestOld = Seed 'latest-old' 20
-$result = Run 'Cleanup' $older.install $older.state
-Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($older.backup) -and [IO.Directory]::Exists($latestOld.backup)) ('Newest aged backup was not retained: ' + $result.output)
-$rows += @{ case = 'newest-retained-after-seven-days'; passed = $true }
-foreach ($mode in @('legacy', 'unfinished', 'wrong-install', 'unknown', 'modified', 'modified-uninstaller', 'tampered-inventory', 'corrupt', 'link', 'modified-registration', 'unproven-registration')) {
-  $protected = Seed $mode 30 $mode; $latest = Seed $mode 1
+$rows += @{ case = 'all-completed-backups-including-latest-and-recent'; passed = $true }
+$latestOnly = Seed 'latest-only' 20
+$result = Run 'Cleanup' $latestOnly.install $latestOnly.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($latestOnly.backup)) ('Only backup was retained: ' + $result.output)
+$rows += @{ case = 'single-latest-backup-deleted'; passed = $true }
+foreach ($mode in @('unfinished', 'wrong-install', 'corrupt', 'link')) {
+  $protected = Seed $mode 30 $mode
   $before = Hash "$($protected.backup)\entry-000000"
   $result = Run 'Cleanup' $protected.install $protected.state
   Assert ($result.code -eq 0) $result.output
@@ -102,6 +111,97 @@ foreach ($mode in @('legacy', 'unfinished', 'wrong-install', 'unknown', 'modifie
   if ($mode -eq 'link') { Assert ([IO.File]::ReadAllText("$($protected.parent)\outside\sentinel.txt") -eq 'OUTSIDE') 'Link destination changed' }
   $rows += @{ case = $mode; passed = $true }
 }
+foreach ($mode in @('legacy', 'unknown', 'modified', 'modified-exe', 'modified-uninstaller', 'tampered-inventory', 'modified-registration', 'unproven-registration')) {
+  $f = Seed $mode 0 $mode
+  $relative = switch ($mode) {
+    'legacy' { 'entry-000000' }
+    'unknown' { 'entry-000001\user-collision.txt' }
+    'modified' { 'entry-000001\app.asar' }
+    'modified-exe' { 'entry-000000' }
+    'modified-uninstaller' { 'uninstaller-backup.exe' }
+    'tampered-inventory' { 'payload-inventory.json' }
+    default { 'registration.json' }
+  }
+  $before = Hash (Join-Path $f.backup $relative)
+  $result = Run 'Cleanup' $f.install $f.state
+  Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($f.backup)) ("$mode completed backup retained: " + $result.output)
+  Assert ((Hash (Join-Path (Preserved $f) ('files\' + $relative))) -eq $before) "$mode unproven data lost"
+  Assert ([IO.File]::Exists((Join-Path (Preserved $f) 'transaction\manifest.jsonl'))) "$mode original path mapping lost"
+  Assert ([IO.File]::ReadAllText("$($f.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') "$mode changed current installation"
+  if ($mode -eq 'modified-exe') { Assert (![IO.File]::Exists((Join-Path (Preserved $f) 'files\entry-000001\app.asar'))) 'Verified old application payload was copied instead of deleted' }
+  $rows += @{ case = ('preserve-unproven-' + $mode); passed = $true }
+}
+$locked = Seed 'locked-user-file' 0 'unknown'
+$handle = [IO.File]::Open("$($locked.backup)\entry-000001\user-collision.txt", [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try {
+  $result = Run 'Cleanup' $locked.install $locked.state
+  Assert ($result.code -eq 0 -and [IO.File]::Exists("$($locked.backup)\entry-000001\user-collision.txt")) 'Locked user file was lost'
+  Assert ([IO.File]::Exists("$($locked.backup)\entry-000000")) 'Cleanup deleted payload before user file preservation finished'
+} finally { $handle.Dispose() }
+$result = Run 'Cleanup' $locked.install $locked.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($locked.backup)) ('Retry failed: ' + $result.output)
+Assert ([IO.File]::ReadAllText((Join-Path (Preserved $locked) 'files\entry-000001\user-collision.txt')) -eq 'PERSONAL DATA') 'Retry changed user file'
+$rows += @{ case = 'locked-user-file-and-safe-retry'; passed = $true }
+$readonly = Seed 'readonly-owned' 0
+[IO.File]::SetAttributes("$($readonly.backup)\entry-000001\app.asar", [IO.FileAttributes]::ReadOnly)
+$result = Run 'Cleanup' $readonly.install $readonly.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($readonly.backup)) ('Readonly verified payload retained: ' + $result.output)
+$rows += @{ case = 'readonly-owned-payload'; passed = $true }
+$redirect = Seed 'preservation-reparse' 0 'unknown'
+Put "$($redirect.parent)\outside\sentinel.txt" 'OUTSIDE'
+$null = & cmd.exe /d /c mklink /J (Preserved $redirect) "$($redirect.parent)\outside"
+Assert ($LASTEXITCODE -eq 0) 'Could not create preservation junction fixture'
+$result = Run 'Cleanup' $redirect.install $redirect.state
+Assert ($result.code -eq 0 -and [IO.Directory]::Exists($redirect.backup)) 'Redirected preservation path was accepted'
+Assert ([IO.File]::ReadAllText("$($redirect.parent)\outside\sentinel.txt") -eq 'OUTSIDE') 'Preservation link target changed'
+Assert (@([IO.Directory]::GetFileSystemEntries("$($redirect.parent)\outside")).Count -eq 1) 'Preservation wrote outside its directory'
+$rows += @{ case = 'preservation-reparse-rejected'; passed = $true }
+foreach ($entry in @('transaction', 'files\entry-000001')) {
+  $dangling = Seed ('dangling-' + $entry.Replace('\', '-')) 0 'unknown'
+  $link = Join-Path (Preserved $dangling) $entry
+  [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($link)) | Out-Null
+  $outside = Join-Path $dangling.parent 'not-created-outside'
+  $null = & cmd.exe /d /c mklink /J $link $outside
+  Assert ($LASTEXITCODE -eq 0) 'Could not create dangling preservation junction'
+  $result = Run 'Cleanup' $dangling.install $dangling.state
+  Assert ($result.code -eq 0 -and [IO.File]::Exists("$($dangling.backup)\entry-000001\user-collision.txt")) 'Dangling preservation path lost user file'
+  Assert (![IO.Directory]::Exists($outside)) 'Cleanup created a dangling link target outside preservation'
+  $rows += @{ case = ('dangling-preservation-' + $entry); passed = $true }
+}
+$empty = Seed 'empty-personal-directory' 0
+[IO.Directory]::CreateDirectory("$($empty.backup)\entry-000001\empty-personal-folder") | Out-Null
+$result = Run 'Cleanup' $empty.install $empty.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($empty.backup)) $result.output
+Assert ([IO.Directory]::Exists((Join-Path (Preserved $empty) 'files\entry-000001\empty-personal-folder'))) 'Empty personal directory was lost'
+$rows += @{ case = 'empty-personal-directory-preserved'; passed = $true }
+$repo = Seed 'personal-subtree' 0
+$repoPath = "$($repo.backup)\entry-000001\personal-project"
+Put "$repoPath\.git\objects\pack\pack.idx" 'PERSONAL GIT DATA'
+[IO.Directory]::CreateDirectory("$repoPath\empty-folder") | Out-Null
+[IO.File]::SetAttributes($repoPath, ([IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::Directory))
+$repoAcl = [IO.Directory]::GetAccessControl($repoPath).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)
+$result = Run 'Cleanup' $repo.install $repo.state
+$savedRepo = Join-Path (Preserved $repo) 'files\entry-000001\personal-project'
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($repo.backup)) $result.output
+Assert ([IO.File]::ReadAllText("$savedRepo\.git\objects\pack\pack.idx") -eq 'PERSONAL GIT DATA') 'Personal subtree contents were lost'
+Assert ([IO.Directory]::Exists("$savedRepo\empty-folder")) 'Personal subtree empty folder was lost'
+Assert (([IO.File]::GetAttributes($savedRepo) -band [IO.FileAttributes]::Hidden) -ne 0) 'Personal directory attributes changed'
+Assert ([IO.Directory]::GetAccessControl($savedRepo).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All) -eq $repoAcl) 'Personal directory ACL changed'
+$rows += @{ case = 'personal-subtree-structure-attributes-acl-preserved'; passed = $true }
+$collision = Seed 'preservation-conflict' 0 'unknown'
+Put (Join-Path (Preserved $collision) 'files\entry-000001\user-collision.txt') 'EARLIER PRESERVED DATA'
+$result = Run 'Cleanup' $collision.install $collision.state
+Assert ($result.code -eq 0 -and [IO.File]::ReadAllText("$($collision.backup)\entry-000001\user-collision.txt") -eq 'PERSONAL DATA') 'Conflicting original user file was lost'
+Assert ([IO.File]::ReadAllText((Join-Path (Preserved $collision) 'files\entry-000001\user-collision.txt')) -eq 'EARLIER PRESERVED DATA') 'Earlier preservation was overwritten'
+$rows += @{ case = 'preservation-conflict-keeps-both-files'; passed = $true }
+$invalidMove = Seed 'invalid-move' 0
+$manifest = "$($invalidMove.backup)\manifest.jsonl"
+$history = @([IO.File]::ReadAllLines($manifest) | ForEach-Object { $_ | ConvertFrom-Json })
+$history[1].original = "$($invalidMove.parent)\other-install\Nuwax.exe"
+Put $manifest (($history | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join [Environment]::NewLine)
+$result = Run 'Cleanup' $invalidMove.install $invalidMove.state
+Assert ($result.code -eq 0 -and [IO.File]::Exists("$($invalidMove.backup)\entry-000000")) 'Cross-installation move was accepted'
+$rows += @{ case = 'invalid-move-keeps-transaction'; passed = $true }
 $registered = Seed 'registration' 30 'registration'; $latest = Seed 'registration' 1
 $result = Run 'Cleanup' $registered.install $registered.state
 Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($registered.backup)) ('Verified expired registry snapshot retained: ' + $result.output)
@@ -111,6 +211,10 @@ $sha = [Security.Cryptography.SHA256]::Create()
 try { $rootHash = [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($active.install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
 Put "$($active.parent)\Nuwax-installer-recovery-active-$rootHash.txt" $active.backup
+Put "$($active.install)\Uninstall Nuwax.exe" 'current uninstaller'
+$result = Run 'Complete' $active.install $active.state
+Assert ($result.code -ne 0 -and [IO.Directory]::Exists($active.backup)) 'Unfinished recovery authorized successful-install cleanup'
+$rows += @{ case = 'complete-rejects-active-recovery'; passed = $true }
 $result = Run 'Cleanup' $active.install $active.state
 Assert ($result.code -eq 0 -and [IO.Directory]::Exists($active.backup)) 'Active recovery removed'
 $rows += @{ case = 'active-recovery'; passed = $true }
@@ -223,10 +327,25 @@ Assert ($result.code -eq 0) $result.output
 Assert ([IO.File]::Exists("$recovery\payload-inventory.json")) 'Old embedded inventory was not recorded'
 Assert ([IO.File]::ReadAllText("$recovery\entry-000000") -eq 'old owned payload') 'Latest backup removed after Restore'
 $rows += @{ case = 'prepare-record-restore'; passed = $true }
-Assert ($result.output.Contains('Backup retention scheduled in background.')) 'Restore did not schedule background cleanup'
+Assert (!$result.output.Contains('Backup retention scheduled in background.')) 'Restore prematurely scheduled successful-install cleanup'
+Assert ([IO.Directory]::Exists($expiredTransactionBackup.backup)) 'Restore removed old backups before installation success'
+[IO.File]::Delete("$install\Uninstall Nuwax.exe")
+$result = Run 'Complete' $install $state $inventory
+Assert ($result.code -ne 0 -and [IO.Directory]::Exists($recovery)) 'Incomplete installation authorized backup cleanup'
+Put "$install\Uninstall Nuwax.exe" 'current uninstall entry must stay'
+$rows += @{ case = 'restore-and-incomplete-install-do-not-clean'; passed = $true }
 $sha = [Security.Cryptography.SHA256]::Create()
 try { $rootHash = [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($install.ToUpperInvariant())), 0, 12).Replace('-', '').ToLowerInvariant() }
 finally { $sha.Dispose() }
+$busyCleanup = [Threading.Mutex]::new($false, ('Global\NuwaxInstallerRecovery-Nuwax-installer-recovery-active-' + $rootHash))
+Assert ($busyCleanup.WaitOne(0)) 'Could not hold own fixture cleanup lock'
+try {
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $result = Run 'Complete' $install $state $inventory
+  Assert ($result.code -eq 0 -and $result.output.Contains('Backup retention scheduled in background.')) ('Complete did not schedule background cleanup: ' + $result.output)
+  Assert ($watch.Elapsed.TotalSeconds -lt 10) 'Successful installer waited for background cleanup lock'
+} finally { $busyCleanup.ReleaseMutex(); $busyCleanup.Dispose() }
+$rows += @{ case = 'successful-install-dispatch-does-not-wait-for-cleanup-lock'; passed = $true }
 $log = Join-Path ([IO.Path]::GetTempPath()) "Nuwax-installer-recovery-active-$rootHash-cleanup.log"
 $deadline = [DateTime]::UtcNow.AddSeconds(15); $finished = $false
 do {
@@ -235,6 +354,7 @@ do {
 } while (!$finished -and [DateTime]::UtcNow -lt $deadline)
 Assert $finished 'Detached cleanup did not complete after Restore returned'
 Assert (![IO.Directory]::Exists($expiredTransactionBackup.backup)) 'Detached cleanup did not remove expired owned backup'
-Assert ([IO.File]::Exists("$recovery\entry-000000")) 'Background cleanup removed latest backup'
+Assert (![IO.Directory]::Exists($recovery)) 'Background cleanup retained latest backup'
+Assert ([IO.File]::ReadAllText("$install\Uninstall Nuwax.exe") -eq 'current uninstall entry must stay') 'Cleanup changed current uninstaller'
 $rows += @{ case = 'detached-cleanup-completes'; passed = $true }
 @{ passed = $true; cases = $rows; fixtureRoot = $fixture; realUserDataTouched = $false; fixtureRetained = $true } | ConvertTo-Json -Depth 5
