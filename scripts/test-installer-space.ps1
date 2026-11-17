@@ -52,6 +52,43 @@ try {
   & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $SpaceScript -InstallDir 'Z:\unavailable\app' -TempPath $root -CachePath (Join-Path $root 'cache\installer.exe') -InstallerPath $exe -UnpackedSizeKB 1 -ReportPath $report | Out-Host
   Check ($LASTEXITCODE -eq 2) 'Unavailable path must return query failure, not success or disk-full.'
   $cases.Add('native-entry-unavailable-drive')
+  # Recheck all writable roles without creating the target. This also exercises
+  # a non-ASCII user-chosen path on Windows PowerShell 5.1.
+  $custom=Join-Path $root ('custom ' + [char]0x6d4b + [char]0x8bd5 + '\app')
+  Assert-InstallWriteAccess $custom 'fixture'
+  Check (-not [IO.Directory]::Exists([IO.Path]::GetDirectoryName($custom))) 'Write probe created the installation directory.'
+  Check (@(Get-ChildItem $root -Filter 'nuwax-write-probe-*').Count -eq 0) 'Write probe was retained.'
+  $cases.Add('native-write-probe-unicode-cleanup')
+  $outside=Join-Path $root 'outside';[IO.Directory]::CreateDirectory($outside)|Out-Null
+  $sentinel=Join-Path $outside 'sentinel.txt';[IO.File]::WriteAllText($sentinel,'keep')
+  $link=Join-Path $root 'redirected'
+  New-Item -ItemType Junction -Path $link -Target $outside|Out-Null
+  try {
+    $failed=$false;try { Assert-InstallWriteAccess (Join-Path $link 'app') 'fixture' } catch { $failed=$true }
+    Check $failed 'Redirected path accepted for a write probe.'
+    Check ([IO.File]::ReadAllText($sentinel) -eq 'keep' -and @(Get-ChildItem $outside).Count -eq 1) 'Probe touched redirected destination.'
+  }finally{[IO.Directory]::Delete($link)}
+  $cases.Add('native-write-probe-refuses-redirect')
+  $denied=Join-Path $root 'denied';[IO.Directory]::CreateDirectory($denied)|Out-Null
+  $acl=[IO.Directory]::GetAccessControl($denied)
+  $rule=New-Object Security.AccessControl.FileSystemAccessRule ([Security.Principal.WindowsIdentity]::GetCurrent().User),([Security.AccessControl.FileSystemRights]::CreateFiles -bor [Security.AccessControl.FileSystemRights]::CreateDirectories),([Security.AccessControl.AccessControlType]::Deny)
+  $acl.AddAccessRule($rule);[IO.Directory]::SetAccessControl($denied,$acl)
+  try {
+    foreach($role in @('install','temp','cache')) {
+      $install=Join-Path $root 'app';$temp=$root;$cache=Join-Path $root 'cache\installer.exe'
+      if($role -eq 'install'){$install=Join-Path $denied 'app'}
+      if($role -eq 'temp'){$temp=$denied}
+      if($role -eq 'cache'){$cache=Join-Path $denied 'installer.exe'}
+      & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $SpaceScript -InstallDir $install -TempPath $temp -CachePath $cache -InstallerPath $exe -UnpackedSizeKB 1 -ReportPath $report | Out-Host
+      Check ($LASTEXITCODE -eq 2 -and [IO.File]::ReadAllText($report).Contains($denied)) ('Write denial was not reported before installation: '+$role)
+      Check (-not [IO.Directory]::Exists($install)) 'Failed preflight created the installation directory.'
+      $cases.Add('native-write-denial-'+$role)
+    }
+  } finally {
+    $acl=[IO.Directory]::GetAccessControl($denied);$acl.RemoveAccessRuleSpecific($rule);[IO.Directory]::SetAccessControl($denied,$acl)
+  }
   $cases | ForEach-Object { Write-Output ('PASS ' + $_) }
   Write-Output ('SPACE_FIXTURES_OK ' + $cases.Count)
+  # Expected failed child probes must not become the CI shell's final status.
+  $global:LASTEXITCODE = 0
 } finally { [IO.Directory]::Delete($root, $true) }

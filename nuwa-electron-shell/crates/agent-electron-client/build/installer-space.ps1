@@ -55,6 +55,15 @@ using System.Text;
 using System.Runtime.InteropServices;
 namespace Nuwax {
   public static class InstallSpaceNative {
+    [DllImport("kernel32.dll", EntryPoint="CreateFileW", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle OpenDirectory(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    public static void RequireDirectoryWriteAccess(string path) {
+      // FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY. No delete-on-close for this
+      // existing directory; this checks the current token without changing ACLs.
+      using (var h = OpenDirectory(path, 6, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+        if (h.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+      }
+    }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     public static extern bool GetVolumePathName(string path, StringBuilder volume, uint length);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
@@ -99,6 +108,9 @@ function Invoke-InstallSpaceCheck {
     )
     if ($SevenZip) { $requests += [pscustomobject]@{ Path = $TempPath; Bytes = $unpacked; Role = '临时解压文件' } }
     $budget = @(Get-InstallSpaceBudget $requests { param($p) Get-InstallSpaceVolume $p })
+    Assert-InstallWriteAccess $InstallDir '程序目录'
+    Assert-InstallWriteAccess $TempPath '临时目录'
+    Assert-InstallWriteAccess ([IO.Path]::GetDirectoryName($CachePath)) '更新缓存目录'
     $lines = @(Format-InstallSpaceBudget $budget)
     $code = 0
     if (@($budget | Where-Object { $_.Shortfall -gt 0 }).Count -gt 0) { $code = 112 }
@@ -107,10 +119,40 @@ function Invoke-InstallSpaceCheck {
     return $code
   } catch {
     $detail = $_.Exception.Message
-    try { [IO.File]::WriteAllText($ReportPath, ('无法核实安装所需的磁盘空间，请检查安装位置、临时目录和磁盘是否可用。' + "`r`n" + $detail), [Text.Encoding]::Unicode) } catch { }
+    try { [IO.File]::WriteAllText($ReportPath, ('安装目录、写入权限或磁盘空间检查失败。请选择当前账户可写的目录，或使用原安装账户检查目录权限后重试。' + "`r`n" + $detail), [Text.Encoding]::Unicode) } catch { }
     Write-Output ('SPACE_QUERY_FAILED ' + $detail)
     return 2
   }
+}
+
+function Assert-InstallWriteAccess([string]$Path, [string]$Role) {
+  $stream = $null
+  try {
+    if ($Path -notmatch '^[A-Za-z]:[\\/]') { throw 'A local absolute directory is required.' }
+    $full = [IO.Path]::GetFullPath($Path)
+    $ancestors = [Collections.Generic.List[string]]::new()
+    for ($p=$full; $p; $p=[IO.Path]::GetDirectoryName($p)) { $ancestors.Add($p) }
+    for ($i=$ancestors.Count-1; $i -ge 0; $i--) {
+      try { $attributes=[IO.File]::GetAttributes($ancestors[$i]) }
+      catch [IO.FileNotFoundException] { break }
+      catch [IO.DirectoryNotFoundException] { break }
+      if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw ('Redirected directory: ' + $ancestors[$i]) }
+      if (-not ($attributes -band [IO.FileAttributes]::Directory)) { throw ('Expected a directory: ' + $ancestors[$i]) }
+    }
+    $parent=$full
+    while (-not [IO.Directory]::Exists($parent)) {
+      $parent=[IO.Path]::GetDirectoryName($parent)
+      if (-not $parent) { throw 'No accessible parent directory.' }
+    }
+    [Nuwax.InstallSpaceNative]::RequireDirectoryWriteAccess($parent)
+    # Exercise actual creation and writing under the installer token. The
+    # random CreateNew file is removed by the OS even when a write fails.
+    # Never create the chosen installation directory or touch existing files.
+    $probe=Join-Path $parent ('nuwax-write-probe-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $stream=[IO.FileStream]::new($probe,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::DeleteOnClose)
+    $stream.WriteByte(0); $stream.Flush()
+  } catch { throw ($Role + ': ' + $Path + "`r`n" + $_.Exception.Message) }
+  finally { if ($stream) { $stream.Dispose() } }
 }
 
 if (-not $FunctionsOnly) {

@@ -151,6 +151,10 @@ Var nuwaxDataLocal
     SetShellVarContext all
   ${endif}
   ${if} $R0 != 0
+    ${if} $R0 == 4
+      !insertmacro nuwaxLogRecoveryFailure UninstallAccess
+      !insertmacro nuwaxStopStandaloneUninstall "当前账户没有足够权限访问卸载所需的文件。尚未移除程序文件或清理历史数据。请使用原安装账户检查目录权限，必要时以管理员权限重试。详情：$TEMP\Nuwax-uninstall-events.jsonl"
+    ${endif}
     ${if} $R0 == 3
       !insertmacro nuwaxLogRecoveryFailure UninstallLocalData
       !insertmacro nuwaxStopStandaloneUninstall "程序文件已移除，但本地数据清理未完成。剩余数据与卸载入口已保留。详情：$TEMP\Nuwax-uninstall-events.jsonl"

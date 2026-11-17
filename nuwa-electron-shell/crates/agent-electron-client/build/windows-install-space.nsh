@@ -60,7 +60,7 @@ Function nuwaxCheckInstallSpace
   ${endif}
   ${if} $nuwaxSpaceReport == ""
     StrCpy $nuwaxSpaceCode 2
-    StrCpy $nuwaxSpaceReport "无法检查磁盘空间，请确认临时目录、安装磁盘及 Windows PowerShell 可用。$\r$\n$R1"
+    StrCpy $nuwaxSpaceReport "无法检查安装目录、权限和空间，请确认临时目录、安装磁盘及 Windows PowerShell 可用。$\r$\n$R1"
   ${endif}
   ${if} $nuwaxSpaceCode != 0
     DetailPrint "$nuwaxSpaceReport"
@@ -89,7 +89,7 @@ FunctionEnd
     ${if} ${Silent}
       Quit
     ${endif}
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装前磁盘空间检查未通过。$\r$\n$nuwaxSpaceReport$\r$\n$\r$\n清理空间后点击重试，或取消本次安装后重新运行并选择安装位置。" IDRETRY +2
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装前目录、权限或空间检查未通过。$\r$\n$nuwaxSpaceReport$\r$\n$\r$\n解决提示的问题后点击重试，或取消本次安装后重新运行并选择安装位置。" IDRETRY +2
     Quit
   ${loop}
   SetErrorLevel 0
@@ -105,7 +105,7 @@ FunctionEnd
     ${if} $nuwaxSpaceCode == 0
       Abort
     ${endif}
-    !insertmacro MUI_HEADER_TEXT "检查安装空间" "请清理磁盘空间，或返回修改安装位置。"
+    !insertmacro MUI_HEADER_TEXT "检查安装目录和空间" "请确认目录权限、清理磁盘空间，或返回修改安装位置。"
     nsDialogs::Create 1018
     Pop $R0
     ${if} $R0 == error

@@ -1,5 +1,6 @@
 param([Parameter(Mandatory = $true)][string]$ScriptPath)
 $ErrorActionPreference = 'Stop'
+$ScriptPath = (Resolve-Path -LiteralPath $ScriptPath).ProviderPath
 $root = Join-Path ([IO.Path]::GetTempPath()) ('nuwax-uninstall-data-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 [IO.File]::WriteAllText((Join-Path $root 'owner.txt'), 'Generated uninstall-data test only')
@@ -45,6 +46,23 @@ foreach ($delete in @($false,$true)) {
   Assert ([IO.File]::ReadAllText("$($f.base)\outside\sentinel.txt") -eq 'fixture') 'External data lost'
   $rows+=@{case=$name;passed=$true}
 }
+foreach ($delete in @($false,$true)) {
+  $name=if($delete){'readonly-program-and-selected-data'}else{'readonly-program-keeps-data'}
+  $f=Fixture $name
+  $license=Join-Path $f.install 'LICENSE.electron.txt';Put $license 'owned license'
+  $m=[IO.File]::ReadAllText($f.manifest)|ConvertFrom-Json;$m.files+=@('LICENSE.electron.txt');$m|ConvertTo-Json -Depth 4|Set-Content -Encoding UTF8 $f.manifest
+  foreach($file in @($license,"$($f.install)\NuwaxU1QA.exe","$($f.install)\resources\user-added.txt")) {
+    [IO.File]::SetAttributes($file,([IO.FileAttributes]::ReadOnly -bor [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::Archive))
+  }
+  $aclBefore=[IO.Directory]::GetAccessControl($f.install).Sddl
+  Assert ((Invoke-Uninstall $f $delete) -eq 0) 'Readonly owned program files blocked uninstall'
+  Assert (!(Test-Path $license)) 'Readonly owned license retained'
+  Assert (!(Test-Path "$($f.install)\NuwaxU1QA.exe")) 'Readonly owned executable retained'
+  Assert (([IO.File]::GetAttributes("$($f.install)\resources\user-added.txt") -band [IO.FileAttributes]::ReadOnly) -ne 0) 'Unknown readonly program file changed'
+  Assert ((Test-Path "$($f.profile)\.nuwax-u1-qa\workspace\user.txt") -eq !$delete) 'Readonly program handling changed the explicit data choice'
+  Assert ([IO.Directory]::GetAccessControl($f.install).Sddl -eq $aclBefore) 'Program removal changed the directory ACL'
+  $rows+=@{case=$name;passed=$true}
+}
 $f=Fixture 'readonly-data-kept-by-default'
 $readonly="$($f.profile)\.nuwax-u1-qa\run\project\.git\objects\pack\pack.idx"
 Put $readonly 'git pack index'
@@ -75,12 +93,44 @@ Assert ((Invoke-Uninstall $f $false $f.base) -eq 0) 'NSIS System.dll shadowed fr
 Assert (Test-Path "$($f.install)\workspace\personal.txt") 'Plugin-directory uninstall removed workspace'
 $rows+=@{case='nsis-system-dll-shadow';passed=$true}
 $f=Fixture 'locked-preflight'
+[IO.File]::SetAttributes("$($f.install)\resources\app.asar",[IO.FileAttributes]::ReadOnly)
 $lock=[IO.File]::Open("$($f.install)\resources\app.asar",[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
 try { Assert ((Invoke-Uninstall $f $true) -ne 0) 'Locked payload accepted' } finally { $lock.Dispose() }
 Assert (Test-Path "$($f.install)\NuwaxU1QA.exe") 'Preflight partly removed program'
 Assert (Test-Path "$($f.profile)\.nuwax-u1-qa\workspace\user.txt") 'Failed uninstall deleted data'
+Assert (([IO.File]::GetAttributes("$($f.install)\resources\app.asar") -band [IO.FileAttributes]::ReadOnly) -ne 0) 'Failed preflight cleared a program readonly attribute'
 Assert ((Invoke-Uninstall $f) -eq 0) 'Unlocked retry failed'
 $rows+=@{case='locked-preflight-and-retry';passed=$true}
+$f=Fixture 'denied-later-program-file'
+$denied="$($f.install)\resources\app.asar"
+[IO.File]::SetAttributes($denied,[IO.FileAttributes]::ReadOnly)
+$parent=[IO.Path]::GetDirectoryName($denied)
+$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+$parentRule=New-Object Security.AccessControl.FileSystemAccessRule $sid,([Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles),([Security.AccessControl.AccessControlType]::Deny)
+$rule=New-Object Security.AccessControl.FileSystemAccessRule $sid,([Security.AccessControl.FileSystemRights]::Delete),([Security.AccessControl.AccessControlType]::Deny)
+$acl=[IO.Directory]::GetAccessControl($parent);$acl.AddAccessRule($parentRule);[IO.Directory]::SetAccessControl($parent,$acl)
+$acl=[IO.File]::GetAccessControl($denied);$acl.AddAccessRule($rule);[IO.File]::SetAccessControl($denied,$acl)
+$probe=Join-Path $parent 'permission-probe.txt';Put $probe
+$acl=[IO.File]::GetAccessControl($probe);$acl.AddAccessRule($rule);[IO.File]::SetAccessControl($probe,$acl)
+$enforcesDeny=$false;try{[IO.File]::Delete($probe)}catch{$enforcesDeny=$true}
+try {
+  if($enforcesDeny){
+    Assert ((Invoke-Uninstall $f $true) -eq 4) 'Delete denial must fail in preflight with the permission result'
+    Assert (Test-Path "$($f.install)\NuwaxU1QA.exe") 'A later permission failure partly removed the program'
+    Assert (Test-Path "$($f.profile)\.nuwax-u1-qa\workspace\user.txt") 'A program permission failure deleted local data'
+    Assert (([IO.File]::GetAttributes($denied) -band [IO.FileAttributes]::ReadOnly) -ne 0) 'Permission preflight changed readonly attributes'
+    $events=@([IO.File]::ReadAllLines((Join-Path ([IO.Path]::GetTempPath()) 'Nuwax-uninstall-events.jsonl'))|ForEach-Object {$_|ConvertFrom-Json}|Where-Object {$_.installDir -eq $f.install})
+    Assert ($events[-1].phase -eq 'Preflight' -and $events[-1].target -eq $denied -and $events[-1].readOnly -and $events[-1].nativeError -eq 5) 'Permission event lost its exact phase, path or attributes'
+  }
+} finally {
+  $acl=[IO.File]::GetAccessControl($denied);$acl.RemoveAccessRuleSpecific($rule);[IO.File]::SetAccessControl($denied,$acl)
+  $acl=[IO.Directory]::GetAccessControl($parent);$acl.RemoveAccessRuleSpecific($parentRule);[IO.Directory]::SetAccessControl($parent,$acl)
+  if([IO.File]::Exists($probe)){$acl=[IO.File]::GetAccessControl($probe);$acl.RemoveAccessRuleSpecific($rule);[IO.File]::SetAccessControl($probe,$acl);[IO.File]::Delete($probe)}
+}
+if($enforcesDeny){
+  Assert ((Invoke-Uninstall $f $true) -eq 0) 'Permission-corrected readonly program did not support retry'
+  $rows+=@{case='denied-later-program-file-and-retry';passed=$true}
+}else{$rows+=@{case='denied-later-program-file-and-retry';skipped=$true;reason='Token overrides DACL denial; standard-user run required'}}
 $f=Fixture 'escaping-inventory'
 $m=[IO.File]::ReadAllText($f.manifest)|ConvertFrom-Json;$m.files=@('NuwaxU1QA.exe','../outside/sentinel.txt');$m|ConvertTo-Json|Set-Content -Encoding UTF8 $f.manifest
 Assert ((Invoke-Uninstall $f) -ne 0) 'Path traversal accepted'
