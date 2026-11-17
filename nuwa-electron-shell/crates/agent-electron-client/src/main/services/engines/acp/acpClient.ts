@@ -912,15 +912,18 @@ export async function createAcpConnection(
       disableThinking: takeAliasedEnv(env, "DISABLE_THINKING"),
       maxOutputTokens:
         takeAliasedEnv(env, "MAX_OUTPUT_TOKENS") ||
-        takeAliasedEnv(env, "OPENCODE_MAX_TOKENS"),
+        env["MAX_OUTPUT_TOKENS"] ||
+        env["OPENCODE_MAX_TOKENS"],
       reasoningEffort: takeAliasedEnv(env, "MODEL_REASONING_EFFORT"),
       // 解析顺序:宿主显式指定的 MODEL_CONTEXT_WINDOW 优先;其次平台按模型
       // 下发的 OPENCODE_MAX_CONTEXT_TOKENS(如 deepseek-flash 1M——2026-11-16
       // 之前被漏读,导致引擎用 200000 兜底再打 95 折 = 190k,恢复会话就在
       // 152k 过早触发压缩);都没有才落客户端默认。
+      // 平台下发的是中性裸名(与 OPENCODE_* 同模式),不在别名收敛范围内,单独读取
       contextWindow:
         takeAliasedEnv(env, "MODEL_CONTEXT_WINDOW") ||
-        takeAliasedEnv(env, "OPENCODE_MAX_CONTEXT_TOKENS"),
+        env["MODEL_CONTEXT_WINDOW"] ||
+        env["OPENCODE_MAX_CONTEXT_TOKENS"],
     };
 
     const route = resolveCodexRoute({
