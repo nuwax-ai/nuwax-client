@@ -2,9 +2,10 @@
  * TrafficLightToolbar - 沉浸式一体化顶行（窗口 chrome 层）。
  *
  * 浮于 NuwaxHostWebview 之上，对照 WorkBuddy Windows 参考样式：
- * 1) 顶部全宽 10px 窄拖拽带（-webkit-app-region:drag）——保底拖拽区，mac 避开红绿灯；
- * 2) 顶行主体（整行 DRAG，交互子块 NO_DRAG 豁免；双击切换最大化）：
- *    - 左（全平台同构的功能区，最左起）：侧栏开关（常驻；当前页无二级菜单时置灰）
+ * 1) 顶行容器穿透；Mac 仅实际按钮接收点击，空白拖窗由 guest 标题栏手势处理；
+ *    Win/Linux 在 guest 顶部避让带内保留原生拖拽 spacer。
+ * 2) 顶行主体：
+ *    - 左（全平台同构的功能区，最左起）：侧栏开关（常驻）
  *      → 设置（注入 onOpenSettings 时渲染；nuwax 宿主入口在 web 用户区，不传不渲染）
  *      → 历史导航（后退/前进）→ statusEntry（服务异常点）；
  *    - 左（仅 Win/Linux，功能区之后）：自绘菜单栏 关于(A)/文件(F)/编辑(E)/窗口(W)/
@@ -107,7 +108,7 @@ export interface TrafficLightToolbarProps {
   statusEntry?: React.ReactNode;
   /** 新版本更新入口（仅当检测到新版本时注入：下载 icon / 下载中百分比 / 待安装；其余不渲染）。 */
   updateEntry?: React.ReactNode;
-  /** guest 页面声明的顶部空白矩形；空数组时使用旧前端兼容窄条。 */
+  /** guest 页面声明的顶部空白矩形；空数组时不铺兼容拖拽层。 */
   dragRegions?: TitlebarDragRegion[];
 }
 
@@ -502,10 +503,9 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           position: "fixed",
           top: 0,
           left: 0,
-          // mac：顶行仅占左侧 300px（图标簇+拖拽区）——mac 不默认退让后，
-          // 内容区顶部必须可交互，全宽行会整条挡死；Win/Linux 仍满宽
-          //（内容区恒避让 28px 顶行，无遮挡冲突）
-          ...(isMac ? { width: 300 } : { right: 0 }),
+          // Mac 的业务内容贴顶，工具栏只占实际按钮宽度；固定宽度的透明
+          // 拖拽空白会盖住 IM「消息」等页面控件（NW-430）。
+          ...(isMac ? { width: "max-content" } : { right: 0 }),
           height: ROW_H,
           zIndex: 1100,
           display: "flex",
@@ -516,7 +516,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           paddingRight: isMac ? 8 : 128,
           // 2026-09-17 手势化后行容器不再整行 drag（其下是 guest 内容顶部，
           // 整行 drag 会吞 logo 等点击）：整行穿透，按钮子块 auto+no-drag，
-          // 行内空白由显式 spacer（见下）承担原生拖拽+双击缩放。
+          // Win/Linux 行内空白由 spacer 承担原生拖拽；Mac 交给 guest 手势。
           pointerEvents: "none",
           ...NO_DRAG,
           // 全平台透明浮层：顶行不涂底色，透出 webview 顶部避让带的页面自身
@@ -543,23 +543,23 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
           {menuBar}
         </div>
 
-        {/* 中间留白：显式原生拖拽手柄（app-region:drag；双击走系统原生缩放）。
-            容器已 pointerEvents:none，仅此 spacer 恢复事件——覆盖按钮群与右侧
-            （win 为窗口三键/更新入口）之间的全部空白，其余区域全穿透给 guest，
-            guest 侧由标题栏手势（nuwax:titlebar-drag-*）接管空白带拖拽。 */}
-        <div
-          data-testid="topbar-drag-spacer"
-          onPointerDown={() => setActiveMenu(null)}
-          onClick={() => setActiveMenu(null)}
-          style={{
-            flex: 1,
-            height: "100%",
-            pointerEvents: "auto",
-            ...dragStyle,
-          }}
-        />
+        {/* Win/Linux 的 guest 已避让顶行，可使用原生拖拽手柄。
+            Mac 内容贴顶，不能在业务控件上铺 app-region:drag，即使透明也会吞点击。 */}
+        {!isMac && (
+          <div
+            data-testid="topbar-drag-spacer"
+            onPointerDown={() => setActiveMenu(null)}
+            onClick={() => setActiveMenu(null)}
+            style={{
+              flex: 1,
+              height: "100%",
+              pointerEvents: "auto",
+              ...dragStyle,
+            }}
+          />
+        )}
 
-        {/* 右侧：更新入口（仅 Win/Linux；mac 顶行只占左侧 300px，
+        {/* 右侧：更新入口（仅 Win/Linux；Mac 顶行仅容纳左侧按钮，
             更新入口单独浮在窗口右上，见下方） */}
         {!isMac && (
           <div
@@ -605,7 +605,7 @@ const TrafficLightToolbar: React.FC<TrafficLightToolbarProps> = ({
         )}
       </div>
 
-      {/* mac 更新入口：独立浮在窗口右上（顶行只占左侧 300px 图标/拖拽区） */}
+      {/* Mac 更新入口独立浮在窗口右上，不扩大左侧工具栏的命中区域。 */}
       {isMac && updateEntry && (
         <div
           style={{
