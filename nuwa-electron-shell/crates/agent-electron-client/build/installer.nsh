@@ -598,4 +598,18 @@ Var nuwaxKeepShortcutsBeforePrepare
   !insertmacro nuwaxMaintenanceComplete
   !insertmacro nuwaxInstallerPhase Installed
   !insertmacro nuwaxRecordUpdateCompletion
+  ; Only this successful install path authorizes deleting completed backups.
+  ; Reconcile during uninstall and Restore during a repair do not schedule it.
+  !insertmacro nuwaxRecoveryScripts
+  !insertmacro nuwaxExtractUninstallInventory
+  nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\normalize-old-install.ps1" -Action Complete -InstallDir "$INSTDIR" -StatePath "$PLUGINSDIR\nuwax-cleanup-state.txt" -PayloadInventoryPath "$PLUGINSDIR\uninstall-payload.json"`
+  Pop $R0
+  Pop $R1
+  ${if} $R0 != 0
+    !insertmacro nuwaxLogRecoveryFailure CleanupSchedule
+  ${else}
+    DetailPrint "$R1"
+  ${endif}
+  ClearErrors
+  SetErrorLevel 0
 !macroend
