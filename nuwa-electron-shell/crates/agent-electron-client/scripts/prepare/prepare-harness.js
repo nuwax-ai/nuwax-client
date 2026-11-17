@@ -125,7 +125,18 @@ async function main() {
 
   // 4. 复制到 resources/nuwax-harness-acp-ts/
   const destDir = path.join(projectRoot, 'resources', BUNDLED_DIR_NAME);
-  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true });
+  // `make harness-local` 先把本地构建的引擎同步进 vendor/,随后启动 `client dev`,
+  // 而资源准备这里原先整目录 rm -rf 再解包 npm 引擎——本地构建(连同 .released-orig
+  // 备份)被覆盖,会话静默跑回发布版(2026-11-12 记录过同类事故,版本号看不出来)。
+  // HARNESS_LOCAL=1 时保留已同步的 vendor,只刷新适配器 bundle。
+  const preserveVendor =
+    process.env.HARNESS_LOCAL === '1' &&
+    fs.existsSync(path.join(destDir, 'vendor', 'nuwax-harness'));
+  if (preserveVendor) {
+    fs.rmSync(path.join(destDir, 'dist'), { recursive: true, force: true });
+  } else if (fs.existsSync(destDir)) {
+    fs.rmSync(destDir, { recursive: true });
+  }
   fs.mkdirSync(path.join(destDir, 'dist'), { recursive: true });
 
   // dist/index.js（adapter bundle）
@@ -136,6 +147,14 @@ async function main() {
 
   // vendor/nuwax-harness/<ver>/（按引擎包 runtime.js 的 requiredBundleFiles 权威清单
   // 选择性复制——缓存目录可能残留旧名二进制等历史产物，整目录复制会把它们带进包里）
+  if (preserveVendor) {
+    const localEngine = path.join(destDir, 'vendor', 'nuwax-harness', engineVer, engineBinaryName());
+    const size = fs.existsSync(localEngine)
+      ? (fs.statSync(localEngine).size / 1024 / 1024).toFixed(0)
+      : '?';
+    console.log(`  vendor/nuwax-harness/${engineVer}/ 保留本地构建（HARNESS_LOCAL=1，${size} MB）`);
+  }
+  if (!preserveVendor) {
   let requiredFiles;
   try {
     const runtime = await import(
@@ -177,6 +196,7 @@ async function main() {
   console.log(
     `  vendor/nuwax-harness/${engineVer}/ (${(engineSize / 1024 / 1024).toFixed(0)} MB 主二进制, ${engineFiles.length} 个可执行)`,
   );
+  }
 
   // 精简 package.json，仅暴露 harness 适配器入口。
   // type 必须保留：dist/index.js 是 esbuild 的 ESM 产物，缺了它 Node 每次 spawn
