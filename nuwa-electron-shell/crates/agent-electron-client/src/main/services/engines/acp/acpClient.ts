@@ -910,8 +910,17 @@ export async function createAcpConnection(
       wireApi: takeAliasedEnv(env, "WIRE_API"),
       apiProtocol: takeAliasedEnv(env, "API_PROTOCOL"),
       disableThinking: takeAliasedEnv(env, "DISABLE_THINKING"),
+      maxOutputTokens:
+        takeAliasedEnv(env, "MAX_OUTPUT_TOKENS") ||
+        takeAliasedEnv(env, "OPENCODE_MAX_TOKENS"),
       reasoningEffort: takeAliasedEnv(env, "MODEL_REASONING_EFFORT"),
-      contextWindow: takeAliasedEnv(env, "MODEL_CONTEXT_WINDOW"),
+      // 解析顺序:宿主显式指定的 MODEL_CONTEXT_WINDOW 优先;其次平台按模型
+      // 下发的 OPENCODE_MAX_CONTEXT_TOKENS(如 deepseek-flash 1M——2026-11-16
+      // 之前被漏读,导致引擎用 200000 兜底再打 95 折 = 190k,恢复会话就在
+      // 152k 过早触发压缩);都没有才落客户端默认。
+      contextWindow:
+        takeAliasedEnv(env, "MODEL_CONTEXT_WINDOW") ||
+        takeAliasedEnv(env, "OPENCODE_MAX_CONTEXT_TOKENS"),
     };
 
     const route = resolveCodexRoute({
@@ -992,6 +1001,10 @@ export async function createAcpConnection(
     // 200000 把后端按模型下发的窗口盖掉，压缩阈值随之算错。
     env.NUWAX_MODEL_CONTEXT_WINDOW =
       backend.contextWindow || DEFAULT_NUWAX_MODEL_CONTEXT_WINDOW;
+    // 输出上限:平台按模型下发(OPENCODE_MAX_TOKENS)或宿主显式指定,透传给引擎
+    if (backend.maxOutputTokens) {
+      env.NUWAX_MAX_OUTPUT_TOKENS = backend.maxOutputTokens;
+    }
     env.CODEX_LOG_DIR = path.join(
       app.getPath("home"),
       APP_DATA_DIR_NAME,
