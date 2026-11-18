@@ -11,7 +11,11 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 $owned = [Collections.Generic.List[Diagnostics.Process]]::new()
 $completionKeys = [Collections.Generic.List[string]]::new()
 function Write-Json([string]$Path, $Value) {
-  [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 5 -Compress), $utf8)
+  # Publish marker files the way the client does so the worker never opens a
+  # partially written file or races a writer that has not closed its handle.
+  $temporary = $Path + '.tmp'
+  [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 5 -Compress), $utf8)
+  [IO.File]::Move($temporary, $Path)
 }
 function Read-Until([string]$File, [string[]]$States) {
   $deadline = [DateTime]::UtcNow.AddSeconds(20)
