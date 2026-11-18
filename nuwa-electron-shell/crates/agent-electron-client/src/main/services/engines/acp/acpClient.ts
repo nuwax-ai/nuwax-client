@@ -35,6 +35,7 @@ import { APP_DATA_DIR_NAME, LOGS_DIR_NAME } from "../../constants";
 import { resolveHarnessAcp } from "@nuwax-ai/agent-kit";
 import { getAppDataDir } from "../../system/appPaths";
 import {
+  resolveEngineHome,
   resolveIsolatedHomePath,
   type IsolatedHomeScope,
 } from "./isolatedHomePaths";
@@ -1055,8 +1056,9 @@ export async function createAcpConnection(
     // isolatedHome/.codex：mac 与现状等价（HOME 重定向已生效），win 补齐隔离语义。
     // codex 不会自建这两个目录（CODEX_HOME 校验存在性、sqlite 建库不建父目录），
     // 必须先 mkdir；backend 显式下发同名 env 时不覆盖。
-    const codexHome = path.join(isolatedHome, ".codex");
-    fs.mkdirSync(codexHome, { recursive: true });
+    // 目录名与旧 `.codex` 的迁移统一由 isolatedHomePaths 负责：迁移失败时它会
+    // 回退旧目录，避免新建空目录导致历史会话“消失”。
+    const codexHome = resolveEngineHome(isolatedHome);
     if (!env.CODEX_HOME) env.CODEX_HOME = codexHome;
     if (!env.CODEX_SQLITE_HOME) env.CODEX_SQLITE_HOME = codexHome;
   }

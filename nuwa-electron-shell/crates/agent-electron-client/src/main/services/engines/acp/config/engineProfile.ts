@@ -1,7 +1,12 @@
 /** ACP engine families determine configuration and prompt retry behavior. */
 export type AcpEngineFamily = "opencode-acp" | "claude-code-acp" | "unknown";
 
-const OPENCODE_ENGINE_IDS = new Set(["nuwaxcode", "codex-cli", "opencode"]);
+const OPENCODE_ENGINE_IDS = new Set([
+  "nuwaxcode",
+  "codex-cli",
+  "nuwax-harness",
+  "opencode",
+]);
 const CLAUDE_CODE_ENGINE_IDS = new Set(["claude-code", "claude-code-acp-ts"]);
 
 export function getAcpEngineProfile(engineId: string) {

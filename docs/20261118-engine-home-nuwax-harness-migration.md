@@ -1,7 +1,7 @@
 # 引擎隔离 home 与引擎标识：统一到 `nuwax-harness`（方案 v2）
 
 日期：2026-11-18
-状态：待评审(只出方案,未改代码)
+状态：**已实施**(2026-11-18)；§7 三项按推荐执行
 变更点：v1 假设“引擎侧默认 home 仍是 `~/.codex`”**有误**；本版据实修正，并按
 “`codex`/`codex-cli` 从未正式启用、真实用户只用 `claude-code-acp-ts` / `nuwaxcode`”
 这一前提重排。
@@ -165,7 +165,28 @@ export function engineHomeSegment(engineId: string): string {
 | 风险 | 低。无 schema 变更、无数据改写；rename 失败回退旧目录 |
 | 主要风险 | ① Windows 上旧目录被占用 → 走回退分支，功能不受影响 ② 平台若已把 `codex-cli` 写进 agent 配置，别名兼容可覆盖 |
 
-## 7. 待确认（3 项）
+## 7. 决策记录（已确认）
+
+1. wire id：保留 `codex-cli`，接受 `nuwax-harness` 别名（`normalizeEngineId` 归一化；
+   `mapAgentCommand` 也已把 `nuwax-harness` / `nuwax-harness-acp-ts` 映射到同一引擎）
+2. 磁盘引擎段：`nuwax-harness`（旧 `codex-cli` 段自动迁移）
+3. `.migrated-<ts>` 备份：`DEFAULT_MIGRATED_BACKUP_RETENTION_DAYS = 30`，
+   已接入 `pruneProjectIsolatedHomeCaches`（超过保留期回收）
+
+## 8. 实施结果
+
+| 改动 | 文件 |
+|---|---|
+| 引擎段映射 + 目录迁移 + `resolveEngineHome` + 备份清理 | `acp/isolatedHomePaths.ts`（新增导出:`engineHomeSegment`/`resolveEngineHome`/`migrateDirectory`/`migrateEngineSegment`/`ENGINE_HOME_DIR_NAME` 等） |
+| 两处调用点改用 `resolveEngineHome` | `acp/acpClient.ts`、`engineManager.ts` |
+| 引擎 id 归一化 | `types.ts`(`normalizeEngineId`)、`ipc/agentHandlers.ts`(zod enum + 归一化) |
+| harness 家族判定 | `engineManager.ts`(`isHarnessEngine`，5 处分支统一) |
+| 其他类型/集合 | `processRegistry.ts`、`acp/config/engineProfile.ts`、`types.ts` |
+| 测试 | 新增 `acp/isolatedHomePaths.test.ts`（11 例：段映射/rename/merge/回退/备份 TTL）+ 更新 `engineManager.test.ts` |
+
+测试：`engines` 目录 30 文件 / **414 例全通过**。
+
+## 9. 遗留问题（原待确认项，已确认无需再议）
 
 1. **wire id**：保留 `codex-cli` + 接受 `nuwax-harness` 别名（推荐，不需后端改动），
    还是直接让平台改发 `nuwax-harness`？

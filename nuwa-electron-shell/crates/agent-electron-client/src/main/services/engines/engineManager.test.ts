@@ -9,12 +9,18 @@ const mocks = vi.hoisted(() => ({
   exists: vi.fn(),
   read: vi.fn(),
   mkdir: vi.fn(),
+  rename: vi.fn(),
+  readdir: vi.fn(() => []),
+  write: vi.fn(),
 }));
 
 vi.mock("fs", () => ({
   existsSync: mocks.exists,
   readFileSync: mocks.read,
   mkdirSync: mocks.mkdir,
+  renameSync: mocks.rename,
+  readdirSync: mocks.readdir,
+  writeFileSync: mocks.write,
 }));
 vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -43,7 +49,11 @@ describe("Nuwax Harness engine management", () => {
     vi.clearAllMocks();
     mocks.bundledDir.mockReturnValue("/resources/nuwax-harness-acp-ts");
     mocks.enginePath.mockReturnValue("/resources/vendor/nuwax-harness");
-    mocks.exists.mockReturnValue(true);
+    // 真实语义：资源路径存在，但隔离 home 里的旧 `.codex` 尚不存在（全新环境），
+    // 于是引擎 home 直接落在 `.nuwax-harness`，不触发迁移分支。
+    mocks.exists.mockImplementation(
+      (target: unknown) => !String(target).endsWith("/.codex"),
+    );
     mocks.read.mockReturnValue('{"version":"1.2.24"}');
   });
 
@@ -103,7 +113,8 @@ describe("Nuwax Harness engine management", () => {
     });
     expect(env.NUWAX_PATH).toBe("/resources/vendor/nuwax-harness");
     expect(env.CODEX_MODEL).toBe("test-model");
-    expect(env.CODEX_HOME).toBe(path.join(env.HOME, ".codex"));
+    // 引擎 home 目录名统一为 .nuwax-harness（旧 .codex 由 resolveEngineHome 迁移）。
+    expect(env.CODEX_HOME).toBe(path.join(env.HOME, ".nuwax-harness"));
     expect(env.CODEX_SQLITE_HOME).toBe(env.CODEX_HOME);
     expect(mocks.mkdir).toHaveBeenCalledWith(env.CODEX_HOME, {
       recursive: true,

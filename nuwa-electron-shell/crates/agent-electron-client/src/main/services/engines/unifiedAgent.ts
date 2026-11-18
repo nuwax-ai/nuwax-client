@@ -82,6 +82,7 @@ import type {
   PromptOptions,
   MessageWithParts,
 } from "./types";
+export { normalizeEngineId } from "./types";
 export type { AgentConfig, AgentEngineType };
 export type {
   AcpSessionStatus,

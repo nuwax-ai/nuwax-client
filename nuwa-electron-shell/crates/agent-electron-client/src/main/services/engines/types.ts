@@ -5,7 +5,11 @@
  * unifiedAgent.ts 会 re-export 本文件的全部类型，外部调用方 import 路径不变。
  */
 
-export type AgentEngineType = "nuwaxcode" | "claude-code" | "codex-cli";
+export type AgentEngineType =
+  | "nuwaxcode"
+  | "claude-code"
+  | "codex-cli"
+  | "nuwax-harness";
 
 import type { IsolatedHomeScope } from "./acp/isolatedHomePaths";
 
@@ -205,4 +209,17 @@ export interface ProviderInfo {
   name?: string;
   models?: Array<{ id: string; name?: string }>;
   [key: string]: unknown;
+}
+
+/**
+ * 引擎 id 归一化。
+ *
+ * `codex` / `codex-cli` 只用于本地验证，产品名为 `nuwax-harness`；三者指向同一套
+ * 实现（同一隔离 home，磁盘段统一映射为 `nuwax-harness`，见 isolatedHomePaths）。
+ * 归一化后内部只处理 `codex-cli`，避免每个分支都要判断三种写法。
+ */
+export function normalizeEngineId(engineId: string): AgentEngineType {
+  const id = engineId.trim().toLowerCase();
+  if (id === "codex" || id === "nuwax-harness") return "codex-cli";
+  return id as AgentEngineType;
 }

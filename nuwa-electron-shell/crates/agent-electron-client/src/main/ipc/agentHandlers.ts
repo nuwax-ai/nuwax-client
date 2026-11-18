@@ -3,7 +3,7 @@ import { ipcMain } from "electron";
 import log from "electron-log";
 import { z } from "zod";
 import { agentService } from "../services/engines/unifiedAgent";
-import type { AgentConfig } from "../services/engines/unifiedAgent";
+import { normalizeEngineId, type AgentEngineType, type AgentConfig } from "../services/engines/unifiedAgent";
 import {
   mcpProxyManager,
   syncMcpConfigToProxyAndReload,
@@ -11,7 +11,13 @@ import {
 
 const agentConfigSchema = z
   .object({
-    engine: z.enum(["nuwaxcode", "claude-code", "codex", "codex-cli"]),
+    engine: z.enum([
+      "nuwaxcode",
+      "claude-code",
+      "codex",
+      "codex-cli",
+      "nuwax-harness",
+    ]),
     workspaceDir: z.string(),
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
@@ -61,10 +67,12 @@ export function registerAgentHandlers(): void {
     }
     const typedConfig = parsedConfig.data as AgentConfig;
 
-    // Normalize "codex" → "codex-cli" for backward compat with AgentEngineType
-    if ((parsedConfig.data as { engine: string }).engine === "codex") {
-      typedConfig.engine = "codex-cli";
-    }
+    // Normalize legacy engine ids. "codex"/"codex-cli" were only ever used for
+    // local verification; the product name is "nuwax-harness" and both spellings
+    // resolve to the same engine implementation (and the same isolated home).
+    typedConfig.engine = normalizeEngineId(
+      (parsedConfig.data as { engine: string }).engine,
+    );
 
     log.info("[IPC] Initializing unified agent:", config.engine);
     try {

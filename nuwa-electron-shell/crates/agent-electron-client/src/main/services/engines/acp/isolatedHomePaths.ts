@@ -28,6 +28,35 @@ export const DEFAULT_EPHEMERAL_HOME_RETENTION_DAYS = 1;
 export const DEFAULT_PROJECT_CACHE_RETENTION_DAYS = 2;
 /** project home 内 tmp 默认保留天数（更短，多为 compile-cache） */
 export const DEFAULT_PROJECT_TMP_RETENTION_DAYS = 1;
+/**
+ * `.migrated-<ts>` 备份目录的保留期（一个版本周期）。
+ * 迁移只改名、不删数据，回滚靠这些备份；过期后由 prune 回收。
+ */
+export const DEFAULT_MIGRATED_BACKUP_RETENTION_DAYS = 30;
+
+/** 引擎 home 目录名（`CODEX_HOME`/`CODEX_SQLITE_HOME` 的落点）。 */
+export const ENGINE_HOME_DIR_NAME = ".nuwax-harness";
+/** 旧引擎 home 目录名，仅用于迁移。 */
+export const LEGACY_ENGINE_HOME_DIR_NAME = ".codex";
+/** 迁移备份目录后缀（`<legacy>.migrated-<ts>`）。 */
+export const MIGRATED_BACKUP_SUFFIX = ".migrated-";
+
+/**
+ * 引擎 id → 隔离 home 里的目录段。
+ *
+ * 与 id 解耦：平台下发的 wire id 仍是 `codex-cli`（以及旧的 `codex`），而磁盘上
+ * 统一用 `nuwax-harness`；将来平台改发 `nuwax-harness` 也命中同一目录，不触发
+ * 第二次迁移。未登记的 id 仍按原样 sanitize（nuwaxcode / claude-code 等不受影响）。
+ */
+const ENGINE_HOME_SEGMENTS: Record<string, string> = {
+  "codex-cli": "nuwax-harness",
+  "nuwax-harness": "nuwax-harness",
+};
+
+export function engineHomeSegment(engineId: string): string {
+  const mapped = ENGINE_HOME_SEGMENTS[engineId.trim().toLowerCase()];
+  return mapped ?? sanitizePathSegment(engineId);
+}
 
 const RUN_SEGMENT = "run";
 const PROJECTS_SEGMENT = "projects";
@@ -84,14 +113,128 @@ export function resolveProjectIsolatedHomeDir(
   }
   const userId = sanitizePathSegment(scope.userId || "_");
   const workDirId = scopeWorkDirSegment(scope.workDirId || "_");
-  const engine = sanitizePathSegment(scope.engine || "unknown");
-  return path.join(
-    getProjectIsolatedHomesRoot(),
-    userId,
-    workDirId,
-    engine,
-    HOME_SEGMENT,
+  const engine = engineHomeSegment(scope.engine || "unknown");
+  const projectRoot = path.join(getProjectIsolatedHomesRoot(), userId, workDirId);
+  // 引擎段改名（codex-cli → nuwax-harness）后，旧段里的会话数据要跟着走。
+  migrateEngineSegment(projectRoot, scope.engine || "unknown", engine);
+  return path.join(projectRoot, engine, HOME_SEGMENT);
+}
+
+/**
+ * 迁移引擎段目录：`<projectRoot>/<旧段>` → `<projectRoot>/<新段>`。
+ * 未发生改名（旧段与新段同名）或旧段不存在时是空操作。
+ */
+export function migrateEngineSegment(
+  projectRoot: string,
+  engineId: string,
+  targetSegment: string,
+): void {
+  const legacies = LEGACY_ENGINE_SEGMENTS[engineId.trim().toLowerCase()] ?? [];
+  for (const legacySegment of legacies) {
+    if (legacySegment === targetSegment) continue;
+    migrateDirectory(
+      path.join(projectRoot, legacySegment),
+      path.join(projectRoot, targetSegment),
+      `engine-segment:${legacySegment}->${targetSegment}`,
+    );
+  }
+}
+
+/** 旧引擎段名（仅 codex-cli 系列有过改名）。 */
+const LEGACY_ENGINE_SEGMENTS: Record<string, string[]> = {
+  "codex-cli": ["codex-cli"],
+  "nuwax-harness": ["codex-cli"],
+};
+
+/**
+ * 目录迁移：绝不丢数据。
+ *
+ * - legacy 不存在 → 空操作
+ * - target 不存在 → `rename`（同盘原子）
+ * - 两者都存在 → 逐项合并（冲突保留 target，legacy 那份改名为 `<name>.from-legacy-<ts>`），
+ *   随后把 legacy 整体改名为 `<legacy>.migrated-<ts>`
+ * - `rename` 失败（EXDEV/EBUSY/EPERM 等） → 保留 legacy 原样并返回 false，
+ *   调用方回退使用旧路径；绝不创建空目录顶替
+ *
+ * 必须在引擎进程启动前调用（避免 Windows 上的文件占用与 sqlite WAL 句柄）。
+ */
+export function migrateDirectory(
+  legacy: string,
+  target: string,
+  label: string,
+): boolean {
+  if (!fs.existsSync(legacy)) return true;
+  try {
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(legacy, target);
+      writeMigrationMarker(target, { from: path.basename(legacy), mode: "rename", label });
+      log.info(`[IsolatedHome] migrated ${label}: ${legacy} → ${target}`);
+      return true;
+    }
+    mergeDirectoryInto(legacy, target, label);
+    return true;
+  } catch (error) {
+    log.error(
+      `[IsolatedHome] migration failed for ${label} (${legacy} → ${target}); keeping the legacy path:`,
+      error,
+    );
+    return false;
+  }
+}
+
+function mergeDirectoryInto(legacy: string, target: string, label: string): void {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let moved = 0;
+  for (const entry of fs.readdirSync(legacy, { withFileTypes: true })) {
+    const from = path.join(legacy, entry.name);
+    const to = path.join(target, entry.name);
+    if (!fs.existsSync(to)) {
+      fs.renameSync(from, to);
+      moved += 1;
+    } else {
+      fs.renameSync(from, `${to}.from-legacy-${stamp}`);
+      moved += 1;
+    }
+  }
+  const backup = `${legacy}${MIGRATED_BACKUP_SUFFIX}${stamp}`;
+  fs.renameSync(legacy, backup);
+  writeMigrationMarker(target, { from: path.basename(legacy), mode: "merge", moved, label });
+  log.info(
+    `[IsolatedHome] merged ${label}: ${legacy} → ${target} (${moved} entries, legacy kept at ${backup})`,
   );
+}
+
+function writeMigrationMarker(
+  target: string,
+  meta: { from: string; mode: string; moved?: number; label: string },
+): void {
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(
+      path.join(target, ".migration.json"),
+      `${JSON.stringify({ ...meta, at: new Date().toISOString() }, null, 2)}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    log.warn(`[IsolatedHome] could not write migration marker in ${target}:`, error);
+  }
+}
+
+/**
+ * 解析引擎 home（`CODEX_HOME` 的落点），并把旧的 `.codex` 迁移到 `.nuwax-harness`。
+ *
+ * 迁移失败时回退旧目录（宁可继续用 `.codex`，也不新建空目录让用户“会话全丢”）。
+ */
+export function resolveEngineHome(isolatedHome: string): string {
+  const target = path.join(isolatedHome, ENGINE_HOME_DIR_NAME);
+  const legacy = path.join(isolatedHome, LEGACY_ENGINE_HOME_DIR_NAME);
+  if (migrateDirectory(legacy, target, "engine-home")) {
+    fs.mkdirSync(target, { recursive: true });
+    return target;
+  }
+  fs.mkdirSync(legacy, { recursive: true });
+  return legacy;
 }
 
 export function resolveEphemeralIsolatedHomeDir(): string {
@@ -340,15 +483,26 @@ function tryPruneCachePath(
  */
 export function pruneProjectIsolatedHomeCaches(
   maxAgeDays = DEFAULT_PROJECT_CACHE_RETENTION_DAYS,
-  options?: { skipPaths?: Set<string>; tmpMaxAgeDays?: number },
+  options?: {
+    skipPaths?: Set<string>;
+    tmpMaxAgeDays?: number;
+    /** 迁移备份（`.migrated-*`）的保留天数，默认一个版本周期。 */
+    migratedMaxAgeDays?: number;
+    /** 覆盖扫描根（测试用）；默认 `run/projects`。 */
+    root?: string;
+  },
 ): number {
-  const projectsRoot = getProjectIsolatedHomesRoot();
+  const projectsRoot = options?.root ?? getProjectIsolatedHomesRoot();
   if (!fs.existsSync(projectsRoot)) return 0;
 
   const tmpMaxAgeDays =
     options?.tmpMaxAgeDays ?? DEFAULT_PROJECT_TMP_RETENTION_DAYS;
   const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
   const tmpMaxAgeMs = tmpMaxAgeDays * 24 * 60 * 60 * 1000;
+  // 迁移备份只用于回滚，超过保留期即回收，避免每次目录改名永久占一份空间。
+  const migratedMaxAgeDays =
+    options?.migratedMaxAgeDays ?? DEFAULT_MIGRATED_BACKUP_RETENTION_DAYS;
+  const migratedMaxAgeMs = migratedMaxAgeDays * 24 * 60 * 60 * 1000;
   const now = Date.now();
   let deleted = 0;
 
@@ -363,6 +517,21 @@ export function pruneProjectIsolatedHomeCaches(
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const fullPath = path.join(dir, entry.name);
+
+      // 迁移备份（<name>.migrated-<ts>）只用于回滚，超过保留期即回收。
+      if (entry.name.includes(MIGRATED_BACKUP_SUFFIX)) {
+        if (
+          tryPruneCachePath(
+            fullPath,
+            migratedMaxAgeMs,
+            now,
+            migratedMaxAgeDays,
+          )
+        ) {
+          deleted++;
+        }
+        continue;
+      }
 
       if (entry.name === HOME_SEGMENT) {
         if (shouldSkipHomeForPrune(fullPath, options?.skipPaths)) {

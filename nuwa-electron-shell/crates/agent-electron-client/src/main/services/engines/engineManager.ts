@@ -8,6 +8,7 @@
  */
 
 import * as path from "path";
+import { resolveEngineHome } from "./acp/isolatedHomePaths";
 import * as os from "os";
 import * as fs from "fs";
 import { spawn } from "child_process";
@@ -28,7 +29,19 @@ import { isWindows } from "../system/shellEnv";
 
 // ==================== Types ====================
 
-export type AgentEngine = "claude-code" | "nuwaxcode" | "codex-cli";
+export type AgentEngine =
+  | "claude-code"
+  | "nuwaxcode"
+  | "codex-cli"
+  | "nuwax-harness";
+
+/**
+ * `codex-cli` / `nuwax-harness` 指向同一实现（产品名与历史验证名的关系，见
+ * `normalizeEngineId`）。所有分支都用这个判定，避免新增写法时漏改某处。
+ */
+export function isHarnessEngine(engine: string): boolean {
+  return engine === "codex-cli" || engine === "nuwax-harness";
+}
 
 export interface EngineConfig {
   engine: AgentEngine;
@@ -113,7 +126,7 @@ export function isEngineInstalledLocally(engine: AgentEngine): boolean {
     }
   }
 
-  if (engine === "codex-cli") {
+  if (isHarnessEngine(engine)) {
     return Boolean(
       findEngineBinary(engine) && resolveBundledHarnessEnginePath(),
     );
@@ -156,7 +169,7 @@ export async function isEngineInstalledGlobally(
 export async function getEngineVersion(
   engine: AgentEngine,
 ): Promise<string | null> {
-  if (engine === "codex-cli") {
+  if (isHarnessEngine(engine)) {
     const adapterDir = getHarnessAcpBundledDir() || getEnginePackageDir(engine);
     if (adapterDir) {
       try {
@@ -228,7 +241,7 @@ function getEnginePackageDir(engine: AgentEngine): string | null {
  * 使用通用工具 resolveNpmPackageEntry 解析入口文件
  */
 export function findEngineBinary(engine: AgentEngine): string | null {
-  if (engine === "codex-cli") {
+  if (isHarnessEngine(engine)) {
     const adapterDir = getHarnessAcpBundledDir() || getEnginePackageDir(engine);
     const entry = adapterDir ? path.join(adapterDir, "dist", "index.js") : null;
     return entry && fs.existsSync(entry) ? entry : null;
@@ -263,7 +276,7 @@ export async function installEngine(
   engine: AgentEngine,
   options?: { registry?: string },
 ): Promise<{ success: boolean; error?: string }> {
-  if (engine === "codex-cli") {
+  if (isHarnessEngine(engine)) {
     return installNpmPackage("@nuwax-ai/nuwax-harness-acp-ts", {
       version: "1.2.24",
       ...options,
@@ -408,14 +421,13 @@ export function createIsolatedEnvironment(config: EngineConfig): {
     env.ANTHROPIC_MODEL = config.model;
   }
 
-  if (config.engine === "codex-cli") {
+  if (isHarnessEngine(config.engine)) {
     const enginePath = resolveBundledHarnessEnginePath();
     if (enginePath) env.NUWAX_PATH = enginePath;
     if (config.apiKey) env.CODEX_API_KEY = config.apiKey;
     if (config.baseUrl) env.CODEX_BASE_URL = config.baseUrl;
     if (config.model) env.CODEX_MODEL = config.model;
-    const codexHome = path.join(isolatedHome, ".codex");
-    fs.mkdirSync(codexHome, { recursive: true });
+    const codexHome = resolveEngineHome(isolatedHome);
     env.CODEX_HOME = codexHome;
     env.CODEX_SQLITE_HOME = codexHome;
   }
