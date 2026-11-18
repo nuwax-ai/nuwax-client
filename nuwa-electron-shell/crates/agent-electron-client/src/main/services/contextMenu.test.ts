@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import type { ContextMenuParams, MenuItemConstructorOptions } from "electron";
 
 let appOnCalls: Array<[string, (...args: unknown[]) => void]> = [];
@@ -70,6 +71,8 @@ import {
 import type { ContextMenuActions } from "./contextMenu";
 
 interface FakeWC {
+  isDestroyed: Mock<() => boolean>;
+  session: { clearCache: Mock<() => Promise<void>> };
   on: ReturnType<typeof vi.fn>;
   fire(event: string, params?: unknown): void;
   [key: string]: unknown;
@@ -88,6 +91,7 @@ function fakeWC(opts: {
   >();
   const wc: Record<string, unknown> = {
     isDestroyed: vi.fn(() => opts.destroyed ?? false),
+    session: { clearCache: vi.fn().mockResolvedValue(undefined) },
     getType: vi.fn(() => opts.type ?? "webview"),
     getURL: vi.fn(() => opts.url ?? "https://agent.nuwax.com/chat"),
     navigationHistory: {
@@ -113,6 +117,7 @@ function fakeWC(opts: {
     delete: vi.fn(),
     selectAll: vi.fn(),
     reload: vi.fn(),
+    reloadIgnoringCache: vi.fn(),
   };
   wc.fire = (event: string, params?: unknown) => {
     for (const fn of listeners.get(event) ?? []) fn({}, params);
@@ -129,6 +134,7 @@ function fakeActions(): ContextMenuActions {
     goBack: vi.fn(),
     goForward: vi.fn(),
     reload: vi.fn(),
+    forceReload: vi.fn(),
   };
 }
 
@@ -344,6 +350,7 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
       "Claw.ContextMenu.back",
       "Claw.ContextMenu.forward",
       "Claw.ContextMenu.reload",
+      "Claw.ContextMenu.forceReload",
     ]);
     clickItem(lastTemplate(), "Claw.ContextMenu.back");
     expect(
@@ -355,7 +362,62 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
     allWebContents = [fresh];
     installContextMenuService({ saveImage: saveImageCoreMock });
     fresh.fire("context-menu", params());
-    expect(labels(lastTemplate())).toEqual(["Claw.ContextMenu.reload"]);
+    expect(labels(lastTemplate())).toEqual([
+      "Claw.ContextMenu.reload",
+      "Claw.ContextMenu.forceReload",
+    ]);
+    clickItem(lastTemplate(), "Claw.ContextMenu.reload");
+    expect(fresh.reload).toHaveBeenCalledOnce();
+    expect(fresh.session.clearCache).not.toHaveBeenCalled();
+    expect(fresh.reloadIgnoringCache).not.toHaveBeenCalled();
+  });
+
+  it("强制刷新等待当前页面的会话缓存清除后，忽略缓存重新加载该页面", async () => {
+    const guest = fakeWC();
+    const hostPage = fakeWC({ type: "window" });
+    allWebContents = [guest, hostPage];
+    let finishClearing!: () => void;
+    const cacheCleared = new Promise<void>((resolve) => {
+      finishClearing = resolve;
+    });
+    guest.session.clearCache.mockReturnValue(cacheCleared);
+    installContextMenuService({ saveImage: saveImageCoreMock });
+
+    guest.fire("context-menu", params());
+    clickItem(lastTemplate(), "Claw.ContextMenu.forceReload");
+
+    expect(guest.session.clearCache).toHaveBeenCalledOnce();
+    expect(guest.reloadIgnoringCache).not.toHaveBeenCalled();
+    finishClearing();
+    await vi.waitFor(() => expect(guest.reloadIgnoringCache).toHaveBeenCalledOnce());
+    expect(hostPage.session.clearCache).not.toHaveBeenCalled();
+    expect(hostPage.reloadIgnoringCache).not.toHaveBeenCalled();
+  });
+
+  it("清理缓存失败时仍尝试忽略缓存重新加载", async () => {
+    const guest = fakeWC();
+    allWebContents = [guest];
+    guest.session.clearCache.mockRejectedValueOnce(new Error("Cache unavailable"));
+    installContextMenuService({ saveImage: saveImageCoreMock });
+
+    guest.fire("context-menu", params());
+    clickItem(lastTemplate(), "Claw.ContextMenu.forceReload");
+
+    await vi.waitFor(() => expect(guest.reloadIgnoringCache).toHaveBeenCalledOnce());
+  });
+
+  it("等待清理缓存期间关闭的页面不会被重新加载", async () => {
+    const guest = fakeWC();
+    allWebContents = [guest];
+    installContextMenuService({ saveImage: saveImageCoreMock });
+
+    guest.fire("context-menu", params());
+    clickItem(lastTemplate(), "Claw.ContextMenu.forceReload");
+    guest.isDestroyed.mockReturnValue(true);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(guest.session.clearCache).toHaveBeenCalledOnce();
+    expect(guest.reloadIgnoringCache).not.toHaveBeenCalled();
   });
 });
 
@@ -514,6 +576,7 @@ describe("模板构建器（纯函数）", () => {
       "Claw.ContextMenu.back",
       "Claw.ContextMenu.forward",
       "Claw.ContextMenu.reload",
+      "Claw.ContextMenu.forceReload",
     ]);
     expect(
       labels(
@@ -523,10 +586,14 @@ describe("模板构建器（纯函数）", () => {
           actions,
         ),
       ),
-    ).toEqual(["Claw.ContextMenu.back", "Claw.ContextMenu.reload"]);
+    ).toEqual([
+      "Claw.ContextMenu.back",
+      "Claw.ContextMenu.reload",
+      "Claw.ContextMenu.forceReload",
+    ]);
   });
 
-  it("选区存在但 canCopy=false：不进复制分支，落兜底（reload 恒在）", () => {
+  it("选区存在但 canCopy=false：显示页面刷新菜单", () => {
     const actions = fakeActions();
     expect(
       labels(
@@ -536,6 +603,6 @@ describe("模板构建器（纯函数）", () => {
           actions,
         ),
       ),
-    ).toEqual(["Claw.ContextMenu.reload"]);
+    ).toEqual(["Claw.ContextMenu.reload", "Claw.ContextMenu.forceReload"]);
   });
 });

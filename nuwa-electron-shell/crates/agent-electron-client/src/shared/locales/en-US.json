@@ -35,6 +35,7 @@
   "Claw.ContextMenu.back": "Back",
   "Claw.ContextMenu.forward": "Forward",
   "Claw.ContextMenu.reload": "Reload",
+  "Claw.ContextMenu.forceReload": "Force Reload",
   "Claw.Toast.Success.configSaved": "Config saved",
   "Claw.Toast.Success.aiConfigSaved": "AI config saved",
   "Claw.Toast.Success.agentStarted": "Agent started",

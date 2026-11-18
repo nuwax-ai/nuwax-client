@@ -35,6 +35,7 @@
   "Claw.ContextMenu.back": "后退",
   "Claw.ContextMenu.forward": "前进",
   "Claw.ContextMenu.reload": "重新加载",
+  "Claw.ContextMenu.forceReload": "强制刷新",
   "Claw.Toast.Success.configSaved": "配置已保存",
   "Claw.Toast.Success.aiConfigSaved": "AI 配置已保存",
   "Claw.Toast.Success.agentStarted": "Agent 已启动",

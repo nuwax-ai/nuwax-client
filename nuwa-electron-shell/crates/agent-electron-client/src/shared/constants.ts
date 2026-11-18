@@ -516,6 +516,7 @@ export const I18N_KEYS = {
   },
   ContextMenu: {
     PASTE_AS_TEXT: "Claw.ContextMenu.pasteAsText",
+    FORCE_RELOAD: "Claw.ContextMenu.forceReload",
   },
   NativeMenu: {
     ABOUT: "Claw.NativeMenu.about",

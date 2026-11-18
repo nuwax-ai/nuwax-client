@@ -69,6 +69,7 @@ export interface ContextMenuActions {
   goBack(): void;
   goForward(): void;
   reload(): void;
+  forceReload(): void;
 }
 
 export type ContextMenuEditAction =
@@ -104,7 +105,7 @@ const EDIT_COMMANDS: Record<
  * - 可编辑：撤销/重做（canUndo/canRedo）｜剪切/复制/粘贴/删除（editFlags 守卫）｜
  *   全选；
  * - 纯选区：复制 / 全选；
- * - 兜底：后退/前进（nav 真值）+ 重新加载（永远有，右键不至于无响应）。
+ * - 兜底：后退/前进（nav 真值）+ 重新加载 / 强制刷新。
  */
 export function buildContextMenuTemplate(
   params: ContextMenuParams,
@@ -242,7 +243,7 @@ export function buildContextMenuTemplate(
     ];
   }
 
-  // —— 兜底：导航 + 重新加载（恒非空，页面空白处右键也有响应）——
+  // —— 兜底：导航 + 刷新（恒非空，页面空白处右键也有响应）——
   if (nav.canGoBack) {
     items.push({
       label: t("Claw.ContextMenu.back"),
@@ -255,10 +256,16 @@ export function buildContextMenuTemplate(
       click: () => actions.goForward(),
     });
   }
-  items.push({
-    label: t("Claw.ContextMenu.reload"),
-    click: () => actions.reload(),
-  });
+  items.push(
+    {
+      label: t("Claw.ContextMenu.reload"),
+      click: () => actions.reload(),
+    },
+    {
+      label: t(I18N_KEYS.ContextMenu.FORCE_RELOAD),
+      click: () => actions.forceReload(),
+    },
+  );
   return items;
 }
 
@@ -328,6 +335,16 @@ function makeActions(
     goBack: () => goNavIndex(wc, "back"),
     goForward: () => goNavIndex(wc, "forward"),
     reload: () => wc.reload(),
+    forceReload: () => {
+      if (wc.isDestroyed()) return;
+      void wc.session
+        .clearCache()
+        .catch((error) => log.warn("[ContextMenu] clear HTTP cache failed:", error))
+        .then(() => {
+          if (!wc.isDestroyed()) wc.reloadIgnoringCache();
+        })
+        .catch((error) => log.warn("[ContextMenu] force reload failed:", error));
+    },
   };
 }
 
