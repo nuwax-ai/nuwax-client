@@ -17,11 +17,12 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-function record(status?: string, exitCode?: number, fromVersion = "3.1.3") {
+function record(status?: string, exitCode?: number, fromVersion = "3.1.3",
+  targetVersion = "3.2.0", phase = "InstallerExited") {
   const id = randomUUID(), directory = path.join(root, id);
   fs.mkdirSync(directory);
   const job: WindowsUpdateJob = {
-    schemaVersion: 1, id, product: "nuwax", fromVersion, targetVersion: "3.2.0",
+    schemaVersion: 1, id, product: "nuwax", fromVersion, targetVersion,
     currentExe: exe, installDirectory: path.win32.dirname(exe), installerPath: "C:\\cache\\setup.exe",
     installerSha512: "a".repeat(128), monitorSha256: "b".repeat(64),
     parentPid: 1, createdAt: new Date().toISOString(),
@@ -31,7 +32,7 @@ function record(status?: string, exitCode?: number, fromVersion = "3.1.3") {
   fs.writeFileSync(path.join(directory, "job.json"), text);
   fs.writeFileSync(path.join(root, "active.json"), JSON.stringify({ id, jobSha256 }));
   if (status) fs.writeFileSync(path.join(directory, "receipt.json"), JSON.stringify({
-    schemaVersion: 1, id, jobSha256, status, phase: "InstallerExited", exitCode,
+    schemaVersion: 1, id, jobSha256, status, phase, exitCode,
     updatedAt: new Date().toISOString(),
   }));
   return { id, directory, job, jobSha256 };
@@ -60,6 +61,27 @@ describe("Windows update startup confirmation", () => {
   it("keeps a failed restoration visible even when the new executable can start", async () => {
     record("failed", 2);
     expect(await inspect("3.2.0")).toMatchObject({ kind: "failed" });
+  });
+  it.each(["3.2.0-beta.7", "3.2.0-beta.8"])(
+    "retires an old pre-handoff failure after a full upgrade to %s while keeping the original receipt",
+    async version => {
+      const { directory, id } = record("failed", undefined, "3.2.0-beta.4", "3.2.0-beta.7", "Handoff");
+      expect(await inspect("3.2.0-beta.4")).toMatchObject({ kind: "failed" });
+      expect(await inspect("3.2.0-beta.6")).toMatchObject({ kind: "failed" });
+      expect(await inspect(version)).toBeNull();
+      expect(fs.existsSync(path.join(root, "active.json"))).toBe(false);
+      expect(JSON.parse(fs.readFileSync(path.join(directory, "receipt.json"), "utf8"))).toMatchObject({ status: "failed" });
+      expect(JSON.parse(fs.readFileSync(path.join(directory, "superseded.json"), "utf8"))).toMatchObject({ id, version });
+    },
+  );
+  it("does not retire a handoff failure after a commit was recorded", async () => {
+    const { directory, id, jobSha256 } = record("failed", undefined, "3.2.0-beta.4", "3.2.0-beta.7", "Handoff");
+    fs.writeFileSync(path.join(directory, "commit.json"), JSON.stringify({ id, jobSha256 }));
+    expect(await inspect("3.2.0-beta.8")).toMatchObject({ kind: "failed" });
+  });
+  it.each(["3.2.0-beta.6", "3.2.0-beta.7"])("keeps a failed downgrade or same-version install visible (%s)", async target => {
+    record("failed", undefined, "3.2.0-beta.7", target, "Handoff");
+    expect(await inspect("3.2.0-beta.7")).toMatchObject({ kind: "failed" });
   });
   it.each([false, true])("same-version signed-package reinstall requires native completion (marker: %s)", async installationCompleted => {
     const { directory } = record("installer-exited", 0, "3.2.0");
