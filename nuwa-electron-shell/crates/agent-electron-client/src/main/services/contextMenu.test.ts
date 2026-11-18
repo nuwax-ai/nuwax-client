@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { ContextMenuParams, MenuItemConstructorOptions } from "electron";
+import log from "electron-log";
 
 let appOnCalls: Array<[string, (...args: unknown[]) => void]> = [];
 let allWebContents: Array<Record<string, unknown>> = [];
@@ -90,6 +91,7 @@ function fakeWC(opts: {
     Array<(e: unknown, p: unknown) => void>
   >();
   const wc: Record<string, unknown> = {
+    id: 123,
     isDestroyed: vi.fn(() => opts.destroyed ?? false),
     session: { clearCache: vi.fn().mockResolvedValue(undefined) },
     getType: vi.fn(() => opts.type ?? "webview"),
@@ -390,6 +392,10 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
     expect(guest.reloadIgnoringCache).not.toHaveBeenCalled();
     finishClearing();
     await vi.waitFor(() => expect(guest.reloadIgnoringCache).toHaveBeenCalledOnce());
+    expect(log.info).toHaveBeenCalledWith(
+      "[ForceReload] HTTP cache cleared",
+      expect.objectContaining({ webContentsId: 123, startedAt: expect.any(Number), elapsedMs: expect.any(Number) }),
+    );
     expect(hostPage.session.clearCache).not.toHaveBeenCalled();
     expect(hostPage.reloadIgnoringCache).not.toHaveBeenCalled();
   });
@@ -404,6 +410,10 @@ describe("弹出与动作（经安装钩子的集成路径）", () => {
     clickItem(lastTemplate(), "Claw.ContextMenu.forceReload");
 
     await vi.waitFor(() => expect(guest.reloadIgnoringCache).toHaveBeenCalledOnce());
+    expect(log.warn).toHaveBeenCalledWith(
+      "[ForceReload] HTTP cache clear failed",
+      expect.objectContaining({ webContentsId: 123, elapsedMs: expect.any(Number) }),
+    );
   });
 
   it("等待清理缓存期间关闭的页面不会被重新加载", async () => {

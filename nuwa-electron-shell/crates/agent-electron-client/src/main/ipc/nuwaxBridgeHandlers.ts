@@ -47,6 +47,7 @@ import { registerPermissionOnboardingHandlers } from "./permissionOnboardingHand
 import * as powerPolicy from "../services/powerPolicy";
 import * as fullDiskAccess from "../services/fullDiskAccess";
 import * as contextMenuService from "../services/contextMenu";
+import { observeMicroAppLoadLogs } from "../services/microAppLoadLog";
 import { attachHostActivityBusinessWindow, getHostActivitySnapshot, syncHostActivityGuest } from "../services/hostActivity";
 import { setGuestNewTaskAvailable } from "../services/newTaskAvailability";
 import { createComputerServiceStateBridge } from "../services/computerServiceState";
@@ -1291,14 +1292,20 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   };
   // guest 导航即推送（did-navigate 含整页跳转如收银台；did-navigate-in-page 含 SPA 路由；
   // dom-ready 兜首载）。商业客户端单窗单 guest，find() 取唯一 webview guest 足够。
-  const hookGuestNavEvents = (wc: Electron.WebContents) => {
+  const hookGuestEvents = (wc: Electron.WebContents) => {
     if (wc.isDestroyed() || wc.getType() !== "webview") return;
     wc.on("did-navigate", pushNavState);
     wc.on("did-navigate-in-page", pushNavState);
     wc.on("dom-ready", pushNavState);
+    observeMicroAppLoadLogs(wc, (frame) => {
+      const host = ctx.getMainWindow();
+      return !switching && !!host && !host.isDestroyed() &&
+        wc.hostWebContents === host.webContents &&
+        trustedOrigins().includes(httpOrigin(frame.url) ?? "");
+    });
   };
-  app.on("web-contents-created", (_e, wc) => hookGuestNavEvents(wc));
-  for (const wc of webContents.getAllWebContents()) hookGuestNavEvents(wc);
+  app.on("web-contents-created", (_e, wc) => hookGuestEvents(wc));
+  for (const wc of webContents.getAllWebContents()) hookGuestEvents(wc);
   ipcMain.handle("nuwax:webview-nav-state", (event) =>
     isHostSender(event) ? readNavState() : { canGoBack: false, canGoForward: false },
   );
