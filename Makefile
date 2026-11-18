@@ -22,7 +22,7 @@ help:
 
 dev:
 	@if [ -z "$$HARNESS_LOCAL" ]; then node scripts/sync-local-harness.mjs --restore --quiet 2>/dev/null || true; fi
-	@bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
+	@bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(REFRESH_FLAG) $(ARGS)
 
 # Lightweight commercial dev: the shell in commercial identity against the production
 # webview (direct https://agent.nuwax.com). Unlike `make dev` (loopback dist with
@@ -69,6 +69,13 @@ submodules-latest:
 # 模型请求抓包:`make dev` / `make harness-local` **默认开启**,请求与响应落到
 # logs/model-capture.log(每次启动截断)。关闭:`NUWAX_MODEL_CAPTURE=0 make dev`。
 # 换端口:`CAPTURE_PORT=19000`。想单独前台看日志用 `make model-capture`。
+# 源码类资源(nuwax-file-server / claude-code-acp-ts)默认拉取上游最新:
+# CLI 的准备流程会复用 .cache/client-toolchain/sources 里的旧克隆,不 fetch,
+# 于是本地可能长期停留在旧版本(2026-11-18 本地 1.6.2 而上游已 1.6.4;
+# npm 的 prepare:all 路径每次都解析远程 commit,所以 CI 不受影响)。
+# 关闭:`REFRESH_RESOURCES=0 make dev`
+REFRESH_RESOURCES ?= 1
+REFRESH_FLAG := $(if $(filter 0,$(REFRESH_RESOURCES)),,--refresh-resources)
 CAPTURE_PORT ?= 18777
 model-capture:
 	@node scripts/client/model-capture-proxy.mjs --port $(CAPTURE_PORT) --log logs/model-capture.log
@@ -76,4 +83,4 @@ model-capture:
 harness-local:
 	@node scripts/sync-local-harness.mjs --ensure-frontend
 	@node scripts/sync-local-harness.mjs
-	@HARNESS_LOCAL=1 bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
+	@HARNESS_LOCAL=1 bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(REFRESH_FLAG) $(ARGS)
