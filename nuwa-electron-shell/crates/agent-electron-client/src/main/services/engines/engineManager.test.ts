@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   rename: vi.fn(),
   readdir: vi.fn(() => []),
   write: vi.fn(),
+  symlink: vi.fn(),
+  lstat: vi.fn(() => ({ isSymbolicLink: () => false })),
 }));
 
 vi.mock("fs", () => ({
@@ -21,6 +23,8 @@ vi.mock("fs", () => ({
   renameSync: mocks.rename,
   readdirSync: mocks.readdir,
   writeFileSync: mocks.write,
+  symlinkSync: mocks.symlink,
+  lstatSync: mocks.lstat,
 }));
 vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },

@@ -9,6 +9,8 @@ import {
   migrateDirectory,
   resolveEngineHome,
   migrateEngineSegment,
+  revertDirectoryRename,
+  symlinkTypeForPlatform,
   pruneProjectIsolatedHomeCaches,
   pruneStaleProjectIsolatedHomes,
 } from "./isolatedHomePaths";
@@ -447,5 +449,52 @@ describe("pruneProjectIsolatedHomeCaches regression", () => {
     expect(fs.existsSync(path.join(home, ".npm"))).toBe(false);
     expect(fs.existsSync(path.join(skipHome, ".cache"))).toBe(true);
     expect(fs.existsSync(path.join(skipHome, ".npm"))).toBe(true);
+  });
+});
+
+describe("cross-platform link strategy", () => {
+  it("uses junctions on Windows (no admin privilege required)", () => {
+    expect(symlinkTypeForPlatform("win32")).toBe("junction");
+  });
+
+  it.each(["darwin", "linux", "freebsd"])("uses directory symlinks on %s", (platform) => {
+    expect(symlinkTypeForPlatform(platform)).toBe("dir");
+  });
+});
+
+describe("revertDirectoryRename", () => {
+  it("puts the directory back under its legacy name", () => {
+    const root = makeTempRoot();
+    const target = path.join(root, ".nuwax-harness");
+    const legacy = path.join(root, ".codex");
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, "installation_id"), "abc\n");
+
+    expect(revertDirectoryRename(target, legacy)).toBe(true);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.readFileSync(path.join(legacy, "installation_id"), "utf8")).toBe("abc\n");
+  });
+
+  it("does not clobber an existing legacy path", () => {
+    const root = makeTempRoot();
+    const target = path.join(root, ".nuwax-harness");
+    const legacy = path.join(root, ".codex");
+    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(legacy, { recursive: true });
+    expect(revertDirectoryRename(target, legacy)).toBe(false);
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
+  it("reports failure when the rename cannot happen", () => {
+    const root = makeTempRoot();
+    const target = path.join(root, ".nuwax-harness");
+    fs.mkdirSync(target, { recursive: true });
+    fs.chmodSync(root, 0o500);
+    try {
+      expect(revertDirectoryRename(target, path.join(root, ".codex"))).toBe(false);
+    } finally {
+      fs.chmodSync(root, 0o700);
+    }
+    expect(fs.existsSync(target)).toBe(true);
   });
 });

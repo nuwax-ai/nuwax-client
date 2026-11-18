@@ -125,7 +125,11 @@ ERROR codex_rollout::list: state db returned stale rollout path for thread …:
 
 - `migrateDirectory` 遇到「旧路径是指向目标符号链接」直接视为已迁移，**不能再合并**，
   否则会顺着链接把目标目录自己合并一遍；
-- 链接创建失败（无权限/文件系统不支持）只记录 warn，不影响主流程；
+- **跨平台**：POSIX 用目录符号链接；**Windows 用 junction**（`fs.symlinkSync(target, legacy, "junction")`）——
+  Windows 建目录符号链接需要 `SeCreateSymbolicLinkPrivilege`（管理员或开发者模式），普通用户
+  会 `EPERM`；junction 不需要任何特权，且对 Node 的 `lstat`/`realpath` 表现为链接；
+- 链接创建失败（无权限/文件系统不支持）→ **回滚目录改名**，继续用旧名跑：引擎 state DB 里的
+  绝对路径仍然有效，旧会话照常可读（反之若强留新名，旧会话会全部打不开），并记 error 日志；
 - 引擎仍会记录 stale 日志（它先查库查到旧路径），但随后可正常解析。
 
 实测：补链接后同一线程的 `thread/resume` 报的是 provider 配置错误（说明 rollout 已找到），

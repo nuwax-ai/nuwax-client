@@ -113,10 +113,15 @@ export function resolveProjectIsolatedHomeDir(
   }
   const userId = sanitizePathSegment(scope.userId || "_");
   const workDirId = scopeWorkDirSegment(scope.workDirId || "_");
-  const engine = engineHomeSegment(scope.engine || "unknown");
+  const desiredEngine = engineHomeSegment(scope.engine || "unknown");
   const projectRoot = path.join(getProjectIsolatedHomesRoot(), userId, workDirId);
-  // 引擎段改名（codex-cli → nuwax-harness）后，旧段里的会话数据要跟着走。
-  migrateEngineSegment(projectRoot, scope.engine || "unknown", engine);
+  // 引擎段改名（codex-cli → nuwax-harness）后，旧段里的会话数据要跟着走；
+  // 万一迁移/建链接失败会回滚，这里以返回的实际段名为准。
+  const engine = migrateEngineSegment(
+    projectRoot,
+    scope.engine || "unknown",
+    desiredEngine,
+  );
   return path.join(projectRoot, engine, HOME_SEGMENT);
 }
 
@@ -128,8 +133,9 @@ export function migrateEngineSegment(
   projectRoot: string,
   engineId: string,
   targetSegment: string,
-): void {
+): string {
   const legacies = LEGACY_ENGINE_SEGMENTS[engineId.trim().toLowerCase()] ?? [];
+  let effectiveSegment = targetSegment;
   for (const legacySegment of legacies) {
     if (legacySegment === targetSegment) continue;
     const legacyPath = path.join(projectRoot, legacySegment);
@@ -139,10 +145,19 @@ export function migrateEngineSegment(
         marker: false,
       })
     ) {
-      // 旧段同样留链接：外部（平台/旧客户端）若仍按 codex-cli 找路径也不会断
-      linkLegacyPath(legacyPath, targetPath);
+      // 旧段同样留链接：外部（平台/旧客户端）若仍按 codex-cli 找路径也不会断；
+      // 建不了链接就回滚段改名，避免引擎按旧绝对路径（含旧段名）找不到数据。
+      if (!linkLegacyPath(legacyPath, targetPath)) {
+        if (revertDirectoryRename(targetPath, legacyPath)) {
+          log.error(
+            `[IsolatedHome] could not create the segment link; reverted ${targetSegment} → ${legacySegment} to keep recorded paths valid`,
+          );
+          effectiveSegment = legacySegment;
+        }
+      }
     }
   }
+  return effectiveSegment;
 }
 
 /** 旧引擎段名（仅 codex-cli 系列有过改名）。 */
@@ -295,14 +310,40 @@ function isSymlinkTo(legacy: string, target: string): boolean {
  *
  * 失败（无权限/文件系统不支持）不影响主流程，仅记录。
  */
-function linkLegacyPath(legacy: string, target: string): void {
-  if (fs.existsSync(legacy)) return;
+export function symlinkTypeForPlatform(platform: string): "dir" | "junction" {
+  // Windows 建目录符号链接需要 SeCreateSymbolicLinkPrivilege（管理员或开发者模式），
+  // 普通用户会 EPERM；**junction 不需要任何特权**，且对 Node 的 lstat/realpath
+  // 表现为链接。POSIX 用普通目录符号链接。
+  return platform === "win32" ? "junction" : "dir";
+}
+
+function linkLegacyPath(legacy: string, target: string): boolean {
+  if (fs.existsSync(legacy)) return true;
   try {
     fs.mkdirSync(path.dirname(legacy), { recursive: true });
-    fs.symlinkSync(target, legacy, "dir");
+    fs.symlinkSync(target, legacy, symlinkTypeForPlatform(process.platform));
     log.info(`[IsolatedHome] linked legacy path ${legacy} → ${target}`);
+    return true;
   } catch (error) {
     log.warn(`[IsolatedHome] could not link legacy path ${legacy} → ${target}:`, error);
+    return false;
+  }
+}
+
+/**
+ * 把已改名的目录改回去（回滚）。
+ *
+ * 建不了兼容链接时，宁可保留旧目录名继续跑：引擎 state DB 里的绝对路径仍然有效，
+ * 旧会话照常可读；反之若强留新名字，旧会话会全部打不开。
+ */
+export function revertDirectoryRename(target: string, legacy: string): boolean {
+  try {
+    if (!fs.existsSync(target) || fs.existsSync(legacy)) return false;
+    fs.renameSync(target, legacy);
+    return true;
+  } catch (error) {
+    log.error(`[IsolatedHome] could not revert ${target} → ${legacy}:`, error);
+    return false;
   }
 }
 
@@ -316,8 +357,15 @@ export function resolveEngineHome(isolatedHome: string): string {
   const legacy = path.join(isolatedHome, LEGACY_ENGINE_HOME_DIR_NAME);
   if (migrateDirectory(legacy, target, "engine-home")) {
     fs.mkdirSync(target, { recursive: true });
-    // 兼容引擎 state DB 里的旧绝对路径（见 linkLegacyPath 说明）
-    linkLegacyPath(legacy, target);
+    // 兼容引擎 state DB 里的旧绝对路径（见 linkLegacyPath 说明）：
+    // 建不了链接就回滚目录名，保证旧会话仍可读。
+    if (!linkLegacyPath(legacy, target) && revertDirectoryRename(target, legacy)) {
+      log.error(
+        `[IsolatedHome] could not create the compatibility link; engine home reverted to ${legacy} so recorded session paths stay valid`,
+      );
+      fs.mkdirSync(legacy, { recursive: true });
+      return legacy;
+    }
     return target;
   }
   fs.mkdirSync(legacy, { recursive: true });
