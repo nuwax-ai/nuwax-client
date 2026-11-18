@@ -1970,3 +1970,156 @@ describe("Windows / macOS 可选一键更新策略", () => {
     });
   });
 });
+
+describe("自动下载更新（默认关闭）", () => {
+  let preference: unknown;
+
+  function emitDownloaded() {
+    const handler = mockUpdaterOn.mock.calls.find(call => call[0] === "update-downloaded")?.[1] as (info: unknown) => void;
+    handler({ version: "0.9.5", downloadedFile: "/cache/update.zip" });
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    mockDarwin();
+    preference = null;
+    delete process.env.NUWAX_UPDATE_SERVER;
+    mockAppVersion.mockReturnValue("0.9.4");
+    mockExistsSync.mockImplementation(file => String(file).includes("Uninstall NuwaClaw.exe"));
+    mockUpdaterOn.mockClear();
+    mockUpdaterCheckForUpdates.mockReset().mockResolvedValue(undefined);
+    mockUpdaterDownloadUpdate.mockReset().mockImplementation(async () => { emitDownloaded(); });
+    mockUpdaterQuitAndInstall.mockReset();
+    mockAppOnce.mockClear();
+    mockPowerMonitorOn.mockClear();
+    mockShellOpenExternal.mockClear();
+    const { readSetting } = await import("../db");
+    vi.mocked(readSetting).mockImplementation(key => key === "update_auto_download" ? preference : null);
+    respondLatestJson({ version: "0.9.5" });
+  });
+
+  afterEach(async () => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    const { readSetting } = await import("../db");
+    vi.mocked(readSetting).mockReset();
+  });
+
+  it.each([null, false, "true", 1])("%s 不自动下载，手动下载仍可用", async value => {
+    preference = value;
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null);
+    expect(await mod.checkForUpdates({ background: true })).toMatchObject({ hasUpdate: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    expect(mod.getUpdateState().status).toBe("available");
+    expect(await mod.downloadUpdate()).toEqual({ success: true });
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+    expect(mod.getUpdateState().status).toBe("downloaded");
+  });
+
+  it.each(["win32", "darwin"])("%s 启动后自动下载，即使手动更新策略是一键安装也不重启", async platform => {
+    if (platform === "win32") mockWin32();
+    preference = true;
+    const cleanup = vi.fn(), markQuitting = vi.fn();
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null, cleanup, markQuitting, { installAfterDownload: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+    expect(mod.getUpdateState()).toMatchObject({ status: "downloaded", version: "0.9.5" });
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+    expect(mockWindowsCommit).not.toHaveBeenCalled();
+    expect(mockAppQuit).not.toHaveBeenCalled();
+    await mod.checkForUpdates({ background: true });
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("发现新版后开启设置立即下载，无需重启或等待下一次定时检查", async () => {
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null);
+    await mod.checkForUpdates({ background: true });
+    preference = true;
+    mod.refreshAutoDownloadPreference();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+    expect(mod.getUpdateState().status).toBe("downloaded");
+  });
+
+  it("准备下载时关闭设置，不再启动传输，仍可手动下载", async () => {
+    preference = true;
+    let finishCheck!: () => void;
+    mockUpdaterCheckForUpdates.mockImplementationOnce(async () => undefined)
+      .mockImplementationOnce(() => new Promise<void>(resolve => { finishCheck = resolve; }));
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null);
+    await mod.checkForUpdates({ background: true });
+    await vi.waitFor(() => expect(finishCheck).toBeTypeOf("function"));
+    preference = false;
+    mod.refreshAutoDownloadPreference();
+    finishCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    expect(await mod.downloadUpdate()).toEqual({ success: true });
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("并发检查只启动一次自动下载，失败保留错误且后续检查可重试", async () => {
+    preference = true;
+    mockUpdaterDownloadUpdate.mockRejectedValueOnce(new Error("checksum mismatch"));
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null);
+    await Promise.all([mod.checkForUpdates({ background: true }), mod.checkForUpdates({ background: true })]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledOnce();
+    expect(mod.getUpdateState()).toMatchObject({ status: "error", error: "checksum mismatch" });
+    await mod.checkForUpdates({ background: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).toHaveBeenCalledTimes(2);
+    expect(mod.getUpdateState().status).toBe("downloaded");
+  });
+
+  it("检查失败或没有新版时不自动下载", async () => {
+    preference = true;
+    const mod = await importFreshWithUpdaterMock();
+    mod.initAutoUpdater(() => null);
+    respondLatestJson({ version: "0.9.4" });
+    await mod.checkForUpdates({ background: true });
+    mockNetRequest.mockImplementation(() => { throw new Error("offline"); });
+    await mod.checkForUpdates({ background: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it("MSI 安装保持手动下载引导，不自动下载或打开网页", async () => {
+    preference = true;
+    mockWin32();
+    mockExistsSync.mockReturnValue(false);
+    const mod = await importFreshWithUpdaterMock();
+    mod._setRegistryAdapterForTest({
+      searchUninstallKeysByDisplayName: () => ["HKLM\\Uninstall\\Nuwax"],
+      queryValue: (_key, value) => value === "DisplayName" ? "NuwaClaw" : "MsiExec.exe /I{PRODUCT}",
+    });
+    mod.initAutoUpdater(() => null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mod.getUpdateState().canAutoUpdate).toBe(false);
+    expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    expect(mockShellOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it("开发运行只检查，不自动下载", async () => {
+    preference = true;
+    const { app } = await import("electron");
+    Object.defineProperty(app, "isPackaged", { value: false, configurable: true });
+    try {
+      const mod = await importFreshWithUpdaterMock();
+      mod.initAutoUpdater(() => null);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mod.getUpdateState().status).toBe("available");
+      expect(mockUpdaterDownloadUpdate).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(app, "isPackaged", { value: true, configurable: true });
+    }
+  });
+});

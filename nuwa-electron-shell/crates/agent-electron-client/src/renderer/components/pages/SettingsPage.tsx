@@ -35,6 +35,7 @@ import { FEATURES } from "@shared/featureFlags";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
+import { AutoDownloadUpdateSettings } from "../settings/AutoDownloadUpdateSettings";
 import { BrowserSettings } from '../../features/browser';
 import { setupService, type Step1Config } from "../../services/core/setup";
 import {
@@ -508,6 +509,8 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
               />
             }
           />
+
+          <AutoDownloadUpdateSettings t={t} Row={SettingsRow} />
 
           {/* 本地化加速（loopback 网关同源加载；服务域名在「服务」区块） */}
           <SettingsRow
