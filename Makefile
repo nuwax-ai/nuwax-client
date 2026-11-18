@@ -22,7 +22,7 @@ help:
 
 dev:
 	@if [ -z "$$HARNESS_LOCAL" ]; then node scripts/sync-local-harness.mjs --restore --quiet 2>/dev/null || true; fi
-	@$(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
+	@bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
 
 # Lightweight commercial dev: the shell in commercial identity against the production
 # webview (direct https://agent.nuwax.com). Unlike `make dev` (loopback dist with
@@ -66,9 +66,9 @@ submodules-latest:
 # Plain `make dev` always auto-restores the released engine first, so the two
 # modes never interfere.
 # HARNESS_PROFILE=dev builds much faster (debug); HARNESS_VERSION=0.18.33-dev stamps.
-# 本地调试:抓模型请求/响应到 logs/model-capture.log(每次启动清空)。
-# 用法:NUWAX_MODEL_CAPTURE=18777 make harness-local
-# 前台另开一个终端跑 `make model-capture` 看实时日志,或直接 tail 文件。
+# 模型请求抓包:`make dev` / `make harness-local` **默认开启**,请求与响应落到
+# logs/model-capture.log(每次启动截断)。关闭:`NUWAX_MODEL_CAPTURE=0 make dev`。
+# 换端口:`CAPTURE_PORT=19000`。想单独前台看日志用 `make model-capture`。
 CAPTURE_PORT ?= 18777
 model-capture:
 	@node scripts/client/model-capture-proxy.mjs --port $(CAPTURE_PORT) --log logs/model-capture.log
@@ -76,4 +76,4 @@ model-capture:
 harness-local:
 	@node scripts/sync-local-harness.mjs --ensure-frontend
 	@node scripts/sync-local-harness.mjs
-	@HARNESS_LOCAL=1 $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)
+	@HARNESS_LOCAL=1 bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(ARGS)

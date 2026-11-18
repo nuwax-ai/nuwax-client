@@ -961,7 +961,10 @@ export async function createAcpConnection(
       // 代理(scripts/client/model-capture-proxy.mjs),由它还原上游并把请求/响应
       // 落到 logs/model-capture.log。前缀是 base64url(原始 base URL),代理据此
       // 还原上游,客户端与代理之间无需额外约定;不设置时行为完全不变。
-      const capturePort = process.env.NUWAX_MODEL_CAPTURE;
+      const captureRaw = process.env.NUWAX_MODEL_CAPTURE?.trim();
+      const captureOff =
+        !captureRaw || ["0", "no", "off", "false"].includes(captureRaw.toLowerCase());
+      const capturePort = captureOff ? undefined : captureRaw;
       if (capturePort) {
         const encoded = Buffer.from(route.baseUrl, 'utf8').toString('base64url');
         env.NUWAX_BASE_URL = `http://127.0.0.1:${capturePort}/${encoded}`;
