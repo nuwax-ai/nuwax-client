@@ -131,17 +131,24 @@ describe("Windows update monitor handoff", () => {
       fromVersion: "3.1.3", targetVersion: "3.2.0", env: { SystemRoot: "C:\\Windows" },
       messages: { title: "Recovery", failed: "Failed", unconfirmed: "Unconfirmed" } };
   }
+  function launcherExit(code: number) {
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("exit", code));
+    return child;
+  }
   function readyChild() {
     launch.mockImplementation((_file, args) => {
-      const child = Object.assign(new EventEmitter(), { pid: 123456, unref: vi.fn() });
       const jobFile = args[args.indexOf("-JobPath") + 1];
       const jobSha256 = args[args.indexOf("-JobSha256") + 1];
       const job = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+      fs.writeFileSync(path.join(path.dirname(jobFile), "launch.json"), JSON.stringify({
+        id: job.id, jobSha256, monitorPid: process.pid,
+      }));
       fs.writeFileSync(path.join(path.dirname(jobFile), "receipt.json"), JSON.stringify({
-        schemaVersion: 1, id: job.id, jobSha256, status: "ready", phase: "Handoff", monitorPid: child.pid,
+        schemaVersion: 1, id: job.id, jobSha256, status: "ready", phase: "Handoff", monitorPid: process.pid,
         updatedAt: new Date().toISOString(),
       }));
-      return child;
+      return launcherExit(0);
     });
   }
   it("keeps signed bytes, hashes the verified download and waits for readiness before commit", async () => {
@@ -156,7 +163,9 @@ describe("Windows update monitor handoff", () => {
     expect(fs.existsSync(path.join(directory, "commit.json"))).toBe(false);
     handoff.commit();
     expect(JSON.parse(fs.readFileSync(path.join(directory, "commit.json"), "utf8"))).toEqual(active);
-    expect(launch.mock.calls[0][2]).toMatchObject({ detached: true, windowsHide: true, stdio: "ignore" });
+    expect(launch.mock.calls[0][1]).toContain("-Launch");
+    expect(launch.mock.calls[0][2]).toMatchObject({ windowsHide: true, stdio: "ignore" });
+    expect(launch.mock.calls[0][2].detached).toBeUndefined();
     expect(launch.mock.calls[0][2].shell).toBeUndefined();
     handoff.cancel();
     expect(fs.existsSync(path.join(directory, "cancel.json"))).toBe(true);
@@ -164,19 +173,31 @@ describe("Windows update monitor handoff", () => {
   it("persists a failed handoff when the signed monitor cannot start", async () => {
     const options = input();
     launch.mockImplementation(() => {
-      const child = Object.assign(new EventEmitter(), { pid: undefined, unref: vi.fn() });
+      const child = new EventEmitter();
       queueMicrotask(() => child.emit("error", new Error("App Control blocked monitor")));
       return child;
     });
     await expect(prepareWindowsUpdate(options)).rejects.toThrow("App Control blocked monitor");
     expect(await inspectWindowsUpdate({ root: options.root, currentExe: exe, currentVersion: "3.1.3", waitMs: 0 })).toMatchObject({ kind: "failed" });
   });
+  it("does not treat exit code zero without a worker PID as a successful launch", async () => {
+    const options = input();
+    launch.mockImplementation(() => launcherExit(0));
+    await expect(prepareWindowsUpdate(options)).rejects.toThrow("without a valid launch receipt (code 0)");
+    expect(await inspectWindowsUpdate({ root: options.root, currentExe: exe, currentVersion: "3.1.3", waitMs: 0 })).toMatchObject({ kind: "failed" });
+  });
   it("rejects a monitor that exits between readiness and commit", async () => {
     const options = input();
     readyChild();
     const handoff = await prepareWindowsUpdate(options);
-    launch.mock.results[0].value.emit("exit", 2, null);
-    expect(() => handoff.commit()).toThrow("exited before handoff");
+    const liveness = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("Monitor exited"), { code: "ESRCH" });
+    });
+    try {
+      expect(() => handoff.commit()).toThrow("no longer ready");
+    } finally {
+      liveness.mockRestore();
+    }
     const active = JSON.parse(fs.readFileSync(path.join(options.root, "active.json"), "utf8"));
     expect(fs.existsSync(path.join(options.root, active.id, "commit.json"))).toBe(false);
     handoff.cancel();

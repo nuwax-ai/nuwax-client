@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$JobPath,
-  [Parameter(Mandatory=$true)][string]$JobSha256
+  [Parameter(Mandatory=$true)][string]$JobSha256,
+  [switch]$Launch
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -87,6 +88,22 @@ try {
   if ((Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash -ine $job.monitorSha256) {
     throw 'Update monitor differs from the installed signed resource.'
   }
+  if ($Launch) {
+    # Windows PowerShell can exit before running -File under DETACHED_PROCESS.
+    # Give the worker its own hidden console and report its PID to the client.
+    $arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $PSCommandPath +
+      '" -JobPath "' + [IO.Path]::GetFullPath($JobPath) + '" -JobSha256 ' + $JobSha256
+    $worker = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments `
+      -WorkingDirectory $directory -WindowStyle Hidden -PassThru `
+      -RedirectStandardOutput (Join-Path $directory 'monitor.stdout.log') `
+      -RedirectStandardError (Join-Path $directory 'monitor.stderr.log')
+    try {
+      Write-AtomicJson (Join-Path $directory 'launch.json') @{
+        id = $job.id; jobSha256 = $JobSha256; monitorPid = $worker.Id
+      }
+    } finally { $worker.Dispose() }
+    exit 0
+  }
   # Capture the actual parent process before acknowledging readiness; a reused
   # numeric PID or another installed copy must not authorize an installation.
   $parent = [Diagnostics.Process]::GetProcessById([int]$job.parentPid)
@@ -158,6 +175,12 @@ try {
   }
   Show-Recovery ([string]$job.messages.unconfirmed)
 } catch {
+  if ($Launch) {
+    Write-AtomicJson (Join-Path $directory 'launch.json') @{
+      id = [IO.Path]::GetFileName($directory); jobSha256 = $JobSha256; error = $_.Exception.Message
+    }
+    exit 2
+  }
   if ($null -ne $job) {
     try { Save-InstallerLog; Write-Receipt 'failed' $null $_.Exception.Message } catch { }
     Show-Recovery ([string]$job.messages.failed)
