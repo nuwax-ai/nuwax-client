@@ -1,161 +1,174 @@
-# 引擎隔离 home：`.codex` → `.nuwax-harness`（方案）
+# 引擎隔离 home 与引擎标识：统一到 `nuwax-harness`（方案 v2）
 
 日期：2026-11-18
-状态：待评审（本文只出方案，未改代码）
+状态：待评审(只出方案,未改代码)
+变更点：v1 假设“引擎侧默认 home 仍是 `~/.codex`”**有误**；本版据实修正，并按
+“`codex`/`codex-cli` 从未正式启用、真实用户只用 `claude-code-acp-ts` / `nuwaxcode`”
+这一前提重排。
 
-## 1. 背景与结论
+## 0. 先纠正两个事实（v1 的前提错误）
 
-nuwax-file-server 1.6.4（`bc630c5 干掉codex，加入nuwax-harness`）已把**工作区级**
-agent 目录 `.codex` 全量替换为 `.nuwax-harness`（`src/` 内已无 `.codex` 引用）。
-但智能体自报的"系统技能根"仍是：
+**事实一：引擎侧默认 home 早就是 `~/.nuwax-harness`。**
+`codex-rs/utils/home-dir/src/nuwax_default.rs:18`
 
-```
-/Users/soddy/.nuwax-dev/run/projects/6/<session>/codex-cli/home/.codex/skills/.system
-```
-
-这是**引擎隔离 home**（`CODEX_HOME`），与 file-server 改的工作区目录属不同层，由
-**客户端**拼接，所以 file-server 升级不会影响它。
-
-目标：把引擎隔离 home 的目录名也改为 `.nuwax-harness`，并且**不丢已有会话数据**
-（本地测试依赖旧会话继续可恢复、可验证）。
-
-## 2. 影响面（代码定位）
-
-全仓 grep `.codex`（排除 node_modules / dist / 注释）后，生产代码只有 **2 处**：
-
-| 位置 | 语境 | 处理 |
-|---|---|---|
-| `src/main/services/engines/acp/acpClient.ts:1058` | ACP 路径（**当前实际使用**）：`is codex-cli` 分支里 `path.join(isolatedHome, ".codex")`，注入 `CODEX_HOME` + `CODEX_SQLITE_HOME` | 改为调用统一解析函数 |
-| `src/main/services/engines/engineManager.ts:417` | 旧的非 ACP `createIsolatedEnvironment()`，同样两行注入 | 同上（同一函数） |
-| `src/main/services/engines/engineManager.test.ts:106` | 断言 `CODEX_HOME === HOME/.codex` | 更新断言 |
-| `acpClient.ts:1052-1056` | 解释 Windows 必须显式隔离的注释 | 同步改文案 |
-
-不受影响（已确认）：
-
-- `CODEX_LOG_DIR`：客户端日志目录，与本 home 无关
-- `isolatedHomePaths.ts` 的保留/清理策略：按目录名白名单（`.cache`/`.npm`/`tmp`…），不含 `.codex`
-- 会话列表/恢复：走平台 DB + app-server API，不靠 home 目录名
-- 引擎侧默认 home（`CODEX_HOME` 未设置时的 `~/.codex`）：客户端始终显式注入，本次不动
-- `config` crate 的 `PROJECT_CONFIG_DIR_NAME_COMPAT = ".codex"`（**项目**里的 `./.codex` 配置目录）：保持不动，属另一概念
-
-## 3. 数据现状（为什么迁移成本低）
-
-单个项目隔离 home 实测（1755386，7.5 MB）：
-
-```
-home/
-├── .bash_profile / .bashrc        # 与引擎无关，不动
-├── .claude/                       # claude 引擎配置
-├── .codex/                        # ← 本次要改名
-│   ├── config.toml                # 用户级配置
-│   ├── installation_id
-│   ├── sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl   # 会话正文（可扫描发现）
-│   ├── session_index.jsonl        # 只有 id / thread_name / updated_at（无绝对路径）
-│   ├── skills/  skills/.system/   # 系统技能
-│   ├── shell_snapshots/ thread-writer-locks/ tmp/
-│   └── *.sqlite(+wal/shm)         # state/queue/logs/memories/goals/thread_history
-└── tmp/
+```rust
+let nuwax_home = user_home.join(".nuwax-harness");
 ```
 
-关键结论（决定迁移可行性）：
+即 `CODEX_HOME`/`NUWAX_HOME` 未设置时，引擎已经落在 `~/.nuwax-harness`。所以
+“引擎侧默认 home 要不要改”这件事**已经完成**，不需要动。残留在 `tui/` 的
+`.codex` 除 `external_editor.rs:185` 外均为测试代码，那一处是“外部编辑器临时文件
+的可写目录候选”（`codex_home` 已是第一候选），非默认 home 语义。
 
-1. **`session_index.jsonl` 不含绝对路径**，只有 id 与标题；
-2. 引擎按目录扫描 `$CODEX_HOME/sessions/**` 发现 rollout，**不依赖库里存的绝对路径**；
-3. 各 `*.sqlite` 仅 `logs_2.sqlite` 内含绝对路径（11 处），是日志文本，不影响功能；
-4. rollout jsonl 里出现的旧绝对路径是**历史对话文本**（当时提示词里带了技能路径），不参与查找。
+**事实二：客户端路径里有**两段**需要改，而不是一段。**
 
-→ 整目录 rename 后引擎可正常按新路径扫描到旧会话，无需改写任何数据内容。
+```
+~/.nuwax-dev/run/projects/{userId}/{workDirId}/{engine}/home/{CODEX_HOME}
+                                                ^^^^^^^^        ^^^^^^^^^^^
+                                                ①引擎段         ②引擎 home 目录名
+```
 
-## 4. 方案设计
+实测：`~/.nuwax-dev/run/projects/6/1755386/codex-cli/home/.codex`
 
-### 4.1 单点解析 + 一次性迁移
+- ① `{engine}` 段来自 `scope.engine`（`isolatedHomePaths.ts` → `sanitizePathSegment(scope.engine)`）
+- ② `.codex` 来自 `path.join(isolatedHome, ".codex")`（`acpClient.ts:1058` / `engineManager.ts:417`）
 
-新增 `resolveEngineHome(isolatedHome: string): string`（放 `src/main/services/engines/acp/isolatedHomePaths.ts`，
-两处调用都 import 它，避免再次漂移）：
+只改 ②，路径里仍会看到 `codex-cli`；只改 ①，agent 自报的系统技能根仍是 `.codex`。
+两段都要处理，且**旧数据要能继续用**（你本地验证依赖旧会话）。
+
+## 1. 命名与 id 的关键决策
+
+| 层 | 现值 | 建议 | 理由 |
+|---|---|---|---|
+| 平台下发的引擎 id（wire） | `codex-cli`（也接受 `codex`） | **保留 `codex-cli`，同时接受 `nuwax-harness` 作为别名**，内部归一化到同一实现 | id 是平台契约，改 id 要后端同步发版；先加别名，平台切换时客户端无需再改 |
+| 磁盘引擎段目录 | `codex-cli` | **`nuwax-harness`** | 用户可见路径，产品语义统一；用映射表与 id 解耦 |
+| 引擎 home 目录名 | `.codex` | **`.nuwax-harness`** | 与 file-server 1.6.4 的工作区目录同名 |
+
+解耦做法（关键）：`id → 目录段` 用显式映射，而不是直接把 id 当目录名。
 
 ```ts
-export const ENGINE_HOME_DIR_NAME = ".nuwax-harness";
-export const LEGACY_ENGINE_HOME_DIR_NAME = ".codex";
-
-export function resolveEngineHome(isolatedHome: string): string {
-  const next = path.join(isolatedHome, ENGINE_HOME_DIR_NAME);
-  const legacy = path.join(isolatedHome, LEGACY_ENGINE_HOME_DIR_NAME);
-  migrateLegacyEngineHome(legacy, next);   // 幂等
-  fs.mkdirSync(next, { recursive: true }); // 引擎只校验存在性，不自建
-  return next;
+// isolatedHomePaths.ts
+const ENGINE_HOME_SEGMENTS: Record<string, string> = {
+  "codex-cli": "nuwax-harness",
+  "nuwax-harness": "nuwax-harness",
+};
+export function engineHomeSegment(engineId: string): string {
+  return ENGINE_HOME_SEGMENTS[engineId] ?? sanitizePathSegment(engineId);
 }
 ```
 
-### 4.2 迁移规则（幂等、可回滚、绝不静默丢数据）
+这样：平台继续发 `codex-cli` 也能落到 `.../nuwax-harness/home/`；将来平台改发
+`nuwax-harness` 也命中同一目录，无需迁移第二次。
 
-`migrateLegacyEngineHome(legacy, next)`：
+## 2. 数据迁移设计（两步，幂等、绝不丢数据）
+
+两个迁移都在 **spawn 引擎之前**执行（无 sqlite 句柄占用，Windows 亦安全），且都遵循
+同一套策略。
+
+### 2.1 公共策略：`migrateDirectory(legacy, target)`
 
 | 状态 | 动作 |
 |---|---|
-| 旧不存在 | 直接返回（新目录由调用方 mkdir） |
-| 旧存在、新不存在 | `fs.renameSync(legacy, next)` —— 同盘原子；随后写 `.migrated-from-codex.json`（时间戳 + 版本） |
-| 都存在 | 逐项合并：把旧目录里**新目录没有的**条目 `rename` 进新目录；同名冲突保留新目录那份，把旧的那份改名为 `<name>.from-codex-<ts>` 保留；最后把旧目录整体改名为 `.codex.migrated-<ts>` |
-| `rename` 失败（EXDEV / EBUSY / 权限） | **回退到旧目录**：`log.error` + 返回 `legacy`，引擎继续用 `.codex` 正常跑；绝不新建空目录顶替 |
+| legacy 不存在 | 直接返回 target（调用方 mkdir） |
+| legacy 存在、target 不存在 | `fs.renameSync`（同盘原子）+ 写迁移标记 |
+| 都存在 | 逐项合并：target 缺失的条目从 legacy `rename` 进来；同名冲突保留 target 的那份，legacy 那份改名为 `<name>.from-legacy-<ts>`；最后把 legacy 整体改名为 `<legacy>.migrated-<ts>` |
+| rename 失败（EXDEV/EBUSY/EPERM） | **回退使用 legacy**，`log.error` 记录；绝不创建空 target 顶替 |
 
-要点：
+保留期：`<legacy>.migrated-<ts>` 保留 **1 个版本周期**（你已确认），之后由既有清理策略回收。
 
-- **永不删除**旧数据，只改名。回滚 = 把 `.codex.migrated-*` 改回 `.codex`。
-- 迁移发生在 **spawn 引擎之前**（`acpClient` 构造 env 时），此时引擎未运行，不存在 sqlite 句柄占用。
-- 每个项目/会话的隔离 home 各自独立，迁移按需触发；老项目下次打开时才迁移，无需全局脚本。
-- 加开关 `NUWAX_ENGINE_HOME_LEGACY=1` 强制继续用 `.codex`（应急用，默认不设）。
+### 2.2 迁移一：引擎段目录
 
-### 4.3 迁移标记
+`run/projects/{user}/{workDirId}/codex-cli` → `run/projects/{user}/{workDirId}/nuwax-harness`
 
-`<home>/.nuwax-harness/.migration.json`：
+触发点：`resolveProjectIsolatedHomeDir()` 计算引擎段时（对 `codex-cli` 映射到
+`nuwax-harness` 的场景执行一次）。
+
+### 2.3 迁移二：home 内部目录名
+
+`<home>/.codex` → `<home>/.nuwax-harness`
+
+触发点：新增 `resolveEngineHome(isolatedHome)`（放 `isolatedHomePaths.ts`），
+`acpClient.ts` 与 `engineManager.ts` 都改调它。
+
+标记文件：`<home>/.nuwax-harness/.migration.json`
 
 ```json
-{"from": ".codex", "at": "2026-11-18T10:30:00Z", "appVersion": "3.2.0-beta.6", "mode": "rename|merge"}
+{"from": ".codex", "at": "2026-11-18T10:30:00Z", "appVersion": "3.2.0-beta.x", "mode": "rename"}
 ```
 
-便于支持侧判断某个用户是否已迁移、以及合并过哪些条目。
+### 2.4 为什么迁移是安全的（已实测核对）
 
-## 5. 兼容与回滚
+| 检查 | 结果 |
+|---|---|
+| `session_index.jsonl` | 仅 `id/thread_name/updated_at`，**无绝对路径** |
+| 会话发现方式 | 扫描 `$CODEX_HOME/sessions/**/*.jsonl`，不依赖库内路径 |
+| `*.sqlite` | 只有 `logs_2.sqlite` 含绝对路径（11 处，纯日志文本） |
+| rollout jsonl 内旧路径 | 是历史对话正文，不参与查找 |
 
-- **向前兼容**：新客户端读到旧目录会自动迁移；旧客户端读新目录会找不到会话 →
-  发布说明里注明"降级前请把 `.nuwax-harness` 改回 `.codex`"。
-- **回滚窗口**：保留 `.codex.migrated-<ts>` 至少一个版本周期；`docs` 里写清手工回滚命令。
-- **不影响** file-server 1.6.4 的工作区目录改动（两层互不依赖）。
+→ 整目录改名后旧会话仍可发现与恢复，无需改写任何数据。
 
-## 6. 测试计划
+## 3. 客户端代码改动清单
 
-单元（vitest，tmp 目录）：
+| 文件 | 改动 |
+|---|---|
+| `services/engines/types.ts:8` | 联合类型加 `"nuwax-harness"`（保留 `codex-cli` 兼容） |
+| `ipc/agentHandlers.ts:14,64-66` | zod enum 加 `nuwax-harness`；normalize 里把 `codex`/`codex-cli`/`nuwax-harness` 统一 |
+| `services/engines/agentHelpers.ts:12,17` | 命令名 → 引擎 id 的映射加 `nuwax-harness` |
+| `services/engines/engineManager.ts:31,116,159,231,266,411` | 类型联合与 `codex-cli` 判定分支改为“是否 harness 家族” |
+| `services/engines/engineManager.ts:417` | 改用 `resolveEngineHome(isolatedHome)` |
+| `services/engines/acp/acpClient.ts:1052-1058` | 同上；注释同步（含 Windows 隔离说明） |
+| `services/engines/acp/isolatedHomePaths.ts` | 新增 `engineHomeSegment()`、`resolveEngineHome()`、`migrateDirectory()` |
+| `services/engines/acp/config/engineProfile.ts:4` | `OPENCODE_ENGINE_IDS` 加 `nuwax-harness`（保持现有行为不变） |
+| `services/agentInstaller.ts:60` | 安装器引擎列表加 `nuwax-harness` |
+| `services/system/processRegistry.ts:14` | engineType 联合加 `nuwax-harness` |
+| `services/engines/engineManager.test.ts:106` | 断言改为 `.nuwax-harness` |
 
-1. 只有旧目录 → 迁移后新目录存在、旧目录消失、`sessions/` 内容一致
-2. 只有新目录 → 不动
-3. 两者都没有 → 创建新目录
-4. 两者都有且内容重叠 → 冲突条目保留新+旧改名，非冲突条目合并
-5. `rename` 抛 EXDEV/EBUSY（mock）→ 返回旧目录、不创建空的新目录、日志有 error
+不改动：
 
-手工（本地，现有项目 1755386）：
+- `CODEX_LOG_DIR`（独立日志目录）
+- `isolatedHomePaths.ts` 的缓存/保留白名单（`.cache`/`.npm`/`tmp`）
+- 引擎 `config` crate 的 `PROJECT_CONFIG_DIR_NAME_COMPAT = ".codex"`（项目级配置目录，另一概念）
 
-1. 启动客户端 → 确认 `home/.nuwax-harness/` 出现、`home/.codex.migrated-*` 存在
-2. 让智能体自报系统技能根 → 应为 `.../home/.nuwax-harness/skills/.system`
-3. **恢复旧会话**：打开迁移前的会话继续对话，验证 rollout 可读、上下文连续
-4. `config.toml`（含 provider 配置）仍生效；`state/queue/thread_history` 无损坏告警
-5. 新建一个项目（无旧目录）→ 直接生成 `.nuwax-harness`
+## 4. 引擎侧改动
 
-## 7. 文档更新
+- **无需改默认 home**（已是 `~/.nuwax-harness`）
+- 可选清理一处：`tui/src/external_editor.rs:185` 的
+  `dirs::home_dir().map(|home| home.join(".codex"))` 候选改为 `.nuwax-harness`
+  （行为不变，仅去掉旧目录候选）
+- `CODEX_HOME` / `NUWAX_HOME` 双别名读取保持不变（`env_alias::resolve_env_alias`）
 
-- `docs/`（本文）
-- 客户端发布说明：目录变更 + 自动迁移 + 降级注意
-- `NUWAX-HARNESS.md`（引擎仓库）：`CODEX_HOME` 的推荐值改为 `.nuwax-harness`，
-  注明"引擎默认 `~/.codex` 不变，由宿主注入"
+## 5. 测试计划
 
-## 8. 工作量与风险
+单元（vitest + tmp 目录）：
+
+1. 引擎段迁移：仅旧段存在 → 改名为新段；两段都存在 → 合并、旧段留 `.migrated-*`
+2. home 迁移：仅 `.codex` → `.nuwax-harness`；两者都有 → 合并；都不存在 → 新建
+3. `rename` 抛 EXDEV/EBUSY → 回退旧路径、不创建空目录、有 error 日志
+4. id 归一：`codex` / `codex-cli` / `nuwax-harness` 三种输入映射到同一目录段
+5. `engineManager.test.ts` 的 `CODEX_HOME` 断言更新后通过
+
+手工（用现有项目 1755386）：
+
+1. 启动后 `run/projects/6/1755386/` 下出现 `nuwax-harness/home/.nuwax-harness/`
+2. agent 自报系统技能根 = `.../home/.nuwax-harness/skills/.system`
+3. **打开迁移前的旧会话继续对话**（关键验收点：rollout 可读、上下文连续、工具可用）
+4. `config.toml`、`installation_id`、`*.sqlite` 均随目录迁移且无损坏告警
+5. 新建项目（无旧目录）→ 直接生成新结构
+6. 回滚演练：把 `nuwax-harness` 段与 `.nuwax-harness` 改回旧名，客户端仍可用（证明可回退）
+
+## 6. 工作量与风险
 
 | 项 | 估计 |
 |---|---|
-| 代码改动 | 2 处调用 + 1 个新函数（约 80 行）+ 测试 |
-| 风险 | 低：无 schema 变更、无数据改写；失败时回退旧目录 |
-| 主要风险点 | Windows 上 `.codex` 若被其他进程占用导致 rename 失败 → 走回退分支，功能不受影响 |
+| 客户端改动 | 约 11 个文件（多数是一行枚举/映射）+ 1 个迁移工具模块（约 100 行）+ 测试 |
+| 引擎改动 | 0（可选 1 行） |
+| 风险 | 低。无 schema 变更、无数据改写；rename 失败回退旧目录 |
+| 主要风险 | ① Windows 上旧目录被占用 → 走回退分支，功能不受影响 ② 平台若已把 `codex-cli` 写进 agent 配置，别名兼容可覆盖 |
 
-## 9. 待确认
+## 7. 待确认（3 项）
 
-1. 目录名确认为 `.nuwax-harness`（与 file-server 工作区目录同名，同一产品语义）？
-2. `.codex.migrated-<ts>` 保留多久（建议 1 个版本周期后由清理策略回收）？
-3. 是否需要同时在引擎侧把默认 home 从 `~/.codex` 改掉（影响面大，建议单独排期）？
+1. **wire id**：保留 `codex-cli` + 接受 `nuwax-harness` 别名（推荐，不需后端改动），
+   还是直接让平台改发 `nuwax-harness`？
+2. **磁盘引擎段**：确认用 `nuwax-harness`（本方案默认），旧 `codex-cli` 段自动迁移。
+3. `.codex.migrated-<ts>` / `codex-cli.migrated-<ts>` 保留 1 个版本周期后由清理策略回收
+   —— 确认是否要在清理策略里显式加这条（否则会一直留着）。
