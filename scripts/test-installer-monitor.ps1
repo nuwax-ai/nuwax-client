@@ -91,25 +91,39 @@ public static class SyntheticInstallerMonitorFixture {
     if ($case -eq 'job-tampered') { [IO.File]::AppendAllText($jobPath, ' ') }
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $start.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $monitor + '" -JobPath "' + $jobPath + '" -JobSha256 ' + $jobHash
+    $start.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $monitor + '" -JobPath "' + $jobPath + '" -JobSha256 ' + $jobHash + ' -Launch'
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
     $start.EnvironmentVariables['NUWAX_QA_ROLE'] = 'installer'
     $start.EnvironmentVariables['NUWAX_QA_MARKER'] = $marker
     $start.EnvironmentVariables['NUWAX_QA_EXIT'] = $(if ($case -eq 'failure') { '2' } else { '0' })
     $start.EnvironmentVariables['NUWAX_QA_PAUSE'] = $(if ($case -eq 'locked') { '1' } else { '0' })
-    $process = [Diagnostics.Process]::Start($start)
-    $owned.Add($process)
+    $launcher = [Diagnostics.Process]::Start($start)
+    $owned.Add($launcher)
+    if (-not $launcher.WaitForExit(10000)) { throw 'Monitor launcher did not exit independently of the worker.' }
     if ($case -eq 'job-tampered') {
-      if (-not $process.WaitForExit(10000) -or $process.ExitCode -eq 0 -or [IO.File]::Exists($marker)) { throw 'Modified job was accepted.' }
+      if ($launcher.ExitCode -eq 0 -or [IO.File]::Exists($marker)) { throw 'Modified job was accepted.' }
       [IO.File]::WriteAllText($release, 'exit')
       if (-not $parent.WaitForExit(5000)) { throw 'Synthetic parent did not terminate.' }
       Write-Output 'PASS monitor=job-tampered phase=Handoff'
       continue
     }
+    if ($launcher.ExitCode -ne 0) { throw ('Monitor launcher exit code: ' + $launcher.ExitCode) }
+    $launch = [IO.File]::ReadAllText((Join-Path $directory 'launch.json'), $utf8) | ConvertFrom-Json
+    if ($launch.id -ne $id -or $launch.jobSha256 -ne $jobHash -or $launch.monitorPid -le 0) {
+      throw 'Monitor launch receipt did not identify the worker.'
+    }
+    $workerPid = $launch.monitorPid
+    try { $process = [Diagnostics.Process]::GetProcessById($workerPid) }
+    catch {
+      $workerLog = Get-Content -LiteralPath (Join-Path $directory 'monitor.stderr.log') -Raw -ErrorAction SilentlyContinue
+      $receipt = Get-Content -LiteralPath (Join-Path $directory 'receipt.json') -Raw -ErrorAction SilentlyContinue
+      throw ('Monitor worker exited before handoff: ' + $workerLog + ' ' + $receipt)
+    }
+    $owned.Add($process)
     $receiptPath = Join-Path $directory 'receipt.json'
     $ready = Read-Until $receiptPath @('ready', 'failed')
-    if ($ready.status -ne 'ready') { throw ('Monitor did not become ready: ' + $ready.error) }
+    if ($ready.status -ne 'ready' -or $ready.monitorPid -ne $workerPid) { throw ('Monitor did not become ready: ' + $ready.error) }
     if ([IO.File]::Exists($marker)) { throw 'Installer ran before the client committed and exited.' }
     if ($case -eq 'tampered') { [IO.File]::AppendAllText($installer, 'changed') }
     if ($case -eq 'cancelled') {

@@ -110,6 +110,38 @@ function readReceipt(directory: string, job: WindowsUpdateJob, jobSha256: string
   } catch (error: any) { if (error.code === "ENOENT") return null; throw error; }
 }
 
+async function launchMonitor(executable: string, directory: string, jobSha256: string,
+  env: NodeJS.ProcessEnv): Promise<number> {
+  // The worker must not inherit a pipe that keeps the launcher's exit pending.
+  const launcher = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", path.join(directory, "monitor.ps1"), "-JobPath", path.join(directory, "job.json"), "-JobSha256", jobSha256, "-Launch"],
+  { windowsHide: true, stdio: "ignore", cwd: directory, env });
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      launcher.kill();
+      reject(new Error("Update monitor launcher did not exit."));
+    }, HANDOFF_TIMEOUT_MS);
+    launcher.once("error", error => { clearTimeout(timer); reject(error); });
+    launcher.once("exit", code => { clearTimeout(timer); resolve(code); });
+  });
+  const fallbackError = `Update monitor launcher exited without a valid launch receipt (code ${exitCode}).`;
+  let result;
+  try {
+    result = json(path.join(directory, "launch.json"));
+  } catch (error: any) {
+    if (error.code === "ENOENT") throw new Error(fallbackError);
+    throw error;
+  }
+  if (result.id !== path.basename(directory) || result.jobSha256 !== jobSha256) {
+    throw new Error("Update monitor launch receipt identity mismatch.");
+  }
+  if (exitCode !== 0) throw new Error(typeof result.error === "string" ? result.error : fallbackError);
+  if (!Number.isInteger(result.monitorPid) || result.monitorPid <= 0 || result.monitorPid > 0xffffffff) {
+    throw new Error(fallbackError);
+  }
+  return result.monitorPid;
+}
+
 export interface WindowsUpdateHandoff { commit(): void; cancel(): void }
 export async function prepareWindowsUpdate(options: {
   root: string; resourcesPath: string; installerPath: string; currentExe: string;
@@ -145,32 +177,29 @@ export async function prepareWindowsUpdate(options: {
   const serialized = JSON.stringify(job), jobSha256 = digest(serialized);
   fs.writeFileSync(path.join(directory, "job.json"), serialized, { flag: "wx", mode: 0o600 });
   atomicJson(path.join(root, "active.json"), { id, jobSha256 });
-  let launchError: Error | null = null;
-  const child = spawn(path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath,
-      "-JobPath", path.join(directory, "job.json"), "-JobSha256", jobSha256],
-    { detached: true, windowsHide: true, stdio: "ignore", cwd: directory, env });
-  child.once("error", error => { launchError = error; });
-  child.once("exit", (code, signal) => { launchError ??= new Error(`Update monitor exited before handoff: ${code ?? signal}`); });
-  child.unref();
   const cancel = () => atomicJson(path.join(directory, "cancel.json"), { id, jobSha256 });
   try {
     const deadline = Date.now() + HANDOFF_TIMEOUT_MS;
+    const monitorPid = await launchMonitor(
+      path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      directory, jobSha256, env,
+    );
     while (Date.now() < deadline) {
-      if (launchError) throw launchError;
       const receipt = readReceipt(directory, job, jobSha256);
-      if (receipt?.status === "ready" && receipt.monitorPid === child.pid) {
+      if (receipt?.status === "failed") throw new Error(receipt.error || "Update monitor failed to initialize.");
+      if (!alive(monitorPid)) throw new Error("Update monitor exited before handoff. See monitor.stderr.log.");
+      if (receipt?.status === "ready" && receipt.monitorPid === monitorPid) {
         return {
           commit: () => {
-            if (launchError) throw launchError;
             const current = readReceipt(directory, job, jobSha256);
-            if (current?.status !== "ready" || current.monitorPid !== child.pid) throw new Error("Update monitor is no longer ready.");
+            if (current?.status !== "ready" || current.monitorPid !== monitorPid || !alive(monitorPid)) {
+              throw new Error("Update monitor is no longer ready.");
+            }
             atomicJson(path.join(directory, "commit.json"), { id, jobSha256 });
           },
           cancel,
         };
       }
-      if (receipt?.status === "failed") throw new Error(receipt.error || "Update monitor failed to initialize.");
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     throw new Error("Update monitor did not become ready.");
