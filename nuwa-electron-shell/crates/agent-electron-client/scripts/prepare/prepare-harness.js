@@ -132,6 +132,10 @@ async function main() {
   const preserveVendor =
     process.env.HARNESS_LOCAL === '1' &&
     fs.existsSync(path.join(destDir, 'vendor', 'nuwax-harness'));
+  // 保留本地构建时,声明必须指向真正持有二进制的那一层目录,否则客户端按
+  // harnessEngineVersion 拼路径会落空(2026-11-18: 声明 0.18.53、目录只有
+  // 0.18.52 → 引擎找不到 → "ACP connection closed")。
+  let declaredEngineVer = engineVer;
   if (preserveVendor) {
     fs.rmSync(path.join(destDir, 'dist'), { recursive: true, force: true });
   } else if (fs.existsSync(destDir)) {
@@ -148,11 +152,24 @@ async function main() {
   // vendor/nuwax-harness/<ver>/（按引擎包 runtime.js 的 requiredBundleFiles 权威清单
   // 选择性复制——缓存目录可能残留旧名二进制等历史产物，整目录复制会把它们带进包里）
   if (preserveVendor) {
-    const localEngine = path.join(destDir, 'vendor', 'nuwax-harness', engineVer, engineBinaryName());
+    const vendorRoot = path.join(destDir, 'vendor', 'nuwax-harness');
+    const withBinary = fs
+      .readdirSync(vendorRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => fs.existsSync(path.join(vendorRoot, name, engineBinaryName())));
+    if (withBinary.length === 1) {
+      declaredEngineVer = withBinary[0];
+    } else if (!withBinary.includes(declaredEngineVer) && withBinary.length > 0) {
+      declaredEngineVer = withBinary[0];
+    }
+    const localEngine = path.join(vendorRoot, declaredEngineVer, engineBinaryName());
     const size = fs.existsSync(localEngine)
       ? (fs.statSync(localEngine).size / 1024 / 1024).toFixed(0)
       : '?';
-    console.log(`  vendor/nuwax-harness/${engineVer}/ 保留本地构建（HARNESS_LOCAL=1，${size} MB）`);
+    console.log(
+      `  vendor/nuwax-harness/${declaredEngineVer}/ 保留本地构建（HARNESS_LOCAL=1，${size} MB）`,
+    );
   }
   if (!preserveVendor) {
   let requiredFiles;
@@ -206,7 +223,7 @@ async function main() {
     version: srcPkg.version,
     // Installation recovery may retain older vendor directories. Runtime must
     // select the adapter's dependency, not the first directory it encounters.
-    harnessEngineVersion: engineVer,
+    harnessEngineVersion: declaredEngineVer,
     type: 'module',
     bin: {
       'nuwax-harness-acp-ts': './dist/index.js',
@@ -215,7 +232,9 @@ async function main() {
   };
   fs.writeFileSync(path.join(destDir, 'package.json'), JSON.stringify(slimPkg, null, 2) + '\n');
 
-  console.log(`[prepare-harness] ✓ resources/${BUNDLED_DIR_NAME}/ (${srcPkg.version}, 引擎 ${engineVer})`);
+  console.log(
+    `[prepare-harness] ✓ resources/${BUNDLED_DIR_NAME}/ (${srcPkg.version}, 引擎 ${declaredEngineVer})`,
+  );
 }
 
 main();
