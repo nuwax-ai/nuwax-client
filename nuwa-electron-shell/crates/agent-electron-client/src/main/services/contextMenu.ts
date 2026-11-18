@@ -337,13 +337,25 @@ function makeActions(
     reload: () => wc.reload(),
     forceReload: () => {
       if (wc.isDestroyed()) return;
+      const startedAt = Date.now();
+      const webContentsId = wc.id;
+      const diagnostic = () => ({ webContentsId, startedAt, elapsedMs: Date.now() - startedAt });
+      log.info("[ForceReload] requested", { webContentsId, startedAt });
       void wc.session
         .clearCache()
-        .catch((error) => log.warn("[ContextMenu] clear HTTP cache failed:", error))
+        .then(
+          () => log.info("[ForceReload] HTTP cache cleared", diagnostic()),
+          () => log.warn("[ForceReload] HTTP cache clear failed", diagnostic()),
+        )
         .then(() => {
-          if (!wc.isDestroyed()) wc.reloadIgnoringCache();
+          if (wc.isDestroyed()) {
+            log.info("[ForceReload] page closed before reload", diagnostic());
+            return;
+          }
+          wc.reloadIgnoringCache();
+          log.info("[ForceReload] reload dispatched", diagnostic());
         })
-        .catch((error) => log.warn("[ContextMenu] force reload failed:", error));
+        .catch(() => log.warn("[ForceReload] dispatch failed", diagnostic()));
     },
   };
 }

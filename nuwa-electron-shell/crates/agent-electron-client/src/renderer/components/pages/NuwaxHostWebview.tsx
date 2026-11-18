@@ -85,6 +85,10 @@ const NuwaxHostWebview = forwardRef<
   const failureRef = useRef<GuestLoadFailure | null>(null);
   const activeDocument = useRef("");
   const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadAttempt = useRef<{
+    startedAt: number;
+    phase: "resolve-url" | "attach-webview" | "load-document" | "wait-for-load-stop";
+  } | null>(null);
   const callbacks = useRef({
     onNavStateChange,
     onNavigationStart,
@@ -105,6 +109,11 @@ const NuwaxHostWebview = forwardRef<
     clearSlowTimer();
     const currentGeneration = generation.current;
     const currentActivity = ++activity.current;
+    const attempt: NonNullable<typeof loadAttempt.current> = {
+      startedAt: Date.now(),
+      phase: phase === "resolving" ? "resolve-url" : "load-document",
+    };
+    loadAttempt.current = attempt;
     loading.current = true;
     setWaiting(false);
     callbacks.current.onGuestLoadStateChange?.(phase);
@@ -115,6 +124,12 @@ const NuwaxHostWebview = forwardRef<
       )
         return;
       slowTimer.current = null;
+      logger.warn("[GuestLoad] slow", "NuwaxHostWebview", {
+        attempt: currentActivity,
+        phase: attempt.phase,
+        startedAt: attempt.startedAt,
+        elapsedMs: Date.now() - attempt.startedAt,
+      });
       // A hint is not a timeout: the live guest and its pending requests stay mounted.
       setWaiting(true);
       reloadLocked.current = false;
@@ -122,15 +137,26 @@ const NuwaxHostWebview = forwardRef<
       callbacks.current.onGuestLoadStateChange?.("waiting");
     }, GUEST_SLOW_HINT_MS);
   };
-  const finishLoading = () => {
+  const finishLoading = (outcome: "stopped" | "failed") => {
     clearSlowTimer();
+    const attempt = loadAttempt.current;
+    loadAttempt.current = null;
+    if (attempt) {
+      logger.info("[GuestLoad] finished", "NuwaxHostWebview", {
+        attempt: activity.current,
+        phase: attempt.phase,
+        startedAt: attempt.startedAt,
+        elapsedMs: Date.now() - attempt.startedAt,
+        outcome,
+      });
+    }
     loading.current = false;
     reloadLocked.current = false;
     setWaiting(false);
     setReloading(false);
   };
   const showFailure = (next: GuestLoadFailure) => {
-    finishLoading();
+    finishLoading("failed");
     failureRef.current = next;
     setFailure(next);
     callbacks.current.onGuestLoadStateChange?.("failed");
@@ -139,6 +165,7 @@ const NuwaxHostWebview = forwardRef<
     // Invalidate old callbacks synchronously, before React has detached the old node.
     ++generation.current;
     clearSlowTimer();
+    loadAttempt.current = null;
     loading.current = false;
     setWaiting(false);
     failureRef.current = null;
@@ -233,6 +260,7 @@ const NuwaxHostWebview = forwardRef<
         )
           throw new Error("Invalid webview origin");
         activeDocument.current = finalUrl;
+        if (loadAttempt.current) loadAttempt.current.phase = "attach-webview";
         logger.info(
           "[NuwaxHostWebview] resolved webview url",
           "NuwaxHostWebview",
@@ -311,15 +339,20 @@ const NuwaxHostWebview = forwardRef<
     const started = () => {
       if (current() && !failureRef.current) beginLoading("loading");
     };
+    const domReady = () => {
+      if (!current()) return;
+      if (loadAttempt.current) loadAttempt.current.phase = "wait-for-load-stop";
+      sync();
+    };
     const stopped = () => {
       if (!current() || failureRef.current) return;
-      finishLoading();
+      finishLoading("stopped");
       setHasLoaded(true);
       // Only transport loading stopped. PC Web owns its own business-ready state.
       callbacks.current.onGuestLoadStateChange?.("stopped");
     };
     const listeners = {
-      "dom-ready": sync,
+      "dom-ready": domReady,
       "did-start-navigation": navigationStarted,
       "did-navigate": sync,
       "did-navigate-in-page": sync,

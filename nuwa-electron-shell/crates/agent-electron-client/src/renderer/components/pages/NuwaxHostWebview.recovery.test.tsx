@@ -60,7 +60,7 @@ vi.mock("../../services/utils/sessionUrl", () => ({
   buildHomeUrl: (host: string) => `${host}/home`,
 }));
 vi.mock("../../services/utils/logService", () => ({
-  logger: { info: vi.fn(), error: vi.fn() },
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 vi.mock("../../services/core/i18n", () => ({ getCurrentLang: () => "zh-CN" }));
 vi.mock("../GuestPageViewport", () => ({
@@ -71,6 +71,7 @@ import Host, {
   type NuwaxHostWebviewHandle,
 } from "./NuwaxHostWebview";
 import { PageLoadRecovery } from "../PageLoadRecovery";
+import { logger } from "../../services/utils/logService";
 function find(node: any, type: any): any {
   if (!node || typeof node !== "object") return null;
   if (node.type === type) return node;
@@ -136,6 +137,7 @@ async function paint() {
 }
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.clearAllMocks();
   hooks.slots = [];
   hooks.cursor = 0;
   hooks.pending = [];
@@ -246,16 +248,28 @@ describe("guest recovery lifecycle", () => {
     await paint();
     const live = guest;
     const key = guestKey;
+    guest.emit("did-start-navigation", { isMainFrame: true });
+    guest.emit("dom-ready");
     vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
     await paint();
     expect(find(tree, PageLoadRecovery).props.mode).toBe("waiting");
     expect(guest).toBe(live);
     expect(guestKey).toBe(key);
     expect(guest.reload).not.toHaveBeenCalled();
+    const slow = vi.mocked(logger.warn).mock.calls.at(-1)?.[2];
+    expect(slow).toMatchObject({
+      phase: "wait-for-load-stop",
+      elapsedMs: GUEST_SLOW_HINT_MS,
+    });
     guest.emit("did-stop-loading");
     await paint();
     expect(find(tree, PageLoadRecovery)?.props.mode).not.toBe("failed");
     expect(guest).toBe(live);
+    expect(logger.info).toHaveBeenCalledWith(
+      "[GuestLoad] finished",
+      "NuwaxHostWebview",
+      expect.objectContaining({ ...slow as object, outcome: "stopped" }),
+    );
   });
   it("uses one refresh entry for card and toolbar and unlocks after a synchronous rejection", async () => {
     await paint();
