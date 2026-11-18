@@ -79,6 +79,7 @@ export interface StartFeaturesOptions {
   log: FeatureLogger;
   translate?(key: string): string;
   host?: FeatureHostServices;
+  getAppEnv?(): NodeJS.ProcessEnv;
   workspace?: FeatureWorkspaceServices;
   permissions?: FeaturePermissionServices;
 }
@@ -158,6 +159,7 @@ export function startDesktopFeatures(
     dataDir: nodePath.join(options.dataDir, feature.id),
     log: options.log,
     translate: options.translate,
+    getAppEnv: options.getAppEnv,
     settings: host.settings,
     session: host.session,
     windows: host.windows,

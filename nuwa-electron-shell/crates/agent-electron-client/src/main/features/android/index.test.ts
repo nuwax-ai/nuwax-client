@@ -12,7 +12,7 @@ import type {
   AgentMcpServer,
 } from "../_kit/agentSessions";
 import { ANDROID_IPC } from "@shared/features/android/contract";
-const mocks = vi.hoisted(() => ({ run: vi.fn() }));
+const mocks = vi.hoisted(() => ({ run: vi.fn(), watch: vi.fn() }));
 const power = new EventEmitter();
 vi.mock("electron", () => ({
   powerMonitor: {
@@ -22,7 +22,7 @@ vi.mock("electron", () => ({
 }));
 vi.mock("./adb", async (original) => ({
   ...(await original<object>()),
-  runAdb: mocks.run,
+  createAdbCommands: () => ({ run: mocks.run, watch: mocks.watch }),
 }));
 import { androidFeature } from "./index";
 
@@ -49,11 +49,15 @@ function fixture() {
     args[0] === "version"
       ? Buffer.from("Android Debug Bridge version 1.0.41")
       : args[0] === "devices"
-        ? Buffer.from("a device model:Pixel\n")
+        ? Buffer.from("a device model:Pixel transport_id:11\n")
         : args.includes("get-state")
           ? Buffer.from("device")
           : png,
   );
+  let loseDevice!: (reason: "deviceOffline") => void;
+  mocks.watch.mockImplementation(async (_device, _signal, onLost) => {
+    loseDevice = onLost;
+  });
   const ctx = {
     session: { isAuthenticated: () => authenticated },
     scratch: createScratchDir(directory),
@@ -90,6 +94,7 @@ function fixture() {
     entry: () => entry,
     participant: () => factory(),
     enable: () => call(ANDROID_IPC.enable, { adbPath: "adb", serial: "a" }),
+    disconnect: () => loseDevice("deviceOffline"),
   };
 }
 async function connect(server: AgentMcpServer) {
@@ -247,6 +252,35 @@ describe("Android 特性、MCP 及 Agent 生命周期", () => {
       (await cb.request("tools/call", { name: "android_screenshot" })).result
         .isError,
     ).toBeUndefined();
+  });
+  it("空闲时断线也撤销 MCP 凭据，重新开启后旧会话不能控制", async () => {
+    const f = fixture();
+    await f.enable();
+    const participant = f.participant();
+    const servers: AgentMcpServer[] = [];
+    participant.prepare(servers).bind("old");
+    const client = await connect(servers[0]);
+    expect(participant.start("old")).toBeGreaterThan(0);
+    expect(
+      (await client.request("initialize", { protocolVersion: "2025-06-18" }))
+        .result.capabilities,
+    ).toEqual({ tools: {} });
+
+    f.disconnect();
+
+    expect(f.call(ANDROID_IPC.status)).toMatchObject({
+      enabled: false,
+      error: "deviceOffline",
+    });
+    expect(mocks.watch.mock.calls[0][1].aborted).toBe(true);
+    await vi.waitFor(() => expect(f.entry()).toBeNull());
+    expect(
+      (await client.request("tools/call", { name: "android_screenshot" })).error
+        .message,
+    ).toBe("notAuthorized");
+
+    await f.enable();
+    expect(participant.start("old")).toBe(0);
   });
   it.each(["lock", "logout", "services"])(
     "%s 同步撤销并移除 MCP，不自动恢复",

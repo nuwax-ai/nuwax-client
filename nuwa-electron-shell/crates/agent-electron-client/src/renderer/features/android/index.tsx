@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Select, Space, Typography } from "antd";
-import type {
-  AndroidBridge,
-  AndroidDevice,
-  AndroidStatus,
+import {
+  ANDROID_I18N_KEYS as text,
+  type AndroidBridge,
+  type AndroidDevice,
+  type AndroidStatus,
 } from "@shared/features/android/contract";
 
 type Row = React.ComponentType<{
@@ -89,28 +90,17 @@ export function AndroidSettings({
         if (!result.devices.length) setError("noDevices");
       }
     });
-  const errorKeys = new Set([
-    "adbMissing",
-    "adbFailed",
-    "deviceOffline",
-    "invalidPath",
-    "loginRequired",
-    "nodeMissing",
-    "gatewayFailed",
-    "cancelled",
-    "noDevices",
-    "invalidScreenshot",
-  ]);
+  const errorKey = error as keyof typeof text.errors;
   return (
     <>
       <Row
-        label={t("Claw.Android.adbPath")}
-        desc={t("Claw.Android.setup")}
+        label={t(text.ADB_PATH)}
+        desc={t(text.SETUP)}
         control={
           <Space>
             <Input
-              aria-label={t("Claw.Android.adbPath")}
-              placeholder={t("Claw.Android.pathPlaceholder")}
+              aria-label={t(text.ADB_PATH)}
+              placeholder={t(text.PATH_PLACEHOLDER)}
               value={adbPath}
               disabled={busy || status.enabled}
               onChange={(event) => {
@@ -126,25 +116,25 @@ export function AndroidSettings({
                 void discover();
               }}
             >
-              {t("Claw.Android.refresh")}
+              {t(text.REFRESH)}
             </Button>
           </Space>
         }
       />
       <Row
-        label={t("Claw.Android.device")}
+        label={t(text.DEVICE)}
         desc={
           status.enabled
-            ? `${t("Claw.Android.controlling")} ${status.serial}`
-            : t("Claw.Android.deviceHint")
+            ? `${t(text.CONTROLLING)} ${status.serial}`
+            : t(text.DEVICE_HINT)
         }
         control={
           <Select
-            aria-label={t("Claw.Android.device")}
+            aria-label={t(text.DEVICE)}
             style={{ minWidth: 250 }}
             value={status.enabled ? status.serial : serial}
             disabled={busy || status.enabled || !ready}
-            placeholder={t("Claw.Android.selectDevice")}
+            placeholder={t(text.SELECT_DEVICE)}
             onChange={setSerial}
             options={devices.map((device) => ({
               value: device.serial,
@@ -155,8 +145,8 @@ export function AndroidSettings({
         }
       />
       <Row
-        label={t("Claw.Android.title")}
-        desc={t("Claw.Android.scope")}
+        label={t(text.TITLE)}
+        desc={t(text.SCOPE)}
         control={
           status.enabled ? (
             <Button
@@ -172,7 +162,7 @@ export function AndroidSettings({
                 });
               }}
             >
-              {t("Claw.Android.stop")}
+              {t(text.STOP)}
             </Button>
           ) : (
             <Button
@@ -180,7 +170,7 @@ export function AndroidSettings({
               disabled={!ready || busy || !serial}
               onClick={() => setConfirming(true)}
             >
-              {t("Claw.Android.enable")}
+              {t(text.ENABLE)}
             </Button>
           )
         }
@@ -190,17 +180,18 @@ export function AndroidSettings({
           type="warning"
           showIcon
           message={t(
-            "Claw.Android.errors." +
-              (errorKeys.has(error) ? error : "operationFailed"),
+            Object.prototype.hasOwnProperty.call(text.errors, errorKey)
+              ? text.errors[errorKey]
+              : text.errors.operationFailed,
           )}
         />
       )}
       <Modal
-        title={t("Claw.Android.confirmTitle")}
+        title={t(text.CONFIRM_TITLE)}
         open={confirming}
         confirmLoading={busy}
-        okText={t("Claw.Android.enable")}
-        cancelText={t("Claw.Android.cancel")}
+        okText={t(text.ENABLE)}
+        cancelText={t(text.CANCEL)}
         onCancel={() => {
           if (!busy) setConfirming(false);
         }}
@@ -216,7 +207,7 @@ export function AndroidSettings({
           });
         }}
       >
-        <Typography.Paragraph>{t("Claw.Android.consent")}</Typography.Paragraph>
+        <Typography.Paragraph>{t(text.CONSENT)}</Typography.Paragraph>
         <Typography.Text strong>
           {devices.find((device) => device.serial === serial)?.model} · {serial}
         </Typography.Text>

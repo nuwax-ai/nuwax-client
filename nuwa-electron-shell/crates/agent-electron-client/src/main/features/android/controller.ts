@@ -2,10 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { AndroidStatus } from "@shared/features/android/contract";
 import {
   AdbDevice,
+  createAdbCommands,
   parseDevices,
   resolveAdbPath,
-  runAdb,
-  type AdbRun,
 } from "./adb";
 
 type Observation = { id: string; width: number; height: number; at: number };
@@ -20,7 +19,7 @@ export class AndroidController {
   constructor(
     private authenticated: () => boolean,
     private changed: () => void,
-    private run: AdbRun = runAdb,
+    private readonly adb = createAdbCommands(),
     private now = Date.now,
   ) {}
   status(): AndroidStatus {
@@ -50,19 +49,19 @@ export class AndroidController {
     this.observations.delete(owner);
     if (this.job?.owner === owner) this.job.abort.abort();
   }
-  async discover(input: string) {
+  private async inspectDevices(input: string) {
     if (!this.authenticated()) throw new Error("loginRequired");
     const file = resolveAdbPath(input),
       abort = new AbortController();
     this.pending.add(abort);
     try {
       const version = (
-        await this.run(file, ["version"], abort.signal)
+        await this.adb.run(file, ["version"], abort.signal)
       ).toString();
       if (!version.includes("Android Debug Bridge version"))
         throw new Error("adbMissing");
       const devices = parseDevices(
-        (await this.run(file, ["devices", "-l"], abort.signal)).toString(),
+        (await this.adb.run(file, ["devices", "-l"], abort.signal)).toString(),
       );
       if (abort.signal.aborted || !this.authenticated())
         throw new Error("cancelled");
@@ -71,21 +70,51 @@ export class AndroidController {
       this.pending.delete(abort);
     }
   }
+  async discover(input: string) {
+    const { devices, adbPath } = await this.inspectDevices(input);
+    return {
+      adbPath,
+      devices: devices.map(({ serial, state, model }) => ({
+        serial,
+        state,
+        model,
+      })),
+    };
+  }
   async enable(input: { adbPath: string; serial: string }) {
     this.stop();
     const epoch = this.epoch;
-    const found = await this.discover(input.adbPath);
+    const found = await this.inspectDevices(input.adbPath);
+    const selected = found.devices.find(
+      (d) => d.serial === input.serial && d.state === "device",
+    );
     if (epoch !== this.epoch || !this.authenticated())
       throw new Error("cancelled");
-    if (
-      !found.devices.some(
-        (d) => d.serial === input.serial && d.state === "device",
-      )
-    )
-      throw new Error("deviceOffline");
-    this.device = new AdbDevice(found.adbPath, input.serial, this.run);
-    this.changed();
-    return this.status();
+    if (!selected) throw new Error("deviceOffline");
+    if (!selected.transportId) throw new Error("adbFailed");
+
+    const device = new AdbDevice(
+      found.adbPath,
+      selected.serial,
+      selected.transportId,
+      this.adb.run,
+    );
+    const abort = new AbortController();
+    this.pending.add(abort);
+    try {
+      await this.adb.watch(device, abort.signal, (reason) => {
+        if (epoch === this.epoch) this.stop(reason);
+      });
+      if (abort.signal.aborted || epoch !== this.epoch || !this.authenticated())
+        throw new Error("cancelled");
+      this.device = device;
+      this.changed();
+      return this.status();
+    } catch (error) {
+      abort.abort();
+      this.pending.delete(abort);
+      throw error;
+    }
   }
   async call(owner: string, name: string, raw: unknown) {
     if (!this.authenticated() || !this.device || !this.owners.has(owner))

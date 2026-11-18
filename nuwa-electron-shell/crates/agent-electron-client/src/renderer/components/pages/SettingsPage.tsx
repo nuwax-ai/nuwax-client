@@ -629,7 +629,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
 
       {registeredFeatures.includes("android") && (
         <div className={styles.group}>
-          <div className={styles.groupTitle}>{t("Claw.Android.title")}</div>
+          <div className={styles.groupTitle}>{t(I18N_KEYS.Android.TITLE)}</div>
           <div className={styles.groupCard}>
             <AndroidSettings t={t} Row={SettingsRow} api={window.electronAPI?.android} />
           </div>

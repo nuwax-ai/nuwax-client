@@ -30,7 +30,7 @@ function fixture() {
   const controller = new AndroidController(
     () => authenticated,
     changed,
-    run,
+    { run, watch: async () => undefined },
     () => clock,
   );
   const enable = async () => {
@@ -84,7 +84,7 @@ describe("Android 手机控制边界", () => {
     ).rejects.toThrow("notAuthorized");
     expect(f.run).not.toHaveBeenCalled();
   });
-  it("所有手机命令绑定选定序列号，截图只在内存返回", async () => {
+  it("所有手机命令绑定本次授权的设备连接，截图只在内存返回", async () => {
     const f = fixture();
     await f.enable();
     f.run.mockClear();
@@ -94,7 +94,7 @@ describe("Android 手机控制边界", () => {
       mimeType: "image/png",
     });
     expect(
-      f.run.mock.calls.every(([, args]) => args[0] === "-s" && args[1] === "a"),
+      f.run.mock.calls.every(([, args]) => args[0] === "-t" && args[1] === "1"),
     ).toBe(true);
   });
   it("写操作只接受当前会话最近截图，操作后必须重新观察", async () => {
@@ -115,8 +115,8 @@ describe("Android 手机控制边界", () => {
       y: 20,
     });
     expect(f.run.mock.calls.at(-1)?.[1]).toEqual([
-      "-s",
-      "a",
+      "-t",
+      "1",
       "shell",
       "'input'",
       "'tap'",
@@ -197,8 +197,8 @@ describe("Android 手机控制边界", () => {
       text,
     });
     expect(f.run.mock.calls.at(-1)?.[1]).toEqual([
-      "-s",
-      "a",
+      "-t",
+      "1",
       "shell",
       "'input'",
       "'text'",

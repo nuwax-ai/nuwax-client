@@ -4,10 +4,12 @@ import { writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import {
   ANDROID_IPC,
+  ANDROID_I18N_KEYS,
   type AndroidStatus,
 } from "@shared/features/android/contract";
 import type { AgentSessionParticipant } from "../_kit/agentSessions";
 import type { DesktopFeature, FeatureMcpServerEntry } from "../_kit/types";
+import { createAdbCommands } from "./adb";
 import { AndroidController } from "./controller";
 import { ANDROID_RELAY, AndroidGateway } from "./gateway";
 
@@ -21,13 +23,18 @@ export const androidFeature: DesktopFeature = {
     const controller = new AndroidController(
       () => ctx.session.isAuthenticated(),
       () => {
+        const status = controller.status();
+        if (status.error && status.error !== "gatewayFailed") {
+          revokeAll();
+          void sync();
+        }
         ctx.activities.set(
-          controller.status().enabled
+          status.enabled
             ? {
                 actions: [
                   {
                     id: "stop",
-                    labelKey: "Claw.Android.stop",
+                    labelKey: ANDROID_I18N_KEYS.STOP,
                     run: () => {
                       void stop();
                     },
@@ -37,6 +44,7 @@ export const androidFeature: DesktopFeature = {
             : null,
         );
       },
+      createAdbCommands(ctx.getAppEnv),
     );
     const gateway = new AndroidGateway(
       controller,

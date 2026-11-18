@@ -104,6 +104,8 @@ export interface FeatureContext {
   log: FeatureLogger;
   /** 本轮调用时使用宿主当前语言；未注入时由特性选择默认文案。 */
   translate?(key: string): string;
+  /** Host environment for feature-owned subprocesses. */
+  getAppEnv?(): NodeJS.ProcessEnv;
   settings: FeatureSettings;
   session: FeatureSession;
   windows: FeatureWindows;
