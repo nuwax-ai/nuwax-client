@@ -957,7 +957,20 @@ export async function createAcpConnection(
       env.NUWAX_MODEL = model;
     }
     if (route.baseUrl) {
-      env.NUWAX_BASE_URL = route.baseUrl;
+      // 本地调试开关:NUWAX_MODEL_CAPTURE=<端口> 时把出站 base URL 指向本地抓包
+      // 代理(scripts/client/model-capture-proxy.mjs),由它还原上游并把请求/响应
+      // 落到 logs/model-capture.log。前缀是 base64url(原始 base URL),代理据此
+      // 还原上游,客户端与代理之间无需额外约定;不设置时行为完全不变。
+      const capturePort = process.env.NUWAX_MODEL_CAPTURE;
+      if (capturePort) {
+        const encoded = Buffer.from(route.baseUrl, 'utf8').toString('base64url');
+        env.NUWAX_BASE_URL = `http://127.0.0.1:${capturePort}/${encoded}`;
+        log.info(
+          `[AcpClient] codex: model capture enabled → 127.0.0.1:${capturePort} (upstream ${route.baseUrl})`,
+        );
+      } else {
+        env.NUWAX_BASE_URL = route.baseUrl;
+      }
     }
     // 后端显式下发过 provider id 就尊重它；否则沿用历史默认值。
     env.NUWAX_PROVIDER_ID = backend.providerId || "zhipu-glm-5";

@@ -66,6 +66,13 @@ submodules-latest:
 # Plain `make dev` always auto-restores the released engine first, so the two
 # modes never interfere.
 # HARNESS_PROFILE=dev builds much faster (debug); HARNESS_VERSION=0.18.33-dev stamps.
+# 本地调试:抓模型请求/响应到 logs/model-capture.log(每次启动清空)。
+# 用法:NUWAX_MODEL_CAPTURE=18777 make harness-local
+# 前台另开一个终端跑 `make model-capture` 看实时日志,或直接 tail 文件。
+CAPTURE_PORT ?= 18777
+model-capture:
+	@node scripts/client/model-capture-proxy.mjs --port $(CAPTURE_PORT) --log logs/model-capture.log
+
 harness-local:
 	@node scripts/sync-local-harness.mjs --ensure-frontend
 	@node scripts/sync-local-harness.mjs
