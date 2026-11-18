@@ -297,3 +297,150 @@ describe("pruneStaleProjectIsolatedHomes", () => {
     expect(fs.existsSync(backupHome)).toBe(true);
   });
 });
+
+describe("resolveEngineHome against a realistic project home", () => {
+  /** 造一份贴近真实布局的旧 home：配置、索引、会话、技能、sqlite 三件套。 */
+  function seedLegacyHome(home: string): string {
+    const legacy = path.join(home, ".codex");
+    fs.mkdirSync(path.join(legacy, "sessions", "2026", "11", "18"), { recursive: true });
+    fs.mkdirSync(path.join(legacy, "skills", ".system", "imagegen"), { recursive: true });
+    fs.writeFileSync(path.join(legacy, "config.toml"), 'model = "deepseek-flash"\n');
+    fs.writeFileSync(path.join(legacy, "installation_id"), "install-abc\n");
+    fs.writeFileSync(
+      path.join(legacy, "session_index.jsonl"),
+      '{"id":"01a1ee21","thread_name":"Skills","updated_at":"2026-11-18T10:09:25.393Z"}\n',
+    );
+    fs.writeFileSync(
+      path.join(legacy, "sessions", "2026", "11", "18", "rollout-01a1ee21.jsonl"),
+      '{"type":"session_meta"}\n',
+    );
+    fs.writeFileSync(path.join(legacy, "skills", ".system", "imagegen", "SKILL.md"), "# imagegen\n");
+    for (const name of ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"]) {
+      fs.writeFileSync(path.join(legacy, name), "sqlite-bytes");
+    }
+    return legacy;
+  }
+
+  it("carries every piece of session state over and is idempotent", () => {
+    const home = makeTempRoot();
+    const legacy = seedLegacyHome(home);
+
+    const resolved = resolveEngineHome(home);
+    expect(resolved).toBe(path.join(home, ENGINE_HOME_DIR_NAME));
+    expect(fs.existsSync(legacy)).toBe(false);
+
+    // 会话可否恢复取决于这些：rollout + 索引 + 配置 + 技能
+    expect(
+      fs.readFileSync(
+        path.join(resolved, "sessions/2026/11/18/rollout-01a1ee21.jsonl"),
+        "utf8",
+      ),
+    ).toBe('{"type":"session_meta"}\n');
+    expect(fs.readFileSync(path.join(resolved, "session_index.jsonl"), "utf8")).toContain(
+      "01a1ee21",
+    );
+    expect(fs.readFileSync(path.join(resolved, "config.toml"), "utf8")).toContain(
+      "deepseek-flash",
+    );
+    expect(fs.existsSync(path.join(resolved, "skills/.system/imagegen/SKILL.md"))).toBe(
+      true,
+    );
+    // sqlite 三件套（含 WAL/SHM）必须一起搬，否则库会打不开
+    for (const name of ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"]) {
+      expect(fs.existsSync(path.join(resolved, name))).toBe(true);
+    }
+    expect(JSON.parse(fs.readFileSync(path.join(resolved, ".migration.json"), "utf8"))).toMatchObject(
+      { from: ".codex", mode: "rename" },
+    );
+
+    // 二次调用必须幂等：不重建 .codex，也不多出备份
+    expect(resolveEngineHome(home)).toBe(resolved);
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.readdirSync(home).filter((n) => n.includes(".migrated-"))).toHaveLength(0);
+  });
+
+  it("merges into an existing new home and prefers its content on conflict", () => {
+    const home = makeTempRoot();
+    const legacy = seedLegacyHome(home);
+    const target = path.join(home, ENGINE_HOME_DIR_NAME);
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, "config.toml"), 'model = "newer"\n');
+    fs.mkdirSync(path.join(target, "sessions", "2026", "11", "17"), { recursive: true });
+    fs.writeFileSync(path.join(target, "sessions/2026/11/17/newer.jsonl"), "{}\n");
+
+    expect(resolveEngineHome(home)).toBe(target);
+    // 冲突文件保留新目录的版本，旧的改名留档
+    expect(fs.readFileSync(path.join(target, "config.toml"), "utf8")).toBe('model = "newer"\n');
+    const keptOld = fs
+      .readdirSync(target)
+      .find((name) => name.startsWith("config.toml.from-legacy-"));
+    expect(keptOld).toBeDefined();
+    // 目录不冲突的部分双向保留（新会话 + 旧会话都在 sessions/ 下）
+    expect(fs.existsSync(path.join(target, "sessions/2026/11/17/newer.jsonl"))).toBe(true);
+    expect(fs.existsSync(path.join(target, "sessions/2026/11/18/rollout-01a1ee21.jsonl"))).toBe(
+      true,
+    );
+    // 旧目录整体留作备份，可按需回滚
+    expect(fs.readdirSync(home).some((n) => n.startsWith(".codex.migrated-"))).toBe(true);
+    expect(fs.existsSync(legacy)).toBe(false);
+  });
+});
+
+describe("migrateEngineSegment idempotency", () => {
+  it("does nothing on the second call and leaves no extra backups", () => {
+    const projectRoot = makeTempRoot();
+    fs.mkdirSync(path.join(projectRoot, "codex-cli", "home", ".codex"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(projectRoot, "codex-cli", "home", ".codex", "installation_id"),
+      "abc\n",
+    );
+
+    migrateEngineSegment(projectRoot, "codex-cli", "nuwax-harness");
+    const backupsAfterFirst = fs
+      .readdirSync(projectRoot)
+      .filter((n) => n.includes(".migrated-"));
+
+    migrateEngineSegment(projectRoot, "codex-cli", "nuwax-harness");
+
+    expect(
+      fs.readdirSync(projectRoot).filter((n) => n.includes(".migrated-")),
+    ).toHaveLength(backupsAfterFirst.length);
+    expect(
+      fs.readFileSync(
+        path.join(projectRoot, "nuwax-harness", "home", ".codex", "installation_id"),
+        "utf8",
+      ),
+    ).toBe("abc\n");
+  });
+});
+
+describe("pruneProjectIsolatedHomeCaches regression", () => {
+  it("still prunes regular caches and honours skipPaths", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwax-harness", "home");
+    const skipHome = path.join(root, "6", "2", "nuwax-harness", "home");
+    for (const dir of [home, skipHome]) {
+      fs.mkdirSync(path.join(dir, ".cache"), { recursive: true });
+      fs.mkdirSync(path.join(dir, ".npm"), { recursive: true });
+    }
+    const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    for (const dir of [home, skipHome]) {
+      for (const name of [".cache", ".npm"]) {
+        fs.utimesSync(path.join(dir, name), old, old);
+      }
+    }
+
+    const pruned = pruneProjectIsolatedHomeCaches(2, {
+      root,
+      skipPaths: new Set([skipHome]),
+    });
+
+    expect(pruned).toBe(2); // 只清理未被 skip 的那份 home 的 .cache/.npm
+    expect(fs.existsSync(path.join(home, ".cache"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".npm"))).toBe(false);
+    expect(fs.existsSync(path.join(skipHome, ".cache"))).toBe(true);
+    expect(fs.existsSync(path.join(skipHome, ".npm"))).toBe(true);
+  });
+});

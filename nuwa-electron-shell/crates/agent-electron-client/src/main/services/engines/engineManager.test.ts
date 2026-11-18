@@ -38,6 +38,7 @@ vi.mock("../packages/mcp", () => ({
 }));
 import {
   createIsolatedEnvironment,
+  isHarnessEngine,
   findEngineBinary,
   getEngineVersion,
   installEngine,
@@ -119,5 +120,23 @@ describe("Nuwax Harness engine management", () => {
     expect(mocks.mkdir).toHaveBeenCalledWith(env.CODEX_HOME, {
       recursive: true,
     });
+  });
+});
+
+describe("harness engine id alias", () => {
+  it("recognizes every spelling the platform may send", () => {
+    for (const id of ["codex", "codex-cli", "nuwax-harness", "NUWAX-HARNESS"]) {
+      expect(isHarnessEngine(id)).toBe(true);
+    }
+    for (const id of ["nuwaxcode", "claude-code", "opencode"]) {
+      expect(isHarnessEngine(id)).toBe(false);
+    }
+  });
+
+  it("injects the same isolated engine home for the product id", () => {
+    const { env } = createIsolatedEnvironment({ engine: "nuwax-harness" });
+    expect(env.CODEX_HOME).toBe(path.join(env.HOME, ".nuwax-harness"));
+    expect(env.CODEX_SQLITE_HOME).toBe(env.CODEX_HOME);
+    expect(env.NUWAX_PATH).toBe("/resources/vendor/nuwax-harness");
   });
 });
