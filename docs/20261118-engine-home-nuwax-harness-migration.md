@@ -96,13 +96,48 @@ export function engineHomeSegment(engineId: string): string {
 {"from": ".codex", "at": "2026-11-18T10:30:00Z", "appVersion": "3.2.0-beta.x", "mode": "rename"}
 ```
 
-### 2.4 为什么迁移是安全的（已实测核对）
+### 2.4 ⚠ 修正：state DB 里**确实有**绝对路径，必须留兼容链接
+
+v1 的核查用了 `sqlite3 ... ?immutable=1` 读表，得到空表列表，据此得出“无绝对路径”的
+结论 —— **这是错的**。实机验证（1749946）：
+
+```
+$ strings state_5.sqlite | grep -c '1749946/codex-cli/home/.codex'
+20
+```
+
+引擎的 `state_5.sqlite` 存了每个 thread 的 **rollout 绝对路径**。目录改名后引擎报：
+
+```
+ERROR codex_rollout::list: state db returned stale rollout path for thread …:
+  …/codex-cli/home/.codex/sessions/2026/11/10/rollout-….jsonl
+→ Prompt failed: Error: thread not found: 01a1c455-…
+```
+
+旧会话因此**打不开**（现象：发消息秒回 `RequestError: Internal error`）。
+
+**修法：迁移后在旧路径留符号链接**（指向新路径），旧绝对路径继续可解析，引擎无需改库：
+
+- `…/home/.codex` → `…/home/.nuwax-harness`
+- `…/<workDir>/codex-cli` → `…/<workDir>/nuwax-harness`
+
+配套约束：
+
+- `migrateDirectory` 遇到「旧路径是指向目标符号链接」直接视为已迁移，**不能再合并**，
+  否则会顺着链接把目标目录自己合并一遍；
+- 链接创建失败（无权限/文件系统不支持）只记录 warn，不影响主流程；
+- 引擎仍会记录 stale 日志（它先查库查到旧路径），但随后可正常解析。
+
+实测：补链接后同一线程的 `thread/resume` 报的是 provider 配置错误（说明 rollout 已找到），
+不再是 `thread not found`。
+
+### 2.5 为什么迁移本身是安全的（已实测核对）
 
 | 检查 | 结果 |
 |---|---|
 | `session_index.jsonl` | 仅 `id/thread_name/updated_at`，**无绝对路径** |
 | 会话发现方式 | 扫描 `$CODEX_HOME/sessions/**/*.jsonl`，不依赖库内路径 |
-| `*.sqlite` | 只有 `logs_2.sqlite` 含绝对路径（11 处，纯日志文本） |
+| `*.sqlite` | **`state_5.sqlite` 含 rollout 绝对路径（关键）**；`logs_2.sqlite` 是日志文本。→ 靠符号链接兼容，不改库 |
 | rollout jsonl 内旧路径 | 是历史对话正文，不参与查找 |
 
 → 整目录改名后旧会话仍可发现与恢复，无需改写任何数据。

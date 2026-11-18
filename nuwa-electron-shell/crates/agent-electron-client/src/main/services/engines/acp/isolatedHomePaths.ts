@@ -132,12 +132,16 @@ export function migrateEngineSegment(
   const legacies = LEGACY_ENGINE_SEGMENTS[engineId.trim().toLowerCase()] ?? [];
   for (const legacySegment of legacies) {
     if (legacySegment === targetSegment) continue;
-    migrateDirectory(
-      path.join(projectRoot, legacySegment),
-      path.join(projectRoot, targetSegment),
-      `engine-segment:${legacySegment}->${targetSegment}`,
-      { marker: false },
-    );
+    const legacyPath = path.join(projectRoot, legacySegment);
+    const targetPath = path.join(projectRoot, targetSegment);
+    if (
+      migrateDirectory(legacyPath, targetPath, `engine-segment:${legacySegment}->${targetSegment}`, {
+        marker: false,
+      })
+    ) {
+      // 旧段同样留链接：外部（平台/旧客户端）若仍按 codex-cli 找路径也不会断
+      linkLegacyPath(legacyPath, targetPath);
+    }
   }
 }
 
@@ -166,6 +170,10 @@ export function migrateDirectory(
   options?: { marker?: boolean },
 ): boolean {
   if (!fs.existsSync(legacy)) return true;
+  // 迁移后会留一个「旧路径 → 新路径」的符号链接做兼容（引擎的 state DB 里存的是
+  // 绝对路径，改名后按旧路径找不到 rollout）。再跑一次必须识别这种情况，否则会
+  // 通过链接把目标目录自己合并一遍。
+  if (isSymlinkTo(legacy, target)) return true;
   try {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -267,6 +275,37 @@ function writeMigrationMarker(
   }
 }
 
+/** `legacy` 是否是指向 `target` 的符号链接（迁移完成的兼容态）。 */
+function isSymlinkTo(legacy: string, target: string): boolean {
+  try {
+    if (!fs.lstatSync(legacy).isSymbolicLink()) return false;
+    return path.resolve(fs.realpathSync(legacy)) === path.resolve(fs.realpathSync(target));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 在旧路径留下指向新路径的符号链接。
+ *
+ * 为什么需要：引擎的 `state_*.sqlite` 里存的是 **rollout 的绝对路径**，目录改名后
+ * 这些行变成 stale，`thread/resume` 会报 `thread not found`（日志里是
+ * `state db returned stale rollout path`）——旧会话就打不开了。链接让旧绝对路径
+ * 继续可解析，引擎无需改库；新会话写入新路径。
+ *
+ * 失败（无权限/文件系统不支持）不影响主流程，仅记录。
+ */
+function linkLegacyPath(legacy: string, target: string): void {
+  if (fs.existsSync(legacy)) return;
+  try {
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.symlinkSync(target, legacy, "dir");
+    log.info(`[IsolatedHome] linked legacy path ${legacy} → ${target}`);
+  } catch (error) {
+    log.warn(`[IsolatedHome] could not link legacy path ${legacy} → ${target}:`, error);
+  }
+}
+
 /**
  * 解析引擎 home（`CODEX_HOME` 的落点），并把旧的 `.codex` 迁移到 `.nuwax-harness`。
  *
@@ -277,6 +316,8 @@ export function resolveEngineHome(isolatedHome: string): string {
   const legacy = path.join(isolatedHome, LEGACY_ENGINE_HOME_DIR_NAME);
   if (migrateDirectory(legacy, target, "engine-home")) {
     fs.mkdirSync(target, { recursive: true });
+    // 兼容引擎 state DB 里的旧绝对路径（见 linkLegacyPath 说明）
+    linkLegacyPath(legacy, target);
     return target;
   }
   fs.mkdirSync(legacy, { recursive: true });

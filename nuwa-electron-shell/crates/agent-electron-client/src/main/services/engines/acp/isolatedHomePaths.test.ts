@@ -152,7 +152,9 @@ describe("resolveEngineHome", () => {
 
     const resolved = resolveEngineHome(home);
     expect(resolved).toBe(path.join(home, ENGINE_HOME_DIR_NAME));
-    expect(fs.existsSync(legacy)).toBe(false);
+    // 旧路径保留为符号链接（引擎 state DB 里的绝对路径要能继续解析）
+    expect(fs.lstatSync(legacy).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(legacy)).toBe(fs.realpathSync(resolved));
     expect(fs.readFileSync(path.join(resolved, "config.toml"), "utf8")).toBe(
       'model = "x"\n',
     );
@@ -192,7 +194,8 @@ describe("migrateEngineSegment", () => {
     expect(fs.readFileSync(path.join(migratedHome, "installation_id"), "utf8")).toBe(
       "abc\n",
     );
-    expect(fs.existsSync(path.join(projectRoot, "codex-cli"))).toBe(false);
+    // 旧段留符号链接，外部按老路径访问仍可用
+    expect(fs.lstatSync(path.join(projectRoot, "codex-cli")).isSymbolicLink()).toBe(true);
   });
 
   it("is a no-op for engines that never changed segment", () => {
@@ -327,7 +330,9 @@ describe("resolveEngineHome against a realistic project home", () => {
 
     const resolved = resolveEngineHome(home);
     expect(resolved).toBe(path.join(home, ENGINE_HOME_DIR_NAME));
-    expect(fs.existsSync(legacy)).toBe(false);
+    // 旧路径保留为符号链接（引擎 state DB 里的绝对路径要能继续解析）
+    expect(fs.lstatSync(legacy).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(legacy)).toBe(fs.realpathSync(resolved));
 
     // 会话可否恢复取决于这些：rollout + 索引 + 配置 + 技能
     expect(
@@ -353,9 +358,9 @@ describe("resolveEngineHome against a realistic project home", () => {
       { from: ".codex", mode: "rename" },
     );
 
-    // 二次调用必须幂等：不重建 .codex，也不多出备份
+    // 二次调用必须幂等：链接保持、不重复迁移、不多出备份
     expect(resolveEngineHome(home)).toBe(resolved);
-    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.lstatSync(legacy).isSymbolicLink()).toBe(true);
     expect(fs.readdirSync(home).filter((n) => n.includes(".migrated-"))).toHaveLength(0);
   });
 
@@ -382,7 +387,7 @@ describe("resolveEngineHome against a realistic project home", () => {
     );
     // 旧目录整体留作备份，可按需回滚
     expect(fs.readdirSync(home).some((n) => n.startsWith(".codex.migrated-"))).toBe(true);
-    expect(fs.existsSync(legacy)).toBe(false);
+    expect(fs.lstatSync(legacy).isSymbolicLink()).toBe(true);
   });
 });
 

@@ -83,9 +83,12 @@ describe("resolveProjectIsolatedHomeDir", () => {
         "utf8",
       ),
     ).toBe('{"old":true}\n');
+    // 旧段留符号链接（兼容按老路径取文件的调用方）
     expect(
-      fs.existsSync(path.join(holder.appData, "run", "projects", "6", "1755386", "codex-cli")),
-    ).toBe(false);
+      fs.lstatSync(
+        path.join(holder.appData, "run", "projects", "6", "1755386", "codex-cli"),
+      ).isSymbolicLink(),
+    ).toBe(true);
   });
 
   it("is stable across repeated resolution (no re-migration churn)", () => {
@@ -154,6 +157,7 @@ describe("resolveIsolatedHomePath (end to end wiring)", () => {
     const engineHome = resolveEngineHome(homeDir);
     expect(engineHome).toBe(path.join(homeDir, ENGINE_HOME_DIR_NAME));
     expect(fs.existsSync(path.join(engineHome, "installation_id"))).toBe(true);
-    expect(fs.existsSync(path.join(legacyHome, ".codex"))).toBe(false);
+    // home 内的旧 .codex 也变成指向 .nuwax-harness 的链接
+    expect(fs.lstatSync(path.join(legacyHome, ".codex")).isSymbolicLink()).toBe(true);
   });
 });
