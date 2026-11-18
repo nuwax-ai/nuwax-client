@@ -56,6 +56,7 @@ import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
 } from "./openAICompatRouting";
+import { isHarnessEngineId } from "../types";
 
 function extractSessionIdFromLine(line: string): string | undefined {
   try {
@@ -616,7 +617,7 @@ export function resolveAcpBinary(
 
   // -- codex / codex-cli (backward compat) --
 
-  if (engine === "codex" || engine === "codex-cli") {
+  if (isHarnessEngineId(engine)) {
     // Codex 统一经 harness adapter 启动；支持随包资源和应用内 npm 修复安装。
     const adapterDir =
       getHarnessAcpBundledDir() ||
@@ -899,7 +900,7 @@ export async function createAcpConnection(
   });
   applyOpenAICompatibleEnv(config, env);
 
-  if (config.engineType === "codex" || config.engineType === "codex-cli") {
+  if (isHarnessEngineId(config.engineType)) {
     // 先把 NUWAX_/CODEX_ 两种拼写收敛成一份（NUWAX_ 优先，来自后端 agent_config.env
     // 或进程环境），再按明确优先级写回唯一拼写：适配器遇到"两种拼写、两个取值"
     // 会直接启动失败（2026-11-09 review P1）。

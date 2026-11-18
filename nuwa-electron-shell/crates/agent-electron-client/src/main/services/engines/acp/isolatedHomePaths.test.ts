@@ -10,6 +10,7 @@ import {
   resolveEngineHome,
   migrateEngineSegment,
   pruneProjectIsolatedHomeCaches,
+  pruneStaleProjectIsolatedHomes,
 } from "./isolatedHomePaths";
 
 vi.mock("electron-log", () => ({
@@ -24,11 +25,26 @@ function makeTempRoot(): string {
   return root;
 }
 
+/** 递归恢复写权限：只读目录留在临时树里会让 rmSync 报 ENOTEMPTY。 */
+function restorePerms(dir: string): void {
+  try {
+    fs.chmodSync(dir, 0o700);
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) restorePerms(path.join(dir, entry.name));
+    }
+  } catch {
+    /* 目录可能已迁移/删除，忽略 */
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   while (tempRoots.length > 0) {
     const root = tempRoots.pop();
-    if (root) fs.rmSync(root, { recursive: true, force: true });
+    if (root) {
+      restorePerms(root);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -205,5 +221,79 @@ describe("pruneProjectIsolatedHomeCaches migrated backups", () => {
     expect(pruned).toBe(1);
     expect(fs.existsSync(oldBackup)).toBe(false);
     expect(fs.existsSync(freshBackup)).toBe(true);
+  });
+});
+
+describe("migrateDirectory recursive merge", () => {
+  it("merges same-named directories instead of renaming them aside", () => {
+    const root = makeTempRoot();
+    const legacy = path.join(root, ".codex");
+    const target = path.join(root, ".nuwax-harness");
+    // 新目录里已有一条会话，旧目录里有另一条；两边都有 sessions/
+    fs.mkdirSync(path.join(target, "sessions", "2026", "11"), { recursive: true });
+    fs.writeFileSync(path.join(target, "sessions", "2026", "11", "new.jsonl"), "new");
+    fs.mkdirSync(path.join(legacy, "sessions", "2026", "10"), { recursive: true });
+    fs.writeFileSync(path.join(legacy, "sessions", "2026", "10", "old.jsonl"), "old");
+
+    expect(migrateDirectory(legacy, target, "test")).toBe(true);
+
+    // 两边的会话都在新目录里，且没有 sessions.from-legacy-* 这种旁路目录
+    expect(
+      fs.readFileSync(path.join(target, "sessions", "2026", "11", "new.jsonl"), "utf8"),
+    ).toBe("new");
+    expect(
+      fs.readFileSync(path.join(target, "sessions", "2026", "10", "old.jsonl"), "utf8"),
+    ).toBe("old");
+    expect(
+      fs.readdirSync(target).filter((name) => name.startsWith("sessions.from-legacy-")),
+    ).toHaveLength(0);
+  });
+
+  it("keeps going when one entry cannot be moved, and retains the legacy copy", () => {
+    const root = makeTempRoot();
+    const legacy = path.join(root, ".codex");
+    const target = path.join(root, ".nuwax-harness");
+    fs.mkdirSync(path.join(legacy, "ok"), { recursive: true });
+    fs.mkdirSync(path.join(legacy, "locked"), { recursive: true });
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "ok", "a.txt"), "a");
+    fs.writeFileSync(path.join(legacy, "locked", "b.txt"), "b");
+
+    // 真实失败：只读目录里的条目无法 rename 出去（不 mock fs）
+    const lockedDir = path.join(legacy, "locked");
+    fs.chmodSync(lockedDir, 0o500);
+    try {
+      expect(migrateDirectory(legacy, target, "test")).toBe(true);
+    } finally {
+      restorePerms(root);
+    }
+
+    // 能搬的搬走了，搬不动的留在备份里——两头都有，数据不丢
+    expect(fs.readFileSync(path.join(target, "ok", "a.txt"), "utf8")).toBe("a");
+    const backups = fs.readdirSync(root).filter((name) => name.includes(".migrated-"));
+    expect(backups).toHaveLength(1);
+    expect(
+      fs.readFileSync(path.join(root, backups[0], "locked", "b.txt"), "utf8"),
+    ).toBe("b");
+  });
+});
+
+describe("pruneStaleProjectIsolatedHomes", () => {
+  it("prunes stale engine homes but leaves migration backups to their own TTL", () => {
+    const root = makeTempRoot();
+    const staleHome = path.join(root, "6", "1", "nuwax-harness", "home");
+    const backupHome = path.join(root, "6", "1", "codex-cli.migrated-2026-01-01T00-00-00-000Z", "home");
+    fs.mkdirSync(staleHome, { recursive: true });
+    fs.mkdirSync(backupHome, { recursive: true });
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(staleHome, old, old);
+    fs.utimesSync(backupHome, old, old);
+
+    const pruned = pruneStaleProjectIsolatedHomes(7, { root, skipPaths: new Set() });
+
+    expect(pruned).toBe(1);
+    expect(fs.existsSync(staleHome)).toBe(false);
+    // 备份仍由 30 天 TTL 管理，这里不能删
+    expect(fs.existsSync(backupHome)).toBe(true);
   });
 });

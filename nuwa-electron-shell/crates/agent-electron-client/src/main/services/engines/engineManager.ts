@@ -9,6 +9,7 @@
 
 import * as path from "path";
 import { resolveEngineHome } from "./acp/isolatedHomePaths";
+import { isHarnessEngineId } from "./types";
 import * as os from "os";
 import * as fs from "fs";
 import { spawn } from "child_process";
@@ -40,7 +41,7 @@ export type AgentEngine =
  * `normalizeEngineId`）。所有分支都用这个判定，避免新增写法时漏改某处。
  */
 export function isHarnessEngine(engine: string): boolean {
-  return engine === "codex-cli" || engine === "nuwax-harness";
+  return isHarnessEngineId(engine);
 }
 
 export interface EngineConfig {

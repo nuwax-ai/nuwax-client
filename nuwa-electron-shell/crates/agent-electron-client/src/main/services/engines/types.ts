@@ -223,3 +223,10 @@ export function normalizeEngineId(engineId: string): AgentEngineType {
   if (id === "codex" || id === "nuwax-harness") return "codex-cli";
   return id as AgentEngineType;
 }
+
+/** 是否 nuwax-harness 家族（`codex-cli` 历史名 / `nuwax-harness` 产品名）。 */
+export function isHarnessEngineId(engineId: string | undefined | null): boolean {
+  if (!engineId) return false;
+  const id = engineId.trim().toLowerCase();
+  return id === "codex-cli" || id === "codex" || id === "nuwax-harness";
+}

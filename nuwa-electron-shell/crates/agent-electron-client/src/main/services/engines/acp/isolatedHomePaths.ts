@@ -136,6 +136,7 @@ export function migrateEngineSegment(
       path.join(projectRoot, legacySegment),
       path.join(projectRoot, targetSegment),
       `engine-segment:${legacySegment}->${targetSegment}`,
+      { marker: false },
     );
   }
 }
@@ -162,17 +163,26 @@ export function migrateDirectory(
   legacy: string,
   target: string,
   label: string,
+  options?: { marker?: boolean },
 ): boolean {
   if (!fs.existsSync(legacy)) return true;
   try {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.renameSync(legacy, target);
-      writeMigrationMarker(target, { from: path.basename(legacy), mode: "rename", label });
+      if (options?.marker !== false) {
+        writeMigrationMarker(target, {
+          from: path.basename(legacy),
+          mode: "rename",
+          label,
+        });
+      }
       log.info(`[IsolatedHome] migrated ${label}: ${legacy} → ${target}`);
       return true;
     }
-    mergeDirectoryInto(legacy, target, label);
+    // 目标已存在：逐项合并。单个条目失败不中断整体——其余内容照样迁入，
+    // 失败条目留在旧目录里，随后连旧目录一起作为备份保留，绝不丢数据。
+    mergeDirectoryInto(legacy, target, label, options?.marker !== false);
     return true;
   } catch (error) {
     log.error(
@@ -183,31 +193,67 @@ export function migrateDirectory(
   }
 }
 
-function mergeDirectoryInto(legacy: string, target: string, label: string): void {
+function mergeDirectoryInto(
+  legacy: string,
+  target: string,
+  label: string,
+  writeMarker: boolean,
+): void {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   let moved = 0;
+  let failed = 0;
   for (const entry of fs.readdirSync(legacy, { withFileTypes: true })) {
     const from = path.join(legacy, entry.name);
     const to = path.join(target, entry.name);
-    if (!fs.existsSync(to)) {
-      fs.renameSync(from, to);
-      moved += 1;
-    } else {
-      fs.renameSync(from, `${to}.from-legacy-${stamp}`);
-      moved += 1;
+    try {
+      if (!fs.existsSync(to)) {
+        fs.renameSync(from, to);
+        moved += 1;
+      } else if (entry.isDirectory() && fs.statSync(to).isDirectory()) {
+        // 两边都是目录（sessions/ skills/ 等）：递归合并，保留双方内容，
+        // 而不是把旧的整个改名到旁边——那样旧会话会“看不见”。
+        mergeDirectoryInto(from, to, `${label}/${entry.name}`, /*writeMarker*/ false);
+        fs.rmdirSync(from);
+        moved += 1;
+      } else {
+        // 同名文件/类型冲突：保留 target 的那份，旧的改名留档。
+        fs.renameSync(from, `${to}.from-legacy-${stamp}`);
+        moved += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      log.warn(
+        `[IsolatedHome] could not merge ${from} → ${to}; it stays in the legacy directory:`,
+        error,
+      );
     }
   }
   const backup = `${legacy}${MIGRATED_BACKUP_SUFFIX}${stamp}`;
-  fs.renameSync(legacy, backup);
-  writeMigrationMarker(target, { from: path.basename(legacy), mode: "merge", moved, label });
+  try {
+    fs.renameSync(legacy, backup);
+  } catch (error) {
+    log.warn(
+      `[IsolatedHome] could not set aside the merged legacy directory ${legacy}:`,
+      error,
+    );
+  }
+  if (writeMarker) {
+    writeMigrationMarker(target, {
+      from: path.basename(legacy),
+      mode: "merge",
+      moved,
+      failed,
+      label,
+    });
+  }
   log.info(
-    `[IsolatedHome] merged ${label}: ${legacy} → ${target} (${moved} entries, legacy kept at ${backup})`,
+    `[IsolatedHome] merged ${label}: ${legacy} → ${target} (${moved} entries, ${failed} failed, legacy kept at ${backup})`,
   );
 }
 
 function writeMigrationMarker(
   target: string,
-  meta: { from: string; mode: string; moved?: number; label: string },
+  meta: { from: string; mode: string; moved?: number; failed?: number; label: string },
 ): void {
   try {
     fs.mkdirSync(target, { recursive: true });
@@ -325,9 +371,9 @@ function shouldSkipHomeForPrune(
  */
 export function pruneStaleProjectIsolatedHomes(
   maxAgeDays = DEFAULT_PROJECT_HOME_RETENTION_DAYS,
-  options?: { skipPaths?: Set<string> },
+  options?: { skipPaths?: Set<string>; root?: string },
 ): number {
-  const projectsRoot = getProjectIsolatedHomesRoot();
+  const projectsRoot = options?.root ?? getProjectIsolatedHomesRoot();
   if (!fs.existsSync(projectsRoot)) return 0;
 
   const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
@@ -345,6 +391,11 @@ export function pruneStaleProjectIsolatedHomes(
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const fullPath = path.join(dir, entry.name);
+
+      // 迁移备份（`<name>.migrated-<ts>`）交给 pruneProjectIsolatedHomeCaches
+      // 按迁移保留期（默认 30 天）回收；这里若继续往下走，备份里的 `home/`
+      // 会被 7 天的 home 清理提前删掉，回滚窗口就没了。
+      if (entry.name.includes(MIGRATED_BACKUP_SUFFIX)) continue;
 
       if (entry.name === HOME_SEGMENT) {
         const parentEngineDir = path.dirname(fullPath);
