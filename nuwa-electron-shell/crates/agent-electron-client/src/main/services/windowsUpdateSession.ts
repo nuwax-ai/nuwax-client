@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { compareVersions } from "./system/dependencyUtils";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/;
@@ -254,6 +255,19 @@ export async function inspectWindowsUpdate(options: {
       receipt = readReceipt(directory, job, active.jobSha256);
     }
     if (json(activeFile).id !== job.id) return null;
+    // A full installer can replace the old client after its monitor failed
+    // before handoff. Keep that failed receipt, but retire the obsolete warning.
+    if (receipt?.status === "failed" && receipt.phase === "Handoff"
+      && !fs.existsSync(path.join(directory, "commit.json"))
+      && VERSION.test(job.fromVersion) && VERSION.test(options.currentVersion)
+      && compareVersions(job.targetVersion, job.fromVersion) > 0
+      && compareVersions(options.currentVersion, job.targetVersion) >= 0) {
+      atomicJson(path.join(directory, "superseded.json"), {
+        id: job.id, jobSha256: active.jobSha256, version: options.currentVersion, exe: options.currentExe,
+      });
+      if (json(activeFile).id === job.id) fs.unlinkSync(activeFile);
+      return null;
+    }
     if (receipt?.status === "failed" || receipt?.status === "cancelled") return recovery("failed");
     if (receipt?.status === "confirmed" || receipt?.status === "installer-exited" && receipt.exitCode === 0) {
       if (options.currentVersion !== targetVersion) return recovery("failed");
