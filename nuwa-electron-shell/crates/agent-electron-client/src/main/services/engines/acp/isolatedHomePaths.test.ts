@@ -498,3 +498,42 @@ describe("revertDirectoryRename", () => {
     expect(fs.existsSync(target)).toBe(true);
   });
 });
+
+describe("edge cases around the compatibility link", () => {
+  it("ignores a dangling legacy symlink instead of failing", () => {
+    const home = makeTempRoot();
+    // 指向不存在的目标：existsSync 为 false，但不能因此把它当“无迁移”而报错
+    fs.symlinkSync(path.join(home, "missing-target"), path.join(home, ".codex"));
+    const resolved = resolveEngineHome(home);
+    expect(resolved).toBe(path.join(home, ENGINE_HOME_DIR_NAME));
+    expect(fs.statSync(resolved).isDirectory()).toBe(true);
+  });
+
+  it("leaves a foreign symlink alone instead of merging through it", () => {
+    const home = makeTempRoot();
+    const elsewhere = path.join(home, "elsewhere");
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.writeFileSync(path.join(elsewhere, "do-not-move.txt"), "keep");
+    fs.symlinkSync(elsewhere, path.join(home, ".codex"));
+
+    const resolved = resolveEngineHome(home);
+
+    // 回退到旧路径，且绝不顺着链接把目标内容搬走
+    expect(resolved).toBe(path.join(home, LEGACY_ENGINE_HOME_DIR_NAME));
+    expect(fs.existsSync(path.join(home, ENGINE_HOME_DIR_NAME))).toBe(false);
+    expect(fs.readFileSync(path.join(elsewhere, "do-not-move.txt"), "utf8")).toBe("keep");
+  });
+
+  it("does not churn once the home was pinned to the legacy name", () => {
+    const home = makeTempRoot();
+    const legacy = path.join(home, LEGACY_ENGINE_HOME_DIR_NAME);
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, "installation_id"), "abc\n");
+    // 模拟“建不了链接 → 已回退并打标记”
+    fs.writeFileSync(path.join(home, ".legacy-engine-home-pinned"), "2026-11-18T00:00:00Z\n");
+
+    expect(resolveEngineHome(home)).toBe(legacy);
+    // 不会再搬成新目录
+    expect(fs.existsSync(path.join(home, ENGINE_HOME_DIR_NAME))).toBe(false);
+  });
+});

@@ -189,6 +189,19 @@ export function migrateDirectory(
   // 绝对路径，改名后按旧路径找不到 rollout）。再跑一次必须识别这种情况，否则会
   // 通过链接把目标目录自己合并一遍。
   if (isSymlinkTo(legacy, target)) return true;
+  // 悬空链接：指向的东西已不存在，忽略即可（不搬任何东西）
+  if (pathEntryExists(legacy) && !fs.existsSync(legacy)) return true;
+  // 旧路径是**指向别处**的链接：绝不能顺着它合并，否则会把链接目标的内容搬进新目录
+  try {
+    if (fs.lstatSync(legacy).isSymbolicLink()) {
+      log.warn(
+        `[IsolatedHome] ${legacy} is a symlink that does not point at ${target}; leaving it alone`,
+      );
+      return false;
+    }
+  } catch {
+    /* 并发删除等竞态：继续走正常分支 */
+  }
   try {
     if (!fs.existsSync(target)) {
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -290,11 +303,26 @@ function writeMigrationMarker(
   }
 }
 
-/** `legacy` 是否是指向 `target` 的符号链接（迁移完成的兼容态）。 */
+/**
+ * `legacy` 是否解析到 `target`（迁移完成的兼容态）。
+ *
+ * 只比较 realpath：POSIX 符号链接与 Windows junction 都成立，普通目录
+ * （realpath 就是自身）不会误判。不依赖 `lstat().isSymbolicLink()`——junction
+ * 在不同 Node 版本上的报法不一致。
+ */
 function isSymlinkTo(legacy: string, target: string): boolean {
   try {
-    if (!fs.lstatSync(legacy).isSymbolicLink()) return false;
     return path.resolve(fs.realpathSync(legacy)) === path.resolve(fs.realpathSync(target));
+  } catch {
+    return false;
+  }
+}
+
+/** 条目是否存在（不跟随链接：悬空链接也算存在）。 */
+function pathEntryExists(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
   } catch {
     return false;
   }
@@ -318,7 +346,10 @@ export function symlinkTypeForPlatform(platform: string): "dir" | "junction" {
 }
 
 function linkLegacyPath(legacy: string, target: string): boolean {
-  if (fs.existsSync(legacy)) return true;
+  // lstat 判定条目：悬空链接也算“已存在”，否则每次启动重试并 EEXIST
+  if (pathEntryExists(legacy)) return true;
+  // junction 的目标必须存在（否则 Windows 直接失败、POSIX 建出悬空链接）
+  if (!fs.existsSync(target)) return true;
   try {
     fs.mkdirSync(path.dirname(legacy), { recursive: true });
     fs.symlinkSync(target, legacy, symlinkTypeForPlatform(process.platform));
@@ -352,9 +383,29 @@ export function revertDirectoryRename(target: string, legacy: string): boolean {
  *
  * 迁移失败时回退旧目录（宁可继续用 `.codex`，也不新建空目录让用户“会话全丢”）。
  */
+const LEGACY_HOME_PIN_MARKER = ".legacy-engine-home-pinned";
+
+function markLegacyHomePinned(isolatedHome: string): void {
+  try {
+    fs.mkdirSync(isolatedHome, { recursive: true });
+    fs.writeFileSync(
+      path.join(isolatedHome, LEGACY_HOME_PIN_MARKER),
+      `${new Date().toISOString()}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    log.warn(`[IsolatedHome] could not record the legacy-home pin in ${isolatedHome}:`, error);
+  }
+}
+
 export function resolveEngineHome(isolatedHome: string): string {
   const target = path.join(isolatedHome, ENGINE_HOME_DIR_NAME);
   const legacy = path.join(isolatedHome, LEGACY_ENGINE_HOME_DIR_NAME);
+  // 上次因无法建立兼容链接而回退过：继续用旧目录，不再反复搬动
+  if (pathEntryExists(path.join(isolatedHome, LEGACY_HOME_PIN_MARKER))) {
+    fs.mkdirSync(legacy, { recursive: true });
+    return legacy;
+  }
   if (migrateDirectory(legacy, target, "engine-home")) {
     fs.mkdirSync(target, { recursive: true });
     // 兼容引擎 state DB 里的旧绝对路径（见 linkLegacyPath 说明）：
@@ -364,6 +415,8 @@ export function resolveEngineHome(isolatedHome: string): string {
         `[IsolatedHome] could not create the compatibility link; engine home reverted to ${legacy} so recorded session paths stay valid`,
       );
       fs.mkdirSync(legacy, { recursive: true });
+      // 记下这次回退：没有链接机制时不要每次启动都再搬一遍目录（搬动本身有风险）
+      markLegacyHomePinned(isolatedHome);
       return legacy;
     }
     return target;

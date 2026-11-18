@@ -13,7 +13,16 @@ const mocks = vi.hoisted(() => ({
   readdir: vi.fn(() => []),
   write: vi.fn(),
   symlink: vi.fn(),
-  lstat: vi.fn(() => ({ isSymbolicLink: () => false })),
+  // 只有真正存在的条目才返回 stat；pin 标记与旧 .codex 都不存在
+  lstat: vi.fn((target: unknown) => {
+    const p = String(target);
+    if (p.includes(".legacy-engine-home-pinned") || p.endsWith("/.codex")) {
+      throw Object.assign(new Error("ENOENT: no such file or directory"), {
+        code: "ENOENT",
+      });
+    }
+    return { isSymbolicLink: () => false };
+  }),
 }));
 
 vi.mock("fs", () => ({
