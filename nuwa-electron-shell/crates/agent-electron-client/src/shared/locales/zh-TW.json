@@ -1424,6 +1424,8 @@
   "Claw.Browser.copy": "複製連結",
   "Claw.Browser.external": "使用預設瀏覽器開啟",
   "Claw.Browser.more": "更多",
+  "Claw.Browser.pinDone": "已置頂",
+  "Claw.Browser.unpinDone": "取消置頂",
   "Claw.Browser.pin": "視窗置頂",
   "Claw.Browser.unpin": "取消置頂",
   "Claw.Browser.print": "列印",

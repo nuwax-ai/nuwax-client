@@ -58,6 +58,8 @@ if (!process.versions.electron) {
       let firstDocumentHeld = false;
       let firstDocumentRequested;
       let pendingRetryRequests = 0;
+      let cacheableResourceRequests = 0;
+      let reloadCacheControl;
       const firstRequest = new Promise((resolve) => {
         firstDocumentRequested = resolve;
       });
@@ -93,6 +95,17 @@ if (!process.versions.electron) {
         if (req.url === "/pending-retry" && ++pendingRetryRequests === 1)
           return;
         if (req.url === "/pending-close") return;
+        if (req.url === "/reload-fixture.js") {
+          res.setHeader("content-type", "text/javascript");
+          res.setHeader("cache-control", "public, max-age=3600");
+          res.end(`window.cacheableResourceVersion = ${++cacheableResourceRequests}`);
+          return;
+        }
+        if (req.url === "/toolbar-next") {
+          reloadCacheControl = req.headers["cache-control"];
+          res.end('<title>/toolbar-next</title><p>Browser compatibility /toolbar-next</p><script src="/reload-fixture.js"></script>');
+          return;
+        }
         if (req.url === "/toolbar-page" && !releaseFirstDocument) {
           firstDocumentHeld = true;
           releaseFirstDocument = () => {
@@ -312,7 +325,10 @@ if (!process.versions.electron) {
         );
         assert.ok(toolbarCsp.includes("script-src 'self';"));
         assert.ok(!toolbarCsp.includes("'unsafe-inline'"));
-        assert.equal(toolbarCsp.includes("'nonce-"), Boolean(process.env.NUWAX_BROWSER_DEV_URL));
+        assert.equal(
+          toolbarCsp.includes("'nonce-"),
+          new URL(managed.window.webContents.getURL()).protocol !== "file:",
+        );
         const navigation = (target = managed.window) => target.webContents.executeJavaScript(`({
           visible: !document.getElementById('navigation').hidden,
           back: !document.getElementById('back').disabled,
@@ -433,6 +449,36 @@ if (!process.versions.electron) {
         isolatedPage.window.destroy();
         console.log("PASS page history: conditional navigation controls and independent back/forward stacks");
         let copied, menu, menuPosition;
+        const toastView = () => managed.window.contentView.children
+          .find((view) => view.webContents?.getURL().startsWith("data:text/html;charset=utf-8,"));
+        const assertCentered = (view) => {
+          const [width, height] = managed.window.getContentSize();
+          const rect = view.getBounds();
+          assert.ok(Math.abs(rect.x + rect.width / 2 - width / 2) <= 0.5);
+          assert.ok(Math.abs(rect.y + rect.height / 2 - height / 2) <= 0.5);
+          assert.ok(rect.y >= bounds().y);
+          assert.equal(managed.window.contentView.children.at(-1), view);
+        };
+        const expectToast = async (key, success = true) => {
+          let view;
+          await waitFor(async () => {
+            view = toastView();
+            return view?.getVisible() && await view.webContents.executeJavaScript(
+              "document.querySelector('#toast span').textContent",
+            ) === messages[key];
+          });
+          assertCentered(view);
+          assert.equal(await view.webContents.executeJavaScript("!!document.querySelector('#toast svg')"), success);
+          const textWidths = await view.webContents.executeJavaScript(`(() => {
+            const text = document.querySelector('#toast span');
+            return { full: text.scrollWidth, visible: text.clientWidth };
+          })()`);
+          assert.ok(
+            textWidths.full <= textWidths.visible,
+            `Toast text needs ${textWidths.full}px but has ${textWidths.visible}px`,
+          );
+          return view;
+        };
         const writeText = clipboard.writeText;
         const buildMenu = Menu.buildFromTemplate;
         try {
@@ -450,20 +496,15 @@ if (!process.versions.electron) {
           await click("copyLink");
           await waitFor(() => typeof copied === "string");
           assert.equal(copied, "https://business.example/toolbar-next");
-          const feedback = () => managed.window.webContents.executeJavaScript(`({
-            visible: !document.getElementById('feedback').hidden,
-            text: document.getElementById('feedbackText').textContent,
-            success: !document.getElementById('feedbackSuccess').hidden,
-            bottom: document.getElementById('feedback').getBoundingClientRect().bottom,
-          })`);
-          await waitFor(async () => (await feedback()).visible);
-          assert.equal((await feedback()).text, messages["Claw.Browser.copyDone"]);
-          assert.equal((await feedback()).success, true);
-          assert.ok((await feedback()).bottom <= bounds().y);
+          const firstToast = await expectToast("Claw.Browser.copyDone");
+          const originalSize = managed.window.getSize();
+          managed.window.setSize(originalSize[0] - 40, originalSize[1] - 20);
+          assertCentered(firstToast);
+          managed.window.setSize(...originalSize);
           if (process.env.NUWAX_BROWSER_SCREENSHOT)
             fs.writeFileSync(
               process.env.NUWAX_BROWSER_SCREENSHOT.replace(/\.png$/, "-copy-toast.png"),
-              (await managed.window.capturePage({x: 0, y: 0, width: 1100, height: 48})).toPNG(),
+              (await firstToast.webContents.capturePage()).toPNG(),
             );
           await click("menu");
           await waitFor(() => menu);
@@ -475,15 +516,34 @@ if (!process.versions.electron) {
           assert.equal(menuPosition.x, await managed.window.webContents.executeJavaScript(
             "Math.round(document.getElementById('pageIdentity').getBoundingClientRect().x)",
           ));
-          const previousCopy = (await getState()).copyFeedback.id;
+          const reloadIndex = menu.findIndex((item) => item.label === messages["Claw.Browser.reload"]);
+          assert.ok(reloadIndex >= 0);
+          const forceReload = menu[reloadIndex + 1];
+          assert.equal(forceReload.label, messages["Claw.ContextMenu.forceReload"]);
+          const oldVersion = await managed.contents.executeJavaScript("window.cacheableResourceVersion");
+          const reloaded = once(managed.contents, "did-finish-load");
+          forceReload.click();
+          await reloaded;
+          assert.equal(managed.contents.getURL(), origin + "/toolbar-next");
+          assert.equal(reloadCacheControl, "no-cache");
+          assert.ok(await managed.contents.executeJavaScript("window.cacheableResourceVersion") > oldVersion);
+          assert.equal((await getState()).canGoBack, true);
           menu.find((item) => item.label === messages["Claw.Browser.copy"]).click();
-          await waitFor(async () => (await getState()).copyFeedback.id > previousCopy);
-          assert.equal((await feedback()).text, messages["Claw.Browser.copyDone"]);
+          assert.ok(!managed.window.contentView.children.includes(firstToast));
+          await expectToast("Claw.Browser.copyDone");
           clipboard.writeText = () => { throw new Error("Clipboard unavailable"); };
           await click("copyLink");
-          await waitFor(async () => (await feedback()).text === messages["Claw.Browser.copyFailed"]);
-          assert.equal((await feedback()).success, false);
-          await waitFor(async () => !(await feedback()).visible);
+          await expectToast("Claw.Browser.copyFailed", false);
+          await waitFor(() => !toastView());
+          await click("pin");
+          await expectToast("Claw.Browser.pinDone");
+          assert.equal(managed.window.isAlwaysOnTop(), true);
+          menu = undefined;
+          await click("menu");
+          await waitFor(() => menu);
+          menu.find((item) => item.label === messages["Claw.Browser.unpin"]).click();
+          await expectToast("Claw.Browser.unpinDone");
+          assert.equal(managed.window.isAlwaysOnTop(), false);
         } finally {
           clipboard.writeText = writeText;
           Menu.buildFromTemplate = buildMenu;
@@ -528,10 +588,6 @@ if (!process.versions.electron) {
         assert.equal((await getState()).zoom, 110);
         await command({ type: "zoom-reset" });
         assert.equal((await getState()).zoom, 100);
-        await command({ type: "pin" });
-        assert.equal(managed.window.isAlwaysOnTop(), true);
-        await command({ type: "pin" });
-        assert.equal(managed.window.isAlwaysOnTop(), false);
         await command({ type: "find-open" });
         await command({ type: "address-open" });
         assert.equal(bounds().y, 132);
@@ -836,15 +892,15 @@ if (!process.versions.electron) {
               "stop/retry and close before first response",
               "history",
               "navigation visibility and per-page history isolation",
-              "reload",
+              "reload and menu force reload (main document + cached subresource)",
               "popup guest adoption/opener",
               "dispose",
               "built toolbar/preload IPC",
               "remote page isolation",
               "zoom",
-              "native pin",
+              "native pin and unpin with centered feedback",
               "URL row + mouse navigation/copy/menu + Escape",
-              "copy toast success, menu copy, clipboard failure and automatic dismissal",
+              "centered copy toast above the page, resize, repeated copies, failure and automatic dismissal",
               "Windows/Linux toolbar layout at 800px (renderer only)",
               "find",
               "close preserves beforeunload cancellation",

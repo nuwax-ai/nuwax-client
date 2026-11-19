@@ -20,8 +20,6 @@ const bridge = (window as unknown as { browserWindow: BrowserWindowBridge })
 const element = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 let current: BrowserState | null = null;
-let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
-let lastFeedbackId = 0;
 const run = (command: BrowserCommand) => {
   void bridge.command(command).catch(() => {});
 };
@@ -69,11 +67,8 @@ function render(state: BrowserState) {
   // 主进程关闭查找时会清空匹配；输入框也结束本轮查询，避免重开后旧词配 0/0。
   if (!state.finding && wasFinding)
     element<HTMLInputElement>("query").value = "";
-  if (tabChanged) {
+  if (tabChanged)
     element<HTMLInputElement>("query").value = state.findText ?? "";
-    clearTimeout(feedbackTimer);
-    element("feedback").hidden = true;
-  }
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
   for (const [id, key] of Object.entries({
@@ -101,17 +96,6 @@ function render(state: BrowserState) {
   for (const id of ["retry", "external", "copy"])
     element(id).textContent = l[id];
   label("closeAddress", l.close);
-  if (state.copyFeedback && state.copyFeedback.id > lastFeedbackId) {
-    lastFeedbackId = state.copyFeedback.id;
-    clearTimeout(feedbackTimer);
-    element("feedbackText").textContent =
-      l[state.copyFeedback.success ? "copyDone" : "copyFailed"];
-    element("feedbackSuccess").hidden = !state.copyFeedback.success;
-    element("feedback").hidden = false;
-    feedbackTimer = setTimeout(() => {
-      element("feedback").hidden = true;
-    }, 2200);
-  }
   if (state.finding && (tabChanged || !wasFinding || findFocusRequested)) {
     element<HTMLInputElement>("query").focus();
     element<HTMLInputElement>("query").select();
@@ -168,10 +152,7 @@ button("previous", () => find(false, true));
 button("next", () => find(true, true));
 button("closefind", () => run({ type: "find-close" }));
 const unsubscribe = bridge.onState(render);
-window.addEventListener("unload", () => {
-  clearTimeout(feedbackTimer);
-  unsubscribe();
-}, { once: true });
+window.addEventListener("unload", unsubscribe, { once: true });
 void bridge
   .getState()
   .then((state) => {

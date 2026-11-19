@@ -21,6 +21,7 @@ import {
 import type { FeatureContext } from "../_kit/types";
 import { PageView } from "./vendor/pageView";
 import { confirmBrowserCertificates } from "./certificates";
+import { createBrowserToast } from "./toast";
 
 export interface BrowserPageOptions {
   windowOptions: BrowserWindowConstructorOptions;
@@ -49,7 +50,7 @@ type WindowEntry = {
   isolated: boolean;
   closing: boolean;
   disposed: boolean;
-  feedbackSequence: number;
+  toast: ReturnType<typeof createBrowserToast>;
   baseListenerLimit: number;
 };
 type Entry = {
@@ -75,6 +76,8 @@ const LABELS = [
   "more",
   "pin",
   "unpin",
+  "pinDone",
+  "unpinDone",
   "print",
   "zoom",
   "zoomIn",
@@ -152,6 +155,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     ? ctx.windows.toExternalUrl(value) : webUrl(value);
   const labels = (): Record<string, string> => ({
     loading: ctx.translate?.("Claw.Common.loading") ?? "Loading…",
+    forceReload: ctx.translate?.("Claw.ContextMenu.forceReload") ?? "Force Reload",
     ...Object.fromEntries(
       LABELS.map((key) => [key, ctx.translate?.(`Claw.Browser.${key}`) ?? key]),
     ),
@@ -241,6 +245,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
   };
   const activate = (entry: Entry, focus = true) => {
     const group = entry.group;
+    if (group.active !== entry) group.toast.dismiss();
     entry.suppressed = false;
     group.active = entry;
     for (const tab of group.tabs) visible(tab);
@@ -301,12 +306,25 @@ export function createBrowserWindows(ctx: FeatureContext) {
         if (wc.navigationHistory.canGoForward())
           wc.navigationHistory.goForward();
         break;
-      case "reload": {
+      case "reload":
+      case "force-reload": {
+        const force = command.type === "force-reload";
+        if (force) {
+          await wc.session.clearCache().catch(() =>
+            ctx.log.warn("[Browser] HTTP cache clear failed"),
+          );
+          if (entry.window.isDestroyed() || wc.isDestroyed()) return false;
+        }
         const pendingUrl =
           (entry.state.error || !entry.hasDocument) && webUrl(entry.state.url);
         entry.state.error = null;
         visible(entry);
-        if (pendingUrl) void wc.loadURL(pendingUrl).catch(() => {});
+        if (pendingUrl) {
+          const options = force
+            ? { extraHeaders: "Cache-Control: no-cache\nPragma: no-cache" }
+            : undefined;
+          void wc.loadURL(pendingUrl, options).catch(() => {});
+        } else if (force) wc.reloadIgnoringCache();
         else wc.reload();
         break;
       }
@@ -325,18 +343,20 @@ export function createBrowserWindows(ctx: FeatureContext) {
         } catch {
           ctx.log.warn("[Browser] Clipboard write failed");
         }
-        entry.state.copyFeedback = {
-          id: ++entry.group.feedbackSequence,
+        entry.group.toast.show(
+          entry.state.labels[success ? "copyDone" : "copyFailed"],
           success,
-        };
-        push(entry);
+        );
         return success;
       }
       case "external":
         return external(entry);
-      case "pin":
+      case "pin": {
         entry.window.setAlwaysOnTop(!entry.window.isAlwaysOnTop());
+        const pinned = entry.window.isAlwaysOnTop();
+        entry.group.toast.show(entry.state.labels[pinned ? "pinDone" : "unpinDone"]);
         break;
+      }
       case "zoom-in":
         wc.setZoomFactor(Math.min(3, wc.getZoomFactor() + 0.1));
         break;
@@ -425,6 +445,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
             accelerator: "CmdOrCtrl+R",
             click: action("reload"),
           },
+          { label: l.forceReload, click: action("force-reload") },
           { label: l.copy, click: action("copy") },
           {
             label: `${l.zoom} (${entry.state.zoom}%)`,
@@ -565,7 +586,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       isolated: options.isolated === true,
       closing: false,
       disposed: false,
-      feedbackSequence: 0,
+      toast: createBrowserToast(win, () => ctx.log.warn("[Browser] Toast failed to show")),
       baseListenerLimit: win.getMaxListeners(),
     };
     const toolbarId = win.webContents.id;
@@ -691,7 +712,6 @@ export function createBrowserWindows(ctx: FeatureContext) {
         activeMatch: 0,
         labels: labels(),
         dark: false,
-        copyFeedback: null,
       },
     };
     // The native page sits above the toolbar renderer. Keep about:blank hidden
@@ -820,7 +840,10 @@ export function createBrowserWindows(ctx: FeatureContext) {
       page.destroy();
       listenerLimit();
       if (group.disposed) return;
-      if (group.active === entry) group.active = group.tabs[Math.max(0, index - 1)] ?? null;
+      if (group.active === entry) {
+        group.toast.dismiss();
+        group.active = group.tabs[Math.max(0, index - 1)] ?? null;
+      }
       if (!group.active) {
         if (!win.isDestroyed()) win.destroy();
       } else if (group.closing) {

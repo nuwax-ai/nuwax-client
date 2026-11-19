@@ -1426,6 +1426,8 @@
   "Claw.Browser.more": "More",
   "Claw.Browser.pin": "Always on top",
   "Claw.Browser.unpin": "Stop keeping on top",
+  "Claw.Browser.pinDone": "Window pinned",
+  "Claw.Browser.unpinDone": "Window unpinned",
   "Claw.Browser.print": "Print",
   "Claw.Browser.zoom": "Page zoom",
   "Claw.Browser.zoomIn": "Zoom in",
