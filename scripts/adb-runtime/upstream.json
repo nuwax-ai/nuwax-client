@@ -1,0 +1,102 @@
+{
+  "pinkyCommit": "87c68839b3ac6ec2ab4755b645f7b5ac0031721e",
+  "platforms": {
+    "darwin-arm64": "pinky-darwin-arm64.zip",
+    "darwin-x64": "pinky-darwin-x64.zip",
+    "win32-x64": "pinky-win32-x64.zip",
+    "linux-x64": "pinky-linux-x64.tar.gz"
+  },
+  "dependencies": [
+    "android-tools-37.0.0p1.tar.xz",
+    "protobuf-cpp-3.21.12.tar.gz",
+    "brotli-1.2.1.tar.gz",
+    "lz4-1.10.0.tar.gz",
+    "zstd-1.5.7.tar.gz",
+    "zlib-1.3.2.tar.xz",
+    "AdbWinApi.def",
+    "adb_api.h"
+  ],
+  "buildScripts": {
+    "LICENSE": "pinky-LICENSE",
+    "scripts/adb.sh": "pinky-adb.sh",
+    "scripts/adb/CMakeLists.txt": "pinky-CMakeLists.txt",
+    "scripts/adb/windows.patch": "pinky-windows.patch"
+  },
+  "inputs": {
+    "pinky-darwin-arm64.zip": {
+      "url": "https://github.com/DIYgod/pinky/releases/download/v2026.1119.4/pinky-2026.1119.4-darwin-arm64.zip",
+      "sha256": "c5effd085bf9df30d17e341935df581e6c1771770f89640a3398a009a9313b6d",
+      "resume": true
+    },
+    "pinky-darwin-x64.zip": {
+      "url": "https://github.com/DIYgod/pinky/releases/download/v2026.1119.4/pinky-2026.1119.4-darwin-amd64.zip",
+      "sha256": "cc6dbe866200bde1f59f6a2cfdd8a7b291cfc3bb5e464b7bf67d9f06f90a59ba",
+      "resume": true
+    },
+    "pinky-linux-x64.tar.gz": {
+      "url": "https://github.com/DIYgod/pinky/releases/download/v2026.1119.4/pinky-2026.1119.4-linux-amd64.tar.gz",
+      "sha256": "2c7552ab5b56e189c868b66291f612a31951b8cf9be1cf82efa9bf7a45d331b8",
+      "resume": true
+    },
+    "pinky-win32-x64.zip": {
+      "url": "https://github.com/DIYgod/pinky/releases/download/v2026.1119.4/pinky-2026.1119.4-windows-amd64.zip",
+      "sha256": "5ac33c98c22c49a4970a572183bb2248d27b8af0410d807230fa735f3674a0ab",
+      "resume": true
+    },
+    "android-tools-37.0.0p1.tar.xz": {
+      "url": "https://github.com/nmeum/android-tools/releases/download/37.0.0p1/android-tools-37.0.0p1.tar.xz",
+      "sha256": "2c6de1abe16b211c7d9f59276217e14fd9e0e18b20e331d3c84358f5dffd576e",
+      "resume": true
+    },
+    "protobuf-cpp-3.21.12.tar.gz": {
+      "url": "https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz",
+      "sha256": "4eab9b524aa5913c6fffb20b2a8abf5ef7f95a80bc0701f3a6dbb4c607f73460",
+      "resume": true
+    },
+    "brotli-1.2.1.tar.gz": {
+      "url": "https://github.com/google/brotli/archive/refs/tags/v1.2.1.tar.gz",
+      "sha256": "98d35d11a78dc453aebb7d10c3748f3f73ff78c8267c0dc697b8631f67bf7e8f"
+    },
+    "lz4-1.10.0.tar.gz": {
+      "url": "https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz",
+      "sha256": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b",
+      "resume": true
+    },
+    "zstd-1.5.7.tar.gz": {
+      "url": "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz",
+      "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+      "resume": true
+    },
+    "zlib-1.3.2.tar.xz": {
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz",
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+      "resume": true
+    },
+    "AdbWinApi.def": {
+      "url": "https://android.googlesource.com/platform/development/+/refs/tags/android-17.0.0_r1/host/windows/prebuilt/usb/AdbWinApi.def?format=TEXT",
+      "sha256": "99a718cb83509a19540411e764d88499de48246f3f0709dfac79871e2023db00",
+      "base64": true
+    },
+    "adb_api.h": {
+      "url": "https://android.googlesource.com/platform/development/+/refs/tags/android-17.0.0_r1/host/windows/usb/api/adb_api.h?format=TEXT",
+      "sha256": "11b9d11e6b0e7725ade38353cbac431376c8017f368229d5437e8d492aa24f16",
+      "base64": true
+    },
+    "pinky-LICENSE": {
+      "url": "https://raw.githubusercontent.com/DIYgod/pinky/87c68839b3ac6ec2ab4755b645f7b5ac0031721e/LICENSE",
+      "sha256": "c95bae1d1ce0235ecccd3560b772ec1efb97f348a79f0fbe0a634f0c2ccefe2c"
+    },
+    "pinky-adb.sh": {
+      "url": "https://raw.githubusercontent.com/DIYgod/pinky/87c68839b3ac6ec2ab4755b645f7b5ac0031721e/scripts/adb.sh",
+      "sha256": "155f5b279a5ce10648e4414c6e4c74490e9003e6e6c1306ba1798088f31c6ff3"
+    },
+    "pinky-CMakeLists.txt": {
+      "url": "https://raw.githubusercontent.com/DIYgod/pinky/87c68839b3ac6ec2ab4755b645f7b5ac0031721e/scripts/adb/CMakeLists.txt",
+      "sha256": "02395f7c66e19e4f033a310e411dfe477a595d4ef3110de0eef629b7afba89fe"
+    },
+    "pinky-windows.patch": {
+      "url": "https://raw.githubusercontent.com/DIYgod/pinky/87c68839b3ac6ec2ab4755b645f7b5ac0031721e/scripts/adb/windows.patch",
+      "sha256": "bb97f4fc08265945891f42970afdb79fc1521b41d549c5d8fb8c99b52148aad3"
+    }
+  }
+}

@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Select, Space, Typography } from "antd";
 import {
   ANDROID_I18N_KEYS as text,
-  ANDROID_PLATFORM_TOOLS_URL,
   type AndroidAdbInstallOffer,
   type AndroidBridge,
   type AndroidDevice,
@@ -99,7 +98,7 @@ export function AndroidSettings({
       setInstallOffer(undefined);
       setInstalling(true);
       try {
-        const result = await api!.install({ version: offer.version, acceptedTerms: true });
+        const result = await api!.install({ version: offer.version, confirmed: true });
         if (!mounted.current) return;
         if (result.error) setError(result.error);
         else await refreshDevices();
@@ -221,12 +220,14 @@ export function AndroidSettings({
         <Typography.Paragraph>
           {t(text.INSTALL_DESC)}
           {installOffer && (
-            <> Android SDK Platform-Tools {installOffer.version} · {(installOffer.bytes / 1048576).toFixed(1)} MiB.</>
+            <> ADB {installOffer.version} · {(installOffer.bytes / 1048576).toFixed(1)} MiB.</>
           )}
         </Typography.Paragraph>
-        <Typography.Link href={ANDROID_PLATFORM_TOOLS_URL} target="_blank" rel="noreferrer">
-          {t(text.INSTALL_TERMS)}
-        </Typography.Link>
+        {installOffer?.sourceUrl && (
+          <Typography.Link href={installOffer.sourceUrl} target="_blank" rel="noreferrer">
+            {t(text.INSTALL_TERMS)}
+          </Typography.Link>
+        )}
       </Modal>
       {error && (
         <Alert

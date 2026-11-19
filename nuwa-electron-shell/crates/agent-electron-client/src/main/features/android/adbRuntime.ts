@@ -9,6 +9,7 @@ export interface AdbRuntimeRelease {
   version: string;
   platform: string;
   url: string;
+  sourceUrl?: string;
   bytes: number;
   sha256: string;
   executable: string;
@@ -83,7 +84,11 @@ export function createAdbRuntime(
   const cache = path.join(dataDir, "platform-tools");
   const destination = release && path.join(cache, release.version + "-" + release.platform);
   const offer: AndroidAdbInstallOffer | undefined = release
-    ? { version: release.version, bytes: release.bytes }
+    ? {
+        version: release.version,
+        bytes: release.bytes,
+        ...(release.sourceUrl ? { sourceUrl: release.sourceUrl } : {}),
+      }
     : undefined;
 
   const find = async (): Promise<string | null> => {

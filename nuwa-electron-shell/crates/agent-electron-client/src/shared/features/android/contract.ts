@@ -58,11 +58,10 @@ export interface AndroidStatus {
   error?: string;
 }
 
-export const ANDROID_PLATFORM_TOOLS_URL = "https://developer.android.com/tools/releases/platform-tools#downloads";
-
 export interface AndroidAdbInstallOffer {
   version: string;
   bytes: number;
+  sourceUrl?: string;
 }
 
 export interface AndroidBridge {
@@ -75,7 +74,7 @@ export interface AndroidBridge {
     error?: string;
     install?: AndroidAdbInstallOffer;
   }>;
-  install(input: { version: string; acceptedTerms: true }): Promise<{ error?: string }>;
+  install(input: { version: string; confirmed: true }): Promise<{ error?: string }>;
   enable(input: { adbPath: string; serial: string }): Promise<AndroidStatus>;
   stop(): Promise<AndroidStatus>;
 }

@@ -1,0 +1,99 @@
+{
+  "version": "37.0.0p1-pinky.2026.1119.4",
+  "baseUrl": "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/dependencies/adb",
+  "source": "adb-source.tar",
+  "platforms": {
+    "darwin-arm64": {
+      "name": "adb-darwin-arm64.zip",
+      "bytes": 6290044,
+      "sha256": "c7b9ff94934aa46200671beccb707c6cd0ba41ff7a36d81c4f3b44a5ed01b327",
+      "executable": "adb",
+      "files": {
+        "BUILD.txt": {
+          "bytes": 1182,
+          "sha256": "ab9698e97b44ad499a113321534dcfa5c6dc3f42b5bbb2da121152ceefa0a7e3"
+        },
+        "NOTICE.txt": {
+          "bytes": 59854,
+          "sha256": "2b8797443c30453dd01f012c9aeff8ddcc13b0c075ef5b40c570af6f8aa2c1c1"
+        },
+        "adb": {
+          "bytes": 6228624,
+          "sha256": "6d77cbca3552add9be65c9c1f15bb8f221977ccfaa4aaab11312d0fcd0c715ee"
+        }
+      }
+    },
+    "darwin-x64": {
+      "name": "adb-darwin-x64.zip",
+      "bytes": 6853549,
+      "sha256": "35fe20b9a00a34a2883364f361cfc299425ff0e68e0c711ec612a1fc84949c88",
+      "executable": "adb",
+      "files": {
+        "BUILD.txt": {
+          "bytes": 1183,
+          "sha256": "9c8e9b1100b65271420835b24e76139ccadb47a7913bd13efc8a259cd1ef4a31"
+        },
+        "NOTICE.txt": {
+          "bytes": 59854,
+          "sha256": "2b8797443c30453dd01f012c9aeff8ddcc13b0c075ef5b40c570af6f8aa2c1c1"
+        },
+        "adb": {
+          "bytes": 6792128,
+          "sha256": "ec91520ccc0e61c0b3ae3c01b5fad38e6fc5152f9692529688d79e592fe4114b"
+        }
+      }
+    },
+    "win32-x64": {
+      "name": "adb-win32-x64.zip",
+      "bytes": 8628763,
+      "sha256": "f5a680d5ed8c4a376187f5f506450ff5f4073593e9a4a9263f4b51fbeb6e614a",
+      "executable": "adb.exe",
+      "files": {
+        "AdbWinApi.dll": {
+          "bytes": 97792,
+          "sha256": "d60103a5e99bc9888f786ee916f5d6e45493c3247972cb053833803de7e95cf9"
+        },
+        "AdbWinUsbApi.dll": {
+          "bytes": 62976,
+          "sha256": "25207c506d29c4e8dceb61b4bd50e8669ba26012988a43fbf26a890b1e60fc97"
+        },
+        "BUILD.txt": {
+          "bytes": 2160,
+          "sha256": "8390c05e1b40dd9466a97b45d65da9d2efa0ddcb3f6a4d7e70421f30bb71ddfe"
+        },
+        "NOTICE.txt": {
+          "bytes": 61191,
+          "sha256": "778ae446f50881244b0c7977415c13ea4064212c19958f4641055a0ecda01d41"
+        },
+        "adb.exe": {
+          "bytes": 8403982,
+          "sha256": "ef0eb345b2104cb81f561c760772352943145c19da3e48136bdabd74765fae24"
+        }
+      }
+    },
+    "linux-x64": {
+      "name": "adb-linux-x64.zip",
+      "bytes": 8848366,
+      "sha256": "c61fda7d3516560bfbd666c69f9c537cd35f7e2df1d5be3d177ddba9144dc0e3",
+      "executable": "adb",
+      "files": {
+        "BUILD.txt": {
+          "bytes": 1335,
+          "sha256": "9d2382c0a1b9cb5d14e6ffbc59521850250ed1cb1397d1ab4bb57ffbffe55340"
+        },
+        "NOTICE.txt": {
+          "bytes": 61031,
+          "sha256": "60bd37089eb0dcd6b32e26a790b719b7221d2cec14b5c307e42a2bce534b13f4"
+        },
+        "adb": {
+          "bytes": 8785616,
+          "sha256": "6f4106dc336370f2ae2bad00cb304d148cb1084888ebc6b3ddc9989f05b6ce74"
+        }
+      }
+    }
+  },
+  "sourceMetadata": {
+    "bytes": 29511680,
+    "sha256": "a381ad13110ff4a007c0afd212d8667d57057fd09a97e29fbab13f8f4270eb9a"
+  }
+}

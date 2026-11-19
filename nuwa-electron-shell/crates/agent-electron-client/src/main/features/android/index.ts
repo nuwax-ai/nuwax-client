@@ -155,9 +155,9 @@ export const androidFeature: DesktopFeature = {
       ANDROID_IPC.install,
       async (_event, input: unknown): Promise<{ error?: string }> => {
         if (disposed || !ctx.session.isAuthenticated()) return { error: "loginRequired" };
-        const consent = input as { version?: unknown; acceptedTerms?: unknown } | null;
+        const consent = input as { version?: unknown; confirmed?: unknown } | null;
         if (!runtime.offer) return { error: "adbInstallUnsupported" };
-        if (consent?.acceptedTerms !== true || consent.version !== runtime.offer.version)
+        if (consent?.confirmed !== true || consent.version !== runtime.offer.version)
           return { error: "invalidArguments" };
         if (controller.status().enabled || installAbort) return { error: "operationFailed" };
 

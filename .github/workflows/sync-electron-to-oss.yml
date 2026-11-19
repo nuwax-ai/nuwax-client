@@ -8,7 +8,7 @@
 # Secrets：GH_PAT（或 repo token）、MINIO_ACCESS_KEY_ID、MINIO_SECRET_ACCESS_KEY、OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET
 
 name: Sync Electron Release to MinIO S3 & OSS (Nuwax)
-run-name: Sync ${{ inputs.channel || (contains(inputs.tag, '-alpha.') && 'dev' || ((contains(inputs.tag, '-beta.') || startsWith(inputs.tag, 'prerelease-v')) && 'beta' || 'stable')) }} ${{ inputs.tag }}
+run-name: Sync ${{ inputs.adb_runtime && 'ADB runtime' || inputs.channel || (contains(inputs.tag, '-alpha.') && 'dev' || ((contains(inputs.tag, '-beta.') || startsWith(inputs.tag, 'prerelease-v')) && 'beta' || 'stable')) }} ${{ inputs.tag }}
 
 on:
   workflow_call:
@@ -40,17 +40,43 @@ on:
         description: "Optional channel assertion (stable|beta|dev); inferred from tag"
         required: false
         type: string
+      adb_runtime:
+        description: "Publish only the pinned ADB runtime and its corresponding source to S3"
+        type: boolean
+        default: false
 
 permissions:
   actions: read
   contents: write
 
 concurrency:
-  group: nuwax-update-subscriptions
+  group: ${{ inputs.adb_runtime && 'nuwax-adb-runtime-publish' || 'nuwax-update-subscriptions' }}
   cancel-in-progress: false
 
 jobs:
+  sync-adb-runtime:
+    if: github.event_name == 'workflow_dispatch' && inputs.adb_runtime
+    name: Sync ADB dependency to MinIO S3
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned runtime archives and corresponding source
+        env:
+          ADB_RUNTIME_VERSION: ${{ inputs.tag }}
+        run: python3 scripts/adb-runtime/prepare.py "$ADB_RUNTIME_VERSION" "$RUNNER_TEMP/adb-runtime"
+      - name: Publish and verify immutable S3 objects
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
+        run: python3 scripts/adb-runtime/publish.py "$RUNNER_TEMP/adb-runtime"
+
   sync-to-minio:
+    if: inputs.adb_runtime != true
     name: Sync release to MinIO S3 & OSS
     runs-on: ubuntu-latest
     env:

@@ -191,7 +191,7 @@ describe("Android 特性、MCP 及 Agent 生命周期", () => {
     f.auth(false);
     expect(await f.call(ANDROID_IPC.install, {
       version: result.install.version,
-      acceptedTerms: true,
+      confirmed: true,
     })).toEqual({ error: "loginRequired" });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
@@ -204,7 +204,7 @@ describe("Android 特性、MCP 及 Agent 生命周期", () => {
     );
     const installation = f.call(ANDROID_IPC.install, {
       version: "37.0.1",
-      acceptedTerms: true,
+      confirmed: true,
     });
     await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledOnce());
     expect(f.entry()).toBeNull();

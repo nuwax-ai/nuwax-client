@@ -40,14 +40,15 @@ describe("Android Platform-Tools managed runtime", () => {
   });
 
   it.each([
-    ["darwin", "darwin"],
-    ["win32", "win"],
-    ["linux", "linux"],
-  ] as const)("downloads %s from the versioned Nuwax S3 mirror", (platform, suffix) => {
-    const { url, version } = platformToolsRelease(platform, "x64")!;
-    expect(url).toBe(
-      `https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/dependencies/adb/${version}/platform-tools_r${version}-${suffix}.zip`,
-    );
+    ["darwin", "arm64"],
+    ["darwin", "x64"],
+    ["win32", "x64"],
+    ["linux", "x64"],
+  ] as const)("downloads %s %s from the versioned Nuwax S3 mirror", (platform, arch) => {
+    const { url, version, sourceUrl } = platformToolsRelease(platform, arch)!;
+    const base = `https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/dependencies/adb/${version}`;
+    expect(url).toBe(`${base}/adb-${platform}-${arch}.zip`);
+    expect(sourceUrl).toBe(`${base}/adb-source.tar`);
   });
 
   it("installs only validated files and reuses the cache without downloading", async () => {
