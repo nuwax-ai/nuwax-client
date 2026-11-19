@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { AndroidController } from "./controller";
 import { parseDevices, resolveAdbPath, type AdbRun } from "./adb";
@@ -10,7 +11,7 @@ function png(width = 1080, height = 2400) {
   data.writeUInt32BE(height, 20);
   return data;
 }
-function fixture() {
+function fixture(findManagedAdb?: () => Promise<string | null>) {
   let authenticated = true,
     clock = 1;
   const run = vi.fn<AdbRun>(async (_file, args) =>
@@ -32,6 +33,7 @@ function fixture() {
     changed,
     { run, watch: async () => undefined },
     () => clock,
+    findManagedAdb,
   );
   const enable = async () => {
     await controller.enable({ adbPath: "adb", serial: "a" });
@@ -51,6 +53,25 @@ function fixture() {
   };
 }
 describe("Android 手机控制边界", () => {
+  it("只在缺少本机 ADB 时为自动路径回退到已校验缓存", async () => {
+    const managed = path.resolve("runtime", "adb");
+    const findManaged = vi.fn(async () => managed);
+    const { controller, run } = fixture(findManaged);
+    await controller.discover("");
+    expect(findManaged).not.toHaveBeenCalled();
+
+    run.mockRejectedValueOnce(new Error("adbMissing"));
+    await expect(controller.discover(path.resolve("explicit", "adb")))
+      .rejects.toThrow("adbMissing");
+    expect(findManaged).not.toHaveBeenCalled();
+
+    run.mockRejectedValueOnce(new Error("adbMissing"));
+    expect(await controller.discover("")).toMatchObject({
+      adbPath: managed,
+      devices: expect.arrayContaining([expect.objectContaining({ serial: "a" })]),
+    });
+    expect(findManaged).toHaveBeenCalledOnce();
+  });
   it("保留多设备状态，不自动选择，拒绝不安全路径与序列号", async () => {
     expect(
       parseDevices(

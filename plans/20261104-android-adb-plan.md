@@ -10,6 +10,14 @@
 
 参考：[Android 官方 ADB 文档](https://developer.android.com/tools/adb)及 [ADB 设备跟踪协议](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/services.md)。
 
+## 3.2 按需安装
+
+- 设置入口继续随壳提供，手机控制默认关闭。客户端启动和读取状态不检测设备、不下载依赖。用户点开启或检测设备后优先使用现有 ADB，找不到时显示官方安装选项。
+- 版本、系统支持、下载大小和 SHA256 固定在主进程。用户确认 SDK 条款后，主进程从 Google 下载，连接中断时有限续传。校验归档与 ADB 文件后，将 ADB、所需库和上游 NOTICE 缓存到本产品数据目录。
+- 安装结束后重新检测，用户选择手机并单独确认控制权限。取消、退出、登出或换域中止在途安装。按需安装不修改系统 PATH、不申请管理员权限，也不安装 USB 驱动。
+- 缓存被破坏时重新确认安装。官方归档不支持的平台、网络不可达或企业限制下载时，允许填写本机 ADB 路径。
+- 验证固定下载来源和校验、缓存复用、取消和安装失败恢复，并分别记录生产壳代码增量与启用后的下载/缓存大小。
+
 ## 未完成验收
 
 - 已有只读真机入口：`node scripts/acceptance/android-device.cjs --serial <已授权设备> [--adb <绝对路径>]`，仅截图和验证停止，不保存或输出屏幕内容。

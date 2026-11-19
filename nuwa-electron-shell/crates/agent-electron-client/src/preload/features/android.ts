@@ -10,6 +10,7 @@ export function createAndroidBridge(
   return {
     status: () => ipc.invoke(ANDROID_IPC.status),
     discover: (input) => ipc.invoke(ANDROID_IPC.discover, input),
+    install: (input) => ipc.invoke(ANDROID_IPC.install, input),
     enable: (input) => ipc.invoke(ANDROID_IPC.enable, input),
     stop: () => ipc.invoke(ANDROID_IPC.stop),
   };

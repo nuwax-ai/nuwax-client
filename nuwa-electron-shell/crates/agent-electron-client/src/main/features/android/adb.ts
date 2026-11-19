@@ -111,6 +111,11 @@ export function createAdbCommands(
   return { run, watch };
 }
 
+export function isAutomaticAdbPath(input: string): boolean {
+  const value = input.trim();
+  return !value || value === "adb";
+}
+
 export function resolveAdbPath(input: unknown): string {
   if (
     typeof input !== "string" ||

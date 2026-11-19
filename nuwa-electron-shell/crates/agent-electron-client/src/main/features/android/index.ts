@@ -1,4 +1,4 @@
-import { powerMonitor } from "electron";
+import { net, powerMonitor } from "electron";
 import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -9,7 +9,8 @@ import {
 } from "@shared/features/android/contract";
 import type { AgentSessionParticipant } from "../_kit/agentSessions";
 import type { DesktopFeature, FeatureMcpServerEntry } from "../_kit/types";
-import { createAdbCommands } from "./adb";
+import { createAdbCommands, isAutomaticAdbPath } from "./adb";
+import { createAdbRuntime } from "./adbRuntime";
 import { AndroidController } from "./controller";
 import { ANDROID_RELAY, AndroidGateway } from "./gateway";
 
@@ -20,6 +21,8 @@ export const androidFeature: DesktopFeature = {
   agentServers: ["nuwax-android"],
   register(ctx) {
     const grants = new Map<string, { owner: string | null; file: string }>();
+    const runtime = createAdbRuntime(ctx.dataDir, (url, options) => net.fetch(url, options));
+    let installAbort: AbortController | null = null;
     const controller = new AndroidController(
       () => ctx.session.isAuthenticated(),
       () => {
@@ -45,6 +48,8 @@ export const androidFeature: DesktopFeature = {
         );
       },
       createAdbCommands(ctx.getAppEnv),
+      Date.now,
+      runtime.find,
     );
     const gateway = new AndroidGateway(
       controller,
@@ -93,6 +98,7 @@ export const androidFeature: DesktopFeature = {
     };
     const stop = async () => {
       ++generation;
+      installAbort?.abort();
       controller.stop();
       revokeAll();
       await sync();
@@ -131,15 +137,49 @@ export const androidFeature: DesktopFeature = {
     ctx.hostIpc.handle(
       ANDROID_IPC.discover,
       async (_event, input: unknown) => {
+        const value = typeof input === "string" ? input : "";
         try {
-          return await controller.discover(
-            typeof input === "string" ? input : "",
-          );
+          return await controller.discover(value);
         } catch (error) {
-          return { devices: [], adbPath: "", error: failedStatus(error).error };
+          const status = failedStatus(error);
+          const install =
+            status.error === "adbMissing" && isAutomaticAdbPath(value)
+              ? runtime.offer
+              : undefined;
+          return { devices: [], adbPath: "", error: status.error, install };
         }
       },
       { devices: [], adbPath: "", error: "notAuthorized" },
+    );
+    ctx.hostIpc.handle(
+      ANDROID_IPC.install,
+      async (_event, input: unknown): Promise<{ error?: string }> => {
+        if (disposed || !ctx.session.isAuthenticated()) return { error: "loginRequired" };
+        const consent = input as { version?: unknown; acceptedTerms?: unknown } | null;
+        if (!runtime.offer) return { error: "adbInstallUnsupported" };
+        if (consent?.acceptedTerms !== true || consent.version !== runtime.offer.version)
+          return { error: "invalidArguments" };
+        if (controller.status().enabled || installAbort) return { error: "operationFailed" };
+
+        const abort = new AbortController();
+        installAbort = abort;
+        try {
+          await runtime.install(abort.signal);
+          if (abort.signal.aborted || disposed || !ctx.session.isAuthenticated())
+            return { error: "cancelled" };
+          return {};
+        } catch (error) {
+          if (abort.signal.aborted) return { error: "cancelled" };
+          return {
+            error: error instanceof Error && error.message === "adbInstallIntegrity"
+              ? "adbInstallIntegrity"
+              : "adbInstallFailed",
+          };
+        } finally {
+          installAbort = null;
+        }
+      },
+      { error: "notAuthorized" },
     );
     ctx.hostIpc.handle(
       ANDROID_IPC.enable,

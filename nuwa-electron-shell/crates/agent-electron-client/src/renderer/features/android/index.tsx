@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Select, Space, Typography } from "antd";
 import {
   ANDROID_I18N_KEYS as text,
+  ANDROID_PLATFORM_TOOLS_URL,
+  type AndroidAdbInstallOffer,
   type AndroidBridge,
   type AndroidDevice,
   type AndroidStatus,
@@ -27,6 +29,9 @@ export function AndroidSettings({
     adbPath: "",
   });
   const [adbPath, setAdbPath] = useState("");
+  const [detectedPath, setDetectedPath] = useState("");
+  const [installOffer, setInstallOffer] = useState<AndroidAdbInstallOffer>();
+  const [installing, setInstalling] = useState(false);
   const [devices, setDevices] = useState<AndroidDevice[]>([]);
   const [serial, setSerial] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -78,16 +83,28 @@ export function AndroidSettings({
       if (mounted.current) setBusy(false);
     }
   };
-  const discover = () =>
+  const refreshDevices = async () => {
+    const result = await api!.discover(adbPath);
+    if (!mounted.current) return;
+    setDevices(result.devices);
+    setSerial(undefined);
+    setDetectedPath(result.adbPath);
+    if (result.install) setInstallOffer(result.install);
+    else if (result.error) setError(result.error);
+    else if (!result.devices.length) setError("noDevices");
+  };
+  const discover = () => act(refreshDevices);
+  const installAdb = (offer: AndroidAdbInstallOffer) =>
     act(async () => {
-      const result = await api!.discover(adbPath);
-      if (!mounted.current) return;
-      setDevices(result.devices);
-      setSerial(undefined);
-      if (result.error) setError(result.error);
-      else {
-        setAdbPath(result.adbPath);
-        if (!result.devices.length) setError("noDevices");
+      setInstallOffer(undefined);
+      setInstalling(true);
+      try {
+        const result = await api!.install({ version: offer.version, acceptedTerms: true });
+        if (!mounted.current) return;
+        if (result.error) setError(result.error);
+        else await refreshDevices();
+      } finally {
+        if (mounted.current) setInstalling(false);
       }
     });
   const errorKey = error as keyof typeof text.errors;
@@ -100,11 +117,12 @@ export function AndroidSettings({
           <Space>
             <Input
               aria-label={t(text.ADB_PATH)}
-              placeholder={t(text.PATH_PLACEHOLDER)}
+              placeholder={detectedPath || t(text.PATH_PLACEHOLDER)}
               value={adbPath}
               disabled={busy || status.enabled}
               onChange={(event) => {
                 setAdbPath(event.target.value);
+                setDetectedPath("");
                 setDevices([]);
                 setSerial(undefined);
               }}
@@ -167,14 +185,49 @@ export function AndroidSettings({
           ) : (
             <Button
               type="primary"
-              disabled={!ready || busy || !serial}
-              onClick={() => setConfirming(true)}
+              disabled={!ready || busy || (devices.length > 0 && !serial)}
+              onClick={() => {
+                if (serial) setConfirming(true);
+                else void discover();
+              }}
             >
               {t(text.ENABLE)}
             </Button>
           )
         }
       />
+      {installing && (
+        <Alert
+          type="info"
+          showIcon
+          message={t(text.INSTALLING)}
+          action={
+            <Button size="small" onClick={() => void api!.stop().catch(() => undefined)}>
+              {t(text.CANCEL)}
+            </Button>
+          }
+        />
+      )}
+      <Modal
+        title={t(text.INSTALL_TITLE)}
+        open={!!installOffer}
+        okText={t(text.INSTALL_ACCEPT)}
+        cancelText={t(text.CANCEL)}
+        onCancel={() => setInstallOffer(undefined)}
+        onOk={() => {
+          if (installOffer) void installAdb(installOffer);
+        }}
+      >
+        <Typography.Paragraph>
+          {t(text.INSTALL_DESC)}
+          {installOffer && (
+            <> Android SDK Platform-Tools {installOffer.version} · {(installOffer.bytes / 1048576).toFixed(1)} MiB.</>
+          )}
+        </Typography.Paragraph>
+        <Typography.Link href={ANDROID_PLATFORM_TOOLS_URL} target="_blank" rel="noreferrer">
+          {t(text.INSTALL_TERMS)}
+        </Typography.Link>
+      </Modal>
       {error && (
         <Alert
           type="warning"

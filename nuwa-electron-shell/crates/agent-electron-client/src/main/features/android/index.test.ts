@@ -12,13 +12,25 @@ import type {
   AgentMcpServer,
 } from "../_kit/agentSessions";
 import { ANDROID_IPC } from "@shared/features/android/contract";
-const mocks = vi.hoisted(() => ({ run: vi.fn(), watch: vi.fn() }));
+const mocks = vi.hoisted(() => ({ run: vi.fn(), watch: vi.fn(), fetch: vi.fn() }));
 const power = new EventEmitter();
 vi.mock("electron", () => ({
+  net: { fetch: mocks.fetch },
   powerMonitor: {
     on: (...args: any[]) => power.on(args[0], args[1]),
     removeListener: (...args: any[]) => power.removeListener(args[0], args[1]),
   },
+}));
+vi.mock("./adbRuntimeRelease", () => ({
+  platformToolsRelease: () => ({
+    version: "37.0.1",
+    platform: "test",
+    url: "https://example.test/platform-tools.zip",
+    bytes: 100,
+    sha256: "",
+    executable: "adb",
+    files: {},
+  }),
 }));
 vi.mock("./adb", async (original) => ({
   ...(await original<object>()),
@@ -59,6 +71,7 @@ function fixture() {
     loseDevice = onLost;
   });
   const ctx = {
+    dataDir: directory,
     session: { isAuthenticated: () => authenticated },
     scratch: createScratchDir(directory),
     activities: { set: vi.fn() },
@@ -155,12 +168,49 @@ describe("Android 特性、MCP 及 Agent 生命周期", () => {
     const f = fixture();
     await Promise.resolve();
     expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
     expect(f.call(ANDROID_IPC.status)).toMatchObject({ enabled: false });
     f.auth(false);
     expect(await f.enable()).toMatchObject({
       enabled: false,
       error: "loginRequired",
     });
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+  it("仅在自动路径缺少 ADB 时给出安装选项，授权前不下载", async () => {
+    const f = fixture();
+    mocks.run.mockRejectedValue(new Error("adbMissing"));
+    expect(await f.call(ANDROID_IPC.discover, path.resolve("adb"))).toMatchObject({
+      error: "adbMissing",
+      install: undefined,
+    });
+    const result = await f.call(ANDROID_IPC.discover, "");
+    expect(result.install).toEqual({ version: "37.0.1", bytes: 100 });
+    expect(await f.call(ANDROID_IPC.install, { version: result.install.version }))
+      .toEqual({ error: "invalidArguments" });
+    f.auth(false);
+    expect(await f.call(ANDROID_IPC.install, {
+      version: result.install.version,
+      acceptedTerms: true,
+    })).toEqual({ error: "loginRequired" });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("停止会中断安装，下载授权不会开启手机控制", async () => {
+    const f = fixture();
+    mocks.fetch.mockImplementation((_url, { signal }: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+    );
+    const installation = f.call(ANDROID_IPC.install, {
+      version: "37.0.1",
+      acceptedTerms: true,
+    });
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalledOnce());
+    expect(f.entry()).toBeNull();
+    await f.call(ANDROID_IPC.stop);
+    expect(await installation).toEqual({ error: "cancelled" });
+    expect(f.call(ANDROID_IPC.status).enabled).toBe(false);
     expect(mocks.run).not.toHaveBeenCalled();
   });
   it("只管理自己的 MCP 条目，保留用户已有 Android 配置", async () => {

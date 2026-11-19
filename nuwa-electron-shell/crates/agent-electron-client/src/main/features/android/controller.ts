@@ -3,6 +3,7 @@ import type { AndroidStatus } from "@shared/features/android/contract";
 import {
   AdbDevice,
   createAdbCommands,
+  isAutomaticAdbPath,
   parseDevices,
   resolveAdbPath,
 } from "./adb";
@@ -21,6 +22,7 @@ export class AndroidController {
     private changed: () => void,
     private readonly adb = createAdbCommands(),
     private now = Date.now,
+    private readonly findManagedAdb: () => Promise<string | null> = async () => null,
   ) {}
   status(): AndroidStatus {
     return {
@@ -51,15 +53,25 @@ export class AndroidController {
   }
   private async inspectDevices(input: string) {
     if (!this.authenticated()) throw new Error("loginRequired");
-    const file = resolveAdbPath(input),
-      abort = new AbortController();
+    let file = resolveAdbPath(input);
+    const abort = new AbortController();
     this.pending.add(abort);
+    const checkVersion = async () => {
+      const version = (await this.adb.run(file, ["version"], abort.signal)).toString();
+      if (!version.includes("Android Debug Bridge version")) throw new Error("adbMissing");
+    };
     try {
-      const version = (
-        await this.adb.run(file, ["version"], abort.signal)
-      ).toString();
-      if (!version.includes("Android Debug Bridge version"))
-        throw new Error("adbMissing");
+      try {
+        await checkVersion();
+      } catch (error) {
+        if (!isAutomaticAdbPath(input) || !(error instanceof Error) || error.message !== "adbMissing")
+          throw error;
+        const managed = await this.findManagedAdb();
+        if (!managed) throw error;
+        if (abort.signal.aborted || !this.authenticated()) throw new Error("cancelled");
+        file = managed;
+        await checkVersion();
+      }
       const devices = parseDevices(
         (await this.adb.run(file, ["devices", "-l"], abort.signal)).toString(),
       );
