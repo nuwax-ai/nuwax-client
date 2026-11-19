@@ -111,13 +111,18 @@ foreach ($mode in @('unfinished', 'wrong-install', 'corrupt', 'link')) {
   if ($mode -eq 'link') { Assert ([IO.File]::ReadAllText("$($protected.parent)\outside\sentinel.txt") -eq 'OUTSIDE') 'Link destination changed' }
   $rows += @{ case = $mode; passed = $true }
 }
-foreach ($mode in @('legacy', 'unknown', 'modified', 'modified-exe', 'modified-uninstaller', 'tampered-inventory', 'modified-registration', 'unproven-registration')) {
+foreach ($mode in @('legacy', 'modified-exe')) {
+  $f = Seed $mode 0 $mode
+  $result = Run 'Cleanup' $f.install $f.state
+  Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($f.backup) -and ![IO.Directory]::Exists((Preserved $f))) ("$mode left obsolete program files: " + $result.output)
+  Assert ([IO.File]::ReadAllText("$($f.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') "$mode changed current installation"
+  $rows += @{ case = ('clean-generated-payload-' + $mode); passed = $true }
+}
+foreach ($mode in @('unknown', 'modified', 'modified-uninstaller', 'tampered-inventory', 'modified-registration', 'unproven-registration')) {
   $f = Seed $mode 0 $mode
   $relative = switch ($mode) {
-    'legacy' { 'entry-000000' }
     'unknown' { 'entry-000001\user-collision.txt' }
     'modified' { 'entry-000001\app.asar' }
-    'modified-exe' { 'entry-000000' }
     'modified-uninstaller' { 'uninstaller-backup.exe' }
     'tampered-inventory' { 'payload-inventory.json' }
     default { 'registration.json' }
@@ -128,9 +133,51 @@ foreach ($mode in @('legacy', 'unknown', 'modified', 'modified-exe', 'modified-u
   Assert ((Hash (Join-Path (Preserved $f) ('files\' + $relative))) -eq $before) "$mode unproven data lost"
   Assert ([IO.File]::Exists((Join-Path (Preserved $f) 'transaction\manifest.jsonl'))) "$mode original path mapping lost"
   Assert ([IO.File]::ReadAllText("$($f.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') "$mode changed current installation"
-  if ($mode -eq 'modified-exe') { Assert (![IO.File]::Exists((Join-Path (Preserved $f) 'files\entry-000001\app.asar'))) 'Verified old application payload was copied instead of deleted' }
   $rows += @{ case = ('preserve-unproven-' + $mode); passed = $true }
 }
+function Archive-LegacyBackup($f) {
+  $archive = Preserved $f
+  $metadata = Join-Path $archive 'transaction'
+  [IO.Directory]::CreateDirectory($metadata) | Out-Null
+  foreach ($name in @('manifest.jsonl', 'payload-inventory.json', 'uninstaller-backup.exe')) {
+    $source = Join-Path $f.backup $name
+    if (![IO.File]::Exists($source)) { continue }
+    [IO.File]::Copy($source, (Join-Path $metadata $name))
+    if ($name -ne 'uninstaller-backup.exe') { [IO.File]::Delete($source) }
+  }
+  [IO.Directory]::Move($f.backup, (Join-Path $archive 'files'))
+  return $archive
+}
+$archived = Seed 'historical-preserved' 30 'legacy'
+Put "$($archived.backup)\entry-000001\installer\installer-monitor.ps1" 'OLD GENERATED MONITOR'
+$archive = Archive-LegacyBackup $archived
+$oldExe = "$archive\files\entry-000000"
+$handle = [IO.File]::Open($oldExe, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+  $result = Run 'Cleanup' $archived.install $archived.state
+  Assert ($result.code -eq 0 -and [IO.File]::Exists($oldExe)) ('Locked archived executable disappeared: ' + $result.output)
+  Assert (![IO.File]::Exists("$archive\files\entry-000001\installer\installer-monitor.ps1")) 'Locked executable blocked other program cleanup'
+  Assert ($result.output -match 'Preserved cleanup: .*inaccessibleEntries=[1-9]') 'Missing incomplete cleanup report'
+} finally { $handle.Dispose() }
+$result = Run 'Cleanup' $archived.install $archived.state
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($archive)) ('Historical archive cleanup did not resume: ' + $result.output)
+$rows += @{ case = 'historical-preserved-lock-and-retry'; passed = $true }
+
+$mixed = Seed 'historical-mixed' 30 'legacy'
+Put "$($mixed.backup)\entry-000001\nuwax-file-server\node_modules\.modules.yaml" 'GENERATED PNPM METADATA'
+Put "$($mixed.backup)\entry-000001\nuwax-file-server\workspace\Nuwax.exe" 'PERSONAL FILE WITH SAME BASENAME'
+$mixedArchive = Archive-LegacyBackup $mixed
+$wrongRoot = Seed 'historical-mixed' 31 'wrong-install'
+$unrelatedArchive = Archive-LegacyBackup $wrongRoot
+$result = Run 'Cleanup' $mixed.install $mixed.state
+$personalFile = "$mixedArchive\files\entry-000001\nuwax-file-server\workspace\Nuwax.exe"
+Assert ($result.code -eq 0 -and [IO.File]::ReadAllText($personalFile) -eq 'PERSONAL FILE WITH SAME BASENAME') ('Historical personal data changed: ' + $result.output)
+Assert (![IO.File]::Exists("$mixedArchive\files\entry-000001\nuwax-file-server\node_modules\.modules.yaml")) 'Historical generated metadata retained'
+Assert ([IO.File]::Exists("$unrelatedArchive\files\entry-000000")) 'Historical archive of another installation changed'
+$left = (Get-ChildItem -LiteralPath $mixedArchive -File -Recurse -Force | Measure-Object -Property Length -Sum).Sum
+Assert ($result.output -match "Preserved cleanup: .*measuredRemainingBytes=$left ") 'Nested personal data was omitted from remaining byte count'
+$rows += @{ case = 'historical-mixed-data-and-installation-isolation'; passed = $true }
+
 $locked = Seed 'locked-user-file' 0 'unknown'
 $handle = [IO.File]::Open("$($locked.backup)\entry-000001\user-collision.txt", [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
