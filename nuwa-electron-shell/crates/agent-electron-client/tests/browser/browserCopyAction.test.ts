@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
   writeText: vi.fn(),
   openExternal: vi.fn(async () => {}),
-  send: vi.fn(),
+  showToast: vi.fn(),
 }));
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -22,7 +22,7 @@ vi.mock("electron", async () => {
         isDestroyed: () => false,
         getURL: () => this.webContents.mainFrame.url,
         setWindowOpenHandler: vi.fn(),
-        send: state.send,
+        send: vi.fn(),
       });
       loadURL = async (url: string) => {
         this.webContents.mainFrame.url = url;
@@ -60,6 +60,9 @@ vi.mock("@main/features/browser/vendor/pageView", () => ({
       this.webContents = options.webContents;
     }
   },
+}));
+vi.mock("@main/features/browser/toast", () => ({
+  createBrowserToast: () => ({ show: state.showToast, dismiss: vi.fn() }),
 }));
 
 let browser: ReturnType<typeof createBrowserWindows> | undefined;
@@ -118,10 +121,7 @@ describe("browser copy action", () => {
     expect(state.writeText).toHaveBeenCalledWith(
       "https://business.example/repo/doc/one?hide_sheet=true#section"
     );
-    expect(state.send).toHaveBeenLastCalledWith(
-      BROWSER_IPC.changed,
-      expect.objectContaining({ copyFeedback: { id: 1, success: true } }),
-    );
+    expect(state.showToast).toHaveBeenLastCalledWith("copyDone", true);
     expect(await run("external")).toBe(true);
     expect(state.openExternal).toHaveBeenCalledWith(
       state.writeText.mock.calls[0][0]
@@ -131,24 +131,15 @@ describe("browser copy action", () => {
     const run = open("http://127.0.0.1:45678/repo/doc/one", "");
     expect(await run("copy")).toBe(false);
     expect(state.writeText).not.toHaveBeenCalled();
-    expect(state.send).toHaveBeenLastCalledWith(
-      BROWSER_IPC.changed,
-      expect.objectContaining({ copyFeedback: { id: 1, success: false } }),
-    );
+    expect(state.showToast).toHaveBeenLastCalledWith("copyFailed", false);
   });
   it("reports clipboard failures and allows a later retry to succeed", async () => {
     const run = open("https://external.example/doc");
     state.writeText.mockImplementationOnce(() => { throw new Error("Clipboard unavailable"); });
     expect(await run("copy")).toBe(false);
-    expect(state.send).toHaveBeenLastCalledWith(
-      BROWSER_IPC.changed,
-      expect.objectContaining({ copyFeedback: { id: 1, success: false } }),
-    );
+    expect(state.showToast).toHaveBeenLastCalledWith("copyFailed", false);
     expect(await run("copy")).toBe(true);
-    expect(state.send).toHaveBeenLastCalledWith(
-      BROWSER_IPC.changed,
-      expect.objectContaining({ copyFeedback: { id: 2, success: true } }),
-    );
+    expect(state.showToast).toHaveBeenLastCalledWith("copyDone", true);
   });
   it("keeps normal external links and their share parameters", async () => {
     const url = "https://external.example/doc?share=read-only#section";

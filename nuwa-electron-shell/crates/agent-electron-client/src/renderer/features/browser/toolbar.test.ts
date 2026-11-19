@@ -84,11 +84,7 @@ async function setup(
     findFocusRequest: 0,
     matches: 0,
     activeMatch: 0,
-    copyFeedback: null,
-    labels: {
-      copyDone: "链接已复制",
-      copyFailed: "复制失败，请重试",
-    },
+    labels: {},
   } as BrowserState;
   return {
     elements,
@@ -169,34 +165,6 @@ describe("browser toolbar actions and feedback", () => {
     expect(f.command).toHaveBeenLastCalledWith({ type: "back" });
     f.elements.get("forward")!.events.get("click")!({});
     expect(f.command).toHaveBeenLastCalledWith({ type: "forward" });
-  });
-
-  it("shows a success toast only for a successful copy result, then dismisses it", async () => {
-    const f = await setup();
-    vi.useFakeTimers();
-    f.update({ copyFeedback: { id: 1, success: true } });
-    expect(f.elements.get("feedbackText")!.textContent).toBe("链接已复制");
-    expect(f.elements.get("feedback")!.hidden).toBe(false);
-    expect(f.elements.get("feedbackSuccess")!.hidden).toBe(false);
-    vi.advanceTimersByTime(2200);
-    expect(f.elements.get("feedback")!.hidden).toBe(true);
-    // Navigation/loading updates must not replay an expired toast.
-    f.update({ loading: true, copyFeedback: { id: 1, success: true } });
-    expect(f.elements.get("feedback")!.hidden).toBe(true);
-  });
-
-  it("refreshes the toast duration on repeated copies and reports a failed copy", async () => {
-    const f = await setup();
-    vi.useFakeTimers();
-    f.update({ copyFeedback: { id: 1, success: true } });
-    vi.advanceTimersByTime(1800);
-    f.update({ copyFeedback: { id: 2, success: false } });
-    vi.advanceTimersByTime(400);
-    expect(f.elements.get("feedback")!.hidden).toBe(false);
-    expect(f.elements.get("feedbackText")!.textContent).toBe("复制失败，请重试");
-    expect(f.elements.get("feedbackSuccess")!.hidden).toBe(true);
-    vi.advanceTimersByTime(1800);
-    expect(f.elements.get("feedback")!.hidden).toBe(true);
   });
 
   it("routes direct actions and anchors the menu beneath the title capsule", async () => {

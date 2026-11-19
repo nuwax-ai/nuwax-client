@@ -45,7 +45,6 @@ export interface BrowserState {
   activeMatch: number;
   labels: Record<string, string>;
   dark: boolean;
-  copyFeedback: { id: number; success: boolean } | null;
 }
 export type BrowserCommand =
   | {
@@ -53,6 +52,7 @@ export type BrowserCommand =
         | "back"
         | "forward"
         | "reload"
+        | "force-reload"
         | "stop"
         | "copy"
         | "external"

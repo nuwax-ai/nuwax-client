@@ -361,6 +361,8 @@ export const I18N_KEYS = {
     more: "Claw.Browser.more",
     pin: "Claw.Browser.pin",
     unpin: "Claw.Browser.unpin",
+    pinDone: "Claw.Browser.pinDone",
+    unpinDone: "Claw.Browser.unpinDone",
     print: "Claw.Browser.print",
     zoom: "Claw.Browser.zoom",
     zoomIn: "Claw.Browser.zoomIn",
