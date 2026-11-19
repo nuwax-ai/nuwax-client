@@ -111,29 +111,12 @@ foreach ($mode in @('unfinished', 'wrong-install', 'corrupt', 'link')) {
   if ($mode -eq 'link') { Assert ([IO.File]::ReadAllText("$($protected.parent)\outside\sentinel.txt") -eq 'OUTSIDE') 'Link destination changed' }
   $rows += @{ case = $mode; passed = $true }
 }
-foreach ($mode in @('legacy', 'modified-exe')) {
+foreach ($mode in @('legacy', 'unknown', 'modified', 'modified-exe', 'modified-uninstaller', 'tampered-inventory', 'modified-registration', 'unproven-registration')) {
   $f = Seed $mode 0 $mode
   $result = Run 'Cleanup' $f.install $f.state
-  Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($f.backup) -and ![IO.Directory]::Exists((Preserved $f))) ("$mode left obsolete program files: " + $result.output)
+  Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($f.backup) -and ![IO.Directory]::Exists((Preserved $f))) ("$mode left a completed archive: " + $result.output)
   Assert ([IO.File]::ReadAllText("$($f.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') "$mode changed current installation"
-  $rows += @{ case = ('clean-generated-payload-' + $mode); passed = $true }
-}
-foreach ($mode in @('unknown', 'modified', 'modified-uninstaller', 'tampered-inventory', 'modified-registration', 'unproven-registration')) {
-  $f = Seed $mode 0 $mode
-  $relative = switch ($mode) {
-    'unknown' { 'entry-000001\user-collision.txt' }
-    'modified' { 'entry-000001\app.asar' }
-    'modified-uninstaller' { 'uninstaller-backup.exe' }
-    'tampered-inventory' { 'payload-inventory.json' }
-    default { 'registration.json' }
-  }
-  $before = Hash (Join-Path $f.backup $relative)
-  $result = Run 'Cleanup' $f.install $f.state
-  Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($f.backup)) ("$mode completed backup retained: " + $result.output)
-  Assert ((Hash (Join-Path (Preserved $f) ('files\' + $relative))) -eq $before) "$mode unproven data lost"
-  Assert ([IO.File]::Exists((Join-Path (Preserved $f) 'transaction\manifest.jsonl'))) "$mode original path mapping lost"
-  Assert ([IO.File]::ReadAllText("$($f.install)\Nuwax.exe") -eq 'CURRENT MUST STAY') "$mode changed current installation"
-  $rows += @{ case = ('preserve-unproven-' + $mode); passed = $true }
+  $rows += @{ case = ('clean-completed-archive-' + $mode); passed = $true }
 }
 function Archive-LegacyBackup($f) {
   $archive = Preserved $f
@@ -157,7 +140,10 @@ try {
   $result = Run 'Cleanup' $archived.install $archived.state
   Assert ($result.code -eq 0 -and [IO.File]::Exists($oldExe)) ('Locked archived executable disappeared: ' + $result.output)
   Assert (![IO.File]::Exists("$archive\files\entry-000001\installer\installer-monitor.ps1")) 'Locked executable blocked other program cleanup'
-  Assert ($result.output -match 'Preserved cleanup: .*inaccessibleEntries=[1-9]') 'Missing incomplete cleanup report'
+  $manifest = Join-Path $archive 'transaction\manifest.jsonl'
+  Assert ([IO.File]::Exists($manifest)) 'Locked archive lost its transaction manifest'
+  $bytesLeft = [IO.FileInfo]::new($oldExe).Length + [IO.FileInfo]::new($manifest).Length
+  Assert ($result.output -match "Preserved cleanup: .*measuredRemainingBytes=$bytesLeft inaccessibleEntries=[1-9]") 'Missing incomplete cleanup report'
 } finally { $handle.Dispose() }
 $result = Run 'Cleanup' $archived.install $archived.state
 Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($archive)) ('Historical archive cleanup did not resume: ' + $result.output)
@@ -165,18 +151,35 @@ $rows += @{ case = 'historical-preserved-lock-and-retry'; passed = $true }
 
 $mixed = Seed 'historical-mixed' 30 'legacy'
 Put "$($mixed.backup)\entry-000001\nuwax-file-server\node_modules\.modules.yaml" 'GENERATED PNPM METADATA'
-Put "$($mixed.backup)\entry-000001\nuwax-file-server\workspace\Nuwax.exe" 'PERSONAL FILE WITH SAME BASENAME'
+Put "$($mixed.backup)\entry-000001\unknown\collision.bin" 'UNCLASSIFIED ARCHIVED FILE'
+[IO.File]::SetAttributes("$($mixed.backup)\entry-000001\unknown\collision.bin", [IO.FileAttributes]::ReadOnly)
+Put "$($mixed.install)\resources\unknown\collision.bin" 'LIVE INSTALL FILE'
 $mixedArchive = Archive-LegacyBackup $mixed
 $wrongRoot = Seed 'historical-mixed' 31 'wrong-install'
 $unrelatedArchive = Archive-LegacyBackup $wrongRoot
+$unfinished = Seed 'historical-mixed' 32 'unfinished'
+$unfinishedArchive = Archive-LegacyBackup $unfinished
+$unverifiedArchive = Join-Path $mixed.parent ('Nuwax-preserved-install-files-20261001T000000Z-' + [Guid]::NewGuid().ToString('N'))
+Put "$unverifiedArchive\sentinel.txt" 'UNVERIFIED DIRECTORY'
 $result = Run 'Cleanup' $mixed.install $mixed.state
-$personalFile = "$mixedArchive\files\entry-000001\nuwax-file-server\workspace\Nuwax.exe"
-Assert ($result.code -eq 0 -and [IO.File]::ReadAllText($personalFile) -eq 'PERSONAL FILE WITH SAME BASENAME') ('Historical personal data changed: ' + $result.output)
-Assert (![IO.File]::Exists("$mixedArchive\files\entry-000001\nuwax-file-server\node_modules\.modules.yaml")) 'Historical generated metadata retained'
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($mixedArchive)) ('Historical archive with unclassified files retained: ' + $result.output)
+Assert ([IO.File]::ReadAllText("$($mixed.install)\resources\unknown\collision.bin") -eq 'LIVE INSTALL FILE') 'Cleanup changed the active installation'
 Assert ([IO.File]::Exists("$unrelatedArchive\files\entry-000000")) 'Historical archive of another installation changed'
-$left = (Get-ChildItem -LiteralPath $mixedArchive -File -Recurse -Force | Measure-Object -Property Length -Sum).Sum
-Assert ($result.output -match "Preserved cleanup: .*measuredRemainingBytes=$left ") 'Nested personal data was omitted from remaining byte count'
-$rows += @{ case = 'historical-mixed-data-and-installation-isolation'; passed = $true }
+Assert ([IO.File]::Exists("$unfinishedArchive\files\entry-000000")) 'Unfinished historical archive changed'
+Assert ([IO.File]::Exists("$unverifiedArchive\sentinel.txt")) 'Archive was deleted based on its name alone'
+$rows += @{ case = 'historical-unclassified-archive-and-installation-isolation'; passed = $true }
+
+$archiveWithLink = Seed 'historical-nested-junction' 30 'legacy'
+$linkedArchive = Archive-LegacyBackup $archiveWithLink
+$outside = Join-Path $archiveWithLink.parent 'outside'
+Put "$outside\sentinel.txt" 'OUTSIDE'
+$null = & cmd.exe /d /c mklink /J "$linkedArchive\files\entry-000001\external" "$outside"
+Assert ($LASTEXITCODE -eq 0) 'Could not create historical archive junction'
+$result = Run 'Cleanup' $archiveWithLink.install $archiveWithLink.state
+Assert ($result.code -eq 0 -and [IO.File]::Exists("$linkedArchive\transaction\manifest.jsonl")) ('Redirected historical archive lost its manifest: ' + $result.output)
+Assert ([IO.File]::ReadAllText("$outside\sentinel.txt") -eq 'OUTSIDE') 'Archive cleanup followed a junction'
+Assert (![IO.File]::Exists("$linkedArchive\files\entry-000000")) 'A junction blocked cleanup of ordinary files in the archive'
+$rows += @{ case = 'historical-archive-junction-not-followed'; passed = $true }
 
 $locked = Seed 'locked-user-file' 0 'unknown'
 $handle = [IO.File]::Open("$($locked.backup)\entry-000001\user-collision.txt", [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
@@ -187,7 +190,7 @@ try {
 } finally { $handle.Dispose() }
 $result = Run 'Cleanup' $locked.install $locked.state
 Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($locked.backup)) ('Retry failed: ' + $result.output)
-Assert ([IO.File]::ReadAllText((Join-Path (Preserved $locked) 'files\entry-000001\user-collision.txt')) -eq 'PERSONAL DATA') 'Retry changed user file'
+Assert (![IO.Directory]::Exists((Preserved $locked))) 'Retry left a completed archive'
 $rows += @{ case = 'locked-user-file-and-safe-retry'; passed = $true }
 $readonly = Seed 'readonly-owned' 0
 [IO.File]::SetAttributes("$($readonly.backup)\entry-000001\app.asar", [IO.FileAttributes]::ReadOnly)
@@ -215,26 +218,11 @@ foreach ($entry in @('transaction', 'files\entry-000001')) {
   Assert (![IO.Directory]::Exists($outside)) 'Cleanup created a dangling link target outside preservation'
   $rows += @{ case = ('dangling-preservation-' + $entry); passed = $true }
 }
-$empty = Seed 'empty-personal-directory' 0
-[IO.Directory]::CreateDirectory("$($empty.backup)\entry-000001\empty-personal-folder") | Out-Null
+$empty = Seed 'empty-archived-directory' 0
+[IO.Directory]::CreateDirectory("$($empty.backup)\entry-000001\empty-folder") | Out-Null
 $result = Run 'Cleanup' $empty.install $empty.state
-Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($empty.backup)) $result.output
-Assert ([IO.Directory]::Exists((Join-Path (Preserved $empty) 'files\entry-000001\empty-personal-folder'))) 'Empty personal directory was lost'
-$rows += @{ case = 'empty-personal-directory-preserved'; passed = $true }
-$repo = Seed 'personal-subtree' 0
-$repoPath = "$($repo.backup)\entry-000001\personal-project"
-Put "$repoPath\.git\objects\pack\pack.idx" 'PERSONAL GIT DATA'
-[IO.Directory]::CreateDirectory("$repoPath\empty-folder") | Out-Null
-[IO.File]::SetAttributes($repoPath, ([IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::Directory))
-$repoAcl = [IO.Directory]::GetAccessControl($repoPath).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)
-$result = Run 'Cleanup' $repo.install $repo.state
-$savedRepo = Join-Path (Preserved $repo) 'files\entry-000001\personal-project'
-Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($repo.backup)) $result.output
-Assert ([IO.File]::ReadAllText("$savedRepo\.git\objects\pack\pack.idx") -eq 'PERSONAL GIT DATA') 'Personal subtree contents were lost'
-Assert ([IO.Directory]::Exists("$savedRepo\empty-folder")) 'Personal subtree empty folder was lost'
-Assert (([IO.File]::GetAttributes($savedRepo) -band [IO.FileAttributes]::Hidden) -ne 0) 'Personal directory attributes changed'
-Assert ([IO.Directory]::GetAccessControl($savedRepo).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All) -eq $repoAcl) 'Personal directory ACL changed'
-$rows += @{ case = 'personal-subtree-structure-attributes-acl-preserved'; passed = $true }
+Assert ($result.code -eq 0 -and ![IO.Directory]::Exists($empty.backup) -and ![IO.Directory]::Exists((Preserved $empty))) ('Empty archived directory remained: ' + $result.output)
+$rows += @{ case = 'empty-archived-directory-removed'; passed = $true }
 $collision = Seed 'preservation-conflict' 0 'unknown'
 Put (Join-Path (Preserved $collision) 'files\entry-000001\user-collision.txt') 'EARLIER PRESERVED DATA'
 $result = Run 'Cleanup' $collision.install $collision.state

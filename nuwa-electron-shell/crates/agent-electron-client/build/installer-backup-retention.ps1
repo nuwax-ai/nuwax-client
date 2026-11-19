@@ -1,7 +1,7 @@
 # Dot-sourced by normalize-old-install.ps1. Ownership comes from the old
 # uninstaller's recorded build inventory or byte-identical files in the new
-# installer's embedded inventory. Completed preservation archives also have
-# an explicit list of generated files whose bytes can differ across releases.
+# installer's embedded inventory. Completed preservation archives are
+# disposable once their transaction and installation path are verified.
 function Assert-RecoveryCleanupMayContinue {
   if ($Action -ne 'Cleanup') { return }
   $held = $false
@@ -145,29 +145,6 @@ public static class NuwaxRecoveryRetentionIO {
   static readonly HashSet<string> Controls = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
     "manifest.jsonl", "payload-inventory.json", "uninstaller-backup.exe", "registration.json"
   };
-  // Exact original paths observed in older Windows packages. The executable
-  // can be signed after inventory generation, and older inventories omitted
-  // the generated runtime files below. Never match by basename or subtree.
-  static readonly HashSet<string> LegacyPayload = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-    "Nuwax.exe",
-    "resources/installer/installer-monitor.ps1",
-    "resources/nuwax-harness-acp-ts/package.json",
-    "resources/nuwax-harness-acp-ts/dist/index.js",
-    "resources/nuwax-file-server/.nuwax-build-cache.json",
-    "resources/nuwax-file-server/node_modules/.modules.yaml"
-  };
-  static readonly HashSet<string> LegacyDirectories = GetLegacyDirectories();
-  static HashSet<string> GetLegacyDirectories() {
-    var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    foreach (string file in LegacyPayload) {
-      string path = file;
-      while (path.LastIndexOf('/') >= 0) {
-        path = path.Substring(0, path.LastIndexOf('/'));
-        directories.Add(path);
-      }
-    }
-    return directories;
-  }
   static void Guard(string path) {
     CheckForeground();
     for (string p = path; !String.IsNullOrEmpty(p); p = Path.GetDirectoryName(p)) {
@@ -257,84 +234,43 @@ public static class NuwaxRecoveryRetentionIO {
       if (FirstError == null) FirstError = error.Message;
     }
   }
-  static bool RemoveArchivedFile(string file, string original, string metadata,
-      Dictionary<string,HashSet<string>> hashes, Dictionary<string,string> controls) {
-    if (original != null && LegacyPayload.Contains(original)) {
-      RemoveFile(file);
-      return true;
-    }
-    HashSet<string> expected;
-    if (original != null && hashes.TryGetValue(original, out expected)) {
-      string actual = Hash(file);
-      if (!expected.Contains(actual)) return false;
-      RemoveVerified(file, actual);
-      return true;
-    }
-    // Older installers stored the generated uninstaller both as payload and
-    // as a transaction control. For archives predating the digest, use the
-    // matching transaction copy. A recorded digest always takes precedence.
-    if (metadata != null && String.Equals(Path.GetFileName(file), "uninstaller-backup.exe", StringComparison.OrdinalIgnoreCase)) {
-      string digest;
-      if (!controls.TryGetValue("uninstaller-backup.exe", out digest))
-        digest = Hash(Path.Combine(metadata, "uninstaller-backup.exe"));
-      if (Hash(file) != digest) return false;
-      RemoveVerified(file, digest);
-      return true;
-    }
-    return false;
-  }
-  public static PreservedCleanupResult PrunePreserved(string root, Dictionary<string,string> moves,
-      Dictionary<string,HashSet<string>> hashes, HashSet<string> ownedDirectories, Dictionary<string,string> controls) {
-    Guard(root);
-    string metadata = Path.Combine(root, "transaction");
-    Guard(metadata);
-    string files = Path.Combine(root, "files");
-    GuardDestination(files);
-    var result = new PreservedCleanupResult();
-    var pending = new Stack<KeyValuePair<string,string>>();
-    var directories = new Stack<string>();
-    foreach (string entry in Directory.GetFileSystemEntries(root)) {
-      if (!String.Equals(entry, files, StringComparison.OrdinalIgnoreCase))
-        pending.Push(new KeyValuePair<string,string>(entry, null));
-    }
-    if (Directory.Exists(files)) {
-      directories.Push(files);
-      foreach (string entry in Directory.GetFileSystemEntries(files)) {
-        string original;
-        moves.TryGetValue(Path.GetFileName(entry), out original);
-        pending.Push(new KeyValuePair<string,string>(entry, original));
+  static void RemoveArchivedFile(string file) {
+    for (int attempt = 0; ; attempt++) {
+      try { RemoveFile(file); return; }
+      catch (IOException error) {
+        int code = error.HResult & 0xffff;
+        if (attempt == 2 || (code != 32 && code != 33)) throw;
+        CheckForeground();
+        Thread.Sleep(200);
       }
-    } else if (File.Exists(files)) {
-      throw new IOException("Preserved payload is not a directory.");
     }
+  }
+  public static PreservedCleanupResult PrunePreserved(string root, string manifest, string manifestHash) {
+    Guard(root);
+    Guard(manifest);
+    string transaction = Path.GetDirectoryName(manifest);
+    long manifestLength = new FileInfo(manifest).Length;
+    var result = new PreservedCleanupResult { RemainingBytes = manifestLength };
+    var pending = new Stack<string>();
+    var directories = new Stack<string>();
+    pending.Push(root);
     while (pending.Count != 0) {
-      var entry = pending.Pop();
+      string entry = pending.Pop();
       long length = 0;
       try {
-        Guard(entry.Key);
-        if ((File.GetAttributes(entry.Key) & FileAttributes.Directory) != 0) {
-          if (entry.Value != null && (ownedDirectories.Contains(entry.Value) || LegacyDirectories.Contains(entry.Value)))
-            directories.Push(entry.Key);
-          foreach (string child in Directory.GetFileSystemEntries(entry.Key))
-            pending.Push(new KeyValuePair<string,string>(child, entry.Value == null ? null : entry.Value + "/" + Path.GetFileName(child)));
+        Guard(entry);
+        if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0) {
+          if (!String.Equals(entry, root, StringComparison.OrdinalIgnoreCase) &&
+              !String.Equals(entry, transaction, StringComparison.OrdinalIgnoreCase)) directories.Push(entry);
+          foreach (string child in Directory.GetFileSystemEntries(entry))
+            if (!String.Equals(child, manifest, StringComparison.OrdinalIgnoreCase)) pending.Push(child);
           continue;
         }
-        length = new FileInfo(entry.Key).Length;
-        string controlDirectory = String.Equals(Path.GetDirectoryName(entry.Key), files, StringComparison.OrdinalIgnoreCase) ? metadata : null;
-        bool removed = false;
-        for (int attempt = 0; attempt < 3; attempt++) {
-          try { removed = RemoveArchivedFile(entry.Key, entry.Value, controlDirectory, hashes, controls); break; }
-          catch (IOException error) {
-            int code = error.HResult & 0xffff;
-            if (attempt == 2 || (code != 32 && code != 33)) throw;
-            CheckForeground();
-            Thread.Sleep(200);
-          }
-        }
-        if (removed) { result.DeletedBytes += length; continue; }
-      } catch (IOException error) { result.RecordError(error); }
-        catch (UnauthorizedAccessException error) { result.RecordError(error); }
-      result.RemainingBytes += length;
+        length = new FileInfo(entry).Length;
+        RemoveArchivedFile(entry);
+        result.DeletedBytes += length;
+      } catch (IOException error) { result.RecordError(error); result.RemainingBytes += length; }
+        catch (UnauthorizedAccessException error) { result.RecordError(error); result.RemainingBytes += length; }
     }
     foreach (string directory in directories) {
       try {
@@ -343,12 +279,10 @@ public static class NuwaxRecoveryRetentionIO {
       } catch (IOException error) { result.RecordError(error); }
         catch (UnauthorizedAccessException error) { result.RecordError(error); }
     }
-    Guard(root);
-    if (result.InaccessibleEntries != 0 || Directory.GetFileSystemEntries(root).Length != 1) return result;
+    if (result.InaccessibleEntries != 0) return result;
 
-    // Retain the mapping while any payload or unknown transaction file exists.
-    // Hold the foreground mutex for this short final step, keeping the manifest
-    // until the last removal so a failed metadata cleanup can resume.
+    // Keep the manifest while files are inaccessible or a foreground install
+    // needs the lock. The next successful install can resume the same archive.
     bool finishing = false;
     try {
       if (ForegroundMutex != null) {
@@ -356,40 +290,23 @@ public static class NuwaxRecoveryRetentionIO {
         catch (AbandonedMutexException) { finishing = true; }
         if (!finishing) throw new OperationCanceledException("An installation operation is waiting for backup cleanup.");
       }
-      var verified = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
-      Guard(metadata);
-      foreach (string entry in Directory.GetFileSystemEntries(metadata)) {
-        Guard(entry);
-        string name = Path.GetFileName(entry);
-        string digest;
-        if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0) return result;
-        if (!controls.TryGetValue(name, out digest)) {
-          if (!String.Equals(name, "uninstaller-backup.exe", StringComparison.OrdinalIgnoreCase)) return result;
-          digest = Hash(entry);
-        }
-        if (Hash(entry) != digest) return result;
-        verified.Add(entry, digest);
-      }
-      string manifest = Path.Combine(metadata, "manifest.jsonl");
-      if (!verified.ContainsKey(manifest)) return result;
-      foreach (var entry in verified) {
-        if (!String.Equals(entry.Key, manifest, StringComparison.OrdinalIgnoreCase))
-          RemoveArchivedControl(entry.Key, entry.Value, result);
-      }
-      RemoveArchivedControl(manifest, verified[manifest], result);
-      Directory.Delete(metadata, false);
+      Guard(root);
+      Guard(transaction);
+      var rootEntries = Directory.GetFileSystemEntries(root);
+      var transactionEntries = Directory.GetFileSystemEntries(transaction);
+      if (rootEntries.Length != 1 || !String.Equals(rootEntries[0], transaction, StringComparison.OrdinalIgnoreCase) ||
+          transactionEntries.Length != 1 || !String.Equals(transactionEntries[0], manifest, StringComparison.OrdinalIgnoreCase))
+        throw new IOException("Preserved archive contents changed during cleanup.");
+      RemoveVerified(manifest, manifestHash);
+      result.DeletedBytes += manifestLength;
+      result.RemainingBytes -= manifestLength;
+      Directory.Delete(transaction, false);
       Directory.Delete(root, false);
       result.Removed = true;
     } catch (IOException error) { result.RecordError(error); }
       catch (UnauthorizedAccessException error) { result.RecordError(error); }
     finally { if (finishing) ForegroundMutex.ReleaseMutex(); }
     return result;
-  }
-  static void RemoveArchivedControl(string path, string digest, PreservedCleanupResult result) {
-    long length = new FileInfo(path).Length;
-    RemoveVerified(path, digest);
-    result.DeletedBytes += length;
-    result.RemainingBytes -= length;
   }
   public static CleanupResult Prune(string root, Dictionary<string,string> moves,
       Dictionary<string,HashSet<string>> hashes, HashSet<string> ownedDirectories,
@@ -574,6 +491,32 @@ function Invoke-RecoveryRetentionPass([string]$InstallRoot, [string]$RecoveryPar
           @($history | Where-Object { $_.status -eq 'complete' }).Count -eq 0) {
         $Totals.retained++; Write-Output "$label retained: $plainFolder; reason=unfinished-transaction"; continue
       }
+      $moves = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+      $originals = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+      foreach ($record in $history) {
+        Assert-RecoveryCleanupMayContinue
+        if ($record.status -ne 'planned') { continue }
+        $originalName = [IO.Path]::GetFileName([string]$record.original)
+        if (-not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.original), $InstallRoot, $pathComparison) -or
+            -not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.backup), $recovery, $pathComparison) -or
+            [IO.Path]::GetFileName([string]$record.backup) -notmatch '^entry-[0-9]{6,}$' -or
+            -not [NuwaxRecoveryRetentionIO]::ValidRelative($originalName) -or -not $originals.Add($originalName)) { throw 'Invalid recovery move.' }
+        $moves.Add([IO.Path]::GetFileName([string]$record.backup), $originalName)
+      }
+      if ($Preserved) {
+        $result = [NuwaxRecoveryRetentionIO]::PrunePreserved($folder, $manifest, $manifestHash)
+        $Totals.deletedBytes += $result.DeletedBytes
+        $Totals.remainingBytes += $result.RemainingBytes
+        $Totals.inaccessibleEntries += $result.InaccessibleEntries
+        if ($result.Removed) {
+          $Totals.deleted++
+          Write-Output "Preserved archive deleted: $plainFolder; deletedBytes=$($result.DeletedBytes)"
+        } else {
+          $Totals.retained++
+          Write-Output "Preserved archive retained: $plainFolder; reason=$($result.FirstError); deletedBytes=$($result.DeletedBytes); measuredRemainingBytes=$($result.RemainingBytes); inaccessibleEntries=$($result.InaccessibleEntries)"
+        }
+        continue
+      }
       $hashes = [Collections.Generic.Dictionary[string,Collections.Generic.HashSet[string]]]::new([StringComparer]::OrdinalIgnoreCase)
       $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
       Add-RecoveryInventoryHashes $currentInventory $hashes $directories
@@ -590,44 +533,18 @@ function Invoke-RecoveryRetentionPass([string]$InstallRoot, [string]$RecoveryPar
           $controls.Add('payload-inventory.json', $lastProof.sha256)
         }
       }
-      $moves = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-      $originals = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-      foreach ($record in $history) {
-        Assert-RecoveryCleanupMayContinue
-        if ($record.status -ne 'planned') { continue }
-        $originalName = [IO.Path]::GetFileName([string]$record.original)
-        if (-not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.original), $InstallRoot, $pathComparison) -or
-            -not [string]::Equals([IO.Path]::GetDirectoryName([string]$record.backup), $recovery, $pathComparison) -or
-            [IO.Path]::GetFileName([string]$record.backup) -notmatch '^entry-[0-9]{6,}$' -or
-            -not [NuwaxRecoveryRetentionIO]::ValidRelative($originalName) -or -not $originals.Add($originalName)) { throw 'Invalid recovery move.' }
-        $moves.Add([IO.Path]::GetFileName([string]$record.backup), $originalName)
-      }
       $registrationProof = @($history | Where-Object { $_.status -eq 'registration-snapshot-recorded' })
       if ($registrationProof.Count -gt 0) {
         $digest = [BitConverter]::ToString([Convert]::FromBase64String($registrationProof[-1].sha256)).Replace('-', '').ToLowerInvariant()
         if ($digest -notmatch '^[a-f0-9]{64}$') { throw 'Invalid registration snapshot digest.' }
         $controls.Add('registration.json', $digest)
       }
-      if ($Preserved) {
-        $result = [NuwaxRecoveryRetentionIO]::PrunePreserved($folder, $moves, $hashes, $directories, $controls)
-        $Totals.remainingBytes += $result.RemainingBytes
-        $Totals.inaccessibleEntries += $result.InaccessibleEntries
-        if ($result.Removed) {
-          $Totals.deleted++
-          Write-Output "Preserved archive deleted: $plainFolder; deletedBytes=$($result.DeletedBytes)"
-        } else {
-          $Totals.retained++
-          $reason = if ($result.FirstError) { $result.FirstError } else { 'unclassified-content' }
-          Write-Output "Preserved archive retained: $plainFolder; reason=$reason; deletedBytes=$($result.DeletedBytes); measuredRemainingBytes=$($result.RemainingBytes); inaccessibleEntries=$($result.InaccessibleEntries)"
-        }
-      } else {
-        $archivePath = [IO.Path]::Combine((Get-ExtendedPath $RecoveryParent), ('Nuwax-preserved-install-files-' + $id))
-        $result = [NuwaxRecoveryRetentionIO]::Prune($folder, $moves, $hashes, $directories, $controls, $archivePath)
-        $Totals.deleted++
-        Write-Output "Backup deleted: $plainFolder; reason=completed-installation; deletedBytes=$($result.DeletedBytes)"
-        if ($result.PreservedFiles -gt 0) { Write-Output "Unproven entries transferred: $($archivePath.Substring(4)); entries=$($result.PreservedFiles); original paths are in transaction\manifest.jsonl" }
-      }
+      $archivePath = [IO.Path]::Combine((Get-ExtendedPath $RecoveryParent), ('Nuwax-preserved-install-files-' + $id))
+      $result = [NuwaxRecoveryRetentionIO]::Prune($folder, $moves, $hashes, $directories, $controls, $archivePath)
+      $Totals.deleted++
       $Totals.deletedBytes += $result.DeletedBytes
+      Write-Output "Backup deleted: $plainFolder; reason=completed-installation; deletedBytes=$($result.DeletedBytes)"
+      if ($result.PreservedFiles -gt 0) { Write-Output "Unproven entries transferred: $($archivePath.Substring(4)); entries=$($result.PreservedFiles)" }
     } catch {
       Assert-RecoveryCleanupMayContinue
       $Totals.retained++
