@@ -44,13 +44,13 @@ importers:
         version: 1.27.1(zod@3.25.76)
       '@nuwax-ai/agent-kit':
         specifier: file:../agent-kit
-        version: file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.46)
+        version: file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.47)
       '@nuwax-ai/mcp-proxy-ts':
         specifier: 1.5.4
         version: 1.5.4(zod@3.25.76)
       '@nuwax-ai/nuwax-harness-acp-ts':
-        specifier: ^1.2.46
-        version: 1.2.46
+        specifier: ^1.2.47
+        version: 1.2.47
       '@uiw/react-json-view':
         specifier: 2.0.0-alpha.42
         version: 2.0.0-alpha.42(@babel/runtime@7.29.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -1162,8 +1162,8 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
-  '@nuwax-ai/nuwax-harness-acp-ts@1.2.46':
-    resolution: {integrity: sha512-dpFx+/BWduury23vlUCzqBV7vHVoNB8QUbHpiSc3oHqJUnaG4P43emCm4ney4BcikwmrRcspicSoW/nxExeIqQ==}
+  '@nuwax-ai/nuwax-harness-acp-ts@1.2.47':
+    resolution: {integrity: sha512-NMDqulcoXeLNE3pfIPhF4J8UM1DXMFDLrqnV4oyLKRYLK5Jcz9/JqFK36F1SUacH3VymtT+C3feqZGj3iEfcLA==}
     hasBin: true
 
   '@nuwax-ai/nuwax-harness@0.18.54':
@@ -5452,10 +5452,10 @@ snapshots:
       mkdirp: 1.0.4
       rimraf: 3.0.2
 
-  '@nuwax-ai/agent-kit@file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.46)':
+  '@nuwax-ai/agent-kit@file:crates/agent-kit(@agentclientprotocol/sdk@0.26.0(zod@3.25.76))(@nuwax-ai/nuwax-harness-acp-ts@1.2.47)':
     dependencies:
       '@agentclientprotocol/sdk': 0.26.0(zod@3.25.76)
-      '@nuwax-ai/nuwax-harness-acp-ts': 1.2.46
+      '@nuwax-ai/nuwax-harness-acp-ts': 1.2.47
 
   '@nuwax-ai/mcp-proxy-ts@1.5.4(zod@3.25.76)':
     dependencies:
@@ -5465,7 +5465,7 @@ snapshots:
       - supports-color
       - zod
 
-  '@nuwax-ai/nuwax-harness-acp-ts@1.2.46':
+  '@nuwax-ai/nuwax-harness-acp-ts@1.2.47':
     dependencies:
       '@agentclientprotocol/sdk': 2.4.0(zod@4.6.7)
       '@nuwax-ai/nuwax-harness': 0.18.54

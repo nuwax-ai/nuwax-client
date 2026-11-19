@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isAcpMethodNotFoundError,
   isAcpSessionModelSyncMethodNotFound,
+  resolveTargetModelForChat,
 } from "./acpSessionModelSync";
 
 describe("isAcpMethodNotFoundError", () => {
@@ -58,5 +59,23 @@ describe("isAcpSessionModelSyncMethodNotFound", () => {
         "setSessionConfigOption",
       ),
     ).toBe(false);
+  });
+});
+
+describe("resolveTargetModelForChat (harness 开关)", () => {
+  const prefixed = {
+    model_provider: { model: "openai-compatible/kimi-k3" },
+  } as unknown as Parameters<typeof resolveTargetModelForChat>[0];
+
+  it("默认（nuwaxcode）保留 openai-compatible/ 前缀", () => {
+    expect(resolveTargetModelForChat(prefixed, null)).toBe(
+      "openai-compatible/kimi-k3",
+    );
+  });
+
+  it("强制 nuwax-harness 时去掉前缀，交给 set_session_model 的是引擎 slug", () => {
+    expect(
+      resolveTargetModelForChat(prefixed, null, { stripProviderPrefix: true }),
+    ).toBe("kimi-k3");
   });
 });

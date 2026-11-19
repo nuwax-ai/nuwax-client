@@ -64,6 +64,7 @@ export function normalizeModelSyncErrorMessage(input: {
 export function resolveTargetModelForChat(
   request: ComputerChatRequest,
   config: SessionModelConfigLike | null | undefined,
+  options?: { stripProviderPrefix?: boolean },
 ): string | null {
   const requestModel =
     request.model_provider?.model || request.model_provider?.default_model;
@@ -78,9 +79,15 @@ export function resolveTargetModelForChat(
       config?.env?.ANTHROPIC_MODEL ||
       config?.model,
   });
-  return (
-    resolved?.rawModel || requestModel || envModel || config?.model || null
-  );
+  // The session model option (unstable_setSessionModel / setSessionConfigOption)
+  // must carry the engine's model id. A forced nuwax-harness engine serves the
+  // raw slug (`kimi-k3`), so the platform's `openai-compatible/` prefix has to
+  // go there too; nuwaxcode keeps the prefixed id. Everything else (env,请求体)
+  // already uses the provider model.
+  const model = options?.stripProviderPrefix
+    ? resolved?.providerModel
+    : resolved?.rawModel;
+  return model || requestModel || envModel || config?.model || null;
 }
 
 export function resolveCurrentSessionModelId(

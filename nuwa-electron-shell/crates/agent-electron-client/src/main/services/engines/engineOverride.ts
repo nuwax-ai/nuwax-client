@@ -9,7 +9,11 @@
  *   2. 删 DevToolsPanel 里的 Force 开关行与「Agent Engine Testing」卡片；
  *   3. 删 SettingsPage 的 devToolsVisible 门控（含读 update_channel 的 effect），
  *      恢复为直接渲染 DevToolsPanel；
- *   4. 删 shared/constants.ts 的 DEV_FORCE_ENGINE_SETTING_KEY / DEV_FORCE_ENGINE_HARNESS。
+ *   4. 删 shared/constants.ts 的 DEV_FORCE_ENGINE_SETTING_KEY / DEV_FORCE_ENGINE_HARNESS；
+ *   5. 删 acpEngine.ts 里 model sync 的 `stripProviderPrefix` 传参及其对
+ *      `isHarnessEngineCommand` 的 import，删 acpSessionModelSync.ts 的
+ *      `stripProviderPrefix` 选项并恢复 `resolveTargetModelForChat` 返回
+ *      `resolved?.rawModel`（临时模型前缀转换随本开关一起下线）。
  *
  * 不属于本模块、不要随之删除的：harness 适配器的 env 组装（NUWAX_PATH、协议族、
  * CLAUDE_CODE_DISABLE_THINKING 映射）在 acpClient 的 codex 分支，那是适配器集成
@@ -46,6 +50,19 @@ export function resolveForcedEngineSource(): string {
   const setting = readSetting(DEV_FORCE_ENGINE_SETTING_KEY);
   const fromSetting = typeof setting === "string" ? setting.trim() : "";
   return process.env.NUWACLAW_FORCE_ENGINE || fromSetting;
+}
+
+/**
+ * 该请求最终交给的是否是 nuwax-harness 适配器。
+ *
+ * 判断的是**请求上已解析出的命令**（`applyForcedEngineToRequest` 会把开关
+ * 改写到 `agent_server.command`），而不是全局设置：已存在的旧会话仍跑
+ * nuwaxcode 时不会误判。测试期专用——harness 的模型 id 是引擎 slug
+ * （`kimi-k3`），后端下发的是 nuwaxcode 的 `openai-compatible/kimi-k3`，
+ * 只有走 harness 时才需要对齐（见 acpEngine 的 model sync）。
+ */
+export function isHarnessEngineCommand(command: string | null | undefined): boolean {
+  return typeof command === "string" && command.trim() === DEV_FORCE_ENGINE_HARNESS;
 }
 
 /**

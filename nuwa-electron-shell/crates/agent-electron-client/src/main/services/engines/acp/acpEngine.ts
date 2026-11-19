@@ -33,6 +33,7 @@ import {
   resolveTargetModelForChat,
   normalizeModelSyncErrorMessage,
 } from "./acpSessionModelSync";
+import { isHarnessEngineCommand } from "../engineOverride";
 import { normalizePromptErrorForDisplay } from "./acpPromptErrorNormalizer";
 import {
   isPersistentIsolatedHome,
@@ -2102,7 +2103,14 @@ export class AcpEngine extends EventEmitter {
       if (session.acpSessionId) {
         // agent_mode → 本地权限审批；不调用 ACP session/set_mode（引擎保持默认 mode）
         this.syncSessionModeForChat(session.acpSessionId, effectiveMode);
-        const targetModelId = resolveTargetModelForChat(request, this.config);
+        const targetModelId = resolveTargetModelForChat(request, this.config, {
+          // 临时（随 Force Nuwax Harness Engine 开关一起删除）：本次请求最终
+          // 跑 harness 时，模型 id 用引擎 slug（去掉 `openai-compatible/`
+          // 前缀）；nuwaxcode 路径保持原样。正式接入由后端按 harness 规范下发。
+          stripProviderPrefix: isHarnessEngineCommand(
+            request.agent_config?.agent_server?.command,
+          ),
+        });
         await this.syncSessionModelForChat(
           session.acpSessionId,
           targetModelId,

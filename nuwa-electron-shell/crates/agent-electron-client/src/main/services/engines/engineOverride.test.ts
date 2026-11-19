@@ -17,6 +17,7 @@ vi.mock("../../db", () => ({ readSetting: (key: string) => readSetting(key) }));
 import {
   applyForcedEngineToRequest,
   isEngineOverrideAllowed,
+  isHarnessEngineCommand,
   DEV_FORCE_ENGINE_HARNESS,
   DEV_FORCE_ENGINE_SETTING_KEY,
 } from "./engineOverride";
@@ -108,5 +109,19 @@ describe("applyForcedEngineToRequest", () => {
     };
     expect(applyForcedEngineToRequest(request)).toBeNull();
     expect(request.agent_config?.agent_server?.command).toBe("claude-code-acp-ts");
+  });
+});
+
+describe("isHarnessEngineCommand", () => {
+  it("识别 harness 适配器命令（允许首尾空白）", () => {
+    expect(isHarnessEngineCommand(DEV_FORCE_ENGINE_HARNESS)).toBe(true);
+    expect(isHarnessEngineCommand(`  ${DEV_FORCE_ENGINE_HARNESS}  `)).toBe(true);
+  });
+
+  it("nuwaxcode / 空值 / 非字符串都不算 harness", () => {
+    expect(isHarnessEngineCommand("nuwaxcode")).toBe(false);
+    expect(isHarnessEngineCommand(undefined)).toBe(false);
+    expect(isHarnessEngineCommand(null)).toBe(false);
+    expect(isHarnessEngineCommand("")).toBe(false);
   });
 });
