@@ -1012,11 +1012,13 @@ export async function createAcpConnection(
       // NUWAX_MODEL_REASONING_EFFORT（单一策略源）。
     } else if (apiProtocol === "responses" && !backend.wireApi && !backend.apiProtocol) {
       // 后端 model_provider.api_protocol=responses：端点本就是 OpenAI
-      // Responses 协议，直连引擎原生 Responses 线，跳过 chat 翻译默认
-      // （如智谱官方 open.bigmodel.cn/api/v1）。
+      // Responses 协议（如智谱官方 open.bigmodel.cn/api/v1）。
+      // 适配器 1.2.47 起 OpenAI 家族默认是 chat，这里必须显式下发 responses，
+      // 不能再靠"省略变量"依赖适配器旧默认，否则会静默走 chat。
       // agent_config.env 显式下发 NUWAX_WIRE_API / NUWAX_API_PROTOCOL 时仍以其为准。
+      env.NUWAX_WIRE_API = "responses";
       log.info(
-        `[AcpClient] codex: provider api_protocol=responses; skipping the chat translation default`,
+        `[AcpClient] codex: provider api_protocol=responses; NUWAX_WIRE_API=responses`,
       );
     } else {
       env.NUWAX_WIRE_API = backend.wireApi || "chat";
