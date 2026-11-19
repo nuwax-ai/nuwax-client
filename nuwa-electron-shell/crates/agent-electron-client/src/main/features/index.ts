@@ -39,6 +39,7 @@ import type {
 import { computerUseFeature } from "./computer-use";
 import { captureFeature } from "./capture";
 import { browserFeature } from "./browser";
+import { androidFeature } from "./android";
 import { localFilesFeature } from "./local-files";
 
 export type { SessionEndReason, ActivityEntry, AgentSessions, AgentTurn, AgentSessionParticipant };
@@ -50,6 +51,7 @@ export const desktopFeatures: readonly DesktopFeature[] = [
   captureFeature,
   localFilesFeature,
   browserFeature,
+  androidFeature,
 ];
 
 /** 宿主仅供壳渲染进程读取已注册特性（用于显示/隐藏入口）。 */
@@ -77,6 +79,7 @@ export interface StartFeaturesOptions {
   log: FeatureLogger;
   translate?(key: string): string;
   host?: FeatureHostServices;
+  getAppEnv?(): NodeJS.ProcessEnv;
   workspace?: FeatureWorkspaceServices;
   permissions?: FeaturePermissionServices;
 }
@@ -156,6 +159,7 @@ export function startDesktopFeatures(
     dataDir: nodePath.join(options.dataDir, feature.id),
     log: options.log,
     translate: options.translate,
+    getAppEnv: options.getAppEnv,
     settings: host.settings,
     session: host.session,
     windows: host.windows,

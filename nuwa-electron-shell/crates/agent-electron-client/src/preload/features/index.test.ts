@@ -12,12 +12,12 @@ import { HOST_CAPTURE_MENU_IPC } from "@shared/features/capture/contract";
 describe("命名空间汇总", () => {
   const ipc = { invoke: vi.fn(), on: vi.fn(), removeListener: vi.fn() } as never;
 
-  it("业务页命名空间包含 capture 与 localFiles", () => {
+  it("业务页保留既有命名空间，不能调用 Android 控制", () => {
     expect(Object.keys(featureNamespaces(ipc))).toEqual(["browser", "capture", "localFiles"]);
   });
 
-  it("宿主壳通过独立通道提供 computerUse/features/capture，不再暴露声明桥", () => {
-    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["browser", "computerUse", "features", "capture"]);
+  it("宿主壳通过独立通道提供 Android 与既有特性", () => {
+    expect(Object.keys(hostFeatureNamespaces(ipc))).toEqual(["browser", "android", "computerUse", "features", "capture"]);
   });
 
   it("canUse 特性侧探测按命名空间归属派发，非特性命名空间返回 null", async () => {

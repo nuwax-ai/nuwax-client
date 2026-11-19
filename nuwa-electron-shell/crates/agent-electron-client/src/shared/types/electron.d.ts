@@ -727,6 +727,7 @@ export interface QuickInitAPI {
 }
 
 export interface ElectronAPI {
+  android: import('../features/android/contract').AndroidBridge;
   browser: import('../features/browser/contract').BrowserBridge;
   capture: HostCaptureBridge;
   /** 已注册的桌面特性 id（用于显示/隐藏宿主壳入口）。 */

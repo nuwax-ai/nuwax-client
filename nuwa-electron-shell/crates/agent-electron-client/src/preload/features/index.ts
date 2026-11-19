@@ -13,6 +13,7 @@ import { createCaptureBridge, captureCapabilityProbe } from "./capture";
 import { createLocalFilesBridge, localFilesCapabilityProbe } from "./local-files";
 import { createComputerUseBridge } from "./computer-use";
 import { createBrowserBridge } from './browser';
+import { createAndroidBridge } from './android';
 
 export interface FeatureNamespaces {
   browser: ReturnType<typeof createBrowserBridge>;
@@ -21,6 +22,7 @@ export interface FeatureNamespaces {
 }
 
 export interface HostFeatureNamespaces {
+  android: ReturnType<typeof createAndroidBridge>;
   browser: ReturnType<typeof createBrowserBridge>;
   capture: HostCaptureBridge;
   computerUse: ComputerUseAPI;
@@ -38,6 +40,7 @@ export function hostFeatureNamespaces(
 ): HostFeatureNamespaces {
   return {
     browser: createBrowserBridge(ipc, true),
+    android: createAndroidBridge(ipc),
     computerUse: createComputerUseBridge(ipc),
     features: { registered: () => ipc.invoke("features:registered") as Promise<string[]> },
     capture: {
