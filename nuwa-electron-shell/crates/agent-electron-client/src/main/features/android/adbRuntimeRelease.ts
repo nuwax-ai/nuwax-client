@@ -1,15 +1,15 @@
 import type { AdbRuntimeRelease } from "./adbRuntime";
 
-// The versioned Google archives match the sizes and SHA-1 values in
-// https://dl.google.com/android/repository/repository2-1.xml.
-// Pin SHA-256 for both the archives and the files we install.
+// Pin the mirrored archives and installed files to the verified upstream bytes.
+// Upstream catalogue: https://dl.google.com/android/repository/repository2-1.xml
 const VERSION = "37.0.1";
-const REPOSITORY = "https://dl.google.com/android/repository/";
+const MIRROR = "https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/dependencies/adb";
+const RELEASE = `${MIRROR}/${VERSION}/platform-tools_r${VERSION}`;
 const releases = {
   darwin: {
     version: VERSION,
     platform: "darwin",
-    url: REPOSITORY + "platform-tools_r" + VERSION + "-darwin.zip",
+    url: RELEASE + "-darwin.zip",
     bytes: 16110554,
     sha256: "ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d",
     executable: "adb",
@@ -27,7 +27,7 @@ const releases = {
   win32: {
     version: VERSION,
     platform: "win32",
-    url: REPOSITORY + "platform-tools_r" + VERSION + "-win.zip",
+    url: RELEASE + "-win.zip",
     bytes: 8044989,
     sha256: "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99",
     executable: "adb.exe",
@@ -57,7 +57,7 @@ const releases = {
   linux: {
     version: VERSION,
     platform: "linux",
-    url: REPOSITORY + "platform-tools_r" + VERSION + "-linux.zip",
+    url: RELEASE + "-linux.zip",
     bytes: 9054187,
     sha256: "d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1",
     executable: "adb",

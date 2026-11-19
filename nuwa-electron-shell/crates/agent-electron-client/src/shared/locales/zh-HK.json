@@ -1484,7 +1484,7 @@
   "Claw.Android.consent": "智慧體可以查看此手機的螢幕，並進行點擊、滑動、按鍵和英文文字輸入。請保護手機上的私人內容；需要接管時，先點擊「停止手機操作」。此次允許僅在目前的客戶端登入期間有效。",
   "Claw.Android.installTitle": "安裝 ADB",
   "Claw.Android.installAccept": "同意並安裝",
-  "Claw.Android.installDesc": "手機控制需要 ADB。將從 Google 下載",
+  "Claw.Android.installDesc": "手機控制需要 ADB。將從 Nuwax 下載",
   "Claw.Android.installTerms": "Android SDK 使用條款",
   "Claw.Android.installing": "正在安裝 ADB…",
   "Claw.Android.errors.adbInstallFailed": "ADB 安裝失敗。請檢查網絡後重試，或輸入本機 ADB 的路徑。",

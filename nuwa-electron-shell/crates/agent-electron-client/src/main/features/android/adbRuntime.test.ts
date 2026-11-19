@@ -5,6 +5,7 @@ import path from "node:path";
 import AdmZip from "adm-zip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAdbRuntime } from "./adbRuntime";
+import { platformToolsRelease } from "./adbRuntimeRelease";
 
 const executable = Buffer.from("validated Android Debug Bridge");
 const library = Buffer.from("validated companion library");
@@ -36,6 +37,17 @@ describe("Android Platform-Tools managed runtime", () => {
   });
   afterEach(async () => {
     await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["darwin", "darwin"],
+    ["win32", "win"],
+    ["linux", "linux"],
+  ] as const)("downloads %s from the versioned Nuwax S3 mirror", (platform, suffix) => {
+    const { url, version } = platformToolsRelease(platform, "x64")!;
+    expect(url).toBe(
+      `https://s3.nuwax.com:9443/nuwaclaw/nuwax-electron/dependencies/adb/${version}/platform-tools_r${version}-${suffix}.zip`,
+    );
   });
 
   it("installs only validated files and reuses the cache without downloading", async () => {
