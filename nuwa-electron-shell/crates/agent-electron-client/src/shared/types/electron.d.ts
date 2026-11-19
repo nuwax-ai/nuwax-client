@@ -303,7 +303,11 @@ export interface EngineAPI {
 }
 
 // SDK types (simplified for renderer use)
-export type AgentEngineType = "nuwaxcode" | "claude-code" | "codex-cli";
+export type AgentEngineType =
+  | "nuwaxcode"
+  | "claude-code"
+  | "codex-cli"
+  | "nuwax-harness";
 
 export interface AgentInitConfig {
   engine: AgentEngineType;

@@ -465,7 +465,12 @@ export interface AcpConnectionConfig {
   apiProtocol?: string;
   env?: Record<string, string>;
   /** Engine type for process registry tracking */
-  engineType?: "claude-code" | "nuwaxcode" | "codex" | "codex-cli";
+  engineType?:
+    | "claude-code"
+    | "nuwaxcode"
+    | "codex"
+    | "codex-cli"
+    | "nuwax-harness";
   /** Purpose of this process (for process registry) */
   purpose?: "engine";
   /** Isolated HOME scope (project / ephemeral) */
