@@ -36,13 +36,14 @@ def publish(directory):
         except HTTPError as error:
             if error.code != 404:
                 raise
+            print(f"{name}: uploading to the version directory", flush=True)
             subprocess.run([
                 "aws", "--endpoint-url", endpoint, "--region", "us-east-1",
-                "s3api", "put-object", "--bucket", bucket, "--key", key,
-                "--body", file, "--if-none-match", "*", "--content-type", content_type,
+                "--cli-connect-timeout", "12", "--cli-read-timeout", "45",
+                "s3", "cp", file, f"s3://{bucket}/{key}", "--content-type", content_type,
                 "--cache-control", "public, max-age=31536000, immutable",
-                "--checksum-algorithm", "SHA256", "--no-cli-pager",
-            ], check=True, stdout=subprocess.DEVNULL)
+                "--checksum-algorithm", "SHA256", "--no-cli-pager", "--only-show-errors",
+            ], check=True, timeout=180)
         with urlopen(url, timeout=45) as response:
             if metadata(response.read(expected["bytes"] + 1)) != expected:
                 raise ValueError(f"{name}: public S3 SHA256 or length mismatch")

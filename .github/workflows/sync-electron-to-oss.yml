@@ -49,14 +49,13 @@ permissions:
   actions: read
   contents: write
 
-concurrency:
-  group: ${{ inputs.adb_runtime && 'nuwax-adb-runtime-publish' || 'nuwax-update-subscriptions' }}
-  cancel-in-progress: false
-
 jobs:
   sync-adb-runtime:
     if: github.event_name == 'workflow_dispatch' && inputs.adb_runtime
     name: Sync ADB dependency to MinIO S3
+    concurrency:
+      group: nuwax-adb-runtime-publish
+      cancel-in-progress: false
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -73,11 +72,19 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
-        run: python3 scripts/adb-runtime/publish.py "$RUNNER_TEMP/adb-runtime"
+        run: |
+          export AWS_CONFIG_FILE="$RUNNER_TEMP/adb-aws-config"
+          aws configure set default.s3.addressing_style path
+          aws configure set default.s3.multipart_threshold 8MB
+          aws configure set default.s3.multipart_chunksize 8MB
+          python3 scripts/adb-runtime/publish.py "$RUNNER_TEMP/adb-runtime"
 
   sync-to-minio:
     if: inputs.adb_runtime != true
     name: Sync release to MinIO S3 & OSS
+    concurrency:
+      group: nuwax-update-subscriptions
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       S3_ENDPOINT: "https://s3.nuwax.com:9443"
