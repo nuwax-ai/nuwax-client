@@ -44,6 +44,7 @@ it.each([
     <SettingsPage onOpenAuthorization={vi.fn()} />,
   );
   expect(html).toContain("Claw.Settings.group.service");
+  expect(html).toContain("Claw.Settings.system.autoDownloadUpdate");
   expect(html.includes("Claw.Settings.systemAuthorization.open")).toBe(
     showsAuthorization,
   );

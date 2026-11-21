@@ -657,6 +657,8 @@
   "Claw.Settings.guiMcp.statusDisabled": "已停用",
   "Claw.Settings.system.title": "系統",
   "Claw.Settings.system.autoLaunch": "開機自動啟動",
+  "Claw.Settings.system.autoDownloadUpdate": "自動下載更新",
+  "Claw.Settings.system.autoDownloadUpdateDesc": "發現新版本時自動在背景下載，下載完成後不會自動重新啟動客戶端。預設關閉。",
   "Claw.Settings.system.autoLaunchDesc": "系統啟動時自動運行 {appName}",
   "Claw.Settings.localFiles.label": "本機檔案直連",
   "Claw.Settings.localFiles.desc": "優先直接讀取及儲存目前電腦的檔案；關閉後使用原檔案服務。重新啟動客戶端後生效。",

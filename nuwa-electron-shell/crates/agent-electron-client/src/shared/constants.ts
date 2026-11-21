@@ -519,6 +519,10 @@ export const I18N_KEYS = {
     MESSAGE_SOUND: "Claw.IM.messageSound",
     MESSAGE_SOUND_DESC: "Claw.IM.messageSoundDesc",
   },
+  Update: {
+    AUTO_DOWNLOAD: "Claw.Settings.system.autoDownloadUpdate",
+    AUTO_DOWNLOAD_DESC: "Claw.Settings.system.autoDownloadUpdateDesc",
+  },
   ContextMenu: {
     PASTE_AS_TEXT: "Claw.ContextMenu.pasteAsText",
     FORCE_RELOAD: "Claw.ContextMenu.forceReload",
