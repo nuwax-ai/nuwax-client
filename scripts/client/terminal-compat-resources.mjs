@@ -52,7 +52,11 @@ export function verifyPackagedTerminalCompat(root, output, options = {}) {
 }
 
 function verify(file, expected, tools) {
-  if (!/^[a-f0-9]{64}$/.test(expected ?? '') || tools.fileHash(file) !== expected) {
+  const actual = tools.fileHash(file);
+  if (actual === null) {
+    throw new Error(`[terminal] missing resource: ${path.basename(file)}`);
+  }
+  if (!/^[a-f0-9]{64}$/.test(expected ?? '') || actual !== expected) {
     throw new Error(`[terminal] SHA256 mismatch: ${path.basename(file)}`);
   }
 }
@@ -86,8 +90,19 @@ export async function prepareTerminalCompatResources(root, options = {}) {
     fs.mkdirSync(unpack);
     try {
       if (process.platform === 'win32') {
-        const quote = value => "'" + value.replaceAll("'", "''") + "'";
-        await tools.run('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(unpack)} -Force`], { cwd: root });
+        // Windows 10+ ships bsdtar, which extracts zip byte-for-byte. Avoid
+        // Windows PowerShell 5.1's Expand-Archive: on 2026-11-22 runners its
+        // Archive module called the .NET 3-arg ExtractToDirectory overload,
+        // which that host lacks; the failure was non-terminating (exit 0), so
+        // the script continued and reported a misleading "SHA256 mismatch".
+        try {
+          await tools.run('tar', ['-xf', archive, '-C', unpack], { cwd: root });
+        } catch {
+          // Fall back to PowerShell 7 when tar is unavailable, with a
+          // terminating error preference so a failed extraction fails loudly.
+          const quote = value => "'" + value.replaceAll("'", "''") + "'";
+          await tools.run('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(unpack)} -Force`], { cwd: root });
+        }
       } else {
         await tools.run('unzip', ['-q', archive, '-d', unpack], { cwd: root });
       }

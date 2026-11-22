@@ -34,9 +34,14 @@ function fixture(t) {
     run(command, args, options) {
       calls.push({ command, args, options });
       if (command === 'curl') write(args[args.indexOf('--output') + 1], state.download);
-      if (command === 'unzip' || command === 'powershell.exe') {
-        const destination = command === 'unzip' ? args.at(-1) : /-DestinationPath '([^']+)'/.exec(args.at(-1))[1];
-        write(path.join(destination, 'LICENSE'), license);
+      if (command === 'unzip' || command === 'tar' || command === 'powershell.exe' || command === 'pwsh.exe') {
+        const destination =
+          command === 'unzip'
+            ? args.at(-1)
+            : command === 'tar'
+              ? args[args.indexOf('-C') + 1]
+              : /-DestinationPath '([^']+)'/.exec(args.at(-1))[1];
+        if (!state.omitLicense) write(path.join(destination, 'LICENSE'), license);
         for (const [name, entry] of Object.entries(lock.files)) write(path.join(destination, entry.archivePath), name);
       }
       if (command === 'go') write(args[args.indexOf('-o') + 1], 'MZ compatibility service ' + calls.length);
@@ -45,6 +50,15 @@ function fixture(t) {
   };
   return { root, tools, calls, state, write, options: { platform: 'win32', arch: 'x64', tools } };
 }
+
+test('a missing upstream license is reported as missing, not a hash mismatch', async t => {
+  const f = fixture(t);
+  f.state.omitLicense = true;
+  await assert.rejects(
+    prepareTerminalCompatResources(f.root, f.options),
+    /missing resource: LICENSE/,
+  );
+});
 
 test('non-Windows skips WinPTY and unsupported architecture fails explicitly', async t => {
   const f = fixture(t);
