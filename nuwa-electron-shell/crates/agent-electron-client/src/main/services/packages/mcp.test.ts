@@ -32,18 +32,24 @@ vi.mock("electron-log", () => ({
 // Mock fs（含 node:fs，供 @nuwax-ai/mcp-proxy-ts Host Adapter 使用）
 const mockExistsSync = vi.fn(() => true);
 const mockMkdirSync = vi.fn();
+const mockMkdtempSync = vi.fn((prefix: string) => prefix + "fixture");
+const mockRmSync = vi.fn();
 const mockWriteFileSync = vi.fn();
 const mockWatchFile = vi.fn();
 const mockUnwatchFile = vi.fn();
 const fsMock = {
   existsSync: (...args: unknown[]) => mockExistsSync(...args),
   mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
+  mkdtempSync: mockMkdtempSync,
+  rmSync: mockRmSync,
   writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
   watchFile: (...args: unknown[]) => mockWatchFile(...args),
   unwatchFile: (...args: unknown[]) => mockUnwatchFile(...args),
   default: {
     existsSync: (...args: unknown[]) => mockExistsSync(...args),
     mkdirSync: (...args: unknown[]) => mockMkdirSync(...args),
+    mkdtempSync: mockMkdtempSync,
+    rmSync: mockRmSync,
     writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
     watchFile: (...args: unknown[]) => mockWatchFile(...args),
     unwatchFile: (...args: unknown[]) => mockUnwatchFile(...args),
@@ -54,6 +60,7 @@ vi.mock("node:fs", () => fsMock);
 // Mock os
 vi.mock("os", () => ({
   tmpdir: vi.fn(() => "/mock/tmp"),
+  homedir: vi.fn(() => "/mock/home"),
 }));
 
 // Mock crypto（Host Adapter 使用 default import createHash）
@@ -991,6 +998,230 @@ describe("syncMcpConfigToProxyAndReload - 真实 context_servers 场景", () => 
     expect(Object.keys(bridgeStartArg)).not.toContain(
       "image-understanding-and-generation",
     );
+  });
+});
+
+describe("MCP environment templates", () => {
+  it("prepares HTTP headers and stdio launch fields for each platform chat", async () => {
+    const { parseContextServers, resolveMcpServersForEngine } =
+      await import("../engines/requestConfigResolver");
+    const { resolvePlatformMcpTemplates, rawMcpServersEqual } =
+      await import("./mcpHelpers");
+    const { mcpProxyManager } = await import("./mcp");
+    const aggregateUrl = "https://platform.example/api/mcp/sse?ak=fixture";
+    const rawServers = await parseContextServers({
+      vault: {
+        command: "mcp-proxy",
+        args: [
+          "convert",
+          "--config",
+          JSON.stringify({ mcpServers: { vault: { url: "https://vault.example/mcp" } } }),
+          "-H",
+          "X-Nuwax-User-Id=${SYS_USER_ID:-}",
+          "-H",
+          "X-Nuwax-User-Uid=${SYS_USER_UID:-}",
+          "-H",
+          "X-Agent-Id=${AGENT_ID}",
+          "-H",
+          "X-Tenant-Id=${MCP_TENANT_ID:-default-tenant}",
+        ],
+      },
+      platform: {
+        command: "mcp-proxy",
+        args: [
+          "convert",
+          "--config",
+          JSON.stringify({ mcpServers: { proxy: { type: "sse", url: aggregateUrl } } }),
+        ],
+      },
+      context7: {
+        command: "mcp-proxy",
+        args: [
+          "convert",
+          "--config",
+          JSON.stringify({
+            mcpServers: {
+              context7: {
+                command: "npx",
+                args: ["-y", "@upstash/context7-mcp", "${AGENT_ID:-unknown}"],
+                headers: { "X-Agent-Id": "${AGENT_ID:-}" },
+                env: {
+                  AGENT_ID: "${AGENT_ID:-}",
+                  TENANT_ID: "${MCP_TENANT_ID:-default-tenant}",
+                },
+              },
+            },
+          }),
+        ],
+      },
+    });
+
+    mcpProxyManager.setConfig({
+      mcpServers: { unrelated: { url: "https://old-chat.example/mcp" } },
+    });
+    await mcpProxyManager.start();
+    const first = resolvePlatformMcpTemplates(rawServers, {
+      SYS_USER_ID: "user-a",
+      SYS_USER_UID: "uid-a",
+      AGENT_ID: "agent-a",
+      MCP_TENANT_ID: "tenant-a",
+    });
+    const second = resolvePlatformMcpTemplates(rawServers, {
+      SYS_USER_ID: "user-b",
+      SYS_USER_UID: "",
+      AGENT_ID: "agent-b",
+    });
+    expect(rawMcpServersEqual(first, second)).toBe(false);
+
+    for (const [engineKey, requestServers, expectedHeaders] of [
+      ["chat-a", first, {
+        "X-Nuwax-User-Id": "user-a",
+        "X-Nuwax-User-Uid": "uid-a",
+        "X-Agent-Id": "agent-a",
+        "X-Tenant-Id": "tenant-a",
+      }],
+      ["chat-b", second, {
+        "X-Nuwax-User-Id": "user-b",
+        "X-Nuwax-User-Uid": "",
+        "X-Agent-Id": "agent-b",
+        "X-Tenant-Id": "default-tenant",
+      }],
+    ] as const) {
+      mockWriteFileSync.mockClear();
+      const config = await resolveMcpServersForEngine({ engineKey, requestServers });
+      expect(Object.keys(config ?? {}).sort()).toEqual([
+        "chrome-devtools",
+        "context7",
+        "proxy",
+        "vault",
+      ]);
+      const entries = Object.assign(
+        {},
+        ...mockWriteFileSync.mock.calls.map(([, json]) => JSON.parse(json as string).mcpServers),
+      );
+      expect(entries.vault.headers).toEqual(expectedHeaders);
+      expect(entries.proxy).toMatchObject({ url: aggregateUrl });
+      expect(entries.proxy.headers).toBeUndefined();
+      expect(entries.context7.args).toContain(expectedHeaders["X-Agent-Id"]);
+      expect(entries.context7.env).toMatchObject({
+        AGENT_ID: expectedHeaders["X-Agent-Id"],
+        TENANT_ID: expectedHeaders["X-Tenant-Id"],
+      });
+      expect(entries.context7.headers).toBeUndefined();
+    }
+
+    expect(rawServers.vault).toMatchObject({
+      headers: { "X-Nuwax-User-Id": "${SYS_USER_ID:-}" },
+    });
+    expect(Object.keys(mcpProxyManager.getConfig().mcpServers)).toEqual(["unrelated"]);
+    await mcpProxyManager.cleanup();
+    expect(mockRmSync).toHaveBeenCalledWith(
+      path.join("/mock/tmp", "nuwax-mcp-configs-fixture"),
+      { recursive: true, force: true },
+    );
+  });
+
+  it("uses only the local server's own env in both settings discovery and chat", async () => {
+    const { mergeRemoteAndLocalMcpConfigs } = await import("../utils/mcpServerMerge");
+    const { resolveLocalMcpTemplates } = await import("./mcpHelpers");
+    const local = {
+      vault: {
+        url: "https://local.example/mcp",
+        headers: {
+          "X-User": "${SYS_USER_ID:-local-default}",
+          "X-Literal": "${UNDEFINED_MCP_VARIABLE}",
+        },
+        authToken: "${VAULT_TOKEN}",
+        env: { VAULT_TOKEN: "fixture-token" },
+      },
+    };
+    const expectedHeaders = {
+      "X-User": "local-default",
+      "X-Literal": "${UNDEFINED_MCP_VARIABLE}",
+    };
+    const discoverRemoteMcpTools = vi.fn().mockResolvedValue(["list"]);
+    vi.doMock("./discoverRemoteMcpTools", () => ({ discoverRemoteMcpTools }));
+    try {
+      const { mcpProxyManager } = await import("./mcp");
+      await mcpProxyManager.start();
+      await expect(mcpProxyManager.discoverTools("vault", { mcpServers: local }))
+        .resolves.toEqual(["list"]);
+      expect(discoverRemoteMcpTools).toHaveBeenCalledWith(
+        expect.objectContaining({ headers: expectedHeaders, authToken: "fixture-token" }),
+      );
+
+      const requestServers = mergeRemoteAndLocalMcpConfigs(
+        { vault: { url: "https://platform.example/mcp", headers: { "X-User": "platform-user" } } },
+        resolveLocalMcpTemplates(local),
+      );
+      mcpProxyManager.getAgentMcpConfig("chat", requestServers);
+      const entries = Object.assign(
+        {},
+        ...mockWriteFileSync.mock.calls.map(([, json]) => JSON.parse(json as string).mcpServers),
+      );
+      expect(entries.vault).toMatchObject({
+        url: local.vault.url,
+        headers: expectedHeaders,
+        authToken: "fixture-token",
+      });
+      expect(entries.vault.env).toBeUndefined();
+      expect(local.vault.authToken).toBe("${VAULT_TOKEN}");
+    } finally {
+      vi.doUnmock("./discoverRemoteMcpTools");
+    }
+  });
+
+  it("expands explicit local stdio variables in discovery and persistent startup", async () => {
+    const discoverStdioMcpTools = vi.fn().mockResolvedValue(["list"]);
+    vi.doMock("./discoverStdioMcpTools", () => ({ discoverStdioMcpTools }));
+    try {
+      const { mcpProxyManager, syncMcpConfigToProxyAndReload } = await import("./mcp");
+      const { persistentMcpBridge } = await import("./persistentMcpBridge");
+      const mcpServers = {
+        fixture: {
+          command: "node",
+          args: ["${APP_VALUE}", "${UNDEFINED_MCP_VARIABLE:-default}"],
+          env: {
+            APP_VALUE: "local",
+            COPY: "${APP_VALUE}",
+            AGENT_ID: "${AGENT_ID:-}",
+            FROM_HOST: "${HOME:-not-in-template-env}",
+          },
+          persistent: true,
+        },
+      };
+      const expected = {
+        args: ["local", "default"],
+        env: {
+          APP_VALUE: "local",
+          COPY: "local",
+          AGENT_ID: "",
+          FROM_HOST: "not-in-template-env",
+          HOME: "/mock/home",
+        },
+      };
+      await expect(mcpProxyManager.discoverTools("fixture", { mcpServers }))
+        .resolves.toEqual(["list"]);
+      expect(discoverStdioMcpTools).toHaveBeenCalledWith(
+        expect.objectContaining({ args: expected.args, env: expect.objectContaining(expected.env) }),
+        expect.anything(),
+      );
+
+      await syncMcpConfigToProxyAndReload(mcpServers);
+      expect(persistentMcpBridge.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fixture: expect.objectContaining({
+            args: expected.args,
+            env: expect.objectContaining(expected.env),
+          }),
+        }),
+      );
+      expect(mcpProxyManager.getConfig().mcpServers.fixture.env?.COPY).toBe(
+        "${APP_VALUE}",
+      );
+    } finally {
+      vi.doUnmock("./discoverStdioMcpTools");
+    }
   });
 });
 

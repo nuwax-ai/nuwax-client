@@ -27,6 +27,7 @@ export type McpServerEntry =
       transport?: "streamable-http" | "sse";
       headers?: Record<string, string>;
       authToken?: string;
+      env?: Record<string, string>;
       enabled?: boolean;
       discoveredTools?: string[];
       allowTools?: string[];

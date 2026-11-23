@@ -35,6 +35,7 @@ import { isWindows, isMacOS } from "../system/shellEnv";
 import { persistentMcpBridge } from "./persistentMcpBridge";
 import { discoverRemoteMcpTools } from "./discoverRemoteMcpTools";
 import { discoverStdioMcpTools } from "./discoverStdioMcpTools";
+import { resolveLocalMcpTemplates, resolveMcpTemplates } from "./mcpHelpers";
 import {
   filterEnabledMcpServers,
   mergeMcpServerConfigs,
@@ -384,11 +385,6 @@ export function extractRealMcpServers(
     }
   }
 
-  // Build base environment variables for child MCP servers
-  // Use full getAppEnv() to ensure Windows system variables (SystemRoot, COMSPEC, etc.)
-  // and app-internal tool paths (NODE_PATH, NPM_CONFIG_*, UV_*) are available
-  const appEnv = getAppEnv();
-
   const result: Record<string, McpServerEntry> = {};
   for (const [name, srv] of Object.entries(inner)) {
     if (!srv) continue;
@@ -424,11 +420,11 @@ export function extractRealMcpServers(
     // stdio entry — resolve command/args/env
     if (typeof srv.command !== "string") continue;
     const resolved = resolveUvCommand(srv.command, srv.args || [], dir);
-    // Env merge: appEnv as foundation, external env overrides, server-specific env takes precedence
+    // Keep explicit env separate until resolveServersConfig supplies the runtime environment.
     result[name] = {
       command: resolved.command,
       args: resolved.args,
-      env: { ...appEnv, ...env, ...(srv.env || {}) },
+      env: { ...env, ...srv.env },
       ...(allowTools ? { allowTools } : {}),
       ...(denyTools ? { denyTools } : {}),
     };
@@ -600,6 +596,8 @@ export interface RemoteMcpServerEntry {
   transport?: "streamable-http" | "sse";
   headers?: Record<string, string>;
   authToken?: string;
+  /** Values explicitly supplied for this local server's HTTP header templates. */
+  env?: Record<string, string>;
   /** 本地 MCP 管理：是否参与 Agent 会话（缺省由调用方按 false 处理） */
   enabled?: boolean;
   /** 工具白名单（只暴露指定工具） */
@@ -643,6 +641,7 @@ class McpProxyManager {
   );
   /** Cached script path — set by start(), avoids fs I/O on every getStatus() poll */
   private cachedScriptPath: string | null = null;
+  private proxyConfigDir?: string;
   /** Track whether PersistentMcpBridge has been started (lazy initialization) */
   private bridgeStarted = false;
   private lastError: string | null = null;
@@ -811,7 +810,10 @@ class McpProxyManager {
    */
   getPersistentServers(): Record<string, StdioMcpServerEntry> {
     const result: Record<string, StdioMcpServerEntry> = {};
-    for (const [name, entry] of Object.entries(this.config.mcpServers)) {
+    const servers = filterEnabledMcpServers(
+      mergeMcpServerConfigs(this.config.mcpServers, readLocalMcpServers()),
+    );
+    for (const [name, entry] of Object.entries(servers)) {
       if (!isRemoteEntry(entry) && entry.persistent) result[name] = entry;
     }
     return result;
@@ -923,7 +925,7 @@ class McpProxyManager {
     if (Object.keys(persistentServers).length > 0) {
       try {
         const resolvedServers = resolveServersConfig(
-          persistentServers,
+          resolveLocalMcpTemplates(persistentServers),
         ) as Record<string, StdioMcpServerEntry>;
         await persistentMcpBridge.start(resolvedServers);
         this.bridgeStarted = true;
@@ -1019,16 +1021,26 @@ class McpProxyManager {
    * 使用应用内置 Node（getNodeBinPathWithFallback）spawn proxy。
    *
    * @param projectId - 可选的项目/会话标识，用于区分不同会话的日志文件
+   * @param requestServers - 本次会话已合并并展开的 MCP 配置
    */
   getAgentMcpConfig(
     projectId?: string,
+    requestServers?: Record<string, McpServerEntry>,
   ): Record<
     string,
     { command: string; args: string[]; env?: Record<string, string> }
   > | null {
-    // 本地配置优先级最高:本地 > this.config（内置 DEFAULT + ACP 下发）。
+    // 会话配置只使用本次请求和本地设置，避免跨会话复用动态 MCP 或已展开的身份。
     const servers = filterEnabledMcpServers(
-      mergeMcpServerConfigs(this.config.mcpServers, readLocalMcpServers()),
+      requestServers
+        ? mergeMcpServerConfigs(
+            DEFAULT_MCP_PROXY_CONFIG.mcpServers,
+            requestServers,
+          )
+        : mergeMcpServerConfigs(
+            this.config.mcpServers,
+            resolveLocalMcpTemplates(readLocalMcpServers()),
+          ),
     );
     if (!servers || Object.keys(servers).length === 0) {
       return null;
@@ -1065,12 +1077,16 @@ class McpProxyManager {
         fs.mkdirSync(logsDir, { recursive: true });
       }
 
+      // Proxy configs can contain credentials and per-session identity headers.
+      this.proxyConfigDir ??= fs.mkdtempSync(
+        path.join(os.tmpdir(), "nuwax-mcp-configs-"),
+      );
       const result = loadMcpProxyHostAdapter().rewriteServersToProxyCommands(
         hostMap,
         {
           proxyScriptPath: scriptPath,
           nodeBinPath,
-          configDir: path.join(os.tmpdir(), "nuwax-mcp-configs"),
+          configDir: this.proxyConfigDir,
           logDir: logsDir,
           projectId,
           allowTools: this.config.allowTools,
@@ -1125,13 +1141,13 @@ class McpProxyManager {
         }
       }
     }
-    let entry = servers[serverId];
-    if (!entry) {
+    const server = servers[serverId];
+    if (!server) {
       throw new Error(`MCP server not found: ${serverId}`);
     }
+    const entry = resolveMcpTemplates(server, server.env);
 
     if (isRemoteEntry(entry)) {
-
       try {
         return await discoverRemoteMcpTools(entry);
       } catch (e) {
@@ -1182,6 +1198,14 @@ class McpProxyManager {
       await persistentMcpBridge.stop();
     } catch (e) {
       log.warn("[McpProxy] PersistentMcpBridge cleanup error:", e);
+    }
+    if (this.proxyConfigDir) {
+      try {
+        fs.rmSync(this.proxyConfigDir, { recursive: true, force: true });
+        this.proxyConfigDir = undefined;
+      } catch (e) {
+        log.warn("[McpProxy] Proxy config cleanup error:", e);
+      }
     }
   }
 }
@@ -1310,11 +1334,13 @@ export async function syncMcpConfigToProxyAndReload(
     // Bridge 只管理 persistent 服务（如 chrome-devtools），动态 MCP 不进 bridge。
     // 变更检测和重启均只针对 persistent servers，避免动态 MCP 变化时重启 chrome-devtools。
     const persistentOnly = Object.fromEntries(
-      Object.entries(mergedWithEnv).filter(
+      Object.entries(merged).filter(
         ([, e]) => !isRemoteEntry(e) && (e as StdioMcpServerEntry).persistent,
       ),
     ) as Record<string, StdioMcpServerEntry>;
-    const resolvedPersistent = resolveServersConfig(persistentOnly) as Record<
+    const resolvedPersistent = resolveServersConfig(
+      resolveLocalMcpTemplates(persistentOnly),
+    ) as Record<
       string,
       StdioMcpServerEntry
     >;

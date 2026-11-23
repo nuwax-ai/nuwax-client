@@ -64,7 +64,13 @@ import type { McpServerEntry } from "../packages/mcp";
 import {
   filterBridgeEntries,
   rawMcpServersEqual,
+  resolveLocalMcpTemplates,
+  resolvePlatformMcpTemplates,
 } from "../packages/mcpHelpers";
+import {
+  filterEnabledMcpServers,
+  mergeRemoteAndLocalMcpConfigs,
+} from "../utils/mcpServerMerge";
 
 interface McpServersConfig {
   mcpServers: Record<string, McpServerEntry>;
@@ -695,10 +701,6 @@ export class UnifiedAgentService extends EventEmitter {
         : (this.engineType ?? undefined),
     });
     const t0 = Date.now();
-    let t1 = t0,
-      t2 = t0,
-      t5 = t0;
-
     // A2：引擎按 conversationId（project_id）复用——同一常规项目下不同对话各自
     // 独立引擎、可并行不互相抢占（见 chatEngineKey.resolveChatEngineRegistryKey）。
     // 不按 session_id 建 key：session_id 仅用于会话恢复，避免 session 轮换后重复冷启动。
@@ -711,7 +713,7 @@ export class UnifiedAgentService extends EventEmitter {
     const requestMcpServersEarly = await parseContextServers(
       request.agent_config?.context_servers,
     );
-    t1 = Date.now();
+    const t1 = Date.now();
 
     // 测试开关：按需把引擎命令改写为 nuwax-harness-acp-ts。
     // 逻辑集中在 engineOverride.ts（含生效范围与移除路径）。
@@ -722,6 +724,14 @@ export class UnifiedAgentService extends EventEmitter {
 
     const agentServer = request.agent_config?.agent_server;
     const mp = request.model_provider;
+    const localMcpConfig = await this.loadLocalMcpConfig();
+    const resolvedMcpServers = mergeRemoteAndLocalMcpConfigs(
+      resolvePlatformMcpTemplates(requestMcpServersEarly, agentServer?.env),
+      resolveLocalMcpTemplates(localMcpConfig),
+    );
+    const requestMcpFiltered = filterBridgeEntries(
+      filterEnabledMcpServers(resolvedMcpServers),
+    );
     const { requiredEngine, resolvedEnv, requestedModel } =
       resolveRequestEngineParams({
         request,
@@ -734,16 +744,14 @@ export class UnifiedAgentService extends EventEmitter {
     const currentEngineType =
       this.engineConfigs.get(registryKey)?.engine || this.engineType;
     const storedRawMcp = this.engineRawMcpServers.get(registryKey);
-    const requestMcpFiltered = filterBridgeEntries(requestMcpServersEarly);
     const mcpChanged = !rawMcpServersEqual(requestMcpFiltered, storedRawMcp);
-    const requestMcpServersRuntime = requestMcpServersEarly;
 
     // 快速路径：已有就绪引擎 + 无配置变更
     if (
       existingEngine?.isReady &&
       !agentServer?.command &&
       !mp &&
-      (Object.keys(requestMcpServersEarly).length === 0 || !mcpChanged)
+      !mcpChanged
     ) {
       perfEmitter.duration("engine.fastPath", Date.now() - t0, { engineKey });
       firstTokenTrace.trace(
@@ -766,22 +774,15 @@ export class UnifiedAgentService extends EventEmitter {
     const needCreateEngine = !existingEngine || !existingEngine.isReady;
     let memoryReadyPromise: Promise<void> | null = null;
 
-    // 加载本地 MCP 并与 context_servers 在配置层合并去重：同名 key 以本地为准
-    const localMcpConfig = await this.loadLocalMcpConfig();
-    const { mergeRemoteAndLocalMcpConfigs, filterEnabledMcpServers } =
-      await import("../utils/mcpServerMerge");
-    const mergedMcpServers = mergeRemoteAndLocalMcpConfigs(
-      requestMcpServersRuntime,
-      localMcpConfig,
-    );
-    const enabledMcpServers = filterEnabledMcpServers(mergedMcpServers);
-
     if (mcpChanged) {
       try {
         const { syncMcpConfigToProxyAndReload } =
           await import("../packages/mcp");
+        // 全局代理只同步原始配置，已展开的身份仅用于会话的代理配置。
         const syncPromise = syncMcpConfigToProxyAndReload(
-          enabledMcpServers, // 使用合并后的配置
+          filterEnabledMcpServers(
+            mergeRemoteAndLocalMcpConfigs(requestMcpServersEarly, localMcpConfig),
+          ),
         );
 
         // 并行执行 memory ready
@@ -793,8 +794,7 @@ export class UnifiedAgentService extends EventEmitter {
         }
 
         await syncPromise;
-        t2 = Date.now();
-        perfEmitter.duration("engine.syncMcp", t2 - t1);
+        perfEmitter.duration("engine.syncMcp", Date.now() - t1);
       } catch (e) {
         log.warn("[UnifiedAgent] syncMcp failed:", e);
       }
@@ -805,10 +805,8 @@ export class UnifiedAgentService extends EventEmitter {
         .then(() => {})
         .catch(() => {});
     }
-    t2 = t2 || t1;
-
     // Extract final model
-    let model = requestedModel;
+    const model = requestedModel;
 
     // Check if existing engine needs to be replaced (config changed)
     if (existingEngine && existingEngine.isReady) {
@@ -817,7 +815,7 @@ export class UnifiedAgentService extends EventEmitter {
         resolvedEnv,
         model,
         mp,
-        requestMcpServersEarly,
+        requestMcpServersEarly: requestMcpFiltered,
       });
 
       if (!hasConfigChange) {
@@ -854,12 +852,9 @@ export class UnifiedAgentService extends EventEmitter {
       workspaceDir: "",
     };
 
-    // 动态 MCP server 已由 syncMcpConfigToProxyAndReload() 同步到 proxy，
-    // bridge 提取与 agent 视角配置见 requestConfigResolver.ts
     const freshMcpServers = await resolveMcpServersForEngine({
-      requestMcpServersRuntime,
+      requestServers: resolvedMcpServers,
       engineKey,
-      perfStartMs: t2,
     });
 
     // Determine custom agent command (when agent_server.command is not a known engine)
@@ -889,8 +884,8 @@ export class UnifiedAgentService extends EventEmitter {
       effectiveConfig,
       memoryReadyPromise,
     );
-    t5 = Date.now();
-    perfEmitter.duration("engine.ensure", t5 - t0, { engineKey });
+    const latencyMs = Date.now() - t0;
+    perfEmitter.duration("engine.ensure", latencyMs, { engineKey });
     firstTokenTrace.trace(
       "engine.ensure.done",
       {
@@ -899,15 +894,15 @@ export class UnifiedAgentService extends EventEmitter {
         projectId: request.project_id,
         engine: engine.engineName,
       },
-      { latencyMs: t5 - t0, engineKey },
+      { latencyMs, engineKey },
     );
 
     // 仅在引擎实际被创建/重建时到达此处（detectConfigChange 返回 false 时已 early-return）。
-    // 将本次过滤好的原始 MCP servers 存入快照，key 用实际注册表 key 以便 detectConfigChange 能命中。
+    // 比较展开后的连接和启动配置，凭证或环境变量变更也能触发重建。
     const finalRegistryKey = this.resolveEngineKey(engineKey) || engineKey;
     this.engineRawMcpServers.set(
       finalRegistryKey,
-      filterBridgeEntries(requestMcpServersEarly),
+      requestMcpFiltered,
     );
 
     return engine;
