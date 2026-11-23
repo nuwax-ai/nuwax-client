@@ -1,6 +1,7 @@
 !ifndef NUWAX_WINDOWS_INSTALLER_RUNTIME_NSH
 !define NUWAX_WINDOWS_INSTALLER_RUNTIME_NSH
 !ifndef BUILD_UNINSTALLER
+!define NUWAX_INSTALLER_LIFECYCLE_LOG "$TEMP\Nuwax-installer-lifecycle.log"
 Var nuwaxInstallerPhase
 Var nuwaxInstallerEvent
 Var nuwaxUpdateAttempt
@@ -37,7 +38,7 @@ Function nuwaxTraceInstaller
   ReadRegStr $R2 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" CurrentBuildNumber
   ReadRegDWORD $R3 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" UBR
   ClearErrors
-  FileOpen $R0 "$TEMP\Nuwax-installer-lifecycle.log" a
+  FileOpen $R0 "${NUWAX_INSTALLER_LIFECYCLE_LOG}" a
   ${ifNot} ${Errors}
     FileSeek $R0 0 END
     FileWriteUTF16LE $R0 "version=${VERSION} transaction=$nuwaxUpdateAttempt window=$HWNDPARENT event=$nuwaxInstallerEvent phase=$nuwaxInstallerPhase build=$R2.$R3 scope=$installMode exit=$R1 path=$INSTDIR$\r$\n"
