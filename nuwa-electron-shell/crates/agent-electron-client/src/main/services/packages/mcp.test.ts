@@ -1023,7 +1023,7 @@ describe("MCP environment templates", () => {
           "-H",
           "X-Agent-Id=${AGENT_ID}",
           "-H",
-          "X-Other=${MODEL_API_KEY:-fallback}",
+          "X-Tenant-Id=${MCP_TENANT_ID:-default-tenant}",
         ],
       },
       platform: {
@@ -1047,7 +1047,7 @@ describe("MCP environment templates", () => {
                 headers: { "X-Agent-Id": "${AGENT_ID:-}" },
                 env: {
                   AGENT_ID: "${AGENT_ID:-}",
-                  API_KEY: "${MODEL_API_KEY:-fallback}",
+                  TENANT_ID: "${MCP_TENANT_ID:-default-tenant}",
                 },
               },
             },
@@ -1064,7 +1064,7 @@ describe("MCP environment templates", () => {
       SYS_USER_ID: "user-a",
       SYS_USER_UID: "uid-a",
       AGENT_ID: "agent-a",
-      MODEL_API_KEY: "secret-outside-allowlist",
+      MCP_TENANT_ID: "tenant-a",
     });
     const second = resolvePlatformMcpTemplates(rawServers, {
       SYS_USER_ID: "user-b",
@@ -1078,13 +1078,13 @@ describe("MCP environment templates", () => {
         "X-Nuwax-User-Id": "user-a",
         "X-Nuwax-User-Uid": "uid-a",
         "X-Agent-Id": "agent-a",
-        "X-Other": "fallback",
+        "X-Tenant-Id": "tenant-a",
       }],
       ["chat-b", second, {
         "X-Nuwax-User-Id": "user-b",
         "X-Nuwax-User-Uid": "",
         "X-Agent-Id": "agent-b",
-        "X-Other": "fallback",
+        "X-Tenant-Id": "default-tenant",
       }],
     ] as const) {
       mockWriteFileSync.mockClear();
@@ -1105,7 +1105,7 @@ describe("MCP environment templates", () => {
       expect(entries.context7.args).toContain(expectedHeaders["X-Agent-Id"]);
       expect(entries.context7.env).toMatchObject({
         AGENT_ID: expectedHeaders["X-Agent-Id"],
-        API_KEY: "fallback",
+        TENANT_ID: expectedHeaders["X-Tenant-Id"],
       });
       expect(entries.context7.headers).toBeUndefined();
     }

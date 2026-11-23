@@ -9,12 +9,6 @@
 import * as path from "path";
 import type { McpServerEntry } from "./mcp";
 
-const PLATFORM_MCP_VARIABLES = [
-  "SYS_USER_ID",
-  "SYS_USER_UID",
-  "AGENT_ID",
-] as const;
-
 /** Expand supported fields in one pass using the supplied variables. */
 export function resolveMcpTemplates(
   entry: McpServerEntry,
@@ -66,16 +60,10 @@ export function resolvePlatformMcpTemplates(
   servers: Record<string, McpServerEntry>,
   agentEnv?: Readonly<Record<string, string>>,
 ): Record<string, McpServerEntry> {
-  const env: Record<string, string> = {};
-  for (const name of PLATFORM_MCP_VARIABLES) {
-    const value = agentEnv?.[name];
-    if (typeof value === "string") env[name] = value;
-  }
-
   return Object.fromEntries(
     Object.entries(servers).map(([name, entry]) => [
       name,
-      resolveMcpTemplates(entry, env),
+      resolveMcpTemplates(entry, agentEnv),
     ]),
   );
 }
