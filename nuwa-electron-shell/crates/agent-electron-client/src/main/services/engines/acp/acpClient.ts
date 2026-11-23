@@ -1150,7 +1150,7 @@ export async function createAcpConnection(
   // enabling process.kill(-pid) to kill the entire tree on cleanup.
   const spawnTimer = perfEmitter.start();
   const useDetached = !isWindows;
-  const proc = spawnAcpProcess({
+  const proc = await spawnAcpProcess({
     binPath,
     args: effectiveBinArgs,
     isNative: config.isNative === true,
@@ -1229,6 +1229,16 @@ export async function createAcpConnection(
 
   proc.on("exit", (code, signal) => {
     log.info("[AcpClient] Process exited", { code, signal });
+  });
+
+  proc.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE") return;
+    log.error("[AcpClient] ACP stdin closed while writing", {
+      engine: config.engineType,
+      pid: proc.pid,
+      exitCode: proc.exitCode,
+      signal: proc.signalCode,
+    });
   });
 
   /**
