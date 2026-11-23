@@ -70,6 +70,9 @@ function MCPServerEditor({
   const [transport, setTransport] = useState<"streamable-http" | "sse">(
     "streamable-http",
   );
+  // Preserve headers and env configured through JSON when editing URL or transport.
+  const [remoteEntry, setRemoteEntry] =
+    useState<Extract<McpServerEntry, { url: string }>>();
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState("");
   const [testLoading, setTestLoading] = useState(false);
@@ -95,10 +98,12 @@ function MCPServerEditor({
             setArgsText(JSON.stringify(initialEntry.args ?? []));
             setEnvText(serializeEnvToText(initialEntry.env));
             setPersistent(!!initialEntry.persistent);
+            setRemoteEntry(undefined);
           } else {
             setServerType("remote");
             setUrl(initialEntry.url);
             setTransport(initialEntry.transport ?? "streamable-http");
+            setRemoteEntry(initialEntry);
             setEnvText("");
             setPersistent(false);
           }
@@ -111,6 +116,7 @@ function MCPServerEditor({
       setJsonText("");
       setEnvText("");
       setPersistent(false);
+      setRemoteEntry(undefined);
       lastInitialEntryRef.current = "";
       lastSyncedServerIdRef.current = "";
     }
@@ -183,7 +189,12 @@ function MCPServerEditor({
     return {
       ok: true,
       serverId: id,
-      entry: { url: u, transport, enabled: initialEntry?.enabled ?? false },
+      entry: {
+        ...remoteEntry,
+        url: u,
+        transport,
+        enabled: remoteEntry?.enabled ?? initialEntry?.enabled ?? false,
+      },
     };
   }, [
     serverId,
@@ -194,6 +205,7 @@ function MCPServerEditor({
     persistent,
     url,
     transport,
+    remoteEntry,
     initialEntry?.enabled,
   ]);
 
@@ -304,10 +316,12 @@ function MCPServerEditor({
         setArgsText(JSON.stringify(entry.args ?? []));
         setEnvText(serializeEnvToText(entry.env));
         setPersistent(!!entry.persistent);
+        setRemoteEntry(undefined);
       } else {
         setServerType("remote");
         setUrl(entry.url);
         setTransport(entry.transport ?? "streamable-http");
+        setRemoteEntry(entry);
         setEnvText("");
         setPersistent(false);
       }

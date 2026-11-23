@@ -156,7 +156,7 @@ describe("rawMcpServersEqual", () => {
       expect(eq(a, b)).toBe(true);
     });
 
-    it("env 字段不同时仍认为相等（env 每次由 getAppEnv 重新注入）", () => {
+    it("显式 stdio 环境变量变化时触发重建", () => {
       const a = {
         time: makeStdio("/uv", ["tool", "run", "mcp-time"], {
           env: { TZ: "UTC" },
@@ -167,7 +167,7 @@ describe("rawMcpServersEqual", () => {
           env: { TZ: "Asia/Shanghai" },
         }),
       };
-      expect(eq(a, b)).toBe(true);
+      expect(eq(a, b)).toBe(false);
     });
 
     it("allowTools 顺序不同时认为相等（排序后比较）", () => {
