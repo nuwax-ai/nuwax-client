@@ -18,6 +18,7 @@ export const DIST_HANDSHAKE_READ_TIMEOUT_MS = 7_000;
 export function observeDistHandshake(api: PrivateHandshakeApi | undefined, update: (state: DistHandshakeState) => void) {
   let disposed = false, revision = 0;
   let pending: Promise<void> | null = null;
+  let lastSnapshot: DistHandshakeView | null = null;
   const deadlines = new Map<ReturnType<typeof setTimeout>, () => void>();
   const getSnapshot = api?.app?.getDistHandshake;
 
@@ -25,7 +26,8 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
     if (disposed || typeof getSnapshot !== "function") return Promise.resolve();
     if (pending) return pending;
     const current = ++revision;
-    update({ snapshot: null, checking: true });
+    // A same-context focus refresh must not unmount the notice during a click.
+    update({ snapshot: lastSnapshot, checking: true });
     let timer: ReturnType<typeof setTimeout>;
     const deadline = new Promise<null>(resolve => {
       timer = setTimeout(() => resolve(null), DIST_HANDSHAKE_READ_TIMEOUT_MS);
@@ -33,7 +35,10 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
     });
     const requested = Promise.resolve().then(() => getSnapshot(force)).catch(() => null);
     const operation = Promise.race([requested, deadline]).then(snapshot => {
-      if (!disposed && revision === current) update({ snapshot, checking: false });
+      if (!disposed && revision === current) {
+        lastSnapshot = snapshot;
+        update({ snapshot, checking: false });
+      }
     }).finally(() => {
       clearTimeout(timer!);
       deadlines.delete(timer!);
@@ -46,6 +51,7 @@ export function observeDistHandshake(api: PrivateHandshakeApi | undefined, updat
     if (disposed) return;
     ++revision;
     pending = null;
+    lastSnapshot = null;
     update({ snapshot: null, checking: false });
     void refresh();
   };
