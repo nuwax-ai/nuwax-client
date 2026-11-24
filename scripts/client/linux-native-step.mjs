@@ -29,7 +29,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 export function parseStepEnv(text) {
   const env = {};
   for (const line of String(text ?? '').split('\n')) {
-    if (!line.trim()) continue;
+    // A `#` line is a comment carried along in the YAML block (the release
+    // workflows keep the explanation of an expression next to it). Skip it on
+    // its own merits rather than because it happens to contain no `=`.
+    if (!line.trim() || line.trim().startsWith('#')) continue;
     const index = line.indexOf('=');
     if (index <= 0) continue;
     env[line.slice(0, index).trim()] = line.slice(index + 1);

@@ -254,8 +254,11 @@ jobs:
         run: pnpm install --filter @nuwax-ai/nuwaclaw...
 
       - name: Rebuild native modules for Electron
-        working-directory: nuwa-electron-shell/crates/agent-electron-client
-        run: npm run rebuild:better-sqlite3
+        uses: ./.github/actions/linux-native-step
+        with:
+          command: npm run rebuild:better-sqlite3
+          working-directory: nuwa-electron-shell/crates/agent-electron-client
+          arch: ${{ matrix.arch }}
 
       - name: Install commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs
@@ -397,35 +400,39 @@ jobs:
       # Import the signing certificate before finalizing capture's runtime SHA.
       # Builder skips only the already signed capture ffmpeg at its exact path.
       - name: Prepare and admit capture release resources
-        shell: bash
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-          MSYS2_LOCATION: ${{ steps.capture-msys2.outputs.msys2-location }}
-          # Only a real certificate enables pre-signing; unsigned QA keeps exact
-          # source bytes. The helper never touches the verified source cache.
-          NUWAX_CAPTURE_MAC_SIGNING: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' || 'false' }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: node scripts/client/build-resource-artifacts.mjs measure capture -- node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
-        timeout-minutes: 30
+        uses: ./.github/actions/linux-native-step
+        with:
+          command: node scripts/client/build-resource-artifacts.mjs measure capture -- node scripts/prepare-release-capture.mjs --arch "$TARGET_ARCH"
+          arch: ${{ matrix.arch }}
+          timeout-minutes: 30
+          env: |
+            TARGET_ARCH=${{ matrix.arch }}
+            MSYS2_LOCATION=${{ steps.capture-msys2.outputs.msys2-location }}
+            # Only a real certificate enables pre-signing; unsigned QA keeps exact
+            # source bytes. The helper never touches the verified source cache.
+            NUWAX_CAPTURE_MAC_SIGNING=${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' || 'false' }}
+            APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}
 
       # ---- Computer Use helper（cua-driver 源码自建）：五平台全矩阵 ----
       # 与 release-electron-dev.yml 同款步骤（锁版+补丁+cargo+组装+预签 Developer ID）
       - name: Build Computer Use helper (cua-driver)
-        shell: bash
-        env:
-          OUT_DIR: nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
-          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          case "${{ runner.os }}/${{ matrix.arch }}" in
-            macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
-            macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
-            Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
-            Linux/x64)   TRIPLE=x86_64-unknown-linux-gnu ;;
-            Linux/arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
-            *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
-          esac
-          export TARGET_TRIPLE="$TRIPLE"
-          node scripts/client/build-resource-artifacts.mjs measure helper -- bash scripts/computer-use/build-helper.sh
+        uses: ./.github/actions/linux-native-step
+        with:
+          arch: ${{ matrix.arch }}
+          env: |
+            OUT_DIR=nuwa-electron-shell/crates/agent-electron-client/resources/computer-use
+            SIGN_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}
+          command: |
+            case "${{ runner.os }}/${{ matrix.arch }}" in
+              macOS/arm64) TRIPLE=aarch64-apple-darwin ;;
+              macOS/x64)   TRIPLE=x86_64-apple-darwin ;;
+              Windows/x64) TRIPLE=x86_64-pc-windows-msvc ;;
+              Linux/x64)   TRIPLE=x86_64-unknown-linux-gnu ;;
+              Linux/arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
+              *) echo "::error::no cua target for ${{ runner.os }}/${{ matrix.arch }}"; exit 1 ;;
+            esac
+            export TARGET_TRIPLE="$TRIPLE"
+            node scripts/client/build-resource-artifacts.mjs measure helper -- bash scripts/computer-use/build-helper.sh
 
       # extraResources 注入（目录随构建产出）
       - name: Publish reusable unsigned native resources
@@ -539,6 +546,15 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
         run: node scripts/client/package-payload.mjs --verify-output "$OUT_DIR" --arch "$TARGET_ARCH"
+
+      # glibc 门禁：扫描安装目录里每个 ELF，需要高于 2.28 的 glibc 即失败（UOS 20 Pro 1050 只有 2.28）。
+      # 接入初期带 --report-only，只报告不失败；确认它报出的文件与豁免清单一致后去掉。
+      - name: Verify Linux binaries stay within the glibc 2.28 floor
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
+        run: node scripts/client/linux-glibc-gate.mjs --verify-output "$OUT_DIR" --platform linux --arch "$TARGET_ARCH" --report-only
 
       - name: Verify packaged Windows terminal compatibility resources
         if: runner.os == 'Windows'

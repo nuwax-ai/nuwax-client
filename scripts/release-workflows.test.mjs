@@ -121,12 +121,15 @@ test('stable and beta prepare locked capture payloads and verify real packaged b
     assert.ok(text.indexOf('Setup Linux capture compiler') < text.indexOf('Prepare and admit capture release resources'));
     assert.match(text, /uses: msys2\/setup-msys2@v2/);
     assert.match(text, /mingw-w64-x86_64-nasm\n\s+perl\n/);
-    assert.match(text, /MSYS2_LOCATION: \$\{\{ steps.capture-msys2.outputs.msys2-location \}\}/);
+    // These reach the capture step either as a YAML `env:` key (`KEY: value`) or
+    // as a line of the composite action's `env:` block (`KEY=value`). What the
+    // assertion protects is that the value itself is passed through unchanged.
+    assert.match(text, /MSYS2_LOCATION[:=] ?\$\{\{ steps.capture-msys2.outputs.msys2-location \}\}/);
     assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH"/);
     assert.match(text, /node scripts\/prepare-release-capture.mjs --arch "\$TARGET_ARCH" --verify-output "\$OUT_DIR"/);
     assert.ok(text.indexOf('Prepare and admit capture release resources') < text.indexOf('- name: Build Electron app'));
     assert.ok(text.indexOf('Import Apple certificate (macOS)') < text.indexOf('Prepare and admit capture release resources'));
-    assert.match(text, /NUWAX_CAPTURE_MAC_SIGNING: \$\{\{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' \|\| 'false' \}\}/);
+    assert.match(text, /NUWAX_CAPTURE_MAC_SIGNING[:=] ?\$\{\{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != '' && 'true' \|\| 'false' \}\}/);
     assert.ok(text.indexOf('- name: Build Electron app') < text.indexOf('Verify packaged capture resources'));
     assert.match(text, /APPLE_API_KEY= APPLE_API_KEY_ID= APPLE_ISSUER_ID=/);
     assert.match(text, /--dir --publish never --config.mac.notarize=false/);
@@ -141,5 +144,27 @@ test('stable and beta prepare locked capture payloads and verify real packaged b
     assert.match(text, /OUT_DIR="\$NUWAX_WINDOWS_OUTPUT_DIR"/);
     assert.match(text, /platform: ubuntu-24.04\n\s+arch: x64/);
     assert.match(text, /platform: ubuntu-24.04-arm\n\s+arch: arm64/);
+
+    // The three Linux native builds go through the glibc 2.28 build image via the
+    // composite action, so their artifacts load on UOS 1050; the same step runs
+    // unchanged on macOS and Windows. And the packaged tree is gated on its floor.
+    for (const [step, command] of [
+      ['Rebuild native modules for Electron', 'npm run rebuild:better-sqlite3'],
+      ['Prepare and admit capture release resources', 'build-resource-artifacts.mjs measure capture'],
+      ['Build Computer Use helper (cua-driver)', 'build-resource-artifacts.mjs measure helper'],
+    ]) {
+      const body = text.slice(text.indexOf(`- name: ${step}`));
+      const next = body.indexOf('\n      - name:', 1);
+      const stepText = next < 0 ? body : body.slice(0, next);
+      assert.ok(stepText.includes('uses: ./.github/actions/linux-native-step'), `${name}: ${step} must run through linux-native-step`);
+      assert.ok(!/^        run:/m.test(stepText), `${name}: ${step} must not bypass the action with a raw run`);
+      assert.ok(stepText.includes(command), `${name}: ${step} command changed`);
+      assert.match(stepText, /arch: \$\{\{ matrix\.arch \}\}/);
+    }
+    // The capture step keeps its 30 minute limit, now expressed as the action input.
+    const capture = text.slice(text.indexOf('- name: Prepare and admit capture release resources'));
+    assert.match(capture.slice(0, capture.indexOf('\n      - ', 1)), /timeout-minutes: 30/);
+    assert.match(text, /Verify Linux binaries stay within the glibc 2\.28 floor\n[\s\S]*?linux-glibc-gate\.mjs --verify-output "\$OUT_DIR" --platform linux --arch "\$TARGET_ARCH"/);
+    assert.ok(text.indexOf('Verify packaged resources exclude build caches') < text.indexOf('Verify Linux binaries stay within the glibc 2.28 floor'));
   }
 });

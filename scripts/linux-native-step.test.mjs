@@ -91,6 +91,9 @@ test('step env text is parsed one KEY=VALUE per line, keeping equals signs insid
   assert.deepEqual(parseStepEnv('A=1\nB=x=y\n\nignored\n  C  = spaced \n'), { A: '1', B: 'x=y', C: ' spaced ' });
   assert.deepEqual(parseStepEnv(''), {});
   assert.deepEqual(parseStepEnv(undefined), {});
+  // Comment lines ride along inside the YAML block; they are skipped even when
+  // they contain an `=`, which would otherwise become a bogus variable.
+  assert.deepEqual(parseStepEnv('A=1\n  # see foo=bar\n#B=2\nC=3'), { A: '1', C: '3' });
 });
 
 test('the docker platform follows the repository architecture names', () => {
