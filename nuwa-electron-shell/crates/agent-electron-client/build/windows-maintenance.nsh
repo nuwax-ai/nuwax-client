@@ -88,6 +88,9 @@ Function .onInstFailed
   ${else}
     !insertmacro nuwaxRestoreFailedRegistration nuwax-old-shell.txt CurrentUser
   ${endif}
+  ${ifNot} ${Silent}
+    MessageBox MB_OK|MB_ICONSTOP "$(MUI_TEXT_ABORT_SUBTITLE)$\r$\n$\r$\n${NUWAX_INSTALLER_LIFECYCLE_LOG}"
+  ${endif}
   SetErrorLevel 2
 FunctionEnd
 
