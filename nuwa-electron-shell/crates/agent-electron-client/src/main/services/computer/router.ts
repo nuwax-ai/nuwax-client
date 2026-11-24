@@ -315,6 +315,14 @@ export async function handleComputerChat(
     redactStringForLog(JSON.stringify(redactForLog(body), null, 2)),
   );
 
+  // 诊断（2026-11-24）：Java 后端有时把整段历史拼进 prompt
+  // （`<context-message>…</context-message>` + 本次新消息）。引擎本身已维护会话
+  // 历史，重复下发会让上下文随轮次累积，压缩因此触发得频繁。这里只记结构化的
+  // 摘要（是否带历史、历史多长、与原始用户输入是否一致），不重复打印全文——全文
+  // 在下面的 debug 日志里。
+  const promptText = body.prompt ?? "";
+  const contextEnd = promptText.indexOf("</context-message>");
+  const hasContextMessage = promptText.includes("<context-message>");
   log.info("📨 [HTTP] Computer Chat request received", {
     user_id: body.user_id,
     project_id: body.project_id,
@@ -329,6 +337,19 @@ export async function handleComputerChat(
       : undefined,
     system_prompt_length: body.system_prompt ? body.system_prompt.length : 0,
     prompt_length: body.prompt ? body.prompt.length : 0,
+    prompt_has_context_message: hasContextMessage,
+    prompt_context_length: hasContextMessage
+      ? contextEnd < 0
+        ? promptText.length
+        : contextEnd + "</context-message>".length
+      : 0,
+    prompt_equals_original_user_prompt:
+      body.original_user_prompt === undefined
+        ? undefined
+        : body.prompt === body.original_user_prompt,
+    prompt_tail: redactStringForLog(
+      promptText.length > 160 ? promptText.slice(-160) : promptText,
+    ),
   });
 
   if (!body.user_id) {
