@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { imageHash, imageRef, imageTag, readVersions, buildArgs } from './client/linux-native-image.mjs';
 import { parseStepEnv, dockerPlatform, containerHome, dockerArgs, withTimeout, runInImage, runNatively } from './client/linux-native-step.mjs';
@@ -64,6 +65,18 @@ test('build args carry every version from versions.env as --build-arg NAME=value
   const values = real.filter((_, index) => index % 2 === 1);
   assert.deepEqual(values, Object.entries(versions).map(([name, value]) => `${name}=${value}`));
   assert.ok(real.filter((_, index) => index % 2 === 0).every((flag) => flag === '--build-arg'));
+});
+
+test('the build-args CLI sub-command prints one KEY=value per line for docker/build-push-action', () => {
+  // The workflow feeds this text straight into the action's `build-args` input.
+  // `docker build` on a command line wants `--build-arg KEY=value` pairs instead; that is buildArgs().
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('./client/linux-native-image.mjs', import.meta.url)), 'build-args'], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const out = run.stdout;
+  const lines = out.trim().split('\n');
+  const versions = readVersions();
+  assert.deepEqual(lines, Object.entries(versions).map(([name, value]) => `${name}=${value}`));
+  assert.ok(!out.includes('--build-arg'), 'the action input must not contain the docker CLI flag');
 });
 
 test('the real recipe resolves to a stable tag', () => {

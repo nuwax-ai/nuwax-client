@@ -62,11 +62,17 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Resolve the image tag from the recipe content
+      - name: Resolve the image tag and build arguments from the recipe content
         id: image
         shell: bash
         run: |
           echo "tag=$(node scripts/client/linux-native-image.mjs tag)" >> "$GITHUB_OUTPUT"
+          # One KEY=value per line, which is what docker/build-push-action's build-args takes.
+          {
+            echo "build-args<<EOF"
+            node scripts/client/linux-native-image.mjs build-args
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

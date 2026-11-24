@@ -79,11 +79,13 @@ export function verifyLocalImage(ref = imageRef(), floor = readVersions().GLIBC_
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const [command, ...rest] = process.argv.slice(2);
+    const [command] = process.argv.slice(2);
     const output = {
       tag: () => imageTag(),
       ref: () => imageRef(),
-      'build-args': () => buildArgs().join('\n'),
+      // One KEY=value per line: the format docker/build-push-action's `build-args` input takes.
+      // (The `docker build` command line wants `--build-arg KEY=value` pairs; that is buildArgs().)
+      'build-args': () => Object.entries(readVersions()).map(([name, value]) => `${name}=${value}`).join('\n'),
       verify: () => { const result = verifyLocalImage(); return `${result.ref} glibc ${result.glibc}`; },
     }[command];
     if (!output) throw new Error('用法: linux-native-image.mjs tag | ref | build-args | verify');
