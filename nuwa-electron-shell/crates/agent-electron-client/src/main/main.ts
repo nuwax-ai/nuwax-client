@@ -54,6 +54,7 @@ import { NUWAX_WEBVIEW_LANG_KEY, resolveShellLang } from "@shared/utils/shellLan
 import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createAutoLaunchManager } from "./window/autoLaunchManager";
 import { createDockVisibility } from "./window/dockVisibility";
+import { revealWhenReady } from "./window/revealWhenReady";
 import { createServiceReadinessGate } from "./services/serviceReadinessGate";
 import { createServiceManager } from "./window/serviceManager";
 import { createTrayServiceActions } from "./window/trayServiceActions";
@@ -419,7 +420,8 @@ function createWindow() {
     },
   });
 
-  mainWindow.once("ready-to-show", () => {
+  // Wayland 下隐藏窗口可能永远等不到 ready-to-show（窗口一直不可见），页面加载后兜底显示。
+  revealWhenReady(mainWindow, () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     // 开发验收在当前操作的显示器打开，避免窗口出现在另一块屏幕上。
     if (isDev) {
@@ -445,6 +447,8 @@ function createWindow() {
         300,
       );
     }
+  }, {
+    onFallback: (fallback) => log.info("Main window shown by fallback", { fallback }),
   });
 
   mainWindow.on("closed", () => {

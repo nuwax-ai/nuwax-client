@@ -20,6 +20,7 @@ import { APP_DISPLAY_NAME, APP_NAME_IDENTIFIER } from "@shared/constants";
 import { readSetting, writeSetting } from "../db";
 import { getDomainTokenKey } from "@shared/utils/domain";
 import { t } from "../services/i18n";
+import { revealWhenReady } from "../window/revealWhenReady";
 
 // ==================== WebView 窗口缓存 ====================
 
@@ -472,10 +473,16 @@ export function registerSessionHandlers(ctx: HandlerContext): void {
 
         await webviewWindow.loadURL(url);
 
-        webviewWindow.once("ready-to-show", () => {
-          webviewWindow?.show();
-          log.debug("[IPC] webview:openWindow - window shown for:", url);
-        });
+        // Wayland 下隐藏窗口可能永远等不到 ready-to-show；页面已加载完成，宽限后兜底显示。
+        const openedWindow = webviewWindow;
+        revealWhenReady(
+          openedWindow,
+          () => {
+            openedWindow.show();
+            log.debug("[IPC] webview:openWindow - window shown for:", url);
+          },
+          { pageLoaded: true },
+        );
 
         let saveBoundsTimeout: NodeJS.Timeout | null = null;
         const saveBounds = () => {
