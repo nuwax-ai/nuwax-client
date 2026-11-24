@@ -249,7 +249,6 @@ describe("guest recovery lifecycle", () => {
     const live = guest;
     const key = guestKey;
     guest.emit("did-start-navigation", { isMainFrame: true });
-    guest.emit("dom-ready");
     vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
     await paint();
     expect(find(tree, PageLoadRecovery).props.mode).toBe("waiting");
@@ -258,9 +257,13 @@ describe("guest recovery lifecycle", () => {
     expect(guest.reload).not.toHaveBeenCalled();
     const slow = vi.mocked(logger.warn).mock.calls.at(-1)?.[2];
     expect(slow).toMatchObject({
-      phase: "wait-for-load-stop",
+      phase: "load-document",
       elapsedMs: GUEST_SLOW_HINT_MS,
     });
+    guest.emit("dom-ready");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    expect(guest).toBe(live);
     guest.emit("did-stop-loading");
     await paint();
     expect(find(tree, PageLoadRecovery)?.props.mode).not.toBe("failed");
@@ -268,8 +271,38 @@ describe("guest recovery lifecycle", () => {
     expect(logger.info).toHaveBeenCalledWith(
       "[GuestLoad] finished",
       "NuwaxHostWebview",
-      expect.objectContaining({ ...slow as object, outcome: "stopped" }),
+      expect.objectContaining({ phase: "wait-for-load-stop", outcome: "stopped" }),
     );
+  });
+  it("keeps a ready document visible while initial and later subresources load", async () => {
+    await paint();
+    const live = guest;
+    guest.emit("did-start-navigation", { isMainFrame: true });
+    guest.emit("dom-ready");
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    expect(vi.mocked(logger.warn).mock.calls.at(-1)?.[2]).toMatchObject({
+      phase: "wait-for-load-stop",
+      elapsedMs: GUEST_SLOW_HINT_MS,
+    });
+
+    guest.emit("did-stop-loading");
+    guest.emit("did-start-navigation", { isMainFrame: false });
+    guest.emit("did-start-loading");
+    vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
+    await paint();
+    expect(find(tree, PageLoadRecovery)).toBeNull();
+    expect(phases).not.toHaveBeenCalledWith("waiting");
+    expect(guest).toBe(live);
+    expect(guest.reload).not.toHaveBeenCalled();
+
+    guest.emit("did-start-navigation", { isMainFrame: true });
+    vi.advanceTimersByTime(GUEST_SLOW_HINT_MS);
+    await paint();
+    expect(find(tree, PageLoadRecovery).props.mode).toBe("waiting");
   });
   it("uses one refresh entry for card and toolbar and unlocks after a synchronous rejection", async () => {
     await paint();
