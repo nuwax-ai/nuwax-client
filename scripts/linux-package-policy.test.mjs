@@ -88,22 +88,37 @@ test('the ar reader accepts the GNU layout that deb packages use', (t) => {
   assert.ok(members[0].size > 0);
 });
 
-test('glibc floor check reads the required symbol version and compares it with the target limit', () => {
-  const missing = policy.checkGlibcFloor('/nonexistent/file.so', '2.28');
-  assert.equal(missing.ok, false);
-  assert.match(missing.reason, /不存在/);
-  const binary = path.join(os.tmpdir(), `nuwax-glibc-${process.pid}.so`);
+test('glibc versions compare as two integers, not as decimals', () => {
+  // 2.9 and 2.10 are 2.9 > 2.1 as decimals, but 2.9 < 2.10 as glibc versions.
+  // Getting this wrong makes the gate reject artifacts that only need GLIBC_2.9.
+  const v = (text) => policy.parseGlibcVersion(text);
+  assert.ok(policy.compareGlibcVersions(v('2.9'), v('2.10')) < 0);
+  assert.ok(policy.compareGlibcVersions(v('2.10'), v('2.28')) < 0);
+  assert.equal(policy.compareGlibcVersions(v('2.28'), v('2.28')), 0);
+  assert.ok(policy.compareGlibcVersions(v('2.29'), v('2.28')) > 0);
+  assert.ok(policy.compareGlibcVersions(v('3.0'), v('2.99')) > 0);
+  for (const invalid of ['', '2', '2.28.1', 'x.y', null, undefined]) assert.equal(policy.parseGlibcVersion(invalid), null);
+});
+
+test('the glibc floor check accepts anything up to the limit and rejects anything above it', () => {
+  const binary = path.join(os.tmpdir(), `nuwax-glibc-floor-${process.pid}.so`);
   try {
-    // 用本机 libc 做一个带版本引用的最小 ELF：直接读系统库最可靠。
-    const candidates = ['/usr/lib/x86_64-linux-gnu/libc.so.6', '/usr/lib/aarch64-linux-gnu/libc.so.6', '/usr/lib/libc.so.6'];
+    const candidates = ['/usr/lib/x86_64-linux-gnu/libc.so.6', '/usr/lib/aarch64-linux-gnu/libc.so.6', '/lib/aarch64-linux-gnu/libc.so.6', '/lib/x86_64-linux-gnu/libc.so.6', '/usr/lib/libc.so.6'];
     const system = candidates.find((file) => fs.existsSync(file));
     if (!system) return;
     fs.copyFileSync(system, binary);
-    const required = policy.highestGlibcVersion(binary);
-    if (required === null) return;
-    assert.equal(policy.checkGlibcFloor(binary, '99.0').ok, true);
-    assert.equal(policy.checkGlibcFloor(binary, '2.0').ok, false);
+    const highest = policy.highestGlibcVersion(binary);
+    if (!highest) return;
+    const at = policy.checkGlibcFloor(binary, `${highest.major}.${highest.minor}`);
+    assert.equal(at.ok, true);
+    assert.equal(at.required, `${highest.major}.${highest.minor}`);
+    const oneBelow = highest.minor === 0 ? { major: highest.major - 1, minor: 99 } : { major: highest.major, minor: highest.minor - 1 };
+    const below = policy.checkGlibcFloor(binary, `${oneBelow.major}.${oneBelow.minor}`);
+    assert.equal(below.ok, false);
+    assert.match(below.reason, /需要 GLIBC_/);
   } finally {
     fs.rmSync(binary, { force: true });
   }
+  assert.match(policy.checkGlibcFloor('/nonexistent/file.so', '2.28').reason, /不存在/);
+  assert.match(policy.checkGlibcFloor('/nonexistent/file.so', 'garbage').reason, /格式无效/);
 });

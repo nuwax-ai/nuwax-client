@@ -129,28 +129,53 @@ function verifyLinuxPackageLinks(directory) {
   return { checked: packages.length };
 }
 
-/** 读取一个 ELF 文件依赖的最高 GLIBC 符号版本，例如 2.28。 */
+/**
+ * 解析 "主.次" 形式的 glibc 版本。glibc 的版本号是两段整数，不能当小数比较：
+ * 2.9 和 2.10 当小数是 2.9 > 2.1，而实际 2.9 < 2.10。
+ * @returns {{major: number, minor: number}|null}
+ */
+function parseGlibcVersion(text) {
+  const match = /^(\d+)\.(\d+)$/.exec(String(text ?? '').trim());
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2]) };
+}
+
+function compareGlibcVersions(a, b) {
+  return a.major !== b.major ? a.major - b.major : a.minor - b.minor;
+}
+
+function formatGlibcVersion(version) {
+  return version ? `${version.major}.${version.minor}` : null;
+}
+
+/**
+ * 读取一个 ELF 文件需要的最高 GLIBC 符号版本。
+ * @returns {{major: number, minor: number}|null} 非 ELF 或读取失败时返回 null
+ */
 function highestGlibcVersion(file) {
+  // readelf 对非 ELF 文件退出码非 0；对没有版本信息的 ELF 退出 0 但输出里没有 GLIBC_。
   const result = spawnSync('readelf', ['-V', file], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) return null;
   let highest = null;
   for (const match of result.stdout.matchAll(/GLIBC_(\d+)\.(\d+)/g)) {
-    const version = Number(`${match[1]}.${match[2]}`);
-    if (highest === null || version > highest) highest = version;
+    const version = { major: Number(match[1]), minor: Number(match[2]) };
+    if (highest === null || compareGlibcVersions(version, highest) > 0) highest = version;
   }
   return highest;
 }
 
 /**
- * 检查一个 ELF 文件是否能在给定的 glibc 上限内加载。
+ * 检查一个 ELF 文件是否能在给定的 glibc 版本上加载。
+ * 没有 GLIBC 版本引用的 ELF（例如纯静态链接）视为满足任意上限。
  */
 function checkGlibcFloor(file, limit) {
+  const floor = parseGlibcVersion(limit);
+  if (!floor) return { ok: false, required: null, limit, reason: `glibc 上限格式无效：${limit}` };
   if (!fs.existsSync(file)) return { ok: false, required: null, limit, reason: '文件不存在' };
   const required = highestGlibcVersion(file);
   if (required === null) return { ok: false, required: null, limit, reason: '无法读取 ELF 版本信息' };
-  const [limitMajor, limitMinor] = limit.split('.').map(Number);
-  const ok = required <= limitMajor + limitMinor / 100;
-  return { ok, required, limit, reason: ok ? undefined : `需要 GLIBC_${required}，目标上限 GLIBC_${limit}` };
+  const ok = compareGlibcVersions(required, floor) <= 0;
+  return { ok, required: formatGlibcVersion(required), limit, reason: ok ? undefined : `需要 GLIBC_${formatGlibcVersion(required)}，目标上限 GLIBC_${limit}` };
 }
 
 module.exports = {
@@ -162,6 +187,8 @@ module.exports = {
   inspectDebHardLinks,
   listLinuxPackages,
   verifyLinuxPackageLinks,
+  parseGlibcVersion,
+  compareGlibcVersions,
   highestGlibcVersion,
   checkGlibcFloor,
 };
