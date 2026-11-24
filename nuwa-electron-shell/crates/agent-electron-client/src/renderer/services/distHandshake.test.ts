@@ -34,7 +34,9 @@ describe("dist mismatch notice", () => {
     const update = vi.fn(); const observer = observeDistHandshake({ app: { getDistHandshake } }, update);
     const first = observer.refresh(); expect(observer.refresh(true)).toBe(first); await first;
     expect(update).toHaveBeenLastCalledWith({ snapshot, checking: false });
-    await observer.refresh(true);
+    const refresh = observer.refresh(true);
+    expect(update).toHaveBeenLastCalledWith({ snapshot, checking: true });
+    await refresh;
     expect(update).toHaveBeenLastCalledWith({ snapshot: null, checking: false });
     observer.dispose();
   });
