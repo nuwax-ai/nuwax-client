@@ -13,10 +13,13 @@ import {
   patternToRegExp,
   readHighestGlibc,
   scanGlibc,
+  unpackedAppDir,
   verifyLinuxGlibc,
 } from './client/linux-glibc-gate.mjs';
+import { packagedResources } from './prepare-release-updater.mjs';
 
-const cli = fileURLToPath(new URL('./client/linux-glibc-gate.mjs', import.meta.url));
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const cli = path.join(root, 'scripts/client/linux-glibc-gate.mjs');
 
 function temporary(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-glibc-gate-'));
@@ -171,6 +174,27 @@ test('the parser agrees with readelf on real binaries when binutils is available
 function compare(a, b) {
   return (a.major - b.major) || (a.minor - b.minor);
 }
+
+test('the unpacked app directory follows the one rule the repo already has', () => {
+  // x64 has no arch suffix, arm64 does. The gate takes this from packagedResources
+  // so there is a single source; the image workflow asks the gate instead of
+  // composing the name itself (it composed `linux-x64-unpacked` once and the gate
+  // could not find the directory).
+  assert.equal(unpackedAppDir('/out', 'x64'), path.join('/out', 'linux-unpacked'));
+  assert.equal(unpackedAppDir('/out', 'arm64'), path.join('/out', 'linux-arm64-unpacked'));
+  // and it agrees with the helper the release workflows use to locate resources
+  assert.equal(unpackedAppDir('/out', 'arm64'), path.dirname(packagedResources('/out', 'linux', 'arm64')));
+  assert.equal(unpackedAppDir('/out', 'x64'), path.dirname(packagedResources('/out', 'linux', 'x64')));
+  // the gate no longer carries its own copy of the rule: it derives the
+  // directory from packagedResources instead of naming it itself
+  const source = fs.readFileSync(cli, 'utf8');
+  assert.ok(source.includes('path.dirname(packagedResources('), 'gate must take the directory from packagedResources');
+  assert.ok(!source.includes("'linux-arm64-unpacked' ? "), 'gate names the directory itself');
+  // the image workflow does not compose the directory name either
+  const workflow = fs.readFileSync(path.join(root, '.github/workflows/linux-native-image.yml'), 'utf8');
+  assert.ok(workflow.includes('unpackedAppDir('), 'image workflow must ask the gate for the app directory');
+  assert.ok(!workflow.includes('linux-$TARGET_ARCH-unpacked'), 'image workflow composes the app directory name itself');
+});
 
 test('non-ELF files, symlinks and missing files are not treated as ELF', (t) => {
   const dir = temporary(t);

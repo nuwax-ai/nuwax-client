@@ -190,13 +190,23 @@ export function scanGlibc(directory, { floor = GLIBC_FLOOR, allowlist = ALLOWLIS
 }
 
 /**
+ * 某个架构的解包安装目录（electron-builder 的输出布局）。
+ * x64 的目录不带架构后缀（`linux-unpacked`），arm64 带（`linux-arm64-unpacked`）。
+ * 规则只有这一处：取自 prepare-release-updater 的 packagedResources，
+ * 调用方（含镜像 workflow 里把产物摆成安装目录的步骤）都从这里拿，不要各抄一份。
+ */
+export function unpackedAppDir(output, arch) {
+  return path.dirname(packagedResources(output, 'linux', arch));
+}
+
+/**
  * 校验打包产物的 glibc 需求。
  * @param {string} output electron-builder 的输出目录
  */
 export function verifyLinuxGlibc(output, { platform, arch, reportOnly = false, floor = GLIBC_FLOOR } = {}) {
   if (platform !== 'linux') return null;
   // 扫描整个安装目录，不只是 resources/：Electron 自带的二进制也在承诺范围内。
-  const appDir = path.join(output, arch === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked');
+  const appDir = unpackedAppDir(output, arch);
   let stat;
   try { stat = fs.lstatSync(appDir); } catch { /* 统一按缺失处理 */ }
   if (!stat?.isDirectory()) throw new Error(`[linux-glibc-gate] 找不到打包目录：${appDir}`);

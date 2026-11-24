@@ -279,16 +279,24 @@ jobs:
             node scripts/client/build-resource-artifacts.mjs measure helper -- bash scripts/computer-use/build-helper.sh
 
       # 把三个产物摆成安装目录的样子，交给门禁判定。
+      # 目录名问门禁要，不在这里拼：x64 的解包目录不带架构后缀（linux-unpacked），
+      # arm64 带（linux-arm64-unpacked）。自己拼过一次，x64 那边拼错了。
       - name: Report the glibc floor of everything the image built
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.target_arch }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/floor/linux-$TARGET_ARCH-unpacked/resources"
-          R="$RUNNER_TEMP/floor/linux-$TARGET_ARCH-unpacked/resources"
-          cp nuwa-electron-shell/crates/agent-electron-client/node_modules/better-sqlite3/build/Release/better_sqlite3.node "$R/"
-          cp resources/capture/linux-$TARGET_ARCH/ffmpeg "$R/"
-          cp nuwa-electron-shell/crates/agent-electron-client/resources/computer-use/NuwaxComputerUse "$R/"
+          FLOOR="$RUNNER_TEMP/floor"
+          APP_DIR="$(node --input-type=module -e '
+            const { unpackedAppDir } = await import("./scripts/client/linux-glibc-gate.mjs");
+            console.log(unpackedAppDir(process.argv[1], process.argv[2]));
+          ' "$FLOOR" "$TARGET_ARCH")"
+          R="$APP_DIR/resources"
+          mkdir -p "$R/app.asar.unpacked/node_modules/better-sqlite3/build/Release" "$R/capture/linux-$TARGET_ARCH" "$R/computer-use"
+          cp nuwa-electron-shell/crates/agent-electron-client/node_modules/better-sqlite3/build/Release/better_sqlite3.node "$R/app.asar.unpacked/node_modules/better-sqlite3/build/Release/"
+          cp resources/capture/linux-$TARGET_ARCH/ffmpeg "$R/capture/linux-$TARGET_ARCH/"
+          cp nuwa-electron-shell/crates/agent-electron-client/resources/computer-use/NuwaxComputerUse "$R/computer-use/"
+          echo "gate will scan: $APP_DIR"
           # 三个产物都不得高于 2.28：门禁不带 --report-only，超限即失败。
-          node scripts/client/linux-glibc-gate.mjs --verify-output "$RUNNER_TEMP/floor" --platform linux --arch "$TARGET_ARCH"
+          node scripts/client/linux-glibc-gate.mjs --verify-output "$FLOOR" --platform linux --arch "$TARGET_ARCH"
