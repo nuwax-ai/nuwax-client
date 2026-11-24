@@ -16,6 +16,7 @@ const fs = require('fs');
 const https = require('https');
 const { execSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
+const { extractWindowsZip } = require('../utils/extract-windows-zip');
 
 const UV_VERSION = '0.10.8';
 
@@ -122,20 +123,7 @@ function extractArchive(archivePath, outDir) {
   const isZip = ext === '.zip';
   if (isZip) {
     if (process.platform === 'win32') {
-      // Windows: 使用 tar 解压 zip（Windows 10+ 内置 tar）
-      // 注意：需要等待文件流完全关闭，避免 "being used by another process" 错误
-      try {
-        execSync(`tar -xf "${archivePath}" -C "${outDir}"`, { stdio: 'inherit' });
-      } catch (e) {
-        // 如果 tar 失败，尝试使用 PowerShell（可能遇到文件锁定问题）
-        console.log('[prepare-uv] tar 解压失败，尝试 PowerShell...');
-        const psPath = archivePath.replace(/'/g, "''");
-        const psDest = outDir.replace(/'/g, "''");
-        execSync(
-          `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${psPath}' -DestinationPath '${psDest}' -Force"`,
-          { stdio: 'inherit' },
-        );
-      }
+      extractWindowsZip(archivePath, outDir);
     } else {
       try {
         execSync(`unzip -o -q "${archivePath}" -d "${outDir}"`, { stdio: 'inherit' });
@@ -197,9 +185,7 @@ async function downloadAndPrepare(key, suffix, version) {
   }
   extractArchive(archivePath, extractDir);
   moveExtractedToKey(extractDir, key);
-  if (!copyToDestBin(key)) {
-    console.warn('[prepare-uv] 解压后未找到 bin 目录，请检查包结构');
-  }
+  copyToDestBin(key);
 }
 
 async function main() {
@@ -254,12 +240,10 @@ async function main() {
   console.log(`[prepare-uv] 使用 uv 版本: ${version}`);
   try {
     await downloadAndPrepare(key, suffix, version);
-    // Write .platform-key and .version markers after successful download
-    if (fs.existsSync(destBin)) {
-      fs.writeFileSync(platformKeyFile, key, 'utf-8');
-      fs.writeFileSync(versionFile, UV_VERSION, 'utf-8');
-      console.log(`[prepare-uv] 已写入 .platform-key: ${key}, .version: ${UV_VERSION}`);
-    }
+    if (!fs.existsSync(destUv)) throw new Error(`解压后未找到 ${uvName}，请检查包结构`);
+    fs.writeFileSync(platformKeyFile, key, 'utf-8');
+    fs.writeFileSync(versionFile, UV_VERSION, 'utf-8');
+    console.log(`[prepare-uv] 已写入 .platform-key: ${key}, .version: ${UV_VERSION}`);
   } catch (err) {
     console.error('[prepare-uv] 下载或解压失败:', err.message);
     process.exit(1);

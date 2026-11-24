@@ -19,6 +19,7 @@ const https = require('https');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
+const { extractWindowsZip } = require('../utils/extract-windows-zip');
 
 const projectRoot = getProjectRoot();
 const nodeRoot = path.join(projectRoot, 'resources', 'node');
@@ -166,12 +167,7 @@ function extractArchive(archivePath, outDir) {
   
   if (ext === '.zip') {
     if (process.platform === 'win32') {
-      const psPath = archivePath.replace(/'/g, "''");
-      const psDest = outDir.replace(/'/g, "''");
-      execSync(
-        `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${psPath}' -DestinationPath '${psDest}' -Force"`,
-        { stdio: 'inherit' }
-      );
+      extractWindowsZip(archivePath, outDir);
     } else {
       execSync(`unzip -o -q "${archivePath}" -d "${outDir}"`, { stdio: 'inherit' });
     }
