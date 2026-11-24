@@ -96,6 +96,17 @@ Computer Use 设置支持选择 CUA Driver（默认）或 Agent Desktop（实验
 
 旧 GUI MCP、本地沙箱和壳目录独立 Makefile 已移除；开发、资源准备和打包统一使用仓库根入口。资源覆盖和缓存规则见根 README。
 
+## UOS 1050 (arm64) 本地启动
+
+`make dev-uos` 是面向统信 UOS 20 Pro 1050 arm64 机器的本地启动入口，只在该平台可用。它做前置检查与环境装配后复用 `make dev-direct` 启动客户端：
+
+- 校验平台为 linux/arm64，其他平台直接拒绝；
+- 找到可用的 Node（这台机器没有系统 Node，用已安装包里的 bundled Node）；
+- 校验 `better_sqlite3.node` 已就绪，且依赖的最高 GLIBC 符号不超过 2.28（超出即需按 glibc 2.28 目标重编）；
+- 启用独立开发档案 `NUWAX_DEV_PROFILE=1`（数据目录 `~/.nuwax-dev`），并保留沙箱 `NUWAX_DEV_KEEP_SANDBOX=1`。
+
+`make dev-uos --check-only` 只做检查不起客户端。开发模式下默认仍关闭沙箱（与既有行为一致），因为晚追加的 `--no-sandbox` 会让沙箱化 webview 的来宾渲染进程崩溃；需要保留沙箱时用上述环境变量。
+
 ## 发布与签名
 
 - `release` 固定本仓提交与前端输入，以不可变 tag 触发五平台构建。beta 自动同步并公开 prerelease；stable 默认停在签名阶段，安装验收后显式 `--stage sync`。失败续跑已有 tag，不移动历史 tag。

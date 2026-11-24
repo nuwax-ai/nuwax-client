@@ -15,7 +15,7 @@ $(error DEV_WEBVIEW must be loopback or dev)
 endif
 
 .DEFAULT_GOAL := dev
-.PHONY: help dev dev-direct setup frontend-build pack doctor release submodules submodules-latest harness-local
+.PHONY: help dev dev-direct dev-uos setup frontend-build pack doctor release submodules submodules-latest harness-local
 
 help:
 	@$(CLIENT_CLI) help
@@ -23,6 +23,13 @@ help:
 dev:
 	@if [ -z "$$HARNESS_LOCAL" ]; then node scripts/sync-local-harness.mjs --restore --quiet 2>/dev/null || true; fi
 	@bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(REFRESH_FLAG) $(ARGS)
+
+# UOS 1050 (arm64) 本地启动客户端。这台机器没有系统 Node、开发副本没有 .git、
+# 原生模块需按 glibc 2.28 重编，且开发模式关沙箱会打死沙箱化 webview；
+# 本命令做前置检查与环境装配后复用 dev-direct 启动。
+# 仅限 linux/arm64；--check-only 只做检查不起客户端。
+dev-uos:
+	@node scripts/client/dev-uos.mjs $(ARGS)
 
 # Lightweight commercial dev: the shell in commercial identity against the production
 # webview (direct https://agent.nuwax.com). Unlike `make dev` (loopback dist with

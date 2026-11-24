@@ -132,7 +132,7 @@ if (process.platform === "darwin") {
 // 沙箱启用策略：
 // 1. deb/rpm 包：通过 postinst 脚本设置 chrome-sandbox 的 SUID 权限
 // 2. AppImage：依赖 unprivileged user namespaces（内核需要支持）
-// 3. 开发模式：禁用沙箱以方便调试
+// 3. 开发模式：默认禁用沙箱以方便调试；需要保留沙箱时用 NUWAX_DEV_KEEP_SANDBOX=1
 // 4. 用户可通过环境变量 ELECTRON_DISABLE_SANDBOX=1 强制禁用
 //
 // 注意: 此代码在 initLogging() 之前执行，所以使用 console 而不是 log
@@ -141,6 +141,10 @@ if (process.platform === "linux") {
   const isAppImage = process.env.APPIMAGE !== undefined;
   const disableSandbox = process.env.ELECTRON_DISABLE_SANDBOX === "1";
   const isDev = !app.isPackaged;
+  // 开发时用 app.commandLine 追加 --no-sandbox 太晚：宿主已按启用沙箱派生 zygote，
+  // 来宾渲染进程再拿真实沙箱时缺少 /dev/shm 共享内存准备，直接崩溃。
+  // 允许在支持 user namespace 的机器上保留沙箱（与正式包行为一致）。
+  const keepDevSandbox = process.env.NUWAX_DEV_KEEP_SANDBOX === "1";
 
   // 警告: 以 root 身份运行存在安全风险
   if (isRoot) {
@@ -160,7 +164,7 @@ if (process.platform === "linux") {
     console.warn("[Security] Sandbox disabled by ELECTRON_DISABLE_SANDBOX=1");
     app.commandLine.appendSwitch("no-sandbox");
     app.commandLine.appendSwitch("disable-setuid-sandbox");
-  } else if (isDev) {
+  } else if (isDev && !keepDevSandbox) {
     // 开发模式：禁用沙箱
     console.info("[Dev] Sandbox disabled in development mode");
     app.commandLine.appendSwitch("no-sandbox");
