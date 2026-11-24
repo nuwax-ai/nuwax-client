@@ -1,6 +1,6 @@
 # 实施计划：electron-43-upgrade
 
-- 状态：实施完成，已提交到 `release/v3.3.0`；本机与 UOS 复验已完成，安装包的真机验收待做
+- 状态：实施完成，已随 3.3.0-beta.2 发布（2026-11-24）；安装包的真机验收待做
 
 ## 背景
 
@@ -39,18 +39,22 @@
 
 | 项目 | 结果 |
 |---|---|
-| 本机 `npm run setup` | Electron 43.8.12 由官方安装器下载；better-sqlite3 13.2.0 经 node-gyp 11.5.0 源码构建；Electron 内 `select 1` 通过（ABI 148） |
+| 本机 `npm run setup` | Electron 43.8.12 由官方安装器下载；better-sqlite3 13.2.0 经 node-gyp 13.1.0 源码构建；Electron 内 `select 1` 通过（ABI 148） |
 | `npm run doctor -- --json` | ready，无 issue |
 | `npm run typecheck` | 通过 |
 | `npm run test:scripts` | 464 个用例：459 通过、0 失败、5 跳过 |
-| `npm run test:commercial` | 322 个文件；3989 通过、1 跳过、0 失败 |
+| `npm run test:commercial` | 322 个文件；3990 通过、1 跳过、0 失败（并入 3.2.0 线修复后的合并提交） |
 | `npm run verify:tooling -- --output <仓外目录>` | 通过（source-tooling） |
 | `npm run dev`（macOS） | 开发版包版本 43.8.12；主窗口 34 秒内显示，未走兜底；干净退出，无残留进程 |
 | `npm run pack`（macOS arm64 无签名） | electron-builder 25.1.8 打包成功；包内运行时为 electron 43.8.12 / node 24.22.1 / chrome 150.0.7871.250；用包内运行时加载包内原生模块，查询、FTS5、`quick_check` 通过；`app.asar` 内没有 prebuilds、`test_extension.node`、`obj/gen` |
 | UOS 20 1050 arm64（开发副本） | `typecheck:main` 通过；vitest 3982 通过、4 失败、4 跳过，失败全部是 `computer-use/mcpGateway.test.ts` 的 `listen EPERM`（该机器既有问题）；原生 Wayland 下窗口经 `did-finish-load` 兜底显示，内存数据库初始化成功；`frame: true` 和 `hiddenInset` 窗口探针正常 |
 
+- CI、打包验证与发布：
+  - CI（gates）在每个推送的提交上全部通过。
+  - 打包验证（`package-validation.yml`）：macOS arm64 签名公证包在 `df58ddb9` 通过；Windows x64 无签名包在合并提交 `c8328535` 通过，约 35 分钟。
+  - `v3.3.0-beta.2`（tag `a7111925`）：门禁、五平台构建、S3 与 OSS 同步全部成功；GitHub Release 已公开，29 个资产；两个镜像的 beta 指针均为 3.3.0-beta.2。
 - 没有做的验证：
-  - CI 五平台打包（`package-validation.yml` 和两个 release workflow）。
+  - 3.3.0-beta.2 安装包的真机验收：升级安装、主要功能，尤其是 Windows。
   - Windows 真机目检：托盘角标、三个未指定默认目录的保存对话框的落点。
   - 没有启动打包产物的界面。正式档案首次启动可能注册登录项和系统权限，没有用一次性构建在本机冒险；同一份源码的界面只在 dev 模式验证过。
 - 验证备注：本机 `npm run pack` 会在 Computer Use 助手的 Rust 构建处失败（strip 后的派生宏动态库无法加载，E0463），与本次升级无关。验证时用 `CARGO_PROFILE_RELEASE_STRIP=none` 绕过，验证后已删除它产生的助手目录、状态文件和缓存条目。
@@ -60,12 +64,12 @@
 
 | 风险 | 缓解 | 回退方式 |
 |---|---|---|
-| electron-builder 25.1.8 与 Electron 43 的兼容性只在 macOS arm64 无签名路径上验证过 | CI 跑 `package-validation.yml` 覆盖五个平台 | 单独评估升级 electron-builder，或整体回退 |
-| 强制源码构建要求各平台有 C++ 工具链 | 原来的 `electron-rebuild` 同样需要，没有新增要求 | 改用 better-sqlite3 13 自带的预编译产物，需同步改打包路径 |
+| electron-builder 25.1.8 与 Electron 43 的兼容性 | 已在打包验证（macOS arm64、Windows）和 3.3.0-beta.2 的五平台发布构建中验证 | 单独评估升级 electron-builder，或整体回退 |
+| 强制源码构建让 Windows CI 第一次真正依赖 Visual Studio 探测（原来的 `electron-rebuild` 在 Windows 上并不编译） | node-gyp 升到 13.1.0 以识别构建机上的 Visual Studio 18 | 改用 better-sqlite3 13 自带的预编译产物，需同步改打包路径 |
 | 未签名的 macOS 构建从 Electron 42 起没有系统通知 | 只影响开发和本机验证 | 无需回退 |
 | Electron 43 在 2027 年 1 月出支持期 | 到时再升一次；44 起不再支持 macOS 12 | — |
 
-回退方式：改动都在工作区、未提交，还原这些文件后按旧锁文件重新安装依赖即可。
+回退方式：改动已随 3.3.0-beta.2 发布，已发布的 tag 不移动。需要回退时按发布流程发一个更高版本号的包，内容是把本计划清单里的文件还原并把 Electron 降回 40.8.2（按旧锁文件重新安装依赖）。
 
 ## 偏离记录
 
@@ -75,6 +79,7 @@
 4. **两个打包入口测试的夹具调整。** 它们断言命令序列，新增的“先构建”步骤需要夹具带上已构建的原生模块，并补一个覆盖该行为的用例。
 5. **安装阶段不再执行 better-sqlite3 的安装脚本。** 推送后 CI 的 Windows 任务在 `pnpm install` 失败：13.x 的安装脚本改为走 node-gyp 配置，而 pnpm 9.15.5 自带的 node-gyp 10.2.0 在 Windows 构建机上探测 Visual Studio 失败。该脚本只做空配置，真正的构建由 `rebuild:better-sqlite3` 用仓库锁定的 node-gyp 完成，因此从两份构建脚本白名单（`onlyBuiltDependencies`、`allowBuilds`）里移除。
 6. **node-gyp 升到 13.1.0。** 打包验证中 Windows 在 `rebuild:better-sqlite3` 失败：构建机镜像（windows-2025-vs2026）装的是 Visual Studio 18，node-gyp 11.5.0 报 `Could not find any Visual Studio installation`；12.1.0 起支持 VS 2026，13.0.1 另有版本识别修复。此前 Windows 上的 `electron-rebuild` 只打印 `Rebuild Complete`、并不真正编译，用的是安装阶段下载的预编译文件，所以这个问题一直没暴露。13.x 要求 Node `^22.22.2 || ^24.15.0 || >=26`，CI 和本机都满足。
+7. **并入 3.2.0 线的修复，改为发布 3.3.0-beta.2。** `v3.3.0-beta.1` 打 tag 并开始构建后发现，`release/v3.2.0` 已合入 #146–#149 且正在准备 3.2.0-beta.17：先公开 3.3.0-beta.1 会缺少这些修复，并因通道不降级的规则挡住 3.2.0-beta.17。按用户决定取消 beta.1 构建（tag 和未公开草稿按惯例保留），把 `release/v3.2.0` 合入 `release/v3.3.0`（`c8328535`），重新验证后发布 3.3.0-beta.2。
 
 ## 后续核对项
 
