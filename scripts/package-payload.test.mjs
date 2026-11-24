@@ -98,6 +98,22 @@ test('read-only packaged scan rejects cache roots but keeps nested runtime index
   }
 });
 
+test('read-only packaged scan rejects better-sqlite3 prebuilt binaries and build by-products', (t) => {
+  for (const [relative, message] of [['prebuilds/win32-x64.node', /by-product found: prebuilds/],
+    ['build/Release/test_extension.node', /by-product found: build\/Release\/test_extension\.node/],
+    ['build/Release/obj/gen/sqlite3/sqlite3.c', /by-product found: build\/Release\/obj/]]) {
+    const root = temporary(t);
+    const resources = packagedResources(root, 'linux', 'arm64');
+    const nativeModule = path.join(resources, 'app.asar.unpacked/node_modules/better-sqlite3');
+    write(path.join(nativeModule, 'build/Release/better_sqlite3.node'));
+    assert.equal(verifyPackagePayload(root, { platform: 'linux', arch: 'arm64' }).resources, resources);
+    const leaked = path.join(nativeModule, relative);
+    write(leaked, 'not shipped');
+    assert.throws(() => verifyPackagePayload(root, { platform: 'linux', arch: 'arm64' }), message);
+    assert.equal(fs.readFileSync(leaked, 'utf8'), 'not shipped', 'verification must never repair signed output');
+  }
+});
+
 test('verification CLI fails on absent output and validates the current platform by default', (t) => {
   const root = temporary(t);
   assert.throws(() => verifyPackagePayload(root), /resource directory/i);

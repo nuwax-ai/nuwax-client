@@ -425,10 +425,10 @@ jobs:
         working-directory: nuwa-electron-shell
         run: pnpm install --filter @nuwax-ai/nuwaclaw...
 
-      # 为 Electron 内嵌 Node 重编 better-sqlite3，避免 Linux arm64 等平台运行时 "cannot open shared object file"
+      # 从源码构建 better-sqlite3（Node-API），避免 Linux arm64 等平台运行时预编译产物 "cannot open shared object file"
       - name: Rebuild native modules for Electron
         working-directory: nuwa-electron-shell/crates/agent-electron-client
-        run: npm run electron-rebuild
+        run: npm run rebuild:better-sqlite3
 
       - name: Install commercial dependencies
         run: node scripts/client/commercial-dependencies.mjs

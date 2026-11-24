@@ -75,6 +75,14 @@ export function verifyPackagePayload(output, { platform = process.platform, arch
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     throw new Error(`[package-payload] Standalone notices found: ${relative}`);
   }
+  // better-sqlite3 ships from a local source build; its bundled prebuilt binaries and
+  // build by-products are excluded by the client build config and must stay out of the app.
+  const nativeModule = path.join(resources, 'app.asar.unpacked/node_modules/better-sqlite3');
+  for (const relative of ['prebuilds', 'build/Release/obj', 'build/Release/test_extension.node']) {
+    try { fs.lstatSync(path.join(nativeModule, relative)); }
+    catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    throw new Error(`[package-payload] better-sqlite3 build by-product found: ${relative}`);
+  }
   return { resources, checkedCacheRoots: cacheRoots.length };
 }
 

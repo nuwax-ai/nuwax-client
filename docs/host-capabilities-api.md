@@ -105,4 +105,4 @@ copy 仅允许原发起页面导出仍有效的句柄。不返回本地路径，
 
 完整交接：[nuwax-im-native-capture-integration.md](nuwax-im-native-capture-integration.md)。采集协议：[native-capture-api.md](native-capture-api.md)。客户端白名单源：`src/shared/hostCapabilities.ts`；公共类型事实源：nuwax 前端 `src/types/interfaces/hostBridge.ts`，由客户端同步脚本生成快照。
 
-平台实现依据：[Electron 40.8.2 clipboard](https://github.com/electron/electron/blob/v40.8.2/docs/api/clipboard.md)、[Windows FileDrop](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist)、[AppKit NSPasteboard](https://developer.apple.com/documentation/appkit/nspasteboard)、[GTK FileList](https://gnome.pages.gitlab.gnome.org/gtk/gdk4/struct.FileList.html)。跨端真实粘贴结果以本次验收记录为准。
+平台实现依据：[Electron 43.8.12 clipboard](https://github.com/electron/electron/blob/v43.8.12/docs/api/clipboard.md)、[Windows FileDrop](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.clipboard.setfiledroplist)、[AppKit NSPasteboard](https://developer.apple.com/documentation/appkit/nspasteboard)、[GTK FileList](https://gnome.pages.gitlab.gnome.org/gtk/gdk4/struct.FileList.html)。跨端真实粘贴结果以本次验收记录为准。

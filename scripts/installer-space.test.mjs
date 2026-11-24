@@ -52,7 +52,7 @@ test('pinned vendor installer and uninstaller compile with the complete commerci
   };
   try {
     await runBuild({ projectDir: dir, prepackaged: app, targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64), publish: 'never',
-      config: { extends: null, appId: 'com.nuwax-ai.spaceqa.compile', productName: 'Nuwax', electronVersion: '40.8.2', npmRebuild: false,
+      config: { extends: null, appId: 'com.nuwax-ai.spaceqa.compile', productName: 'Nuwax', electronVersion: '43.8.12', npmRebuild: false,
         directories: { output: path.join(dir, 'out'), buildResources: resources },
         win: { signAndEditExecutable: false },
         nsis: { include, packElevateHelper: false, oneClick: false, perMachine: false, allowToChangeInstallationDirectory: true, useZip: true, differentialPackage: false, warningsAsErrors: false }, publish: null } });

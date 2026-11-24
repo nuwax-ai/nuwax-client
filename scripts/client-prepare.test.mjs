@@ -51,6 +51,11 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
         write(path.join(destination, 'package.json'), { main: 'dist/index.js', scripts: { build: 'fixture' } });
       }
       if (command === 'npm' && ['install', 'ci'].includes(args[0])) write(path.join(options.cwd, 'node_modules/dependency/index.js'));
+      if (args[0] === path.join(p.client, 'node_modules/electron/install.js')) {
+        const binary = platform === 'win32' ? 'electron.exe' : platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron' : 'electron';
+        write(path.join(p.client, 'node_modules/electron/path.txt'), binary);
+        write(path.join(p.client, 'node_modules/electron/dist', binary));
+      }
       if (args[0] === '-p') return { ...success, stdout: '143\n' };
       return success;
     },
@@ -63,15 +68,13 @@ function fixture(t, { platform = 'darwin', arch = 'arm64' } = {}) {
       if (dir === kit && args[0] === 'run') for (const name of ['index.js', 'index.cjs', 'index.d.ts']) write(path.join(kit, 'dist', name));
       if (dir === p.base && args[0] === 'install') {
         for (const name of ['electron', 'vite', 'better-sqlite3', '@nuwax-ai/agent-kit']) write(path.join(p.client, 'node_modules', name, 'package.json'), { version: '1.0.0' });
-        write(path.join(p.client, 'node_modules/electron/path.txt'), 'electron');
-        write(path.join(p.client, 'node_modules/electron/dist/electron'));
       }
       if (dir === p.frontend) write(path.join(p.frontend, 'node_modules/@umijs/max/package.json'), { version: '1' });
       return success;
     },
     npmRun(dir, script) {
       calls.push(['npm', dir, script]);
-      if (script === 'electron-rebuild') write(path.join(p.client, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'));
+      if (script === 'rebuild:better-sqlite3') write(path.join(p.client, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'));
       if (script === 'build' && dir.includes(path.join('.cache', 'client-toolchain', 'sources'))) {
         write(path.join(dir, 'dist/index.js'));
         if (path.basename(dir).startsWith('nuwax-file-server-')) write(path.join(dir, 'dist/server.js'));
@@ -189,12 +192,32 @@ test('kit edits invalidate workspace; ABI and missing native artifacts invalidat
   f.calls.length = 0;
   fs.rmSync(path.join(f.p.client, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'));
   await prepare(f.root, options);
-  assert.ok(f.calls.some((call) => call.includes('electron-rebuild')));
+  assert.ok(f.calls.some((call) => call.includes('rebuild:better-sqlite3')));
   f.calls.length = 0;
   const run = f.tools.run;
   f.tools.run = (...args) => args[1][0] === '-p' ? { status: 0, stdout: '144', stderr: '' } : run(...args);
   await prepare(f.root, options);
-  assert.ok(f.calls.some((call) => call.includes('electron-rebuild')));
+  assert.ok(f.calls.some((call) => call.includes('rebuild:better-sqlite3')));
+});
+
+test('missing Electron binary is fetched by the package installer, never by pnpm rebuild', async (t) => {
+  const f = fixture(t);
+  const options = { tools: f.tools, platform: f.platform, arch: f.arch };
+  await prepare(f.root, options);
+  const installer = path.join(f.p.client, 'node_modules/electron/install.js');
+  assert.ok(f.calls.some((call) => call[0] === 'run' && call[1] === process.execPath && call[2] === installer));
+  assert.equal(f.calls.some((call) => call[0] === 'pnpm' && call.includes('rebuild')), false);
+  f.calls.length = 0;
+  await prepare(f.root, options);
+  assert.equal(f.calls.some((call) => call[2] === installer), false, 'warm preparation reuses the downloaded binary');
+});
+
+test('preparation fails clearly when the Electron installer leaves no binary', async (t) => {
+  const f = fixture(t);
+  const installer = path.join(f.p.client, 'node_modules/electron/install.js');
+  const run = f.tools.run;
+  f.tools.run = (...args) => args[1][0] === installer ? { status: 0, stdout: '', stderr: '' } : run(...args);
+  await assert.rejects(prepare(f.root, { tools: f.tools, platform: f.platform, arch: f.arch }), /Electron 可执行文件缺失/);
 });
 
 test('managed source refresh preserves developer checkout and only fetches explicitly', async (t) => {

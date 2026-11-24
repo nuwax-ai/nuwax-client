@@ -286,15 +286,18 @@ export async function prepare(root, options = {}) {
       save();
     } else console.log('[prepare] 复用工作区依赖');
     const electron = electronBinary(p.client, opt.platform);
-    if (!fileReady(electron)) await tools.pnpmRun(p.client, ['rebuild', 'electron'], { env });
-    if (!fileReady(electron)) throw new Error('[prepare] Electron 可执行文件缺失，检查 pnpm electron 安装脚本及下载网络');
+    // Electron 42+ 的 npm 包没有安装脚本，pnpm install 不会下载二进制，需由官方安装器触发。
+    if (!fileReady(electron)) await tools.run(process.execPath, [path.join(p.client, 'node_modules/electron/install.js')], { cwd: p.client, env });
+    if (!fileReady(electron)) throw new Error('[prepare] Electron 可执行文件缺失，检查 electron install.js 及下载网络');
     const abiResult = await tools.run(electron, ['-p', 'process.versions.modules'], { cwd: p.client, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, capture: true });
     const abi = abiResult.stdout.trim();
     if (!/^\d+$/.test(abi)) throw new Error('[prepare] 无法获取 Electron 原生模块 ABI');
     const native = path.join(p.client, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node');
     const nativeKey = tools.fingerprint([workspaceKey, abi, opt.platform, opt.arch]);
     if (state.native?.key !== nativeKey || state.native?.artifact !== inputDigest([native]) || !fileReady(native)) {
-      await tools.npmRun(p.client, 'electron-rebuild', [], { env });
+      // better-sqlite3 13 是 Node-API 模块，自带预编译产物，electron-rebuild 不再编译；
+      // 这里强制从源码构建，产物路径与打包配置保持一致。
+      await tools.npmRun(p.client, 'rebuild:better-sqlite3', [], { env });
       if (!fileReady(native)) throw new Error('[prepare] better_sqlite3.node 未生成；检查 Python 和系统 C/C++ 构建工具');
     }
     await tools.run(electron, ['-e', "const db = new (require('better-sqlite3'))(':memory:'); db.prepare('select 1').get(); db.close()"], { cwd: p.client, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, capture: true });

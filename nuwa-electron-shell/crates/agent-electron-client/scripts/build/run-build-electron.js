@@ -118,6 +118,14 @@ function main() {
     console.log('[build:electron] SKIP_PREPARE=1, skipping prepare:all');
   }
 
+  const nativeModule = path.join(projectRoot, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node');
+  if (!fs.existsSync(nativeModule)) {
+    // better-sqlite3 是 Node-API 模块，由 rebuild:better-sqlite3 从源码构建；
+    // package.json 已关闭 electron-builder 自带重编，这里补上同样的保证。
+    console.log('[build:electron] better_sqlite3.node 缺失，执行 rebuild:better-sqlite3...');
+    execSync('npm run rebuild:better-sqlite3', { cwd: projectRoot, stdio: 'inherit', env: prepareEnv });
+  }
+
   const compression = archiveMode && archiveMode !== '7z-qa' ? ZIP_COMPRESSION : 'maximum';
   const commercialActions = process.env.GITHUB_ACTIONS === 'true' && process.env.NUWAX_APP_IDENTIFIER === 'nuwax';
   if (archivePlatform === 'win32' && process.platform === 'win32' && !commercialActions) {

@@ -5,7 +5,7 @@
 # Electron comes from -ElectronExe, or the electron-builder cache zip for -ElectronVersion.
 param(
   [Parameter(Mandatory = $true)][string]$BundleDir,
-  [string]$ElectronVersion = '40.8.2',
+  [string]$ElectronVersion = '43.8.12',
   [string]$ElectronExe = '',
   [string]$WorkDir = (Join-Path $env:USERPROFILE 'nuwax-lf-qa')
 )

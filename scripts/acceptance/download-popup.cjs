@@ -99,7 +99,7 @@ async function run() {
   app.commandLine.appendSwitch('host-resolver-rules', 'MAP popup-business.fixture.test 127.0.0.1, MAP popup-external.fixture.test 127.0.0.1');
   app.on('window-all-closed', () => {});
   await app.whenReady();
-  assert.equal(Number(process.versions.electron.split('.')[0]), 40, 'fixture requires Electron 40');
+  assert.equal(Number(process.versions.electron.split('.')[0]), 43, 'fixture requires Electron 43');
 
   const { initWebviewPolicy, initSessionAuthInjection, trustInitialBusinessNavigation, fixtureSettings, markDedicatedPage } = require(bundlePath(temp));
   app.on('web-contents-created', (_event, contents) => markDedicatedPage(contents));

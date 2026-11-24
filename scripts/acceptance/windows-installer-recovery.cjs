@@ -61,7 +61,7 @@ const inventory = require('../../nuwa-electron-shell/crates/agent-electron-clien
 fs.writeFileSync(path.join(source, 'qa-include.nsh'), `!define NUWAX_UNINSTALL_MANIFEST "${inventory}"\n!include "${path.join(source, 'installer.nsh')}"\n`);
 const config = {
   extends: null, appId: 'com.nuwax-ai.recoveryqa.' + guid, productName: identity, executableName: identity,
-  electronVersion: '40.8.2', npmRebuild: false, compression: 'store',
+  electronVersion: '43.8.12', npmRebuild: false, compression: 'store',
   directories: { output: path.join(root, 'installers'), buildResources: source },
   win: { target: ['nsis'], signAndEditExecutable: false },
   nsis: { guid, include: path.join(source, 'qa-include.nsh'), oneClick: false, perMachine: false,

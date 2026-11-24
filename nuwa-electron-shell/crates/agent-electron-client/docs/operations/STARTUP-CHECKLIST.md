@@ -157,8 +157,8 @@ cd /Users/apple/workspace/nuwax-agent/crates/agent-electron-client
 # 1. 安装依赖（首次或 package.json 变更后）
 npm install
 
-# 2. 若曾出现 better-sqlite3 与 Electron Node 版本不匹配，先重建 native 模块
-npx @electron/rebuild
+# 2. 若曾出现 better-sqlite3 加载失败，先重建 native 模块
+npm run rebuild:better-sqlite3
 
 # 3. 启动开发环境（Vite + Electron）
 npm run dev
@@ -179,7 +179,7 @@ npm run dev
 2. **首次运行或更换 Electron/Node 后**  
    若出现「Database initialization failed」且与 better-sqlite3 相关，在**开发目录**执行一次：
    ```bash
-   cd crates/agent-electron-client && npx @electron/rebuild
+   cd crates/agent-electron-client && npm run rebuild:better-sqlite3
    ```
    然后重新打包再运行。
 

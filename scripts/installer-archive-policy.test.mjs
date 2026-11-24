@@ -38,6 +38,10 @@ function temporaryClient(t, build = pkg.build, versionOverrides = {}) {
     fs.mkdirSync(moduleDir, { recursive: true });
     fs.writeFileSync(path.join(moduleDir, 'package.json'), JSON.stringify({ name, version }));
   }
+  // The legacy wrapper builds the native module itself when it is missing; the archive
+  // policy cases below start from the already-built state.
+  fs.mkdirSync(path.join(dir, 'node_modules/better-sqlite3/build/Release'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'), 'fixture');
   return dir;
 }
 
@@ -183,6 +187,16 @@ test('commercial legacy dist configures updater before builder even when prepara
   assert.equal(commands.length, 2);
   assert.equal(commands[0].command, process.execPath);
   assert.deepEqual(Array.from(commands[0].args), [path.resolve(dir, '../../../scripts/prepare-release-updater.mjs'), '--client', dir]);
+  assert.match(commands[1].command, /electron-builder.*--dir/);
+});
+
+test('legacy dist builds the native module before packaging when it is missing', (t) => {
+  const dir = temporaryClient(t);
+  fs.rmSync(path.join(dir, 'node_modules/better-sqlite3/build/Release/better_sqlite3.node'));
+  const commands = runLegacy(dir, ['--mac', '--arm64', '--dir', '--publish', 'never'], { SKIP_PREPARE: '1' });
+  assert.equal(commands.length, 2);
+  assert.equal(commands[0].command, 'npm run rebuild:better-sqlite3');
+  assert.equal(commands[0].options.cwd, dir);
   assert.match(commands[1].command, /electron-builder.*--dir/);
 });
 

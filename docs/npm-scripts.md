@@ -87,7 +87,7 @@ npm --prefix nuwa-electron-shell/crates/agent-electron-client run test:run -- <�
 | `dist:mac*` / `dist:win*` / `dist:linux*` | 平台打包实现 |
 | `dist:unsigned:local` | 根 `pack` 使用的无签名打包实现 |
 | `prepare:all`、各项 `prepare:*` | Node、uv、git、ripgrep、MCP 代理、引擎和文件服务等运行资源准备 |
-| `electron-rebuild` | 重编 Electron 原生依赖 |
+| `rebuild:better-sqlite3` | 从源码构建 better-sqlite3（Node-API 模块，产物在 `build/Release`）；包内只带该产物，自带的各平台预编译文件不进包，发布前由 `package-payload` 校验 |
 | `test:run` / `test:scripts` | 客户端行为与构建脚本测试 |
 | `check:boundaries` / `check:appdir` | 源码导入及应用数据目录检查 |
 | `clean:release` / `clean:electron-cache` | 清理相应生成物与缓存 |

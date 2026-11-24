@@ -51,6 +51,7 @@ test('the standard commercial Windows wrapper dispatches a parallel installer co
   const output = 'D:/a/_temp/nw-40358051690-1-x64';
   write(path.join(dir, 'package.json'), JSON.stringify(standardBuild(output)));
   for (const name of ['electron-builder', 'app-builder-lib']) write(path.join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ version: '25.1.8' }));
+  write(path.join(dir, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'));
   const commands = [];
   const module = { exports: {} };
   const mockedRequire = name => {
