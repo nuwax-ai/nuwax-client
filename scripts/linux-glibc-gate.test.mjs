@@ -148,13 +148,29 @@ test('the parser agrees with readelf on real binaries when binutils is available
   if (!lib) return;
   const copy = path.join(dir, 'libc.so.6');
   fs.copyFileSync(lib, copy);
+  // `readelf -V` prints three sections, in whatever order they sit in the file
+  // (for libc.so.6: symbols, definitions, needs). Only "Version needs" lists
+  // what the file requires — the thing the dynamic loader checks and the only
+  // thing the gate reads. "Version definition" lists what the file itself
+  // *exports* (libc.so.6 defines every GLIBC_ version up to its own), and the
+  // symbol table repeats both. Taking the maximum over the whole listing would
+  // compare the gate against versions the file does not need at all.
   const listing = spawnSync('readelf', ['-V', copy], { encoding: 'utf8' }).stdout;
-  const fromReadelf = [...listing.matchAll(/GLIBC_(\d+)\.(\d+)/g)]
-    .map((match) => ({ major: Number(match[1]), minor: Number(match[2]) }))
-    .sort((a, b) => (a.major - b.major) || (a.minor - b.minor))
-    .pop();
-  assert.deepEqual(readHighestGlibc(copy), fromReadelf);
+  // Split on every section heading, then keep the block that starts with "needs".
+  const blocks = listing.split(/^(?=Version (?:needs|definition|symbols) section)/m);
+  const needs = blocks.find((block) => /^Version needs section/m.test(block));
+  assert.ok(needs, `readelf -V output has no needs section:\n${listing.slice(0, 400)}`);
+  const required = [...needs.matchAll(/Name: GLIBC_(\d+)\.(\d+)/g)]
+    .map((match) => ({ major: Number(match[1]), minor: Number(match[2]) }));
+  assert.ok(required.length > 0, 'no GLIBC requirement found in the needs section');
+  const highest = required.reduce((a, b) => (compare(a, b) >= 0 ? a : b));
+  assert.deepEqual(readHighestGlibc(copy), highest);
 });
+
+/** glibc versions order as two integers: 2.9 < 2.10 < 2.28 < 3.0. */
+function compare(a, b) {
+  return (a.major - b.major) || (a.minor - b.minor);
+}
 
 test('non-ELF files, symlinks and missing files are not treated as ELF', (t) => {
   const dir = temporary(t);
