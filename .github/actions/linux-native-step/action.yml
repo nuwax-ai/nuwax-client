@@ -1,0 +1,43 @@
+name: Run a Linux native build step
+description: >
+  Run a build command on the runner, except on Linux where it runs inside the
+  glibc 2.28 build image so native artifacts load on UOS 20 Pro 1050.
+  On macOS and Windows the command is executed unchanged, so one step
+  definition serves all platforms.
+
+inputs:
+  command:
+    description: The command to run. On Linux it is executed by bash inside the image.
+    required: true
+  working-directory:
+    description: Working directory for the command, relative to the repository root
+    required: false
+    default: ''
+  arch:
+    description: Native target architecture (x64 or arm64); defaults to the runner's
+    required: false
+    default: ''
+  env:
+    description: Environment variables for the command, one KEY=VALUE per line
+    required: false
+    default: ''
+  timeout-minutes:
+    description: >
+      Step timeout in minutes. A composite action step cannot carry the
+      timeout-minutes keyword, so the runner applies it with `timeout`.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run the step (in the glibc 2.28 image on Linux, directly elsewhere)
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        STEP_COMMAND: ${{ inputs.command }}
+        STEP_WORKDIR: ${{ inputs.working-directory }}
+        STEP_ARCH: ${{ inputs.arch }}
+        STEP_ENV: ${{ inputs.env }}
+        STEP_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      run: node scripts/client/linux-native-step.mjs
