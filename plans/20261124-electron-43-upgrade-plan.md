@@ -73,6 +73,7 @@
 2. **排除 better-sqlite3 的预编译产物和构建副产物。** better-sqlite3 13 自带 8 个平台的 `.node`，electron-builder 会把含 `.node` 的依赖包大量文件放到 `app.asar.unpacked`，新包因此多出约 27 MB 的外平台二进制和生成源码，签名构建存在对这些文件执行签名的风险；强制源码构建还会产出旧包没有的 `test_extension.node`。处理：`files` 排除 `prebuilds`、`build/Release/obj`、`test_extension.node`，`asarUnpack` 和 `extraResources` 收紧到 `better_sqlite3.node`，并在 `package-payload` 的发布前校验里加一条，防止以后被改回去。
 3. **同步两处文档。** `client/docs/operations/STARTUP-CHECKLIST.md` 里的 `npx @electron/rebuild` 对 better-sqlite3 13 不再编译，改为新脚本；`docs/host-capabilities-api.md` 的 Electron 文档链接改到 43.8.12。
 4. **两个打包入口测试的夹具调整。** 它们断言命令序列，新增的“先构建”步骤需要夹具带上已构建的原生模块，并补一个覆盖该行为的用例。
+5. **安装阶段不再执行 better-sqlite3 的安装脚本。** 推送后 CI 的 Windows 任务在 `pnpm install` 失败：13.x 的安装脚本改为走 node-gyp 配置，而 pnpm 9.15.5 自带的 node-gyp 10.2.0 在 Windows 构建机上探测 Visual Studio 失败。该脚本只做空配置，真正的构建由 `rebuild:better-sqlite3` 用仓库锁定的 node-gyp 完成，因此从两份构建脚本白名单（`onlyBuiltDependencies`、`allowBuilds`）里移除。
 
 ## 后续核对项
 

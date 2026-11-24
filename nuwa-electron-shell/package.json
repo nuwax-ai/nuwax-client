@@ -30,7 +30,6 @@
     "onlyBuiltDependencies": [
       "@nuwax-ai/nuwax-harness",
       "electron",
-      "better-sqlite3",
       "esbuild",
       "protobufjs",
       "sharp"

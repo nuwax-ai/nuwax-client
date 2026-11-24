@@ -8,7 +8,9 @@ confirmModulesPurge: false
 
 allowBuilds:
   '@nuwax-ai/nuwax-harness': true
-  better-sqlite3: true
+  # better-sqlite3 13 由 rebuild:better-sqlite3 用仓库锁定的 node-gyp 从源码构建；
+  # 它自带的安装脚本只做空配置，而 pnpm 自带的旧 node-gyp 在 Windows 构建机上认不出 Visual Studio。
+  better-sqlite3: false
   electron: true
   esbuild: true
   protobufjs: true
