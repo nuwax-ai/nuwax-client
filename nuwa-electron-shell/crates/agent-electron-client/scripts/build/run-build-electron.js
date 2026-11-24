@@ -18,6 +18,7 @@ const {
   installerArchiveCliArgs,
   ZIP_COMPRESSION,
 } = require('./installer-archive-policy.cjs');
+const { applyHardLinkPolicy } = require('./linux-package-policy.cjs');
 
 /**
  * 从 electron-builder CLI 参数解析目标 CPU 架构。
@@ -149,7 +150,9 @@ function main() {
   }
   const cmd = `npx electron-builder --config.compression=${compression} ${[...extraArgs, ...archiveArgs].join(' ')}`;
   console.log('[build:electron]', cmd);
-  execSync(cmd, { cwd: projectRoot, stdio: 'inherit' });
+  // Linux 目标关闭 builder 的硬链接复制：包内硬链接在跨文件系统安装时无法重建。
+  const builderEnv = applyHardLinkPolicy(process.env, archivePlatform);
+  execSync(cmd, { cwd: projectRoot, stdio: 'inherit', env: builderEnv });
 }
 
 module.exports = {

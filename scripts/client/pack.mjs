@@ -14,6 +14,7 @@ import updater from '../../nuwa-electron-shell/crates/agent-electron-client/scri
 import archivePolicy from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/installer-archive-policy.cjs';
 import { configureSystemAppName } from './system-app-name.mjs';
 import { configurePackagePayload, verifyPackagePayload } from './package-payload.mjs';
+import { applyHardLinkPolicy } from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/linux-package-policy.cjs';
 
 const { resolveInstallerArchiveMode, installedBuilderVersions, applyInstallerArchivePolicy } = archivePolicy;
 
@@ -188,7 +189,8 @@ export async function pack(root, options = {}) {
   const env = unsignedEnv(root);
   await tools.npmRun(p.client, 'build', [], { env });
   const target = platform === 'darwin' ? '--mac' : platform === 'win32' ? '--win' : '--linux';
-  await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...((options.dir ?? config.pack.dir) ? ['--dir'] : [])], { env });
+  const builderEnv = applyHardLinkPolicy(env, platform);
+  await tools.pnpmRun(p.client, ['exec', 'electron-builder', '--config', configFile, target, `--${arch}`, '--publish', 'never', ...((options.dir ?? config.pack.dir) ? ['--dir'] : [])], { env: builderEnv });
   if (!fs.existsSync(output) || fs.readdirSync(output).length === 0) throw new Error(`[pack] 打包完成但输出目录为空: ${output}`);
   await (options.verifyPackagePayload ?? verifyPackagePayload)(output, { platform, arch });
   await (options.verifyUpdaterOutput ?? verifyUpdaterOutput)(output, { platform, arch, archives: !(options.dir ?? config.pack.dir), tools });

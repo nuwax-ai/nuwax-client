@@ -55,6 +55,7 @@ function runLegacy(projectRoot, argv, env = {}, platform = 'darwin') {
     };
     if (name === '../utils/project-paths') return { getProjectRoot: () => projectRoot };
     if (name === './installer-archive-policy.cjs') return policy;
+    if (name === './linux-package-policy.cjs') return require(path.join(path.dirname(wrapperPath), 'linux-package-policy.cjs'));
     return require(name);
   };
   mockRequire.main = module;

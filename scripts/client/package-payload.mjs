@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as core from './core.mjs';
 import { packagedResources } from '../prepare-release-updater.mjs';
+import { verifyLinuxPackageLinks } from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/linux-package-policy.cjs';
 
 const toolNames = ['node', 'git', 'uv', 'ripgrep'];
 const toolRoot = /(?:^|\/)resources\/(?:node|git|uv|ripgrep)$/;
@@ -83,7 +84,9 @@ export function verifyPackagePayload(output, { platform = process.platform, arch
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     throw new Error(`[package-payload] better-sqlite3 build by-product found: ${relative}`);
   }
-  return { resources, checkedCacheRoots: cacheRoots.length };
+  // Linux 安装包内不得有硬链接：dpkg 安装时要在目标位置重建链接，跨文件系统必然失败。
+  const packages = verifyLinuxPackageLinks(output);
+  return { resources, checkedCacheRoots: cacheRoots.length, checkedPackages: packages.checked };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -103,6 +106,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else {
       const result = verifyPackagePayload(options['--verify-output'], { platform: options['--platform'], arch: options['--arch'] });
       console.log(`[package-payload] No build caches or standalone notices in unpacked resources (${result.checkedCacheRoots} cache roots checked)`);
+      if (result.checkedPackages) console.log(`[package-payload] No hard links in ${result.checkedPackages} Linux package(s)`);
     }
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

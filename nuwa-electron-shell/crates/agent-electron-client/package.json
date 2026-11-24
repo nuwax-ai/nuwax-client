@@ -189,13 +189,6 @@
         ]
       },
       {
-        "from": "node_modules/better-sqlite3/build/Release",
-        "to": "better-sqlite3",
-        "filter": [
-          "better_sqlite3.node"
-        ]
-      },
-      {
         "from": "resources/uv/bin",
         "to": "uv/bin",
         "filter": [

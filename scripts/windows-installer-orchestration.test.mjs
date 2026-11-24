@@ -58,6 +58,7 @@ test('the standard commercial Windows wrapper dispatches a parallel installer co
     if (name === 'child_process') return { execSync: (...args) => commands.push({ type: 'shell', args }), execFileSync: (...args) => commands.push({ type: 'file', args }) };
     if (name === '../utils/project-paths') return { getProjectRoot: () => dir };
     if (name === './installer-archive-policy.cjs') return policy;
+    if (name === './linux-package-policy.cjs') return require(path.join(buildDir, 'linux-package-policy.cjs'));
     if (name === './windows-installer-orchestration.cjs') return helper();
     return require(name);
   };
