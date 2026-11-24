@@ -17,6 +17,7 @@
  *   STEP_ENV       额外环境变量，每行一个 KEY=VALUE
  *   STEP_TIMEOUT_MINUTES  步骤超时（分钟），可空
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -116,9 +117,12 @@ export function dockerArgs({ workspace, arch, uid, gid, home, volumes = {}, work
  * 在镜像里执行命令。命令经 `bash -euo pipefail -c` 运行，与 workflow 的 `shell: bash` 行为一致。
  * @returns {number} 退出码
  */
-export function runInImage({ command, workingDirectory, env, workspace, arch, uid, gid, runnerTemp, volumes, timeoutMinutes, ref = imageRef(), spawn = spawnSync }) {
+export function runInImage({ command, workingDirectory, env, workspace, arch, uid, gid, runnerTemp, volumes, timeoutMinutes, ref = imageRef(), spawn = spawnSync, mkdir = fs.mkdirSync }) {
   if (!command || !command.trim()) throw new Error('[linux-native-step] 缺少要执行的命令');
   const home = containerHome(runnerTemp, workspace);
+  // 容器的 HOME 必须由当前用户先建好。若留给 docker 在挂载时创建，它会属于 root，
+  // 容器里的 runner 用户就写不了（corepack 第一个写 .cache 的动作即 EACCES）。
+  mkdir(home, { recursive: true });
   const mounts = { [home]: home, ...(volumes || {}) };
   const args = dockerArgs({ workspace, arch, uid, gid, home, volumes: mounts, workingDirectory });
   // 步骤自己的环境变量：与 dockerArgs 的默认值同名时替换它，而不是追加第二个，

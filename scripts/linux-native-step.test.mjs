@@ -21,7 +21,10 @@ function temporary(t) {
 function spy(status = 0) {
   const calls = [];
   const spawn = (command, args, options) => { calls.push({ command, args, options }); return { status }; };
-  return { spawn, calls };
+  // runInImage creates the container HOME before mounting; stub it so a test
+  // never writes to a path like /rt/linux-native-home on the host.
+  const mkdir = () => {};
+  return { spawn, mkdir, calls };
 }
 
 test('the image tag is the content hash of the recipe directory', (t) => {
@@ -122,11 +125,11 @@ test('the container mounts the workspace at the same path and runs as the runner
 });
 
 test('a step runs through bash -euo pipefail inside the image, with env and working directory applied', () => {
-  const { spawn, calls } = spy();
+  const { spawn, mkdir, calls } = spy();
   const code = runInImage({
     command: 'npm run rebuild:better-sqlite3', workingDirectory: 'nuwa-electron-shell/crates/agent-electron-client',
     env: { TARGET_ARCH: 'arm64', EMPTY: '' }, workspace: '/ws', arch: 'arm64', uid: 1001, gid: 121, runnerTemp: '/rt',
-    ref: 'ghcr.io/nuwax-ai/nuwax-linux-native:abc', spawn,
+    ref: 'ghcr.io/nuwax-ai/nuwax-linux-native:abc', spawn, mkdir,
   });
   assert.equal(code, 0);
   assert.equal(calls.length, 1);
@@ -146,9 +149,20 @@ test('a step runs through bash -euo pipefail inside the image, with env and work
   assert.throws(() => runInImage({ command: '   ', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', spawn }), /缺少要执行的命令/);
 });
 
+test('the container HOME is created as the current user before docker mounts it', () => {
+  // If docker creates the mount point itself, it belongs to root and the runner
+  // user cannot write inside the container (corepack's first `.cache` write is EACCES).
+  // Seen on real runners; not reproducible locally when the directory already exists.
+  const { spawn } = spy();
+  const made = [];
+  runInImage({ command: 'true', workspace: '/ws', arch: 'x64', uid: 1001, gid: 121, runnerTemp: '/rt', ref: 'img', spawn,
+    mkdir: (dir, options) => made.push({ dir, options }) });
+  assert.deepEqual(made, [{ dir: path.join('/rt', 'linux-native-home'), options: { recursive: true } }]);
+});
+
 test('the image exit status is passed through, so a failed build fails the step', () => {
-  const { spawn } = spy(101);
-  assert.equal(runInImage({ command: 'false', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', ref: 'img', spawn }), 101);
+  const { spawn, mkdir } = spy(101);
+  assert.equal(runInImage({ command: 'false', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', ref: 'img', spawn, mkdir }), 101);
 });
 
 test('on other platforms the command runs directly on the runner with the step env merged in', () => {
@@ -177,8 +191,8 @@ test('a step timeout wraps the command in timeout, and no limit leaves it alone'
 });
 
 test('the timeout wraps docker itself on Linux, so a hung build is killed and the container goes with it', () => {
-  const { spawn, calls } = spy(124);
-  const code = runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', timeoutMinutes: 30, ref: 'img', spawn });
+  const { spawn, mkdir, calls } = spy(124);
+  const code = runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', timeoutMinutes: 30, ref: 'img', spawn, mkdir });
   assert.equal(code, 124);
   const { command, args } = calls[0];
   assert.equal(command, 'timeout');
@@ -186,7 +200,7 @@ test('the timeout wraps docker itself on Linux, so a hung build is killed and th
   assert.equal(args[3], 'run');
   // Without a timeout the command is docker itself.
   const plain = spy();
-  runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', ref: 'img', spawn: plain.spawn });
+  runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', ref: 'img', spawn: plain.spawn, mkdir: plain.mkdir });
   assert.equal(plain.calls[0].command, 'docker');
 });
 
