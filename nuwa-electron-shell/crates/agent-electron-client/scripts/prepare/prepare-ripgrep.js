@@ -16,6 +16,7 @@ const fs = require('fs');
 const https = require('https');
 const { execSync } = require('child_process');
 const { getProjectRoot } = require('../utils/project-paths');
+const { extractWindowsZip } = require('../utils/extract-windows-zip');
 
 const RG_VERSION = '14.1.1';
 
@@ -139,17 +140,7 @@ function extractArchive(archivePath, outDir) {
   const isZip = ext === '.zip';
   if (isZip) {
     if (process.platform === 'win32') {
-      try {
-        execSync(`tar -xf "${archivePath}" -C "${outDir}"`, { stdio: 'inherit' });
-      } catch (e) {
-        console.log('[prepare-ripgrep] tar 解压失败，尝试 PowerShell...');
-        const psPath = archivePath.replace(/'/g, "''");
-        const psDest = outDir.replace(/'/g, "''");
-        execSync(
-          `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${psPath}' -DestinationPath '${psDest}' -Force"`,
-          { stdio: 'inherit' },
-        );
-      }
+      extractWindowsZip(archivePath, outDir);
     } else {
       try {
         execSync(`unzip -o -q "${archivePath}" -d "${outDir}"`, { stdio: 'inherit' });
