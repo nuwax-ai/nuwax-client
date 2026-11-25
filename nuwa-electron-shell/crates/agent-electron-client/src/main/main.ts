@@ -55,6 +55,7 @@ import { createTrayManager, TrayStatus } from "./window/trayManager";
 import { createAutoLaunchManager } from "./window/autoLaunchManager";
 import { createDockVisibility } from "./window/dockVisibility";
 import { revealWhenReady } from "./window/revealWhenReady";
+import { selectLinuxDisplayBackend } from "./window/linuxDisplayBackend";
 import { createServiceReadinessGate } from "./services/serviceReadinessGate";
 import { createServiceManager } from "./window/serviceManager";
 import { createTrayServiceActions } from "./window/trayServiceActions";
@@ -87,6 +88,15 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
+
+// Linux Wayland：合成器没有 text-input-v3 时，原生客户端接不到输入法（如统信 UOS 20），此时回退到 XWayland；
+// 合成器有 v3、或没有 X 服务可回退时保持原生 Wayland。后端只能在 ready 之前决定，所以放在最前面。
+// 注意: 此代码在 initLogging() 之前执行，所以使用 console 而不是 log
+if (process.platform === "linux") {
+  const display = selectLinuxDisplayBackend();
+  if (display.platform) app.commandLine.appendSwitch("ozone-platform", display.platform);
+  console.info(`[Display] ${display.reason}`);
+}
 
 const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
