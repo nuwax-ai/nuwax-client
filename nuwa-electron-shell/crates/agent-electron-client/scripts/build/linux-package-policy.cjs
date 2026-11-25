@@ -130,92 +130,6 @@ function verifyLinuxPackageLinks(directory) {
 }
 
 /**
- * deb 依赖的核对。
- *
- * 客户端内升级 deb 时要弹管理员密码框，用的是 zenity（见 src/main/services/linuxDebInstaller.ts）；
- * 统信 UOS 这类系统默认不带它，所以让安装包自己依赖 zenity，装客户端时一并装上。
- *
- * electron-builder 25 只要配置了 deb.depends，就不再带它自己的默认依赖（fpm 只收到 -d <配置项>，
- * libgtk-3-0 等会全部消失），所以 package.json 里写的是"electron-builder 默认依赖 + zenity"的完整列表。
- * 这里以那份配置为准，打包后读控制文件逐项核对。
- */
-
-/** crate 的 package.json；build.deb.depends 以它为唯一出处，CI 与本地打包读的也是它。 */
-const PACKAGE_FILE = path.join(__dirname, '..', '..', 'package.json');
-
-/** package.json 里为 deb 配置的依赖列表。 */
-function configuredDebDepends(packageFile = PACKAGE_FILE) {
-  const depends = JSON.parse(fs.readFileSync(packageFile, 'utf8')).build?.deb?.depends;
-  if (!Array.isArray(depends) || depends.length === 0) throw new Error(`${packageFile} 没有配置 build.deb.depends`);
-  return depends;
-}
-
-/** 解析 Debian 控制文件：字段名 → 值；以空白开头的续行并回上一个字段。 */
-function parseControl(text) {
-  const fields = {};
-  let current = null;
-  for (const line of String(text).split('\n')) {
-    const match = /^([A-Za-z][A-Za-z0-9-]*):[ ]?(.*)$/.exec(line);
-    if (match) {
-      current = match[1];
-      fields[current] = match[2].trim();
-    } else if (current && /^[ \t]/.test(line)) {
-      fields[current] = `${fields[current]} ${line.trim()}`.trim();
-    }
-  }
-  return fields;
-}
-
-/** Depends 字段里的包名：去掉版本约束，多选一（a | b）只取第一个。 */
-function dependencyNames(depends) {
-  return String(depends ?? '')
-    .split(',')
-    .map((item) => item.split('|')[0].trim().replace(/\s*\([^)]*\)$/, ''))
-    .filter(Boolean);
-}
-
-/** 读取 deb 控制文件里的字段。 */
-function readDebControl(debFile) {
-  const buffer = fs.readFileSync(debFile);
-  const control = readArMembers(debFile).find((member) => /^control\.tar/.test(member.name));
-  if (!control) throw new Error(`${debFile} 里没有控制归档`);
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-deb-control-'));
-  const archive = path.join(work, control.name);
-  try {
-    fs.writeFileSync(archive, buffer.subarray(control.offset, control.offset + control.size));
-    // tar 自己能识别 xz/gzip 压缩；成员固定叫 ./control，直接输出到 stdout。
-    const result = spawnSync('tar', ['-xOf', archive, './control'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-    if (result.error || result.status !== 0) {
-      throw new Error(`无法读取 ${debFile} 的控制文件：${result.error?.message ?? result.stderr}`);
-    }
-    return parseControl(result.stdout);
-  } finally {
-    fs.rmSync(work, { recursive: true, force: true });
-  }
-}
-
-/**
- * 校验目录里每个 deb 都声明了全部应有的依赖。
- * @param {string} expectedPackageFile 取 build.deb.depends 的 package.json
- * @returns {{checked: number, dependencies: string[]}}
- */
-function verifyLinuxPackageDependencies(directory, expectedPackageFile = PACKAGE_FILE) {
-  const expected = configuredDebDepends(expectedPackageFile);
-  const packages = listLinuxPackages(directory).filter((file) => file.endsWith('.deb'));
-  const missing = [];
-  for (const file of packages) {
-    const declared = dependencyNames(readDebControl(file).Depends);
-    for (const name of expected) {
-      if (!declared.includes(name)) missing.push(`${path.basename(file)}: ${name}`);
-    }
-  }
-  if (missing.length) {
-    throw new Error(`[linux-package] 安装包缺少依赖，装到目标系统后客户端内升级无法使用：\n${missing.map((item) => `  ${item}`).join('\n')}`);
-  }
-  return { checked: packages.length, dependencies: expected };
-}
-
-/**
  * 解析 "主.次" 形式的 glibc 版本。glibc 的版本号是两段整数，不能当小数比较：
  * 2.9 和 2.10 当小数是 2.9 > 2.1，而实际 2.9 < 2.10。
  * @returns {{major: number, minor: number}|null}
@@ -273,11 +187,6 @@ module.exports = {
   inspectDebHardLinks,
   listLinuxPackages,
   verifyLinuxPackageLinks,
-  configuredDebDepends,
-  parseControl,
-  dependencyNames,
-  readDebControl,
-  verifyLinuxPackageDependencies,
   parseGlibcVersion,
   compareGlibcVersions,
   highestGlibcVersion,

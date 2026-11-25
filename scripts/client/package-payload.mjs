@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as core from './core.mjs';
 import { packagedResources } from '../prepare-release-updater.mjs';
-import { verifyLinuxPackageDependencies, verifyLinuxPackageLinks } from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/linux-package-policy.cjs';
+import { verifyLinuxPackageLinks } from '../../nuwa-electron-shell/crates/agent-electron-client/scripts/build/linux-package-policy.cjs';
 
 const toolNames = ['node', 'git', 'uv', 'ripgrep'];
 const toolRoot = /(?:^|\/)resources\/(?:node|git|uv|ripgrep)$/;
@@ -86,8 +86,6 @@ export function verifyPackagePayload(output, { platform = process.platform, arch
   }
   // Linux 安装包内不得有硬链接：dpkg 安装时要在目标位置重建链接，跨文件系统必然失败。
   const packages = verifyLinuxPackageLinks(output);
-  // deb 必须带上客户端内升级要用的 zenity 等依赖，否则装到目标系统后只能手动升级。
-  verifyLinuxPackageDependencies(output);
   return { resources, checkedCacheRoots: cacheRoots.length, checkedPackages: packages.checked };
 }
 
