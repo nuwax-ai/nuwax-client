@@ -5,11 +5,12 @@ import * as path from "path";
 import { buildEffectiveConfig } from "../requestConfigResolver";
 import type { AgentEngineType } from "../types";
 import type { ComputerChatRequest } from "@shared/types/computerTypes";
+import { ACP_SETUP_DEFAULT_BUDGETS } from "./acpSetupBudgets";
 import {
-  resolveSessionForChat,
+  resolveSessionWithRecovery,
   type AcpSessionLike,
-  type SessionSetupDeps,
-} from "./acpSessionSetup";
+  type SessionRecoveryDeps,
+} from "./acpSessionRecovery";
 import { collectSessionWorkspaceCandidates } from "./acpSessionWorkspace";
 
 vi.mock("electron-log", () => ({
@@ -21,8 +22,10 @@ afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
 function sessionHarness(engine: AgentEngineType, baseWorkspace: string) {
   const sessions = new Map<string, AcpSessionLike>();
-  const deps: SessionSetupDeps = {
+  const deps: SessionRecoveryDeps = {
     logTag: "[test]",
+    engineKey: "default",
+    budgets: ACP_SETUP_DEFAULT_BUDGETS,
     workspaceDir: baseWorkspace,
     engineName: engine,
     agentCapabilities: null,
@@ -37,7 +40,7 @@ function sessionHarness(engine: AgentEngineType, baseWorkspace: string) {
     loadSession: async () => {
       throw new Error("unexpected session/load");
     },
-    // 仅模拟 ACP 外部 RPC；cwd/title 完全取自实际 resolveSessionForChat 的请求参数。
+    // 仅模拟 ACP 外部 RPC；cwd/title 完全取自实际恢复链路的请求参数。
     createSession: async (opts) => {
       const id = `ses_${sessions.size + 1}`;
       sessions.set(id, {
@@ -51,8 +54,9 @@ function sessionHarness(engine: AgentEngineType, baseWorkspace: string) {
       return { id };
     },
     getSessionRecord: (id) => sessions.get(id)!,
+    recycle: async () => ({ ok: true }),
   };
-  const send = (request: ComputerChatRequest) => {
+  const send = async (request: ComputerChatRequest) => {
     const config = buildEffectiveConfig({
       base: { engine, workspaceDir: baseWorkspace },
       requiredEngine: engine,
@@ -63,10 +67,12 @@ function sessionHarness(engine: AgentEngineType, baseWorkspace: string) {
       request,
       engineKey: request.agent_work_dir || request.project_id || "default",
     });
-    return resolveSessionForChat(
+    const result = await resolveSessionWithRecovery(
       { ...deps, workspaceDir: config.workspaceDir },
       request,
     );
+    if (!result.ok) throw new Error(result.message);
+    return result;
   };
   return {
     send,

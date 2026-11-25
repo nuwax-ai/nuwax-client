@@ -62,4 +62,59 @@ describe("ACP process transport", () => {
       await rejected;
     },
   );
+
+  it("kills the process and rejects when spawn does not happen within the budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const process = Object.assign(new EventEmitter(), {
+        kill: vi.fn(),
+      });
+      vi.mocked(spawn).mockReturnValue(process as never);
+      const launch = spawnAcpProcess({
+        binPath: "/tools/nuwaxcode",
+        args: ["acp"],
+        isNative: true,
+        cwd: "/project",
+        env: {},
+        detached: false,
+        spawnTimeoutMs: 10_000,
+      });
+      const rejected = expect(launch).rejects.toThrow(
+        "engine spawn timed out after 10000ms",
+      );
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(process.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(process.kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still starts when spawn arrives just before the budget runs out", async () => {
+    vi.useFakeTimers();
+    try {
+      const process = Object.assign(new EventEmitter(), {
+        kill: vi.fn(),
+      });
+      vi.mocked(spawn).mockReturnValue(process as never);
+      const launch = spawnAcpProcess({
+        binPath: "/tools/nuwaxcode",
+        args: ["acp"],
+        isNative: true,
+        cwd: "/project",
+        env: {},
+        detached: false,
+        spawnTimeoutMs: 10_000,
+      });
+      await vi.advanceTimersByTimeAsync(9_000);
+      process.emit("spawn");
+      await expect(launch).resolves.toBe(process);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(process.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

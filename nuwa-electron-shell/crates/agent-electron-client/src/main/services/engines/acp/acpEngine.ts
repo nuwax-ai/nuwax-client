@@ -59,9 +59,27 @@ import {
   type NewSessionOpts,
 } from "./acpNewSessionParams";
 import {
-  resolveSessionForChat,
-  type SessionRestoredVia,
-} from "./acpSessionSetup";
+  getAcpSetupBudgets,
+  isAcpSetupTimeoutError,
+  withSetupTimeout,
+} from "./acpSetupBudgets";
+import type { SessionRestoredVia } from "./acpSessionSetup";
+import {
+  resolveSessionWithRecovery,
+  sessionSetupRecoveryState,
+  type AcpEngineRecycleOptions,
+  type AcpEngineRecycleReason,
+  type AcpEngineRecycleResult,
+  type SessionHomeQuarantineResult,
+  type SessionRecoveryResult,
+  type SessionSetupFailureReason,
+  type SessionSetupFallbackReason,
+  type SessionSetupReport,
+} from "./acpSessionRecovery";
+import {
+  buildSessionSetupFailure,
+  withSessionSetupFallback,
+} from "./sessionSetupFailure";
 import {
   collectSessionWorkspaceCandidates,
   type SessionWorkspaceRef,
@@ -135,6 +153,7 @@ import {
   chatDispatchCoordinator,
   type ChatDispatchContext,
 } from "../../computer/chatDispatchCoordinator";
+import { resolveChatEngineRegistryKey } from "../../computer/chatEngineKey";
 import {
   formatAcpLoadError,
   snapshotOpencodePersistence,
@@ -281,6 +300,19 @@ export class AcpEngine extends EventEmitter {
   /** loadSession 历史 replay 期间不向 SSE 转发 */
   private suppressSessionReplayFor = new Set<string>();
   private pendingLoadSessionRegistration = false;
+  /**
+   * 每次 destroy() 递增。session/load|new 的宿主侧超时不取消 RPC，迟到的响应会唤醒
+   * 挂起的续体；续体在 await 之后核对该代际号，不再把会话登记到已重启的引擎上。
+   */
+  private lifecycleEpoch = 0;
+  /** 恢复链路正在执行 destroy→init；这期间的 destroy 不算「被外部销毁」 */
+  private recycling = false;
+  /** 被 stop / 空闲驱逐等外部销毁：恢复链路不得再重启它 */
+  private ownerDestroyed = false;
+  /** 同一会话并发的 chat 共享一次会话建立（含失败结果），不再各发一组 RPC */
+  private setupQueues = new Map<string, Promise<SessionRecoveryResult>>();
+  private setupTail: Promise<unknown> = Promise.resolve();
+  private readonly setupBudgets = getAcpSetupBudgets();
   private permissionGatedToolRawInputs = new Map<
     string,
     PermissionGatedToolInputCache
@@ -654,7 +686,11 @@ export class AcpEngine extends EventEmitter {
     // 鉴权激活失败不阻断 init：模型 provider 已随 spawn env（CODEX_*）下发，
     // accountLogin 失败时让引擎继续起，真实错误留到会话层暴露。
     try {
-      await connection.authenticate({ methodId });
+      // 无响应同样不能干等：握手阶段的预算共用一份
+      await withSetupTimeout(
+        Promise.resolve(connection.authenticate({ methodId })),
+        { stage: "handshake", hardMs: this.setupBudgets.handshakeHardMs },
+      );
       log.info(`${this.logTag} ACP env auth activated`, { methodId });
     } catch (err) {
       log.warn(
@@ -675,6 +711,8 @@ export class AcpEngine extends EventEmitter {
     const timer = perfEmitter.start();
     firstTokenTrace.trace("acp.init.start", { engine: this.engineName });
     this.config = config;
+    // 重新 init 即重新可用（外部销毁后由服务层重建，或恢复链路原地重启）
+    this.ownerDestroyed = false;
     const envModel = config.env?.OPENCODE_MODEL || config.env?.ANTHROPIC_MODEL;
     log.info(`${this.logTag} 🚀 Init config`, {
       engine: this.engineName,
@@ -828,14 +866,18 @@ export class AcpEngine extends EventEmitter {
       });
 
       // Initialize ACP protocol handshake
+      // 握手无响应时不能干等：超时后走下面的失败分支销毁进程，chat 返回明确错误。
       const handshakeTimer = perfEmitter.start();
       const acp = await loadAcpSdk();
-      const initResult = await connection.initialize({
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: {
-          terminal: true, // Enable ACP Terminal API (terminal/create, etc.)
-        },
-      });
+      const initResult = await withSetupTimeout(
+        connection.initialize({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {
+            terminal: true, // Enable ACP Terminal API (terminal/create, etc.)
+          },
+        }),
+        { stage: "handshake", hardMs: this.setupBudgets.handshakeHardMs },
+      );
       await this.authenticateCodexWithEnv(connection, config, spawnEnv);
 
       handshakeTimer.end("acp.init.handshake", { engine: this.engineName });
@@ -888,6 +930,8 @@ export class AcpEngine extends EventEmitter {
   }
 
   async destroy(): Promise<void> {
+    this.lifecycleEpoch++;
+    if (!this.recycling) this.ownerDestroyed = true;
     this.agentSessions.destroy();
     // Cancel all active sessions
     for (const [, session] of this.sessions) {
@@ -966,12 +1010,21 @@ export class AcpEngine extends EventEmitter {
     this.agentCapabilities = null;
     this.suppressSessionReplayFor.clear();
     this.pendingLoadSessionRegistration = false;
+    this.pendingNewSessionRegistration = false;
+    // 只取消本引擎会话的待审批。这里原先调用全局 approvalInterventionService.destroy()，
+    // 会连带取消其他引擎里正在等待用户审批的会话；恢复链路会重建单个引擎，不能
+    // 打断别的对话。
+    for (const session of this.sessions.values()) {
+      approvalInterventionService.cancelByAcpSession(
+        session.acpSessionId ?? session.id,
+        "engine_destroyed",
+      );
+    }
     this.sessions.clear();
     this.activePromptSessions.clear();
     this.activePromptRejects.clear();
     this.promptTurnBySession.clear();
     this.permissions.destroy();
-    approvalInterventionService.destroy();
     this.config = null;
     this._acpAgentName = null;
     this._ready = false;
@@ -1002,6 +1055,188 @@ export class AcpEngine extends EventEmitter {
 
   getIsolatedHome(): string | null {
     return this.isolatedHome;
+  }
+
+  /** 会话建立期间引擎被销毁/重启：迟到的续体不得再登记会话。 */
+  private assertLifecycleEpoch(epoch: number): void {
+    if (epoch !== this.lifecycleEpoch) {
+      throw new Error("ACP engine recycled during session setup");
+    }
+  }
+
+  /**
+   * 恢复链路用：销毁引擎进程树，并按需用原配置原地重启。
+   *
+   * chat() 里换模型、改权限桥时的 destroy()+init() 是同样的先例；区别在于这里给
+   * 销毁加了时限，并且不把销毁标记成「被外部销毁」，链路随后才能继续 init。
+   * respawn=false 用于最终失败：只收掉卡死的进程，引擎留给服务层按「已死」重建。
+   */
+  async recycleForRecovery(
+    reason: AcpEngineRecycleReason,
+    options: AcpEngineRecycleOptions,
+  ): Promise<AcpEngineRecycleResult> {
+    const config = this.config;
+    if (!config) return { ok: false, error: "engine config missing" };
+    log.warn(
+      `${this.logTag} ♻️ Session setup recovery (${reason}): destroy engine (respawn=${options.respawn})`,
+    );
+    this.recycling = true;
+    try {
+      try {
+        await withSetupTimeout(this.destroy(), {
+          stage: "destroy",
+          hardMs: this.setupBudgets.destroyHardMs,
+        });
+      } catch (err) {
+        log.error(
+          `${this.logTag} Session setup recovery: engine destroy did not finish`,
+          err,
+        );
+        // 销毁没走完时引擎状态不可信：不重启，留给服务层按「已死引擎」重建
+        this._ready = false;
+        this.ownerDestroyed = true;
+        return { ok: false, error: "engine destroy did not finish" };
+      }
+      if (!options.respawn) {
+        this.ownerDestroyed = true;
+        return { ok: true };
+      }
+      if (this.ownerDestroyed) {
+        // 等待期间被外部销毁（stop / 空闲驱逐）：不复活
+        return { ok: false, error: "engine was destroyed by owner" };
+      }
+      const initResult = await this.init(config);
+      return initResult.ok
+        ? { ok: true }
+        : { ok: false, error: initResult.error || "engine re-init failed" };
+    } finally {
+      this.recycling = false;
+    }
+  }
+
+  /**
+   * 同一会话并发的 chat 共享一次会话建立：后到的请求等同一个结果，不再各发一组
+   * session/load|new。同一引擎上的建立过程也串行，否则两条链路会互相销毁对方
+   * 正在使用的进程。
+   */
+  private runSessionSetup(
+    request: ComputerChatRequest,
+    options: { chainStartedAtMs?: number },
+  ): Promise<SessionRecoveryResult> {
+    const key = JSON.stringify([
+      request.session_id ?? null,
+      request.agent_work_dir ?? request.project_id ?? null,
+    ]);
+    const existing = this.setupQueues.get(key);
+    if (existing) return existing;
+    const queued = this.setupTail.then(
+      () => this.executeSessionSetup(request, options),
+      () => this.executeSessionSetup(request, options),
+    );
+    this.setupTail = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    const tracked: Promise<SessionRecoveryResult> = queued.finally(() => {
+      if (this.setupQueues.get(key) === tracked) this.setupQueues.delete(key);
+    });
+    this.setupQueues.set(key, tracked);
+    return tracked;
+  }
+
+  private async executeSessionSetup(
+    request: ComputerChatRequest,
+    options: { chainStartedAtMs?: number },
+  ): Promise<SessionRecoveryResult> {
+    const config = this.config;
+    if (!config) {
+      return {
+        ok: false,
+        reason: "setup_failed",
+        message: "AcpEngine not initialized",
+        report: {
+          engineKey: resolveChatEngineRegistryKey(request),
+          prevSessionId: request.session_id,
+          setupPath: "new",
+          loadMs: null,
+          newAttemptsMs: [],
+          recycleReasons: [],
+          quarantined: false,
+          slowRestore: false,
+          breakerOpened: false,
+          totalMs: 0,
+        },
+      };
+    }
+    const engineKey = resolveChatEngineRegistryKey(request);
+    return resolveSessionWithRecovery(
+      {
+        logTag: this.logTag,
+        engineKey,
+        workspaceDir: config.workspaceDir,
+        engineName: this.engineName,
+        agentCapabilities: this.agentCapabilities,
+        budgets: this.setupBudgets,
+        chainStartedAtMs: options.chainStartedAtMs,
+        state: sessionSetupRecoveryState,
+        onSlowRestore: ({ sessionId, softMs }) => {
+          log.warn(
+            `${this.logTag} [SessionSetup] slow restore: session/load still pending ${softMs}ms after send (sessionId=${sessionId}); keep waiting until the hard budget`,
+          );
+        },
+        getSession: (id) => this.sessions.get(id),
+        findSessionByProjectId: (pid) => this.findSessionByProjectId(pid),
+        loadSession: async (sessionId, opts) => {
+          const sdk = await this.loadAcpSession(sessionId, opts);
+          return this.sessions.get(sdk.id)!;
+        },
+        createSession: async (opts) => {
+          const sdk = await this.createSession(opts);
+          return { id: sdk.id };
+        },
+        getSessionRecord: (id) => this.sessions.get(id)!,
+        recycle: (reason, recycleOptions) =>
+          this.recycleForRecovery(reason, recycleOptions),
+        quarantineHome: () => this.quarantineEngineHome(engineKey),
+      },
+      request,
+      {
+        systemPrompt: request.system_prompt,
+        requestId: request.request_id,
+      },
+    );
+  }
+
+  /**
+   * 隔离引擎 home：把目录改名保留后让引擎按原路径重建，用于「新进程里也建不出会话」。
+   * 约束见 specs/session-setup-ha.md（持久化 home、未被其他引擎共用、每次运行一次、
+   * 非机器级变慢）。
+   */
+  private quarantineEngineHome(engineKey: string): SessionHomeQuarantineResult {
+    void engineKey;
+    return { ok: false, reason: "disabled" };
+  }
+
+  private logSessionSetupFailure(
+    request: ComputerChatRequest,
+    result: Extract<SessionRecoveryResult, { ok: false }>,
+  ): void {
+    const { report } = result;
+    log.warn(`${this.logTag} [SessionSetup] failed`, {
+      requestId: request.request_id,
+      projectId: request.project_id,
+      sessionId: request.session_id,
+      reason: result.reason,
+      message: result.message,
+      setupPath: report.setupPath,
+      loadMs: report.loadMs,
+      newAttemptsMs: report.newAttemptsMs,
+      recycled: report.recycleReasons,
+      quarantined: report.quarantined,
+      slowRestore: report.slowRestore,
+      breakerOpened: report.breakerOpened,
+      totalMs: report.totalMs,
+    });
   }
 
   getAgentCapabilities(): Record<string, unknown> | null {
@@ -1109,6 +1344,7 @@ export class AcpEngine extends EventEmitter {
     this.suppressSessionReplayFor.add(sessionId);
     this.pendingLoadSessionRegistration = true;
     const timer = perfEmitter.start();
+    const epoch = this.lifecycleEpoch;
     let loadResult: { modes?: unknown; configOptions?: unknown };
     try {
       loadResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.loadSession!({
@@ -1118,21 +1354,28 @@ export class AcpEngine extends EventEmitter {
         _meta,
       }), () => sessionId);
     } catch (err) {
-      log.warn(`${this.logTag} loadSession RPC failed`, {
-        sessionId,
-        cwd: sessionCwd,
-        isolatedHome: this.isolatedHome,
-        error: formatAcpLoadError(err),
-        persistence: persistenceBefore,
-        hint:
-          "nuwaxcode load calls sdk.session.get; session data lives in isolatedHome/.local/share/opencode. " +
-          "If session is missing after restart, verify the engine uses a persistent project isolated HOME.",
-      });
+      // 被恢复链路销毁导致的失败不算 RPC 自身的问题，不必按「会话数据缺失」告警
+      if (epoch === this.lifecycleEpoch) {
+        log.warn(`${this.logTag} loadSession RPC failed`, {
+          sessionId,
+          cwd: sessionCwd,
+          isolatedHome: this.isolatedHome,
+          error: formatAcpLoadError(err),
+          persistence: persistenceBefore,
+          hint:
+            "nuwaxcode load calls sdk.session.get; session data lives in isolatedHome/.local/share/opencode. " +
+            "If session is missing after restart, verify the engine uses a persistent project isolated HOME.",
+        });
+      }
       throw err;
     } finally {
-      this.pendingLoadSessionRegistration = false;
-      this.suppressSessionReplayFor.delete(sessionId);
+      // 引擎已被销毁/重启：标志位已由 destroy() 重置，不能在这里清掉新一轮的登记
+      if (epoch === this.lifecycleEpoch) {
+        this.pendingLoadSessionRegistration = false;
+        this.suppressSessionReplayFor.delete(sessionId);
+      }
     }
+    this.assertLifecycleEpoch(epoch);
     timer.end("acp.session.load", { mcpCount: mcpServers.length });
 
     const existing = this.sessions.get(sessionId);
@@ -1222,15 +1465,21 @@ export class AcpEngine extends EventEmitter {
       sessionId: string;
       modes?: { currentModeId?: string } | null;
     };
+    const epoch = this.lifecycleEpoch;
     this.pendingNewSessionRegistration = true;
     try {
       acpResult = await this.agentSessions.setup(mcpServers, () => this.acpConnection!.newSession(newSessionParams), (result) => result.sessionId);
     } catch (err) {
-      log.error(`${this.logTag} ❌ ACP newSession failed:`, err);
+      // 被恢复链路销毁导致的失败（连接已关）不是 newSession 自身的问题
+      if (epoch === this.lifecycleEpoch) {
+        log.error(`${this.logTag} ❌ ACP newSession failed:`, err);
+      }
       throw err;
     } finally {
-      this.pendingNewSessionRegistration = false;
+      // 引擎已被销毁/重启：标志位已由 destroy() 重置，不能在这里清掉新一轮的登记
+      if (epoch === this.lifecycleEpoch) this.pendingNewSessionRegistration = false;
     }
+    this.assertLifecycleEpoch(epoch);
     const createMs = timer.end("acp.session.create", {
       mcpCount: mcpServers.length,
     });
@@ -1931,6 +2180,10 @@ export class AcpEngine extends EventEmitter {
   async chat(
     request: ComputerChatRequest,
     dispatch?: ChatDispatchContext,
+    options?: {
+      /** 进入 /computer/chat 的时刻：恢复链路总时限从这里起算（含引擎创建） */
+      chainStartedAtMs?: number;
+    },
   ): Promise<AcpChatHttpResult> {
     const timer = perfEmitter.start();
     firstTokenTrace.trace("acp.chat.enter", {
@@ -1947,6 +2200,20 @@ export class AcpEngine extends EventEmitter {
         tid: null,
         success: false,
       };
+    }
+
+    // 熔断期内不进建立链路：上次已判环境卡死，再试只会再等一轮预算。放在换模型/
+    // 权限桥的 reinit 之前，避免为一个注定失败的请求重建进程。
+    const setupBreaker = sessionSetupRecoveryState.getOpenBreaker(
+      resolveChatEngineRegistryKey(request),
+      Date.now(),
+    );
+    if (setupBreaker) {
+      log.warn(
+        `${this.logTag} [SessionSetup] breaker open until ${new Date(setupBreaker.untilMs).toISOString()} (${setupBreaker.reason}); failing fast`,
+        { requestId: request.request_id, projectId: request.project_id },
+      );
+      return buildSessionSetupFailure(request, setupBreaker.reason);
     }
 
     try {
@@ -2031,37 +2298,18 @@ export class AcpEngine extends EventEmitter {
         };
       }
 
-      // 1. Resolve session: memory → load → new
-      let restoredVia: SessionRestoredVia = "memory";
-      const setup = await resolveSessionForChat(
-        {
-          logTag: this.logTag,
-          workspaceDir: this.config.workspaceDir,
-          // 用于跨引擎 sessionId 形态校验（ses_* vs UUID），避免异引擎 load 挂起
-          engineName: this.engineName,
-          agentCapabilities: this.agentCapabilities,
-          getSession: (id) => this.sessions.get(id),
-          findSessionByProjectId: (pid) => this.findSessionByProjectId(pid),
-          loadSession: async (sessionId, opts) => {
-            const sdk = await this.loadAcpSession(sessionId, opts);
-            return this.sessions.get(sdk.id)!;
-          },
-          createSession: async (opts) => {
-            const sdk = await this.createSession(opts);
-            return { id: sdk.id };
-          },
-          getSessionRecord: (id) => this.sessions.get(id)!,
-        },
-        request,
-        {
-          systemPrompt: request.system_prompt,
-          requestId: request.request_id,
-        },
-      );
+      // 1. Resolve session: memory → load → new（预算、重建、隔离与熔断见 acpSessionRecovery）
+      const setup = await this.runSessionSetup(request, {
+        chainStartedAtMs: options?.chainStartedAtMs,
+      });
+      if (!setup.ok) {
+        this.logSessionSetupFailure(request, setup);
+        return buildSessionSetupFailure(request, setup.reason, setup.message);
+      }
 
       const session = setup.session as AcpSession;
       const isNewSession = setup.isNewSession;
-      restoredVia = setup.restoredVia;
+      const restoredVia = setup.restoredVia;
       const setupPath = setup.setupPath;
 
       if (request.agent_config?.context_servers && restoredVia === "new") {
@@ -2111,11 +2359,31 @@ export class AcpEngine extends EventEmitter {
             request.agent_config?.agent_server?.command,
           ),
         });
-        await this.syncSessionModelForChat(
-          session.acpSessionId,
-          targetModelId,
-          session.resumedModelId ?? session.acpCurrentModelId ?? null,
-        );
+        try {
+          await withSetupTimeout(
+            this.syncSessionModelForChat(
+              session.acpSessionId,
+              targetModelId,
+              session.resumedModelId ?? session.acpCurrentModelId ?? null,
+            ),
+            { stage: "config", hardMs: this.setupBudgets.configOptionHardMs },
+          );
+        } catch (err) {
+          if (!isAcpSetupTimeoutError(err)) throw err;
+          // 模型同步也无响应：引擎不可用。收掉进程，本请求不再重试。
+          log.warn(
+            `${this.logTag} [SessionSetup] session model sync timed out; destroying engine without respawn`,
+            { sessionId: session.id, requestId: request.request_id },
+          );
+          await this.recycleForRecovery("config_timeout", {
+            respawn: false,
+          }).catch(() => undefined);
+          return buildSessionSetupFailure(
+            request,
+            "setup_timeout",
+            "session model sync timed out",
+          );
+        }
         session.resumedModeState = null;
         session.resumedModelId = null;
         // 每次 chat 请求刷新该会话的 tool_approval_rules（不传则清除，保持向后兼容）
@@ -2156,6 +2424,12 @@ export class AcpEngine extends EventEmitter {
         dominant,
         requestId: request.request_id,
         projectId: request.project_id,
+        // 恢复链路补充字段：是否降级、是否重建过进程
+        fallbackReason: setup.fallbackReason,
+        loadMs: setup.report.loadMs,
+        recycled: setup.report.recycleReasons,
+        quarantined: setup.report.quarantined,
+        slowRestore: setup.report.slowRestore,
       });
       firstTokenTrace.trace(
         "acp.chat.session_ready",
@@ -2280,6 +2554,7 @@ export class AcpEngine extends EventEmitter {
           dispatch,
           isNewSession,
           timer,
+          setup.fallbackReason,
         );
       }
 
@@ -2292,13 +2567,16 @@ export class AcpEngine extends EventEmitter {
         promptOutcome,
       });
 
-      const chatResponse: ComputerChatResponse = {
-        project_id: request.project_id || session.id,
-        session_id: session.id,
-        error: null,
-        request_id: request.request_id,
-        is_new_session: isNewSession,
-      };
+      const chatResponse: ComputerChatResponse = withSessionSetupFallback(
+        {
+          project_id: request.project_id || session.id,
+          session_id: session.id,
+          error: null,
+          request_id: request.request_id,
+          is_new_session: isNewSession,
+        },
+        setup.fallbackReason,
+      );
 
       log.info(`${this.logTag} ✅ chat() response: session_id=${session.id}`);
       firstTokenTrace.trace(
@@ -2355,6 +2633,7 @@ export class AcpEngine extends EventEmitter {
     dispatch: ChatDispatchContext | undefined,
     isNewSession: boolean,
     timer: ReturnType<typeof perfEmitter.start>,
+    fallbackReason?: SessionSetupFallbackReason,
   ): AcpChatHttpResult {
     timer.end("acp.chat.total", {
       stage: "total",
@@ -2383,13 +2662,16 @@ export class AcpEngine extends EventEmitter {
     return {
       code: "0000",
       message: "success",
-      data: {
-        project_id: request.project_id || session.id,
-        session_id: session.id,
-        error: null,
-        request_id: request.request_id,
-        is_new_session: isNewSession,
-      },
+      data: withSessionSetupFallback(
+        {
+          project_id: request.project_id || session.id,
+          session_id: session.id,
+          error: null,
+          request_id: request.request_id,
+          is_new_session: isNewSession,
+        },
+        fallbackReason,
+      ),
       tid: null,
       success: true,
       promptDispatched: false,
