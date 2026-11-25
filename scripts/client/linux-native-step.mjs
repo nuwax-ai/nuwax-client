@@ -41,16 +41,48 @@ export function parseStepEnv(text) {
 }
 
 /**
- * 步骤级超时。复合 action 的 `uses` 步骤上不能写 `timeout-minutes`，所以由这里执行：
- * 给命令前面加 `timeout`，到点先 TERM、宽限期后 KILL。
+ * 步骤级超时。复合 action 的 `uses:` 步骤上不能写 `timeout-minutes`，所以由这里执行。
+ *
+ * 不用外部 `timeout` 命令：GitHub 的 macOS runner（macOS 26）没有它，v3.3.0-beta.3
+ * 的 macOS 构建就是在这里 80 毫秒退出的（当时那一步写了 timeout-minutes）。
+ * 用 Node 自己做包装 —— Node 一定在，就是跑本脚本的那个。
+ *
  * @param {string[]} argv 要执行的命令
  * @param {number|string} [minutes] 超时分钟数；空或非正数表示不限制
+ * @returns {string[]} 原样返回，或前面加上 `node --eval <包装脚本> <毫秒>` 的 argv
  */
-export function withTimeout(argv, minutes) {
+export function withTimeout(argv, minutes, { graceMs = 30000, execPath = process.execPath } = {}) {
   const limit = Number(minutes);
   if (!Number.isFinite(limit) || limit <= 0) return argv;
-  // 超时时退出码 124，与 `timeout` 约定一致，便于在日志里辨认。
-  return ['timeout', '--kill-after=30s', `${limit}m`, ...argv];
+  // 到点先 TERM 让子进程收尾，宽限期后 KILL。超时的退出码是 124，与 `timeout` 约定一致。
+  // 先给整个进程组发信号（docker 客户端死了，带 --rm 的容器随之结束），进程组不存在时再只杀子进程。
+  const wrapper = `
+    const { spawn } = require('node:child_process');
+    const [limitMs, graceMs, command, ...args] = process.argv.slice(1);
+    const child = spawn(command, args, { stdio: 'inherit', detached: true });
+    let timedOut = false;
+    const stop = (signal) => {
+      try { process.kill(-child.pid, signal); return; } catch {}
+      try { child.kill(signal); } catch {}
+    };
+    const killer = setTimeout(() => {
+      timedOut = true;
+      stop('SIGTERM');
+      setTimeout(() => stop('SIGKILL'), Number(graceMs)).unref();
+    }, Number(limitMs));
+    child.once('error', (error) => { console.error('[linux-native-step] ' + error.message); process.exit(127); });
+    child.once('close', (code) => {
+      clearTimeout(killer);
+      if (timedOut) {
+        const limit = Number(limitMs);
+        const shown = limit % 60000 === 0 ? (limit / 60000) + ' 分钟' : (limit / 1000) + ' 秒';
+        console.error('[linux-native-step] 步骤超过 ' + shown + '，已终止');
+        process.exit(124);
+      }
+      process.exit(code ?? 1);
+    });
+  `;
+  return [execPath, '--eval', wrapper, String(Math.round(limit * 60_000)), String(graceMs), ...argv];
 }
 
 /** Docker 说 amd64，仓库和 CI 的约定是 x64。 */

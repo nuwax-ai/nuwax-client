@@ -728,7 +728,10 @@ jobs:
 
       # glibc 门禁：扫描安装目录里每个 ELF，需要高于 2.28 的 glibc 即失败（UOS 20 Pro 1050 只有 2.28）。
       # 接入初期带 --report-only，只报告不失败；确认它报出的文件与豁免清单一致后去掉。
+      # 只在 Linux 上跑：glibc 对 macOS / Windows 没有意义，那两个平台也没有这个目录
+      # （v3.3.0-beta.3 的 Windows 构建在最后这一步因找不到 linux-unpacked 而失败）。
       - name: Verify Linux binaries stay within the glibc 2.28 floor
+        if: runner.os == 'Linux'
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.arch }}

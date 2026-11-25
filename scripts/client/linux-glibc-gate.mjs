@@ -232,8 +232,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       i += 1;
     }
     if (!options['--verify-output']) throw new Error('[linux-glibc-gate] Use --verify-output DIRECTORY [--platform linux] [--arch ARCH] [--report-only]');
+    // The platform argument says which layout to expect; it cannot make a non-Linux
+    // host produce one. A mismatch means the caller asked the wrong runner to run
+    // this — v3.3.0-beta.3's Windows build passed `--platform linux` and failed here
+    // looking for a `linux-unpacked` directory. Say that, instead of "directory not found".
+    const platform = options['--platform'] || process.platform;
+    if (platform !== process.platform) {
+      throw new Error(`[linux-glibc-gate] --platform ${platform} 与当前系统 ${process.platform} 不一致：这个门禁只应在 Linux runner 上执行`);
+    }
     const result = verifyLinuxGlibc(options['--verify-output'], {
-      platform: options['--platform'] || process.platform,
+      platform,
       arch: options['--arch'] || process.arch,
       reportOnly: options.reportOnly,
     });

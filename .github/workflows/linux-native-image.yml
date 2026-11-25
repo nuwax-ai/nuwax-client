@@ -291,3 +291,67 @@ jobs:
           echo "gate will scan: $APP_DIR"
           # 三个产物都不得高于 2.28：门禁不带 --report-only，超限即失败。
           node scripts/client/linux-glibc-gate.mjs --verify-output "$FLOOR" --platform linux --arch "$TARGET_ARCH"
+
+  # 复合 action 在 macOS / Windows 上是「原样执行」——不碰镜像。这一支不经过镜像，
+  # 所以上面两个 job 验证不到它，而它同样会让发布失败：v3.3.0-beta.3 的 macOS 构建
+  # 步在超时包装上（runner 没有 timeout 命令），Windows 构建败在门禁上（不该在
+  # 非 Linux 上跑）。这里用最小的真实命令把那两条路各走一遍。
+  native-platforms:
+    name: Native path (${{ matrix.runner }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            os: macOS
+          - runner: windows-latest
+            os: Windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 不带超时：命令原样执行。
+      - name: Runs a command unchanged
+        uses: ./.github/actions/linux-native-step
+        with:
+          arch: x64
+          command: node -e "console.log('native path ok on ' + process.platform)"
+
+      # 带超时：这就是 macOS 上 80 毫秒退出的那一步。超时由 Node 自己实现，
+      # 不依赖 runner 上有没有 timeout 命令。
+      - name: Applies a step timeout without the external timeout command
+        uses: ./.github/actions/linux-native-step
+        with:
+          arch: x64
+          timeout-minutes: 5
+          command: node -e "console.log('timed step finished on ' + process.platform)"
+
+      # 带环境变量与工作目录：发布 workflow 的 capture 步骤就是这个形态。
+      - name: Passes env and a working directory
+        uses: ./.github/actions/linux-native-step
+        with:
+          arch: x64
+          working-directory: scripts
+          env: |
+            TARGET_ARCH=x64
+            MSYS2_LOCATION=
+          command: node -e "if (process.env.TARGET_ARCH !== 'x64') process.exit(1); console.log('env ok, cwd=' + process.cwd())"
+
+      # 门禁在非 Linux 上不该被调用；万一被调用，它必须明确拒绝而不是找错目录。
+      - name: The glibc gate refuses to run here instead of looking for a Linux directory
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/client/linux-glibc-gate.mjs --verify-output "$RUNNER_TEMP" --platform linux --arch x64 2> "$RUNNER_TEMP/gate.err"; then
+            echo "::error::the gate accepted --platform linux on $RUNNER_OS"; exit 1
+          fi
+          grep -q "只应在 Linux runner 上执行" "$RUNNER_TEMP/gate.err"
+          echo "gate correctly refused: $(cat "$RUNNER_TEMP/gate.err")"

@@ -186,11 +186,38 @@ test('the container home lives under RUNNER_TEMP so it belongs to the runner use
   assert.equal(containerHome('', '/ws'), path.join('/ws', '.tmp', 'linux-native-home'));
 });
 
-test('a step timeout wraps the command in timeout, and no limit leaves it alone', () => {
-  assert.deepEqual(withTimeout(['bash', '-c', 'true'], 30), ['timeout', '--kill-after=30s', '30m', 'bash', '-c', 'true']);
-  assert.deepEqual(withTimeout(['bash', '-c', 'true'], '30'), ['timeout', '--kill-after=30s', '30m', 'bash', '-c', 'true']);
+test('a step timeout is applied by Node itself, not by the external timeout command', () => {
+  // GitHub's macOS 26 runners have no `timeout`; v3.3.0-beta.3's macOS builds died in
+  // 80 ms on it. The wrapper is `node --eval <script> <ms> <grace> <command…>`, so it
+  // runs wherever Node does — and never puts a bare command name like `timeout` on PATH's path.
+  const [runner, flag, script, limitMs, graceMs, command, ...rest] = withTimeout(['bash', '-c', 'true'], 30);
+  assert.equal(runner, process.execPath);
+  assert.deepEqual([flag, command], ['--eval', 'bash']);
+  assert.deepEqual(rest, ['-c', 'true']);
+  assert.equal(Number(limitMs), 30 * 60_000);
+  assert.equal(Number(graceMs), 30_000);
+  assert.match(script, /process\.exit\(124\)/);
+  assert.ok(!/\btimeout\b/.test(script.split('\n').map((l) => l.trim()).filter((l) => !l.startsWith('//')).join(' ')), 'must not shell out to timeout');
   // No limit: unchanged, for empty, zero, negative and non-numeric input.
   for (const limit of ['', undefined, null, 0, -5, 'soon']) assert.deepEqual(withTimeout(['bash', '-c', 'true'], limit), ['bash', '-c', 'true']);
+});
+
+test('the timeout wrapper really works: it passes results through and kills a hung command', () => {
+  // Execute the wrapped argv for real. A test that only inspects argv proved nothing
+  // last time — the old form was `timeout …`, which looked right and failed on macOS.
+  const exec = (argv) => spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 20000 });
+  const fast = exec(withTimeout(['bash', '-c', 'echo out; echo err >&2; exit 7'], 1, { graceMs: 200 }));
+  assert.equal(fast.status, 7, 'a finishing command keeps its own exit status');
+  assert.equal(fast.stdout.trim(), 'out');
+  assert.equal(fast.stderr.trim(), 'err');
+  const hung = exec(withTimeout(['bash', '-c', 'echo started; sleep 30; echo never'], 0.05, { graceMs: 200 }));
+  assert.equal(hung.status, 124, 'a hung command is stopped and reported as 124');
+  assert.equal(hung.stdout.trim(), 'started');
+  assert.ok(!hung.stdout.includes('never'));
+  assert.match(hung.stderr, /步骤超过 3 秒，已终止/);
+  const missing = exec(withTimeout(['definitely-not-a-command-xyz'], 1, { graceMs: 200 }));
+  assert.equal(missing.status, 127);
+  assert.match(missing.stderr, /ENOENT/);
 });
 
 test('the timeout wraps docker itself on Linux, so a hung build is killed and the container goes with it', () => {
@@ -198,9 +225,11 @@ test('the timeout wraps docker itself on Linux, so a hung build is killed and th
   const code = runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', timeoutMinutes: 30, ref: 'img', spawn, mkdir });
   assert.equal(code, 124);
   const { command, args } = calls[0];
-  assert.equal(command, 'timeout');
-  assert.deepEqual(args.slice(0, 3), ['--kill-after=30s', '30m', 'docker']);
-  assert.equal(args[3], 'run');
+  // node --eval <script> <ms> <grace> docker run …
+  assert.equal(command, process.execPath);
+  assert.deepEqual(args.slice(0, 2), ['--eval', withTimeout(['docker'], 30)[2]]);
+  assert.deepEqual(args.slice(2, 5), [String(30 * 60_000), '30000', 'docker']);
+  assert.equal(args[5], 'run');
   // Without a timeout the command is docker itself.
   const plain = spy();
   runInImage({ command: 'make', workspace: '/ws', arch: 'x64', uid: 1, gid: 1, runnerTemp: '/rt', ref: 'img', spawn: plain.spawn, mkdir: plain.mkdir });

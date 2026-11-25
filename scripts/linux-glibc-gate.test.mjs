@@ -288,21 +288,40 @@ test('verification targets the unpacked app directory for the architecture and f
   assert.throws(() => verifyLinuxGlibc(path.join(output, 'absent'), { platform: 'linux', arch: 'arm64' }), /找不到打包目录/);
 });
 
-test('the CLI fails on violations, passes with --report-only, and rejects malformed arguments', (t) => {
+test('the CLI validates its arguments and refuses to pretend it runs on another platform', (t) => {
   const output = temporary(t);
-  const root = appRoot(output);
-  write(path.join(root, 'bad.so'), buildElf({ versions: ['GLIBC_2.39'] }));
-  const run = (args) => spawnSync(process.execPath, [cli, '--verify-output', output, '--platform', 'linux', '--arch', 'arm64', ...args], { encoding: 'utf8' });
+  const run = (args) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+  // Argument parsing is platform independent.
   assert.equal(run([]).status, 1);
-  assert.match(run([]).stderr, /GLIBC_2\.39/);
-  const report = run(['--report-only']);
+  assert.equal(run(['--verify-output', output, '--bogus']).status, 1);
+  assert.equal(run(['--verify-output', output, '--verify-output', output]).status, 1);
+  // --platform names the layout to expect; it cannot turn a non-Linux host into one.
+  // A mismatch means the wrong runner was asked to run this (v3.3.0-beta.3's Windows
+  // build passed --platform linux and died looking for a linux-unpacked directory).
+  const other = process.platform === 'linux' ? 'darwin' : 'linux';
+  const wrong = run(['--verify-output', output, '--platform', other, '--arch', 'arm64']);
+  assert.equal(wrong.status, 1);
+  assert.match(wrong.stderr, new RegExp(`--platform ${other} 与当前系统 ${process.platform} 不一致.*只应在 Linux runner 上执行`));
+  if (process.platform !== 'linux') {
+    // Without --platform a non-Linux host reports that the gate does not apply.
+    const skip = run(['--verify-output', output]);
+    assert.equal(skip.status, 0);
+    assert.match(skip.stdout, /非 Linux 平台，本门禁不适用/);
+    return;
+  }
+  // On Linux the CLI runs for real: it scans, reports exemptions and fails on violations.
+  const root = appRoot(output);
+  write(path.join(root, 'resources/agent-desktop/linux-arm64/agent-desktop-linux-arm64'), buildElf({ versions: ['GLIBC_2.35'] }));
+  const ok = run(['--verify-output', output, '--arch', 'arm64']);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /豁免：resources\/agent-desktop\/linux-arm64\/agent-desktop-linux-arm64 需要 GLIBC_2\.35/);
+  write(path.join(root, 'resources/bad.node'), buildElf({ versions: ['GLIBC_2.39'] }));
+  const bad = run(['--verify-output', output, '--arch', 'arm64']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /resources\/bad\.node\s+需要 GLIBC_2\.39/);
+  const report = run(['--verify-output', output, '--arch', 'arm64', '--report-only']);
   assert.equal(report.status, 0);
   assert.match(report.stderr, /只报告，不失败/);
-  fs.rmSync(path.join(root, 'bad.so'));
-  const clean = run([]);
-  assert.equal(clean.status, 0, clean.stderr);
-  assert.match(clean.stdout, new RegExp(`均不超过 glibc ${GLIBC_FLOOR}`));
-  assert.equal(spawnSync(process.execPath, [cli, '--verify-output', output, '--bogus'], { encoding: 'utf8' }).status, 1);
 });
 
 test('the floor matches the UOS 1050 target the image exists for', () => {
