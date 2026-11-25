@@ -16,6 +16,7 @@
 
 import type { ChildProcess } from "child_process";
 import { spawnAcpProcess } from "./acpProcess";
+import { getAcpSetupBudgets } from "./acpSetupBudgets";
 import { Readable, Writable, Transform } from "stream";
 import * as path from "path";
 import * as fs from "fs";
@@ -1157,6 +1158,8 @@ export async function createAcpConnection(
     cwd: config.workspaceDir,
     env,
     detached: useDetached,
+    // 进程起不来时按预算失败，避免 init（以及其后的 chat）永久挂起
+    spawnTimeoutMs: getAcpSetupBudgets().spawnHardMs,
   });
   // Unref so the parent process can exit without waiting for the child
   // (we manage cleanup explicitly via killProcessTree)

@@ -73,6 +73,11 @@ import {
   buildChatErrorWithReload,
 } from "./devcomputerAutoReload";
 import { ensureSessionIdFromRegistry } from "./ensureChatSessionId";
+import { sessionSetupRecoveryState } from "../engines/acp/acpSessionRecovery";
+import {
+  buildSessionSetupFailure,
+  isEngineInitTimeoutMessage,
+} from "../engines/acp/sessionSetupFailure";
 import { resolveChatProjectRegistryKey } from "./chatEngineKey";
 import { rememberProjectSession } from "./projectSessionRegistry";
 import { closeStaleSseBeforeChat } from "./closeStaleSseForChat";
@@ -418,6 +423,29 @@ export async function handleComputerChat(
     ),
   };
 
+  // 上一次已判为会话环境卡死且仍在熔断期：不建引擎、不进恢复链路，直接返回同一判定。
+  // 在 ensureEngineForRequest 之前挡掉，避免为一个注定失败的请求再拉起进程。
+  const setupBreaker = sessionSetupRecoveryState.getOpenBreaker(
+    dispatchKey,
+    Date.now(),
+  );
+  if (setupBreaker) {
+    log.warn(
+      `⛔ [HTTP] Session setup breaker open for project_id=${body.project_id} (${setupBreaker.reason}); failing fast`,
+    );
+    firstTokenTrace.trace(
+      "chat.failed",
+      {
+        requestId: body.request_id,
+        projectId: body.project_id,
+        sessionId: body.session_id,
+      },
+      { reason: "session_setup_breaker_open", detail: setupBreaker.reason },
+    );
+    sendJson(res, 200, buildSessionSetupFailure(body, setupBreaker.reason));
+    return;
+  }
+
   t2 = Date.now();
   firstTokenTrace.trace(
     "chat.validated",
@@ -594,16 +622,15 @@ export async function handleComputerChat(
         error: err?.message || String(err),
       },
     );
-    sendJson(
-      res,
-      200,
-      buildChatErrorWithReload(
-        body,
-        "5000",
-        err.message || "Engine switch failed",
-        engineReloaded,
-      ),
-    );
+    const errorMessage: string = err?.message || "Engine switch failed";
+    // 引擎起不来（握手 / spawn 超时）按会话建立失败返回：可读文案 + fallback_reason
+    const failure = isEngineInitTimeoutMessage(errorMessage)
+      ? buildSessionSetupFailure(body, "engine_init_timeout")
+      : buildChatErrorWithReload(body, "5000", errorMessage, engineReloaded);
+    if (isEngineInitTimeoutMessage(errorMessage)) {
+      failure.data!.reloaded = engineReloaded;
+    }
+    sendJson(res, 200, failure);
     return;
   }
   t3 = Date.now();
@@ -636,7 +663,10 @@ export async function handleComputerChat(
 
   closeStaleSseBeforeChat(body, acpEngine);
 
-  const rawResult: AcpChatHttpResult = await acpEngine.chat(body, chatDispatch);
+  // 恢复链路总时限从进入 handler 起算（含引擎创建），整条请求有界
+  const rawResult: AcpChatHttpResult = await acpEngine.chat(body, chatDispatch, {
+    chainStartedAtMs: t0,
+  });
   const promptDispatched = rawResult.promptDispatched !== false;
   const { promptDispatched: _pd, ...result } = rawResult;
   attachReloadedToChatResult(result, body, engineReloaded);

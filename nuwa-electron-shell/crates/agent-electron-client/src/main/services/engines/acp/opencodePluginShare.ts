@@ -14,13 +14,14 @@
  *   - 链接失败：记录警告并跳过（引擎仍可自行安装，不阻断启动）
  */
 
-import { spawn } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import log from "electron-log";
 import { getAppDataDir, getResourcesPath } from "../../system/appPaths";
 import { getAppEnv } from "../../system/appEnv";
 import { isWindows } from "../../system/shellEnv";
+import { getAcpSetupBudgets, setupTimeoutMessage } from "./acpSetupBudgets";
 
 const PLUGIN_PACKAGE = "@opencode-ai/plugin";
 const SHARED_SEGMENT = "shared";
@@ -85,9 +86,37 @@ function sharedNodeModulesReady(sharedDir: string): boolean {
   return fs.existsSync(nm);
 }
 
+/**
+ * npm install 没有内建超时；网络卡住时会拖住引擎启动（它在 spawn 之前被 await）。
+ * 到点按进程树收掉：Windows 上经 shell 启动，只杀 npm.cmd 会留下子进程。
+ */
+const DEFAULT_NPM_INSTALL_TIMEOUT_MS = 40_000;
+
+function killInstallProcess(proc: ChildProcess): void {
+  const pid = proc.pid;
+  if (!pid) {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // 已退出
+    }
+    return;
+  }
+  if (isWindows()) {
+    execFile("taskkill", ["/pid", String(pid), "/T", "/F"], () => {});
+    return;
+  }
+  try {
+    proc.kill("SIGKILL");
+  } catch {
+    // 已退出
+  }
+}
+
 function runNpmInstallInDir(
   cwd: string,
   version: string,
+  timeoutMs: number = DEFAULT_NPM_INSTALL_TIMEOUT_MS,
 ): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
     const npmCmd = isWindows() ? "npm.cmd" : "npm";
@@ -100,7 +129,7 @@ function runNpmInstallInDir(
     ];
     const env = { ...process.env, ...getAppEnv() };
     log.info(
-      `[OpencodePluginShare] Installing ${PLUGIN_PACKAGE}@${version} into ${cwd}`,
+      `[OpencodePluginShare] Installing ${PLUGIN_PACKAGE}@${version} into ${cwd} (timeout ${timeoutMs}ms)`,
     );
     const proc = spawn(npmCmd, args, {
       cwd,
@@ -108,17 +137,34 @@ function runNpmInstallInDir(
       stdio: "pipe",
       shell: isWindows(),
     });
+    let settled = false;
     let stderr = "";
+    const settle = (result: { success: boolean; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      killInstallProcess(proc);
+      log.warn(
+        `[OpencodePluginShare] npm install timed out after ${timeoutMs}ms; continuing without the shared plugin`,
+      );
+      settle({
+        success: false,
+        error: setupTimeoutMessage("plugin install", timeoutMs),
+      });
+    }, Math.max(0, timeoutMs));
     proc.stderr?.on("data", (d) => {
       stderr += d.toString();
     });
     proc.on("error", (error) => {
-      resolve({ success: false, error: error.message });
+      settle({ success: false, error: error.message });
     });
     proc.on("close", (code) => {
-      if (code === 0) resolve({ success: true });
+      if (code === 0) settle({ success: true });
       else
-        resolve({
+        settle({
           success: false,
           error: stderr.trim() || `npm install exited ${code}`,
         });
@@ -146,7 +192,11 @@ export async function ensureSharedOpencodePlugin(
 
   // 写明依赖后再 install，便于 npm / 排障查看
   fs.writeFileSync(pkgPath, pluginPackageJson(version) + "\n", "utf-8");
-  const install = await runNpmInstallInDir(sharedDir, version);
+  const install = await runNpmInstallInDir(
+    sharedDir,
+    version,
+    getAcpSetupBudgets().pluginInstallHardMs,
+  );
   if (!install.success) {
     return { ok: false, sharedDir, error: install.error };
   }
