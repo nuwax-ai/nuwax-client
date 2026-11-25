@@ -40,4 +40,10 @@ runs:
         STEP_ARCH: ${{ inputs.arch }}
         STEP_ENV: ${{ inputs.env }}
         STEP_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        # The image on GHCR is private, so pulling it needs a login. The token is
+        # not an environment variable by default — a composite action has to ask
+        # for it. Declaring it here means every caller passes it without having
+        # to remember to; release/v3.3.0-beta.3 failed with `unauthorized` because
+        # the release workflows did not.
+        GITHUB_TOKEN: ${{ github.token }}
       run: node scripts/client/linux-native-step.mjs

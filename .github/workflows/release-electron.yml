@@ -19,6 +19,8 @@ on:
 permissions:
   actions: read
   contents: write
+  # Linux 原生件构建镜像在 GHCR 上是私有的，构建 job 拉取它需要读包权限。
+  packages: read
 
 # 同名 tag 被移动重推时自动取消旧 run，防止两条发布管线并发争抢同一 Release
 # 资产与 S3 同步（v3.0.23-beta.10 双 run 竞态的兜底）。既有铁律不变：

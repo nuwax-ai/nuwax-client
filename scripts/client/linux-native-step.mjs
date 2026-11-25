@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { imageRef, REGISTRY } from './linux-native-image.mjs';
+import { imageRef, REGISTRY_HOST } from './linux-native-image.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -140,9 +140,25 @@ export function runInImage({ command, workingDirectory, env, workspace, arch, ui
   }
   args.push(ref, 'bash', '-euo', 'pipefail', '-c', command);
   // 超时包在 docker 客户端外面：客户端被杀后，前台运行且带 --rm 的容器随之结束。
+  // docker 自己的 stderr 另存一份：拉取私有镜像被拒时它只会给一个 `unauthorized`
+  // 加退出码 125，值得翻译成能直接照做的提示。
+  const dockerError = path.join(home, 'docker-stderr.log');
   const argv = withTimeout(['docker', ...args], timeoutMinutes);
-  const result = spawn(argv[0], argv.slice(1), { stdio: 'inherit', cwd: workspace });
-  return result.status ?? 1;
+  const result = spawn(argv[0], argv.slice(1), { stdio: ['inherit', 'inherit', 'pipe'], cwd: workspace });
+  if (result.stderr?.length) {
+    fs.writeFileSync(dockerError, result.stderr);
+    process.stderr.write(result.stderr);
+  }
+  const status = result.status ?? 1;
+  if (status === 125 && /unauthorized|denied: requested access/i.test(String(result.stderr))) {
+    throw new Error([
+      `[linux-native-step] 拉取镜像 ${ref} 被拒（unauthorized）。它在 GHCR 上是私有的，需要：`,
+      '  1. 复合 action 把 GITHUB_TOKEN 传给本脚本（action.yml 的 env 里有 github.token）；',
+      '  2. 调用方 workflow 在 permissions 里声明 packages: read。',
+      '  两样都要有，缺任何一样都是这个错误。',
+    ].join('\n'));
+  }
+  return status;
 }
 
 /** 非 Linux 平台：命令原样跑在 runner 上。 */
@@ -159,6 +175,35 @@ export function runNatively({ command, workingDirectory, env, workspace, timeout
 }
 
 /**
+ * 登录镜像仓库。镜像在 GHCR 上是私有的，拉取前要登录。
+ *
+ * token 由复合 action 的 env 传入 —— 它不是默认就有的环境变量，action 必须自己声明
+ * `GITHUB_TOKEN: ${{ github.token }}`；调用方 workflow 还要在 permissions 里写
+ * `packages: read`。两样缺任何一样，拉取都会被拒。（v3.3.0-beta.3 的发布就是因此
+ * 四个平台构建失败：当时两样都没有。）
+ *
+ * 没给 token 就不登录：用本地镜像或公开镜像时本来也不需要。登录失败则直接报错 ——
+ * 继续往下只会得到一个更难懂的那个错。
+ *
+ * @returns {boolean} 是否执行了登录
+ */
+export function loginToRegistry({ token, actor, registry = REGISTRY_HOST, spawn = spawnSync, log = () => {} } = {}) {
+  if (!token) {
+    log('[linux-native-step] 未提供 GITHUB_TOKEN，跳过 registry 登录（本地镜像或公开镜像不需要）');
+    return false;
+  }
+  const login = spawn('docker', ['login', registry, '-u', actor || 'github-actions', '--password-stdin'], {
+    input: token, stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  if (login.status !== 0) {
+    const detail = (login.stderr || '').toString().trim() || '无输出';
+    throw new Error(`[linux-native-step] docker login 到 ${registry} 失败（退出码 ${login.status}）：${detail}`);
+  }
+  return true;
+}
+
+/**
+ * 复合 action 的入口：按平台决定在镜像里执行还是直接执行。
  * @param {object} [options]
  * @param {string} [options.ref] 要用的镜像地址；默认是当前内容哈希对应的那个。
  *   本地验证时可以指向尚未推送的本地镜像。
@@ -179,14 +224,7 @@ export function main(env = process.env, platform = process.platform, { ref = ima
   // 容器的 HOME 在 RUNNER_TEMP 下，而 RUNNER_TEMP 会被挂进容器（见 runInImage），
   // 所以 pnpm、cargo、node-gyp 的缓存都落在宿主机上，同一个 job 里后续步骤直接复用。
   console.log(`[linux-native-step] linux/${arch}: 在镜像 ${ref} 里执行`);
-  // 镜像可能还没被设成 public，所以总是先登录；设成 public 之后登录也无害。
-  // registry 取自镜像地址的常量，不听命于环境变量：两者必须指向同一个地方。
-  if (env.GITHUB_TOKEN) {
-    const login = spawnSync('docker', ['login', REGISTRY, '-u', env.GITHUB_ACTOR || 'github-actions', '--password-stdin'], {
-      input: env.GITHUB_TOKEN, stdio: ['pipe', 'ignore', 'pipe'],
-    });
-    if (login.status !== 0) console.warn('[linux-native-step] docker login 未成功，若镜像已是 public 则不影响');
-  }
+  loginToRegistry({ token: env.GITHUB_TOKEN, actor: env.GITHUB_ACTOR, log: (message) => console.log(message) });
   return runInImage({ ...options, uid: Number(process.getuid?.()), gid: Number(process.getgid?.()), runnerTemp: env.RUNNER_TEMP, ref });
 }
 

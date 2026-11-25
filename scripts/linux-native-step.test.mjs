@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { imageHash, imageRef, imageTag, readVersions, buildArgs } from './client/linux-native-image.mjs';
-import { parseStepEnv, dockerPlatform, containerHome, dockerArgs, withTimeout, runInImage, runNatively } from './client/linux-native-step.mjs';
+import { parseStepEnv, dockerPlatform, containerHome, dockerArgs, withTimeout, loginToRegistry, runInImage, runNatively } from './client/linux-native-step.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imageDir = path.join(root, 'docker/linux-native');
@@ -207,3 +207,54 @@ test('the timeout wraps docker itself on Linux, so a hung build is killed and th
   assert.equal(plain.calls[0].command, 'docker');
 });
 
+test('registry login is skipped without a token, and performed with one', () => {
+  // Local images and public images need no login, so a missing token is not an error.
+  const logs = [];
+  const { spawn, calls } = spy();
+  assert.equal(loginToRegistry({ token: '', spawn, log: (m) => logs.push(m) }), false);
+  assert.equal(calls.length, 0, 'no docker call without a token');
+  assert.match(logs.join('\n'), /跳过 registry 登录/);
+
+  // With a token: docker login to the image's registry, token on stdin, never in argv.
+  const ok = spy();
+  assert.equal(loginToRegistry({ token: 'ghs_secret', actor: 'octocat', spawn: ok.spawn, log: () => {} }), true);
+  const { command, args, options } = ok.calls[0];
+  assert.equal(command, 'docker');
+  assert.deepEqual(args, ['login', 'ghcr.io', '-u', 'octocat', '--password-stdin']);
+  assert.equal(options.input, 'ghs_secret');
+  assert.ok(!JSON.stringify(args).includes('ghs_secret'), 'the token must not appear on the command line');
+  // No actor given falls back to the github-actions bot account.
+  const fallback = spy();
+  loginToRegistry({ token: 't', spawn: fallback.spawn, log: () => {} });
+  assert.deepEqual(fallback.calls[0].args, ['login', 'ghcr.io', '-u', 'github-actions', '--password-stdin']);
+});
+
+test('a failed registry login stops the step instead of letting the pull fail later', () => {
+  // Carrying on after a failed login only produces a harder-to-read `unauthorized`
+  // from the pull. v3.3.0-beta.3's builds failed that way.
+  const { spawn } = spy(1);
+  assert.throws(
+    () => loginToRegistry({ token: 'bad', spawn, log: () => {} }),
+    (error) => /docker login 到 ghcr\.io 失败（退出码 1）/.test(error.message),
+  );
+});
+
+test('a rejected private-image pull is reported as the token/permission problem it is', (t) => {
+  // docker itself only prints `unauthorized` and exits 125. The step names the two
+  // things that are missing so the log is actionable on its own.
+  const dir = temporary(t);
+  const workspace = path.join(dir, 'ws');
+  fs.mkdirSync(workspace, { recursive: true });
+  // A spawn stand-in. The real runInImage asks spawn for a piped stderr and reads
+  // it back off the result, so emulate exactly that: collect what docker would
+  // have printed and return it as result.stderr.
+  const docker = (status, stderrText) => (command, args, options) => {
+    assert.equal(options.stdio[2], 'pipe', 'runInImage must capture docker stderr');
+    return { status, stderr: Buffer.from(stderrText + '\n') };
+  };
+  const run = (spawn) => runInImage({ command: 'true', workspace, arch: 'x64', uid: 1001, gid: 121, runnerTemp: path.join(dir, 'rt'), ref: 'ghcr.io/nuwax-ai/nuwax-linux-native:abc', spawn });
+  assert.throws(() => run(docker(125, 'docker: Error response from daemon: Head "https://ghcr.io/v2/nuwax-ai/nuwax-linux-native/manifests/abc": unauthorized')), (error) =>
+    /拉取镜像 .*:abc 被拒（unauthorized）/.test(error.message) && /GITHUB_TOKEN/.test(error.message) && /packages: read/.test(error.message));
+  // Any other docker failure keeps its exit status, without being mistaken for this one.
+  assert.equal(run(docker(125, 'docker: Error response from daemon: No such container')), 125);
+});

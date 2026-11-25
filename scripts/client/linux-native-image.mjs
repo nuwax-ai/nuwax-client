@@ -24,8 +24,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const imageDir = path.join(root, 'docker/linux-native');
 /** 镜像内容哈希的输入：这些文件任何一个变化都必须产生新的 tag。 */
 const RECIPE_FILES = ['Dockerfile', 'versions.env', 'gxx-shim.sh'];
-/** 仓库是 public 的，镜像也设为 public，CI 拉取不需要凭据。 */
-export const REGISTRY = 'ghcr.io/nuwax-ai/nuwax-linux-native';
+/** 镜像所在的 registry 主机。`docker login` 要的是主机名，不带镜像名。 */
+export const REGISTRY_HOST = 'ghcr.io';
+/** 镜像名（不含 tag）。 */
+export const IMAGE_NAME = 'nuwax-ai/nuwax-linux-native';
+/**
+ * 镜像的完整路径（不含 tag）。
+ * 镜像在 GHCR 上是**私有**的：拉取前要先 `docker login`，用 GITHUB_TOKEN，
+ * 调用方 workflow 需要 packages: read。（仓库是 public 的，但包的可见性是单独设置的。）
+ */
+export const REGISTRY = `${REGISTRY_HOST}/${IMAGE_NAME}`;
 
 /** 镜像内容哈希：Dockerfile、版本清单与垫片的 SHA256，取前 12 位。 */
 export function imageHash(directory = imageDir) {
