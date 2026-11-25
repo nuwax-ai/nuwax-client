@@ -38,8 +38,9 @@ function writeAr(file, members) {
 /**
  * 构造一个 deb：数据归档里放普通文件；带硬链接时再放一条指向同一 inode 的路径。
  * tar 遇到同一 inode 的第二个路径会写成类型 'h' 的条目，安装时需要重建链接。
+ * 控制归档默认声明 package.json 里配置的全部依赖，传入 depends 可以改写。
  */
-function buildDeb(t, { withHardLink }) {
+function buildDeb(t, { withHardLink, depends = policy.configuredDebDepends(), controlCompression = 'none' } = {}) {
   const dir = temporary(t);
   const tree = path.join(dir, 'tree');
   fs.mkdirSync(path.join(tree, 'opt/Nuwax/resources'), { recursive: true });
@@ -50,8 +51,31 @@ function buildDeb(t, { withHardLink }) {
   const member = path.join(dir, 'data.tar');
   const tar = spawnSync('tar', ['-cf', member, '-C', tree, 'opt'], { encoding: 'utf8' });
   assert.equal(tar.status, 0, tar.stderr);
+
+  // fpm 写出的控制归档成员名是 ./control；这里按同样的布局打包，必要时加 gzip。
+  const controlDir = path.join(dir, 'control');
+  fs.mkdirSync(controlDir);
+  const control = [
+    'Package: nuwax',
+    'Version: 3.3.0',
+    'Architecture: arm64',
+    'Maintainer: Nuwax Team <dev@example.invalid>',
+    ...(depends?.length ? [`Depends: ${depends.join(', ')}`] : []),
+    'Description: test package',
+    ' second line of the description',
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(controlDir, 'control'), control);
+  const controlName = `control.tar${controlCompression === 'gzip' ? '.gz' : ''}`;
+  const controlMember = path.join(dir, controlName);
+  const controlTar = spawnSync('tar', [`-c${controlCompression === 'gzip' ? 'z' : ''}f`, controlMember, '-C', controlDir, './control'], { encoding: 'utf8' });
+  assert.equal(controlTar.status, 0, controlTar.stderr);
+
   const deb = path.join(dir, 'package.deb');
-  writeAr(deb, [{ name: 'data.tar', data: fs.readFileSync(member) }]);
+  writeAr(deb, [
+    { name: controlName, data: fs.readFileSync(controlMember) },
+    { name: 'data.tar', data: fs.readFileSync(member) },
+  ]);
   return { deb, dir, member };
 }
 
@@ -84,8 +108,49 @@ test('a deb with a hard link is rejected with the offending path', (t) => {
 test('the ar reader accepts the GNU layout that deb packages use', (t) => {
   const { deb } = buildDeb(t, { withHardLink: false });
   const members = policy.readArMembers(deb);
-  assert.deepEqual(members.map((member) => member.name), ['data.tar']);
-  assert.ok(members[0].size > 0);
+  assert.deepEqual(members.map((member) => member.name), ['control.tar', 'data.tar']);
+  assert.ok(members.every((member) => member.size > 0));
+});
+
+test('the configured deb dependencies keep every electron-builder default and add zenity', () => {
+  // electron-builder 25 drops its own defaults as soon as deb.depends is set, so the nine
+  // defaults below have to stay in package.json next to zenity. The list was read from the
+  // fpm command line and from the control files of packages built with electron-builder
+  // 25.1.8 / app-builder-bin 5.0.0-alpha.10; re-read it when either is upgraded.
+  assert.deepEqual(policy.configuredDebDepends(), [
+    'libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0',
+    'zenity',
+  ]);
+});
+
+test('a deb that declares every configured dependency passes the dependency check', (t) => {
+  const { dir } = buildDeb(t, { withHardLink: false });
+  assert.deepEqual(policy.verifyLinuxPackageDependencies(dir), { checked: 1, dependencies: policy.configuredDebDepends() });
+});
+
+test('a deb that lacks a dependency is rejected with the missing package', (t) => {
+  const { dir } = buildDeb(t, { withHardLink: false, depends: policy.configuredDebDepends().filter((name) => name !== 'zenity') });
+  assert.throws(() => policy.verifyLinuxPackageDependencies(dir), /zenity/);
+  const bare = buildDeb(t, { withHardLink: false, depends: [] }).dir;
+  assert.throws(() => policy.verifyLinuxPackageDependencies(bare), /libgtk-3-0/);
+});
+
+test('the control file is read through compressed archives and version constraints are ignored', (t) => {
+  const { deb, dir } = buildDeb(t, {
+    withHardLink: false,
+    controlCompression: 'gzip',
+    depends: ['libgtk-3-0 (>= 3.22)', 'dbus | dbus-x11', 'zenity (>= 3.0)'],
+  });
+  assert.equal(policy.readDebControl(deb).Package, 'nuwax');
+  assert.equal(policy.readDebControl(deb).Depends, 'libgtk-3-0 (>= 3.22), dbus | dbus-x11, zenity (>= 3.0)');
+  assert.equal(policy.readDebControl(deb).Description, 'test package second line of the description');
+  assert.deepEqual(policy.dependencyNames(policy.readDebControl(deb).Depends), ['libgtk-3-0', 'dbus', 'zenity']);
+  // 版本约束不影响判断；多选一的依赖按第一个名字识别（dbus | dbus-x11 → dbus）。
+  const expectedFile = path.join(path.dirname(deb), 'expected.json');
+  fs.writeFileSync(expectedFile, JSON.stringify({ build: { deb: { depends: ['libgtk-3-0', 'zenity', 'dbus'] } } }));
+  assert.equal(policy.verifyLinuxPackageDependencies(dir, expectedFile).checked, 1);
+  fs.writeFileSync(expectedFile, JSON.stringify({ build: { deb: { depends: ['libnss3'] } } }));
+  assert.throws(() => policy.verifyLinuxPackageDependencies(dir, expectedFile), /libnss3/);
 });
 
 test('glibc versions compare as two integers, not as decimals', () => {
