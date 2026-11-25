@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -121,10 +121,14 @@ describe("Wayland registry query", () => {
     ]);
     // 两条 12 字节的请求，对象 id、（长度 << 16 | 操作码）、new_id 各一个字：
     // wl_display(1).get_registry → 2 号对象，wl_display(1).sync → 3 号对象。
-    expect(compositor.requests.flat()).toEqual([
-      1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0,
-      1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0,
-    ]);
+    // 请求记录是从合成器所在线程经消息传回来的，与查询结果走的不是一条通道，
+    // 负载高时会晚于结果到达：等到它到了再比对。
+    await vi.waitFor(() => {
+      expect(compositor.requests.flat()).toEqual([
+        1, 0, 0, 0, 1, 0, 12, 0, 2, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 12, 0, 3, 0, 0, 0,
+      ]);
+    });
   });
 
   it("reassembles messages that arrive in pieces", async () => {
