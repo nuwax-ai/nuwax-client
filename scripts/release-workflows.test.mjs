@@ -166,5 +166,12 @@ test('stable and beta prepare locked capture payloads and verify real packaged b
     assert.match(capture.slice(0, capture.indexOf('\n      - ', 1)), /timeout-minutes: 30/);
     assert.match(text, /Verify Linux binaries stay within the glibc 2\.28 floor\n[\s\S]*?linux-glibc-gate\.mjs --verify-output "\$OUT_DIR" --platform linux --arch "\$TARGET_ARCH"/);
     assert.ok(text.indexOf('Verify packaged resources exclude build caches') < text.indexOf('Verify Linux binaries stay within the glibc 2.28 floor'));
+    // The gate enforces, and only runs where it means something. Report-only let a deb with a
+    // glibc 2.38 ffmpeg through (v3.3.0-beta.4); running it on Windows failed looking for a
+    // Linux directory (v3.3.0-beta.3).
+    const gate = text.slice(text.indexOf('- name: Verify Linux binaries stay within the glibc 2.28 floor'));
+    const gateStep = gate.slice(0, gate.indexOf('\n      - ', 1));
+    assert.match(gateStep, /if: runner\.os == 'Linux'/, `${name}: the gate must be limited to Linux`);
+    assert.ok(!gateStep.includes('--report-only'), `${name}: the gate must fail the build, not just report`);
   }
 });

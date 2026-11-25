@@ -174,6 +174,42 @@ test('transport-layer edits do not invalidate the helper cache identity', async 
   assert.equal(f.producerApi.nativeHelperResourceKey(f.producer), expected);
 });
 
+test('on Linux the build image is part of the native cache identity, and only there', async t => {
+  // nativeTools() probes the runner's compilers. Since the Linux native builds moved
+  // into the glibc 2.28 image, the image — not the runner — decides what the artifacts
+  // require. v3.3.0-beta.4's Linux builds restored ffmpeg compiled on Ubuntu 24.04 because
+  // the key never changed; the gate then let it through in report-only mode.
+  const text = fs.readFileSync(path.join(root, 'scripts/client/native-build-cache.mjs'), 'utf8');
+  const uses = text.match(/image: linuxNativeBuildIdentity\(root\)/g) ?? [];
+  assert.equal(uses.length, 3, 'helper resource key, capture key and helper entry must all carry the image identity');
+  // The function itself is platform gated, so run it for both outcomes.
+  const { linuxNativeBuildIdentity } = await import('./client/native-build-cache.mjs');
+  if (process.platform === 'linux') {
+    const identity = linuxNativeBuildIdentity(root);
+    assert.match(identity, /^[0-9a-f]{64}$/);
+    // Changing any image recipe file changes the identity.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nuwax-cache-image-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const copy = (from) => fs.cpSync(path.join(root, from), path.join(dir, from), { recursive: true });
+    for (const name of ['Dockerfile', 'versions.env', 'gxx-shim.sh']) {
+      fs.mkdirSync(path.join(dir, 'docker/linux-native'), { recursive: true });
+      fs.copyFileSync(path.join(root, 'docker/linux-native', name), path.join(dir, 'docker/linux-native', name));
+    }
+    assert.equal(linuxNativeBuildIdentity(dir), identity, 'same image files, same identity');
+    for (const name of ['Dockerfile', 'versions.env', 'gxx-shim.sh']) {
+      const file = path.join(dir, 'docker/linux-native', name);
+      const original = fs.readFileSync(file);
+      fs.appendFileSync(file, '\n# changed\n');
+      assert.notEqual(linuxNativeBuildIdentity(dir), identity, `editing ${name} must change the identity`);
+      fs.writeFileSync(file, original);
+      assert.equal(linuxNativeBuildIdentity(dir), identity);
+    }
+  } else {
+    // macOS and Windows do not build in the image, so their identities must not move.
+    assert.equal(linuxNativeBuildIdentity(root), null);
+  }
+});
+
 test('bumping the staging contract constant invalidates the helper identity', async t => {
   const f = await fixture(t);
   const expected = f.producerApi.nativeHelperResourceKey(f.producer);

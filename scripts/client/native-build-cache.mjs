@@ -34,6 +34,28 @@ function recipe(root, files) {
   });
 }
 
+/**
+ * On Linux the native artifacts are compiled inside the glibc 2.28 build image
+ * (docker/linux-native), so the image — not the runner — is the toolchain that
+ * decides what the artifacts require. nativeTools() probes the runner and never
+ * sees the image; without this the cache key did not change when the build moved
+ * into the image, and v3.3.0-beta.4's Linux builds restored ffmpeg compiled on
+ * Ubuntu 24.04 (glibc 2.38) instead of building a 2.28 one.
+ * The identity is the image's content hash (the same value as its tag), so any
+ * change to the image invalidates the caches once and every cached artifact is
+ * tied to the image that produced it. Other platforms do not use the image.
+ */
+export function linuxNativeBuildIdentity(root) {
+  if (process.platform !== 'linux') return null;
+  const files = ['Dockerfile', 'versions.env', 'gxx-shim.sh'].map(name => path.join(root, 'docker/linux-native', name));
+  const parts = files.map(file => {
+    const digest = core.fileHash(file);
+    if (!digest) throw new Error('[native-cache] Missing build image input: ' + file);
+    return [path.basename(file), digest];
+  });
+  return core.fingerprint({ schema: 1, image: parts });
+}
+
 function probe(command, args, options = {}) {
   const result = core.run(command, args, { capture: true, allowFailure: true, ...options });
   // rustup may install workspace components on the first successful version
@@ -93,14 +115,15 @@ function rustTools(cwd) {
 }
 
 export function nativeHelperResourceKey(root) {
-  const helper = core.fingerprint({ schema: 1, recipe: recipe(root, HELPER_RECIPE), tools: nativeTools('helper'), rust: rustTools(root), sourceOverride: process.env.CUA_COMMIT || null });
+  const helper = core.fingerprint({ schema: 1, recipe: recipe(root, HELPER_RECIPE), tools: nativeTools('helper'), rust: rustTools(root), sourceOverride: process.env.CUA_COMMIT || null,
+    image: linuxNativeBuildIdentity(root) });
   const suffix = process.platform + '-' + (process.env.TARGET_ARCH || process.arch);
   return `native-helper-v1-${suffix}-${helper}`;
 }
 
 export function nativeCacheKeys(root) {
   const helper = nativeHelperResourceKey(root);
-  const capture = core.fingerprint({ schema: 1, recipe: recipe(root, CAPTURE_RECIPE), tools: nativeTools('capture') });
+  const capture = core.fingerprint({ schema: 1, recipe: recipe(root, CAPTURE_RECIPE), tools: nativeTools('capture'), image: linuxNativeBuildIdentity(root) });
   const suffix = process.platform + '-' + (process.env.TARGET_ARCH || process.arch);
   return { helper, capture: `native-capture-v1-${suffix}-${capture}` };
 }
@@ -111,7 +134,8 @@ function helperEntry(root, source, target) {
   if (!lock) throw new Error('[native-cache] Cargo.lock is required');
   const sourceSha = core.git(source, ['rev-parse', 'HEAD']);
   const key = core.fingerprint({ schema: 1, sourceSha, target, features: ['portal-input'], profile: 'release', lock,
-    recipe: recipe(root, HELPER_RECIPE), tools: nativeTools('helper'), rust: rustTools(workspace) });
+    recipe: recipe(root, HELPER_RECIPE), tools: nativeTools('helper'), rust: rustTools(workspace),
+    image: linuxNativeBuildIdentity(root) });
   const directory = process.env.NUWAX_CUA_CACHE_DIR || path.join(core.paths(root).cache, 'cua-helper');
   return { key, sourceSha, binary: path.join(directory, key + '.bin'), record: path.join(directory, key + '.json') };
 }

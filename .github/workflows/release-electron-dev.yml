@@ -727,16 +727,17 @@ jobs:
         run: node scripts/client/package-payload.mjs --verify-output "$OUT_DIR" --arch "$TARGET_ARCH"
 
       # glibc 门禁：扫描安装目录里每个 ELF，需要高于 2.28 的 glibc 即失败（UOS 20 Pro 1050 只有 2.28）。
-      # 接入初期带 --report-only，只报告不失败；确认它报出的文件与豁免清单一致后去掉。
-      # 只在 Linux 上跑：glibc 对 macOS / Windows 没有意义，那两个平台也没有这个目录
-      # （v3.3.0-beta.3 的 Windows 构建在最后这一步因找不到 linux-unpacked 而失败）。
+      # glibc 门禁：安装目录里任何 ELF 需要高于 2.28 的 glibc 即失败，直接拦下有问题的包。
+      # 不用只报告模式：v3.3.0-beta.4 的 Linux 包带着一份需要 glibc 2.38 的录屏编码器
+      # （原生件缓存命中了换构建镜像之前的旧产物），只报告会放过它。
+      # 只在 Linux 上跑：glibc 对 macOS / Windows 没有意义，那两个平台也没有这个目录。
       - name: Verify Linux binaries stay within the glibc 2.28 floor
         if: runner.os == 'Linux'
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.arch }}
           OUT_DIR: ${{ steps.packaged_resources.outputs.output_dir }}
-        run: node scripts/client/linux-glibc-gate.mjs --verify-output "$OUT_DIR" --platform linux --arch "$TARGET_ARCH" --report-only
+        run: node scripts/client/linux-glibc-gate.mjs --verify-output "$OUT_DIR" --platform linux --arch "$TARGET_ARCH"
 
       - name: Verify packaged Windows terminal compatibility resources
         if: runner.os == 'Windows'
