@@ -7,8 +7,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+// What the fixture copies into its producer and consumer trees: the helper recipe's files,
+// plus the build image's — on Linux the image is part of the cache identity, so a fixture
+// without it cannot compute a key there.
 const recipe = ['scripts/computer-use/build-helper.sh', 'scripts/client/native-build-cache.mjs',
-  'scripts/client/core.mjs', 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch'];
+  'scripts/client/core.mjs', 'docs/computer-use-poc/0001-0003-cua-nuwax-helper-bundle.patch',
+  'docker/linux-native/Dockerfile', 'docker/linux-native/versions.env', 'docker/linux-native/gxx-shim.sh'];
 
 // The production module is copied unchanged. Only its command adapter is replaced,
 // so this exercises the real key/save/restore path without a Rust build or host SDK.
