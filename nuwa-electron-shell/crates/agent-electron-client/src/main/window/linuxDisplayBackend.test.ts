@@ -18,6 +18,10 @@ describe("Linux display backend", () => {
     for (const extra of [["--ozone-platform=wayland"], ["--ozone-platform", "wayland"], ["--ozone-platform-hint=auto"]]) {
       expect(selectLinuxDisplayBackend({ platform: "linux", env: waylandSession, argv: [...argv, ...extra], query }).platform).toBeNull();
     }
+    // 重启后的那一轮带着我们自己加的参数：必须直接放行，否则会无限重启。
+    expect(selectLinuxDisplayBackend({
+      platform: "linux", env: waylandSession, argv: [...argv, "--ozone-platform=x11"], query, exists: xServerPresent,
+    }).platform).toBeNull();
     for (const hint of ["auto", "wayland", "x11"]) {
       expect(selectLinuxDisplayBackend({ platform: "linux", env: { ...waylandSession, ELECTRON_OZONE_PLATFORM_HINT: hint }, argv, query }).platform).toBeNull();
     }

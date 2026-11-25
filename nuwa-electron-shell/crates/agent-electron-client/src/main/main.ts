@@ -88,14 +88,34 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
+import { spawn } from "child_process";
 
 // Linux Wayland：合成器没有 text-input-v3 时，原生客户端接不到输入法（如统信 UOS 20），此时回退到 XWayland；
-// 合成器有 v3、或没有 X 服务可回退时保持原生 Wayland。后端只能在 ready 之前决定，所以放在最前面。
-// 注意: 此代码在 initLogging() 之前执行，所以使用 console 而不是 log
+// 合成器有 v3、或没有 X 服务可回退时保持原生 Wayland。
+//
+// 为什么是重启而不是 appendSwitch：Chromium 在主进程 JS 执行之前就按默认值连上了显示服务器，
+// appendSwitch(ozone-platform) 只会传给之后创建的子进程 —— 浏览器进程留在 Wayland、渲染/GPU 却按
+// X11 初始化，两边对不上，窗口画不出来（实测 GPU 报 XGetWindowAttributes failed for window 1）。
+// 所以这里带 --ozone-platform 参数把自己重启一轮；第二轮 argv 已带该参数，决策函数直接放行，不会循环。
+// 重启失败时保持默认后端（Wayland 窗口仍能显示，只是没有输入法），不能退回 appendSwitch。
+// 注意: 此代码在 initLogging() 之前执行，所以使用 console 而不是 log；
+// 实例马上要退出，日志用同步写，避免管道缓冲被 app.exit 截断。
 if (process.platform === "linux") {
   const display = selectLinuxDisplayBackend();
-  if (display.platform) app.commandLine.appendSwitch("ozone-platform", display.platform);
-  console.info(`[Display] ${display.reason}`);
+  if (display.platform) {
+    const flag = `--ozone-platform=${display.platform}`;
+    const note = `[Display] ${display.reason}; restarting with ${flag}`;
+    try { fs.writeSync(1, `${note}\n`); } catch { console.info(note); }
+    try {
+      const child = spawn(process.execPath, [...process.argv.slice(1), flag], { stdio: "inherit" });
+      child.once("spawn", () => app.exit(0));
+      child.once("error", (error) => console.error(`[Display] restart failed (${error}); keeping the default backend`));
+    } catch (error) {
+      console.error(`[Display] restart failed (${error}); keeping the default backend`);
+    }
+  } else {
+    console.info(`[Display] ${display.reason}`);
+  }
 }
 
 const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);

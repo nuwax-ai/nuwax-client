@@ -6,7 +6,9 @@
  * Chromium 改用 GTK 的输入法模块，输入法正常。所以：合成器提供 v3 时保持原生 Wayland；
  * 不提供、且本机有可用的 X 服务时回退到 X11。没有 X 服务可回退时仍然保持原生 Wayland。
  *
- * 必须在 app ready 之前调用：后端一旦初始化就不能再改。
+ * 决策的结果无法在当前进程里生效：Chromium 在主进程 JS 执行之前就选定了后端，appendSwitch 只会
+ * 传给之后创建的子进程。调用方须据此带 --ozone-platform 参数重启（见 main.ts）；
+ * 重启后的 argv 已含该参数，这里的"用户已显式指定"分支会让它直接放行，因此只会重启一轮。
  */
 import * as fs from "node:fs";
 import { hasWaylandGlobalSync, waylandSocketPath } from "./waylandRegistry";
