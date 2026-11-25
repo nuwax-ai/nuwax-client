@@ -41,6 +41,8 @@ export interface UpdateState {
   releaseNotes?: string;
   progress?: UpdateProgress;
   error?: string;
+  /** 安装进行中给用户的说明，例如系统授权窗口出现时该做什么；离开安装中状态后清空。 */
+  hint?: string;
   /** false 表示当前安装方式不支持自动更新（如 Windows MSI），需要手动下载 */
   canAutoUpdate?: boolean;
   /** true 表示因应用在只读卷运行（如从「下载」直接打开）导致无法就地更新，应引导用户前往下载页 */

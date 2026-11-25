@@ -12,12 +12,12 @@ interface SpawnCall {
   options: any;
 }
 
+/** exitCodes 依次作为每次 spawn 的退出码；用 undefined 表示进程无法启动。 */
 function makeDeps(
-  exitCodes: Array<number | null>,
+  exitCodes: Array<number | undefined>,
   overrides: Partial<LinuxDebInstallerDeps> = {},
 ) {
   const calls: SpawnCall[] = [];
-  const disposeAskpass = vi.fn();
   const closeLog = vi.fn();
   const deps: LinuxDebInstallerDeps = {
     spawn: ((cmd: string, args: string[], options: any) => {
@@ -30,135 +30,110 @@ function makeDeps(
       });
       return child;
     }) as any,
-    findCommand: (name) => (name === "zenity" ? "/usr/bin/zenity" : null),
+    findCommand: (name) => (name === "pkexec" ? "/usr/bin/pkexec" : null),
     isRoot: () => false,
-    createAskpass: vi.fn(() => ({
-      path: "/tmp/nuwax-askpass-x/askpass.sh",
-      dispose: disposeAskpass,
-    })),
     openLog: vi.fn(() => 42),
     closeLog,
     ...overrides,
   };
-  return { deps, calls, disposeAskpass, closeLog };
+  return { deps, calls, closeLog };
 }
 
 const baseOptions = () => ({
   debPath: "/home/u/.cache/nuwax-updater/pending/Nuwax-3.0.14-beta.6-amd64.deb",
   logPath: "/home/u/.nuwax/logs/update-install.log",
-  askpassTitle: "需要管理员密码",
-  beforeInstall: vi.fn(async () => {}),
 });
 
 describe("installLinuxDeb", () => {
-  it("先 sudo -A -v 授权，成功后才清理，再以同一 askpass 执行 dpkg", async () => {
-    const { deps, calls, disposeAskpass, closeLog } = makeDeps([0, 0]);
-    const options = baseOptions();
-    const order: string[] = [];
-    options.beforeInstall.mockImplementation(async () => {
-      order.push(`beforeInstall after ${calls.length} spawn(s)`);
-    });
+  it("经 pkexec 执行一次安装脚本，输出写日志文件", async () => {
+    const { deps, calls, closeLog } = makeDeps([0]);
 
-    const result = await installLinuxDeb(options, deps);
+    const result = await installLinuxDeb(baseOptions(), deps);
 
     expect(result).toEqual({ ok: true });
-    expect(deps.createAskpass).toHaveBeenCalledWith(
-      "/usr/bin/zenity",
-      "需要管理员密码",
-    );
-    expect(calls).toHaveLength(2);
-    expect(calls[0].cmd).toBe("sudo");
-    expect(calls[0].args).toEqual(["-A", "-v"]);
-    expect(calls[0].options.env.SUDO_ASKPASS).toBe(
-      "/tmp/nuwax-askpass-x/askpass.sh",
-    );
-    expect(order).toEqual(["beforeInstall after 1 spawn(s)"]);
-    expect(calls[1].cmd).toBe("sudo");
-    expect(calls[1].args).toEqual([
-      "-A",
-      "--",
+    expect(calls).toHaveLength(1);
+    expect(calls[0].cmd).toBe("/usr/bin/pkexec");
+    expect(calls[0].args).toEqual([
       "/bin/sh",
       "-c",
       DEB_INSTALL_SCRIPT,
       "nuwax-update",
-      options.debPath,
+      baseOptions().debPath,
     ]);
-    expect(calls[1].options.env.SUDO_ASKPASS).toBe(
-      "/tmp/nuwax-askpass-x/askpass.sh",
-    );
-    // dpkg 输出落日志文件，不接管道：壳退出时不会因 SIGPIPE 连带终止 dpkg
-    expect(calls[1].options.stdio).toEqual(["ignore", 42, 42]);
-    // detached 会让 sudo 进新会话、认不到 `sudo -v` 的授权缓存而二次弹框（真机实测）
-    expect(calls[1].options.detached).toBeUndefined();
+    // 输出落日志文件，不接管道：壳在安装中途退出时 dpkg 不会因 SIGPIPE 中止
+    expect(calls[0].options.stdio).toEqual(["ignore", 42, 42]);
     expect(closeLog).toHaveBeenCalledWith(42);
-    expect(disposeAskpass).toHaveBeenCalledTimes(1);
   });
 
-  it("授权失败（取消或密码错误）不清理、不安装", async () => {
-    const { deps, calls, disposeAskpass } = makeDeps([1]);
-    const options = baseOptions();
+  it("用户在系统授权框点了取消（126），归为授权未通过", async () => {
+    const { deps, closeLog } = makeDeps([126]);
 
-    const result = await installLinuxDeb(options, deps);
+    const result = await installLinuxDeb(baseOptions(), deps);
 
     expect(result).toEqual({ ok: false, reason: "auth-failed" });
-    expect(calls).toHaveLength(1);
-    expect(options.beforeInstall).not.toHaveBeenCalled();
-    expect(disposeAskpass).toHaveBeenCalledTimes(1);
+    expect(closeLog).toHaveBeenCalledWith(42);
   });
 
-  it("sudo 无法启动按授权失败处理", async () => {
-    const { deps } = makeDeps([undefined as unknown as number]);
-    const options = baseOptions();
+  it("拿不到授权（127，例如桌面上没有授权代理），归为无法在客户端内安装", async () => {
+    const { deps } = makeDeps([127]);
 
-    const result = await installLinuxDeb(options, deps);
+    const result = await installLinuxDeb(baseOptions(), deps);
 
-    expect(result).toEqual({ ok: false, reason: "auth-failed" });
-    expect(options.beforeInstall).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
   });
 
-  it("没有 zenity 时不清理、不调用 sudo", async () => {
-    const { deps, calls } = makeDeps([], { findCommand: () => null });
-    const options = baseOptions();
+  it("dpkg 非零退出返回 install-failed，日志照常关闭", async () => {
+    const { deps, closeLog } = makeDeps([1]);
 
-    const result = await installLinuxDeb(options, deps);
-
-    expect(result).toEqual({ ok: false, reason: "no-askpass" });
-    expect(calls).toHaveLength(0);
-    expect(deps.createAskpass).not.toHaveBeenCalled();
-    expect(options.beforeInstall).not.toHaveBeenCalled();
-  });
-
-  it("dpkg 非零退出返回 install-failed，并清理 askpass", async () => {
-    const { deps, disposeAskpass, closeLog } = makeDeps([0, 1]);
-    const options = baseOptions();
-
-    const result = await installLinuxDeb(options, deps);
+    const result = await installLinuxDeb(baseOptions(), deps);
 
     expect(result).toEqual({ ok: false, reason: "install-failed" });
-    expect(options.beforeInstall).toHaveBeenCalledTimes(1);
     expect(closeLog).toHaveBeenCalledWith(42);
-    expect(disposeAskpass).toHaveBeenCalledTimes(1);
   });
 
-  it("以 root 运行时跳过授权，直接执行安装脚本", async () => {
+  it("没有 pkexec 时不启动任何进程", async () => {
+    const { deps, calls } = makeDeps([], { findCommand: () => null });
+
+    const result = await installLinuxDeb(baseOptions(), deps);
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(calls).toHaveLength(0);
+    expect(deps.openLog).not.toHaveBeenCalled();
+  });
+
+  it("pkexec 进程无法启动，按无法在客户端内安装处理", async () => {
+    const { deps, closeLog } = makeDeps([undefined]);
+
+    const result = await installLinuxDeb(baseOptions(), deps);
+
+    expect(result).toEqual({ ok: false, reason: "unavailable" });
+    expect(closeLog).toHaveBeenCalledWith(42);
+  });
+
+  it("以 root 运行时跳过 pkexec，直接执行安装脚本", async () => {
     const { deps, calls } = makeDeps([0], {
       isRoot: () => true,
       findCommand: () => null,
     });
-    const options = baseOptions();
 
-    const result = await installLinuxDeb(options, deps);
+    const result = await installLinuxDeb(baseOptions(), deps);
 
     expect(result).toEqual({ ok: true });
-    expect(deps.createAskpass).not.toHaveBeenCalled();
     expect(calls).toHaveLength(1);
     expect(calls[0].cmd).toBe("/bin/sh");
     expect(calls[0].args).toEqual([
       "-c",
       DEB_INSTALL_SCRIPT,
       "nuwax-update",
-      options.debPath,
+      baseOptions().debPath,
     ]);
+  });
+
+  it("root 直装时脚本自己的 126 / 127 不会被当成授权问题", async () => {
+    const root = (code: number) => makeDeps([code], { isRoot: () => true }).deps;
+
+    expect(await installLinuxDeb(baseOptions(), root(126))).toEqual({ ok: false, reason: "install-failed" });
+    expect(await installLinuxDeb(baseOptions(), root(127))).toEqual({ ok: false, reason: "install-failed" });
   });
 
   it("安装脚本 dpkg 失败时补跑 apt-get 修依赖，并以非交互模式运行", () => {

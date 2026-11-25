@@ -1401,7 +1401,7 @@ async function installDownloadedUpdate(): Promise<UpdateResult> {
   }
   setState({ status: "installing", progress: undefined });
   const result = await applyDownloadedUpdate();
-  if (!result.success) setState({ status: "error", error: result.error });
+  if (!result.success) setState({ status: "error", error: result.error, hint: undefined });
   return result;
 }
 
@@ -1547,14 +1547,13 @@ async function installLinuxDebUpdate(): Promise<{
     "update-install.log",
   );
   try {
-    log.info(`[AutoUpdater] Installing deb via sudo askpass: ${debPath}`);
-    const result = await installLinuxDeb({
-      debPath,
-      logPath,
-      askpassTitle: t("Claw.AutoUpdater.linuxAuthTitle"),
-      beforeInstall: prepareForInstall,
-    });
+    // 系统授权框里写的是将要执行的程序（/bin/sh），所以应用里先告诉用户会看到什么。
+    setState({ hint: t("Claw.AutoUpdater.linuxAuthPrompt") });
+    log.info(`[AutoUpdater] Installing deb via pkexec: ${debPath}`);
+    const result = await installLinuxDeb({ debPath, logPath });
     if (result.ok) {
+      // 装完才停服务：授权框被取消或安装失败时，服务一步都没停，客户端照常运行。
+      await prepareForInstall();
       log.info("[AutoUpdater] deb installed, relaunching");
       app.relaunch();
       app.quit();
@@ -1564,7 +1563,7 @@ async function installLinuxDebUpdate(): Promise<{
     const error =
       result.reason === "auth-failed"
         ? t("Claw.AutoUpdater.linuxAuthFailed")
-        : result.reason === "no-askpass"
+        : result.reason === "unavailable"
           ? t("Claw.AutoUpdater.linuxManualInstall", debPath)
           : t("Claw.AutoUpdater.linuxInstallFailed", logPath);
     return { success: false, error };

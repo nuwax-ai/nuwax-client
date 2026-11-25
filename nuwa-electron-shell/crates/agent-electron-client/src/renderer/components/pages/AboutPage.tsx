@@ -404,7 +404,7 @@ export default function AboutPage({ webMeta }: AboutPageProps = {}) {
         return {
           desc: (
             <div className={styles.rowDesc}>
-              {t("Claw.About.installUpdate")}
+              {updateState.hint ?? t("Claw.About.installUpdate")}
             </div>
           ),
           control: (

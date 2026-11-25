@@ -1,19 +1,22 @@
 /**
  * Linux deb 安装形态的客户端内升级。
  *
- * electron-updater 的 DebUpdater 用 spawnSync 调 pkexec：等待授权期间主进程冻结；且 Chromium
- * 启动后会把自身移入 systemd 用户作用域（app-org.chromium.Chromium-*.scope），polkit 无法识别
- * 所属登录会话，会把密码框弹到物理屏会话上，xrdp 等远程桌面里看不到。
+ * 授权与安装是同一次 pkexec 调用：密码框由桌面自带的 polkit 授权代理弹出，密码不经过本进程，
+ * 也不依赖 zenity 这类外部工具（统信 UOS 不带 zenity，sudo -A 没有它们就直接拒绝）。
+ * 与 electron-updater 的 DebUpdater 是同一种提权方式，区别只在它同步调用 —— 等待授权期间主进程冻结；
+ * 这里异步执行。
  *
- * 这里改为：zenity 作 SUDO_ASKPASS（由本进程拉起、继承本进程的 DISPLAY，弹在用户当前桌面），
- * 先 `sudo -A -v` 授权，授权成功才执行 beforeInstall（停服务），再异步执行 dpkg。
- * sudo 无终端时凭据按父进程缓存，安装步骤通常无需二次输入密码。
+ * 客户端进程不在登录会话里（Chromium 会把自己移进 systemd 用户作用域），本机桌面上 polkit 仍会把
+ * 授权框弹到当前活跃的图形会话（统信 UOS 20 Pro 1050 实测）。远程桌面下授权框会出现在物理屏幕上，
+ * 这种场景不在支持范围内：用户取消或一直不应答，都不会安装任何东西。
+ *
+ * pkexec 返回安装命令的退出码；它自己的失败只有两个：用户在授权框点了取消是 126，
+ * 拿不到授权或出错是 127（例如桌面上没有授权代理）。
  */
 
 import { spawn as nodeSpawn } from "child_process";
 import type { ChildProcess, SpawnOptions } from "child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as path from "path";
 
 /** $1 = deb 路径。dpkg 因依赖缺失失败时由 apt-get 补齐依赖并完成配置。 */
@@ -22,28 +25,25 @@ export const DEB_INSTALL_SCRIPT =
 
 export type LinuxDebInstallResult =
   | { ok: true }
-  | { ok: false; reason: "no-askpass" | "auth-failed" | "install-failed" };
+  | { ok: false; reason: "unavailable" | "auth-failed" | "install-failed" };
 
 export interface LinuxDebInstallOptions {
   debPath: string;
   /** dpkg 输出追加写入的日志文件 */
   logPath: string;
-  askpassTitle: string;
-  /** 授权成功后、执行安装前调用（停服务等）；授权失败时不会调用 */
-  beforeInstall: () => Promise<void>;
 }
 
 export interface LinuxDebInstallerDeps {
   spawn: (cmd: string, args: string[], options: SpawnOptions) => ChildProcess;
   findCommand: (name: string) => string | null;
   isRoot: () => boolean;
-  createAskpass: (
-    zenityPath: string,
-    title: string,
-  ) => { path: string; dispose: () => void };
   openLog: (logPath: string) => number;
   closeLog: (fd: number) => void;
 }
+
+/** pkexec 自身的退出码；安装命令几乎不会以这两个值结束。 */
+const PKEXEC_CANCELLED = 126;
+const PKEXEC_UNAVAILABLE = 127;
 
 function findCommandInPath(name: string): string | null {
   for (const dir of (process.env.PATH || "").split(path.delimiter)) {
@@ -59,27 +59,6 @@ function findCommandInPath(name: string): string | null {
   return null;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function createAskpassScript(
-  zenityPath: string,
-  title: string,
-): { path: string; dispose: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nuwax-askpass-"));
-  const scriptPath = path.join(dir, "askpass.sh");
-  fs.writeFileSync(
-    scriptPath,
-    `#!/bin/sh\nexec ${shellQuote(zenityPath)} --password --title=${shellQuote(title)}\n`,
-    { mode: 0o700 },
-  );
-  return {
-    path: scriptPath,
-    dispose: () => fs.rmSync(dir, { recursive: true, force: true }),
-  };
-}
-
 function openLogFile(logPath: string): number {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const fd = fs.openSync(logPath, "a");
@@ -91,7 +70,6 @@ const defaultDeps: LinuxDebInstallerDeps = {
   spawn: nodeSpawn,
   findCommand: findCommandInPath,
   isRoot: () => process.getuid?.() === 0,
-  createAskpass: createAskpassScript,
   openLog: openLogFile,
   closeLog: (fd) => fs.closeSync(fd),
 };
@@ -104,39 +82,24 @@ function waitForExit(child: ChildProcess): Promise<number | null> {
   });
 }
 
+function failureFor(code: number, viaPkexec: boolean): LinuxDebInstallResult {
+  if (viaPkexec && code === PKEXEC_CANCELLED) return { ok: false, reason: "auth-failed" };
+  if (viaPkexec && code === PKEXEC_UNAVAILABLE) return { ok: false, reason: "unavailable" };
+  return { ok: false, reason: "install-failed" };
+}
+
 export async function installLinuxDeb(
   options: LinuxDebInstallOptions,
   deps: LinuxDebInstallerDeps = defaultDeps,
 ): Promise<LinuxDebInstallResult> {
   const scriptArgs = ["-c", DEB_INSTALL_SCRIPT, "nuwax-update", options.debPath];
-
   if (deps.isRoot()) {
-    await options.beforeInstall();
-    return runInstall(deps, options.logPath, "/bin/sh", scriptArgs, process.env);
+    return runInstall(deps, options.logPath, "/bin/sh", scriptArgs, false);
   }
-
-  const zenityPath = deps.findCommand("zenity");
-  if (!zenityPath) return { ok: false, reason: "no-askpass" };
-
-  const askpass = deps.createAskpass(zenityPath, options.askpassTitle);
-  try {
-    const env = { ...process.env, SUDO_ASKPASS: askpass.path };
-    const authCode = await waitForExit(
-      deps.spawn("sudo", ["-A", "-v"], { env, stdio: "ignore" }),
-    );
-    if (authCode !== 0) return { ok: false, reason: "auth-failed" };
-
-    await options.beforeInstall();
-    return await runInstall(
-      deps,
-      options.logPath,
-      "sudo",
-      ["-A", "--", "/bin/sh", ...scriptArgs],
-      env,
-    );
-  } finally {
-    askpass.dispose();
-  }
+  const pkexec = deps.findCommand("pkexec");
+  if (!pkexec) return { ok: false, reason: "unavailable" };
+  // pkexec 只接受绝对路径的程序，并在最小环境里运行它：非交互前端由脚本自己导出。
+  return runInstall(deps, options.logPath, pkexec, ["/bin/sh", ...scriptArgs], true);
 }
 
 async function runInstall(
@@ -144,16 +107,15 @@ async function runInstall(
   logPath: string,
   cmd: string,
   args: string[],
-  env: NodeJS.ProcessEnv,
+  viaPkexec: boolean,
 ): Promise<LinuxDebInstallResult> {
   const fd = deps.openLog(logPath);
   try {
     // 输出写文件不接管道：壳在安装中途退出时 dpkg 不会因 SIGPIPE 中止。
-    // 不能 detached：新会话里 sudo 认不到 `sudo -v` 的授权缓存，会再弹一次密码框。
-    const code = await waitForExit(
-      deps.spawn(cmd, args, { env, stdio: ["ignore", fd, fd] }),
-    );
-    return code === 0 ? { ok: true } : { ok: false, reason: "install-failed" };
+    const code = await waitForExit(deps.spawn(cmd, args, { stdio: ["ignore", fd, fd] }));
+    if (code === 0) return { ok: true };
+    // 进程没起来（pkexec 不存在、无权执行）：和拿不到授权一样，只能请用户手动安装。
+    return code === null ? { ok: false, reason: "unavailable" } : failureFor(code, viaPkexec);
   } finally {
     deps.closeLog(fd);
   }

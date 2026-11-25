@@ -1495,7 +1495,7 @@ describe("Linux deb 安装形态", () => {
     expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(true);
   });
 
-  it("安装由 linuxDebInstaller 接管：授权后清理，成功后重启，不调 quitAndInstall", async () => {
+  it("安装由 linuxDebInstaller 接管：装完后才清理并重启，不调 quitAndInstall", async () => {
     mockDebPackage();
     const mod = await importFreshWithUpdaterMock();
     const markQuitting = vi.fn();
@@ -1505,24 +1505,26 @@ describe("Linux deb 安装形态", () => {
       version: "0.9.5",
       downloadedFile: DEB_PATH,
     });
-    mockInstallLinuxDeb.mockImplementation(async (options: any) => {
+    mockInstallLinuxDeb.mockImplementation(async () => {
+      // 授权框被取消或安装失败时服务一步都不能停：安装期间还没有任何清理
       expect(markQuitting).not.toHaveBeenCalled();
-      await options.beforeInstall();
-      expect(markQuitting).toHaveBeenCalledTimes(1);
-      expect(cleanup).toHaveBeenCalledTimes(1);
+      expect(cleanup).not.toHaveBeenCalled();
+      // 系统授权框里写的是将要执行的程序，应用自己先说明一句
+      expect(mod.getUpdateState()).toMatchObject({
+        status: "installing",
+        hint: "Claw.AutoUpdater.linuxAuthPrompt",
+      });
       return { ok: true };
     });
 
     const result = await mod.installUpdate();
 
     expect(result).toEqual({ success: true });
-    expect(mockInstallLinuxDeb).toHaveBeenCalledWith(
-      expect.objectContaining({
-        debPath: DEB_PATH,
-        logPath: "/home/u/.nuwaclaw/logs/update-install.log",
-        askpassTitle: "Claw.AutoUpdater.linuxAuthTitle",
-      }),
-    );
+    expect(mockInstallLinuxDeb.mock.calls).toEqual([
+      [{ debPath: DEB_PATH, logPath: "/home/u/.nuwaclaw/logs/update-install.log" }],
+    ]);
+    expect(markQuitting).toHaveBeenCalledTimes(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
     expect(mockAppRelaunch).toHaveBeenCalledTimes(1);
     expect(mockAppQuit).toHaveBeenCalledTimes(1);
@@ -1530,12 +1532,14 @@ describe("Linux deb 安装形态", () => {
 
   it.each([
     ["auth-failed", "Claw.AutoUpdater.linuxAuthFailed"],
-    ["no-askpass", "Claw.AutoUpdater.linuxManualInstall"],
+    ["unavailable", "Claw.AutoUpdater.linuxManualInstall"],
     ["install-failed", "Claw.AutoUpdater.linuxInstallFailed"],
-  ])("%s 时返回错误且不重启", async (reason, errorKey) => {
+  ])("%s 时返回错误，不清理、不重启，并撤掉安装中的提示", async (reason, errorKey) => {
     mockDebPackage();
     const mod = await importFreshWithUpdaterMock();
-    mod.initAutoUpdater(() => null);
+    const markQuitting = vi.fn();
+    const cleanup = vi.fn(async () => {});
+    mod.initAutoUpdater(() => null, cleanup, markQuitting);
     emitUpdaterEvent("update-downloaded", {
       version: "0.9.5",
       downloadedFile: DEB_PATH,
@@ -1545,6 +1549,10 @@ describe("Linux deb 安装形态", () => {
     const result = await mod.installUpdate();
 
     expect(result).toEqual({ success: false, error: errorKey });
+    expect(mod.getUpdateState()).toMatchObject({ status: "error", error: errorKey });
+    expect(mod.getUpdateState().hint).toBeUndefined();
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
     expect(mockAppRelaunch).not.toHaveBeenCalled();
     expect(mockAppQuit).not.toHaveBeenCalled();
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
