@@ -782,6 +782,7 @@ export class UnifiedAgentService extends EventEmitter {
           },
           { engineKey },
         );
+        this.touchEngineActivity(existingEngine);
         return existingEngine;
     }
 
@@ -843,6 +844,7 @@ export class UnifiedAgentService extends EventEmitter {
           projectId: request.project_id,
           engine: existingEngine.engineName,
         });
+        this.touchEngineActivity(existingEngine);
         return existingEngine;
       }
 
@@ -851,6 +853,7 @@ export class UnifiedAgentService extends EventEmitter {
         log.warn(
           `[UnifiedAgent] ⚠️ Config changed for project ${registryKey} but has active prompts (${existingEngine.getActivePromptCount()}), using current engine`,
         );
+        this.touchEngineActivity(existingEngine);
         return existingEngine;
       }
 
@@ -1275,12 +1278,24 @@ export class UnifiedAgentService extends EventEmitter {
 
   // === Helpers ===
 
+  /**
+   * 刷新引擎的最近活跃时间。消息到达（含快速路径）和一轮 prompt 结束时都会调用：
+   * 否则一条跑了很久的 prompt 一结束，引擎就会被下一轮空闲 sweep 当成「闲置超过
+   * 30 分钟」立刻回收，下一条消息又要冷启动（多一次 session/load）。
+   */
+  private touchEngineActivity(engine: AcpEngine): void {
+    for (const [key, candidate] of this.engines) {
+      if (candidate === engine) this.engineLastActive.set(key, Date.now());
+    }
+  }
+
   private forwardEvents(engine: AcpEngine): void {
     // 事件白名单转发 + assistant 文本记忆缓冲见 engineEventForwarder.ts
     attachEngineEventForwarders(engine, {
       emit: (event, ...args) => this.emit(event, ...args),
       assistantTextBuffers: this.assistantTextBuffers,
     });
+    engine.on("computer:promptEnd", () => this.touchEngineActivity(engine));
   }
 }
 

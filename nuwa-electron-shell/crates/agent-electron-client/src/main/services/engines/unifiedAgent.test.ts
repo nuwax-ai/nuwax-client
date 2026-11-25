@@ -546,3 +546,277 @@ describe("UnifiedAgentService — 懒加载引擎生命周期", () => {
     await svc.destroy();
   });
 });
+
+describe("UnifiedAgentService — 引擎活跃时间（session-setup-ha）", () => {
+  const baseConfig = {
+    engine: "nuwaxcode" as const,
+    workspaceDir: "/tmp",
+    apiKey: "k",
+    baseUrl: "u",
+    model: "m",
+  };
+
+  it("消息走快速路径到达时刷新活跃时间，引擎不会被提前空闲回收", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "1800000";
+      const svc = new UnifiedAgentService();
+      await svc.init(baseConfig);
+      const engine = await svc.getOrCreateEngine("proj-touch", baseConfig);
+      const created = (svc as any).engineLastActive.get("proj-touch");
+
+      // 20 分钟后来了一条消息（快速路径：已有就绪引擎、配置未变）
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      await svc.ensureEngineForRequest({
+        user_id: "u1",
+        project_id: "proj-touch",
+        prompt: "hi",
+      } as any);
+      const touched = (svc as any).engineLastActive.get("proj-touch");
+      expect(touched).toBeGreaterThan(created);
+
+      // 再过 20 分钟（距创建 40 分钟，但距上次使用 20 分钟）触发 sweep：不回收
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      await (svc as any).sweepIdleEngines();
+      expect((svc as any).engines.has("proj-touch")).toBe(true);
+      expect(engine.destroy).not.toHaveBeenCalled();
+
+      await svc.destroy();
+    } finally {
+      vi.useRealTimers();
+      delete process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS;
+    }
+  });
+
+  it("一轮 prompt 结束时刷新活跃时间", async () => {
+    vi.useFakeTimers();
+    try {
+      const svc = new UnifiedAgentService();
+      await svc.init(baseConfig);
+      const engine = await svc.getOrCreateEngine("proj-prompt-end", baseConfig);
+      const promptEndHandler = engine.on.mock.calls.find(
+        ([event]: [string]) => event === "computer:promptEnd",
+      )?.[1] as () => void;
+      expect(promptEndHandler).toBeDefined();
+
+      // 一轮长 prompt 跑了 40 分钟：期间有活跃 prompt，sweep 只续期不回收
+      engine.getActivePromptCount = vi.fn(() => 1);
+      await vi.advanceTimersByTimeAsync(40 * 60_000);
+      const beforeEnd = (svc as any).engineLastActive.get("proj-prompt-end");
+
+      engine.getActivePromptCount = vi.fn(() => 0);
+      promptEndHandler();
+      const afterEnd = (svc as any).engineLastActive.get("proj-prompt-end");
+      expect(afterEnd).toBeGreaterThanOrEqual(beforeEnd);
+      expect(Date.now() - afterEnd).toBeLessThan(1_000);
+
+      // prompt 刚结束不久，不应被当成闲置回收
+      await vi.advanceTimersByTimeAsync(60_000);
+      await (svc as any).sweepIdleEngines();
+      expect((svc as any).engines.has("proj-prompt-end")).toBe(true);
+      expect(engine.destroy).not.toHaveBeenCalled();
+      await svc.destroy();
+    } finally {
+      vi.useRealTimers();
+      delete process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS;
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// listAllSessionsDetailed：活跃/就绪引擎过滤回归
+// ────────────────────────────────────────────────────────────────────────────
+describe("UnifiedAgentService.listAllSessionsDetailed — 仅返回 ready 引擎会话", () => {
+  it("should filter non-ready engines", () => {
+    // 使用 as any 访问私有 engines 属性进行单测
+    // 生产代码通过 public 方法访问，测试直接操作内部状态以隔离测试
+    const svc = new UnifiedAgentService() as any;
+
+    const readySessions = [
+      {
+        id: "ses-ready-1",
+        title: "t1",
+        engineType: "nuwaxcode",
+        projectId: "proj-ready",
+        status: "active",
+        createdAt: 1,
+        lastActivity: 2,
+      },
+    ];
+    const deadSessions = [
+      {
+        id: "ses-dead-1",
+        title: "t-dead",
+        engineType: "claude-code",
+        projectId: "proj-dead",
+        status: "active",
+        createdAt: 10,
+        lastActivity: 11,
+      },
+    ];
+
+    svc.engines = new Map<string, any>([
+      [
+        "proj-ready",
+        {
+          isReady: true,
+          engineName: "nuwaxcode",
+          listSessionsDetailed: () => readySessions,
+        },
+      ],
+      [
+        "proj-dead",
+        {
+          isReady: false,
+          engineName: "claude-code",
+          listSessionsDetailed: () => deadSessions,
+        },
+      ],
+    ]);
+
+    const result = svc.listAllSessionsDetailed();
+    expect(result).toEqual(readySessions);
+  });
+});
+
+describe("UnifiedAgentService.getWorkspaceDirForProject — 终端精确 cwd", () => {
+  it("conversationId 可经 session.projectId 反查所属引擎工作区", () => {
+    const svc = new UnifiedAgentService() as any;
+    svc.engines = new Map([
+      [
+        "/workspace/current-project",
+        {
+          isReady: true, getSessionWorkspaceCandidates: (id: string) =>
+            collectSessionWorkspaceCandidates(
+              [
+                {
+                  id: "ses_current",
+                  projectId: "1694106",
+                  cwd: "/workspace/current-project",
+                },
+              ],
+              id,
+            ),
+        },
+      ],
+    ]);
+    svc.engineConfigs = new Map([
+      ["/workspace/current-project", { workspaceDir: "/workspace" }],
+    ]);
+
+    expect(svc.getWorkspaceDirForProject("1694106")).toBe(
+      "/workspace/current-project",
+    );
+    expect(svc.getWorkspaceDirForProject("unknown")).toBeNull();
+  });
+
+  it("同标识在多个引擎对应不同 cwd 时不猜测；无会话的引擎 config 也不算精确命中", () => {
+    const svc = new UnifiedAgentService() as any;
+    svc.engines = new Map([
+      ["old", { isReady: true, getSessionWorkspaceCandidates: () => ["/old"] }],
+      ["new", { isReady: true, getSessionWorkspaceCandidates: () => ["/new"] }],
+    ]);
+    expect(svc.getWorkspaceDirForProject("1694106")).toBeNull();
+
+    svc.engines = new Map([
+      ["1694106", { isReady: true, getSessionWorkspaceCandidates: () => [] }],
+    ]);
+    svc.engineConfigs = new Map([["1694106", { workspaceDir: "/workspace" }]]);
+    expect(svc.getWorkspaceDirForProject("1694106")).toBeNull();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 引擎空闲驱逐（idle eviction）：每引擎一整棵进程树，仅靠 MAX_ENGINES 满员
+// 驱逐会无限累积（实测多代树存活 19h+）。此处锁定超时驱逐/活跃保留/禁用三态。
+// ────────────────────────────────────────────────────────────────────────────
+describe("UnifiedAgentService — 引擎空闲驱逐（idle eviction）", () => {
+  const makeEngine = (opts?: { activePrompts?: number }) => ({
+    isReady: true,
+    engineName: "nuwaxcode" as const,
+    currentConfig: {},
+    init: vi.fn().mockResolvedValue({ ok: true }),
+    updateConfig: vi.fn(),
+    removeAllListeners: vi.fn(),
+    destroy: vi.fn().mockResolvedValue(undefined),
+    getActivePromptCount: vi.fn(() => opts?.activePrompts ?? 0),
+    on: vi.fn(),
+  });
+
+  afterEach(() => {
+    delete process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS;
+  });
+
+  /** 手工铺两台引擎：一台空闲 5s（阈值 1s），一台活跃 prompt 中 */
+  function seed(svc: UnifiedAgentService) {
+    const idle = makeEngine();
+    const busy = makeEngine({ activePrompts: 1 });
+    (svc as any).engines.set("proj-idle", idle);
+    (svc as any).engines.set("proj-busy", busy);
+    (svc as any).engineConfigs.set("proj-idle", {});
+    (svc as any).engineConfigs.set("proj-busy", {});
+    const now = Date.now();
+    (svc as any).engineLastActive.set("proj-idle", now - 5000);
+    (svc as any).engineLastActive.set("proj-busy", now - 5000);
+    return { idle, busy };
+  }
+
+  it("空闲超过阈值的引擎被驱逐（destroy），活跃引擎保留", async () => {
+    process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "1000";
+    const svc = new UnifiedAgentService();
+    const { idle, busy } = seed(svc);
+
+    await (svc as any).sweepIdleEngines();
+
+    expect((svc as any).engines.has("proj-idle")).toBe(false);
+    expect((svc as any).engineConfigs.has("proj-idle")).toBe(false);
+    expect((svc as any).engineLastActive.has("proj-idle")).toBe(false);
+    expect(idle.destroy).toHaveBeenCalledTimes(1);
+    expect((svc as any).engines.has("proj-busy")).toBe(true);
+    expect(busy.destroy).not.toHaveBeenCalled();
+  });
+
+  it("活跃引擎驱逐窗口续期（长 prompt 结束后享有完整空闲期）", async () => {
+    process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "1000";
+    const svc = new UnifiedAgentService();
+    seed(svc);
+    const before = (svc as any).engineLastActive.get("proj-busy") as number;
+    await new Promise((r) => setTimeout(r, 5));
+
+    await (svc as any).sweepIdleEngines();
+
+    const after = (svc as any).engineLastActive.get("proj-busy") as number;
+    expect(after).toBeGreaterThan(before);
+  });
+
+  it("env=0 禁用空闲驱逐（维持旧行为）", async () => {
+    process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "0";
+    const svc = new UnifiedAgentService();
+    const { idle } = seed(svc);
+
+    await (svc as any).sweepIdleEngines();
+
+    expect((svc as any).engines.has("proj-idle")).toBe(true);
+    expect(idle.destroy).not.toHaveBeenCalled();
+  });
+
+  it("sweep 定时器按周期触发驱逐（startIdleSweep/stopIdleSweep 生命周期）", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "1000";
+      const svc = new UnifiedAgentService();
+      const { idle } = seed(svc); // lastActive = fake-now - 5000
+
+      (svc as any).startIdleSweep();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(idle.destroy).toHaveBeenCalledTimes(1);
+      expect((svc as any).engines.has("proj-idle")).toBe(false);
+
+      (svc as any).stopIdleSweep();
+      expect((svc as any).idleSweepTimer).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

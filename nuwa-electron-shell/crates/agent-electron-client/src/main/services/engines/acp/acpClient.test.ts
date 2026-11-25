@@ -225,3 +225,37 @@ describe("resolveAcpBinary — custom node agent", () => {
     expect(mockResolveCustomAgentBinary).toHaveBeenCalledWith("node");
   });
 });
+
+describe("ACP 线上日志的分级（session-setup-ha）", () => {
+  it("只有流式分片通知算 streaming，请求、响应与其他通知不算", async () => {
+    const { isStreamingSessionUpdate } = await import("./acpClient");
+
+    for (const kind of [
+      "agent_thought_chunk",
+      "agent_message_chunk",
+      "tool_call_update",
+      "usage_update",
+    ]) {
+      expect(
+        isStreamingSessionUpdate(
+          `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"${kind}"}}}`,
+        ),
+        kind,
+      ).toBe(true);
+    }
+    // stdout 按数据块切分：只剩后半段的分片通知也要认出来
+    expect(isStreamingSessionUpdate(`,"update":{"sessionUpdate":"agent_thought_chunk"}}}`)).toBe(true);
+
+    expect(
+      isStreamingSessionUpdate(
+        '{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"session_info_update"}}}',
+      ),
+    ).toBe(false);
+    expect(
+      isStreamingSessionUpdate('{"jsonrpc":"2.0","id":1,"result":{"sessionId":"ses_1"}}'),
+    ).toBe(false);
+    expect(
+      isStreamingSessionUpdate('{"jsonrpc":"2.0","id":7,"method":"session/request_permission"}'),
+    ).toBe(false);
+  });
+});
