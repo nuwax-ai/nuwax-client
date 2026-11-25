@@ -4,8 +4,11 @@ import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ENGINE_HOME_DIR_NAME,
+  HOME_LAST_USE_SCAN_LIMIT,
   LEGACY_ENGINE_HOME_DIR_NAME,
+  QUARANTINE_SUFFIX,
   engineHomeSegment,
+  getOpencodeLogFile,
   migrateDirectory,
   resolveEngineHome,
   migrateEngineSegment,
@@ -13,10 +16,21 @@ import {
   symlinkTypeForPlatform,
   pruneProjectIsolatedHomeCaches,
   pruneStaleProjectIsolatedHomes,
+  projectHomeLastUsedMs,
+  quarantineProjectIsolatedHome,
 } from "./isolatedHomePaths";
 
 vi.mock("electron-log", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+/** isPersistentIsolatedHome 以 run/projects 前缀判定；测试里指到临时目录 */
+const appData = vi.hoisted(() => ({ dir: "" }));
+vi.mock("../../system/appPaths", () => ({
+  getAppDataDir: () => {
+    if (!appData.dir) throw new Error("app data dir not set for this test");
+    return appData.dir;
+  },
 }));
 
 const tempRoots: string[] = [];
@@ -25,6 +39,26 @@ function makeTempRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nuwax-home-migrate-"));
   tempRoots.push(root);
   return root;
+}
+
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+/** 在 appData 下造一个持久化 project home：run/projects/<user>/<id>/<engine>/home */
+function makePersistentHome(engine = "nuwaxcode"): string {
+  if (!appData.dir) appData.dir = makeTempRoot();
+  const home = path.join(
+    appData.dir,
+    "run",
+    "projects",
+    "u1",
+    "1759004",
+    engine,
+    "home",
+  );
+  fs.mkdirSync(home, { recursive: true });
+  return home;
 }
 
 /** 递归恢复写权限：只读目录留在临时树里会让 rmSync 报 ENOTEMPTY。 */
@@ -449,6 +483,276 @@ describe("pruneProjectIsolatedHomeCaches regression", () => {
     expect(fs.existsSync(path.join(home, ".npm"))).toBe(false);
     expect(fs.existsSync(path.join(skipHome, ".cache"))).toBe(true);
     expect(fs.existsSync(path.join(skipHome, ".npm"))).toBe(true);
+  });
+});
+
+describe("getOpencodeLogFile", () => {
+  it("指向 home 下的 opencode.log；清理保留的是它所在的目录", () => {
+    const file = getOpencodeLogFile(path.join("/data", "run", "projects", "u1", "p1", "nuwaxcode", "home"));
+    expect(file).toBe(
+      path.join("/data", "run", "projects", "u1", "p1", "nuwaxcode", "home", ".local", "share", "opencode", "log", "opencode.log"),
+    );
+  });
+});
+
+describe("pruneStaleProjectIsolatedHomes · 按最近使用时间判定（session-setup-ha）", () => {
+  it("home 目录自身很旧、但里面的会话库最近写过：不删", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    const db = path.join(home, ".local", "share", "opencode", "opencode.db");
+    fs.mkdirSync(path.dirname(db), { recursive: true });
+    fs.writeFileSync(db, "session data");
+    const old = daysAgo(40);
+    fs.utimesSync(home, old, old);
+    fs.utimesSync(db, daysAgo(1), daysAgo(1));
+
+    const pruned = pruneStaleProjectIsolatedHomes(7, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(0);
+    expect(fs.existsSync(db)).toBe(true);
+  });
+
+  it("目录和里面所有文件都超过保留期：照常清理", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    const db = path.join(home, ".local", "share", "opencode", "opencode.db");
+    fs.mkdirSync(path.dirname(db), { recursive: true });
+    fs.writeFileSync(db, "stale");
+    const old = daysAgo(40);
+    // 整棵树（含中间目录）都停在 40 天前
+    for (const dir of [home, path.dirname(db), path.join(home, ".local", "share"), path.join(home, ".local")]) {
+      fs.utimesSync(dir, old, old);
+    }
+    fs.utimesSync(db, old, old);
+
+    const pruned = pruneStaleProjectIsolatedHomes(7, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(1);
+    expect(fs.existsSync(home)).toBe(false);
+  });
+
+  it("扫描触顶时按「在用」处理，不删", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    fs.mkdirSync(path.join(home, "a"), { recursive: true });
+    fs.mkdirSync(path.join(home, "b"), { recursive: true });
+    const old = daysAgo(40);
+    for (const dir of [home, path.join(home, "a"), path.join(home, "b")]) {
+      fs.utimesSync(dir, old, old);
+    }
+    // 只允许扫 1 个条目，必然触顶
+    expect(projectHomeLastUsedMs(home, 1)).toBe(Number.POSITIVE_INFINITY);
+
+    const pruned = pruneStaleProjectIsolatedHomes(7, {
+      root,
+      skipPaths: new Set(),
+      scanLimit: 1,
+    });
+
+    expect(pruned).toBe(0);
+    expect(fs.existsSync(home)).toBe(true);
+  });
+
+  it("默认扫描上限足以覆盖普通 home；目录不存在返回 NaN", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    fs.mkdirSync(home, { recursive: true });
+    const lastUsed = projectHomeLastUsedMs(home);
+    expect(Number.isFinite(lastUsed)).toBe(true);
+    expect(HOME_LAST_USE_SCAN_LIMIT).toBeGreaterThan(100);
+    expect(projectHomeLastUsedMs(path.join(root, "missing"))).toBeNaN();
+  });
+
+  it("隔离目录不在这里回收，交给它自己的保留期", () => {
+    const root = makeTempRoot();
+    const quarantined = path.join(
+      root,
+      "6",
+      "1",
+      "nuwaxcode",
+      `home${QUARANTINE_SUFFIX}20260101000000`,
+    );
+    fs.mkdirSync(path.join(quarantined, ".local"), { recursive: true });
+    const old = daysAgo(40);
+    fs.utimesSync(quarantined, old, old);
+
+    const pruned = pruneStaleProjectIsolatedHomes(7, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(0);
+    expect(fs.existsSync(quarantined)).toBe(true);
+  });
+});
+
+describe("quarantineProjectIsolatedHome（session-setup-ha）", () => {
+  it("把 home 改名保留，原数据不丢", () => {
+    const home = makePersistentHome();
+    const db = path.join(home, ".local", "share", "opencode", "opencode.db");
+    fs.mkdirSync(path.dirname(db), { recursive: true });
+    fs.writeFileSync(db, "session data");
+
+    const result = quarantineProjectIsolatedHome(home, {
+      now: new Date(2026, 10, 25, 14, 20, 39).getTime(),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      home: path.normalize(home),
+      backupPath: path.normalize(
+        `${home}${QUARANTINE_SUFFIX}20261125142039`,
+      ),
+    });
+    if (!result.ok) return;
+    expect(fs.existsSync(home)).toBe(false);
+    expect(
+      fs.readFileSync(
+        path.join(result.backupPath, ".local", "share", "opencode", "opencode.db"),
+        "utf8",
+      ),
+    ).toBe("session data");
+  });
+
+  it("非持久化 home 或非 home 目录：拒绝隔离", () => {
+    expect(
+      quarantineProjectIsolatedHome(path.join(os.tmpdir(), "acp-123", "home")),
+    ).toMatchObject({ ok: false, reason: "not_persistent" });
+    const home = makePersistentHome();
+    expect(quarantineProjectIsolatedHome(path.dirname(home))).toMatchObject({
+      ok: false,
+      reason: "not_persistent",
+    });
+    expect(fs.existsSync(home)).toBe(true);
+  });
+
+  it("home 还不存在：视为已隔离，不报错", () => {
+    const home = path.join(
+      path.dirname(makePersistentHome()),
+      "home",
+    );
+    fs.rmSync(home, { recursive: true, force: true });
+    expect(quarantineProjectIsolatedHome(home)).toEqual({
+      ok: true,
+      home: path.normalize(home),
+      backupPath: "",
+    });
+  });
+
+  it("改名失败时返回 rename_failed，原目录保持不动", () => {
+    const home = makePersistentHome();
+    const engineDir = path.dirname(home);
+    // 真实失败：父目录只读，rename 会 EACCES（不 mock，覆盖真实错误分支）
+    fs.chmodSync(engineDir, 0o500);
+    try {
+      const result = quarantineProjectIsolatedHome(home);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("rename_failed");
+      expect(result.error).toBeTruthy();
+    } finally {
+      fs.chmodSync(engineDir, 0o700);
+    }
+    expect(fs.existsSync(home)).toBe(true);
+    expect(fs.readdirSync(engineDir)).toEqual(["home"]);
+  });
+
+  it("备份路径已存在时不覆盖，按改名失败处理", () => {
+    const home = makePersistentHome();
+    const now = new Date(2026, 10, 25, 14, 20, 39).getTime();
+    const backup = `${home}${QUARANTINE_SUFFIX}20261125142039`;
+    fs.mkdirSync(backup, { recursive: true });
+    fs.writeFileSync(path.join(backup, "keep"), "existing backup");
+
+    const result = quarantineProjectIsolatedHome(home, { now });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("rename_failed");
+    expect(fs.existsSync(path.join(backup, "keep"))).toBe(true);
+    expect(fs.existsSync(home)).toBe(true);
+  });
+});
+
+describe("pruneProjectIsolatedHomeCaches · 引擎日志与隔离目录（session-setup-ha）", () => {
+  const logDir = (home: string) =>
+    path.join(home, ".local", "share", "opencode", "log");
+
+  it("引擎日志按文件时间保留：上一次运行留下的新日志不会被目录时间误删", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    fs.mkdirSync(logDir(home), { recursive: true });
+    const log = path.join(logDir(home), "opencode.log");
+    fs.writeFileSync(log, "today's log");
+    // 目录停在 40 天前（首次创建后只追加写），文件是今天写的
+    const old = daysAgo(40);
+    fs.utimesSync(logDir(home), old, old);
+
+    const pruned = pruneProjectIsolatedHomeCaches(2, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(0);
+    expect(fs.existsSync(log)).toBe(true);
+  });
+
+  it("超过保留期的旧日志文件被清理，目录本身保留", () => {
+    const root = makeTempRoot();
+    const home = path.join(root, "6", "1", "nuwaxcode", "home");
+    fs.mkdirSync(logDir(home), { recursive: true });
+    const oldLog = path.join(logDir(home), "opencode.log");
+    const freshLog = path.join(logDir(home), "opencode.1.log");
+    fs.writeFileSync(oldLog, "old");
+    fs.writeFileSync(freshLog, "fresh");
+    fs.utimesSync(oldLog, daysAgo(10), daysAgo(10));
+    fs.utimesSync(freshLog, daysAgo(1), daysAgo(1));
+
+    const pruned = pruneProjectIsolatedHomeCaches(2, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(1);
+    expect(fs.existsSync(oldLog)).toBe(false);
+    expect(fs.existsSync(freshLog)).toBe(true);
+    expect(fs.existsSync(logDir(home))).toBe(true);
+  });
+
+  it("隔离目录超过保留期后整个回收，未到期保留", () => {
+    const root = makeTempRoot();
+    const expired = path.join(
+      root,
+      "6",
+      "1",
+      "nuwaxcode",
+      `home${QUARANTINE_SUFFIX}20260101000000`,
+    );
+    const fresh = path.join(
+      root,
+      "6",
+      "2",
+      "nuwaxcode",
+      `home${QUARANTINE_SUFFIX}20990101000000`,
+    );
+    fs.mkdirSync(expired, { recursive: true });
+    fs.mkdirSync(fresh, { recursive: true });
+    fs.utimesSync(expired, daysAgo(10), daysAgo(10));
+
+    const pruned = pruneProjectIsolatedHomeCaches(2, {
+      root,
+      skipPaths: new Set(),
+    });
+
+    expect(pruned).toBe(1);
+    expect(fs.existsSync(expired)).toBe(false);
+    expect(fs.existsSync(fresh)).toBe(true);
   });
 });
 

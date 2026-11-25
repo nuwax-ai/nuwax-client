@@ -121,3 +121,78 @@ describe("log directory ZIP export", () => {
     expect(await readdir(logs)).toEqual(["main.log", "nested"]);
   });
 });
+
+describe("日志目录之外的附加条目（session-setup-ha）", () => {
+  it("直接内容与整份文件都按指定路径进包", async () => {
+    const engineLog = path.join(directory, "opencode.log");
+    await writeFile(engineLog, "engine line\n");
+    await writeFile(path.join(logs, "main.log"), "main");
+
+    await exportLogArchive(logs, destination, [
+      { name: "diagnostics/session-setup.json", content: Buffer.from('{"records":[]}') },
+      { name: "engine-logs/u1/p1/home/opencode.log", source: engineLog },
+    ]);
+
+    const zip = new AdmZip(destination);
+    expect(zip.readAsText("diagnostics/session-setup.json")).toBe('{"records":[]}');
+    expect(zip.readAsText("engine-logs/u1/p1/home/opencode.log")).toBe("engine line\n");
+    expect(zip.readAsText("logs/main.log")).toBe("main");
+  });
+
+  it("文件超过 tailBytes 时只打包末尾", async () => {
+    const engineLog = path.join(directory, "opencode.log");
+    const lines = Array.from({ length: 200 }, (_, i) => `line-${i}\n`);
+    await writeFile(engineLog, lines.join(""));
+
+    await exportLogArchive(logs, destination, [
+      { name: "engine-logs/tail.log", source: engineLog, tailBytes: 100 },
+    ]);
+
+    const text = new AdmZip(destination).readAsText("engine-logs/tail.log");
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(100);
+    expect(text.endsWith("line-199\n")).toBe(true);
+    expect(text).not.toContain("line-0\n");
+  });
+
+  it("文件在打包前已被清掉时跳过，不影响其余内容", async () => {
+    await writeFile(path.join(logs, "main.log"), "main");
+    const engineLog = path.join(directory, "opencode.log");
+    await writeFile(engineLog, "engine line\n");
+
+    await exportLogArchive(logs, destination, [
+      { name: "engine-logs/gone.log", source: path.join(directory, "gone.log") },
+      { name: "engine-logs/kept.log", source: engineLog },
+    ]);
+
+    const zip = new AdmZip(destination);
+    expect(zip.getEntries().map((entry) => entry.entryName).sort()).toEqual([
+      "engine-logs/kept.log",
+      "logs/",
+      "logs/main.log",
+    ]);
+    expect(zip.readAsText("engine-logs/kept.log")).toBe("engine line\n");
+  });
+
+  it.skipIf(process.platform === "win32")("不带符号链接，避免把目录之外的文件带进包", async () => {
+    const outside = path.join(directory, "private.txt");
+    await writeFile(outside, "outside secret");
+    await symlink(outside, path.join(directory, "link.log"));
+
+    await exportLogArchive(logs, destination, [
+      { name: "engine-logs/link.log", source: path.join(directory, "link.log") },
+    ]);
+
+    expect(new AdmZip(destination).getEntry("engine-logs/link.log")).toBeNull();
+  });
+
+  it("拒绝可能逃出包根的条目名", async () => {
+    await expect(
+      exportLogArchive(logs, destination, [
+        { name: "../escape.json", content: Buffer.from("x") },
+      ]),
+    ).rejects.toThrow("Unsafe archive entry name");
+    expect(await readdir(directory)).toEqual(
+      expect.not.arrayContaining([expect.stringMatching(/\.tmp$/)]),
+    );
+  });
+});

@@ -54,6 +54,11 @@ export type AcpEngineRecycleReason =
 export interface AcpEngineRecycleOptions {
   /** false = 只销毁（最终失败时收掉卡死的进程） */
   respawn: boolean;
+  /**
+   * 销毁之后、重启之前执行。隔离 home 必须放在这里：引擎进程还占着 home 里的文件
+   * （Windows 上会让改名失败），而重启之后原路径又会被重新建出来。
+   */
+  beforeInit?: () => void | Promise<void>;
 }
 
 export type AcpEngineRecycleResult =
@@ -63,6 +68,7 @@ export type AcpEngineRecycleResult =
 export type SessionHomeQuarantineFailure =
   | "disabled"
   | "not_persistent"
+  | "unsupported_engine"
   | "shared"
   | "already_quarantined"
   | "machine_slow"
@@ -197,6 +203,8 @@ export interface SessionRecoveryDeps extends SessionSetupDeps {
   ): Promise<AcpEngineRecycleResult>;
   /** 隔离引擎 home；未提供视为不支持 */
   quarantineHome?(): SessionHomeQuarantineResult;
+  /** 不做改名的前提下判断能否隔离；缺省同「是否提供 quarantineHome」 */
+  canQuarantineHome?(): boolean;
   state?: SessionSetupRecoveryState;
   now?: () => number;
   /** 链路起点（进入 /computer/chat 的时刻）；缺省取 now() */
@@ -350,6 +358,11 @@ export async function resolveSessionWithRecovery(
   let setupPath = "new";
   let fallbackReason: SessionSetupFallbackReason | undefined;
   let recycledInChain = false;
+  /**
+   * 本链路里「足额预算内仍无响应」的次数。预算被总时限截短的超时不算数。
+   * 两次及以上说明不是偶发变慢，收尾时开熔断。
+   */
+  let conclusiveTimeouts = 0;
 
   if (request.session_id && supportsLoadSession(deps.agentCapabilities)) {
     // 跨引擎：异形态 sessionId 直接跳过 load，避免发出无法取消的挂起 RPC
@@ -403,6 +416,7 @@ export async function resolveSessionWithRecovery(
             teardown: true,
           });
         } else {
+          conclusiveTimeouts++;
           state.blacklistRestore(request.session_id);
           state.noteSetupTimeout(deps.engineKey);
           report.recycleReasons.push("load_timeout");
@@ -423,11 +437,10 @@ export async function resolveSessionWithRecovery(
   for (let attempt = 0; ; attempt++) {
     const newBudget = stageBudget(budgets.newSessionHardMs);
     // 首次尝试只要还有预算就发；重试则要求剩余足够跑完一次健康的新建会话
-    if (
-      newBudget <= 0 ||
-      (attempt > 0 && remainingMs() < budgets.minRetryMs)
-    ) {
-      return fail("setup_timeout", "session setup deadline exceeded");
+    if (newBudget <= 0 || (attempt > 0 && remainingMs() < budgets.minRetryMs)) {
+      return fail("setup_timeout", "session setup deadline exceeded", {
+        breaker: conclusiveTimeouts >= 2,
+      });
     }
     const newClipped = newBudget < budgets.newSessionHardMs;
     const newStart = now();
@@ -449,10 +462,13 @@ export async function resolveSessionWithRecovery(
         return fail("setup_failed", describeError(err));
       }
       if (newClipped) {
+        // 预算被总时限截短：这次超时不算数，但此前已有两次足额超时则照样熔断
         return fail("setup_timeout", "session setup deadline exceeded", {
           teardown: true,
+          breaker: conclusiveTimeouts >= 2,
         });
       }
+      conclusiveTimeouts++;
       state.noteSetupTimeout(deps.engineKey);
       if (!recycledInChain) {
         report.recycleReasons.push("new_timeout");
@@ -467,25 +483,38 @@ export async function resolveSessionWithRecovery(
       // 新进程里也建不出：环境级卡死
       let finalReason: SessionSetupFailureReason = "engine_env_hang";
       let finalMessage = "session/new timed out in a fresh engine process";
-      if (deps.quarantineHome && !report.quarantined) {
-        const quarantine = deps.quarantineHome();
-        if (quarantine.ok) {
+      const mayQuarantine =
+        !!deps.quarantineHome &&
+        !report.quarantined &&
+        (deps.canQuarantineHome?.() ?? true);
+      if (mayQuarantine) {
+        report.recycleReasons.push("home_quarantined");
+        // 用对象承载结果：赋值发生在回调里，TS 对普通变量做流 narrow 会把它当成 null
+        const outcome: { quarantine: SessionHomeQuarantineResult | null } = {
+          quarantine: null,
+        };
+        const recycled = await deps.recycle("home_quarantined", {
+          respawn: true,
+          beforeInit: () => {
+            outcome.quarantine = deps.quarantineHome!();
+          },
+        });
+        if (!recycled.ok) {
+          return fail("engine_recycle_failed", recycled.error);
+        }
+        const { quarantine } = outcome;
+        if (quarantine?.ok) {
           state.markHomeQuarantined(quarantine.home);
           report.quarantined = true;
-          report.recycleReasons.push("home_quarantined");
           fallbackReason = "engine_env_reset";
-          const recycled = await deps.recycle("home_quarantined", {
-            respawn: true,
-          });
-          if (!recycled.ok) {
-            return fail("engine_recycle_failed", recycled.error);
-          }
           continue;
         }
-        if (quarantine.reason === "rename_failed") {
+        if (quarantine?.reason === "rename_failed") {
           finalReason = "quarantine_failed";
-          finalMessage = quarantine.error ?? "failed to quarantine engine home";
+          finalMessage =
+            quarantine.error ?? "failed to quarantine engine home";
         }
+        // 其余不能隔离的原因：进程已重启，按环境卡死收尾
       }
       return fail(finalReason, finalMessage, { teardown: true, breaker: true });
     }

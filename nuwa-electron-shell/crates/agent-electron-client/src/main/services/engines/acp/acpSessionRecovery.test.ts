@@ -20,6 +20,7 @@ import {
   SessionSetupRecoveryState,
   classifyLoadError,
   resolveSessionWithRecovery,
+  type AcpEngineRecycleOptions,
   type AcpSessionLike,
   type SessionRecoveryDeps,
 } from "./acpSessionRecovery";
@@ -94,6 +95,14 @@ function request(
 /** 永不 settle 的 promise，模拟引擎无响应 */
 function hang(): Promise<never> {
   return new Promise<never>(() => {});
+}
+
+/** 模拟真实的 recycle：在销毁之后、重启之前执行 beforeInit（隔离 home 的时机） */
+function recycleRunningBeforeInit(): SessionRecoveryDeps["recycle"] {
+  return vi.fn(async (_reason: string, options: AcpEngineRecycleOptions) => {
+    options.beforeInit?.();
+    return { ok: true as const };
+  });
 }
 
 async function flush(): Promise<void> {
@@ -556,6 +565,7 @@ describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
             "/run/projects/u1/p1/nuwaxcode/home.quarantine-20261125120000",
         })),
         getSessionRecord: () => makeSession("new-after-reset"),
+        recycle: recycleRunningBeforeInit(),
       });
 
       const pending = resolveSessionWithRecovery(deps, request());
@@ -565,9 +575,12 @@ describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
       const result = await pending;
 
       expect(deps.quarantineHome).toHaveBeenCalledTimes(1);
-      expect(deps.recycle).toHaveBeenNthCalledWith(2, "home_quarantined", {
-        respawn: true,
-      });
+      // 隔离发生在「销毁之后、重启之前」：进程还占着 home 时改不了名
+      expect(deps.recycle).toHaveBeenNthCalledWith(
+        2,
+        "home_quarantined",
+        { respawn: true, beforeInit: expect.any(Function) },
+      );
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.session.id).toBe("new-after-reset");
@@ -594,6 +607,7 @@ describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
           reason: "rename_failed" as const,
           error: "EPERM: operation not permitted, rename",
         })),
+        recycle: recycleRunningBeforeInit(),
       });
 
       const pending = resolveSessionWithRecovery(deps, request());
@@ -624,6 +638,7 @@ describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
           ok: false as const,
           reason: "shared" as const,
         })),
+        recycle: recycleRunningBeforeInit(),
       });
 
       const pending = resolveSessionWithRecovery(deps, request());
@@ -635,6 +650,32 @@ describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.reason).toBe("engine_env_hang");
+      expect(deps.recycle).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("事先已知不能隔离：不为隔离多销毁一次进程", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        createSession: vi.fn(hang),
+        quarantineHome: vi.fn(() => ({ ok: true as const, home: "/h", backupPath: "/h.bak" })),
+        canQuarantineHome: () => false,
+        recycle: recycleRunningBeforeInit(),
+      });
+
+      const pending = resolveSessionWithRecovery(deps, request());
+      await vi.advanceTimersByTimeAsync(deps.budgets.newSessionHardMs);
+      await flush();
+      await vi.advanceTimersByTimeAsync(deps.budgets.newSessionHardMs);
+      const result = await pending;
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("engine_env_hang");
+      expect(deps.quarantineHome).not.toHaveBeenCalled();
       expect(deps.recycle).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -753,6 +794,76 @@ describe("resolveSessionWithRecovery · 链路总时限", () => {
       expect(deps.createSession).toHaveBeenCalledTimes(1);
       expect(deps.recycle).toHaveBeenCalledTimes(1);
       expect(deps.state!.getOpenBreaker("p1", Date.now())).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("已有两次足额超时、最后一次尝试的预算被截短：仍开熔断", async () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      const budgets = defaultBudgets();
+      const deps = makeDeps({
+        createSession: vi.fn(hang),
+        quarantineHome: vi.fn(() => ({
+          ok: true as const,
+          home: "/h/home",
+          backupPath: "/h/home.bak",
+        })),
+        recycle: recycleRunningBeforeInit(),
+        // 剩余 115s：两次足额 40s 之后只剩 35s，隔离后的第三次拿不到足额预算
+        chainStartedAtMs: now - (budgets.chainDeadlineMs - 115_000),
+      });
+
+      const pending = resolveSessionWithRecovery(deps, request());
+      await vi.advanceTimersByTimeAsync(budgets.newSessionHardMs);
+      await flush();
+      await vi.advanceTimersByTimeAsync(budgets.newSessionHardMs);
+      await flush();
+      await vi.advanceTimersByTimeAsync(budgets.newSessionHardMs);
+      const result = await pending;
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("setup_timeout");
+      expect(result.report.quarantined).toBe(true);
+      expect(result.report.breakerOpened).toBe(true);
+      expect(deps.createSession).toHaveBeenCalledTimes(3);
+      expect(deps.state!.getOpenBreaker("p1", Date.now())).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("隔离后仍建不出会话：收掉进程、熔断，返回 engine_env_hang", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        createSession: vi.fn(hang),
+        quarantineHome: vi.fn(() => ({
+          ok: true as const,
+          home: "/h/home",
+          backupPath: "/h/home.bak",
+        })),
+        recycle: recycleRunningBeforeInit(),
+      });
+
+      const pending = resolveSessionWithRecovery(deps, request());
+      for (let i = 0; i < 3; i++) {
+        await vi.advanceTimersByTimeAsync(deps.budgets.newSessionHardMs);
+        await flush();
+      }
+      const result = await pending;
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("engine_env_hang");
+      expect(deps.quarantineHome).toHaveBeenCalledTimes(1);
+      expect(deps.recycle).toHaveBeenLastCalledWith("give_up", {
+        respawn: false,
+      });
+      expect(deps.state!.getOpenBreaker("p1", Date.now())).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
