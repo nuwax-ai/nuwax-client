@@ -195,10 +195,15 @@ export function applySessionAuthHeaders(
       else delete headers[key];
     }
   }
-  // Preserve main.ts's product header, while correctly recognizing bracketed IPv6.
-  if (!isLocal) {
-    for (const key of Object.keys(headers))
-      if (key.toLowerCase() === "x-client-type") delete headers[key];
+  // 商业登录需要产品标识。共享会话的第三方站点不应收到这个额外请求头。
+  const addClientType = !isLocal && (APP_NAME_IDENTIFIER !== "nuwax" || businessTarget);
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "x-client-type" &&
+      (addClientType || (APP_NAME_IDENTIFIER === "nuwax" && headers[key] === APP_NAME_IDENTIFIER))) {
+      delete headers[key];
+    }
+  }
+  if (addClientType) {
     headers["x-client-type"] = APP_NAME_IDENTIFIER;
   }
   if (!businessTarget) return headers;
