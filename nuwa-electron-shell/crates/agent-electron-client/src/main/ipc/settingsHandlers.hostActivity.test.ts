@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   refreshBrowser: vi.fn(),
   shortcutAvailable: vi.fn(),
   development: false,
+  refreshAutoDownload: vi.fn(),
 }));
 vi.mock('@shared/constants', async (original) => ({
   ...await original<typeof import('@shared/constants')>(),
@@ -26,6 +27,7 @@ vi.mock("../db", () => ({
 }));
 vi.mock("electron-log", () => ({ default: { warn: mocks.warn } }));
 vi.mock("../bootstrap/quickInit", () => ({ readQuickInitConfig: vi.fn() }));
+vi.mock("../services/autoUpdater", () => ({ refreshAutoDownloadPreference: mocks.refreshAutoDownload }));
 vi.mock("../services/hostActivity", () => ({
   DORMANCY_SETTING_KEY: "nuwax.dormancy",
   refreshHostActivity: mocks.refresh,
@@ -42,6 +44,7 @@ beforeEach(() => {
   mocks.run.mockReset();
   mocks.prepare.mockReset().mockReturnValue({ run: mocks.run });
   mocks.refresh.mockReset();
+  mocks.refreshAutoDownload.mockReset();
   mocks.warn.mockClear();
   mocks.notifyCapture.mockReset();
   mocks.refreshBrowser.mockReset();
@@ -50,6 +53,23 @@ beforeEach(() => {
 });
 
 describe("settings:set host activity refresh", () => {
+  it("自动下载只保存布尔值或重置，持久化成功后即时应用", async () => {
+    const set = mocks.handlers.get("settings:set")!;
+    const key = "update_auto_download";
+    for (const value of ["true", "false", 1, {}]) expect(set({}, key, value)).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    for (const value of [true, false, null]) {
+      expect(await set({}, key, value)).toBe(true);
+      if (value === null) expect(mocks.run).toHaveBeenLastCalledWith(key);
+      else expect(mocks.run).toHaveBeenLastCalledWith(key, JSON.stringify(value));
+    }
+    expect(mocks.refreshAutoDownload).toHaveBeenCalledTimes(3);
+    expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(mocks.refreshAutoDownload.mock.invocationCallOrder[0]);
+    mocks.refreshAutoDownload.mockClear();
+    mocks.run.mockImplementationOnce(() => { throw new Error("write failed"); });
+    await expect(set({}, key, true)).rejects.toThrow("write failed");
+    expect(mocks.refreshAutoDownload).not.toHaveBeenCalled();
+  });
   it('development saves its own shortcut preference without reserving a system hotkey', () => {
     mocks.development = true;
     expect(mocks.handlers.get('settings:set')!({}, CAPTURE_SHORTCUT_SETTING, 'CmdOrCtrl+Alt+G')).toBe(true);

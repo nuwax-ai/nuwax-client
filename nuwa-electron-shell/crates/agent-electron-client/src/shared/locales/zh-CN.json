@@ -660,6 +660,8 @@
   "Claw.Settings.guiMcp.statusDisabled": "已禁用",
   "Claw.Settings.system.title": "系统",
   "Claw.Settings.system.autoLaunch": "开机自启动",
+  "Claw.Settings.system.autoDownloadUpdate": "自动下载更新",
+  "Claw.Settings.system.autoDownloadUpdateDesc": "发现新版本时自动在后台下载，下载完成后不会自动重启客户端。默认关闭。",
   "Claw.Settings.system.autoLaunchDesc": "系统启动时自动运行 {appName}",
   "Claw.Settings.localFiles.label": "本机文件直连",
   "Claw.Settings.localFiles.desc": "优先直接读取和保存当前电脑的文件；关闭后使用原文件服务。重启客户端后生效。",
