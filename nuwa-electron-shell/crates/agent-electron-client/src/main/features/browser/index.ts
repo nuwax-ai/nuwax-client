@@ -4,7 +4,9 @@ import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import {
+  BROWSER_AGENT_ENABLED_SETTING,
   BROWSER_FEATURE_SETTING,
+  isBrowserAgentEnabled,
   BROWSER_IPC,
 } from "@shared/features/browser/contract";
 import type { AgentSessionParticipant } from "../_kit/agentSessions";
@@ -35,6 +37,7 @@ import {
 let active: {
   windows: ReturnType<typeof createBrowserWindows>;
   available(): boolean;
+  refreshAgentPreference(): Promise<void>;
   revokeOpener(contents: WebContents): void;
 } | null = null;
 export const isDesktopBrowserAvailable = (): boolean => {
@@ -46,6 +49,8 @@ export const isDesktopBrowserAvailable = (): boolean => {
 };
 export const refreshDesktopBrowserWindows = (): void =>
   active?.windows.refresh();
+export const refreshDesktopBrowserAgentPreference = () =>
+  active?.refreshAgentPreference();
 export function createDesktopBrowserPage(
   options: BrowserPageOptions
 ): BrowserPage | null {
@@ -252,9 +257,18 @@ export const browserFeature: DesktopFeature = {
   register(ctx) {
     const windows = createBrowserWindows(ctx);
     let disposed = false;
+    const available = () => {
+      try {
+        return !disposed && ctx.settings.read(BROWSER_FEATURE_SETTING) !== false;
+      } catch {
+        return false;
+      }
+    };
+    let agentServicesRunning = true;
     const enabled = () => {
       try {
-        return ctx.settings.read(BROWSER_FEATURE_SETTING) !== false;
+        return agentServicesRunning && available() &&
+          isBrowserAgentEnabled(ctx.settings.read(BROWSER_AGENT_ENABLED_SETTING));
       } catch {
         return false;
       }
@@ -345,7 +359,7 @@ export const browserFeature: DesktopFeature = {
       revoke: (contents) => controller.revokePage(contents, "revokedByUser"),
     });
     const gateway = new BrowserGateway({
-      owner: (grant) => grants.get(grant),
+      owner: (grant) => enabled() ? grants.get(grant) : undefined,
       call: (input) => {
         if (AGENT_WINDOW_TOOL_NAMES.has(input.tool))
           return windowManager.call(input);
@@ -403,17 +417,25 @@ export const browserFeature: DesktopFeature = {
         starting = null;
         throw error;
       }));
-    if (ctx.agent?.setLocalMcpServer) {
-      void initialize()
-        .then(async () => {
-          if (disposed) return;
-          if (entry)
-            await ctx.agent.setLocalMcpServer(AGENT_BROWSER_SERVER, entry);
-        })
+    // Serialize proxy updates so a slow enable cannot overwrite a later disable.
+    let mcpSync = Promise.resolve();
+    const syncAgentMcp = () => {
+      mcpSync = mcpSync.then(async () => {
+        if (enabled()) {
+          await initialize();
+          if (enabled() && entry) {
+            await ctx.agent?.setLocalMcpServer(AGENT_BROWSER_SERVER, entry);
+            return;
+          }
+        }
+        if (ctx.agent?.hasLocalMcpServer(AGENT_BROWSER_SERVER))
+          await ctx.agent.setLocalMcpServer(AGENT_BROWSER_SERVER, null);
+      })
         .catch((error) => {
           ctx.log?.warn?.("[Browser] Agent browser MCP unavailable", error);
         });
-    }
+      return mcpSync;
+    };
 
     const offParticipant =
       ctx.agent?.registerSessionParticipant?.(
@@ -432,8 +454,7 @@ export const browserFeature: DesktopFeature = {
               for (let index = servers.length - 1; index >= 0; index--)
                 if (servers[index].name === AGENT_BROWSER_SERVER)
                   servers.splice(index, 1);
-              const featureEnabled = enabled();
-              if (!entry || disposed || !directory || !featureEnabled)
+              if (!entry || !directory || !enabled())
                 return { bind() {}, cancel() {} };
               const secret = randomBytes(32).toString("hex");
               const file = path.join(directory, randomUUID());
@@ -483,7 +504,7 @@ export const browserFeature: DesktopFeature = {
             },
             start(sessionId) {
               const grant = sessions.get(sessionId);
-              if (!grant || !grants.has(grant.secret)) return 0;
+              if (!grant || !grants.has(grant.secret) || !enabled()) return 0;
               if (grant.active) endGrantTurn(grant, "turnEnded");
               grant.owner = nextOwner();
               grant.active = true;
@@ -577,7 +598,11 @@ export const browserFeature: DesktopFeature = {
     }
     const instance = {
       windows,
-      available: enabled,
+      available,
+      refreshAgentPreference() {
+        if (!enabled()) revokeEverything();
+        return syncAgentMcp();
+      },
       revokeOpener: (contents: WebContents) => controller.revokePage(contents, "newWindow"),
     };
     active = instance;
@@ -590,35 +615,20 @@ export const browserFeature: DesktopFeature = {
         windows.closeAll();
         revokeEverything();
       }) ?? (() => {});
-    const offStopping =
-      ctx.lifecycle?.onServicesStopping?.(async () => {
-        revokeEverything();
-        try {
-          await ctx.agent?.setLocalMcpServer?.(AGENT_BROWSER_SERVER, null);
-        } catch {
-          /* The entry is already unusable without a live gateway. */
-        }
-      }) ?? (() => {});
-    const offQuit =
-      ctx.lifecycle?.onQuit?.(async () => {
-        revokeEverything();
-        try {
-          await ctx.agent?.setLocalMcpServer?.(AGENT_BROWSER_SERVER, null);
-        } catch {
-          /* Best effort during quit. */
-        }
-      }) ?? (() => {});
+    const stopAgentMcp = () => {
+      agentServicesRunning = false;
+      revokeEverything();
+      return syncAgentMcp();
+    };
+    const offStopping = ctx.lifecycle?.onServicesStopping?.(stopAgentMcp) ?? (() => {});
+    const offQuit = ctx.lifecycle?.onQuit?.(stopAgentMcp) ?? (() => {});
     // Register before the engine starts so a session created at boot can see
     // the browser MCP server; the initial fire-and-forget above is best effort.
     const offStarting =
-      ctx.lifecycle?.onServicesStarting?.(async () => {
-        try {
-          await initialize();
-          if (entry)
-            await ctx.agent?.setLocalMcpServer?.(AGENT_BROWSER_SERVER, entry);
-        } catch (error) {
-          ctx.log?.warn?.("[Browser] Agent browser MCP unavailable", error);
-        }
+      ctx.lifecycle?.onServicesStarting?.((signal) => {
+        if (signal.aborted) return;
+        agentServicesRunning = true;
+        return syncAgentMcp();
       }) ?? (() => {});
 
     let removed = false;
@@ -626,13 +636,7 @@ export const browserFeature: DesktopFeature = {
       if (removed) return;
       removed = true;
       disposed = true;
-      try {
-        void ctx.agent
-          ?.setLocalMcpServer?.(AGENT_BROWSER_SERVER, null)
-          ?.catch?.(() => {});
-      } catch {
-        /* The database may already be closing. */
-      }
+      void syncAgentMcp();
       if (active === instance) active = null;
       offChanged();
       offParticipant();
@@ -652,14 +656,18 @@ export const browserFeature: DesktopFeature = {
       windows.dispose();
       revokeAllGrants();
       syncActivity();
-      gateway.close();
-      if (directory) {
-        try {
-          ctx.scratch?.remove?.(scratchId);
-        } catch {
-          /* Scratch cleanup is retried by the host on next boot. */
+      const releaseGateway = () => {
+        gateway.close();
+        if (directory) {
+          try {
+            ctx.scratch?.remove?.(scratchId);
+          } catch {
+            /* Scratch cleanup is retried by the host on next boot. */
+          }
         }
-      }
+      };
+      if (starting) void starting.then(releaseGateway, releaseGateway);
+      else releaseGateway();
       ctx.ipc.dispose();
       ctx.hostIpc.dispose();
     };
@@ -671,6 +679,7 @@ export const browserFeature: DesktopFeature = {
       ctx.hostIpc.handle(BROWSER_IPC.hostCapabilities, capabilities, {
         available: false,
       });
+      if (ctx.agent) void syncAgentMcp();
     } catch (error) {
       dispose();
       throw error;

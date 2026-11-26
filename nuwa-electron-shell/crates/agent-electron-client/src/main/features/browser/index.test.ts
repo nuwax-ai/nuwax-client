@@ -3,6 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BROWSER_AGENT_ENABLED_SETTING } from "@shared/features/browser/contract";
 import type { AgentSessionParticipant } from "../_kit/agentSessions";
 import { registerDesktopFeatures } from "../_kit/register";
 import type { FeatureContext, FeatureHandle } from "../_kit/types";
@@ -26,6 +27,7 @@ import {
   browserFeature,
   createDesktopBrowserPage,
   isDesktopBrowserAvailable,
+  refreshDesktopBrowserAgentPreference,
 } from "./index";
 function mcpClient(port: number) {
   const socket = net.connect({ host: "127.0.0.1", port });
@@ -123,24 +125,31 @@ describe("browser feature lifecycle", () => {
     expect(mocks.dispose).toHaveBeenCalledOnce();
     expect(isDesktopBrowserAvailable()).toBe(false);
   });
-  it("registers a per-turn session grant and isolates participant cleanup", async () => {
+  it("requires opt-in, revokes live grants on opt-out and isolates participant cleanup", async () => {
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "nuwax-browser-agent-"),
     );
-    const setLocalMcpServer = vi.fn(async () => {});
+    let optedIn: boolean | undefined;
+    let hasMcpEntry = true; // A previous version may have registered it by default.
+    const setLocalMcpServer = vi.fn(async (_name: string, entry: unknown) => {
+      hasMcpEntry = entry !== null;
+    });
     let factory: (() => AgentSessionParticipant) | null = null;
     const ctx = {
       ...context(),
-      settings: { read: vi.fn(() => true), write: vi.fn(() => true) },
+      settings: {
+        read: vi.fn((key: string) => key === BROWSER_AGENT_ENABLED_SETTING ? optedIn : undefined),
+        write: vi.fn(() => true),
+      },
       log: { info() {}, warn() {}, error() {} },
       windows: { getMain: () => null },
       activities: { set: vi.fn() },
       dataDir: directory,
-      scratch: { create: () => directory, remove: vi.fn(), sweep: vi.fn() },
+      scratch: { create: vi.fn(() => directory), remove: vi.fn(), sweep: vi.fn() },
       agent: {
         resolveNodeBinary: () => process.execPath,
         setLocalMcpServer,
-        hasLocalMcpServer: () => true,
+        hasLocalMcpServer: () => hasMcpEntry,
         registerSessionParticipant: (
           next: () => AgentSessionParticipant,
         ) => {
@@ -158,6 +167,19 @@ describe("browser feature lifecycle", () => {
     };
     const local = browserFeature.register(ctx as unknown as FeatureContext);
     try {
+      expect(isDesktopBrowserAvailable()).toBe(true);
+      await vi.waitFor(() => expect(setLocalMcpServer).toHaveBeenCalledWith("nuwax-browser", null));
+      expect(setLocalMcpServer).toHaveBeenCalledOnce();
+      expect(ctx.scratch.create).not.toHaveBeenCalled();
+      expect(factory).toBeTypeOf("function");
+      const participant = (factory as unknown as () => AgentSessionParticipant)();
+      const defaultServers = [{ name: "nuwax-browser" }, { name: "other-browser" }];
+      participant.prepare(defaultServers).bind("default");
+      expect(defaultServers).toEqual([{ name: "other-browser" }]);
+      expect(participant.start("default")).toBe(0);
+
+      optedIn = true;
+      await refreshDesktopBrowserAgentPreference();
       await vi.waitFor(() =>
         expect(setLocalMcpServer).toHaveBeenCalledWith(
           "nuwax-browser",
@@ -165,8 +187,6 @@ describe("browser feature lifecycle", () => {
         ),
       );
       expect(browserFeature.agentServers).toEqual(["nuwax-browser"]);
-      expect(factory).toBeTypeOf("function");
-      const participant = (factory as unknown as () => AgentSessionParticipant)();
       const servers: Array<{
         name: string;
         command?: string;
@@ -259,15 +279,48 @@ describe("browser feature lifecycle", () => {
         }
       };
       participant.start("session-3");
-      other.start("session-3");
-      const [firstWindow, otherWindow] = await Promise.all([
-        listWindow(freshFile),
-        listWindow(otherFile),
-      ]);
-      expect(firstWindow).not.toBe(otherWindow);
+      const firstWindow = await listWindow(freshFile);
+      expect(firstWindow).toBeTypeOf("string");
       participant.destroy();
       expect(fs.existsSync(freshFile)).toBe(false);
       expect(fs.existsSync(otherFile)).toBe(true);
+
+      const activeRelay = mcpClient(Number(env.NUWAX_BROWSER_PORT));
+      try {
+        await activeRelay.opened;
+        activeRelay.send({ token, grant: fs.readFileSync(otherFile, "utf8") });
+        expect(other.start("session-3")).toBe(1);
+        const list = (id: number) => {
+          activeRelay.send({
+            jsonrpc: "2.0", id, method: "tools/call",
+            params: { name: "nuwax_browser_list_tabs", arguments: {} },
+          });
+          return activeRelay.next();
+        };
+        const otherWindow = (await list(1)).result.structuredContent.windowId;
+        expect(otherWindow).toBeTypeOf("string");
+        expect(otherWindow).not.toBe(firstWindow);
+        optedIn = false;
+        const removal = refreshDesktopBrowserAgentPreference();
+        expect(fs.existsSync(otherFile)).toBe(false);
+        expect(other.start("session-3")).toBe(0);
+        expect((await list(2)).error.message).toBe("notAuthorized");
+        await removal;
+        expect(setLocalMcpServer).toHaveBeenLastCalledWith("nuwax-browser", null);
+        expect(isDesktopBrowserAvailable()).toBe(true);
+        expect(mocks.closeAll).not.toHaveBeenCalled();
+
+        optedIn = true;
+        await refreshDesktopBrowserAgentPreference();
+        expect(other.start("session-3")).toBe(0);
+        expect((await list(3)).error.message).toBe("notAuthorized");
+        const reopenedServers: Parameters<AgentSessionParticipant["prepare"]>[0] = [];
+        other.prepare(reopenedServers).bind("session-3");
+        expect(reopenedServers).toHaveLength(1);
+        expect(other.start("session-3")).toBe(1);
+      } finally {
+        activeRelay.socket.destroy();
+      }
       other.destroy();
       expect(fs.existsSync(otherFile)).toBe(false);
     } finally {

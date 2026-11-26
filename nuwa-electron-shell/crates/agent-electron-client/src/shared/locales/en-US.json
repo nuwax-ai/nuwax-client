@@ -1482,6 +1482,8 @@
   "Claw.Browser.agentActionTarget": "Target URL",
   "Claw.Browser.agentActionNoText": "Typed text is not shown.",
   "Claw.Browser.settingsTitle": "Default webpage opening method",
+  "Claw.Browser.agentSettingsTitle": "Allow agents to use the built-in browser",
+  "Claw.Browser.agentSettingsDesc": "When enabled, new or reconnected local agent sessions can request browser access. Turning this off revokes access immediately.",
   "Claw.Browser.settingsDesc": "Where ordinary webpage links from conversations, IM and documents open.",
   "Claw.Browser.unavailableDesc": "The built-in browser is unavailable. Links open in the system default browser.",
   "Claw.Browser.inApp": "In-app window",

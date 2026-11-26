@@ -415,6 +415,8 @@ export const I18N_KEYS = {
     agentActionNoText: "Claw.Browser.agentActionNoText",
     settingsTitle: "Claw.Browser.settingsTitle",
     settingsDesc: "Claw.Browser.settingsDesc",
+    agentSettingsTitle: "Claw.Browser.agentSettingsTitle",
+    agentSettingsDesc: "Claw.Browser.agentSettingsDesc",
     unavailableDesc: "Claw.Browser.unavailableDesc",
     inApp: "Claw.Browser.inApp",
     system: "Claw.Browser.system",

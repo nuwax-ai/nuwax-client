@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
   notifyCapture: vi.fn(),
   refreshBrowser: vi.fn(),
+  refreshBrowserAgent: vi.fn(),
   shortcutAvailable: vi.fn(),
   development: false,
   refreshAutoDownload: vi.fn(),
@@ -34,7 +35,8 @@ vi.mock("../services/hostActivity", () => ({
 }));
 
 import { registerSettingsHandlers } from "./settingsHandlers";
-vi.mock("../features", () => ({ refreshDesktopBrowserWindows: mocks.refreshBrowser, notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
+vi.mock("../features", () => ({ refreshDesktopBrowserWindows: mocks.refreshBrowser, refreshDesktopBrowserAgentPreference: mocks.refreshBrowserAgent, notifyCapturePreferencesChanged: mocks.notifyCapture, saveCaptureShortcutPreference: mocks.shortcutAvailable }));
+import { BROWSER_AGENT_ENABLED_SETTING } from '@shared/features/browser/contract';
 import { CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING } from '@shared/features/capture/contract';
 
 beforeEach(() => {
@@ -48,6 +50,7 @@ beforeEach(() => {
   mocks.warn.mockClear();
   mocks.notifyCapture.mockReset();
   mocks.refreshBrowser.mockReset();
+  mocks.refreshBrowserAgent.mockReset();
   mocks.shortcutAvailable.mockReset().mockImplementation((_shortcut, _action, persist) => { persist(); return true; });
   registerSettingsHandlers();
 });
@@ -93,6 +96,21 @@ describe("settings:set host activity refresh", () => {
     expect(mocks.handlers.get('settings:set')!({}, 'theme_mode', 'dark')).toBe(true);
     expect(mocks.refreshBrowser).toHaveBeenCalledOnce();
     expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(mocks.refreshBrowser.mock.invocationCallOrder[0]);
+  });
+  it('persists the Agent browser opt-in before refreshing access and resets to the default', async () => {
+    const set = mocks.handlers.get('settings:set')!;
+    for (const value of ['true', 1, {}]) expect(set({}, BROWSER_AGENT_ENABLED_SETTING, value)).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.refreshBrowserAgent).not.toHaveBeenCalled();
+    mocks.refreshBrowserAgent.mockResolvedValue(undefined);
+    for (const value of [true, false, null]) {
+      expect(await set({}, BROWSER_AGENT_ENABLED_SETTING, value)).toBe(true);
+      if (value === null) expect(mocks.run).toHaveBeenLastCalledWith(BROWSER_AGENT_ENABLED_SETTING);
+      else expect(mocks.run).toHaveBeenLastCalledWith(BROWSER_AGENT_ENABLED_SETTING, JSON.stringify(value));
+    }
+    expect(mocks.refreshBrowserAgent).toHaveBeenCalledTimes(3);
+    expect(mocks.run.mock.invocationCallOrder[0]).toBeLessThan(mocks.refreshBrowserAgent.mock.invocationCallOrder[0]);
+    expect(mocks.refreshBrowser).not.toHaveBeenCalled();
   });
   it("消息提示音只保存布尔值，重置时恢复默认，不改变其它设置", () => {
     const set = mocks.handlers.get("settings:set")!;
