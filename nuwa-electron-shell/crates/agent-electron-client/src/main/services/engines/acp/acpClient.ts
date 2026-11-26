@@ -58,6 +58,25 @@ import {
   resolveOpenAICompatModel,
 } from "./openAICompatRouting";
 import { isHarnessEngineId } from "../types";
+import { redactStringForLog } from "../../utils/logRedact";
+
+/** ACP 线上日志单行预览上限 */
+const WIRE_LOG_PREVIEW_CHARS = 500;
+
+/** 流式分片通知：一轮思考/输出就是上千行，内容只记 debug。 */
+const STREAMING_SESSION_UPDATE_RE =
+  /"sessionUpdate":"(?:agent_thought_chunk|agent_message_chunk|tool_call_update|usage_update)"/;
+
+/** 是否为流式分片类 session/update（stdout 按数据块切分，一行可能被拆成两段，故只认 update 类型）。 */
+export function isStreamingSessionUpdate(line: string): boolean {
+  return STREAMING_SESSION_UPDATE_RE.test(line);
+}
+
+function truncateForLog(text: string): string {
+  return text.length > WIRE_LOG_PREVIEW_CHARS
+    ? `${text.substring(0, WIRE_LOG_PREVIEW_CHARS)}...`
+    : text;
+}
 
 function extractSessionIdFromLine(line: string): string | undefined {
   try {
@@ -759,6 +778,9 @@ export async function createAcpConnection(
       );
     }
     if (!effectiveBinArgs.includes("--log-dir")) {
+      // nuwaxcode 1.17.11 不支持 --log-dir（只有 --print-logs / --log-level）；该版本下
+      // 深度模式的引擎日志靠上面的 --print-logs 走 stderr 进入主日志。保留此参数供
+      // 支持它的引擎版本使用。
       const traceLogDir = firstTokenTrace.getNuwaxcodeLogDir();
       if (traceLogDir) {
         fs.mkdirSync(traceLogDir, { recursive: true });
@@ -1084,6 +1106,11 @@ export async function createAcpConnection(
 
   // Ensure nuwaxcode writes detailed logs to persistent app logs directory.
   // Without this, logs default to isolated XDG paths under /tmp and are removed on destroy.
+  //
+  // 注意：nuwaxcode 1.17.11 并不读取 OPENCODE_LOG_DIR（也不认 --log-dir），它的日志固定
+  // 写在 isolated home 的 .local/share/opencode/log/opencode.log。这里的 env 只对读它的
+  // 引擎版本有效；读引擎日志请用 opencodeSessionDiagnostics.readEngineLogTail /
+  // engineLogCollector.collectEngineLogFiles，不要去 <appData>/logs/nuwaxcode 找。
   if (config.engineType === "nuwaxcode" && !env.OPENCODE_LOG_DIR) {
     const persistentLogDir = getNuwaxcodePersistentLogDir();
     fs.mkdirSync(persistentLogDir, { recursive: true });
@@ -1257,9 +1284,14 @@ export async function createAcpConnection(
       for (const line of text.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const preview =
-          trimmed.length > 500 ? trimmed.substring(0, 500) + "..." : trimmed;
-        log.info("[AcpClient stdout] 📥", preview);
+        // 先脱敏再截断：截断会把密钥切成两半，留下无法识别的前半段
+        const preview = truncateForLog(redactStringForLog(trimmed));
+        // 流式分片通知量大（一轮思考/输出就是上千行），内容降为 debug；
+        // 请求、响应、错误仍是 info
+        (isStreamingSessionUpdate(trimmed) ? log.debug : log.info)(
+          "[AcpClient stdout] 📥",
+          preview,
+        );
         if (firstTokenTrace.isDeepMode()) {
           firstTokenTrace.trace(
             "acp.stdout.line",
@@ -1285,8 +1317,8 @@ export async function createAcpConnection(
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const preview =
-        trimmed.length > 500 ? trimmed.substring(0, 500) + "..." : trimmed;
+      // stdin 里有完整 prompt 和 MCP 配置（含凭据），落盘前必须脱敏
+      const preview = truncateForLog(redactStringForLog(trimmed));
       log.info("[AcpClient stdin] 📤", preview);
       if (firstTokenTrace.isDeepMode()) {
         firstTokenTrace.trace(

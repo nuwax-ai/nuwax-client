@@ -84,6 +84,7 @@ vi.mock("./acp/acpEngine", () => {
   });
   return {
     AcpEngine: vi.fn().mockImplementation(() => createMockEngine()),
+    registerActiveIsolatedHomesProvider: vi.fn(),
   };
 });
 
@@ -520,6 +521,105 @@ describe("UnifiedAgentService — 懒加载引擎生命周期", () => {
     expect((svc as any).engines.size).toBe(0);
     expect((svc as any).engineConfigs.size).toBe(0);
     expect((svc as any).engineRawMcpServers.size).toBe(0);
+  });
+
+  it("init() 把「活跃引擎的 home 列表」注入给会话建立恢复链路（隔离 home 前判断是否共用）", async () => {
+    const { registerActiveIsolatedHomesProvider } = await import("./acp/acpEngine");
+    const svc = new UnifiedAgentService();
+
+    await svc.init(baseConfig);
+
+    expect(registerActiveIsolatedHomesProvider).toHaveBeenCalledTimes(1);
+    const provider = vi.mocked(registerActiveIsolatedHomesProvider).mock
+      .calls[0][0] as () => string[];
+    const engineA = await svc.getOrCreateEngine("proj-home-a", baseConfig);
+    const engineB = await svc.getOrCreateEngine("proj-home-b", baseConfig);
+    engineA.getIsolatedHome = () => "/run/projects/u1/272/nuwaxcode/home";
+    engineB.getIsolatedHome = () => "/run/projects/u1/272/nuwaxcode/home";
+
+    // 按引擎计数、保留重复：同一 home 上有两个引擎
+    expect(provider()).toEqual([
+      "/run/projects/u1/272/nuwaxcode/home",
+      "/run/projects/u1/272/nuwaxcode/home",
+    ]);
+    expect(svc.getActiveIsolatedHomeList()).toHaveLength(2);
+    await svc.destroy();
+  });
+});
+
+describe("UnifiedAgentService — 引擎活跃时间（session-setup-ha）", () => {
+  const baseConfig = {
+    engine: "nuwaxcode" as const,
+    workspaceDir: "/tmp",
+    apiKey: "k",
+    baseUrl: "u",
+    model: "m",
+  };
+
+  it("消息走快速路径到达时刷新活跃时间，引擎不会被提前空闲回收", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS = "1800000";
+      const svc = new UnifiedAgentService();
+      await svc.init(baseConfig);
+      const engine = await svc.getOrCreateEngine("proj-touch", baseConfig);
+      const created = (svc as any).engineLastActive.get("proj-touch");
+
+      // 20 分钟后来了一条消息（快速路径：已有就绪引擎、配置未变）
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      await svc.ensureEngineForRequest({
+        user_id: "u1",
+        project_id: "proj-touch",
+        prompt: "hi",
+      } as any);
+      const touched = (svc as any).engineLastActive.get("proj-touch");
+      expect(touched).toBeGreaterThan(created);
+
+      // 再过 20 分钟（距创建 40 分钟，但距上次使用 20 分钟）触发 sweep：不回收
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      await (svc as any).sweepIdleEngines();
+      expect((svc as any).engines.has("proj-touch")).toBe(true);
+      expect(engine.destroy).not.toHaveBeenCalled();
+
+      await svc.destroy();
+    } finally {
+      vi.useRealTimers();
+      delete process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS;
+    }
+  });
+
+  it("一轮 prompt 结束时刷新活跃时间", async () => {
+    vi.useFakeTimers();
+    try {
+      const svc = new UnifiedAgentService();
+      await svc.init(baseConfig);
+      const engine = await svc.getOrCreateEngine("proj-prompt-end", baseConfig);
+      const promptEndHandler = engine.on.mock.calls.find(
+        ([event]: [string]) => event === "computer:promptEnd",
+      )?.[1] as () => void;
+      expect(promptEndHandler).toBeDefined();
+
+      // 一轮长 prompt 跑了 40 分钟：期间有活跃 prompt，sweep 只续期不回收
+      engine.getActivePromptCount = vi.fn(() => 1);
+      await vi.advanceTimersByTimeAsync(40 * 60_000);
+      const beforeEnd = (svc as any).engineLastActive.get("proj-prompt-end");
+
+      engine.getActivePromptCount = vi.fn(() => 0);
+      promptEndHandler();
+      const afterEnd = (svc as any).engineLastActive.get("proj-prompt-end");
+      expect(afterEnd).toBeGreaterThanOrEqual(beforeEnd);
+      expect(Date.now() - afterEnd).toBeLessThan(1_000);
+
+      // prompt 刚结束不久，不应被当成闲置回收
+      await vi.advanceTimersByTimeAsync(60_000);
+      await (svc as any).sweepIdleEngines();
+      expect((svc as any).engines.has("proj-prompt-end")).toBe(true);
+      expect(engine.destroy).not.toHaveBeenCalled();
+      await svc.destroy();
+    } finally {
+      vi.useRealTimers();
+      delete process.env.NUWAX_ENGINE_IDLE_TIMEOUT_MS;
+    }
   });
 });
 

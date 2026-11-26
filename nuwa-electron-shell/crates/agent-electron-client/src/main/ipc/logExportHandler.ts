@@ -10,7 +10,8 @@ import path from "node:path";
 import log from "electron-log";
 import { getAppDataDir } from "../services/system/appPaths";
 import { t } from "../services/i18n";
-import { exportLogArchive } from "../services/utils/logArchive";
+import { exportLogArchive, type LogArchiveExtra } from "../services/utils/logArchive";
+import { buildDiagnosticArchiveExtras } from "../services/engines/sessionSetupArchiveExtras";
 import { isHostRendererSender } from "./bridgeTrust";
 import { formatLocalFileTimestamp } from "../features";
 
@@ -54,9 +55,17 @@ export function registerLogExportHandler(ctx: HandlerContext): void {
       const destination = saved.filePath.toLowerCase().endsWith(".zip")
         ? saved.filePath
         : `${saved.filePath}.zip`;
+      let extras: LogArchiveExtra[] = [];
+      try {
+        extras = buildDiagnosticArchiveExtras();
+      } catch (error) {
+        // 诊断条目拿不到不应挡住主日志导出
+        log.warn("[IPC] diagnostic archive extras unavailable:", error);
+      }
       await exportLogArchive(
         path.join(getAppDataDir(), LOGS_DIR_NAME),
         destination,
+        extras,
       );
       return { success: true, filePath: destination };
     } catch (error) {

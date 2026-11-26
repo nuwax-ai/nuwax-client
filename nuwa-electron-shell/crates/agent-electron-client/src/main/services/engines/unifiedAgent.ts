@@ -17,7 +17,10 @@ import { firstTokenTrace } from "./perf/firstTokenTrace";
 export { AcpEngine } from "./acp/acpEngine";
 export { mapAgentCommand, resolveAgentEnv } from "./agentHelpers";
 
-import { AcpEngine } from "./acp/acpEngine";
+import {
+  AcpEngine,
+  registerActiveIsolatedHomesProvider,
+} from "./acp/acpEngine";
 import { loadAcpSdk } from "./acp/acpClient";
 import {
   pruneStaleProjectIsolatedHomes,
@@ -236,6 +239,8 @@ export class UnifiedAgentService extends EventEmitter {
     // Start process registry sweep to detect orphan ACP processes
     processRegistry.bindActivePidsFn(() => this.getActivePids());
     processRegistry.startPeriodicSweep(300_000);
+    // 会话建立恢复链路隔离 home 前，要知道这个 home 是否还被别的引擎共用
+    registerActiveIsolatedHomesProvider(() => this.getActiveIsolatedHomeList());
     // 空闲驱逐 sweep（env 可禁用）；unref 不阻止进程退出
     this.startIdleSweep();
     setImmediate(() => {
@@ -439,6 +444,19 @@ export class UnifiedAgentService extends EventEmitter {
       // 防御：注册表可能混入部分实现/测试 mock（缺方法），sweep 是后台异步路径
       const home = engine.getIsolatedHome?.() ?? null;
       if (home) paths.add(home);
+    }
+    return paths;
+  }
+
+  /**
+   * 全部活跃引擎的 isolated home，保留重复。常规项目的多个对话可以共用一个 home，
+   * 判断「home 是否还被别的引擎在用」需要按引擎计数，Set 会把重复折叠掉。
+   */
+  getActiveIsolatedHomeList(): string[] {
+    const paths: string[] = [];
+    for (const engine of this.engines.values()) {
+      const home = engine.getIsolatedHome?.() ?? null;
+      if (home) paths.push(home);
     }
     return paths;
   }
@@ -754,17 +772,18 @@ export class UnifiedAgentService extends EventEmitter {
       !mcpChanged
     ) {
       perfEmitter.duration("engine.fastPath", Date.now() - t0, { engineKey });
-      firstTokenTrace.trace(
-        "engine.ensure.fast_path",
-        {
-          requestId: request.request_id,
-          sessionId: request.session_id,
-          projectId: request.project_id,
-          engine: existingEngine.engineName,
-        },
-        { engineKey },
-      );
-      return existingEngine;
+        firstTokenTrace.trace(
+          "engine.ensure.fast_path",
+          {
+            requestId: request.request_id,
+            sessionId: request.session_id,
+            projectId: request.project_id,
+            engine: existingEngine.engineName,
+          },
+          { engineKey },
+        );
+        this.touchEngineActivity(existingEngine);
+        return existingEngine;
     }
 
     perfEmitter.point("engine.fullPath", { engineKey });
@@ -825,6 +844,7 @@ export class UnifiedAgentService extends EventEmitter {
           projectId: request.project_id,
           engine: existingEngine.engineName,
         });
+        this.touchEngineActivity(existingEngine);
         return existingEngine;
       }
 
@@ -833,6 +853,7 @@ export class UnifiedAgentService extends EventEmitter {
         log.warn(
           `[UnifiedAgent] ⚠️ Config changed for project ${registryKey} but has active prompts (${existingEngine.getActivePromptCount()}), using current engine`,
         );
+        this.touchEngineActivity(existingEngine);
         return existingEngine;
       }
 
@@ -1257,12 +1278,24 @@ export class UnifiedAgentService extends EventEmitter {
 
   // === Helpers ===
 
+  /**
+   * 刷新引擎的最近活跃时间。消息到达（含快速路径）和一轮 prompt 结束时都会调用：
+   * 否则一条跑了很久的 prompt 一结束，引擎就会被下一轮空闲 sweep 当成「闲置超过
+   * 30 分钟」立刻回收，下一条消息又要冷启动（多一次 session/load）。
+   */
+  private touchEngineActivity(engine: AcpEngine): void {
+    for (const [key, candidate] of this.engines) {
+      if (candidate === engine) this.engineLastActive.set(key, Date.now());
+    }
+  }
+
   private forwardEvents(engine: AcpEngine): void {
     // 事件白名单转发 + assistant 文本记忆缓冲见 engineEventForwarder.ts
     attachEngineEventForwarders(engine, {
       emit: (event, ...args) => this.emit(event, ...args),
       assistantTextBuffers: this.assistantTextBuffers,
     });
+    engine.on("computer:promptEnd", () => this.touchEngineActivity(engine));
   }
 }
 

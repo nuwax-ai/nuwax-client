@@ -42,24 +42,41 @@
 2. `session/load`：成功保留上下文；报错记原因后建新会话；软超时告警继续等；硬超时则销毁进程、该 `session_id` 进黑名单，再建新会话。
 3. `session/new` 超时：
    - 本请求还没重建过：销毁并用原配置重启，重试一次。
-   - 已重建过：满足隔离约束则隔离 home，重启，再试一次。
+   - 已重建过：满足隔离约束则隔离 home，重启，再试一次。隔离发生在「销毁之后、重启之前」——进程还占着 home 里的文件时改不了名。
    - 仍失败：销毁进程，开熔断，返回结构化错误。
 4. 模型同步超时：销毁进程，返回结构化错误，本请求不再重试。
 
+「足额超时」指预算没有被总时限截短时的超时。一次链路里出现两次及以上足额超时，收尾时都会开熔断（包括最后一次尝试因预算不足而放弃的情况）；只有一次足额超时时不开熔断。
+
 **隔离 home 的约束**：
 
+- 只对 nuwaxcode。它的模型凭据随环境变量下发，home 里只有会话数据；其他引擎的 home 可能存登录态，换一个干净 home 等于把用户登出。
 - 只对持久化的 project home。
-- 同一 home 还有其他活跃引擎时不隔离。
+- 同一 home 还有其他活跃引擎时不隔离（常规项目的多个对话共用一个 home，按引擎计数）。
 - 每个 home 每次运行最多一次。
 - 本次运行里若有别的会话也出现建会话超时，视为机器级变慢，不隔离。
 - 做法是把 `<engine>/home` 改名为 `home.quarantine-<时间戳>`，原数据保留 7 天。
+- 总开关：`NUWAX_SESSION_SETUP_AUTO_QUARANTINE=0`（或 `false`、`off`）关闭自动隔离，关闭后退化为「快速失败」。
 
 **进程内状态**（重启清空）：
 
 - 恢复黑名单：硬超时过的 `session_id` 本次运行不再 load。
 - 熔断：判为环境卡死后，该会话 5 分钟内直接返回错误；到期自动再试，不再隔离。
 
-**并发**：同一会话的并发消息共享一次建立过程，含错误；建立完成后沿用现有 `runDispatch` 顶替。
+**并发**：同一会话的并发消息共享一次建立过程，含错误；建立完成后沿用现有 `runDispatch` 顶替。同一引擎上的建立过程串行，避免两条链路互相销毁对方正在用的进程。
+
+**诊断**：
+
+- `[SessionSetup]` 日志：成功走原有 `sessionSetup.summary`（补充 `fallbackReason`、`loadMs`、`recycled`、`quarantined`、`slowRestore`）；失败、恢复成功另有 warn 级摘要。
+- 判为卡死（`engine_env_hang`、`quarantine_failed`、`setup_timeout`）时，把引擎日志尾部（`<home>/.local/share/opencode/log/opencode.log`，末尾 80 行、64KB 上限、逐行脱敏）写进主日志。
+- 进程内保留最近 20 条「出过状况」的建立过程（失败、重建过进程、隔离过 home、恢复变慢）；导出日志时写入 `diagnostics/session-setup.json`，并附上各引擎 home 的引擎日志末尾 256KB（最多 50 份，最近的优先）。
+
+**home 清理**：
+
+- project home 的陈旧判定取「home 自身 mtime」与「其下最新条目 mtime」的较大者，扫描上限 5000 条，触顶按在用处理。
+- 引擎日志按文件时间保留 7 天，不再按日志目录的 mtime 整目录删除。
+- 隔离目录保留 7 天后回收。
+- 引擎的最近活跃时间在消息到达（含快速路径）和一轮 prompt 结束时刷新，避免被空闲回收后多一次冷恢复。
 
 **对外字段**（`ComputerChatResponse`，类型不变）：
 
@@ -71,9 +88,11 @@
 
 | 行为点 | 说明 |
 |---|---|
-| 所有引擎 | 链路在 `AcpEngine` 内，claude-code、nuwaxcode、codex、harness 共用 |
+| 所有引擎 | 预算、重建进程、熔断在 `AcpEngine` 内，claude-code、nuwaxcode、codex、harness 共用 |
+| 自动隔离 home | 仅 nuwaxcode，见上方约束 |
 | Windows | 进程树 kill 与 home 改名需安装包实机验收；改名失败归入 `quarantine_failed` |
 | stable / beta | 摘要日志为 info 级，两条通道都落盘 |
+| 引擎版本 | nuwaxcode 1.17.11 不读 `OPENCODE_LOG_DIR`、不支持 `--log-dir`；读引擎日志统一走 `readEngineLogTail` / `collectEngineLogFiles` |
 
 ## 异常与失败场景
 

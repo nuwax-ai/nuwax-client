@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   archive: vi.fn(),
   error: vi.fn(),
+  warn: vi.fn(),
+  extras: vi.fn(),
   packaged: false,
   url: "file:///app/index.html",
 }));
@@ -23,9 +25,12 @@ vi.mock("electron", () => ({
     handle: (name: string, handler: any) => mocks.handlers.set(name, handler),
   },
 }));
-vi.mock("electron-log", () => ({ default: { error: mocks.error } }));
+vi.mock("electron-log", () => ({ default: { error: mocks.error, warn: mocks.warn } }));
 vi.mock("../services/utils/logArchive", () => ({
   exportLogArchive: mocks.archive,
+}));
+vi.mock("../services/engines/sessionSetupArchiveExtras", () => ({
+  buildDiagnosticArchiveExtras: mocks.extras,
 }));
 vi.mock("../services/i18n", () => ({ t: (key: string) => key }));
 vi.mock("../services/auth/businessOrigins", () => ({
@@ -53,6 +58,7 @@ beforeEach(() => {
     filePath: "/downloads/feedback.zip",
   });
   mocks.archive.mockResolvedValue(undefined);
+  mocks.extras.mockReturnValue([]);
   registerLogExportHandler(ctx);
 });
 afterEach(() => vi.useRealTimers());
@@ -96,6 +102,7 @@ describe("shell log ZIP export IPC", () => {
     expect(mocks.archive).toHaveBeenCalledWith(
       path.join("/fixture/home", APP_DATA_DIR_NAME, "logs"),
       "/downloads/feedback.zip",
+      [],
     );
     const [parent, options] = mocks.save.mock.calls[0];
     expect(parent).toBe(host);
@@ -151,5 +158,39 @@ describe("shell log ZIP export IPC", () => {
     });
     expect(mocks.error).toHaveBeenCalled();
     expect(await run()).toMatchObject({ success: true });
+  });
+
+  it("把诊断条目（会话建立摘要、引擎日志尾部）随主日志一起导出", async () => {
+    const extras = [
+      { name: "diagnostics/session-setup.json", content: Buffer.from("{}") },
+      {
+        name: "engine-logs/u1/1759004/nuwaxcode/home/opencode.log",
+        source: "/fixture/engine/opencode.log",
+        tailBytes: 4096,
+      },
+    ];
+    mocks.extras.mockReturnValue(extras);
+
+    expect(await run()).toMatchObject({ success: true });
+    expect(mocks.extras).toHaveBeenCalledTimes(1);
+    expect(mocks.archive).toHaveBeenCalledWith(
+      path.join("/fixture/home", APP_DATA_DIR_NAME, "logs"),
+      "/downloads/feedback.zip",
+      extras,
+    );
+  });
+
+  it("诊断条目拿不到时仍导出主日志", async () => {
+    mocks.extras.mockImplementation(() => {
+      throw new Error("engine log directory unreadable");
+    });
+
+    expect(await run()).toMatchObject({ success: true });
+    expect(mocks.warn).toHaveBeenCalled();
+    expect(mocks.archive).toHaveBeenCalledWith(
+      path.join("/fixture/home", APP_DATA_DIR_NAME, "logs"),
+      "/downloads/feedback.zip",
+      [],
+    );
   });
 });
