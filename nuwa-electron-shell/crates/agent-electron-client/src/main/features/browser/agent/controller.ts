@@ -34,12 +34,24 @@ export interface AgentBrowserPage {
   url: string;
   origin: string;
   active: boolean;
+  /** Set only for pages in an agent-owned dedicated window. */
+  agentWindow?: {
+    sessionKey: string;
+    windowId: string;
+    tabId: string;
+  } | null;
 }
 
 export interface AgentBrowserPageSource {
+  /** User ordinary pages; must not include agent-owned windows. */
   list(): AgentBrowserPage[];
   resolve(contents: WebContents): AgentBrowserPage | null;
   activate?(contents: WebContents): boolean;
+  /** Resolve a tab in the caller's own agent window by opaque tab id. */
+  resolveOwnedTab?(
+    sessionKey: string,
+    tabId: string,
+  ): AgentBrowserPage | null;
 }
 
 export interface AgentBrowserAuthorizationRequest {
@@ -53,7 +65,12 @@ export type AgentBrowserConfirm = (
   request: AgentBrowserAuthorizationRequest,
 ) => Promise<number | null>;
 
-export type AgentBrowserActionKind = "click" | "type" | "navigate";
+export type AgentBrowserActionKind =
+  | "click"
+  | "type"
+  | "navigate"
+  | "open-window"
+  | "open-tab";
 
 export interface AgentBrowserAction {
   kind: AgentBrowserActionKind;
@@ -121,6 +138,9 @@ export type RevokeReason =
   | "sessionEnded"
   | "turnEnded"
   | "turnCancelled"
+  | "tabSwitched"
+  | "tabClosed"
+  | "tabInactive"
   | "disconnected"
   | "featureDisabled";
 
@@ -260,6 +280,7 @@ export class AgentBrowserController {
     conversationId: string | null,
     reason: string,
     signal?: AbortSignal,
+    target: { sessionKey?: string | null; tabId?: string } = {},
   ): Promise<AgentToolOutcome> {
     if (this.disposed || this.options.enabled?.() === false)
       throw new AgentBrowserError(
@@ -268,20 +289,65 @@ export class AgentBrowserController {
       );
     const existing = this.byOwner.get(owner);
     if (existing && !existing.revoked) {
+      let live = true;
       try {
         this.assertLive(existing);
-        return this.pageOutcome(existing);
       } catch {
-        /* The old binding was revoked; continue with a fresh authorization. */
+        // The binding was revoked; continue with a fresh authorization.
+        live = false;
+      }
+      if (live && this.byOwner.get(owner) === existing) {
+        if (!target.tabId) return this.pageOutcome(existing);
+        const owned = target.sessionKey
+          ? this.options.pages.resolveOwnedTab?.(
+              target.sessionKey,
+              target.tabId,
+            )
+          : null;
+        if (owned?.contents.id === existing.contents.id)
+          return this.pageOutcome(existing);
+        throw new AgentBrowserError(
+          "pageBusy",
+          "This session already controls a different tab. Call nuwax_browser_release_access first.",
+        );
       }
     }
 
-    const pages = this.availablePages();
+    let pages: AgentBrowserPage[];
+    if (target.tabId !== undefined) {
+      if (
+        !target.sessionKey ||
+        !this.options.pages.resolveOwnedTab
+      )
+        throw new AgentBrowserError(
+          "notAuthorized",
+          "tabId is only available for a tab in the agent's own window.",
+        );
+      const owned = this.options.pages.resolveOwnedTab(
+        target.sessionKey,
+        target.tabId,
+      );
+      if (!owned)
+        throw new AgentBrowserError(
+          "unknownTab",
+          "The tabId is not a live tab in your own agent window. Use nuwax_browser_list_tabs.",
+        );
+      if (!owned.active)
+        throw new AgentBrowserError(
+          "tabInactive",
+          "Switch to that tab before requesting access.",
+        );
+      pages = [owned];
+    } else {
+      // The legacy user-choice flow never mixes in agent-owned windows.
+      pages = this.options.pages.list().filter((page) => !page.agentWindow);
+    }
+    pages = this.availablePages(pages);
     const candidates = pages.filter((page) => !this.byPage.has(page.contents.id));
     if (pages.length === 0)
       throw new AgentBrowserError(
         "noPage",
-        "No ordinary webpage tab is open in the built-in browser. Ask the user to open the target page in the Nuwax browser first.",
+        "No ordinary user webpage tab is open. Use nuwax_browser_list_tabs and request access with your own tabId, or ask the user to open a page in the Nuwax browser.",
       );
     if (candidates.length === 0)
       throw new AgentBrowserError(
@@ -329,11 +395,22 @@ export class AgentBrowserController {
         "The built-in browser was disabled before authorization completed.",
       );
     const chosen = candidates[choice]!;
-    const current = this.options.pages.resolve(chosen.contents);
-    if (!current)
+    const current =
+      target.tabId !== undefined && target.sessionKey
+        ? this.options.pages.resolveOwnedTab?.(
+            target.sessionKey,
+            target.tabId,
+          ) ?? null
+        : this.options.pages.resolve(chosen.contents);
+    if (!current || current.contents.id !== chosen.contents.id)
       throw new AgentBrowserError(
         "pageChanged",
         "The selected tab closed before authorization completed. Ask the user to try again.",
+      );
+    if (current.agentWindow && !current.active)
+      throw new AgentBrowserError(
+        "tabInactive",
+        "The selected tab is no longer active. Switch to it and request access again.",
       );
     const origin = httpOrigin(current.url);
     if (!origin || origin !== httpOrigin(chosen.url) || origin !== chosen.origin)
@@ -378,6 +455,7 @@ export class AgentBrowserController {
     tool: string,
     rawArgs: unknown,
     signal?: AbortSignal,
+    sessionKey: string | null = null,
   ): Promise<AgentToolOutcome> {
     if (this.disposed || this.options.enabled?.() === false)
       throw new AgentBrowserError(
@@ -386,7 +464,7 @@ export class AgentBrowserController {
       );
     switch (tool) {
       case "nuwax_browser_request_access": {
-        const args = strictArgs(rawArgs, ["reason"]);
+        const args = strictArgs(rawArgs, ["reason", "tabId"]);
         const reason =
           args.reason === undefined
             ? ""
@@ -395,7 +473,17 @@ export class AgentBrowserController {
               : (() => {
                   throw invalidArguments("reason must be a string.");
                 })();
-        return this.requestAccess(owner, conversationId, reason, signal);
+        if (
+          args.tabId !== undefined &&
+          (typeof args.tabId !== "string" ||
+            args.tabId.length === 0 ||
+            args.tabId.length > 128)
+        )
+          throw invalidArguments("tabId must be an opaque tab id.");
+        return this.requestAccess(owner, conversationId, reason, signal, {
+          sessionKey,
+          tabId: args.tabId as string | undefined,
+        });
       }
       case "nuwax_browser_release_access": {
         strictArgs(rawArgs, []);
@@ -673,10 +761,10 @@ export class AgentBrowserController {
     this.listeners.clear();
   }
 
-  private availablePages(): AgentBrowserPage[] {
+  private availablePages(input: AgentBrowserPage[]): AgentBrowserPage[] {
     const seen = new Set<number>();
     const pages: AgentBrowserPage[] = [];
-    for (const page of this.options.pages.list()) {
+    for (const page of input) {
       if (!page.contents || page.contents.isDestroyed()) continue;
       if (seen.has(page.contents.id)) continue;
       if (!httpOrigin(page.url)) continue;
@@ -689,6 +777,7 @@ export class AgentBrowserController {
   private pageOutcome(binding: Binding): AgentToolOutcome {
     const title = binding.contents.getTitle() || "";
     const url = binding.contents.getURL();
+    const page = this.options.pages.resolve(binding.contents);
     return outcome(
       `Authorized ${binding.origin}${title ? ` (${title})` : ""} for this agent session.`,
       {
@@ -697,6 +786,8 @@ export class AgentBrowserController {
         url,
         origin: binding.origin,
         conversationId: binding.conversationId,
+        tabId: page?.agentWindow?.tabId ?? null,
+        windowId: page?.agentWindow?.windowId ?? null,
       },
     );
   }
@@ -814,6 +905,14 @@ export class AgentBrowserController {
         "The authorized page is no longer an ordinary browser tab. Ask the user to authorize a tab again.",
       );
     }
+    // Agent-owned windows only operate on the tab that is actually in front.
+    if (page.agentWindow && !page.active) {
+      this.revoke(binding, "tabInactive");
+      throw new AgentBrowserError(
+        "reauthRequired",
+        "The agent tab is no longer active. Switch to it and request access again.",
+      );
+    }
     const origin = httpOrigin(binding.contents.getURL());
     if (!origin || origin !== binding.origin) {
       this.revoke(binding, "crossOrigin");
@@ -879,6 +978,16 @@ export class AgentBrowserController {
           );
         if (this.byPage.get(binding.contents.id) !== binding)
           throw cancelled("Agent browser control ended.");
+        const page = this.options.pages.resolve(binding.contents);
+        if (!page) {
+          this.revoke(binding, "pageUnavailable");
+          throw cancelled("The authorized page is no longer available.");
+        }
+        // Never dispatch a step against a background tab in an agent window.
+        if (page.agentWindow && !page.active) {
+          this.revoke(binding, "tabInactive");
+          throw cancelled("The agent tab is no longer active.");
+        }
         signal.throwIfAborted();
       },
     };

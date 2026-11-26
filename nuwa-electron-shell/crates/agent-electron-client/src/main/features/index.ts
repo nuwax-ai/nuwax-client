@@ -326,6 +326,7 @@ export { formatLocalFileTimestamp } from "./_kit/fileTimestamp";
 
 export {
   createDesktopBrowserPage,
+  isAgentOwnedBrowserPage,
   isDesktopBrowserAvailable,
   notifyAgentBrowserNewWindow,
   refreshDesktopBrowserWindows,

@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   configureAgent: vi.fn(),
   listAgentPages: vi.fn(() => []),
+  listAgentTabs: vi.fn((sessionKey: string) => ({
+    windowId: `fixture-${sessionKey}`,
+    tabs: [],
+  })),
   resolveAgentPage: vi.fn(() => null),
   activateAgentPage: vi.fn(() => false),
   refresh: vi.fn(),
@@ -69,6 +73,7 @@ beforeEach(() => {
     dispose: mocks.dispose,
     configureAgent: mocks.configureAgent,
     listAgentPages: mocks.listAgentPages,
+    listAgentTabs: mocks.listAgentTabs,
     resolveAgentPage: mocks.resolveAgentPage,
     activateAgentPage: mocks.activateAgentPage,
     refresh: mocks.refresh,
@@ -231,11 +236,35 @@ describe("browser feature lifecycle", () => {
         env?: Array<{ name: string; value: string }>;
       }> = [];
       const otherPrepared = other.prepare(otherServers);
-      otherPrepared.bind("session-2");
+      // Two independent engines can return the same ACP session ID.
+      otherPrepared.bind("session-3");
       const otherFile = Object.fromEntries(
         (otherServers[0]?.env ?? []).map((item) => [item.name, item.value]),
       ).NUWAX_BROWSER_SESSION!;
       expect(fs.existsSync(otherFile)).toBe(true);
+      const listWindow = async (file: string) => {
+        const relay = mcpClient(Number(env.NUWAX_BROWSER_PORT));
+        try {
+          await relay.opened;
+          relay.send({ token, grant: fs.readFileSync(file, "utf8") });
+          relay.send({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "nuwax_browser_list_tabs", arguments: {} },
+          });
+          return (await relay.next()).result.structuredContent.windowId;
+        } finally {
+          relay.socket.destroy();
+        }
+      };
+      participant.start("session-3");
+      other.start("session-3");
+      const [firstWindow, otherWindow] = await Promise.all([
+        listWindow(freshFile),
+        listWindow(otherFile),
+      ]);
+      expect(firstWindow).not.toBe(otherWindow);
       participant.destroy();
       expect(fs.existsSync(freshFile)).toBe(false);
       expect(fs.existsSync(otherFile)).toBe(true);

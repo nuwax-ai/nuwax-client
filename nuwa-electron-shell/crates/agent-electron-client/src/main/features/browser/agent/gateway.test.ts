@@ -108,6 +108,22 @@ describe("BrowserGateway authentication", () => {
     });
     expect(observe.description).toContain("structuredContent.outline");
     expect(observe.description.toLowerCase()).toContain("never guess");
+    const names = tools.result.tools.map(
+      (tool: { name: string }) => tool.name,
+    );
+    for (const name of [
+      "nuwax_browser_open_window",
+      "nuwax_browser_list_tabs",
+      "nuwax_browser_open_tab",
+      "nuwax_browser_switch_tab",
+      "nuwax_browser_close_tab",
+      "nuwax_browser_close_window",
+    ])
+      expect(names).toContain(name);
+    const openWindow = tools.result.tools.find(
+      (tool: { name: string }) => tool.name === "nuwax_browser_open_window",
+    );
+    expect(openWindow.inputSchema.required).toEqual(["url"]);
     connection.send({
       jsonrpc: "2.0",
       id: 3,
@@ -130,7 +146,7 @@ describe("BrowserGateway session binding", () => {
       image: { mimeType: "image/png", data: "cG5n" },
     }));
     const { gateway, disconnect } = setup(
-      { g1: { owner: "session-a", conversationId: "conv-1", active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: "conv-1", active: true } },
       call,
     );
     const port = await gateway.listen("correct");
@@ -147,6 +163,7 @@ describe("BrowserGateway session binding", () => {
     expect(call).toHaveBeenCalledWith(
       expect.objectContaining({
         owner: "session-a",
+        sessionKey: "session-a",
         conversationId: "conv-1",
         tool: "nuwax_browser_observe",
       }),
@@ -180,7 +197,7 @@ describe("BrowserGateway session binding", () => {
         }),
     );
     const { gateway, cancel } = setup(
-      { g1: { owner: "session-a", conversationId: null, active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: true } },
       call,
     );
     const port = await gateway.listen("correct");
@@ -214,7 +231,7 @@ describe("BrowserGateway session binding", () => {
       throw new AgentBrowserError("uncertain", "may have run", true);
     });
     const { gateway } = setup(
-      { g1: { owner: "session-a", conversationId: null, active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: true } },
       call,
     );
     const port = await gateway.listen("correct");
@@ -245,7 +262,7 @@ describe("BrowserGateway turn and transport lifecycle", () => {
       structured: { ok: true },
     }));
     const grants = {
-      g1: { owner: "session-a", conversationId: null, active: false },
+      g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: false },
     };
     const { gateway } = setup(grants, call);
     const port = await gateway.listen("correct");
@@ -293,7 +310,7 @@ describe("BrowserGateway turn and transport lifecycle", () => {
       structured: { ok: true },
     }));
     const { gateway, disconnect } = setup(
-      { g1: { owner: "session-a", conversationId: null, active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: true } },
       call,
     );
     const port = await gateway.listen("correct");
@@ -335,7 +352,7 @@ describe("BrowserGateway observation content", () => {
       },
     }));
     const { gateway } = setup(
-      { g1: { owner: "session-a", conversationId: null, active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: true } },
       call,
     );
     const port = await gateway.listen("correct");
@@ -380,7 +397,7 @@ describe("BrowserGateway observation content", () => {
       image: { mimeType: "image/jpeg", data: "aGVsbG8=" },
     }));
     const { gateway } = setup(
-      { g1: { owner: "session-a", conversationId: null, active: true } },
+      { g1: { owner: "session-a", sessionKey: "session-a", conversationId: null, active: true } },
       call,
     );
     const port = await gateway.listen("correct");

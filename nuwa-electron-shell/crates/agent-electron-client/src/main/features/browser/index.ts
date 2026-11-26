@@ -20,7 +20,12 @@ import {
   type RevokeReason,
 } from "./agent/controller";
 import { BrowserGateway } from "./agent/gateway";
-import { AGENT_BROWSER_RELAY, AGENT_BROWSER_SERVER } from "./agent/tools";
+import { AgentWindowManager } from "./agent/windowManager";
+import {
+  AGENT_BROWSER_RELAY,
+  AGENT_BROWSER_SERVER,
+  AGENT_WINDOW_TOOL_NAMES,
+} from "./agent/tools";
 import {
   createBrowserWindows,
   type BrowserPage,
@@ -56,6 +61,15 @@ export function notifyAgentBrowserNewWindow(opener: WebContents): void {
     active?.revokeOpener(opener);
   } catch {
     /* Best effort: the controller also watches the opener directly. */
+  }
+}
+
+/** Agent-owned pages must never open popups into the user's shared window. */
+export function isAgentOwnedBrowserPage(contents: WebContents): boolean {
+  try {
+    return active?.windows.isAgentOwnedPage?.(contents) === true;
+  } catch {
+    return false;
   }
 }
 
@@ -144,6 +158,7 @@ async function confirmAgentBrowserAction(
   const labels = {
     title: t("Claw.Browser.agentActionTitle"),
     message: t("Claw.Browser.agentActionMessage"),
+    openMessage: t("Claw.Browser.agentActionOpenMessage"),
     session: t("Claw.Browser.agentRequestSession"),
     unknownSession: t("Claw.Browser.agentRequestUnknownSession"),
     site: t("Claw.Browser.agentActionSite"),
@@ -151,6 +166,8 @@ async function confirmAgentBrowserAction(
     click: t("Claw.Browser.agentActionClick"),
     type: t("Claw.Browser.agentActionType"),
     navigate: t("Claw.Browser.agentActionNavigate"),
+    openWindow: t("Claw.Browser.agentActionOpenWindow"),
+    openTab: t("Claw.Browser.agentActionOpenTab"),
     submit: t("Claw.Browser.agentActionSubmit"),
     element: t("Claw.Browser.agentActionElement"),
     target: t("Claw.Browser.agentActionTarget"),
@@ -164,7 +181,11 @@ async function confirmAgentBrowserAction(
       ? labels.click
       : action.kind === "type"
         ? labels.type
-        : labels.navigate;
+        : action.kind === "navigate"
+          ? labels.navigate
+          : action.kind === "open-window"
+            ? labels.openWindow
+            : labels.openTab;
   const element = action.element
     ? `${safeLabel(action.element.role)}${action.element.name ? ` ${JSON.stringify(truncate(safeLabel(action.element.name), 80))}` : ""}`
     : "";
@@ -173,7 +194,10 @@ async function confirmAgentBrowserAction(
     `${labels.site}: ${request.page.origin}`,
     `${labels.action}: ${actionText}`,
     ...(element ? [`${labels.element}: ${element}`] : []),
-    ...(action.kind === "navigate" && action.url
+    ...(action.url &&
+    (action.kind === "navigate" ||
+      action.kind === "open-window" ||
+      action.kind === "open-tab")
       ? [`${labels.target}: ${safeLabel(action.url)}`]
       : []),
     ...(action.submit ? [labels.submit] : []),
@@ -189,10 +213,14 @@ async function confirmAgentBrowserAction(
             return undefined;
           }
         })();
+  const message =
+    action.kind === "open-window" || action.kind === "open-tab"
+      ? labels.openMessage
+      : labels.message;
   const options = {
     type: "question" as const,
     title: labels.title,
-    message: labels.message,
+    message,
     detail,
     buttons: [labels.allow, labels.deny],
     // Default and Escape deny the action.
@@ -224,33 +252,32 @@ export const browserFeature: DesktopFeature = {
   register(ctx) {
     const windows = createBrowserWindows(ctx);
     let disposed = false;
+    const enabled = () => {
+      try {
+        return ctx.settings.read(BROWSER_FEATURE_SETTING) !== false;
+      } catch {
+        return false;
+      }
+    };
     const controller = new AgentBrowserController({
       pages: {
-        list: () => windows.listAgentPages(),
+        // Default access lists user pages only; agent windows are targeted by tabId.
+        list: () =>
+          windows.listUserAgentPages?.() ?? windows.listAgentPages?.() ?? [],
         resolve: (contents) => windows.resolveAgentPage(contents),
         activate: (contents) => windows.activateAgentPage(contents),
+        resolveOwnedTab: (sessionKey, tabId) =>
+          windows.resolveOwnedAgentPage?.(sessionKey, tabId) ?? null,
       },
-      enabled: () => {
-        try {
-          return ctx.settings.read(BROWSER_FEATURE_SETTING) !== false;
-        } catch {
-          return false;
-        }
-      },
+      enabled,
       log: ctx.log,
       confirm: (request) => confirmAgentBrowserAccess(ctx, request),
       confirmAction: (request) => confirmAgentBrowserAction(ctx, request),
     });
-    windows.configureAgent?.({
-      state: (contentsId) => controller.stateFor(contentsId),
-      revokeAll: () => controller.revokeAll("revokedByUser"),
-      revoke: (contents) => controller.revokePage(contents, "revokedByUser"),
-    });
-
     type BrowserGrant = {
       secret: string;
       file: string;
-      sessionId: string | null;
+      sessionKey: string;
       /** One fresh generation per agent turn; null outside start..finish. */
       owner: string | null;
       active: boolean;
@@ -262,7 +289,10 @@ export const browserFeature: DesktopFeature = {
       const owner = grant.owner;
       grant.active = false;
       grant.owner = null;
-      if (owner) controller.revokeOwner(owner, reason);
+      if (owner) {
+        controller.revokeOwner(owner, reason);
+        windowManager.cancelOwner(owner);
+      }
     };
     const releaseGrant = (grant: BrowserGrant) => {
       if (grant.active) endGrantTurn(grant, "sessionEnded");
@@ -279,16 +309,55 @@ export const browserFeature: DesktopFeature = {
         releaseGrant(grant);
       }
     };
+    const windowManager = new AgentWindowManager({
+      windows,
+      enabled,
+      confirmAction: (request) => confirmAgentBrowserAction(ctx, request),
+      isActiveOwner: (sessionKey, owner) => {
+        for (const grant of grants.values())
+          if (
+            grant.sessionKey === sessionKey &&
+            grant.active &&
+            grant.owner === owner
+          )
+            return true;
+        return false;
+      },
+      controller: {
+        revokeOwner: (owner, reason) => controller.revokeOwner(owner, reason),
+        stateFor: (contentsId) => controller.stateFor(contentsId),
+      },
+      mainWindow: () => {
+        try {
+          return ctx.windows?.getMain?.() ?? null;
+        } catch {
+          return null;
+        }
+      },
+      log: ctx.log,
+    });
+    windows.configureAgent?.({
+      state: (contentsId) => controller.stateFor(contentsId),
+      revokeAll: () => {
+        windowManager.cancelPending();
+        controller.revokeAll("revokedByUser");
+      },
+      revoke: (contents) => controller.revokePage(contents, "revokedByUser"),
+    });
     const gateway = new BrowserGateway({
       owner: (grant) => grants.get(grant),
-      call: (input) =>
-        controller.call(
+      call: (input) => {
+        if (AGENT_WINDOW_TOOL_NAMES.has(input.tool))
+          return windowManager.call(input);
+        return controller.call(
           input.owner,
           input.conversationId,
           input.tool,
           input.args,
           input.signal,
-        ),
+          input.sessionKey,
+        );
+      },
       cancel: (owner) => controller.cancelOwner(owner),
       disconnect: (grant) => {
         const record = grants.get(grant);
@@ -363,13 +432,7 @@ export const browserFeature: DesktopFeature = {
               for (let index = servers.length - 1; index >= 0; index--)
                 if (servers[index].name === AGENT_BROWSER_SERVER)
                   servers.splice(index, 1);
-              let featureEnabled = true;
-              try {
-                featureEnabled =
-                  ctx.settings.read(BROWSER_FEATURE_SETTING) !== false;
-              } catch {
-                featureEnabled = false;
-              }
+              const featureEnabled = enabled();
               if (!entry || disposed || !directory || !featureEnabled)
                 return { bind() {}, cancel() {} };
               const secret = randomBytes(32).toString("hex");
@@ -382,7 +445,7 @@ export const browserFeature: DesktopFeature = {
               const grant: BrowserGrant = {
                 secret,
                 file,
-                sessionId: null,
+                sessionKey: randomUUID(),
                 owner: null,
                 active: false,
                 turn: 0,
@@ -404,7 +467,6 @@ export const browserFeature: DesktopFeature = {
                   if (!grants.has(grant.secret)) return;
                   const previous = sessions.get(sessionId);
                   if (previous && previous !== grant) dropGrant(previous);
-                  grant.sessionId = sessionId;
                   sessions.set(sessionId, grant);
                   try {
                     grant.conversationId =
@@ -472,7 +534,10 @@ export const browserFeature: DesktopFeature = {
                   {
                     id: "stop",
                     labelKey: "Claw.Browser.agentStop",
-                    run: () => controller.revokeAll("revokedByUser"),
+                    run: () => {
+                      windowManager.cancelPending();
+                      controller.revokeAll("revokedByUser");
+                    },
                   },
                 ],
               }
@@ -492,6 +557,7 @@ export const browserFeature: DesktopFeature = {
     });
 
     const revokeEverything = () => {
+      windowManager.cancelPending();
       controller.revokeAll("sessionEnded");
       revokeAllGrants();
       syncActivity();
@@ -499,6 +565,7 @@ export const browserFeature: DesktopFeature = {
     // Lock/suspend means the user is no longer present to watch the tab. Keep
     // the session grant so the same session can ask again after unlock.
     const revokeWhileAbsent = () => {
+      windowManager.cancelPending();
       controller.revokeAll("revokedByUser");
       syncActivity();
     };
@@ -510,7 +577,7 @@ export const browserFeature: DesktopFeature = {
     }
     const instance = {
       windows,
-      available: () => ctx.settings.read(BROWSER_FEATURE_SETTING) !== false,
+      available: enabled,
       revokeOpener: (contents: WebContents) => controller.revokePage(contents, "newWindow"),
     };
     active = instance;
@@ -580,6 +647,7 @@ export const browserFeature: DesktopFeature = {
       } catch {
         /* Best effort during shutdown. */
       }
+      windowManager.cancelPending();
       controller.dispose();
       windows.dispose();
       revokeAllGrants();

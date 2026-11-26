@@ -39,11 +39,11 @@ const mocks = vi.hoisted(() => {
     return ses;
   });
   return { findViews, focused: null as unknown, owner: null as unknown,
-    browserAvailable: true, createBrowserPage: vi.fn(), notifyAgentBrowserNewWindow: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
+    browserAvailable: true, createBrowserPage: vi.fn(), notifyAgentBrowserNewWindow: vi.fn(), isAgentOwnedPage: vi.fn(() => false), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
     attachHostActivityBusinessWindow: vi.fn(), trustInitialBusinessNavigation: vi.fn() };
 });
 const settings = new Map<string, unknown>();
-vi.mock("../../features", () => ({ isDesktopBrowserAvailable: () => mocks.browserAvailable, createDesktopBrowserPage: mocks.createBrowserPage, notifyAgentBrowserNewWindow: mocks.notifyAgentBrowserNewWindow }));
+vi.mock("../../features", () => ({ isDesktopBrowserAvailable: () => mocks.browserAvailable, createDesktopBrowserPage: mocks.createBrowserPage, notifyAgentBrowserNewWindow: mocks.notifyAgentBrowserNewWindow, isAgentOwnedBrowserPage: mocks.isAgentOwnedPage }));
 
 vi.mock("electron", () => ({
   app: { on: mocks.appOn },
@@ -179,6 +179,7 @@ beforeEach(async () => {
   mocks.attachHostActivityBusinessWindow.mockClear();
   mocks.trustInitialBusinessNavigation.mockClear();
   mocks.notifyAgentBrowserNewWindow.mockClear();
+  mocks.isAgentOwnedPage.mockReset().mockReturnValue(false);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -640,6 +641,20 @@ describe("download popup lifecycle", () => {
     const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
     return { result, contents, win: mocks.popupWindows.at(-1)! };
   }
+
+  it("denies popups from agent-owned pages instead of mixing them into shared windows", async () => {
+    const created = await setup();
+    const guest = attachedWebview(created, `${business}/home`);
+    mocks.isAgentOwnedPage.mockReturnValue(true);
+    const handler = guest.setWindowOpenHandler.mock.lastCall?.[0] as (
+      details: unknown,
+    ) => import("electron").WindowOpenHandlerResponse;
+    expect(handler(popup(`${business}/file`, `${business}/home`))).toEqual({
+      action: "deny",
+    });
+    expect(mocks.createBrowserPage).not.toHaveBeenCalled();
+    expect(mocks.notifyAgentBrowserNewWindow).not.toHaveBeenCalled();
+  });
 
   it("revokes agent control when the authorized page creates a new in-app page", async () => {
     const created = await setup();

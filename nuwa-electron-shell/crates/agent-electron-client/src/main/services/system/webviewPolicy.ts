@@ -24,7 +24,7 @@ import { attachHostActivityBusinessWindow } from "../hostActivity";
 import { isGuestNewTaskAvailable } from "../newTaskAvailability";
 import { t } from "../i18n";
 import { trustInitialBusinessNavigation } from "../sessionAuthInjection";
-import { createDesktopBrowserPage, notifyAgentBrowserNewWindow } from '../../features';
+import { createDesktopBrowserPage, isAgentOwnedBrowserPage, notifyAgentBrowserNewWindow } from '../../features';
 import { prefersDesktopBrowser, openSystemPopupLink, openSystemWebLink } from './webLinkRouting';
 import { externalWebUrl } from '../../ipc/openExternal';
 import { openWebviewFind } from './webviewFind';
@@ -279,6 +279,8 @@ export function createBusinessReadingPage(windowOptions: BrowserWindowConstructo
 
 /** Shared ordinary-link entry; dedicated business/payment windows do not use it. */
 export function openOrdinaryWebLink(value: string, opener?: WebContents): { success: boolean; error?: string } | Promise<{ success: boolean; error?: string }> {
+  if (opener && isAgentOwnedBrowserPage(opener))
+    return { success: false, error: 'agentPagePopupBlocked' };
   const url = externalWebUrl(value);
   if (!url) return { success: false, error: 'Invalid webpage URL' };
   if (!prefersDesktopBrowser()) return openSystemWebLink(url);
@@ -382,6 +384,9 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   if (!target) {
     return { action: "deny" };
   }
+  // Agent pages must use nuwax_browser_open_tab; never mix their popup into the
+  // user's shared window (or another agent window).
+  if (isAgentOwnedBrowserPage(opener)) return { action: "deny" };
   if (APP_NAME_IDENTIFIER === 'nuwax' && (target.username || target.password)) return { action: 'deny' };
 
   const openerUrl = parseHttpUrl(opener.getURL());

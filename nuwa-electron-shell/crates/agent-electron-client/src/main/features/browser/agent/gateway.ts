@@ -14,6 +14,8 @@ import { AGENT_BROWSER_TOOLS } from "./tools";
 export interface BrowserGrantRecord {
   /** Per-turn generation; null while no turn is active. */
   owner: string | null;
+  /** Host-issued window ownership key, independent of engine session IDs. */
+  sessionKey: string | null;
   conversationId: string | null;
   /** Session grants are usable only between participant start and finish. */
   active: boolean;
@@ -23,6 +25,7 @@ export interface BrowserGatewayOptions {
   owner(grant: string): BrowserGrantRecord | undefined;
   call(input: {
     owner: string;
+    sessionKey: string | null;
     conversationId: string | null;
     tool: string;
     args: unknown;
@@ -163,6 +166,7 @@ export class BrowserGateway {
       try {
         const result = await this.options.call({
           owner: bound.owner,
+          sessionKey: bound.sessionKey,
           conversationId: bound.conversationId,
           tool: typeof rpc.params?.name === "string" ? rpc.params.name : "",
           args: rpc.params?.arguments,

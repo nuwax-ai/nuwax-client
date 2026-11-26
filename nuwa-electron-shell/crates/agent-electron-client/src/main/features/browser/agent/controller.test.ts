@@ -107,6 +107,12 @@ function setup(options: { actionTimeoutMs?: number } = {}) {
     resolve: (candidate: WebContents) =>
       page && candidate === (contents as unknown as WebContents) ? page : null,
     activate: vi.fn(() => true),
+    resolveOwnedTab: (sessionKey: string, tabId: string) =>
+      page &&
+      page.agentWindow?.sessionKey === sessionKey &&
+      page.agentWindow.tabId === tabId
+        ? page
+        : null,
   };
   const confirm = vi.fn(async () => 0);
   const confirmAction = vi.fn(async () => true);
@@ -152,6 +158,12 @@ function setup(options: { actionTimeoutMs?: number } = {}) {
     click,
     setPage: (next: AgentBrowserPage | null) => {
       page = next;
+    },
+    setPageActive: (value: boolean) => {
+      if (page) page.active = value;
+    },
+    setAgentWindow: (value: AgentBrowserPage["agentWindow"]) => {
+      if (page) page.agentWindow = value;
     },
   };
 }
@@ -215,6 +227,106 @@ describe("AgentBrowserController authorization", () => {
       code: "pageBusy",
     });
     expect(f.confirm).toHaveBeenCalledOnce();
+  });
+
+  it("targets an own active tab by opaque tabId", async () => {
+    const f = setup();
+    f.setAgentWindow({
+      sessionKey: "session-1",
+      windowId: "win-1",
+      tabId: "tab-1",
+    });
+    const result = await f.controller.call(
+      "owner-a",
+      "conversation-1",
+      "nuwax_browser_request_access",
+      { reason: "test", tabId: "tab-1" },
+      undefined,
+      "session-1",
+    );
+    expect(f.confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pages: [
+          expect.objectContaining({
+            active: true,
+            agentWindow: {
+              sessionKey: "session-1",
+              windowId: "win-1",
+              tabId: "tab-1",
+            },
+          }),
+        ],
+      }),
+    );
+    expect(result.structured).toMatchObject({
+      authorized: true,
+      tabId: "tab-1",
+      windowId: "win-1",
+    });
+  });
+
+  it("keeps agent-owned tabs out of the legacy user-choice flow", async () => {
+    const f = setup();
+    f.setAgentWindow({
+      sessionKey: "session-1",
+      windowId: "win-1",
+      tabId: "tab-1",
+    });
+    await expect(f.authorize()).rejects.toMatchObject({ code: "noPage" });
+    expect(f.confirm).not.toHaveBeenCalled();
+  });
+
+  it("rejects a tabId from another session or an inactive own tab", async () => {
+    const f = setup();
+    f.setAgentWindow({
+      sessionKey: "session-1",
+      windowId: "win-1",
+      tabId: "tab-1",
+    });
+    await expect(
+      f.controller.call(
+        "owner-a",
+        "conversation-1",
+        "nuwax_browser_request_access",
+        { reason: "test", tabId: "tab-1" },
+        undefined,
+        "session-2",
+      ),
+    ).rejects.toMatchObject({ code: "unknownTab" });
+    f.setPageActive(false);
+    await expect(
+      f.controller.call(
+        "owner-a",
+        "conversation-1",
+        "nuwax_browser_request_access",
+        { reason: "test", tabId: "tab-1" },
+        undefined,
+        "session-1",
+      ),
+    ).rejects.toMatchObject({ code: "tabInactive" });
+    expect(f.confirm).not.toHaveBeenCalled();
+  });
+
+  it("revokes an agent tab as soon as it is no longer the active tab", async () => {
+    const f = setup();
+    f.setAgentWindow({
+      sessionKey: "session-1",
+      windowId: "win-1",
+      tabId: "tab-1",
+    });
+    await f.controller.call(
+      "owner-a",
+      "conversation-1",
+      "nuwax_browser_request_access",
+      { reason: "test", tabId: "tab-1" },
+      undefined,
+      "session-1",
+    );
+    f.setPageActive(false);
+    await expect(f.observe()).rejects.toMatchObject({
+      code: "reauthRequired",
+    });
+    expect(f.controller.stateFor(f.contents.id)).toBeNull();
   });
 
   it("only lets the bound owner act", async () => {
