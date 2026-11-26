@@ -40,4 +40,20 @@ describe('capture source acquisition ordering',()=>{
     expect(await portalSource.acquireStill({signal:controller.signal,select,selectPrepared,capturePortalFrame})).toBeNull();
     expect(capturePortalFrame).toHaveBeenCalledOnce();expect(select).not.toHaveBeenCalled();expect(selectPrepared).not.toHaveBeenCalled();
   });
+  it('opens the native desktop selector without requesting portal permission when a native frame is available', async () => {
+    const captureNativeFrame = vi.fn(async () => image);
+    const capturePortalFrame = vi.fn(async () => image);
+    const selectPrepared = vi.fn(async frame => frame);
+    const signal = new AbortController().signal;
+    const result = await portalSource.acquireStill({ signal, select: vi.fn(), selectPrepared, captureNativeFrame, capturePortalFrame });
+    expect(result).toBe(image);
+    expect(selectPrepared).toHaveBeenCalledWith(image);
+    expect(capturePortalFrame).not.toHaveBeenCalled();
+  });
+  it('keeps the system chooser when the compositor cannot provide a native frame', async () => {
+    const capturePortalFrame = vi.fn(async () => image);
+    const signal = new AbortController().signal;
+    await portalSource.acquireStill({ signal, select: vi.fn(), selectPrepared: vi.fn(), captureNativeFrame: async () => null, capturePortalFrame });
+    expect(capturePortalFrame).toHaveBeenCalledWith(signal);
+  });
 });

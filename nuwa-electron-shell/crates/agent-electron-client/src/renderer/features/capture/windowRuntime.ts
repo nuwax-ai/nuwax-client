@@ -72,7 +72,8 @@ export async function mountCaptureWindow(
   let captureAction = config.action ?? (config.mode === 'record' ? 'mp4' : 'screenshot');
   const recordingActions = captureActions.filter(action => action !== 'screenshot');
   let recordingAction = captureAction === 'screenshot' ? recordingActions[0] ?? 'mp4' : captureAction;
-  const previewPresentation = config.presentation === 'preview';
+  const previewPresentation = config.presentation !== undefined;
+  const desktopSourcePreview = config.presentation === 'desktop-source';
   const workArea = config.workArea;
   const painter = makePainter();
   const history = makeHistory<CaptureAnnotation>();
@@ -457,10 +458,10 @@ export async function mountCaptureWindow(
     hover = next; draw();
   }
   function full() { crop = { x: 0, y: 0, width: frame.width, height: frame.height }; clear(); draw(); }
-  button(modeGroup, 'screen', previewPresentation ? labels.entireSource : labels.screen, () => { void chooseDisplay('screen'); });
+  button(modeGroup, 'screen', previewPresentation && !desktopSourcePreview ? labels.entireSource : labels.screen, () => { void chooseDisplay('screen'); });
   let sourcesLoaded = config.sources.length > 0;
   button(modeGroup, 'window', labels.window, () => { void chooseWindows(); });
-  if (config.presentation === 'preview') buttons.window.hidden = true;
+  if (previewPresentation) buttons.window.hidden = true;
   button(modeGroup, 'region', labels.region, () => { void chooseDisplay('region'); });
   function chooseAction(action: typeof captureAction) {
     if (busy || drag || cropDrag || annotationDrag || active) return;
@@ -761,7 +762,8 @@ export async function mountCaptureWindow(
     const screenSource = frame.selection.sourceKind === 'screen' && !previewPresentation;
     viewport.classList.toggle('fitted', !screenSource);
     const ratio = frame.width / frame.height;
-    const viewWidth = screenSource ? innerWidth : Math.min(innerWidth - 80, (innerHeight - 160) * ratio);
+    const marginX = desktopSourcePreview ? 0 : 80, marginY = desktopSourcePreview ? 0 : 160;
+    const viewWidth = screenSource ? innerWidth : Math.max(1, Math.min(innerWidth - marginX, (innerHeight - marginY) * ratio));
     const viewHeight = screenSource ? innerHeight : viewWidth / ratio;
     viewport.style.width = `${viewWidth}px`; viewport.style.height = `${viewHeight}px`;
     viewport.style.left = `${(innerWidth - viewWidth) / 2}px`; viewport.style.top = `${(innerHeight - viewHeight) / 2}px`;

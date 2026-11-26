@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { RECORDING_IPC, type RecordingCommand, type RecordingConfig, type RecordingEvent } from '@shared/features/capture/recordingContract';
 import { recordingScript } from '@renderer/features/capture/recordingPage';
 import { installPortalRequest } from './portalRequest';
+import type { UosFrame } from './platforms/uosFrames';
 export interface PrivateRecordingSession {
   window: BrowserWindow;
   url: string;
@@ -15,6 +16,7 @@ export interface PrivateRecordingSession {
   event(event: RecordingEvent): void | Promise<void>;
   chunk(sequence: unknown, data: unknown): Promise<void>;
   snapshot(data: unknown, width: unknown, height: unknown): Promise<void>;
+  frame?(): Promise<UosFrame>;
   fail(error: Error): void;
 }
 
@@ -72,12 +74,24 @@ function installHandlers() {
     const session = sessionFor(event);
     try { await session.snapshot(data, width, height); } catch (error) { session.fail(asError(error)); throw error; }
   });
+  ipcMain.handle(RECORDING_IPC.FRAME, async event => {
+    const session = sessionFor(event);
+    if (!session.configured || session.config.acquisition !== 'uos-desktop' || !session.frame) {
+      throw new Error('recording window has no native frame source');
+    }
+    const id = event.sender.id;
+    try { return await session.frame(); }
+    catch (error) {
+      if (sessions.get(id) === session) session.fail(asError(error));
+      return null;
+    }
+  });
 }
 
 function uninstallUnusedHandlers() {
   if (sessions.size || !handlersInstalled) return;
   handlersInstalled = false;
-  for (const channel of [RECORDING_IPC.CONFIG, RECORDING_IPC.EVENT, RECORDING_IPC.CHUNK, RECORDING_IPC.SNAPSHOT]) ipcMain.removeHandler(channel);
+  for (const channel of [RECORDING_IPC.CONFIG, RECORDING_IPC.EVENT, RECORDING_IPC.CHUNK, RECORDING_IPC.SNAPSHOT, RECORDING_IPC.FRAME]) ipcMain.removeHandler(channel);
 }
 
 export const asError = (error: unknown) => error instanceof Error ? error : new Error(String(error));
@@ -92,7 +106,7 @@ export function deferred<T>() {
 }
 
 export async function openRecordingWindow(dir: string, config: RecordingConfig, signal: AbortSignal,
-  callbacks: Pick<PrivateRecordingSession, "event" | "chunk" | "snapshot" | "fail">,
+  callbacks: Pick<PrivateRecordingSession, "event" | "chunk" | "snapshot" | "frame" | "fail">,
   preloadPath = join(__dirname, "..", "preload", "captureRecording.js")) {
   const html = join(dir, "recording.html");
   const hash = createHash("sha256").update(recordingScript).digest("base64");
@@ -139,11 +153,11 @@ export async function openRecordingWindow(dir: string, config: RecordingConfig, 
     disposed = true;
     signal.removeEventListener("abort", onAbort);
     sessions.delete(id);
-    uninstallUnusedHandlers();
     removePortalRequest?.();
     session.setPermissionCheckHandler(null);
     session.setPermissionRequestHandler(null);
     if (!window.isDestroyed()) window.destroy();
+    uninstallUnusedHandlers();
   };
   signal.addEventListener("abort", onAbort, { once: true });
   try {

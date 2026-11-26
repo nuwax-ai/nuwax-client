@@ -24,6 +24,7 @@ import { createCaptureSourceStill, createCapturePortalFrame, createRecordEngine 
 import { resolveCaptureFfmpeg } from "./encodingResources";
 import { captureBackendAvailable, configureCaptureBackend } from './linuxEnvironment';
 import { resolveCapturePlatform } from './platforms';
+import { captureUosFrame } from './platforms/uosFrames';
 import { createScratchDir } from '../_kit/scratchDir';
 import { createCaptureClipboard } from './clipboard';
 import { canCopyCaptureFiles, createCaptureClipboardPlatform } from './platforms/clipboard';
@@ -140,6 +141,7 @@ export const captureFeature: DesktopFeature = {
           log: ctx.log,
           captureWindowFrame: createCaptureSourceStill({ scratch: ctx.scratch, preloadPath: recordingPreload }),
           capturePortalFrame: createCapturePortalFrame({ scratch: ctx.scratch, preloadPath: recordingPreload }),
+          captureNativeFrame: captureUosFrame,
         });
         results = createResultStore(ctx.scratch);
         captureClipboard = createCaptureClipboard(results, createScratchDir(path.join(ctx.scratch.root, '.clipboard')), createCaptureClipboardPlatform());

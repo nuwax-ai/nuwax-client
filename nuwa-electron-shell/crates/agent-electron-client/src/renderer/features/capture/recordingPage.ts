@@ -7,7 +7,7 @@ export const recordingScript = String.raw`
   let closing = false, finished = false, recordingReady = false, recorderFactory;
   let pacedCanvas, pacedContext, pacedStream, pacingTimer, fps, recordingWidth, recordingHeight;
   let cancelFrameWait;
-  let frameProbe, guardSource = false, repeatLastFrame = false, arming = false, starting = false;
+  let frameProbe, guardSource = false, repeatLastFrame = false, nativeDesktop = false, arming = false, starting = false;
   const stoppedTracks=new Set();
   const stopTracks = () => {
     clearInterval(pacingTimer); cancelFrameWait?.();
@@ -63,11 +63,46 @@ export const recordingScript = String.raw`
       return new Promise((resolve,reject) => { wait={after:timestamp,remaining:3,resolve,reject}; timer=setTimeout(() => { reject(timeoutError()); void close(); },5000); });
     }};
   };
+  const drawDesktopFrame = (context, frame, width, height) => {
+    if (!frame) throw new Error('UOS desktop stream ended');
+    if (frame.width !== width || frame.height !== height) throw new Error('UOS desktop dimensions changed during capture');
+    const videoFrame = new VideoFrame(frame.pixels, {
+      format: frame.format, codedWidth: width, codedHeight: height, timestamp: 0,
+    });
+    try { context.drawImage(videoFrame, 0, 0); } finally { videoFrame.close(); }
+  };
+  const createDesktopFrameProbe = () => {
+    let closed = false, fresh, timer;
+    const sample = async () => {
+      const frame = await bridge.frame();
+      if (!closed) drawDesktopFrame(pacedContext, frame, recordingWidth, recordingHeight);
+    };
+    const schedule = () => {
+      if (closed || closing || finished) return;
+      const started = performance.now();
+      void sample().then(() => {
+        if (!closed) timer = setTimeout(schedule, Math.max(0, 1000 / fps - (performance.now() - started)));
+      }).catch(error => { if (!closed && !closing && !finished) void fail(error); });
+    };
+    return {
+      ready: Promise.resolve(),
+      close() { closed = true; clearTimeout(timer); return Promise.resolve(); },
+      waitForFreshFrames() {
+        // Pull only after recording controls are hidden. The helper hands back
+        // newly announced buffers, and drains announcements while waiting.
+        fresh ??= (async () => {
+          for (let i = 0; i < 3 && !closed; i++) await sample();
+          schedule();
+        })();
+        return fresh;
+      },
+    };
+  };
   const arm = async () => {
     if (arming || frameProbe || finished || !recordingReady || (recorder && recorder.state !== 'inactive')) return;
     arming=true;
     try {
-      if (guardSource) { frameProbe=createFrameProbe(); await frameProbe.ready; }
+      if (guardSource) { frameProbe=nativeDesktop ? createDesktopFrameProbe() : createFrameProbe(); await frameProbe.ready; }
       if (!finished) await bridge.event({type:'armed'});
     } catch (error) { await fail(error); }
     finally { arming=false; }
@@ -115,13 +150,12 @@ export const recordingScript = String.raw`
     } catch (error) { void fail(error); }
   });
   window.addEventListener('beforeunload', () => { closing = true; finished = true; stopTracks(); });
-  let acquiring = false;
-  const acquire = async () => {
-    if (acquiring || finished) return;
-    acquiring = true;
-    const config = await configuration;
-    repeatLastFrame = config.framePipeline === 'repeat-last-frame';
-    guardSource = repeatLastFrame || config.framePipeline === 'guarded-source'; fps=config.fps;
+  const publishSnapshot = async (canvas, width, height) => {
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Desktop snapshot encoding failed');
+    await bridge.snapshot(await blob.arrayBuffer(), width, height);
+  };
+  const acquireChromium = async config => {
     const mandatory = { chromeMediaSource:'desktop', chromeMediaSourceId:config.sourceId,
       minFrameRate:1, maxFrameRate:config.fps };
     // Window dimensions come from the real track. Thumbnail dimensions must never downscale it.
@@ -153,7 +187,7 @@ export const recordingScript = String.raw`
     await metadata;
     await video.play();
     if (finished) { stopTracks(); return; }
-    let width = video.videoWidth, height = video.videoHeight;
+    width = video.videoWidth; height = video.videoHeight;
     if (!width || !height) throw new Error('Desktop capture returned an empty video track');
     if (config.mode === 'snapshot' || config.preview) {
       await new Promise((resolve, reject) => {
@@ -181,17 +215,38 @@ export const recordingScript = String.raw`
       if (video.readyState < 2 || !width || !height) throw new Error('Desktop capture returned no decoded frame');
       const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
       canvas.getContext('2d', {colorSpace:'srgb'}).drawImage(video,0,0);
-      const blob = await new Promise(resolve => canvas.toBlob(resolve,'image/png'));
-      if (!blob) throw new Error('Desktop snapshot encoding failed');
-      await bridge.snapshot(await blob.arrayBuffer(),width,height);
+      await publishSnapshot(canvas, width, height);
       if (config.mode === 'snapshot') { finished = true; stopTracks(); return; }
     }
+    return {width, height};
+  };
+  const acquireDesktop = async ({width, height}) => {
+    const frame = await bridge.frame();
+    if (finished) return;
+    pacedCanvas = document.createElement('canvas');
+    pacedCanvas.width = width; pacedCanvas.height = height;
+    pacedContext = pacedCanvas.getContext('2d', {colorSpace:'srgb'});
+    drawDesktopFrame(pacedContext, frame, width, height);
+    await publishSnapshot(pacedCanvas, width, height);
+    return {width, height};
+  };
+  let acquiring = false;
+  const acquire = async () => {
+    if (acquiring || finished) return;
+    acquiring = true;
+    const config = await configuration;
+    nativeDesktop = config.acquisition === 'uos-desktop';
+    repeatLastFrame = nativeDesktop || config.framePipeline === 'repeat-last-frame';
+    guardSource = repeatLastFrame || config.framePipeline === 'guarded-source'; fps=config.fps;
+    const size = nativeDesktop ? await acquireDesktop(config.sourceSize) : await acquireChromium(config);
+    if (!size || finished) return;
+    const {width, height} = size;
     const mime = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(type => MediaRecorder.isTypeSupported(type));
     if (!mime) throw new Error('Chromium WebM recording encoder is unavailable');
     // High-quality intermediate; requested compression is applied once by ffmpeg after capture.
     const bitrate = Math.min(120000000, Math.max(4000000,width*height*config.fps*0.25));
     recordingWidth=width; recordingHeight=height;
-    if (repeatLastFrame) {
+    if (repeatLastFrame && !pacedCanvas) {
       pacedCanvas=document.createElement('canvas'); pacedCanvas.width=width; pacedCanvas.height=height;
       pacedContext=pacedCanvas.getContext('2d',{colorSpace:'srgb'});
     }

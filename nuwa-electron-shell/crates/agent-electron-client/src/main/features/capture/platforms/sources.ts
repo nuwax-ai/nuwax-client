@@ -23,6 +23,7 @@ export interface CaptureSourceStrategy {
     select(): Promise<T | null>;
     selectPrepared(image: CaptureWindowImage): Promise<T | null>;
     capturePortalFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage>;
+    captureNativeFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage | null>;
   }): Promise<T | null>;
   acquireRecording(context: RecordingSourceContext): Promise<{ selection: CaptureSelection; size: CaptureSize } | null>;
 }
@@ -47,6 +48,9 @@ export const portalSource: CaptureSourceStrategy = {
   providesPreview: true,
   acquisitionTimeoutMs: 60000,
   async acquireStill(context) {
+    const native = await context.captureNativeFrame?.(context.signal);
+    if (context.signal.aborted) return null;
+    if (native) return context.selectPrepared(native);
     if (!context.capturePortalFrame) throw new Error('Portal snapshot acquisition is unavailable');
     const image = await context.capturePortalFrame(context.signal);
     if (context.signal.aborted) return null;
