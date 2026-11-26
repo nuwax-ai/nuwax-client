@@ -14,6 +14,10 @@ vi.mock("electron", () => ({
 }));
 vi.mock("electron-log", () => ({ default: { info: vi.fn() } }));
 vi.mock("./commercialTicketSession", () => ({ currentTicket: mocks.currentTicket }));
+vi.mock("@shared/constants", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@shared/constants")>(),
+  APP_NAME_IDENTIFIER: "nuwax",
+}));
 import { applySessionAuthHeaders as applyHeaders, initSessionAuthInjection, SessionTicketProvenance, trustInitialBusinessNavigation } from "./sessionAuthInjection";
 import type { SessionAuthContext } from "./sessionAuthInjection";
 import { APP_NAME_IDENTIFIER } from "@shared/constants";
@@ -78,6 +82,18 @@ describe("business cookie session boundary", () => {
     expect(applySessionAuthHeaders(request({ requestHeaders: {
       Cookie: "ticket=new; a=1", Authorization: "Bearer obsolete",
     } }), context)).toEqual({ Cookie: "ticket=new; a=1", "x-client-type": APP_NAME_IDENTIFIER });
+  });
+  it("removes the Nuwax product header on cross-origin redirects", () => {
+    const url = "https://external.example/";
+    const requestHeaders = { "X-Client-Type": APP_NAME_IDENTIFIER, Accept: "text/html" };
+    expect(applySessionAuthHeaders(request({ url, requestHeaders })))
+      .toEqual({ Accept: "text/html" });
+  });
+  it("preserves an external site's own client type", () => {
+    const url = "https://external.example/api";
+    const requestHeaders = { "X-Client-Type": "partner-web" };
+    expect(applySessionAuthHeaders(request({ url, requestHeaders })))
+      .toEqual(requestHeaders);
   });
   it("strips ticket on public login and external iframe requests", () => {
     const headers = { Cookie: "ticket=old; a=1" };

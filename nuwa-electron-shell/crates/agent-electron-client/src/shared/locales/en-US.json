@@ -660,6 +660,8 @@
   "Claw.Settings.guiMcp.statusDisabled": "Disabled",
   "Claw.Settings.system.title": "System",
   "Claw.Settings.system.autoLaunch": "Auto Launch",
+  "Claw.Settings.system.autoDownloadUpdate": "Automatically download updates",
+  "Claw.Settings.system.autoDownloadUpdateDesc": "Download new versions in the background without automatically restarting the app. Off by default.",
   "Claw.Settings.system.autoLaunchDesc": "Automatically run {appName} at system startup",
   "Claw.Settings.localFiles.label": "Direct local file access",
   "Claw.Settings.localFiles.desc": "Read and save this computer’s files locally. Turn off to use the existing file service. Restart the client to apply.",

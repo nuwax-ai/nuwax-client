@@ -1,3 +1,6 @@
+/** Only an explicit true enables automatic update downloads. */
+export const UPDATE_AUTO_DOWNLOAD_SETTING_KEY = "update_auto_download";
+
 export type UpdateStatus =
   | "idle"
   | "checking"

@@ -9,6 +9,7 @@ import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refresh
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
 import { IM_MESSAGE_SOUND_SETTING } from '@shared/types/imReceiver';
 import { UPDATE_CHANNEL_SETTING_KEY, UPDATE_CHANNEL_SWITCH_SETTING_KEY, isUpdateChannel } from '@shared/types/updateChannel';
+import { UPDATE_AUTO_DOWNLOAD_SETTING_KEY } from '@shared/types/updateTypes';
 import { BROWSER_SETTING, BROWSER_FEATURE_SETTING } from '@shared/features/browser/contract';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
@@ -38,6 +39,14 @@ export function registerSettingsHandlers(): void {
       const next = value;
       return import('../services/autoUpdater').then(({ changeUpdateChannel }) =>
         changeUpdateChannel(next, () => persist(next)));
+    }
+    if (key === UPDATE_AUTO_DOWNLOAD_SETTING_KEY) {
+      if (value != null && typeof value !== 'boolean') return false;
+      return import('../services/autoUpdater').then(({ refreshAutoDownloadPreference }) => {
+        persist(value);
+        refreshAutoDownloadPreference();
+        return true;
+      });
     }
     if (key === LOCAL_FILES_ENABLED_SETTING && value != null && typeof value !== 'boolean') return false;
     if (key === IM_MESSAGE_SOUND_SETTING && value != null && typeof value !== 'boolean') return false;

@@ -6,7 +6,7 @@
  * 2. 比较版本号，如有更新则将 electron-updater 指向版本化 OSS 路径
  * 3. electron-updater 从版本化路径读取 latest-*.yml 完成下载/安装
  *
- * - autoDownload = false: 用户控制下载时机
+ * - autoDownload = false: 下载经本服务协调；自动下载设置默认关闭
  * - autoInstallOnAppQuit = true: 下载完成后退出时自动安装（Linux deb 除外）
  * - Windows: NSIS 安装支持自动更新；MSI 安装（注册表 UninstallString 为
  *   msiexec 的真 MSI，非「找不到卸载程序」的兜底误判）引导到官网下载安装页
@@ -24,6 +24,7 @@ import type {
   UpdateProgress,
   UpdateCheckOptions,
 } from "@shared/types/updateTypes";
+import { UPDATE_AUTO_DOWNLOAD_SETTING_KEY } from "@shared/types/updateTypes";
 import {
   UPDATE_CHANNEL_SETTING_KEY,
   UPDATE_CHANNEL_SWITCH_SETTING_KEY,
@@ -634,6 +635,13 @@ export function changeUpdateChannel(next: UpdateChannel, persist: () => void): b
   return true;
 }
 
+/** Apply a saved preference immediately, including an already available update. */
+export function refreshAutoDownloadPreference(): void {
+  if (updaterInitialized && readSetting(UPDATE_AUTO_DOWNLOAD_SETTING_KEY) === true) {
+    scheduleBackgroundCheck(0);
+  }
+}
+
 async function doCheckViaLatestJson(
   options: CheckOptions,
   updateChannel: UpdateChannel,
@@ -937,7 +945,7 @@ export function initAutoUpdater(
   });
 
   // 后台定时复检：启动 1s 首查（静默失败），此后按固定间隔轮询，托盘常驻/长会话
-  // 也能发现新版本；发现新版只推状态亮徽标（available），下载仍由用户手动触发。
+  // 也能发现新版本；默认只亮徽标，显式开启自动下载后后台下载。
   scheduleBackgroundCheck(STARTUP_CHECK_DELAY_MS);
 
   // 系统睡眠期间 Node 定时器不走，唤醒后补查一轮让发现更及时
@@ -1185,7 +1193,16 @@ export async function checkForUpdates(
     };
   }
 
-  return runUpdateCheck(options);
+  const result = await runUpdateCheck(options);
+  if (
+    result.hasUpdate && !result.error && currentState.status === "available" &&
+    !updateTask && !downloadTask && app.isPackaged && canAutoUpdate() &&
+    readSetting(UPDATE_AUTO_DOWNLOAD_SETTING_KEY) === true
+  ) {
+    // Bypass the manual one-click install policy: background downloads must not restart the app.
+    void downloadOnlyUpdate(true);
+  }
+  return result;
 }
 
 async function doCheckForUpdates(options: CheckOptions, channel: UpdateChannel, revision: number): Promise<UpdateInfo> {
@@ -1301,17 +1318,17 @@ function runOneClickUpdate(): Promise<UpdateResult> {
   return updateTask;
 }
 
-function downloadOnlyUpdate(): Promise<UpdateResult> {
+function downloadOnlyUpdate(automatic = false): Promise<UpdateResult> {
   if (downloadTask) return downloadTask;
   downloadTask = Promise.resolve()
-    .then(() => doDownloadOnlyUpdate())
+    .then(() => doDownloadOnlyUpdate(automatic))
     .finally(() => {
       downloadTask = null;
     });
   return downloadTask;
 }
 
-async function doDownloadOnlyUpdate(): Promise<UpdateResult> {
+async function doDownloadOnlyUpdate(automatic: boolean): Promise<UpdateResult> {
   // Dev 模式下 Squirrel.Mac 无法处理更新包（bundle ID 不匹配），只允许检查更新
   if (!app.isPackaged) {
     const errMsg = t("Claw.AutoUpdater.devModeUnsupported");
@@ -1340,6 +1357,10 @@ async function doDownloadOnlyUpdate(): Promise<UpdateResult> {
     // 用户查看日志后仍可能继续发布。重新解析通道指针并准备最新 feed，
     // 若已有检查则等待它完成；无法确认目标时不沿用旧下载信息。
     const latest = await runUpdateCheck({ background: true });
+    // The preference may have been switched off while the latest feed was being checked.
+    if (automatic && readSetting(UPDATE_AUTO_DOWNLOAD_SETTING_KEY) !== true) {
+      return { success: false, canceled: true };
+    }
     if (!latest.hasUpdate || latest.error) {
       if (latest.error) {
         setState({ status: "error", error: latest.error, progress: undefined });
