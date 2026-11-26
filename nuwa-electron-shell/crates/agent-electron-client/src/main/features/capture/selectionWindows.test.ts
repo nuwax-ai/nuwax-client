@@ -282,13 +282,13 @@ describe('Linux portal source preview', () => {
   const image = { dataUrl: 'data:image/png;base64,frame', width: 100, height: 80,
     selection: { sourceId: 'screen:portal', sourceKind: 'screen' as const, sourceSize: {width:100,height:80},
       crop: {x:0,y:0,width:100,height:80}, coordinateSpace:'source' as const, hdrToneMapped:false } };
-  it('selects a source-pixel region in an ordinary window without desktop enumeration or positioning', async () => {
+  it('selects a source-pixel region in a fullscreen portal preview without desktop positioning', async () => {
     windows.dispose(); windows = createCaptureWindows({platform:'linux',portal:true,log:mock.log});
     const pending = windows.selectPrepared('record',image,new AbortController().signal);
     await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
     const window = mock.windows[0]; const event = {sender:window.webContents,senderFrame:window.webContents.mainFrame};
     expect(mock.handlers.get(CH.init)!(event)).toMatchObject({recordingHint:expect.stringContaining('Ctrl+Alt+R')});
-    expect(window.options).toMatchObject({frame:true,alwaysOnTop:false,resizable:true});
+    expect(window.options).toMatchObject({frame:true,alwaysOnTop:false,resizable:true,fullscreen:true,fullscreenable:true});
     expect(window.options).not.toHaveProperty('x'); expect(window.options).not.toHaveProperty('y');
     expect(window.setBounds).not.toHaveBeenCalled(); expect(window.setAlwaysOnTop).not.toHaveBeenCalled();
     expect(window.setVisibleOnAllWorkspaces).not.toHaveBeenCalled(); expect(mock.timeline).not.toContain('freeze');
@@ -296,10 +296,21 @@ describe('Linux portal source preview', () => {
     expect(mock.handlers.get(CH.finish)!(event,{crop})).toBe(true);
     expect(await pending).toEqual({...image.selection,crop}); expect(window.destroyed).toBe(true);
   });
+  it('keeps a portal window source in source coordinates in fullscreen', async () => {
+    windows.dispose(); windows = createCaptureWindows({platform:'linux',portal:true,log:mock.log});
+    const windowImage = {...image, selection: {...image.selection, sourceKind: 'window' as const}};
+    const pending = windows.selectPrepared('record',windowImage,new AbortController().signal);
+    await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
+    const window = mock.windows[0]; const event = {sender:window.webContents,senderFrame:window.webContents.mainFrame};
+    expect(window.options).toMatchObject({fullscreen:true,fullscreenable:true});
+    const crop = {x:10,y:12,width:50,height:40};
+    expect(mock.handlers.get(CH.finish)!(event,{crop})).toBe(true);
+    expect(await pending).toEqual({...windowImage.selection,crop});
+  });
   it('hides Linux controls before capture without content protection or a border window', () => {
     windows.dispose(); windows = createCaptureWindows({platform:'linux',portal:true,log:mock.log});
     const controls = windows.createRecordingControls(image.selection,vi.fn());
-    expect(mock.windows).toHaveLength(1); expect(mock.windows[0].options.frame).toBe(true);
+    expect(mock.windows).toHaveLength(1); expect(mock.windows[0].options).toMatchObject({frame:true,fullscreen:false});
     expect(mock.windows[0].setPosition).not.toHaveBeenCalled(); expect(mock.windows[0].setBounds).not.toHaveBeenCalled();
     controls.setContentProtection(true); expect(mock.windows[0].setContentProtection).not.toHaveBeenCalled();
     controls.hideForRecording?.(); expect(mock.windows[0].hide).toHaveBeenCalledOnce();
@@ -322,6 +333,7 @@ describe('Linux portal source preview', () => {
     const pending = windows.captureStill(abort.signal);
     await vi.waitFor(() => expect(mock.windows).toHaveLength(1));
     const window = mock.windows[0];
+    expect(window.options.fullscreen).toBe(false);
     expect(capturePortalFrame).toHaveBeenCalledWith(abort.signal);
     expect(mock.timeline).not.toContain('freeze');
     expect(mock.handlers.get(CH.init)!({ sender: window.webContents, senderFrame: window.webContents.mainFrame })).toMatchObject({ kind: 'selection', mode: 'still', presentation: 'preview', image });

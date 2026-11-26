@@ -103,11 +103,15 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   function create(config: CaptureWindowConfiguration, bounds: CaptureRect, controls = false, activate = true): ManagedWindow {
     if (disposed) throw new Error('capture windows have been disposed');
     const preview = 'presentation' in config && config.presentation === 'preview';
+    // A portal source has no reliable desktop coordinates. Keep preview's
+    // source-pixel mapping, but give the selection the whole compositor surface.
+    const fullscreenPortalPreview = portal && platform === 'linux' && preview && config.kind === 'selection';
     const selectorPolicy = windowPolicy.selectionWindow(config, bounds);
     const window = new BrowserWindow({
       ...(preview ? { width: bounds.width, height: bounds.height } : bounds), useContentSize: true, show: false,
       frame: preview, transparent: !preview && config.kind !== 'selection',
-      resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls, fullscreenable: false,
+      resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls,
+      fullscreen: fullscreenPortalPreview, fullscreenable: fullscreenPortalPreview,
       ...selectorPolicy?.options,
       ...(platform === 'darwin' && !preview ? { type: 'panel' } : {}),
       skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview && !controls, enableLargerThanScreen: !preview,
