@@ -76,4 +76,13 @@
 
 ## 偏离记录
 
-（实现中偏离本计划的逐条补记：原因 + 对应提交）
+实现与计划的差异（均已同步到 `specs/session-setup-ha.md`）：
+
+1. **自动隔离只对 nuwaxcode 生效。** 其他引擎的 home 里可能存登录态，换干净 home 等于把用户登出，不该由自动恢复来付这个代价。claude-code、codex 等在「新进程里仍建不出会话」时直接返回 `engine_env_hang`。
+2. **隔离挪到「销毁之后、重启之前」。** 计划写的是「隔离 home → 重建进程」；实际引擎进程还占着 home 里的文件（Windows 上改名会失败），必须先停进程再改名。链路用 `recycle(…, { beforeInit })` 把改名夹在两步之间。
+3. **初始化预算拆成三段**：插件安装 40 秒、spawn 10 秒、握手 10 秒（合计仍是 60 秒）。插件安装超时沿用既有语义——告警后不带共享插件继续启动，而不是让初始化失败。
+4. **熔断规则补全**：一次链路里两次及以上「足额超时」（预算没被总时限截短）就熔断，包括最后一次尝试因预算不足而放弃的情况；只有一次时不开。计划里只写了「判为环境卡死后熔断」。
+5. **共用 home 的判断按引擎计数**。`getActiveIsolatedHomes()` 返回 Set，会把多个引擎共用同一 home 折叠成一条；新增 `getActiveIsolatedHomeList()` 保留重复，由 `UnifiedAgentService.init()` 注入给恢复链路。
+6. **导出内容的边界**：引擎日志每份取末尾 256KB、最多 50 份、最近的优先；诊断缓冲只收「出过状况」的建立过程（失败、重建、隔离、慢恢复），健康路径不进。
+7. **`--log-dir` 同样无效**：nuwaxcode 1.17.11 只支持 `--print-logs` 和 `--log-level`。只补了注释，没有改深度追踪模式的行为。
+8. **未做的验收**：macOS 开发环境的端到端复现、Windows 安装包验收都没有执行，步骤在 `nuwa-electron-shell/crates/agent-electron-client/tests/manual/session-setup-ha/README.md`。随包引擎的三种引擎侧行为已用同目录的 `probe.mjs` 在 macOS 上跑通。

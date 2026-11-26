@@ -238,7 +238,9 @@ export function buildEffectiveConfig(args: {
 
   const mergedEnv = { ...(base.env || {}), ...(resolvedEnv || {}) };
 
-  // OPENCODE_LOG_DIR 容器路径本地化（共享 helper，与 configChangeDetector 一致）
+  // OPENCODE_LOG_DIR 容器路径本地化（共享 helper，与 configChangeDetector 一致）。
+  // nuwaxcode 1.17.11 不读取该变量（日志在 isolated home 下），这条本地化只对读它的
+  // 引擎版本有效；排障时不要据此去 <appData>/logs 找 nuwaxcode 日志。
   const origLogDir = mergedEnv.OPENCODE_LOG_DIR;
   const localizedEnv = normalizeLogDirInEnv(mergedEnv);
   if (localizedEnv && localizedEnv.OPENCODE_LOG_DIR !== origLogDir) {
