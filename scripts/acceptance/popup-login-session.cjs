@@ -109,6 +109,7 @@ async function run() {
   fsSync.mkdirSync(path.join(temp, 'profile'), { recursive: true });
   app.setPath('userData', path.join(temp, 'profile'));
   app.setPath('sessionData', path.join(temp, 'profile'));
+  app.commandLine.appendSwitch('host-resolver-rules', 'MAP company-popup.test 127.0.0.1');
   app.on('window-all-closed', () => {});
   await app.whenReady();
   const { initWebviewPolicy, initSessionAuthInjection, configureSharedWebview, settings, browserFixturePages, setBrowserFixtureMode, createBusinessReadingPage, trackPopupWindow, trustInitialBusinessNavigation, loadPopupDocument } = require(bundlePath(temp));
@@ -124,7 +125,18 @@ async function run() {
     const capability = req.headers['x-nuwax-gateway-request'] === 'fixture-gateway-secret';
     const url = new URL(req.url, 'http://fixture');
     requests.push({ role, path: url.pathname, search: url.search, authenticated, thirdPartyAuthenticated, capability, referrer: req.headers.referer || '' });
-    if (role === 'external' && url.pathname === '/browser-download') {
+    if (role === 'external' && url.pathname === '/company-home') {
+      res.setHeader('Content-Type', 'text/html');
+      if (req.headers['x-client-type']) {
+        res.writeHead(403);
+        res.end('<title>403 Forbidden</title>');
+      } else {
+        res.end('<title>Company Home</title><a id="missing" href="/company-missing">Missing page</a>');
+      }
+    } else if (role === 'external' && url.pathname === '/company-missing') {
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      res.end('<title>404 Not Found</title>');
+    } else if (role === 'external' && url.pathname === '/browser-download') {
       releaseDownload = () => {
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': downloadBytes.length, 'Content-Disposition': 'attachment; filename="browser-download.bin"' });
         // Feed Chromium's initial sniff buffer, then hold the remainder so the
@@ -157,7 +169,7 @@ async function run() {
   const waitFor = async (predicate, label) => {
     const deadline = Date.now() + 7000;
     while (Date.now() < deadline) {
-      const value = predicate();
+      const value = await predicate();
       if (value) return value;
       await new Promise(resolve => setTimeout(resolve, 20));
     }
@@ -276,6 +288,24 @@ async function run() {
           console.log(`PASS ${mode}/${type}/raw-${readerMode}: authenticated same-session reader; Find/Back/Forward when available`);
         }
         setBrowserFixtureMode('available'); settings.delete('nuwax.linkOpenMode');
+        if (mode === 'direct' && type === 'webview') {
+          const company = `http://company-popup.test:${externalServer.address().port}`;
+          const home = `${company}/company-home`;
+          const popup = await openFrom(opener, home, 'anchor');
+          assert.equal(popup.webContents.getTitle(), 'Company Home', 'no Nuwax product header on ordinary website requests');
+          assert.equal(browserFixturePages.has(popup.window.id), true, 'external link uses the browser toolbar');
+          const navigated = new Promise(resolve => popup.webContents.once('did-navigate', (_event, url, status) => resolve({ url, status })));
+          await popup.webContents.executeJavaScript("document.querySelector('#missing').click()", true);
+          assert.deepEqual(await navigated, { url: `${company}/company-missing`, status: 404 });
+          const toolbar = popup.window.webContents;
+          await waitFor(() => toolbar.executeJavaScript(
+            "!document.querySelector('#back').disabled && !document.querySelector('#navigation').hidden",
+          ), 'Back is visible and enabled on the 404 page');
+          await toolbar.executeJavaScript("document.querySelector('#back').click()");
+          await waitFor(() => popup.webContents.getURL() === home && !popup.webContents.isLoading(), 'Back to company site');
+          popup.destroy();
+          console.log('PASS webview link: external homepage loads and toolbar Back recovers from HTTP 404');
+        }
         const outside = await openFrom(opener, `${externalOrigin}/outside?case=${mode}-${type}`, 'anchor');
         assert.equal(outside.webContents.session, session.defaultSession, 'external popup uses the normal browser session');
         assert.equal(await outside.webContents.executeJavaScript('typeof window.NuwaClawBridge'), 'undefined');
