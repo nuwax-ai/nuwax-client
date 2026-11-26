@@ -2,6 +2,7 @@ import path from "node:path";
 import { createWriteStream } from "node:fs";
 import {
   lstat,
+  open,
   opendir,
   readlink,
   realpath,
@@ -12,10 +13,94 @@ import { randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { ZipArchive } from "archiver";
 
-/** 流式压缩日志目录；成功后才替换目标文件，符号链接只归档链接本身。 */
+/** 日志目录之外要一并打包的条目（如引擎日志、诊断摘要）。 */
+export interface LogArchiveExtra {
+  /** ZIP 内路径（相对包根，不带前导斜杠） */
+  name: string;
+  /** 直接写入的内容（与 source 二选一） */
+  content?: Buffer;
+  /** 要打包的文件；给了 tailBytes 且文件更大时只取末尾 */
+  source?: string;
+  tailBytes?: number;
+}
+
+function isSafeArchiveName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    !name.startsWith("/") &&
+    !/^[A-Za-z]:/.test(name) &&
+    !name.split("/").some((segment) => segment === "" || segment === "..")
+  );
+}
+
+async function appendExtra(
+  archive: ZipArchive,
+  extra: LogArchiveExtra,
+): Promise<void> {
+  if (!isSafeArchiveName(extra.name)) {
+    throw new Error(`Unsafe archive entry name: ${extra.name}`);
+  }
+  if (extra.content) {
+    archive.append(extra.content, { name: extra.name });
+    return;
+  }
+  if (!extra.source) return;
+  // 附加条目是锦上添花：读不到就跳过，不能因此让整份主日志导不出
+  try {
+    await appendExtraFile(archive, extra.source, extra.name, extra.tailBytes);
+  } catch {
+    // 见上
+  }
+}
+
+async function appendExtraFile(
+  archive: ZipArchive,
+  source: string,
+  name: string,
+  tailBytes?: number,
+): Promise<void> {
+  let stat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stat = await lstat(source);
+  } catch {
+    // 收集之后、打包之前被清掉：跳过
+    return;
+  }
+  // 只带普通文件；链接的目标可能在日志目录之外
+  if (!stat.isFile()) return;
+  if (tailBytes && stat.size > tailBytes) {
+    const length = tailBytes;
+    const buffer = Buffer.alloc(length);
+    const handle = await open(source, "r");
+    try {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        length,
+        stat.size - length,
+      );
+      archive.append(buffer.subarray(0, bytesRead), {
+        name,
+        mode: stat.mode,
+        date: stat.mtime,
+      });
+    } finally {
+      await handle.close();
+    }
+    return;
+  }
+  archive.file(source, {
+    name,
+    mode: stat.mode,
+    date: stat.mtime,
+  });
+}
+
+/** 流式压缩日志目录（可附加日志目录之外的条目）；成功后才替换目标文件，符号链接只归档链接本身。 */
 export async function exportLogArchive(
   source: string,
   destination: string,
+  extras: LogArchiveExtra[] = [],
 ): Promise<void> {
   const root = await realpath(source);
   const parent = await realpath(path.dirname(destination));
@@ -70,6 +155,9 @@ export async function exportLogArchive(
 
   try {
     await visit(root, "logs");
+    for (const extra of extras) {
+      await appendExtra(archive, extra);
+    }
     await Promise.all([archive.finalize(), completion]);
     await rename(temporary, destination);
   } catch (error) {

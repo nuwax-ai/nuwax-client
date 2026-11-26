@@ -13,8 +13,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import log from "electron-log";
 import { chatDispatchCoordinator } from "../../computer/chatDispatchCoordinator";
 
 vi.mock("electron", () => ({
@@ -82,10 +84,17 @@ vi.mock("@main/services/system/binaryLocator", async (importOriginal) => {
   };
 });
 
-import { AcpEngine } from "./acpEngine";
+import {
+  AcpEngine,
+  registerActiveIsolatedHomesProvider,
+} from "./acpEngine";
 import * as acpClient from "./acpClient";
 import { killProcessTreeGraceful } from "../../utils/processTree";
 import { sessionSetupRecoveryState } from "./acpSessionRecovery";
+import {
+  clearSessionSetupDiagnosticsForTests,
+  getSessionSetupDiagnostics,
+} from "./sessionSetupDiagnostics";
 import { isEngineInitTimeoutMessage } from "./sessionSetupFailure";
 
 type Deferred<T> = {
@@ -147,7 +156,10 @@ async function flush(): Promise<void> {
 }
 
 /** 让 init() 不碰真实进程：每次 createAcpConnection 发一个新连接，便于观察重建次数 */
-function stubSpawn(connectionFactory: () => Record<string, unknown>) {
+function stubSpawn(
+  connectionFactory: () => Record<string, unknown>,
+  isolatedHome: string | null = null,
+) {
   vi.spyOn(acpClient, "resolveAcpBinary").mockReturnValue({
     binPath: "nuwaxcode",
     binArgs: ["acp"],
@@ -159,7 +171,7 @@ function stubSpawn(connectionFactory: () => Record<string, unknown>) {
       return {
         connection: connectionFactory(),
         process: mockProcess(12345 + createAcpConnection.mock.calls.length),
-        isolatedHome: null,
+        isolatedHome,
         cleanup: vi.fn(),
       } as any;
     });
@@ -169,16 +181,52 @@ function stubSpawn(connectionFactory: () => Record<string, unknown>) {
   return createAcpConnection;
 }
 
+/** 在（测试用的）应用数据目录下造一个持久化 project home：run/projects/u1/<id>/nuwaxcode/home */
+function makePersistentHome(projectId = "p1"): string {
+  const home = path.join(
+    mockAppDataDir,
+    "run",
+    "projects",
+    "u1",
+    projectId,
+    "nuwaxcode",
+    "home",
+  );
+  fs.mkdirSync(home, { recursive: true });
+  return home;
+}
+
+function quarantineBackups(home: string): string[] {
+  try {
+    return fs
+      .readdirSync(path.dirname(home))
+      .filter((name) => name.startsWith("home.quarantine-"));
+  } catch {
+    return [];
+  }
+}
+
+function seedSessionDb(home: string): string {
+  const db = path.join(home, ".local", "share", "opencode", "opencode.db");
+  fs.mkdirSync(path.dirname(db), { recursive: true });
+  fs.writeFileSync(db, "old session data");
+  return db;
+}
+
 describe("AcpEngine session setup recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionSetupRecoveryState.reset();
+    clearSessionSetupDiagnosticsForTests();
     chatDispatchCoordinator.reset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    registerActiveIsolatedHomesProvider(null);
+    delete process.env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE;
+    fs.rmSync(mockAppDataDir, { recursive: true, force: true });
   });
 
   it("destroy() 只取消本引擎会话的待审批，不再调用全局 destroy", async () => {
@@ -491,5 +539,281 @@ describe("AcpEngine session setup recovery", () => {
     expect(result).toEqual({ ok: true });
     expect(engine.isReady).toBe(false);
     expect(createAcpConnection).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AcpEngine session setup recovery · 隔离 home 与诊断", () => {
+  /** 连接全部无响应；freshFrom 起的新建会话恢复正常 */
+  function stubHangingSpawn(home: string | null, freshFrom = Infinity) {
+    const connections: Array<ReturnType<typeof mockConnection>> = [];
+    let spawned = 0;
+    const createAcpConnection = stubSpawn(() => {
+      spawned += 1;
+      const connection = mockConnection(
+        spawned >= freshFrom
+          ? { newSession: vi.fn().mockResolvedValue({ sessionId: "ses_fresh" }) }
+          : {},
+      );
+      connections.push(connection);
+      return connection;
+    }, home);
+    return { connections, createAcpConnection, spawnedCount: () => spawned };
+  }
+
+  const newChatRequest = (requestId: string) =>
+    ({
+      user_id: "u1",
+      project_id: "p1",
+      request_id: requestId,
+      prompt: "hi",
+    }) as any;
+
+  /** 跑完「new 超时 → 重建 → new 再超时」两轮，停在隔离判定之前 */
+  async function runUntilSecondNewTimeout() {
+    await vi.advanceTimersByTimeAsync(40_000);
+    await flush();
+    await vi.advanceTimersByTimeAsync(40_000);
+    await flush();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionSetupRecoveryState.reset();
+    clearSessionSetupDiagnosticsForTests();
+    registerActiveIsolatedHomesProvider(null);
+    delete process.env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    registerActiveIsolatedHomesProvider(null);
+    delete process.env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE;
+    fs.rmSync(mockAppDataDir, { recursive: true, force: true });
+  });
+
+  it("新进程里仍建不出会话：在销毁之后、重启之前把 home 改名，再用干净 home 建新会话", async () => {
+    const home = makePersistentHome();
+    const db = seedSessionDb(home);
+    const spawn = stubHangingSpawn(home, 3);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    vi.spyOn(engine, "promptAsync").mockResolvedValue(undefined);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-quarantine"));
+    // 第一轮 new 超时：只重建进程，home 原样
+    await vi.advanceTimersByTimeAsync(40_000);
+    await flush();
+    expect(spawn.spawnedCount()).toBe(2);
+    expect(quarantineBackups(home)).toEqual([]);
+    // 第二轮 new 超时：销毁 → 改名 → 重启 → 第三次 new 恢复正常
+    await vi.advanceTimersByTimeAsync(40_000);
+    const result = await pending;
+
+    // 原数据整体挪进备份目录，新 home 是干净的
+    const [backup] = quarantineBackups(home);
+    expect(backup).toMatch(/^home\.quarantine-\d{14}$/);
+    expect(
+      fs.readFileSync(
+        path.join(path.dirname(home), backup, ".local", "share", "opencode", "opencode.db"),
+        "utf8",
+      ),
+    ).toBe("old session data");
+    expect(fs.existsSync(db)).toBe(false);
+    expect(spawn.spawnedCount()).toBe(3);
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        session_id: "ses_fresh",
+        is_new_session: true,
+        fallback_reason: "engine_env_reset",
+      },
+    });
+    expect(sessionSetupRecoveryState.isHomeQuarantined(home)).toBe(true);
+    expect(sessionSetupRecoveryState.getOpenBreaker("p1", Date.now())).toBeNull();
+    await engine.destroy();
+  });
+
+  it("home 还被其他引擎共用时不隔离", async () => {
+    const home = makePersistentHome();
+    const db = seedSessionDb(home);
+    const spawn = stubHangingSpawn(home);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    // 本引擎 + 同一 home 上的另一个引擎（常规项目多对话共用 home）
+    registerActiveIsolatedHomesProvider(() => [home, home]);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-shared"));
+    await runUntilSecondNewTimeout();
+    const result = await pending;
+
+    expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+    expect(quarantineBackups(home)).toEqual([]);
+    expect(fs.existsSync(db)).toBe(true);
+    expect(spawn.spawnedCount()).toBe(2);
+  });
+
+  it("别的会话也建会话超时过（机器级变慢）时不隔离", async () => {
+    const home = makePersistentHome();
+    const db = seedSessionDb(home);
+    const spawn = stubHangingSpawn(home);
+    sessionSetupRecoveryState.noteSetupTimeout("other-project");
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-slow-machine"));
+    await runUntilSecondNewTimeout();
+    const result = await pending;
+
+    expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+    expect(quarantineBackups(home)).toEqual([]);
+    expect(fs.existsSync(db)).toBe(true);
+    expect(spawn.spawnedCount()).toBe(2);
+  });
+
+  it("用环境变量可以关掉自动隔离", async () => {
+    process.env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE = "0";
+    const home = makePersistentHome();
+    const db = seedSessionDb(home);
+    const spawn = stubHangingSpawn(home, 3);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-disabled"));
+    await runUntilSecondNewTimeout();
+    const result = await pending;
+
+    expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+    expect(quarantineBackups(home)).toEqual([]);
+    expect(fs.existsSync(db)).toBe(true);
+    expect(spawn.spawnedCount()).toBe(2);
+  });
+
+  it.each(["claude-code", "codex-cli"])(
+    "%s 的 home 可能存着登录态：不自动隔离",
+    async (engineType) => {
+      const home = makePersistentHome();
+      const db = seedSessionDb(home);
+      const spawn = stubHangingSpawn(home, 3);
+      const engine = new AcpEngine(engineType);
+      await engine.init({ ...ENGINE_CONFIG, engine: engineType });
+
+      vi.useFakeTimers();
+      const pending = engine.chat(newChatRequest(`rid-${engineType}`));
+      await runUntilSecondNewTimeout();
+      const result = await pending;
+
+      expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+      expect(quarantineBackups(home)).toEqual([]);
+      expect(fs.existsSync(db)).toBe(true);
+      expect(spawn.spawnedCount()).toBe(2);
+    },
+  );
+
+  it("每个 home 每次运行只隔离一次", async () => {
+    const home = makePersistentHome();
+    seedSessionDb(home);
+    // 隔离之后的第三次仍无响应：不再隔离第二次，直接判环境卡死
+    const spawn = stubHangingSpawn(home);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-once"));
+    await runUntilSecondNewTimeout();
+    await vi.advanceTimersByTimeAsync(40_000);
+    const result = await pending;
+
+    expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+    expect(quarantineBackups(home)).toHaveLength(1);
+    expect(spawn.spawnedCount()).toBe(3);
+  });
+
+  it("判为卡死时把引擎日志尾部写进主日志和诊断缓冲", async () => {
+    // 关掉自动隔离，让流程停在「新进程里仍建不出会话」的判定上
+    process.env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE = "0";
+    const home = makePersistentHome();
+    const engineLog = path.join(
+      home,
+      ".local",
+      "share",
+      "opencode",
+      "log",
+      "opencode.log",
+    );
+    fs.mkdirSync(path.dirname(engineLog), { recursive: true });
+    fs.writeFileSync(
+      engineLog,
+      [
+        'timestamp=2026-11-25T06:10:58.000Z level=INFO message="creating instance" directory=C:\\ws\\1759004',
+        'timestamp=2026-11-25T06:10:58.001Z level=INFO message="bootstrapping" directory=C:\\ws\\1759004',
+        'timestamp=2026-11-25T06:10:58.005Z level=INFO message="loading" api_key="sk-abcdefghijklmnop"',
+      ].join("\n"),
+    );
+    stubHangingSpawn(home);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-tail"));
+    await runUntilSecondNewTimeout();
+    const result = await pending;
+
+    expect(result.data).toMatchObject({ fallback_reason: "engine_env_hang" });
+    const tailCall = vi
+      .mocked(log.warn)
+      .mock.calls.find(([message]) =>
+        String(message).includes("[SessionSetup] engine log tail"),
+      );
+    expect(tailCall).toBeDefined();
+    expect(tailCall![1]).toEqual(
+      expect.arrayContaining([expect.stringContaining("bootstrapping")]),
+    );
+    // 脱敏后才落日志
+    expect(JSON.stringify(tailCall![1])).not.toContain("sk-abcdefghijklmnop");
+
+    const { records } = getSessionSetupDiagnostics();
+    expect(records.at(-1)).toMatchObject({
+      ok: false,
+      reason: "engine_env_hang",
+      engineKey: "p1",
+      recycled: ["new_timeout", "give_up"],
+      breakerOpened: true,
+      engineLogTail: expect.arrayContaining([
+        expect.stringContaining("bootstrapping"),
+      ]),
+    });
+  });
+
+  it("恢复成功（重建过进程）同样留档，健康路径不留", async () => {
+    const home = makePersistentHome();
+    const spawn = stubHangingSpawn(home, 2);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    vi.spyOn(engine, "promptAsync").mockResolvedValue(undefined);
+
+    vi.useFakeTimers();
+    const pending = engine.chat(newChatRequest("rid-recovered"));
+    await vi.advanceTimersByTimeAsync(40_000);
+    const result = await pending;
+    expect(result.success).toBe(true);
+
+    // 新会话已在内存里：第二次是健康路径
+    const again = await engine.chat(newChatRequest("rid-healthy"));
+    expect(again.success).toBe(true);
+
+    const { records } = getSessionSetupDiagnostics();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      ok: true,
+      recycled: ["new_timeout"],
+      quarantined: false,
+      setupPath: "new",
+    });
+    await engine.destroy();
   });
 });

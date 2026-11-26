@@ -41,10 +41,10 @@
 | 8 | `SHELL/shared/locales/*.json` | 改 | 四个语言文件补三条错误文案 |
 | 9 | `SHELL/main/services/engines/acp/isolatedHomePaths.ts` | 改 | 隔离函数；陈旧判定取最新文件 mtime；`opencode/log` 按文件时间保留；隔离目录 7 天回收 |
 | 10 | `SHELL/main/services/engines/acp/opencodeSessionDiagnostics.ts`、`sessionSetupDiagnostics.ts` | 改/增 | 引擎日志尾部读取；建立结果环形缓冲 |
-| 11 | `SHELL/main/services/utils/logArchive.ts`、`SHELL/main/ipc/logExportHandler.ts` | 改 | 导出追加引擎日志尾部与诊断 JSON |
-| 12 | `SHELL/main/services/engines/unifiedAgent.ts` | 改 | 活跃时间戳在快速路径刷新 |
+| 11 | `SHELL/main/services/utils/logArchive.ts`、`SHELL/main/ipc/logExportHandler.ts`、`SHELL/main/services/engines/sessionSetupArchiveExtras.ts` | 改/增 | 导出追加引擎日志尾部与诊断 JSON |
+| 12 | `SHELL/main/services/engines/unifiedAgent.ts` | 改 | 活跃时间戳在快速路径与 prompt 结束时刷新；注入活跃 home 列表 |
 | 13 | 各对应 `*.test.ts` | 改/增 | 见下 |
-| 14 | `tests/manual/session-setup-ha/` | 增 | 对随包真实引擎二进制的复现脚本 |
+| 14 | `tests/manual/session-setup-ha/` | 增 | 对随包真实引擎二进制的复现脚本（Node）与端到端验收步骤 |
 
 ## 实施顺序
 

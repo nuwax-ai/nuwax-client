@@ -33,6 +33,21 @@ export const DEFAULT_PROJECT_TMP_RETENTION_DAYS = 1;
  * 迁移只改名、不删数据，回滚靠这些备份；过期后由 prune 回收。
  */
 export const DEFAULT_MIGRATED_BACKUP_RETENTION_DAYS = 30;
+/**
+ * `.quarantine-<ts>`：会话建立恢复链路隔离出来的引擎 home（只改名，原数据不动）。
+ * 回滚只需把它改回 `home`；超过保留期由 prune 回收。
+ */
+export const QUARANTINE_SUFFIX = ".quarantine-";
+/** 隔离出来的 home 默认保留天数 */
+export const DEFAULT_QUARANTINE_RETENTION_DAYS = 7;
+/**
+ * 引擎日志（.local/share/opencode/log）按「文件」时间保留的天数。
+ * 日志目录只在新建文件时才变 mtime，而 opencode.log 是追加写；按目录时间清会把上一次
+ * 运行的日志在启动时删掉，而那正是排障最需要的一份。
+ */
+export const DEFAULT_ENGINE_LOG_RETENTION_DAYS = 7;
+/** 判定 project home 最近使用时间时的最大扫描条目数；触顶视为「在用」 */
+export const HOME_LAST_USE_SCAN_LIMIT = 5000;
 
 /** 引擎 home 目录名（`CODEX_HOME`/`CODEX_SQLITE_HOME` 的落点）。 */
 export const ENGINE_HOME_DIR_NAME = ".nuwax-harness";
@@ -63,14 +78,18 @@ const PROJECTS_SEGMENT = "projects";
 const HOME_SEGMENT = "home";
 /** project home 下可安全删除的可重建缓存目录名（不含 tmp，tmp 单独用更短 TTL） */
 const PROJECT_CACHE_DIR_NAMES = [".cache", ".npm"] as const;
-/** 额外可清理的路径（相对 home）；不碰 opencode.db* 与 flowagents */
+/**
+ * 额外可清理的路径（相对 home）；不碰 opencode.db* 与 flowagents。
+ * 引擎日志目录不在这里：它按文件时间单独保留（见 DEFAULT_ENGINE_LOG_RETENTION_DAYS）。
+ */
 const PROJECT_CACHE_RELATIVE_PATHS = [
   path.join(".local", "share", "pnpm"),
   path.join(".local", "share", "uv"),
-  path.join(".local", "share", "opencode", "log"),
   // OpenCode 插件依赖可重建；保留 package.json，共享安装 + symlink 后应较少再膨胀
   path.join(".config", "opencode", "node_modules"),
 ] as const;
+/** 引擎日志目录（相对 home）；清理时按文件时间保留里面的日志 */
+const ENGINE_LOG_DIR_RELATIVE_PATH = path.join(".local", "share", "opencode", "log");
 
 /** 拒绝路径穿越与分隔符，非法字符替换为下划线 */
 export function sanitizePathSegment(segment: string): string {
@@ -471,6 +490,17 @@ export function isPersistentIsolatedHome(
   );
 }
 
+/**
+ * nuwaxcode 引擎自己的日志文件。
+ *
+ * nuwaxcode 1.17.11 不读 OPENCODE_LOG_DIR，日志固定写在
+ * <home>/.local/share/opencode/log/opencode.log，不在 <appData>/logs 下。
+ * 读取、清理、导出都以这里为唯一定义。
+ */
+export function getOpencodeLogFile(isolatedHome: string): string {
+  return path.join(isolatedHome, ENGINE_LOG_DIR_RELATIVE_PATH, "opencode.log");
+}
+
 function removeEmptyParentsUpTo(dir: string, stopAt: string): void {
   let current = dir;
   const stop = path.normalize(stopAt);
@@ -508,12 +538,124 @@ function shouldSkipHomeForPrune(
 }
 
 /**
+ * 目录下最新条目的 mtime（有界扫描；符号链接/junction 只看自身，不跟进）。
+ *
+ * 目录自身的 mtime 只在直接子项增删时变化，反映不了「最近是否在用」：会话库和日志
+ * 都是追加写。complete=false 表示触到扫描上限，结果不可信，调用方应按「在用」处理。
+ */
+function newestMtimeUnder(
+  root: string,
+  limit: number,
+): { mtimeMs: number; complete: boolean } {
+  let newest = 0;
+  let scanned = 0;
+  const pending = [root];
+  while (pending.length > 0) {
+    const dir = pending.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      scanned++;
+      if (scanned > limit) return { mtimeMs: newest, complete: false };
+      const full = path.join(dir, entry.name);
+      let stats: fs.Stats;
+      try {
+        stats = entry.isSymbolicLink() ? fs.lstatSync(full) : fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (stats.mtimeMs > newest) newest = stats.mtimeMs;
+      if (entry.isDirectory()) pending.push(full);
+    }
+  }
+  return { mtimeMs: newest, complete: true };
+}
+
+/**
+ * project home 的最近使用时间：home 自身 mtime 与其下最新条目 mtime 的较大者。
+ * 扫描触顶时返回 +Infinity（按在用处理），目录不存在时返回 NaN。
+ */
+export function projectHomeLastUsedMs(
+  homeDir: string,
+  scanLimit: number = HOME_LAST_USE_SCAN_LIMIT,
+): number {
+  let homeMtimeMs: number;
+  try {
+    homeMtimeMs = fs.statSync(homeDir).mtimeMs;
+  } catch {
+    return Number.NaN;
+  }
+  const scan = newestMtimeUnder(homeDir, scanLimit);
+  if (!scan.complete) return Number.POSITIVE_INFINITY;
+  return Math.max(homeMtimeMs, scan.mtimeMs);
+}
+
+/**
+ * 隔离 project home：把 `<engine>/home` 改名为 `home.quarantine-<时间戳>`，原数据保留。
+ *
+ * 用于「新进程里也建不出会话」的恢复链路：随后的引擎启动会按原路径重建一个干净的
+ * home。只改名不删数据，回滚就是改回去；超过保留期由 pruneProjectIsolatedHomeCaches
+ * 回收。调用方须先停掉使用该 home 的引擎（Windows 上文件被占用时改名会失败）。
+ */
+export function quarantineProjectIsolatedHome(
+  homeDir: string,
+  options?: { now?: number },
+):
+  | { ok: true; home: string; backupPath: string }
+  | { ok: false; reason: "not_persistent" | "rename_failed"; error?: string } {
+  const home = path.normalize(homeDir);
+  if (!isPersistentIsolatedHome(home) || path.basename(home) !== HOME_SEGMENT) {
+    return { ok: false, reason: "not_persistent" };
+  }
+  // 还没有 home 可隔离：等同于已隔离，调用方照常重建
+  if (!fs.existsSync(home)) return { ok: true, home, backupPath: "" };
+  const stamp = new Date(options?.now ?? Date.now());
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const stampText = [
+    String(stamp.getFullYear()),
+    pad(stamp.getMonth() + 1),
+    pad(stamp.getDate()),
+    pad(stamp.getHours()),
+    pad(stamp.getMinutes()),
+    pad(stamp.getSeconds()),
+  ].join("");
+  const backupPath = `${home}${QUARANTINE_SUFFIX}${stampText}`;
+  if (fs.existsSync(backupPath)) {
+    return {
+      ok: false,
+      reason: "rename_failed",
+      error: `quarantine target already exists: ${backupPath}`,
+    };
+  }
+  try {
+    fs.renameSync(home, backupPath);
+  } catch (error) {
+    log.error(`[IsolatedHome] could not quarantine engine home ${home}:`, error);
+    return {
+      ok: false,
+      reason: "rename_failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  log.warn(`[IsolatedHome] Quarantined engine home: ${home} → ${backupPath}`);
+  return { ok: true, home, backupPath };
+}
+
+/**
  * 清理 mtime 超过 maxAgeDays 的 project isolated home。
  * 扫描 run/projects 下各层 home 目录，跳过活跃引擎路径。
+ *
+ * 陈旧度取「最近使用时间」而不是 home 目录自身的 mtime：后者只在直接子项增删时
+ * 变化，长期使用但顶层目录稳定的会话会被当成陈旧数据删掉，会话随之丢失。
+ * 隔离目录（`home.quarantine-<ts>`）交给 pruneProjectIsolatedHomeCaches 按其保留期回收。
  */
 export function pruneStaleProjectIsolatedHomes(
   maxAgeDays = DEFAULT_PROJECT_HOME_RETENTION_DAYS,
-  options?: { skipPaths?: Set<string>; root?: string },
+  options?: { skipPaths?: Set<string>; root?: string; scanLimit?: number },
 ): number {
   const projectsRoot = options?.root ?? getProjectIsolatedHomesRoot();
   if (!fs.existsSync(projectsRoot)) return 0;
@@ -538,19 +680,16 @@ export function pruneStaleProjectIsolatedHomes(
       // 按迁移保留期（默认 30 天）回收；这里若继续往下走，备份里的 `home/`
       // 会被 7 天的 home 清理提前删掉，回滚窗口就没了。
       if (entry.name.includes(MIGRATED_BACKUP_SUFFIX)) continue;
+      // 隔离目录同理（保留期更短），这里不往里走
+      if (entry.name.includes(QUARANTINE_SUFFIX)) continue;
 
       if (entry.name === HOME_SEGMENT) {
         const parentEngineDir = path.dirname(fullPath);
         if (shouldSkipHomeForPrune(fullPath, options?.skipPaths)) {
           continue;
         }
-        let mtimeMs = 0;
-        try {
-          mtimeMs = fs.statSync(fullPath).mtimeMs;
-        } catch {
-          continue;
-        }
-        if (now - mtimeMs <= maxAgeMs) continue;
+        const lastUsedMs = projectHomeLastUsedMs(fullPath, options?.scanLimit);
+        if (Number.isNaN(lastUsedMs) || now - lastUsedMs <= maxAgeMs) continue;
 
         try {
           fs.rmSync(parentEngineDir, { recursive: true, force: true });
@@ -668,10 +807,43 @@ function tryPruneCachePath(
   }
 }
 
+/** 删除目录下 mtime 超期的普通文件（只看一层），返回删除个数。 */
+function pruneOldFilesInDir(
+  dir: string,
+  maxAgeMs: number,
+  now: number,
+  maxAgeDays: number,
+): number {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let deleted = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const filePath = path.join(dir, entry.name);
+    try {
+      if (now - fs.statSync(filePath).mtimeMs <= maxAgeMs) continue;
+      fs.rmSync(filePath, { force: true });
+      deleted++;
+      log.info(
+        `[IsolatedHome] Pruned old engine log (>${maxAgeDays}d): ${filePath}`,
+      );
+    } catch (err) {
+      log.warn(`[IsolatedHome] Engine log prune failed for ${filePath}:`, err);
+    }
+  }
+  return deleted;
+}
+
 /**
  * 清理 project home 内可重建缓存。
- * - .cache / .npm / .local/share/{pnpm,uv} / opencode/log：默认 maxAgeDays
+ * - .cache / .npm / .local/share/{pnpm,uv} / opencode 的 node_modules：默认 maxAgeDays
  * - tmp：默认更短 TTL（tmpMaxAgeDays）
+ * - 引擎日志（opencode/log）：按文件时间保留 engineLogMaxAgeDays，默认 7 天
+ * - 迁移备份（`.migrated-*`）与隔离目录（`home.quarantine-*`）：各有独立保留期
  * 保留 .claude、.nuwaxcode、.flowagents、.config、opencode.db* 等会话数据。
  */
 export function pruneProjectIsolatedHomeCaches(
@@ -681,6 +853,10 @@ export function pruneProjectIsolatedHomeCaches(
     tmpMaxAgeDays?: number;
     /** 迁移备份（`.migrated-*`）的保留天数，默认一个版本周期。 */
     migratedMaxAgeDays?: number;
+    /** 隔离目录（`home.quarantine-*`）的保留天数，默认 7 天。 */
+    quarantineMaxAgeDays?: number;
+    /** 引擎日志文件的保留天数，默认 7 天。 */
+    engineLogMaxAgeDays?: number;
     /** 覆盖扫描根（测试用）；默认 `run/projects`。 */
     root?: string;
   },
@@ -696,6 +872,13 @@ export function pruneProjectIsolatedHomeCaches(
   const migratedMaxAgeDays =
     options?.migratedMaxAgeDays ?? DEFAULT_MIGRATED_BACKUP_RETENTION_DAYS;
   const migratedMaxAgeMs = migratedMaxAgeDays * 24 * 60 * 60 * 1000;
+  // 隔离目录保留一个排障窗口；确认不需要回滚后回收
+  const quarantineMaxAgeDays =
+    options?.quarantineMaxAgeDays ?? DEFAULT_QUARANTINE_RETENTION_DAYS;
+  const quarantineMaxAgeMs = quarantineMaxAgeDays * 24 * 60 * 60 * 1000;
+  const engineLogMaxAgeDays =
+    options?.engineLogMaxAgeDays ?? DEFAULT_ENGINE_LOG_RETENTION_DAYS;
+  const engineLogMaxAgeMs = engineLogMaxAgeDays * 24 * 60 * 60 * 1000;
   const now = Date.now();
   let deleted = 0;
 
@@ -710,6 +893,21 @@ export function pruneProjectIsolatedHomeCaches(
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const fullPath = path.join(dir, entry.name);
+
+      // 隔离目录只用于回滚，超过保留期整个回收
+      if (entry.name.includes(QUARANTINE_SUFFIX)) {
+        if (
+          tryPruneCachePath(
+            fullPath,
+            quarantineMaxAgeMs,
+            now,
+            quarantineMaxAgeDays,
+          )
+        ) {
+          deleted++;
+        }
+        continue;
+      }
 
       // 迁移备份（<name>.migrated-<ts>）只用于回滚，超过保留期即回收。
       if (entry.name.includes(MIGRATED_BACKUP_SUFFIX)) {
@@ -766,6 +964,13 @@ export function pruneProjectIsolatedHomeCaches(
             deleted++;
           }
         }
+        // 引擎日志按文件时间保留：opencode.log 是追加写，目录 mtime 停在首次创建时
+        deleted += pruneOldFilesInDir(
+          path.dirname(getOpencodeLogFile(fullPath)),
+          engineLogMaxAgeMs,
+          now,
+          engineLogMaxAgeDays,
+        );
         continue;
       }
 

@@ -37,6 +37,7 @@ import { isHarnessEngineCommand } from "../engineOverride";
 import { normalizePromptErrorForDisplay } from "./acpPromptErrorNormalizer";
 import {
   isPersistentIsolatedHome,
+  quarantineProjectIsolatedHome,
   type IsolatedHomeScope,
 } from "./isolatedHomePaths";
 import {
@@ -63,7 +64,6 @@ import {
   isAcpSetupTimeoutError,
   withSetupTimeout,
 } from "./acpSetupBudgets";
-import type { SessionRestoredVia } from "./acpSessionSetup";
 import {
   resolveSessionWithRecovery,
   sessionSetupRecoveryState,
@@ -72,9 +72,7 @@ import {
   type AcpEngineRecycleResult,
   type SessionHomeQuarantineResult,
   type SessionRecoveryResult,
-  type SessionSetupFailureReason,
   type SessionSetupFallbackReason,
-  type SessionSetupReport,
 } from "./acpSessionRecovery";
 import {
   buildSessionSetupFailure,
@@ -156,14 +154,63 @@ import {
 import { resolveChatEngineRegistryKey } from "../../computer/chatEngineKey";
 import {
   formatAcpLoadError,
+  readEngineLogTail,
   snapshotOpencodePersistence,
 } from "./opencodeSessionDiagnostics";
+import {
+  isNotableSessionSetupOutcome,
+  recordSessionSetupOutcome,
+} from "./sessionSetupDiagnostics";
 import { computeOpencodePermissionBridgeKey } from "./permission/opencodePermissionBridge";
 
 /** AcpEngine.init() 返回结果 */
 export interface EngineInitResult {
   ok: boolean;
   error?: string;
+}
+
+/**
+ * 自动隔离引擎 home 的开关（默认开）。关闭后恢复链路在「新进程里也建不出会话」时
+ * 直接返回 engine_env_hang，不再改名 home。
+ * env NUWAX_SESSION_SETUP_AUTO_QUARANTINE=0/false/off 关闭。
+ */
+export function isSessionSetupAutoQuarantineEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = env.NUWAX_SESSION_SETUP_AUTO_QUARANTINE
+    ?.trim()
+    .toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off";
+}
+
+type ActiveIsolatedHomesProvider = () => Iterable<string>;
+let activeIsolatedHomesProvider: ActiveIsolatedHomesProvider | null = null;
+
+/**
+ * 允许自动隔离 home 的引擎。目前只有 nuwaxcode：它的模型凭据随环境变量下发，
+ * home 里只有会话数据。其他引擎的 home 可能存登录态，隔离等于把用户登出。
+ */
+const SESSION_SETUP_QUARANTINE_ENGINES: ReadonlySet<string> = new Set([
+  "nuwaxcode",
+]);
+
+/** 路径相等判断：Windows 上不区分大小写。 */
+function samePath(a: string, b: string): boolean {
+  const left = path.resolve(a);
+  const right = path.resolve(b);
+  return process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+/**
+ * 由 UnifiedAgentService 注入：当前全部活跃引擎的 isolated home。
+ * 隔离 home 前用它判断是否被其他引擎共用（常规项目的多个对话共用一个 home）。
+ */
+export function registerActiveIsolatedHomesProvider(
+  provider: ActiveIsolatedHomesProvider | null,
+): void {
+  activeIsolatedHomesProvider = provider;
 }
 
 const MCP_RETRY_DELAY_MS = 1200;
@@ -309,6 +356,8 @@ export class AcpEngine extends EventEmitter {
   private recycling = false;
   /** 被 stop / 空闲驱逐等外部销毁：恢复链路不得再重启它 */
   private ownerDestroyed = false;
+  /** 最近一次使用的持久化 home；destroy 之后隔离 home 仍需要它 */
+  private lastKnownIsolatedHome: string | null = null;
   /** 同一会话并发的 chat 共享一次会话建立（含失败结果），不再各发一组 RPC */
   private setupQueues = new Map<string, Promise<SessionRecoveryResult>>();
   private setupTail: Promise<unknown> = Promise.resolve();
@@ -1038,6 +1087,7 @@ export class AcpEngine extends EventEmitter {
 
     if (isPersistentIsolatedHome(home)) {
       log.info(`${this.logTag} Preserved persistent isolated HOME: ${home}`);
+      this.lastKnownIsolatedHome = home;
       this.isolatedHome = null;
       return;
     }
@@ -1105,6 +1155,21 @@ export class AcpEngine extends EventEmitter {
         // 等待期间被外部销毁（stop / 空闲驱逐）：不复活
         return { ok: false, error: "engine was destroyed by owner" };
       }
+      if (options.beforeInit) {
+        try {
+          await options.beforeInit();
+        } catch (err) {
+          log.error(
+            `${this.logTag} Session setup recovery: step before re-init failed`,
+            err,
+          );
+          this.ownerDestroyed = true;
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
       const initResult = await this.init(config);
       return initResult.ok
         ? { ok: true }
@@ -1169,7 +1234,8 @@ export class AcpEngine extends EventEmitter {
       };
     }
     const engineKey = resolveChatEngineRegistryKey(request);
-    return resolveSessionWithRecovery(
+    const homeAtStart = this.isolatedHome ?? this.lastKnownIsolatedHome;
+    const result = await resolveSessionWithRecovery(
       {
         logTag: this.logTag,
         engineKey,
@@ -1197,6 +1263,7 @@ export class AcpEngine extends EventEmitter {
         getSessionRecord: (id) => this.sessions.get(id)!,
         recycle: (reason, recycleOptions) =>
           this.recycleForRecovery(reason, recycleOptions),
+        canQuarantineHome: () => this.canQuarantineEngineHome(engineKey),
         quarantineHome: () => this.quarantineEngineHome(engineKey),
       },
       request,
@@ -1205,37 +1272,128 @@ export class AcpEngine extends EventEmitter {
         requestId: request.request_id,
       },
     );
+    this.reportSessionSetupOutcome(request, result, homeAtStart);
+    return result;
+  }
+
+  /** 本次运行里是否已经对别的会话判过「建会话超时」。 */
+  private canQuarantineEngineHome(engineKey: string): boolean {
+    if (!isSessionSetupAutoQuarantineEnabled()) return false;
+    // 只对凭据随环境变量下发的引擎做。其他引擎的 home 里可能存着登录态，
+    // 换一个干净 home 等于把用户登出，这种代价不该由自动恢复来付。
+    if (!SESSION_SETUP_QUARANTINE_ENGINES.has(this.engineName)) return false;
+    const home = this.isolatedHome ?? this.lastKnownIsolatedHome;
+    // 只对持久化的 project home 做：临时 home 销毁即消失，没有可隔离的东西
+    if (!home || !isPersistentIsolatedHome(home)) return false;
+    if (sessionSetupRecoveryState.isHomeQuarantined(home)) return false;
+    // 常规项目的多个对话共用一个 home：别的引擎还在用时不能动。
+    // 调用可能发生在本引擎销毁之前，先把自己从活跃集合里去掉。
+    const selfIsUsingHome =
+      !!this.isolatedHome && samePath(this.isolatedHome, home);
+    let users = 0;
+    for (const active of activeIsolatedHomesProvider?.() ?? []) {
+      if (samePath(active, home)) users++;
+    }
+    if (users - (selfIsUsingHome ? 1 : 0) > 0) return false;
+    // 别的会话也建会话超时过 → 更像机器级变慢（MCP、网络），不是这个 home 的问题
+    if (sessionSetupRecoveryState.hasSetupTimeoutForOtherEngine(engineKey)) {
+      return false;
+    }
+    return true;
   }
 
   /**
-   * 隔离引擎 home：把目录改名保留后让引擎按原路径重建，用于「新进程里也建不出会话」。
-   * 约束见 specs/session-setup-ha.md（持久化 home、未被其他引擎共用、每次运行一次、
-   * 非机器级变慢）。
+   * 隔离引擎 home：把目录改名保留，让随后 init() 按原路径重建一个干净的 home。
+   * 必须在引擎进程销毁之后、重启之前调用（见 recycleForRecovery 的 beforeInit）。
+   * 约束见 specs/session-setup-ha.md。
    */
   private quarantineEngineHome(engineKey: string): SessionHomeQuarantineResult {
-    void engineKey;
-    return { ok: false, reason: "disabled" };
+    const home = this.isolatedHome ?? this.lastKnownIsolatedHome;
+    if (!isSessionSetupAutoQuarantineEnabled()) {
+      return { ok: false, reason: "disabled" };
+    }
+    if (!SESSION_SETUP_QUARANTINE_ENGINES.has(this.engineName)) {
+      return { ok: false, reason: "unsupported_engine" };
+    }
+    if (!home || !isPersistentIsolatedHome(home)) {
+      return { ok: false, reason: "not_persistent" };
+    }
+    if (sessionSetupRecoveryState.isHomeQuarantined(home)) {
+      return { ok: false, reason: "already_quarantined" };
+    }
+    if (!this.canQuarantineEngineHome(engineKey)) {
+      return { ok: false, reason: "machine_slow" };
+    }
+    const result = quarantineProjectIsolatedHome(home);
+    if (!result.ok) {
+      return { ok: false, reason: result.reason, error: result.error };
+    }
+    log.warn(
+      `${this.logTag} [SessionSetup] quarantined engine home ${result.home} → ${result.backupPath}`,
+      { engineKey },
+    );
+    return { ok: true, home: result.home, backupPath: result.backupPath };
   }
 
-  private logSessionSetupFailure(
+  /**
+   * 建立过程「出过状况」时留档：失败、重建过进程、隔离过 home、恢复变慢。
+   * 判为卡死时把引擎日志尾部带进主日志——主进程日志里只能看到 RPC 无响应，
+   * 看不到引擎停在启动的哪一步。
+   */
+  private reportSessionSetupOutcome(
     request: ComputerChatRequest,
-    result: Extract<SessionRecoveryResult, { ok: false }>,
+    result: SessionRecoveryResult,
+    homeAtStart: string | null,
   ): void {
     const { report } = result;
-    log.warn(`${this.logTag} [SessionSetup] failed`, {
-      requestId: request.request_id,
+    const input = {
+      engineKey: report.engineKey,
       projectId: request.project_id,
       sessionId: request.session_id,
-      reason: result.reason,
-      message: result.message,
+      ok: result.ok,
+      reason: result.ok ? undefined : result.reason,
+      fallbackReason: result.ok ? result.fallbackReason : undefined,
       setupPath: report.setupPath,
       loadMs: report.loadMs,
-      newAttemptsMs: report.newAttemptsMs,
-      recycled: report.recycleReasons,
+      newAttemptsMs: [...report.newAttemptsMs],
+      recycled: [...report.recycleReasons],
       quarantined: report.quarantined,
       slowRestore: report.slowRestore,
       breakerOpened: report.breakerOpened,
       totalMs: report.totalMs,
+    };
+    if (!isNotableSessionSetupOutcome(input)) return;
+
+    let engineLogTail: string[] | undefined;
+    // 「是否卡死」由恢复链路判定（它据此开熔断），这里不另维护一份原因清单
+    if (!result.ok && report.breakerOpened) {
+      const tail = readEngineLogTail(homeAtStart);
+      if (tail?.exists) {
+        engineLogTail = tail.lines;
+        log.warn(
+          `${this.logTag} [SessionSetup] engine log tail (${tail.path}${tail.truncated ? ", truncated" : ""})`,
+          tail.lines,
+        );
+      } else {
+        log.warn(
+          `${this.logTag} [SessionSetup] engine log not found (${tail?.path ?? "no isolated home"})`,
+        );
+      }
+    }
+    recordSessionSetupOutcome({ ...input, engineLogTail });
+
+    if (result.ok) {
+      log.warn(`${this.logTag} [SessionSetup] recovered`, input);
+      return;
+    }
+    // 引擎日志尾部已在上面单独打过，这里不再重复带
+    log.warn(`${this.logTag} [SessionSetup] failed`, {
+      ...input,
+      message: result.message,
+    });
+    perfEmitter.duration("acp.sessionSetup.failed", report.totalMs, {
+      reason: result.reason,
+      engine: this.engineName,
     });
   }
 
@@ -2303,7 +2461,6 @@ export class AcpEngine extends EventEmitter {
         chainStartedAtMs: options?.chainStartedAtMs,
       });
       if (!setup.ok) {
-        this.logSessionSetupFailure(request, setup);
         return buildSessionSetupFailure(request, setup.reason, setup.message);
       }
 
