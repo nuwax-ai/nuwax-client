@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({}));
-import { browserWindowChrome, isBrowserToolbar } from "./windows";
+import {
+  browserWindowChrome,
+  isAgentEligiblePage,
+  isBrowserToolbar,
+} from "./windows";
 describe("browser window chrome", () => {
   it("keeps only native traffic lights on macOS, inside the toolbar", () => {
     expect(browserWindowChrome("darwin")).toMatchObject({
@@ -23,6 +27,28 @@ describe("browser window chrome", () => {
       );
     },
   );
+});
+describe("agent browser page eligibility", () => {
+  it("accepts ordinary HTTP(S) tabs and rejects dedicated, local and credential URLs", () => {
+    expect(
+      isAgentEligiblePage({ isolated: false, url: "https://example.com/a" }),
+    ).toBe(true);
+    expect(
+      isAgentEligiblePage({ isolated: true, url: "https://example.com/a" }),
+    ).toBe(false);
+    expect(
+      isAgentEligiblePage({ isolated: false, url: "file:///etc/passwd" }),
+    ).toBe(false);
+    expect(
+      isAgentEligiblePage({ isolated: false, url: "about:blank" }),
+    ).toBe(false);
+    expect(
+      isAgentEligiblePage({
+        isolated: false,
+        url: "https://user:pass@example.com/",
+      }),
+    ).toBe(false);
+  });
 });
 describe("browser toolbar ownership", () => {
   it("only accepts the owned local main frame, rejecting pages, subframes and navigated toolbars", () => {

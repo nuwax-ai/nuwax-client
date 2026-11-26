@@ -94,6 +94,8 @@ const LABELS = [
   "copyFailed",
   "printFailed",
   "url",
+  "agent",
+  "agentStop",
 ] as const;
 
 /** Ordinary tabs and isolated payment windows use the same window chrome. */
@@ -127,6 +129,30 @@ function webUrl(value: string): string | null {
   }
 }
 
+export interface BrowserAgentPage {
+  contents: WebContents;
+  window: BrowserWindow;
+  title: string;
+  url: string;
+  origin: string;
+  active: boolean;
+}
+
+export interface BrowserAgentHooks {
+  state?(contentsId: number): { controlled: boolean; origin?: string } | null;
+  /** Stop every agent binding; the toolbar badge is a global stop control. */
+  revokeAll?(): void;
+  revoke?(contents: WebContents): void;
+}
+
+/**
+ * Agent control is limited to ordinary HTTP(S) tabs. Isolated payment/dedicated
+ * windows never enter this registry, and the predicate keeps the boundary explicit.
+ */
+export function isAgentEligiblePage(input: { isolated: boolean; url: string }): boolean {
+  return !input.isolated && webUrl(input.url) !== null;
+}
+
 /** Only the locally owned toolbar main frame can control its associated page. */
 export function isBrowserToolbar(
   event: IpcMainInvokeEvent,
@@ -149,6 +175,8 @@ export function isBrowserToolbar(
 
 export function createBrowserWindows(ctx: FeatureContext) {
   const windows = new Map<number, WindowEntry>();
+  const pageEntries = new Map<number, Entry>();
+  const agentHooks: BrowserAgentHooks = {};
   let shared: WindowEntry | null = null;
   let disposed = false;
   const publicUrl = (value: string) => ctx.windows.toExternalUrl
@@ -196,8 +224,14 @@ export function createBrowserWindows(ctx: FeatureContext) {
   const snapshot = (group: WindowEntry): BrowserState | null => {
     if (!group.active || group.disposed) return null;
     updateState(group.active);
+    // A background tab may be the controlled one; keep the stop badge visible.
+    const agent =
+      group.tabs
+        .map((tab) => agentHooks.state?.(tab.contents.id))
+        .find((state) => state?.controlled) ?? null;
     return {
       ...group.active.state,
+      agent,
       activeTabId: group.active.contents.id,
       tabs: group.tabs.map((tab) => ({
         id: tab.contents.id,
@@ -390,6 +424,10 @@ export function createBrowserWindows(ctx: FeatureContext) {
       case "address-close":
         entry.state.addressOpen = command.type === "address-open";
         layout(entry);
+        break;
+      case "agent-revoke":
+        if (agentHooks.revokeAll) agentHooks.revokeAll();
+        else agentHooks.revoke?.(entry.contents);
         break;
       case "window-minimize":
         if (!entry.window.isMinimizable()) return false;
@@ -705,6 +743,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         fullscreen: false,
         addressOpen: false,
         error: null,
+        agent: null,
         finding: false,
         findText: "",
         findFocusRequest: 0,
@@ -718,6 +757,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     // so the local loading UI can paint while the server has not responded.
     page.view.setVisible(false);
     group.tabs.push(entry);
+    pageEntries.set(wc.id, entry);
     wc.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
       if (webUrl(url)) entry.state.url = url;
@@ -835,6 +875,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       if (cleaned) return;
       cleaned = true;
       disposeCertificatePrompts();
+      pageEntries.delete(entry.contents.id);
       const index = group.tabs.indexOf(entry);
       if (index >= 0) group.tabs.splice(index, 1);
       page.destroy();
@@ -880,14 +921,76 @@ export function createBrowserWindows(ctx: FeatureContext) {
   const closeAll = () => {
     for (const group of [...windows.values()]) group.window.destroy();
   };
+  const agentPage = (contents: WebContents): BrowserAgentPage | null => {
+    const entry = pageEntries.get(contents.id);
+    if (!entry || entry.contents !== contents) return null;
+    const group = entry.group;
+    if (group.isolated || group.disposed || group.closing) return null;
+    if (group.window.isDestroyed() || contents.isDestroyed()) return null;
+    // The toolbar renderer and the host main window are never agent targets.
+    if (contents === group.window.webContents) return null;
+    try {
+      const main = ctx.windows.getMain();
+      if (main && main.webContents === contents) return null;
+    } catch {
+      /* Window host unavailable during shutdown. */
+    }
+    const url = webUrl(contents.getURL());
+    if (!url || !isAgentEligiblePage({ isolated: group.isolated, url }))
+      return null;
+    let origin = "";
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      return null;
+    }
+    return {
+      contents,
+      window: group.window,
+      title: contents.getTitle() || url,
+      url,
+      origin,
+      active: group.active === entry,
+    };
+  };
+
   return {
     open,
     closeAll,
     refresh,
+    configureAgent(hooks: BrowserAgentHooks) {
+      Object.assign(agentHooks, hooks);
+      refresh();
+    },
+    listAgentPages(): BrowserAgentPage[] {
+      const pages: BrowserAgentPage[] = [];
+      for (const entry of pageEntries.values()) {
+        const page = agentPage(entry.contents);
+        if (page) pages.push(page);
+      }
+      return pages.sort(
+        (a, b) => Number(b.active) - Number(a.active),
+      );
+    },
+    resolveAgentPage(contents: WebContents): BrowserAgentPage | null {
+      return agentPage(contents);
+    },
+    activateAgentPage(contents: WebContents): boolean {
+      const entry = pageEntries.get(contents.id);
+      if (!entry || entry.contents !== contents) return false;
+      const page = agentPage(contents);
+      if (!page) return false;
+      if (page.window.isMinimized()) page.window.restore();
+      page.window.show();
+      page.window.focus();
+      activate(entry);
+      return true;
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       closeAll();
+      pageEntries.clear();
       nativeTheme.removeListener("updated", refresh);
       ipcMain.removeHandler(BROWSER_IPC.state);
       ipcMain.removeHandler(BROWSER_IPC.command);

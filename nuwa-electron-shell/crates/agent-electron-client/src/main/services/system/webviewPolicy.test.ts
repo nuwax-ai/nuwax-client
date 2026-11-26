@@ -39,11 +39,11 @@ const mocks = vi.hoisted(() => {
     return ses;
   });
   return { findViews, focused: null as unknown, owner: null as unknown,
-    browserAvailable: true, createBrowserPage: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
+    browserAvailable: true, createBrowserPage: vi.fn(), notifyAgentBrowserNewWindow: vi.fn(), openExternal: vi.fn(async () => undefined), appOn: vi.fn(), showMessageBoxSync: vi.fn(), defaultSession, partitionSessions, fromPartition, popupWindows,
     attachHostActivityBusinessWindow: vi.fn(), trustInitialBusinessNavigation: vi.fn() };
 });
 const settings = new Map<string, unknown>();
-vi.mock("../../features", () => ({ isDesktopBrowserAvailable: () => mocks.browserAvailable, createDesktopBrowserPage: mocks.createBrowserPage }));
+vi.mock("../../features", () => ({ isDesktopBrowserAvailable: () => mocks.browserAvailable, createDesktopBrowserPage: mocks.createBrowserPage, notifyAgentBrowserNewWindow: mocks.notifyAgentBrowserNewWindow }));
 
 vi.mock("electron", () => ({
   app: { on: mocks.appOn },
@@ -178,6 +178,7 @@ beforeEach(async () => {
   mocks.popupWindows.length = 0;
   mocks.attachHostActivityBusinessWindow.mockClear();
   mocks.trustInitialBusinessNavigation.mockClear();
+  mocks.notifyAgentBrowserNewWindow.mockClear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -639,6 +640,16 @@ describe("download popup lifecycle", () => {
     const contents = result.createWindow!(result.overrideBrowserWindowOptions!);
     return { result, contents, win: mocks.popupWindows.at(-1)! };
   }
+
+  it("revokes agent control when the authorized page creates a new in-app page", async () => {
+    const created = await setup();
+    const guest = attachedWebview(created, `${business}/home`);
+    const handler = guest.setWindowOpenHandler.mock.lastCall?.[0] as (
+      details: unknown,
+    ) => import("electron").WindowOpenHandlerResponse;
+    handler(popup(`${business}/file`, `${business}/home`));
+    expect(mocks.notifyAgentBrowserNewWindow).toHaveBeenCalledWith(guest);
+  });
 
   it("registers initial business authentication before loading a hidden popup", async () => {
     const { result, contents, win } = await createPopup();

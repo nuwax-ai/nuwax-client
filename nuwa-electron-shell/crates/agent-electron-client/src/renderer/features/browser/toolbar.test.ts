@@ -146,6 +146,21 @@ describe("browser toolbar find state", () => {
 });
 
 describe("browser toolbar actions and feedback", () => {
+  it("shows the agent stop badge only while a tab is controlled", async () => {
+    const f = await setup();
+    f.update({ agent: null });
+    expect(f.elements.get("agent")!.hidden).toBe(true);
+    f.update({
+      agent: { controlled: true, origin: "https://example.com" },
+      labels: { agent: "Agent", agentStop: "Stop agent control" },
+    });
+    expect(f.elements.get("agent")!.hidden).toBe(false);
+    expect(f.elements.get("agentText")!.textContent).toBe("Agent");
+    f.elements.get("agent")!.events.get("click")!({});
+    expect(f.command).toHaveBeenCalledWith({ type: "agent-revoke" });
+    f.update({ agent: null });
+    expect(f.elements.get("agent")!.hidden).toBe(true);
+  });
   it("shows navigation only when the current page can go back or forward", async () => {
     const f = await setup();
     for (const [canGoBack, canGoForward] of [

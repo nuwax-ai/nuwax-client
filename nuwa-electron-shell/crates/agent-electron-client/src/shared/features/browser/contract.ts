@@ -20,6 +20,11 @@ export interface BrowserTab {
   title: string;
   loading: boolean;
 }
+/** Host-owned agent binding state; the toolbar only needs to know it exists. */
+export interface BrowserAgentState {
+  controlled: boolean;
+  origin?: string;
+}
 export interface BrowserState {
   tabs: BrowserTab[];
   activeTabId: number;
@@ -28,6 +33,7 @@ export interface BrowserState {
   domain: string;
   loading: boolean;
   initialLoading: boolean;
+  agent: BrowserAgentState | null;
   canGoBack: boolean;
   canGoForward: boolean;
   zoom: number;
@@ -65,6 +71,7 @@ export type BrowserCommand =
         | "find-close"
         | "address-open"
         | "address-close"
+        | "agent-revoke"
         | "window-minimize"
         | "window-maximize"
         | "window-close";

@@ -324,4 +324,9 @@ export { routeCaptureShortcut } from "./capture/shortcutRouting";
 export { applyCuaCapabilityNotice } from "./computer-use/cuaSessionNotice";
 export { formatLocalFileTimestamp } from "./_kit/fileTimestamp";
 
-export { createDesktopBrowserPage, isDesktopBrowserAvailable, refreshDesktopBrowserWindows } from "./browser";
+export {
+  createDesktopBrowserPage,
+  isDesktopBrowserAvailable,
+  notifyAgentBrowserNewWindow,
+  refreshDesktopBrowserWindows,
+} from "./browser";
