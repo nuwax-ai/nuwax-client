@@ -7,6 +7,7 @@ import { RECORDING_IPC } from "@shared/features/capture/recordingContract";
 import { createScratchDir } from "../_kit/scratchDir";
 import { createRecordEngine, createCaptureSourceStill, createCapturePortalFrame } from "./recorder";
 import { resolveCapturePlatform } from './platforms';
+import { openRecordingWindow } from './recordingSession';
 import type { CaptureSelection, RecordingAction } from "@shared/features/capture/windowContract";
 import type { CaptureState } from "@shared/features/capture/contract";
 
@@ -90,6 +91,25 @@ describe("private desktop recorder", () => {
     vi.useRealTimers();
     await realDelay(5);
     await rm(root,{recursive:true,force:true}); expect(fake.handlers.size).toBe(0);
+  });
+
+  it('delivers UOS pixels only to the configured native recording document', async () => {
+    fake.autoReady = false;
+    const frame = { width: 1, height: 1, format: 'BGRX' as const, pixels: Uint8Array.of(1, 2, 3, 255) };
+    const session = await openRecordingWindow(root, {
+      sourceId: 'screen:uos-desktop', sourceKind: 'screen', sourceSize: frame, fps: 30, mode: 'record', acquisition: 'uos-desktop',
+    }, new AbortController().signal, {
+      frame: async () => frame, event: vi.fn(), snapshot: vi.fn(), chunk: vi.fn(), fail: vi.fn(),
+    });
+    try {
+      const event = fake.windows[0].event();
+      const handler = fake.handlers.get(RECORDING_IPC.FRAME)!;
+      await expect(handler(event)).rejects.toThrow('no native frame source');
+      await fake.handlers.get(RECORDING_IPC.CONFIG)!(event);
+      await expect(handler({ ...event, senderFrame: { url: event.senderFrame.url } })).rejects.toThrow('untrusted');
+      await expect(handler(event)).resolves.toEqual(frame);
+      expect(fake.windows[0].webContents.session.setDisplayMediaRequestHandler).not.toHaveBeenCalled();
+    } finally { session.dispose(); }
   });
 
   it.each([

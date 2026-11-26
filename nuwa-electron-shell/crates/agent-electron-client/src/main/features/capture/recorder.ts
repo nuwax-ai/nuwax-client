@@ -14,6 +14,7 @@ import { openRecordingWindow, deferred, canceled, dimensions as recordingDimensi
 import { resolveCapturePlatform, type CapturePlatformAdapter } from './platforms';
 import { portalRecordingConfig } from './platforms/sources';
 import { getTierParams } from './tiers';
+import { openUosFrames, UOS_DESKTOP_SOURCE } from './platforms/uosFrames';
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -129,6 +130,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
       let keepResult = false;
       let controls: RecordingControls | undefined;
       let engineWindow: Awaited<ReturnType<typeof openRecordingWindow>> | undefined;
+      let disposeNativeSource: (() => void) | undefined;
       let sink: Awaited<ReturnType<typeof createRecordingSink>> | undefined;
       let tick: ReturnType<typeof setInterval> | undefined;
       let acquisitionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -181,7 +183,8 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
       try {
         dir = deps.scratch.create(id);
         sink = await createRecordingSink(join(dir, "source.webm"));
-        const callbacks: Pick<PrivateRecordingSession, 'event' | 'chunk' | 'snapshot' | 'fail'> = {
+        let currentConfig: RecordingConfig;
+        const callbacks: Pick<PrivateRecordingSession, 'event' | 'chunk' | 'snapshot' | 'frame' | 'fail'> = {
           fail,
           async chunk(sequence, data) {
             if (!sink || !["recording", "paused", "stopping"].includes(state) || signal.aborted) throw new Error("recording session is not accepting chunks");
@@ -190,7 +193,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
           async snapshot(data, width, height) {
             if (!adapter.source.providesPreview || state !== 'starting' || snapshotConsumed) throw new Error('recording window cannot submit snapshots');
             snapshotConsumed = true;
-            preview.resolve(portalImage(snapshotFrame(data, width, height), portalRecordingConfig('record')));
+            preview.resolve(portalImage(snapshotFrame(data, width, height), currentConfig));
           },
           async event(event) {
             if (event.type === "error") { fail(event.canceled ? new CaptureCanceledError(event.message)
@@ -235,11 +238,33 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
           framePipeline: adapter.framePipeline,
           windows: preselected ? {
             select: async () => preselected,
-            selectPrepared: async (_mode, image) => ({ ...image.selection, crop: preselected.crop }),
+            selectPrepared: async (_mode, image) => {
+              if (preselected.sourceId === UOS_DESKTOP_SOURCE &&
+                  (image.selection.sourceId !== preselected.sourceId || image.width !== preselected.sourceSize.width ||
+                   image.height !== preselected.sourceSize.height)) throw new Error('UOS desktop changed after selection');
+              return { ...image.selection, crop: preselected.crop };
+            },
           } : deps.windows, ready: ready.promise, preview: preview.promise,
           async open(config) {
             acquisitionTimer = setTimeout(() => fail(new Error('Desktop capture acquisition timed out')), adapter.source.acquisitionTimeoutMs);
-            engineWindow = await openRecordingWindow(dir, config, signal, callbacks, deps.preloadPath);
+            currentConfig = config;
+            if (config.acquisition === 'portal' && (!preselected || preselected.sourceId === UOS_DESKTOP_SOURCE)) {
+              const source = await openUosFrames(signal);
+              if (!source && preselected?.sourceId === UOS_DESKTOP_SOURCE) throw new Error('UOS desktop source is no longer available');
+              if (source) {
+                disposeNativeSource = source.dispose;
+                void source.closed.then(error => { if (error) fail(error); });
+                let initial = true;
+                currentConfig = { ...config, acquisition: 'uos-desktop', sourceId: UOS_DESKTOP_SOURCE,
+                  sourceSize: { width: source.first.width, height: source.first.height } };
+                callbacks.frame = () => {
+                  if (!initial) return source.next();
+                  initial = false;
+                  return Promise.resolve(source.first);
+                };
+              }
+            }
+            engineWindow = await openRecordingWindow(dir, currentConfig, signal, callbacks, deps.preloadPath);
             return engineWindow;
           },
         });
@@ -274,6 +299,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         await done.promise;
         clearInterval(tick); clearTimeout(stopTimer);
         engineWindow!.dispose(); engineWindow = undefined;
+        disposeNativeSource?.(); disposeNativeSource = undefined;
         if (signal.aborted) throw fatalError ?? canceled();
         if (!sink.bytes) throw new CaptureRecordingError("failed", "No desktop recording frames were written");
         onState("encoding"); updateControls({ state: "encoding", elapsedMs: Math.round(activeMs) });
@@ -295,6 +321,7 @@ export function createRecordEngine(deps: RecordEngineDeps): RecordEngine & { dis
         try { releasePower?.(); } catch (error) { deps.log.warn('[Capture] recording sleep blocker cleanup failed', error); }
         clearInterval(tick); clearTimeout(acquisitionTimer); clearTimeout(stopTimer);
         engineWindow?.dispose(); controls?.dispose();
+        disposeNativeSource?.();
         await sink?.close().catch(error => deps.log.warn("[Capture] recording writer cleanup failed", error));
         parentSignal.removeEventListener("abort", abort);
         active.delete(controller);

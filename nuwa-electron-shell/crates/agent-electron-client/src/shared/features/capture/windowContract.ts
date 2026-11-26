@@ -74,7 +74,7 @@ export type CaptureWindowConfiguration = {
   image: CaptureWindowImage; sources: CaptureWindowSource[]; workArea: CaptureRect;
   /** Visible top-level windows in frozen-frame pixels, topmost first; absent where desktop geometry is unknown. */
   regions?: CaptureRect[];
-  presentation?: 'preview';
+  presentation?: 'preview' | 'desktop-source';
   recordingHint?: string;
 } | {
   kind: 'controls'; labels: CaptureWindowLabels; state: RecordingControlState;

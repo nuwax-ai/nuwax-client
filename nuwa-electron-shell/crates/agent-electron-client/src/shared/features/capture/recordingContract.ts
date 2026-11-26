@@ -4,6 +4,7 @@ export const RECORDING_IPC = {
   EVENT: "capture:recording:event",
   CHUNK: "capture:recording:chunk",
   SNAPSHOT: "capture:recording:snapshot",
+  FRAME: "capture:recording:frame",
   COMMAND: "capture:recording:command",
 } as const;
 
@@ -17,7 +18,7 @@ export interface RecordingConfig {
   sourceSize: { width: number; height: number };
   fps: number;
   mode: "record" | "snapshot";
-  acquisition?: 'portal';
+  acquisition?: 'portal' | 'uos-desktop';
   /** Keep the granted stream after its first frame; the recording command reuses it. */
   preview?: boolean;
   /** Repeat decoded native pixels at the requested rate for damage-driven sources. */
@@ -37,5 +38,6 @@ export interface RecordingWindowBridge {
   event(event: RecordingEvent): Promise<void>;
   chunk(sequence: number, data: ArrayBuffer): Promise<void>;
   snapshot(data: ArrayBuffer, width: number, height: number): Promise<void>;
+  frame(): Promise<{ width: number; height: number; format: 'BGRX' | 'RGBX'; pixels: Uint8Array } | null>;
   onCommand(listener: (command: RecordingCommand) => void): () => void;
 }

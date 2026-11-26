@@ -10,6 +10,7 @@ const bridge: RecordingWindowBridge = {
   event: (event) => ipcRenderer.invoke(RECORDING_IPC.EVENT, event),
   chunk: (sequence, data) => ipcRenderer.invoke(RECORDING_IPC.CHUNK, sequence, data),
   snapshot: (data, width, height) => ipcRenderer.invoke(RECORDING_IPC.SNAPSHOT, data, width, height),
+  frame: () => ipcRenderer.invoke(RECORDING_IPC.FRAME),
   onCommand(listener) {
     const handler = (_event: Electron.IpcRendererEvent, command: RecordingCommand) => listener(command);
     ipcRenderer.on(RECORDING_IPC.COMMAND, handler);

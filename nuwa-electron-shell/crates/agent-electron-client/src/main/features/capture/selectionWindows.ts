@@ -18,6 +18,7 @@ import { recordingBorderBounds, recordingControlBounds } from './windowGeometry'
 import { usesCapturePortal } from './linuxEnvironment';
 import { resolveCaptureWindowPolicy, type CaptureSelectorWindowPolicy, type CaptureWindowPolicy } from './platforms/windowing';
 import { desktopSource, portalSource, type CaptureSourceStrategy } from './platforms/sources';
+import { UOS_DESKTOP_SOURCE } from './platforms/uosFrames';
 import { createNativeWindowLister, physicalDisplayBounds, projectWindowsToDisplay, type NativeWindowInfo, type NativeWindowLister } from './windowRegions';
 import { formatLocalFileTimestamp } from '../_kit/fileTimestamp';
 
@@ -40,6 +41,7 @@ export interface CaptureWindowOptions {
   windowPolicy?: CaptureWindowPolicy;
   sourceStrategy?: CaptureSourceStrategy;
   capturePortalFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage>;
+  captureNativeFrame?: (signal: AbortSignal) => Promise<CaptureWindowImage | null>;
   captureWindowFrame?: (sourceId: string, sourceSize: CaptureSize, signal: AbortSignal) => Promise<{ png: Buffer; width: number; height: number; hdrToneMapped: boolean }>;
   /** Desktop windows for hover detection; defaults to the native list on the host OS, never for portal sources. */
   listWindows?: NativeWindowLister;
@@ -102,19 +104,20 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
   };
   function create(config: CaptureWindowConfiguration, bounds: CaptureRect, controls = false, activate = true): ManagedWindow {
     if (disposed) throw new Error('capture windows have been disposed');
-    const preview = 'presentation' in config && config.presentation === 'preview';
+    const preview = 'presentation' in config && config.presentation !== undefined;
+    const desktopSourcePreview = config.kind === 'selection' && config.presentation === 'desktop-source';
     // A portal source has no reliable desktop coordinates. Keep preview's
     // source-pixel mapping, but give the selection the whole compositor surface.
     const fullscreenPortalPreview = portal && platform === 'linux' && preview && config.kind === 'selection';
     const selectorPolicy = windowPolicy.selectionWindow(config, bounds);
     const window = new BrowserWindow({
       ...(preview ? { width: bounds.width, height: bounds.height } : bounds), useContentSize: true, show: false,
-      frame: preview, transparent: !preview && config.kind !== 'selection',
+      frame: preview && !desktopSourcePreview, transparent: !preview && config.kind !== 'selection',
       resizable: preview && !controls, minimizable: preview, maximizable: preview && !controls,
       fullscreen: fullscreenPortalPreview, fullscreenable: fullscreenPortalPreview,
       ...selectorPolicy?.options,
       ...(platform === 'darwin' && !preview ? { type: 'panel' } : {}),
-      skipTaskbar: !preview || controls, alwaysOnTop: !preview, hasShadow: preview && !controls, enableLargerThanScreen: !preview,
+      skipTaskbar: !preview || controls || desktopSourcePreview, alwaysOnTop: !preview, hasShadow: preview && !controls, enableLargerThanScreen: !preview,
       roundedCorners: config.kind !== 'border',
       title: config.kind === 'selection' ? `${config.mode === 'still' ? labels.screenshot : labels.record}` : config.kind === 'controls' ? labels.record : '',
       backgroundColor: config.kind === 'selection' ? '#12161b' : '#00000000',
@@ -374,9 +377,10 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       const abort = () => finish(null);
       pending = abort; signal.addEventListener('abort', abort, { once: true });
       try {
-        // The compositor positions this ordinary window. Its local viewport is not a display.
+        // The compositor positions this window. Its coordinates stay local to the source.
         const viewport = { x: 0, y: 0, width: 1040, height: 740 };
-        owned = create({ kind: 'selection', mode, labels, action: mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action, ...(actions.length ? { actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation: 'preview',
+        const presentation = image.selection.sourceId === UOS_DESKTOP_SOURCE ? 'desktop-source' : 'preview';
+        owned = create({ kind: 'selection', mode, labels, action: mode === 'still' ? 'screenshot' : action === 'screenshot' ? 'mp4' : action, ...(actions.length ? { actions: [...actions] } : {}), image, sources: [], workArea: viewport, presentation,
           ...recordingHint(mode) }, viewport);
         owned.signal = signal; owned.finish = finish; owned.fail = error => finish(null, error);
         if (signal.aborted) finish(null);
@@ -392,6 +396,7 @@ export function createCaptureWindows(options: CaptureWindowOptions = {}): Captur
       select: () => select('still', signal) as Promise<StillCapture | null>,
       selectPrepared: image => selectPrepared('still', image, signal) as Promise<StillCapture | null>,
       capturePortalFrame: options.capturePortalFrame,
+      captureNativeFrame: options.captureNativeFrame,
     }),
     select: (_mode, signal) => select('record', signal) as Promise<CaptureSelection | null>,
     selectPrepared: selectPrepared as CaptureWindows['selectPrepared'],
