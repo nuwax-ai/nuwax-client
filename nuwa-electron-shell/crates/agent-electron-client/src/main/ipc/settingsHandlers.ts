@@ -5,12 +5,12 @@ import { readQuickInitConfig } from '../bootstrap/quickInit';
 import { DORMANCY_SETTING_KEY, refreshHostActivity } from '../services/hostActivity';
 import { APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from '@shared/constants';
 import { CAPTURE_HIDE_WINDOW_SETTING, CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING, CAPTURE_SHORTCUT_UNAVAILABLE_ERROR, captureShortcut, recordShortcut, parseCaptureShortcut } from '@shared/features/capture/contract';
-import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refreshDesktopBrowserWindows } from '../features';
+import { notifyCapturePreferencesChanged, saveCaptureShortcutPreference, refreshDesktopBrowserAgentPreference, refreshDesktopBrowserWindows } from '../features';
 import { LOCAL_FILES_ENABLED_SETTING } from '@shared/features/local-files/contract';
 import { IM_MESSAGE_SOUND_SETTING } from '@shared/types/imReceiver';
 import { UPDATE_CHANNEL_SETTING_KEY, UPDATE_CHANNEL_SWITCH_SETTING_KEY, isUpdateChannel } from '@shared/types/updateChannel';
 import { UPDATE_AUTO_DOWNLOAD_SETTING_KEY } from '@shared/types/updateTypes';
-import { BROWSER_SETTING, BROWSER_FEATURE_SETTING } from '@shared/features/browser/contract';
+import { BROWSER_AGENT_ENABLED_SETTING, BROWSER_SETTING, BROWSER_FEATURE_SETTING } from '@shared/features/browser/contract';
 import { sanitizeCommercialPortSetting, projectCommercialPortSetting, AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY } from '../services/commercialLocalPorts';
 
 export function registerSettingsHandlers(): void {
@@ -51,7 +51,8 @@ export function registerSettingsHandlers(): void {
     if (key === LOCAL_FILES_ENABLED_SETTING && value != null && typeof value !== 'boolean') return false;
     if (key === IM_MESSAGE_SOUND_SETTING && value != null && typeof value !== 'boolean') return false;
     if (key === BROWSER_SETTING && value != null && value !== 'in-app' && value !== 'system') return false;
-    if (key === BROWSER_FEATURE_SETTING && value != null && typeof value !== 'boolean') return false;
+    const changesBrowserAgent = key === BROWSER_AGENT_ENABLED_SETTING || key === BROWSER_FEATURE_SETTING;
+    if (changesBrowserAgent && value != null && typeof value !== 'boolean') return false;
     if ([CAPTURE_SHORTCUT_SETTING, CAPTURE_RECORD_SHORTCUT_SETTING].includes(key)) {
       const shortcut = value == null ? (key === CAPTURE_SHORTCUT_SETTING ? captureShortcut(null) : recordShortcut(null)) : parseCaptureShortcut(value);
       if (!shortcut) return false;
@@ -67,6 +68,10 @@ export function registerSettingsHandlers(): void {
     if (APP_NAME_IDENTIFIER === 'nuwax' && [AUTOMATIC_PORTS_KEY, AUTOMATIC_PORTS_MIGRATED_KEY].includes(key)) return false;
     value = sanitizeCommercialPortSetting(key, value);
     persist(value);
+    if (changesBrowserAgent) {
+      const refreshed = refreshDesktopBrowserAgentPreference();
+      return refreshed ? refreshed.then(() => true) : true;
+    }
     if (key === 'theme_mode') refreshDesktopBrowserWindows();
     if (key === DORMANCY_SETTING_KEY) {
       try {

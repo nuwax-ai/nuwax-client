@@ -329,5 +329,6 @@ export {
   isAgentOwnedBrowserPage,
   isDesktopBrowserAvailable,
   notifyAgentBrowserNewWindow,
+  refreshDesktopBrowserAgentPreference,
   refreshDesktopBrowserWindows,
 } from "./browser";

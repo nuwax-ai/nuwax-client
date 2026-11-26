@@ -1482,6 +1482,8 @@
   "Claw.Browser.agentActionTarget": "目標網址",
   "Claw.Browser.agentActionNoText": "不會顯示輸入的內容。",
   "Claw.Browser.settingsTitle": "網頁連結預設開啟方式",
+  "Claw.Browser.agentSettingsTitle": "允許 Agent 使用內置瀏覽器",
+  "Claw.Browser.agentSettingsDesc": "開啟後，新建或重新連線的本機 Agent 工作階段可申請使用內置瀏覽器。關閉後立即撤銷存取權。",
   "Claw.Browser.settingsDesc": "對話、IM 及文件等一般網頁連結的開啟位置。",
   "Claw.Browser.unavailableDesc": "應用程式內瀏覽器目前無法使用，網頁連結將使用系統預設瀏覽器開啟。",
   "Claw.Browser.inApp": "應用程式內獨立視窗",

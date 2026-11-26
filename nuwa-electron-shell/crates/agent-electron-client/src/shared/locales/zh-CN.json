@@ -1482,6 +1482,8 @@
   "Claw.Browser.agentActionTarget": "目标网址",
   "Claw.Browser.agentActionNoText": "不会显示输入的内容。",
   "Claw.Browser.settingsTitle": "网页链接默认打开方式",
+  "Claw.Browser.agentSettingsTitle": "允许 Agent 使用内置浏览器",
+  "Claw.Browser.agentSettingsDesc": "开启后，新建或重新连接的本机 Agent 会话可申请使用内置浏览器。关闭后立即撤销访问。",
   "Claw.Browser.settingsDesc": "会话、IM 和文档等普通网页链接的打开位置。",
   "Claw.Browser.unavailableDesc": "应用内浏览器当前不可用，网页链接将使用系统默认浏览器打开。",
   "Claw.Browser.inApp": "应用内独立窗口",
