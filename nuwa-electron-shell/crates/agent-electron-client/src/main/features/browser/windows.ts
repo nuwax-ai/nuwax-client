@@ -11,6 +11,7 @@ import {
   type WebContents,
 } from "electron";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   BROWSER_IPC,
   BROWSER_TOOLBAR_HEIGHT,
@@ -32,6 +33,8 @@ export interface BrowserPageOptions {
   preloadPath?: string;
   /** Payment flows need their own window; ordinary pages share a tabbed window. */
   isolated?: boolean;
+  /** Internal: an agent-owned dedicated window, never the user's shared window. */
+  agentSessionKey?: string;
 }
 export interface BrowserPage {
   window: BrowserWindow;
@@ -48,6 +51,10 @@ type WindowEntry = {
   toolbarReady: boolean;
   showing: boolean;
   isolated: boolean;
+  /** Stable authenticated ACP session that owns this dedicated window. */
+  agentSessionKey: string | null;
+  /** Host-generated opaque id; never a WebContents/BrowserWindow id. */
+  agentWindowId: string | null;
   closing: boolean;
   disposed: boolean;
   toast: ReturnType<typeof createBrowserToast>;
@@ -63,6 +70,8 @@ type Entry = {
   findRequest: number;
   query: string;
   suppressed: boolean;
+  /** Host-generated opaque tab id for agent-owned windows. */
+  agentTabId: string | null;
   shortcuts?: (event: Electron.Event, input: Electron.Input) => void;
   dispose(): void;
 };
@@ -94,6 +103,8 @@ const LABELS = [
   "copyFailed",
   "printFailed",
   "url",
+  "agent",
+  "agentStop",
 ] as const;
 
 /** Ordinary tabs and isolated payment windows use the same window chrome. */
@@ -127,6 +138,50 @@ function webUrl(value: string): string | null {
   }
 }
 
+export interface BrowserAgentPage {
+  contents: WebContents;
+  window: BrowserWindow;
+  title: string;
+  url: string;
+  origin: string;
+  active: boolean;
+  /** Set only for pages in an agent-owned dedicated window. */
+  agentWindow: {
+    sessionKey: string;
+    windowId: string;
+    tabId: string;
+  } | null;
+}
+
+export interface AgentWindowTabInfo {
+  windowId: string;
+  tabId: string;
+  title: string;
+  url: string;
+  active: boolean;
+}
+
+export interface AgentCloseResult {
+  closed: boolean;
+  requested: boolean;
+  cancelled?: boolean;
+}
+
+export interface BrowserAgentHooks {
+  state?(contentsId: number): { controlled: boolean; origin?: string } | null;
+  /** Stop every agent binding; the toolbar badge is a global stop control. */
+  revokeAll?(): void;
+  revoke?(contents: WebContents): void;
+}
+
+/**
+ * Agent control is limited to ordinary HTTP(S) tabs. Isolated payment/dedicated
+ * windows never enter this registry, and the predicate keeps the boundary explicit.
+ */
+export function isAgentEligiblePage(input: { isolated: boolean; url: string }): boolean {
+  return !input.isolated && webUrl(input.url) !== null;
+}
+
 /** Only the locally owned toolbar main frame can control its associated page. */
 export function isBrowserToolbar(
   event: IpcMainInvokeEvent,
@@ -149,6 +204,10 @@ export function isBrowserToolbar(
 
 export function createBrowserWindows(ctx: FeatureContext) {
   const windows = new Map<number, WindowEntry>();
+  const pageEntries = new Map<number, Entry>();
+  /** One dedicated agent window per authenticated session key. */
+  const agentGroups = new Map<string, WindowEntry>();
+  const agentHooks: BrowserAgentHooks = {};
   let shared: WindowEntry | null = null;
   let disposed = false;
   const publicUrl = (value: string) => ctx.windows.toExternalUrl
@@ -196,8 +255,14 @@ export function createBrowserWindows(ctx: FeatureContext) {
   const snapshot = (group: WindowEntry): BrowserState | null => {
     if (!group.active || group.disposed) return null;
     updateState(group.active);
+    // A background tab may be the controlled one; keep the stop badge visible.
+    const agent =
+      group.tabs
+        .map((tab) => agentHooks.state?.(tab.contents.id))
+        .find((state) => state?.controlled) ?? null;
     return {
       ...group.active.state,
+      agent,
       activeTabId: group.active.contents.id,
       tabs: group.tabs.map((tab) => ({
         id: tab.contents.id,
@@ -391,6 +456,10 @@ export function createBrowserWindows(ctx: FeatureContext) {
         entry.state.addressOpen = command.type === "address-open";
         layout(entry);
         break;
+      case "agent-revoke":
+        if (agentHooks.revokeAll) agentHooks.revokeAll();
+        else agentHooks.revoke?.(entry.contents);
+        break;
       case "window-minimize":
         if (!entry.window.isMinimizable()) return false;
         entry.window.minimize();
@@ -554,7 +623,11 @@ export function createBrowserWindows(ctx: FeatureContext) {
     }
     tab.contents.close({ waitForBeforeUnload: true });
   };
-  const createWindow = (options: BrowserPageOptions, toolbarUrl: string): WindowEntry => {
+  const createWindow = (
+    options: BrowserPageOptions,
+    toolbarUrl: string,
+    agentSessionKey: string | null = null,
+  ): WindowEntry => {
     const {
       webPreferences,
       webContents: _guest,
@@ -584,6 +657,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
       toolbarReady: false,
       showing: false,
       isolated: options.isolated === true,
+      agentSessionKey,
+      agentWindowId: agentSessionKey ? randomUUID() : null,
       closing: false,
       disposed: false,
       toast: createBrowserToast(win, () => ctx.log.warn("[Browser] Toast failed to show")),
@@ -591,7 +666,8 @@ export function createBrowserWindows(ctx: FeatureContext) {
     };
     const toolbarId = win.webContents.id;
     windows.set(toolbarId, group);
-    if (!group.isolated) shared = group;
+    if (agentSessionKey) agentGroups.set(agentSessionKey, group);
+    else if (!group.isolated) shared = group;
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (event) => event.preventDefault());
     win.webContents.on("will-redirect", (event) => event.preventDefault());
@@ -621,6 +697,11 @@ export function createBrowserWindows(ctx: FeatureContext) {
       group.disposed = true;
       windows.delete(toolbarId);
       if (shared === group) shared = null;
+      if (
+        group.agentSessionKey &&
+        agentGroups.get(group.agentSessionKey) === group
+      )
+        agentGroups.delete(group.agentSessionKey);
       for (const tab of [...group.tabs]) tab.dispose();
     });
     void win.loadURL(toolbarUrl).catch(() => {
@@ -638,16 +719,20 @@ export function createBrowserWindows(ctx: FeatureContext) {
     return group;
   };
 
-  const open = (options: BrowserPageOptions): BrowserPage => {
-    if (disposed) throw new Error("Browser feature is disposed");
+  const toolbarUrlFor = (options: BrowserPageOptions): string => {
     const parentEntry = ctx.windows.getMain()?.webContents.getURL();
     const toolbarUrl = options.toolbarUrl ??
       (parentEntry ? new URL("./browser.html", parentEntry).href : "");
     if (!toolbarUrl) throw new Error("Browser toolbar entry unavailable");
-    const reused = !options.isolated && shared && !shared.disposed &&
-      !shared.closing && !shared.window.isDestroyed() && shared.toolbarUrl === toolbarUrl
-      ? shared : null;
-    const group = reused ?? createWindow(options, toolbarUrl);
+    return toolbarUrl;
+  };
+
+  const openInGroup = (
+    group: WindowEntry,
+    options: BrowserPageOptions,
+    reused: boolean,
+  ): BrowserPage => {
+    if (disposed) throw new Error("Browser feature is disposed");
     const win = group.window;
     // Each live tab owns certificate, host-activity and popup cleanup listeners.
     // Keep the diagnostic limit proportional to live tabs and restore it on close.
@@ -682,6 +767,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       query: "",
       findRequest: -1,
       suppressed: false,
+      agentTabId: group.agentSessionKey ? randomUUID() : null,
       dispose: () => {},
       state: {
         tabs: [],
@@ -705,6 +791,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
         fullscreen: false,
         addressOpen: false,
         error: null,
+        agent: null,
         finding: false,
         findText: "",
         findFocusRequest: 0,
@@ -718,6 +805,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
     // so the local loading UI can paint while the server has not responded.
     page.view.setVisible(false);
     group.tabs.push(entry);
+    pageEntries.set(wc.id, entry);
     wc.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
       if (webUrl(url)) entry.state.url = url;
@@ -835,6 +923,7 @@ export function createBrowserWindows(ctx: FeatureContext) {
       if (cleaned) return;
       cleaned = true;
       disposeCertificatePrompts();
+      pageEntries.delete(entry.contents.id);
       const index = group.tabs.indexOf(entry);
       if (index >= 0) group.tabs.splice(index, 1);
       page.destroy();
@@ -877,17 +966,347 @@ export function createBrowserWindows(ctx: FeatureContext) {
       },
     };
   };
+
+  const open = (options: BrowserPageOptions): BrowserPage => {
+    if (disposed) throw new Error("Browser feature is disposed");
+    const toolbarUrl = toolbarUrlFor(options);
+    const agentSessionKey = options.agentSessionKey ?? null;
+    const reused = !options.isolated && !agentSessionKey && shared &&
+      !shared.disposed && !shared.closing && !shared.window.isDestroyed() &&
+      shared.toolbarUrl === toolbarUrl
+      ? shared : null;
+    const group = reused ?? createWindow(options, toolbarUrl, agentSessionKey);
+    return openInGroup(group, options, !!reused);
+  };
+
   const closeAll = () => {
     for (const group of [...windows.values()]) group.window.destroy();
   };
+  const agentPage = (contents: WebContents): BrowserAgentPage | null => {
+    const entry = pageEntries.get(contents.id);
+    if (!entry || entry.contents !== contents) return null;
+    const group = entry.group;
+    if (group.isolated || group.disposed || group.closing) return null;
+    if (group.window.isDestroyed() || contents.isDestroyed()) return null;
+    // The toolbar renderer and the host main window are never agent targets.
+    if (contents === group.window.webContents) return null;
+    try {
+      const main = ctx.windows.getMain();
+      if (main && main.webContents === contents) return null;
+    } catch {
+      /* Window host unavailable during shutdown. */
+    }
+    const url = webUrl(contents.getURL());
+    if (!url || !isAgentEligiblePage({ isolated: group.isolated, url }))
+      return null;
+    let origin = "";
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      return null;
+    }
+    return {
+      contents,
+      window: group.window,
+      title: contents.getTitle() || url,
+      url,
+      origin,
+      active: group.active === entry,
+      agentWindow:
+        group.agentSessionKey && group.agentWindowId && entry.agentTabId
+          ? {
+              sessionKey: group.agentSessionKey,
+              windowId: group.agentWindowId,
+              tabId: entry.agentTabId,
+            }
+          : null,
+    };
+  };
+
+  const agentWindowOptions = (): BrowserWindowConstructorOptions => ({
+    width: 1024,
+    height: 768,
+    minWidth: 480,
+    minHeight: 360,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  const findAgentGroup = (sessionKey: string): WindowEntry | null => {
+    const group = agentGroups.get(sessionKey);
+    if (!group || group.disposed || group.window.isDestroyed()) return null;
+    return group;
+  };
+  const findAgentEntry = (group: WindowEntry, tabId: string): Entry | null =>
+    group.tabs.find(
+      (tab) => tab.agentTabId === tabId && !tab.contents.isDestroyed(),
+    ) ?? null;
+  const agentTabInfo = (
+    group: WindowEntry,
+    entry: Entry,
+  ): AgentWindowTabInfo => {
+    const url = webUrl(entry.contents.getURL()) ?? entry.state.url;
+    return {
+      windowId: group.agentWindowId ?? "",
+      tabId: entry.agentTabId ?? "",
+      title: entry.contents.getTitle() || entry.state.title || url,
+      url,
+      active: group.active === entry,
+    };
+  };
+  const loadAgentPage = (page: BrowserPage, url: string): void => {
+    void page.contents.loadURL(url).catch(() => {
+      ctx.log.warn("[Browser] Agent page failed to load");
+    });
+  };
+  const openAgentTab = (
+    sessionKey: string,
+    windowId: string | undefined,
+    url: string,
+  ): AgentWindowTabInfo | null => {
+    const group = findAgentGroup(sessionKey);
+    if (!group || group.closing) return null;
+    if (windowId && group.agentWindowId !== windowId) return null;
+    const options: BrowserPageOptions = {
+      windowOptions: agentWindowOptions(),
+      initialUrl: url,
+      agentSessionKey: sessionKey,
+    };
+    const page = openInGroup(group, options, true);
+    loadAgentPage(page, url);
+    const entry = pageEntries.get(page.contents.id);
+    if (!entry || !entry.agentTabId) {
+      page.destroy();
+      return null;
+    }
+    if (group.window.isMinimized()) group.window.restore();
+    group.window.show();
+    group.window.focus();
+    activate(entry);
+    return agentTabInfo(group, entry);
+  };
+  const openAgentWindow = (
+    sessionKey: string,
+    url: string,
+  ): AgentWindowTabInfo => {
+    const existing = findAgentGroup(sessionKey);
+    if (existing && !existing.closing) {
+      const tab = openAgentTab(
+        sessionKey,
+        existing.agentWindowId ?? undefined,
+        url,
+      );
+      if (!tab) throw new Error("Agent window is closing");
+      return tab;
+    }
+    const options: BrowserPageOptions = {
+      windowOptions: agentWindowOptions(),
+      initialUrl: url,
+      agentSessionKey: sessionKey,
+    };
+    const group = createWindow(options, toolbarUrlFor(options), sessionKey);
+    const page = openInGroup(group, options, false);
+    loadAgentPage(page, url);
+    const entry = pageEntries.get(page.contents.id);
+    if (!entry || !entry.agentTabId) {
+      page.destroy();
+      throw new Error("Agent tab unavailable");
+    }
+    return agentTabInfo(group, entry);
+  };
+  const listAgentTabs = (
+    sessionKey: string,
+    windowId?: string,
+  ): { windowId: string; tabs: AgentWindowTabInfo[] } | null => {
+    const group = findAgentGroup(sessionKey);
+    if (!group || (windowId && group.agentWindowId !== windowId)) return null;
+    return {
+      windowId: group.agentWindowId ?? "",
+      tabs: group.tabs
+        .filter((tab) => tab.agentTabId && !tab.contents.isDestroyed())
+        .map((tab) => agentTabInfo(group, tab)),
+    };
+  };
+  const switchAgentTab = (
+    sessionKey: string,
+    tabId: string,
+  ): AgentWindowTabInfo | null => {
+    const group = findAgentGroup(sessionKey);
+    if (!group || group.closing) return null;
+    const entry = findAgentEntry(group, tabId);
+    if (!entry) return null;
+    if (group.window.isMinimized()) group.window.restore();
+    group.window.show();
+    group.window.focus();
+    activate(entry);
+    return agentTabInfo(group, entry);
+  };
+  const waitForContentsDestroyed = (
+    contents: WebContents,
+    timeoutMs: number,
+  ): Promise<boolean> =>
+    new Promise((resolve) => {
+      if (contents.isDestroyed()) {
+        resolve(true);
+        return;
+      }
+      let done = false;
+      const finish = (value: boolean) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        contents.removeListener("destroyed", onDestroyed);
+        resolve(value);
+      };
+      const onDestroyed = () => finish(true);
+      const timer = setTimeout(
+        () => finish(contents.isDestroyed()),
+        timeoutMs,
+      );
+      contents.once("destroyed", onDestroyed);
+      try {
+        contents.close({ waitForBeforeUnload: true });
+      } catch {
+        finish(contents.isDestroyed());
+      }
+    });
+  const waitForWindowClosed = (
+    win: BrowserWindow,
+    timeoutMs: number,
+  ): Promise<boolean> =>
+    new Promise((resolve) => {
+      if (win.isDestroyed()) {
+        resolve(true);
+        return;
+      }
+      let done = false;
+      const finish = (value: boolean) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        win.removeListener("closed", onClosed);
+        resolve(value);
+      };
+      const onClosed = () => finish(true);
+      const timer = setTimeout(() => finish(win.isDestroyed()), timeoutMs);
+      win.once("closed", onClosed);
+      try {
+        win.close();
+      } catch {
+        finish(win.isDestroyed());
+      }
+    });
+  const closeAgentTab = async (
+    sessionKey: string,
+    tabId: string,
+  ): Promise<AgentCloseResult | null> => {
+    const group = findAgentGroup(sessionKey);
+    if (!group) return null;
+    const entry = findAgentEntry(group, tabId);
+    if (!entry) return null;
+    const destroyed = await waitForContentsDestroyed(entry.contents, 3000);
+    return destroyed
+      ? { closed: true, requested: false }
+      : { closed: false, requested: true };
+  };
+  const closeAgentWindow = async (
+    sessionKey: string,
+    windowId?: string,
+  ): Promise<AgentCloseResult | null> => {
+    const group = findAgentGroup(sessionKey);
+    if (!group || (windowId && group.agentWindowId !== windowId)) return null;
+    const closed = await waitForWindowClosed(group.window, 4000);
+    if (closed) return { closed: true, requested: false };
+    return {
+      closed: false,
+      requested: true,
+      cancelled: !group.closing,
+    };
+  };
+  const resolveOwnedAgentPage = (
+    sessionKey: string,
+    tabId: string,
+  ): BrowserAgentPage | null => {
+    const group = findAgentGroup(sessionKey);
+    if (!group) return null;
+    const entry = findAgentEntry(group, tabId);
+    if (!entry) return null;
+    return agentPage(entry.contents);
+  };
+  const agentWindowFor = (
+    sessionKey: string,
+    windowId?: string,
+  ): { windowId: string; window: BrowserWindow | null } | null => {
+    const group = findAgentGroup(sessionKey);
+    if (!group || (windowId && group.agentWindowId !== windowId)) return null;
+    if (!group.agentWindowId) return null;
+    return {
+      windowId: group.agentWindowId,
+      window: group.window.isDestroyed() ? null : group.window,
+    };
+  };
+  const isAgentOwnedPage = (contents: WebContents): boolean => {
+    const entry = pageEntries.get(contents.id);
+    return (
+      !!entry &&
+      entry.contents === contents &&
+      entry.group.agentSessionKey !== null
+    );
+  };
+  const allAgentPages = (): BrowserAgentPage[] => {
+    const pages: BrowserAgentPage[] = [];
+    for (const entry of pageEntries.values()) {
+      const page = agentPage(entry.contents);
+      if (page) pages.push(page);
+    }
+    return pages.sort((a, b) => Number(b.active) - Number(a.active));
+  };
+
   return {
     open,
     closeAll,
     refresh,
+    configureAgent(hooks: BrowserAgentHooks) {
+      Object.assign(agentHooks, hooks);
+      refresh();
+    },
+    listAgentPages: allAgentPages,
+    /** Default request_access must not expose agent-owned windows. */
+    listUserAgentPages(): BrowserAgentPage[] {
+      return allAgentPages().filter((page) => page.agentWindow === null);
+    },
+    resolveAgentPage(contents: WebContents): BrowserAgentPage | null {
+      return agentPage(contents);
+    },
+    resolveOwnedAgentPage,
+    openAgentWindow,
+    openAgentTab,
+    listAgentTabs,
+    switchAgentTab,
+    closeAgentTab,
+    closeAgentWindow,
+    agentWindowFor,
+    isAgentOwnedPage,
+    activateAgentPage(contents: WebContents): boolean {
+      const entry = pageEntries.get(contents.id);
+      if (!entry || entry.contents !== contents) return false;
+      const page = agentPage(contents);
+      if (!page) return false;
+      if (page.window.isMinimized()) page.window.restore();
+      page.window.show();
+      page.window.focus();
+      activate(entry);
+      return true;
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
       closeAll();
+      pageEntries.clear();
       nativeTheme.removeListener("updated", refresh);
       ipcMain.removeHandler(BROWSER_IPC.state);
       ipcMain.removeHandler(BROWSER_IPC.command);

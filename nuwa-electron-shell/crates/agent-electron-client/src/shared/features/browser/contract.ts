@@ -1,5 +1,7 @@
 export const BROWSER_SETTING = "nuwax.linkOpenMode";
 export const BROWSER_FEATURE_SETTING = "features.browser.enabled";
+export const BROWSER_AGENT_ENABLED_SETTING = "features.browser.agent.enabled";
+export const isBrowserAgentEnabled = (value: unknown): boolean => value === true;
 export const BROWSER_TOOLBAR_HEIGHT = 48;
 export const BROWSER_AUXILIARY_BAR_HEIGHT = 42;
 export type LinkOpenMode = "in-app" | "system";
@@ -20,6 +22,11 @@ export interface BrowserTab {
   title: string;
   loading: boolean;
 }
+/** Host-owned agent binding state; the toolbar only needs to know it exists. */
+export interface BrowserAgentState {
+  controlled: boolean;
+  origin?: string;
+}
 export interface BrowserState {
   tabs: BrowserTab[];
   activeTabId: number;
@@ -28,6 +35,7 @@ export interface BrowserState {
   domain: string;
   loading: boolean;
   initialLoading: boolean;
+  agent: BrowserAgentState | null;
   canGoBack: boolean;
   canGoForward: boolean;
   zoom: number;
@@ -65,6 +73,7 @@ export type BrowserCommand =
         | "find-close"
         | "address-open"
         | "address-close"
+        | "agent-revoke"
         | "window-minimize"
         | "window-maximize"
         | "window-close";

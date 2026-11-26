@@ -414,3 +414,26 @@ button svg {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+#agent {
+  width: auto;
+  min-width: 0;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--capsule);
+  font-size: 12px;
+}
+#agent:hover {
+  background: var(--hover);
+}
+#agentDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5276ca;
+  flex-shrink: 0;
+}
+#agentText {
+  white-space: nowrap;
+}

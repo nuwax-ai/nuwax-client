@@ -71,6 +71,12 @@ function render(state: BrowserState) {
     element<HTMLInputElement>("query").value = state.findText ?? "";
   element("matches").textContent = `${state.activeMatch}/${state.matches}`;
   const l = state.labels;
+  const agentControlled = state.agent?.controlled === true;
+  element("agent").hidden = !agentControlled;
+  if (agentControlled) {
+    element("agentText").textContent = l.agent;
+    label("agent", l.agentStop);
+  }
   for (const [id, key] of Object.entries({
     back: "back",
     forward: "forward",
@@ -126,6 +132,7 @@ button("copyLink", () => run({ type: "copy" }));
 button("closeTab", () => {
   if (current) run({ type: "tab-close", id: current.activeTabId });
 });
+button("agent", () => run({ type: "agent-revoke" }));
 button("search", () => run({ type: "find-open" }));
 button("location", () =>
   run({ type: current?.addressOpen ? "address-close" : "address-open" }),
