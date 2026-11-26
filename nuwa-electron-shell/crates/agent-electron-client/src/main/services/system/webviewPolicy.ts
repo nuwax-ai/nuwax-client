@@ -24,7 +24,7 @@ import { attachHostActivityBusinessWindow } from "../hostActivity";
 import { isGuestNewTaskAvailable } from "../newTaskAvailability";
 import { t } from "../i18n";
 import { trustInitialBusinessNavigation } from "../sessionAuthInjection";
-import { createDesktopBrowserPage } from '../../features';
+import { createDesktopBrowserPage, isAgentOwnedBrowserPage, notifyAgentBrowserNewWindow } from '../../features';
 import { prefersDesktopBrowser, openSystemPopupLink, openSystemWebLink } from './webLinkRouting';
 import { externalWebUrl } from '../../ipc/openExternal';
 import { openWebviewFind } from './webviewFind';
@@ -279,10 +279,13 @@ export function createBusinessReadingPage(windowOptions: BrowserWindowConstructo
 
 /** Shared ordinary-link entry; dedicated business/payment windows do not use it. */
 export function openOrdinaryWebLink(value: string, opener?: WebContents): { success: boolean; error?: string } | Promise<{ success: boolean; error?: string }> {
+  if (opener && isAgentOwnedBrowserPage(opener))
+    return { success: false, error: 'agentPagePopupBlocked' };
   const url = externalWebUrl(value);
   if (!url) return { success: false, error: 'Invalid webpage URL' };
   if (!prefersDesktopBrowser()) return openSystemWebLink(url);
   try {
+    if (opener) notifyAgentBrowserNewWindow(opener);
     const page = createDesktopBrowserPage({ windowOptions: buildPopupWindowOptions(''), initialUrl: url });
     if (!page) return openSystemWebLink(url);
     trackPopupWindow(page.window, opener, page.contents, { page, closeWithOpener: false });
@@ -381,6 +384,9 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   if (!target) {
     return { action: "deny" };
   }
+  // Agent pages must use nuwax_browser_open_tab; never mix their popup into the
+  // user's shared window (or another agent window).
+  if (isAgentOwnedBrowserPage(opener)) return { action: "deny" };
   if (APP_NAME_IDENTIFIER === 'nuwax' && (target.username || target.password)) return { action: 'deny' };
 
   const openerUrl = parseHttpUrl(opener.getURL());
@@ -407,6 +413,9 @@ function handleHttpPopupOpen(details: HandlerDetails, opener: WebContents): Wind
   const isolated = dedicatedContents.has(opener);
   const browser = ordinaryLink && prefersDesktopBrowser();
   if (ordinaryLink && !browser) { openSystemPopupLink(target.href); return { action: 'deny' }; }
+  // A new in-app page is a different WebContents; the authorized opener must be
+  // re-authorized even when the destination stays on the same origin.
+  notifyAgentBrowserNewWindow(opener);
   const options = buildPopupWindowOptions(features ?? "");
   log.debug(
     `[WebviewPolicy] Opening in-app popup: ${target.origin} (${options.width}x${options.height})`,
