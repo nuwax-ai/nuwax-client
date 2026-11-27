@@ -8,6 +8,9 @@ import * as core from './core.mjs';
 import { prepare, commercialEnv, fileReady } from './prepare.mjs';
 import { prepareDevelopmentApp } from './dev-app.mjs';
 
+// Must match the supervised restart exit code in restartApplication.ts.
+export const DEV_RESTART_EXIT_CODE = 75;
+
 export function assertPortAvailable(port, host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -67,10 +70,26 @@ export function launch(command, args, { cwd, env, log, name, platform = process.
 
 export function developmentEnv(root, mode, frontendPort) {
   return commercialEnv(root, {
-    NODE_ENV: 'development', NUWAX_DEV_PROFILE: '1',
+    NODE_ENV: 'development', NUWAX_DEV_PROFILE: '1', NUWAX_DEV_SUPERVISED: '1',
     NUWAX_DEV_COMPUTER_USE_ROOT: path.join(core.paths(root).cache, 'dev/computer-use'),
     NUWAX_WEBVIEW_ORIGIN: mode === 'source' ? `http://localhost:${frontendPort}` : '',
   });
+}
+
+/** Restart only Electron on an explicit request; renderer/frontend stay owned. */
+export async function superviseElectron({ startElectron, services, shouldStop, disposeElectron }) {
+  let electron = startElectron();
+  for (;;) {
+    const exits = [...services, electron].map(item => item.exit.then(result => ({ item, result })));
+    const { item, result } = await Promise.race(exits);
+    if (item !== electron || result.code !== DEV_RESTART_EXIT_CODE || shouldStop())
+      return { item, result, electron };
+    await disposeElectron(electron);
+    if (shouldStop() || services.some(service => !service.alive()))
+      return { item, result, electron };
+    console.log('[dev] 正在重启 Electron，保留开发服务器');
+    electron = startElectron();
+  }
 }
 
 /** Start independent frontend/Vite/Electron processes, retaining Vite's valid cache. */
@@ -92,6 +111,7 @@ export async function dev(root, options = {}) {
   const env = developmentEnv(root, mode, frontendPort);
   const launchProcess = options.launch ?? launch;
   const processes = [];
+  const initializedLogs = new Set();
   let stopping;
   let requestedSignal = null;
   const stop = async () => {
@@ -104,7 +124,10 @@ export async function dev(root, options = {}) {
   process.once('SIGTERM', onTerminate);
   const start = (name, command, args, cwd, processEnv = env) => {
     const log = path.join(logs, `${name}-dev.log`);
-    fs.writeFileSync(log, `=== ${name} ${new Date().toISOString()} ===\n`);
+    if (!initializedLogs.has(name)) {
+      fs.writeFileSync(log, `=== ${name} ${new Date().toISOString()} ===\n`);
+      initializedLogs.add(name);
+    }
     const item = launchProcess(command, args, { cwd, env: processEnv, log, name });
     processes.push(item);
     console.log(`[dev] ${name} 日志: ${log}`);
@@ -112,21 +135,34 @@ export async function dev(root, options = {}) {
   };
   const check = (file) => { if (!fileReady(file)) throw new Error(`[dev] 缺少执行入口 ${file}`); return file; };
   try {
+    const services = [];
     if (mode === 'source') {
       const frontend = start('frontend', process.execPath, [check(path.join(p.frontend, 'node_modules/@umijs/max/bin/max.js')), 'dev', '--port', String(frontendPort)], p.frontend, { ...env, UMI_ENV: 'development', PORT: String(frontendPort), NODE_OPTIONS: process.env.NODE_OPTIONS ?? config.frontend.devNodeOptions });
+      services.push(frontend);
       await waitForHttp(`http://127.0.0.1:${frontendPort}/`, { alive: frontend.alive });
     }
     const vite = start('vite', process.execPath, [check(path.join(p.client, 'node_modules/vite/bin/vite.js')), '--host', '127.0.0.1', '--port', String(rendererPort), '--strictPort'], p.client);
+    services.push(vite);
     await waitForHttp(`http://127.0.0.1:${rendererPort}/`, { alive: vite.alive });
     if (requestedSignal) return { ...prepared, stopped: true };
     await tools.npmRun(p.client, 'build:main:dev', [], { env });
     if (requestedSignal) return { ...prepared, stopped: true };
-    const electron = start('electron', check(developmentApp.binary), ['.'], p.client);
+    const electronBinary = check(developmentApp.binary);
+    const startElectron = () => {
+      const electron = start('electron', electronBinary, ['.'], p.client);
+      console.log(`[dev] Electron 已启动；前端 ${mode === 'source' ? `HMR http://localhost:${frontendPort}` : mode === 'remote' ? '使用客户端设置中的业务域名（Cookie 登录）' : p.dist}。按 Ctrl+C 停止全部进程。`);
+      return electron;
+    };
     const helper = start('computer-use-prepare', process.execPath, [path.join(root, 'scripts/client/dev-helper.mjs')], root);
     void helper.exit.then(({ code }) => console.log(code === 0 ? '[dev] Computer Use Dev 助手已就绪' : '[dev] Computer Use Dev 助手准备失败，主客户端可继续使用；查看 computer-use-prepare-dev.log'));
-    console.log(`[dev] Electron 已启动；前端 ${mode === 'source' ? `HMR http://localhost:${frontendPort}` : mode === 'remote' ? '使用客户端设置中的业务域名（Cookie 登录）' : p.dist}。按 Ctrl+C 停止全部进程。`);
-    const exits = processes.filter(item => item !== helper).map((item) => item.exit.then((result) => ({ item, result })));
-    const { result } = await Promise.race(exits);
+    const { result, electron } = await superviseElectron({
+      startElectron, services, shouldStop: () => !!requestedSignal,
+      disposeElectron: async (item) => {
+        await stopProcess(item.child);
+        const index = processes.indexOf(item);
+        if (index >= 0) processes.splice(index, 1);
+      },
+    });
     if (result.code !== 0 && !requestedSignal) throw new Error(`[dev] 子进程退出 (${result.code})；查看 ${logs}`);
     return { ...prepared, stopped: true, code: requestedSignal ? 0 : result.code, electronPid: electron.child.pid };
   } catch (error) {

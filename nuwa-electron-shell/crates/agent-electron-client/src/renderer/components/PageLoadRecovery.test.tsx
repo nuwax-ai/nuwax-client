@@ -20,7 +20,13 @@ describe("local recovery UI", () => {
     expect(html).toContain("<details");
     expect(html).not.toContain("<details open");
     expect(html).toContain("-105");
+    expect(html).toContain("域名无法解析");
     expect(html).not.toContain("http");
+  });
+  it("explains common network errors without exposing arbitrary URLs", () => {
+    for (const [code, expected] of [[-106, "网络不可用"], [-202, "无法验证服务器证书"], [-118, "连接超时"]] as const) {
+      expect(renderToStaticMarkup(<PageLoadRecovery mode="failed" code={code} lang="zh-CN" />)).toContain(expected);
+    }
   });
   it("exposes busy state without disabling settings and provides local traditional/English copy", () => {
     const html = renderToStaticMarkup(

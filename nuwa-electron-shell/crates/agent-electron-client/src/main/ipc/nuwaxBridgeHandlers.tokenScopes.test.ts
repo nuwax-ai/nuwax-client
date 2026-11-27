@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   showSaveDialog: vi.fn(),
   showOpenDialog: vi.fn(),
   netFetch: vi.fn(),
+  probeHost: vi.fn(async (): Promise<"ok" | "dns" | "unreachable"> => "ok"),
+  relaunch: vi.fn(), quit: vi.fn(),
   stop: vi.fn(async () => ({ success: true, results: {} })),
   storage: vi.fn(async () => undefined),
   // captureTicketCookie 的 session.cookies.get（默认查不到 ticket）
@@ -79,6 +81,7 @@ vi.mock("../services/hostActivity", () => ({
 vi.mock("../services/loopbackGateway", () => ({
   refreshLoopbackGateway: mocks.refreshGateway,
 }));
+vi.mock("../services/serverHostProbe", () => ({ probeServerHost: mocks.probeHost }));
 
 vi.mock("../services/sessionAuthInjection", () => ({
   initSessionAuthInjection: vi.fn(),
@@ -106,7 +109,7 @@ vi.mock("electron", () => ({
   // app.on：registerCuaQuitCleanup（will-quit 停 daemon）与 fullDiskAccess
   // boot 钩子（browser-window-created/focus）在注册期挂监听
   shell: { openExternal: mocks.openExternal },
-  app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd() },
+  app: { isPackaged: false, on: vi.fn(), getAppPath: () => process.cwd(), relaunch: mocks.relaunch, quit: mocks.quit },
   powerMonitor: { on: vi.fn() },
   nativeTheme: { shouldUseDarkColors: false },
   ipcMain: {
@@ -247,6 +250,8 @@ async function seedTicket(value: string): Promise<void> {
 afterEach(async () => { await disposeDesktopFeatures(); });
 
 beforeEach(() => {
+  mocks.probeHost.mockReset().mockResolvedValue("ok");
+  mocks.relaunch.mockClear(); mocks.quit.mockClear();
   for (const mock of [mocks.startIM, mocks.stopIM, mocks.unreadIM, mocks.retryIM, mocks.enabledIM, mocks.ackIM]) mock.mockClear();
   mocks.hostActivitySnapshot.mockClear();
   mocks.syncHostActivityGuest.mockClear();
@@ -602,6 +607,67 @@ describe("cookie 会话与旧 token 桥", () => {
 });
 
 describe("configureServerHost（企业登录切换域名）", () => {
+  it("preflight failure leaves credentials and services untouched and allows retry", async () => {
+    settings.set("auth.saved_key", "keep-me");
+    mocks.probeHost.mockResolvedValueOnce("dns");
+    const stopCount = mocks.stop.mock.calls.length;
+    expect(await handlers.get("services:configureServerHost")!(hostEvent(), "bad.example"))
+      .toEqual({ success: false, error: "Server host probe failed", probe: "dns" });
+    expect(settings.get("auth.saved_key")).toBe("keep-me");
+    expect(settings.get("step1_config")).toEqual({ serverHost: HOST_ORIGIN });
+    expect(mocks.stop).toHaveBeenCalledTimes(stopCount);
+    expect(mocks.storage).not.toHaveBeenCalled();
+    expect(await handlers.get("services:configureServerHost")!(hostEvent(), "intranet", { allowUnreachable: true }))
+      .toMatchObject({ success: true, serverHost: "https://intranet" });
+    expect(settings.get("nuwax.previousServerHost")).toBe(HOST_ORIGIN);
+  });
+
+  it("does not let a guest bypass failed preflight", async () => {
+    mocks.probeHost.mockResolvedValueOnce("unreachable");
+    expect(await handlers.get("auth:configureServerHost")!(senderEvent(GW_ORIGIN), "intranet", { allowUnreachable: true }))
+      .toMatchObject({ success: false, probe: "unreachable" });
+  });
+  it("rejects a guest that navigates away during preflight", async () => {
+    let finish!: (value: "ok") => void;
+    mocks.probeHost.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const caller = senderEvent(GW_ORIGIN);
+    const stopCount = mocks.stop.mock.calls.length;
+    const switchingHost = handlers.get("auth:configureServerHost")!(caller, "intranet") as Promise<unknown>;
+    caller.senderFrame.url = "https://other.example/";
+    finish("ok");
+    expect(await switchingHost).toEqual({ success: false, error: "Stale document" });
+    expect(mocks.stop).toHaveBeenCalledTimes(stopCount);
+  });
+
+  it("restores the previous host via the transaction and restarts only after success", async () => {
+    expect(await handlers.get("services:configureServerHost")!(hostEvent(), "new.example"))
+      .toMatchObject({ success: true });
+    expect(settings.get("nuwax.previousServerHost")).toBe(HOST_ORIGIN);
+    settings.set(`nuwax.accessToken.${HOST_ORIGIN}`, "old");
+    settings.set("nuwax.accessToken.https://new.example", "new");
+    expect(await handlers.get("services:configureServerHost")!(hostEvent(), HOST_ORIGIN, { restart: true }))
+      .toMatchObject({ success: true, serverHost: HOST_ORIGIN });
+    expect(settings.get(`nuwax.accessToken.${HOST_ORIGIN}`)).toBeNull();
+    expect(settings.get("nuwax.accessToken.https://new.example")).toBeNull();
+    expect(mocks.relaunch).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mocks.relaunch).toHaveBeenCalledOnce());
+    expect(mocks.quit).toHaveBeenCalledOnce();
+  });
+  it("requests a supervised restart after a successful domain switch in Dev", async () => {
+    const devProfile = vi.spyOn(bridgeConstants, "IS_DEV_PROFILE", "get").mockReturnValue(true);
+    vi.stubEnv("NUWAX_DEV_SUPERVISED", "1");
+    try {
+      expect(await handlers.get("services:configureServerHost")!(hostEvent(), "new.example", { restart: true }))
+        .toMatchObject({ success: true, serverHost: "https://new.example" });
+      await vi.waitFor(() => expect(mocks.quit).toHaveBeenCalledOnce());
+      expect(mocks.relaunch).not.toHaveBeenCalled();
+      const { applicationExitCode } = await import("../services/restartApplication");
+      expect(applicationExitCode()).toBe(75);
+    } finally {
+      devProfile.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
   it("NUW-49：直连页面登出后无需刷新即可切换企业域名，其他旧页面仍被拒绝", async () => {
     settings.set("nuwax.loopback", { enabled: false, origin: null });
     const caller = senderEvent(HOST_ORIGIN, 11);
@@ -644,7 +710,7 @@ describe("configureServerHost（企业登录切换域名）", () => {
       success: boolean; error?: string;
     };
     expect(second).toEqual({ success: false, error: "Domain switch already in progress" });
-    expect(mocks.stop).toHaveBeenCalledTimes(priorStops + 1);
+    await vi.waitFor(() => expect(mocks.stop).toHaveBeenCalledTimes(priorStops + 1));
     finishStop({ success: true, results: {} });
     expect((await first as { success: boolean }).success).toBe(true);
     expect((settings.get("step1_config") as { serverHost: string }).serverHost)

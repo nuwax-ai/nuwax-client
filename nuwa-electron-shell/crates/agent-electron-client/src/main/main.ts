@@ -86,6 +86,7 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
+import { applicationExitCode } from "./services/restartApplication";
 
 const featureSchemes = prepareDesktopFeaturesBeforeReady(APP_NAME_IDENTIFIER, app.commandLine);
 if (featureSchemes.length) protocol.registerSchemesAsPrivileged(featureSchemes);
@@ -1101,7 +1102,7 @@ app.on("before-quit", (e) => {
       }
       closeDb();
       log.info("[App] Cleanup complete, exiting");
-      app.exit(0);
+      app.exit(applicationExitCode());
     }
   })();
 });
