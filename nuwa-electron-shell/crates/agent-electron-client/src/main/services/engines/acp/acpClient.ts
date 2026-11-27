@@ -1071,12 +1071,26 @@ export async function createAcpConnection(
     if (backend.maxOutputTokens) {
       env.NUWAX_MAX_OUTPUT_TOKENS = backend.maxOutputTokens;
     }
-    env.CODEX_LOG_DIR = path.join(
+    // 日志统一落在客户端的 logs 目录下，两个子目录各管一端：
+    //   nuwax-harness-acp-ts/ 适配器自己的日志（app-server.<日期>.log 等）
+    //   nuwax-harness/        引擎日志（适配器经 -c log_dir= 传给引擎的落点）
+    // 不这么指定时，引擎日志会写进每个项目隔离的 CODEX_HOME，排障要挨个项目目录翻。
+    const engineLogsRoot = path.join(
       app.getPath("home"),
       APP_DATA_DIR_NAME,
       LOGS_DIR_NAME,
-      "codex",
     );
+    env.CODEX_LOG_DIR = path.join(engineLogsRoot, "nuwax-harness-acp-ts");
+    // 引擎日志落点：宿主机显式设置时以其为准（与 NUWAX_UPDATE_PLAN 的透传口径一致），
+    // 否则跟随客户端 logs 目录。适配器只接受绝对路径。
+    const harnessLogDirOverride = process.env.NUWAX_HARNESS_LOG_DIR?.trim();
+    env.NUWAX_HARNESS_LOG_DIR =
+      harnessLogDirOverride || path.join(engineLogsRoot, "nuwax-harness");
+    if (harnessLogDirOverride) {
+      log.info("[AcpClient] NUWAX_HARNESS_LOG_DIR passthrough from host env", {
+        dir: harnessLogDirOverride,
+      });
+    }
     env.RUST_LOG = "debug";
     // 适配器（nuwax-harness-acp-ts）只认 NUWAX_PATH/CODEX_PATH 定位引擎二进制，
     // 其 homedir() 缓存兜底在下方隔离 HOME 下必然落空，必须显式指向 bundled
