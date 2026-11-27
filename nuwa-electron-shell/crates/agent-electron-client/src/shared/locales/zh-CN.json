@@ -1292,6 +1292,8 @@
   "Claw.AutoUpdater.linuxAuthFailed": "未获得管理员授权，更新未安装",
   "Claw.AutoUpdater.linuxManualInstall": "无法在客户端内完成授权。请在终端执行以下命令完成更新：sudo apt install \"{0}\"",
   "Claw.AutoUpdater.linuxInstallFailed": "更新安装失败，详细输出见 {0}",
+  "Claw.AutoUpdater.linuxNeedsDesktopRestart": "更新已下载。请完全退出客户端，从系统应用菜单重新打开后再安装。",
+  "Claw.AutoUpdater.linuxRestartAfterInstall": "更新已安装。请完全退出客户端，再从系统应用菜单打开新版本。",
   "Claw.Settings.computerUse.scope": "操作范围",
   "Claw.Settings.computerUse.diagnostics": "诊断",
   "Claw.Settings.computerUse.errors.helperIdentityUnverified": "系统权限已授予，但无法确认 {computerUseHelper} 助手的身份，可能是助手版本过旧。请重新安装客户端后再开启。",
