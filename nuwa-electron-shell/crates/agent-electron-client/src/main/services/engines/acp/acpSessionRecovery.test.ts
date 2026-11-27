@@ -379,6 +379,86 @@ describe("resolveSessionWithRecovery · 慢恢复与健康阈值（S1）", () =>
 });
 
 describe("resolveSessionWithRecovery · 卡死与恢复（S3/S4/S6）", () => {
+  it("load 卡住时跳过外部插件重试原会话，保留会话 ID", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        canRetryWithoutExternalPlugins: () => true,
+        loadSession: vi.fn().mockImplementationOnce(hang).mockResolvedValueOnce(makeSession("ses_hung")),
+      });
+      const pending = resolveSessionWithRecovery(deps, request({ session_id: "ses_hung" }));
+      await vi.advanceTimersByTimeAsync(deps.budgets.loadHardMs);
+      const result = await pending;
+      expect(deps.recycle).toHaveBeenCalledWith("external_plugins_disabled", {
+        respawn: true, withoutExternalPlugins: true,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.restoredVia).toBe("load");
+      expect(result.session.id).toBe("ses_hung");
+      expect(result.isNewSession).toBe(false);
+      expect(deps.createSession).not.toHaveBeenCalled();
+      expect(deps.state!.isRestoreBlacklisted("ses_hung")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("跳过插件仍无法恢复时收掉进程，不隔离原会话数据", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        canRetryWithoutExternalPlugins: () => true,
+        loadSession: vi.fn(hang),
+        quarantineHome: vi.fn(),
+      });
+      const pending = resolveSessionWithRecovery(deps, request({ session_id: "ses_hung" }));
+      await vi.advanceTimersByTimeAsync(deps.budgets.loadHardMs * 2);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("engine_env_hang");
+      expect(deps.quarantineHome).not.toHaveBeenCalled();
+      expect(deps.recycle).toHaveBeenLastCalledWith("give_up", { respawn: false });
+      expect(deps.state!.isRestoreBlacklisted("ses_hung")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("新会话卡住时也可跳过插件后重试", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        canRetryWithoutExternalPlugins: () => true,
+        createSession: vi.fn().mockImplementationOnce(hang).mockResolvedValueOnce({ id: "new" }),
+        getSessionRecord: () => makeSession("new"),
+      });
+      const pending = resolveSessionWithRecovery(deps, request());
+      await vi.advanceTimersByTimeAsync(deps.budgets.newSessionHardMs);
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(deps.recycle).toHaveBeenCalledWith("external_plugins_disabled", {
+        respawn: true, withoutExternalPlugins: true,
+      });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("load 报错且新建卡住时，跳过插件后优先重试原会话", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        canRetryWithoutExternalPlugins: () => true,
+        loadSession: vi.fn().mockRejectedValueOnce(new Error("load failed")).mockResolvedValueOnce(makeSession("ses_old")),
+        createSession: vi.fn(hang),
+      });
+      const pending = resolveSessionWithRecovery(deps, request({ session_id: "ses_old" }));
+      await vi.advanceTimersByTimeAsync(deps.budgets.newSessionHardMs);
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.session.id).toBe("ses_old");
+      expect(result.restoredVia).toBe("load");
+      expect(deps.createSession).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("load 硬超时：重建进程后建新会话，该 session_id 进黑名单", async () => {
     vi.useFakeTimers();
     try {

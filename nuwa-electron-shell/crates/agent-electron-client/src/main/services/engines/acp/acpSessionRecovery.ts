@@ -1,5 +1,5 @@
 /**
- * 会话建立阶段的恢复链路：memory → load → new，含重建进程、隔离 home、熔断。
+ * 会话建立阶段的恢复链路：memory → load → new，含插件隔离重试、进程重建与熔断。
  *
  * 纯逻辑：时钟、重建进程、隔离 home 与运行期状态全部经 deps 注入，各失败分支可用
  * 假计时器覆盖；真正的进程与文件操作在 AcpEngine 里实现（recycleForRecovery）。
@@ -48,12 +48,15 @@ export type AcpEngineRecycleReason =
   | "load_timeout"
   | "new_timeout"
   | "home_quarantined"
+  | "external_plugins_disabled"
   | "config_timeout"
   | "give_up";
 
 export interface AcpEngineRecycleOptions {
   /** false = 只销毁（最终失败时收掉卡死的进程） */
   respawn: boolean;
+  /** Retry in a fresh process without loading external plugins. */
+  withoutExternalPlugins?: boolean;
   /**
    * 销毁之后、重启之前执行。隔离 home 必须放在这里：引擎进程还占着 home 里的文件
    * （Windows 上会让改名失败），而重启之后原路径又会被重新建出来。
@@ -205,6 +208,8 @@ export interface SessionRecoveryDeps extends SessionSetupDeps {
   quarantineHome?(): SessionHomeQuarantineResult;
   /** 不做改名的前提下判断能否隔离；缺省同「是否提供 quarantineHome」 */
   canQuarantineHome?(): boolean;
+  /** Only engines known to support a plugin-only recovery mode opt in. */
+  canRetryWithoutExternalPlugins?(): boolean;
   state?: SessionSetupRecoveryState;
   now?: () => number;
   /** 链路起点（进入 /computer/chat 的时刻）；缺省取 now() */
@@ -255,10 +260,10 @@ function describeError(err: unknown): string {
  *
  * 每个请求最多经历三个引擎进程：
  * 1. 内存命中直接用。
- * 2. session/load：成功保留上下文；报错后建新会话；软超时只告警；硬超时则销毁
- *    进程、该 session_id 进黑名单，再建新会话。
- * 3. session/new 超时：未重建过 → 重建后重试一次；已在新进程里仍超时 → 满足约束时
- *    隔离 home 后重启再试一次；仍失败 → 销毁进程、开熔断、返回失败。
+ * 2. session/load：成功保留上下文；硬超时后支持安全模式的引擎跳过外部插件重试
+ *    同一个会话。旧引擎沿用黑名单和新会话回退。
+ * 3. session/new 超时：支持安全模式的引擎跳过外部插件重试；其他引擎沿用进程重建、
+ *    可选 home 隔离与熔断。跳过插件后的消息必须由调用方要求用户确认。
  */
 export async function resolveSessionWithRecovery(
   deps: SessionRecoveryDeps,
@@ -298,6 +303,7 @@ export async function resolveSessionWithRecovery(
     setupPath: string,
     fallbackReason?: SessionSetupFallbackReason,
   ): SessionRecoveryResult => {
+    report.setupPath = setupPath;
     if (restoredVia !== "memory") {
       session.projectId = request.project_id || request.agent_work_dir;
     }
@@ -358,6 +364,7 @@ export async function resolveSessionWithRecovery(
   let setupPath = "new";
   let fallbackReason: SessionSetupFallbackReason | undefined;
   let recycledInChain = false;
+  let pluginsDisabledInChain = false;
   /**
    * 本链路里「足额预算内仍无响应」的次数。预算被总时限截短的超时不算数。
    * 两次及以上说明不是偶发变慢，收尾时开熔断。
@@ -417,8 +424,46 @@ export async function resolveSessionWithRecovery(
           });
         } else {
           conclusiveTimeouts++;
-          state.blacklistRestore(request.session_id);
           state.noteSetupTimeout(deps.engineKey);
+          if (deps.canRetryWithoutExternalPlugins?.()) {
+            report.recycleReasons.push("external_plugins_disabled");
+            const recycled = await deps.recycle("external_plugins_disabled", {
+              respawn: true,
+              withoutExternalPlugins: true,
+            });
+            if (!recycled.ok) {
+              return fail("engine_recycle_failed", recycled.error);
+            }
+            const retryBudget = stageBudget(budgets.loadHardMs);
+            if (retryBudget < budgets.minRetryMs) {
+              return fail(
+                "setup_timeout",
+                "insufficient budget to restore without external plugins",
+                { teardown: true },
+              );
+            }
+            try {
+              const restored = await withSetupTimeout(
+                deps.loadSession(request.session_id, sessionOpts),
+                { stage: "load", hardMs: retryBudget },
+              );
+              return succeed(
+                restored, false, "load", "load_timeout→load_without_plugins",
+              );
+            } catch (retryError) {
+              if (isAcpSetupTimeoutError(retryError)) {
+                return fail(
+                  retryBudget < budgets.loadHardMs ? "setup_timeout" : "engine_env_hang",
+                  "session/load also timed out without external plugins",
+                  { teardown: true, breaker: retryBudget >= budgets.loadHardMs },
+                );
+              }
+              return fail("setup_failed", describeError(retryError), {
+                teardown: true,
+              });
+            }
+          }
+          state.blacklistRestore(request.session_id);
           report.recycleReasons.push("load_timeout");
           const recycled = await deps.recycle("load_timeout", { respawn: true });
           if (!recycled.ok) {
@@ -470,6 +515,57 @@ export async function resolveSessionWithRecovery(
       }
       conclusiveTimeouts++;
       state.noteSetupTimeout(deps.engineKey);
+      if (pluginsDisabledInChain) {
+        return fail(
+          "engine_env_hang",
+          "session/new also timed out without external plugins",
+          { teardown: true, breaker: conclusiveTimeouts >= 2 },
+        );
+      }
+      if (deps.canRetryWithoutExternalPlugins?.()) {
+        report.recycleReasons.push("external_plugins_disabled");
+        const recycled = await deps.recycle("external_plugins_disabled", {
+          respawn: true,
+          withoutExternalPlugins: true,
+        });
+        if (!recycled.ok) {
+          return fail("engine_recycle_failed", recycled.error);
+        }
+        pluginsDisabledInChain = true;
+        recycledInChain = true;
+        // A previous load error may have been caused by the same plugin setup.
+        // Try the original session once more before creating a replacement.
+        if (request.session_id && fallbackReason === "load_error") {
+          const retryBudget = stageBudget(budgets.loadHardMs);
+          if (retryBudget < budgets.minRetryMs) {
+            return fail(
+              "setup_timeout",
+              "insufficient budget to restore without external plugins",
+              { teardown: true },
+            );
+          }
+          try {
+            const restored = await withSetupTimeout(
+              deps.loadSession(request.session_id, sessionOpts),
+              { stage: "load", hardMs: retryBudget },
+            );
+            return succeed(
+              restored, false, "load", "load_error→load_without_plugins",
+            );
+          } catch (retryError) {
+            if (isAcpSetupTimeoutError(retryError)) {
+              return fail(
+                retryBudget < budgets.loadHardMs ? "setup_timeout" : "engine_env_hang",
+                "session/load also timed out without external plugins",
+                { teardown: true, breaker: retryBudget >= budgets.loadHardMs },
+              );
+            }
+            fallbackReason = classifyLoadError(retryError);
+          }
+        }
+        setupPath += "→new_without_plugins";
+        continue;
+      }
       if (!recycledInChain) {
         report.recycleReasons.push("new_timeout");
         const recycled = await deps.recycle("new_timeout", { respawn: true });

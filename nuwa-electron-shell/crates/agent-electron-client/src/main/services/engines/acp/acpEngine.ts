@@ -9,6 +9,7 @@ import { applyCuaCapabilityNotice, createDesktopAgentSessions, type AgentTurn } 
  */
 
 import { EventEmitter } from "events";
+import { randomUUID } from "crypto";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
@@ -291,6 +292,8 @@ interface AcpSession extends SessionWorkspaceRef {
 // Session counter removed — ACP protocol UUID is used as canonical session.id
 
 export class AcpEngine extends EventEmitter {
+  /** Scoped to this engine process and cleared on ordinary destruction. */
+  private externalPluginsDisabledForRecovery = false;
   /**
    * nuwax-harness 在上下文压不动时会把 `_meta.codex.sessionFailure` 挂在
    * prompt 结果上（fork-codex-acp-ts 的 legacy 元数据通道）。这里只做透出：
@@ -687,6 +690,17 @@ export class AcpEngine extends EventEmitter {
     return getAcpEngineProfile(this.engineName);
   }
 
+  private canRetryWithoutExternalPlugins(): boolean {
+    return (
+      this.engineName === "nuwaxcode" &&
+      !this.config?.customEngineCommand &&
+      !/^(1|true|yes|on)$/i.test(
+        this.config?.env?.OPENCODE_PURE ?? process.env.OPENCODE_PURE ?? "",
+      ) &&
+      !this.externalPluginsDisabledForRecovery
+    );
+  }
+
   private resolveCodexAuthMethod(
     config: AgentConfig,
     spawnEnv: Record<string, string>,
@@ -762,6 +776,7 @@ export class AcpEngine extends EventEmitter {
     this.config = config;
     // 重新 init 即重新可用（外部销毁后由服务层重建，或恢复链路原地重启）
     this.ownerDestroyed = false;
+    const initEpoch = this.lifecycleEpoch;
     const envModel = config.env?.OPENCODE_MODEL || config.env?.ANTHROPIC_MODEL;
     log.info(`${this.logTag} 🚀 Init config`, {
       engine: this.engineName,
@@ -791,6 +806,12 @@ export class AcpEngine extends EventEmitter {
 
       // For nuwaxcode: inject config via OPENCODE_CONFIG_CONTENT env var
       const spawnEnv = { ...(config.env || {}) };
+      if (
+        this.externalPluginsDisabledForRecovery &&
+        this.engineProfile.usesOpencodeSpawnConfig
+      ) {
+        spawnEnv.OPENCODE_PURE = "1";
+      }
 
       if (this.engineProfile.usesOpencodeSpawnConfig) {
         spawnEnv.OPENCODE_PERMISSION = resolveOpencodePermissionEnv(
@@ -956,6 +977,12 @@ export class AcpEngine extends EventEmitter {
       firstTokenTrace.trace("acp.init.ready", { engine: this.engineName });
       return { ok: true };
     } catch (error) {
+      const retryWithoutPlugins =
+        isAcpSetupTimeoutError(error) &&
+        error.stage === "handshake" &&
+        this.canRetryWithoutExternalPlugins() &&
+        !this.ownerDestroyed &&
+        this.lifecycleEpoch === initEpoch;
       const reason =
         error instanceof Error
           ? error.message
@@ -970,6 +997,11 @@ export class AcpEngine extends EventEmitter {
       );
       // Ensure spawned process is cleaned up on init failure
       await this.destroy().catch(() => {});
+      if (retryWithoutPlugins && this.lifecycleEpoch === initEpoch + 1) {
+        log.warn(`${this.logTag} ACP handshake timed out; retrying without external plugins`);
+        this.externalPluginsDisabledForRecovery = true;
+        return this.init(config);
+      }
       this.emit(
         "error",
         error instanceof Error ? error : new Error(String(error)),
@@ -980,6 +1012,7 @@ export class AcpEngine extends EventEmitter {
 
   async destroy(): Promise<void> {
     this.lifecycleEpoch++;
+    if (!this.recycling) this.externalPluginsDisabledForRecovery = false;
     if (!this.recycling) this.ownerDestroyed = true;
     this.agentSessions.destroy();
     // Cancel all active sessions
@@ -1170,6 +1203,9 @@ export class AcpEngine extends EventEmitter {
           };
         }
       }
+      if (options.withoutExternalPlugins) {
+        this.externalPluginsDisabledForRecovery = true;
+      }
       const initResult = await this.init(config);
       return initResult.ok
         ? { ok: true }
@@ -1263,6 +1299,7 @@ export class AcpEngine extends EventEmitter {
         getSessionRecord: (id) => this.sessions.get(id)!,
         recycle: (reason, recycleOptions) =>
           this.recycleForRecovery(reason, recycleOptions),
+        canRetryWithoutExternalPlugins: () => this.canRetryWithoutExternalPlugins(),
         canQuarantineHome: () => this.canQuarantineEngineHome(engineKey),
         quarantineHome: () => this.quarantineEngineHome(engineKey),
       },
@@ -1927,6 +1964,16 @@ export class AcpEngine extends EventEmitter {
     this.on("computer:progress", onProgress);
 
     try {
+      if (this.externalPluginsDisabledForRecovery) {
+        const allowed = await this.requestPluginRecoveryConsent(sessionId);
+        if (
+          !allowed ||
+          !this.isCurrentPromptTurn(sessionId, promptTurn) ||
+          this.sessions.get(sessionId) !== session
+        ) {
+          throw createSessionCancelledError();
+        }
+      }
       agentTurn = this.agentSessions.start(sessionId);
       log.info(`${this.logTag} Starting prompt`, {
         sessionId,
@@ -3003,6 +3050,62 @@ export class AcpEngine extends EventEmitter {
   }
 
   // === Internal: Permission Handling ===
+
+  private async requestPluginRecoveryConsent(
+    sessionId: string,
+  ): Promise<boolean> {
+    const request: AcpPermissionRequest = {
+      sessionId,
+      toolCall: {
+        toolCallId: `plugin-recovery-${randomUUID()}`,
+        kind: "other",
+        title: t("Claw.Errors.pluginRecoveryApproval"),
+      },
+      options: [
+        {
+          optionId: "reject",
+          kind: "reject_once",
+          name: t("Claw.Errors.pluginRecoveryReject"),
+        },
+        {
+          optionId: "continue",
+          kind: "allow_once",
+          name: t("Claw.Errors.pluginRecoveryContinue"),
+        },
+      ],
+    };
+    // This is an explicit recovery choice, not a tool permission: never apply
+    // agent_mode=yolo or tool approval rules to it.
+    const { interventionRequest, acpResponsePromise } =
+      approvalInterventionService.createPending({
+        engine: this.engineName,
+        appSessionId: sessionId,
+        acpSessionId: sessionId,
+        acpRequest: request,
+        timeoutMs: 5 * 60_000,
+      });
+    this.emit("computer:progress", {
+      sessionId,
+      acpSessionId: sessionId,
+      messageType: "acpRequestPermission",
+      subType: "request_permission",
+      data: {
+        ...toComputerPermissionProgressData({
+          acpRequest: request,
+          interventionId: interventionRequest.id,
+          revision: interventionRequest.revision,
+        }),
+        _intervention: interventionRequest,
+        _engine: this.engineName,
+      },
+      timestamp: new Date().toISOString(),
+    });
+    const response = await acpResponsePromise;
+    return (
+      response.outcome.outcome === "selected" &&
+      response.outcome.optionId === "continue"
+    );
+  }
 
   private async handlePermissionRequest(
     params: AcpPermissionRequest,
