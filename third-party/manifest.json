@@ -201,7 +201,7 @@
     "nuwax-harness-acp-ts": {
       "id": "nuwax-harness-acp-ts",
       "name": "Nuwax Harness adapter",
-      "version": "1.2.24",
+      "version": "auto",
       "license": "Apache-2.0",
       "licenseFile": "third-party/licenses/nuwax-harness-adapter.txt",
       "sourceUrl": "https://github.com/agentclientprotocol/codex-acp",
