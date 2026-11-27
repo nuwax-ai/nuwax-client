@@ -986,6 +986,17 @@ export async function createAcpConnection(
     if (model) {
       env.NUWAX_MODEL = model;
     }
+    // 引擎开关透传:ACP 子进程环境来自 getAppEnv() 白名单,不继承 process.env,
+    // 所以宿主(或 `make harness-local`)设置的 NUWAX_* 开关必须在这里显式写进 env,
+    // 否则引擎永远看不到。当前只透传待办清单开关;非法值由引擎 fail-fast 报错,
+    // 这里不做二次校验,避免客户端与引擎对"什么算合法"有两套说法。
+    const updatePlanRaw = process.env.NUWAX_UPDATE_PLAN?.trim();
+    if (updatePlanRaw) {
+      env.NUWAX_UPDATE_PLAN = updatePlanRaw;
+      log.info("[AcpClient] NUWAX_UPDATE_PLAN passthrough from host env", {
+        value: updatePlanRaw,
+      });
+    }
     if (route.baseUrl) {
       // 本地调试开关:NUWAX_MODEL_CAPTURE=<端口> 时把出站 base URL 指向本地抓包
       // 代理(scripts/client/model-capture-proxy.mjs),由它还原上游并把请求/响应
