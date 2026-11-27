@@ -31,6 +31,7 @@ const mockAppRelaunch = vi.fn();
 const mockAppQuit = vi.fn();
 const mockShowMessageBox = vi.fn();
 const mockInstallLinuxDeb = vi.fn();
+const mockScheduleLinuxDebRelaunch = vi.fn(async (..._args: unknown[]) => {});
 const mockWindowsInstallPreflight = vi.fn(async (..._args: unknown[]) => {});
 const mockWindowsCommit = vi.fn();
 const mockWindowsCancel = vi.fn();
@@ -59,6 +60,9 @@ vi.mock("fs", () => ({
 
 vi.mock("./linuxDebInstaller", () => ({
   installLinuxDeb: (...args: unknown[]) => mockInstallLinuxDeb(...args),
+}));
+vi.mock("./linuxDebRelaunch", () => ({
+  scheduleLinuxDebRelaunch: (...args: unknown[]) => mockScheduleLinuxDebRelaunch(...args),
 }));
 vi.mock("./windowsInstallPreflight", () => ({
   checkWindowsInstallRuntime: (...args: unknown[]) => mockWindowsInstallPreflight(...args),
@@ -1452,6 +1456,7 @@ describe("Linux deb 安装形态", () => {
     mockAppRelaunch.mockClear();
     mockAppQuit.mockClear();
     mockInstallLinuxDeb.mockReset();
+    mockScheduleLinuxDebRelaunch.mockReset().mockResolvedValue(undefined);
     mockReadFileSync.mockReset();
     mockReadFileSync.mockImplementation(() => {
       throw new Error("ENOENT");
@@ -1495,7 +1500,7 @@ describe("Linux deb 安装形态", () => {
     expect(lastFakeUpdater.autoInstallOnAppQuit).toBe(true);
   });
 
-  it("安装由 linuxDebInstaller 接管：装完后才清理并重启，不调 quitAndInstall", async () => {
+  it("安装成功且重启已安排后才清理并退出", async () => {
     mockDebPackage();
     const mod = await importFreshWithUpdaterMock();
     const markQuitting = vi.fn();
@@ -1516,6 +1521,12 @@ describe("Linux deb 安装形态", () => {
       });
       return { ok: true };
     });
+    mockScheduleLinuxDebRelaunch.mockImplementationOnce(async () => {
+      expect(mockInstallLinuxDeb).toHaveBeenCalledTimes(1);
+      expect(markQuitting).not.toHaveBeenCalled();
+      expect(cleanup).not.toHaveBeenCalled();
+      expect(mockAppQuit).not.toHaveBeenCalled();
+    });
 
     const result = await mod.installUpdate();
 
@@ -1526,7 +1537,12 @@ describe("Linux deb 安装形态", () => {
     expect(markQuitting).toHaveBeenCalledTimes(1);
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
-    expect(mockAppRelaunch).toHaveBeenCalledTimes(1);
+    expect(mockScheduleLinuxDebRelaunch).toHaveBeenCalledWith({
+      executable: process.execPath,
+      args: process.argv.slice(1),
+      logPath: "/home/u/.nuwaclaw/logs/update-install.log",
+    });
+    expect(mockAppRelaunch).not.toHaveBeenCalled();
     expect(mockAppQuit).toHaveBeenCalledTimes(1);
   });
 
@@ -1534,6 +1550,7 @@ describe("Linux deb 安装形态", () => {
     ["auth-failed", "Claw.AutoUpdater.linuxAuthFailed"],
     ["unavailable", "Claw.AutoUpdater.linuxManualInstall"],
     ["install-failed", "Claw.AutoUpdater.linuxInstallFailed"],
+    ["needs-desktop-restart", "Claw.AutoUpdater.linuxNeedsDesktopRestart"],
   ])("%s 时返回错误，不清理、不重启，并撤掉安装中的提示", async (reason, errorKey) => {
     mockDebPackage();
     const mod = await importFreshWithUpdaterMock();
@@ -1553,9 +1570,33 @@ describe("Linux deb 安装形态", () => {
     expect(mod.getUpdateState().hint).toBeUndefined();
     expect(markQuitting).not.toHaveBeenCalled();
     expect(cleanup).not.toHaveBeenCalled();
+    expect(mockScheduleLinuxDebRelaunch).not.toHaveBeenCalled();
     expect(mockAppRelaunch).not.toHaveBeenCalled();
     expect(mockAppQuit).not.toHaveBeenCalled();
     expect(mockUpdaterQuitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it("安装成功但无法安排重启时保留服务，后续点击只提示打开已安装的新版本", async () => {
+    mockDebPackage();
+    const mod = await importFreshWithUpdaterMock();
+    const markQuitting = vi.fn();
+    const cleanup = vi.fn(async () => {});
+    mod.initAutoUpdater(() => null, cleanup, markQuitting);
+    emitUpdaterEvent("update-downloaded", {
+      version: "0.9.5",
+      downloadedFile: DEB_PATH,
+    });
+    mockInstallLinuxDeb.mockResolvedValue({ ok: true });
+    mockScheduleLinuxDebRelaunch.mockRejectedValueOnce(new Error("relaunch unavailable"));
+
+    const restartRequired = { success: false, error: "Claw.AutoUpdater.linuxRestartAfterInstall" };
+    expect(await mod.installUpdate()).toEqual(restartRequired);
+    expect(await mod.installUpdate()).toEqual(restartRequired);
+    expect(mockInstallLinuxDeb).toHaveBeenCalledTimes(1);
+    expect(markQuitting).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(mockAppQuit).not.toHaveBeenCalled();
+    expect(mockAppRelaunch).not.toHaveBeenCalled();
   });
 
   it("尚未下载完成时不启动安装", async () => {

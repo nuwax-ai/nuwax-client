@@ -1292,6 +1292,8 @@
   "Claw.AutoUpdater.linuxAuthFailed": "Administrator authorization was not granted. The update was not installed.",
   "Claw.AutoUpdater.linuxManualInstall": "Authorization could not be completed inside the app. Run this command in a terminal to finish the update: sudo apt install \"{0}\"",
   "Claw.AutoUpdater.linuxInstallFailed": "Failed to install the update. See {0} for details.",
+  "Claw.AutoUpdater.linuxNeedsDesktopRestart": "The update is downloaded. Quit the app completely, reopen it from the system app menu, then try installing again.",
+  "Claw.AutoUpdater.linuxRestartAfterInstall": "The update is installed. Quit the app completely and reopen it from the system app menu to use the new version.",
   "Claw.Settings.computerUse.scope": "Scope",
   "Claw.Settings.computerUse.diagnostics": "Diagnostics",
   "Claw.Settings.computerUse.errors.helperIdentityUnverified": "System permissions are granted, but the {computerUseHelper} helper's identity could not be confirmed; it may be outdated. Reinstall the client, then turn it on again.",

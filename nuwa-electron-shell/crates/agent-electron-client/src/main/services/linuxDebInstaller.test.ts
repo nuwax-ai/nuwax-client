@@ -32,6 +32,7 @@ function makeDeps(
     }) as any,
     findCommand: (name) => (name === "pkexec" ? "/usr/bin/pkexec" : null),
     isRoot: () => false,
+    readProcessStatus: () => "NoNewPrivs:\t0\n",
     openLog: vi.fn(() => 42),
     closeLog,
     ...overrides,
@@ -101,6 +102,25 @@ describe("installLinuxDeb", () => {
     expect(deps.openLog).not.toHaveBeenCalled();
   });
 
+  it("NoNewPrivs 为 1 时提示从桌面重新打开，且不启动授权进程", async () => {
+    const { deps, calls } = makeDeps([], {
+      readProcessStatus: () => "Name:\tnuwax\nNoNewPrivs:\t1\nSeccomp:\t0\n",
+    });
+
+    expect(await installLinuxDeb(baseOptions(), deps)).toEqual({ ok: false, reason: "needs-desktop-restart" });
+    expect(calls).toHaveLength(0);
+    expect(deps.openLog).not.toHaveBeenCalled();
+  });
+
+  it("无法读取进程状态时仍交给系统授权", async () => {
+    const { deps, calls } = makeDeps([0], {
+      readProcessStatus: () => { throw new Error("procfs unavailable"); },
+    });
+
+    expect(await installLinuxDeb(baseOptions(), deps)).toEqual({ ok: true });
+    expect(calls[0].cmd).toBe("/usr/bin/pkexec");
+  });
+
   it("pkexec 进程无法启动，按无法在客户端内安装处理", async () => {
     const { deps, closeLog } = makeDeps([undefined]);
 
@@ -110,9 +130,10 @@ describe("installLinuxDeb", () => {
     expect(closeLog).toHaveBeenCalledWith(42);
   });
 
-  it("以 root 运行时跳过 pkexec，直接执行安装脚本", async () => {
+  it("以 root 运行时即使 NoNewPrivs 为 1 也直接执行安装脚本", async () => {
     const { deps, calls } = makeDeps([0], {
       isRoot: () => true,
+      readProcessStatus: () => "NoNewPrivs:\t1\n",
       findCommand: () => null,
     });
 

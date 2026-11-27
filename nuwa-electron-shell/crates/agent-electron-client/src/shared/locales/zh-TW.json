@@ -1292,6 +1292,8 @@
   "Claw.AutoUpdater.linuxAuthFailed": "未獲得管理員授權，更新未安裝",
   "Claw.AutoUpdater.linuxManualInstall": "無法在應用程式內完成授權。請在終端機執行以下命令完成更新：sudo apt install \"{0}\"",
   "Claw.AutoUpdater.linuxInstallFailed": "更新安裝失敗，詳細輸出見 {0}",
+  "Claw.AutoUpdater.linuxNeedsDesktopRestart": "更新已下載。請完全結束應用程式，從系統應用程式選單重新開啟後再安裝。",
+  "Claw.AutoUpdater.linuxRestartAfterInstall": "更新已安裝。請完全結束應用程式，再從系統應用程式選單開啟新版本。",
   "Claw.Settings.computerUse.scope": "操作範圍",
   "Claw.Settings.computerUse.diagnostics": "診斷",
   "Claw.Settings.computerUse.errors.helperIdentityUnverified": "系統權限已授予，但無法確認 {computerUseHelper} 助手的身分，可能是助手版本過舊。請重新安裝用戶端後再開啟。",

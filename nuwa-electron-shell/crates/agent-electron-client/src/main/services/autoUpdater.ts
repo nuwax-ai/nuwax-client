@@ -38,6 +38,7 @@ import { readSetting, writeSetting } from "../db";
 import { compareVersions } from "./system/dependencyUtils";
 import { t } from "./i18n";
 import { installLinuxDeb } from "./linuxDebInstaller";
+import { scheduleLinuxDebRelaunch } from "./linuxDebRelaunch";
 import { checkWindowsInstallRuntime } from "./windowsInstallPreflight";
 import { prepareWindowsUpdate, inspectWindowsUpdate, windowsUpdateRoot as sessionRoot, type WindowsUpdateHandoff } from "./windowsUpdateSession";
 import { getAppEnv } from "./system/dependencies";
@@ -505,6 +506,7 @@ let preparedVersion: string | null = null;
 let channelRevision = 0;
 let updaterInitialized = false;
 let linuxDebInstallInFlight = false;
+let linuxDebInstalled = false;
 /** 可选宿主策略，默认仍由用户在下载后选择安装时机。 */
 let installAfterDownload = false;
 type UpdateResult = { success: boolean; error?: string; canceled?: boolean };
@@ -1553,6 +1555,9 @@ async function installLinuxDebUpdate(): Promise<{
   success: boolean;
   error?: string;
 }> {
+  if (linuxDebInstalled) {
+    return { success: false, error: t("Claw.AutoUpdater.linuxRestartAfterInstall") };
+  }
   if (!downloadedUpdateFile) {
     return { success: false, error: "No downloaded update to install" };
   }
@@ -1570,17 +1575,27 @@ async function installLinuxDebUpdate(): Promise<{
   try {
     // 系统授权框里写的是将要执行的程序（/bin/sh），所以应用里先告诉用户会看到什么。
     setState({ hint: t("Claw.AutoUpdater.linuxAuthPrompt") });
-    log.info(`[AutoUpdater] Installing deb via pkexec: ${debPath}`);
+    log.info(`[AutoUpdater] Installing Linux deb update: ${debPath}`);
     const result = await installLinuxDeb({ debPath, logPath });
     if (result.ok) {
-      // 装完才停服务：授权框被取消或安装失败时，服务一步都没停，客户端照常运行。
+      linuxDebInstalled = true;
+      try {
+        await scheduleLinuxDebRelaunch({ executable: process.execPath, args: process.argv.slice(1), logPath });
+      } catch (error) {
+        log.error("[AutoUpdater] deb installed but could not schedule a relaunch:", error);
+        return { success: false, error: t("Claw.AutoUpdater.linuxRestartAfterInstall") };
+      }
+      // The launcher waits for this process to exit. Keep services up until
+      // installation and the launch handoff have both succeeded.
       await prepareForInstall();
       log.info("[AutoUpdater] deb installed, relaunching");
-      app.relaunch();
       app.quit();
       return { success: true };
     }
     log.warn(`[AutoUpdater] deb install not completed: ${result.reason}`);
+    if (result.reason === "needs-desktop-restart") {
+      return { success: false, error: t("Claw.AutoUpdater.linuxNeedsDesktopRestart") };
+    }
     const error =
       result.reason === "auth-failed"
         ? t("Claw.AutoUpdater.linuxAuthFailed")

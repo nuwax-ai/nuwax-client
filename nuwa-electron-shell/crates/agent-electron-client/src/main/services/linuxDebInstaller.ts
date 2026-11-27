@@ -25,7 +25,7 @@ export const DEB_INSTALL_SCRIPT =
 
 export type LinuxDebInstallResult =
   | { ok: true }
-  | { ok: false; reason: "unavailable" | "auth-failed" | "install-failed" };
+  | { ok: false; reason: "unavailable" | "auth-failed" | "install-failed" | "needs-desktop-restart" };
 
 export interface LinuxDebInstallOptions {
   debPath: string;
@@ -37,6 +37,7 @@ export interface LinuxDebInstallerDeps {
   spawn: (cmd: string, args: string[], options: SpawnOptions) => ChildProcess;
   findCommand: (name: string) => string | null;
   isRoot: () => boolean;
+  readProcessStatus: () => string;
   openLog: (logPath: string) => number;
   closeLog: (fd: number) => void;
 }
@@ -70,9 +71,18 @@ const defaultDeps: LinuxDebInstallerDeps = {
   spawn: nodeSpawn,
   findCommand: findCommandInPath,
   isRoot: () => process.getuid?.() === 0,
+  readProcessStatus: () => fs.readFileSync("/proc/self/status", "utf8"),
   openLog: openLogFile,
   closeLog: (fd) => fs.closeSync(fd),
 };
+
+function hasNoNewPrivileges(readProcessStatus: () => string): boolean {
+  try {
+    return /^NoNewPrivs:[ \t]*1[ \t]*$/m.test(readProcessStatus());
+  } catch {
+    return false;
+  }
+}
 
 /** 进程退出码；无法启动返回 null。 */
 function waitForExit(child: ChildProcess): Promise<number | null> {
@@ -95,6 +105,9 @@ export async function installLinuxDeb(
   const scriptArgs = ["-c", DEB_INSTALL_SCRIPT, "nuwax-update", options.debPath];
   if (deps.isRoot()) {
     return runInstall(deps, options.logPath, "/bin/sh", scriptArgs, false);
+  }
+  if (hasNoNewPrivileges(deps.readProcessStatus)) {
+    return { ok: false, reason: "needs-desktop-restart" };
   }
   const pkexec = deps.findCommand("pkexec");
   if (!pkexec) return { ok: false, reason: "unavailable" };
