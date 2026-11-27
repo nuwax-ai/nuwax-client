@@ -87,7 +87,12 @@ CAPTURE_PORT ?= 18777
 model-capture:
 	@node scripts/client/model-capture-proxy.mjs --port $(CAPTURE_PORT) --log logs/model-capture.log
 
+# 本地验证待办清单(update_plan):默认开启,`NUWAX_UPDATE_PLAN=false make harness-local` 关闭。
+# 这个是引擎侧开关,会经 Electron -> ACP 适配器 -> app-server 子进程透传(NUWAX_ 前缀,
+# 不在适配器的消费清单里),因此设置在这里就够,不需要改适配器或客户端代码。
+# 注意只有源码构建的引擎才有这个开关(0.18.68 及更早的 npm 版没有)。
+NUWAX_UPDATE_PLAN ?= true
 harness-local:
 	@node scripts/sync-local-harness.mjs --ensure-frontend
 	@node scripts/sync-local-harness.mjs
-	@HARNESS_LOCAL=1 bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(REFRESH_FLAG) $(ARGS)
+	@HARNESS_LOCAL=1 NUWAX_UPDATE_PLAN=$(NUWAX_UPDATE_PLAN) bash scripts/client/with-model-capture.sh $(CLIENT_CLI) dev --frontend $(FRONTEND_MODE) --port "$(FRONTEND_PORT)" $(REFRESH_FLAG) $(ARGS)
