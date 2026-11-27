@@ -335,6 +335,15 @@ export const DEFAULT_MCP_PROXY_HOST = LOCALHOST_IP;
  */
 export const I18N_KEYS = {
   Android: ANDROID_I18N_KEYS,
+  HostProbe: {
+    TITLE: "Claw.Settings.messages.hostProbeTitle",
+    DNS: "Claw.Settings.messages.hostProbeDns",
+    UNREACHABLE: "Claw.Settings.messages.hostProbeUnreachable",
+    CONTINUE: "Claw.Settings.messages.hostProbeContinue",
+    GUEST_DNS: "Claw.Settings.messages.hostProbeGuestDns",
+    GUEST_UNREACHABLE: "Claw.Settings.messages.hostProbeGuestUnreachable",
+    INVALID: "Claw.Settings.messages.hostProbeInvalid",
+  },
   UpdateRecovery: {
     TITLE: "Claw.AutoUpdater.recoveryTitle",
     DETAIL: "Claw.AutoUpdater.recoveryDetail",

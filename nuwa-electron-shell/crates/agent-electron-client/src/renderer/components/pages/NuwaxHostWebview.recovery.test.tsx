@@ -240,6 +240,11 @@ describe("guest recovery lifecycle", () => {
     await paint();
     expect(find(tree, PageLoadRecovery).props.mode).toBe("failed");
     expect(phases).toHaveBeenLastCalledWith("failed");
+    const failedGuest = guest;
+    vi.advanceTimersByTime(120_000);
+    await paint();
+    expect(guest).toBe(failedGuest);
+    expect(guest.reload).not.toHaveBeenCalled();
     guest.emit("did-stop-loading");
     await paint();
     expect(find(tree, PageLoadRecovery).props.mode).toBe("failed");

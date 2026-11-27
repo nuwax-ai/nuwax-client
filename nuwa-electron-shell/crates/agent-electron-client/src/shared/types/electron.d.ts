@@ -654,7 +654,8 @@ export interface ComputerAPI {
 export interface ServicesAPI {
   configureServerHost(
     host: string,
-  ): Promise<{ success: boolean; serverHost?: string; error?: string }>;
+    options?: { allowUnreachable?: boolean; restart?: boolean },
+  ): Promise<{ success: boolean; serverHost?: string; error?: string; probe?: "dns" | "unreachable" }>;
   authState(): Promise<{ phase: string; error?: string; loggedIn: boolean }>;
   syncConfig(): Promise<import("./registration").ClientRegisterResponse>;
   restartAll: () => Promise<{

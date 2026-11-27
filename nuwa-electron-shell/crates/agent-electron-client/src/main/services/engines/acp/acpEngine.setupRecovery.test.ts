@@ -304,7 +304,7 @@ describe("AcpEngine session setup recovery", () => {
     expect((engine as any).pendingLoadSessionRegistration).toBe(false);
   });
 
-  it("initialize 握手无响应：按预算失败并杀掉进程", async () => {
+  it("已跳过插件时握手仍无响应：按预算失败并杀掉进程", async () => {
     const connection = mockConnection({
       initialize: vi.fn(hang),
     });
@@ -316,7 +316,7 @@ describe("AcpEngine session setup recovery", () => {
     engine.on("error", (err) => errors.push(err));
 
     vi.useFakeTimers();
-    const pending = engine.init(ENGINE_CONFIG).then(
+    const pending = engine.init({ ...ENGINE_CONFIG, env: { OPENCODE_PURE: "1" } }).then(
       (value) => value,
       (err: unknown) => err,
     );
@@ -339,6 +339,38 @@ describe("AcpEngine session setup recovery", () => {
     expect(engine.isReady).toBe(false);
   });
 
+  it("根目录插件卡住握手时重启为无插件模式", async () => {
+    let spawned = 0;
+    const spawn = stubSpawn(() => {
+      spawned++;
+      return mockConnection(spawned === 1 ? { initialize: vi.fn(hang) } : {});
+    });
+    const engine = new AcpEngine("nuwaxcode");
+    engine.on("error", vi.fn());
+    vi.useFakeTimers();
+    const pending = engine.init(ENGINE_CONFIG);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn.mock.calls[1][0].env).toMatchObject({ OPENCODE_PURE: "1" });
+    expect((engine as any).externalPluginsDisabledForRecovery).toBe(true);
+    await engine.destroy();
+  });
+
+  it("跳过插件后握手仍超时，只重试一次并报告失败", async () => {
+    const spawn = stubSpawn(() => mockConnection({ initialize: vi.fn(hang) }));
+    const engine = new AcpEngine("nuwaxcode");
+    const errors = vi.fn();
+    engine.on("error", errors);
+    vi.useFakeTimers();
+    const pending = engine.init(ENGINE_CONFIG);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await expect(pending).resolves.toMatchObject({ ok: false, error: "handshake timed out after 10000ms" });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(engine.isReady).toBe(false);
+  });
+
   it("握手在预算内返回则正常就绪", async () => {
     const connection = mockConnection();
     stubSpawn(() => connection);
@@ -353,7 +385,7 @@ describe("AcpEngine session setup recovery", () => {
     expect(killProcessTreeGraceful).not.toHaveBeenCalled();
   });
 
-  it("load 与回退 new 都无响应：有界结束，返回结构化错误并熔断（同事日志场景）", async () => {
+  it("load 与跳过外部插件后的 load 都无响应：有界结束并熔断", async () => {
     const connections: Array<ReturnType<typeof mockConnection>> = [];
     const createAcpConnection = stubSpawn(() => {
       const connection = mockConnection();
@@ -381,12 +413,12 @@ describe("AcpEngine session setup recovery", () => {
     expect(createAcpConnection).toHaveBeenCalledTimes(1);
     expect(connections[0].loadSession).toHaveBeenCalledTimes(1);
 
-    // load 硬超时 → 销毁并用原配置重启 → 回退 new（仍无响应）
+    // load 硬超时 → 跳过外部插件重启 → 再次恢复原会话
     await vi.advanceTimersByTimeAsync(1);
     await flush();
     expect(killProcessTreeGraceful).toHaveBeenCalledTimes(1);
     expect(createAcpConnection).toHaveBeenCalledTimes(2);
-    expect(connections[1].newSession).toHaveBeenCalledTimes(1);
+    expect(connections[1].loadSession).toHaveBeenCalledTimes(1);
 
     // 新进程里也建不出 → 收掉进程、熔断、返回结构化错误
     await vi.advanceTimersByTimeAsync(40_000);
@@ -412,17 +444,17 @@ describe("AcpEngine session setup recovery", () => {
     const again = await engine.chat({ ...request, request_id: "rid-hang-2" });
     expect(again.success).toBe(false);
     expect(connections[0].loadSession).toHaveBeenCalledTimes(1);
-    expect(connections[1].newSession).toHaveBeenCalledTimes(1);
+    expect(connections[1].loadSession).toHaveBeenCalledTimes(1);
   });
 
-  it("load 硬超时后新进程能建出会话：用新会话继续并带上 fallback_reason", async () => {
+  it("load 超时后跳过外部插件恢复原会话", async () => {
     const connections: Array<ReturnType<typeof mockConnection>> = [];
-    const newSession = createDeferred<{ sessionId: string }>();
+    const loadedSession = createDeferred<{ configOptions: unknown[] }>();
     let spawned = 0;
     stubSpawn(() => {
       spawned += 1;
       const connection = mockConnection(
-        spawned === 1 ? {} : { newSession: vi.fn(() => newSession.promise) },
+        spawned === 1 ? {} : { loadSession: vi.fn(() => loadedSession.promise) },
       );
       connections.push(connection);
       return connection;
@@ -441,17 +473,16 @@ describe("AcpEngine session setup recovery", () => {
     } as any);
     await vi.advanceTimersByTimeAsync(40_000);
     await flush();
-    // load 硬超时后已重建进程，并改用 session/new
+    // load 硬超时后重建进程，再恢复原会话
     expect(connections).toHaveLength(2);
-    expect(connections[1].newSession).toHaveBeenCalledTimes(1);
-    newSession.resolve({ sessionId: "ses_recovered" });
+    expect(connections[1].loadSession).toHaveBeenCalledTimes(1);
+    loadedSession.resolve({ configOptions: [] });
     const result = await pending;
 
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
-      session_id: "ses_recovered",
-      is_new_session: true,
-      fallback_reason: "load_timeout",
+      session_id: "ses_hung",
+      is_new_session: false,
     });
     expect(engine.isReady).toBe(true);
     expect(
@@ -493,6 +524,150 @@ describe("AcpEngine session setup recovery", () => {
     expect(promptAsync).not.toHaveBeenCalled();
     expect(killProcessTreeGraceful).toHaveBeenCalledTimes(1);
     expect(engine.isReady).toBe(false);
+  });
+
+  it.each(["continue", "reject"])("无外部插件模式必须明确确认：%s", async (choice) => {
+    const connection = mockConnection();
+    const spawn = stubSpawn(() => connection);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    await engine.recycleForRecovery("external_plugins_disabled", {
+      respawn: true,
+      withoutExternalPlugins: true,
+    });
+    expect(spawn.mock.calls[1][0].env).toMatchObject({ OPENCODE_PURE: "1" });
+    const id = "ses_existing";
+    (engine as any).sessions.set(id, { id, acpSessionId: id, createdAt: Date.now(), status: "idle" });
+    (engine as any).setEffectiveMode(id, "yolo");
+    const progress = vi.fn();
+    const end = vi.fn();
+    engine.on("computer:progress", progress);
+    engine.on("computer:promptEnd", end);
+    const pending = engine.prompt(id, [{ type: "text", text: "hello" }]);
+    await flush();
+    const confirmation = progress.mock.calls.map(([event]) => event).find((event) => event.subType === "request_permission");
+    expect(confirmation).toBeDefined();
+    expect(connection.prompt).not.toHaveBeenCalled();
+    const request = confirmation.data.request_permission_request;
+    expect(request.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ optionId: "continue", kind: "allow_once" }),
+      expect.objectContaining({ optionId: "reject", kind: "reject_once" }),
+    ]));
+    const resolved = engine.resolvePermissionIntervention({
+      permission_resolve_request: {
+        request_permission_response: { outcome: { Selected: { option_id: choice } } },
+        session_id: id,
+        tool_call_id: request.toolCall.toolCallId,
+        save_rule: false,
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    await pending;
+    expect(connection.prompt).toHaveBeenCalledTimes(choice === "continue" ? 1 : 0);
+    if (choice === "reject") expect(end).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
+    if (choice === "continue") {
+      const next = engine.prompt(id, [{ type: "text", text: "another message" }]);
+      await flush();
+      expect(connection.prompt).toHaveBeenCalledTimes(1);
+      const confirmations = progress.mock.calls.map(([event]) => event).filter((event) => event.subType === "request_permission");
+      expect(confirmations).toHaveLength(2);
+      const nextRequest = confirmations[1].data.request_permission_request;
+      expect(engine.resolvePermissionIntervention({
+        permission_resolve_request: {
+          request_permission_response: { outcome: { Selected: { option_id: "reject" } } },
+          session_id: id, tool_call_id: nextRequest.toolCall.toolCallId, save_rule: false,
+        },
+      }).ok).toBe(true);
+      await next;
+      expect(connection.prompt).toHaveBeenCalledTimes(1);
+    }
+    await engine.destroy();
+  });
+
+  it("原会话恢复后先返回 chat 响应，再等待用户确认发送原消息", async () => {
+    const connections: Array<ReturnType<typeof mockConnection>> = [];
+    const spawn = stubSpawn(() => {
+      const connection = mockConnection(connections.length ? {
+        loadSession: vi.fn().mockResolvedValue({ configOptions: [] }),
+      } : {});
+      connections.push(connection);
+      return connection;
+    });
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    const progress = vi.fn();
+    engine.on("computer:progress", progress);
+    vi.useFakeTimers();
+    const pending = engine.chat({
+      user_id: "u1", project_id: "p1", session_id: "ses_old", request_id: "rid-approval", prompt: "hello",
+    } as any);
+    await vi.advanceTimersByTimeAsync(40_000);
+    const result = await pending;
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({ session_id: "ses_old", is_new_session: false });
+    expect(spawn.mock.calls[1][0].env).toMatchObject({ OPENCODE_PURE: "1" });
+    expect(connections[1].prompt).not.toHaveBeenCalled();
+    const confirmation = progress.mock.calls.map(([event]) => event).find((event) => event.subType === "request_permission");
+    expect(confirmation).toBeDefined();
+    const request = confirmation.data.request_permission_request;
+    expect(engine.resolvePermissionIntervention({
+      permission_resolve_request: {
+        request_permission_response: { outcome: { Selected: { option_id: "continue" } } },
+        session_id: "ses_old", tool_call_id: request.toolCall.toolCallId, save_rule: false,
+      },
+    }).ok).toBe(true);
+    await flush();
+    expect(connections[1].prompt).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "ses_old" }));
+    await engine.destroy();
+  });
+
+  it("恢复确认超时后不发送消息", async () => {
+    const connection = mockConnection();
+    stubSpawn(() => connection);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    (engine as any).externalPluginsDisabledForRecovery = true;
+    const id = "ses_timeout";
+    (engine as any).sessions.set(id, { id, acpSessionId: id, createdAt: Date.now(), status: "idle" });
+    const end = vi.fn();
+    engine.on("computer:promptEnd", end);
+    vi.useFakeTimers();
+    const pending = engine.prompt(id, [{ type: "text", text: "hello" }]);
+    await flush();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await pending;
+    expect(connection.prompt).not.toHaveBeenCalled();
+    expect(end).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
+    await engine.destroy();
+  });
+
+  it("等待确认时取消消息，迟到的确认不能发送消息", async () => {
+    const connection = mockConnection();
+    stubSpawn(() => connection);
+    const engine = new AcpEngine("nuwaxcode");
+    await engine.init(ENGINE_CONFIG);
+    (engine as any).externalPluginsDisabledForRecovery = true;
+    const id = "ses_cancel";
+    (engine as any).sessions.set(id, { id, acpSessionId: id, createdAt: Date.now(), status: "idle" });
+    const progress = vi.fn();
+    engine.on("computer:progress", progress);
+    const pending = engine.prompt(id, [{ type: "text", text: "hello" }]);
+    await flush();
+    const confirmation = progress.mock.calls.map(([event]) => event).find((event) => event.subType === "request_permission");
+    const request = confirmation.data.request_permission_request;
+    await engine.abortSession(id);
+    await pending;
+    const late = engine.resolvePermissionIntervention({
+      permission_resolve_request: {
+        request_permission_response: { outcome: { Selected: { option_id: "continue" } } },
+        session_id: id,
+        tool_call_id: request.toolCall.toolCallId,
+        save_rule: false,
+      },
+    });
+    expect(late.ok).toBe(false);
+    expect(connection.prompt).not.toHaveBeenCalled();
+    await engine.destroy();
   });
 
   it("同一会话的并发消息共享一次会话建立", async () => {
@@ -592,12 +767,12 @@ describe("AcpEngine session setup recovery · 隔离 home 与诊断", () => {
     fs.rmSync(mockAppDataDir, { recursive: true, force: true });
   });
 
-  it("新进程里仍建不出会话：在销毁之后、重启之前把 home 改名，再用干净 home 建新会话", async () => {
+  it("已禁用外部插件时仍可按原有隔离规则重建 home", async () => {
     const home = makePersistentHome();
     const db = seedSessionDb(home);
     const spawn = stubHangingSpawn(home, 3);
     const engine = new AcpEngine("nuwaxcode");
-    await engine.init(ENGINE_CONFIG);
+    await engine.init({ ...ENGINE_CONFIG, env: { OPENCODE_PURE: "1" } });
     vi.spyOn(engine, "promptAsync").mockResolvedValue(undefined);
 
     vi.useFakeTimers();
@@ -720,7 +895,7 @@ describe("AcpEngine session setup recovery · 隔离 home 与诊断", () => {
     // 隔离之后的第三次仍无响应：不再隔离第二次，直接判环境卡死
     const spawn = stubHangingSpawn(home);
     const engine = new AcpEngine("nuwaxcode");
-    await engine.init(ENGINE_CONFIG);
+    await engine.init({ ...ENGINE_CONFIG, env: { OPENCODE_PURE: "1" } });
 
     vi.useFakeTimers();
     const pending = engine.chat(newChatRequest("rid-once"));
@@ -781,7 +956,7 @@ describe("AcpEngine session setup recovery · 隔离 home 与诊断", () => {
       ok: false,
       reason: "engine_env_hang",
       engineKey: "p1",
-      recycled: ["new_timeout", "give_up"],
+      recycled: ["external_plugins_disabled", "give_up"],
       breakerOpened: true,
       engineLogTail: expect.arrayContaining([
         expect.stringContaining("bootstrapping"),
@@ -810,9 +985,9 @@ describe("AcpEngine session setup recovery · 隔离 home 与诊断", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       ok: true,
-      recycled: ["new_timeout"],
+      recycled: ["external_plugins_disabled"],
       quarantined: false,
-      setupPath: "new",
+      setupPath: "new→new_without_plugins",
     });
     await engine.destroy();
   });
