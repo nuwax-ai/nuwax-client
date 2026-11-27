@@ -285,8 +285,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Services (对齐 Tauri services_restart_all)
   services: {
-    configureServerHost: (host: string) =>
-      ipcRenderer.invoke("services:configureServerHost", host),
+    configureServerHost: (host: string, options?: { allowUnreachable?: boolean; restart?: boolean }) =>
+      ipcRenderer.invoke("services:configureServerHost", host, options),
     authState: () => ipcRenderer.invoke("services:authState"),
     syncConfig: () => ipcRenderer.invoke("services:syncConfig"),
     restartAll: () => ipcRenderer.invoke("services:restartAll"),

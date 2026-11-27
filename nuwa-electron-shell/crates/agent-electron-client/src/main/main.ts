@@ -88,6 +88,7 @@ import { redactLocalFileUrl } from "@shared/features/local-files/contract";
 import { businessBridgeOrigins, httpOrigin } from "./services/auth/businessOrigins";
 import { SPA_RESTORE_ARGUMENT } from "@shared/utils/spaDocumentRoute";
 import { configureCdpDiagnostics, describeCdpDecision } from "./diagnostics/cdpDiagnostics";
+import { applicationExitCode } from "./services/restartApplication";
 import { spawn } from "child_process";
 
 // Linux Wayland：合成器没有 text-input-v3 时，原生客户端接不到输入法（如统信 UOS 20），此时回退到 XWayland；
@@ -1139,7 +1140,7 @@ app.on("before-quit", (e) => {
       }
       closeDb();
       log.info("[App] Cleanup complete, exiting");
-      app.exit(0);
+      app.exit(applicationExitCode());
     }
   })();
 });

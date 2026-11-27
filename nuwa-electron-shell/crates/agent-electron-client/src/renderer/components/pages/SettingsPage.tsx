@@ -32,6 +32,7 @@ import {
   TEST_SERVER_HOST,
 } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
+import { isValidServiceHostInput } from "@shared/utils/serviceHostInput";
 import { ComputerUseSettings } from "../../features/computer-use";
 import { LocalFilesSettings } from "../../features/local-files";
 import { MessageSoundSettings } from "../settings/MessageSoundSettings";
@@ -245,9 +246,38 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
     return /^[a-z][a-z0-9+.-]*:\/\//i.test(host) ? host : `https://${host}`;
   };
 
+  const switchHost = async (next: string, allowUnreachable = false) => {
+    setSaving(true);
+    try {
+      const switched = await window.electronAPI!.services.configureServerHost(next, { allowUnreachable });
+      if (switched.probe) {
+        Modal.confirm({
+          title: t(I18N_KEYS.HostProbe.TITLE),
+          content: t(switched.probe === "dns"
+            ? I18N_KEYS.HostProbe.DNS
+            : I18N_KEYS.HostProbe.UNREACHABLE),
+          okText: t(I18N_KEYS.HostProbe.CONTINUE),
+          cancelText: t("Claw.Settings.saveConfig.cancel"),
+          onOk: () => switchHost(next, true),
+        });
+        return;
+      }
+      if (!switched.success) throw new Error(switched.error || "Domain switch failed");
+      const latest = await setupService.getStep1Config();
+      setConfig({ ...latest, serverHost: switched.serverHost! });
+      message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
+    } catch (error) {
+      console.error("Failed to switch server host:", error);
+      message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const commitHost = () => {
     const draft = hostDraft;
     if (draft == null) return;
+    if (!isValidServiceHostInput(draft)) return;
     setHostDraft(null);
     const saved = config?.serverHost ?? "";
     const next = normalizeHost(draft);
@@ -276,27 +306,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
       ),
       okText: t("Claw.Settings.saveConfig.save"),
       cancelText: t("Claw.Settings.saveConfig.cancel"),
-      onOk: async () => {
-        setSaving(true);
-        try {
-          const switched =
-            await window.electronAPI!.services.configureServerHost(next);
-          if (!switched.success)
-            throw new Error(switched.error || "Domain switch failed");
-          const latest = await setupService.getStep1Config();
-          await setupService.saveStep1Config({
-            ...latest,
-            serverHost: switched.serverHost!,
-          });
-          setConfig({ ...latest, serverHost: switched.serverHost! });
-          message.success(t(I18N_KEYS.Toast.SUCCESS.CONFIG_SAVED));
-        } catch (error) {
-          console.error("Failed to switch server host:", error);
-          message.error(t(I18N_KEYS.Toast.ERROR.CONFIG_SAVE_FAILED));
-        } finally {
-          setSaving(false);
-        }
-      },
+      onOk: () => switchHost(next),
     });
   };
 
@@ -448,6 +458,7 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
                 <AutoComplete
                   style={{ width: 260 }}
                   value={hostValue}
+                  status={hostDraft !== null && !isValidServiceHostInput(hostDraft) ? "error" : undefined}
                   // 预置建议：默认域 + 测试域去重（测试期默认域即测试环境，
                   // 恢复正式默认后两项并存，方便来回切换）
                   options={[...new Set([DEFAULT_SERVER_HOST, TEST_SERVER_HOST])].map(
@@ -460,6 +471,11 @@ export default function SettingsPage({ onOpenAuthorization }: { onOpenAuthorizat
                   onChange={(value) => setHostDraft(value)}
                   onBlur={commitHost}
                 />
+                {hostDraft !== null && !isValidServiceHostInput(hostDraft) && (
+                  <span role="alert" style={{ display: "block", color: "var(--color-error, #d4380d)", fontSize: 12 }}>
+                    {t(I18N_KEYS.HostProbe.INVALID)}
+                  </span>
+                )}
               </span>
             }
           />

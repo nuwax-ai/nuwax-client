@@ -28,7 +28,7 @@
 import { getAppEnv } from "../services/system/dependencies";
 import { ipcMain, dialog, BrowserWindow, webContents, app, screen, net, session, nativeTheme } from "electron";
 import type { IpcMainInvokeEvent, BrowserWindowConstructorOptions } from "electron";
-import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE } from "@shared/constants";
+import { APP_DATA_DIR_NAME, APP_NAME_IDENTIFIER, IS_DEV_PROFILE, I18N_KEYS } from "@shared/constants";
 import { FEATURES } from "@shared/featureFlags";
 import * as fs from "fs";
 import * as os from "os";
@@ -75,6 +75,8 @@ import { CAN_USE_IPC, resolveHostCapability } from '@shared/hostCapabilities';
 import { resolveLocalFilesWorkspace } from "../services/localFilesWorkspace";
 import { redactStringForLog } from "../services/utils/logRedact";
 import { getConfiguredPorts } from "../services/startupPorts";
+import { probeServerHost } from "../services/serverHostProbe";
+import { restartApplication } from "../services/restartApplication";
 
 import {
   initializeCommercialAuth,
@@ -830,6 +832,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
   const configureServerHost = async (
     event: IpcMainInvokeEvent,
     input: unknown,
+    options?: { allowUnreachable?: boolean; restart?: boolean },
   ) => {
     if (switching) return { success: false, error: "Domain switch already in progress" };
     const raw =
@@ -841,7 +844,7 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     let origin: string;
     try {
       const url = new URL(candidate);
-      if (!/^https?:$/.test(url.protocol)) {
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password) {
         return { success: false, error: "only http(s) allowed" };
       }
       origin = url.origin;
@@ -852,6 +855,26 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
     if (!(isTrustedSender(event) && isCurrentDocument(event)) && !isHostSender(event))
       return { success: false, error: "Stale document" };
     switching = true;
+    // Only the host UI may explicitly override a failed probe or request restart.
+    const hostRequest = isHostSender(event);
+    let preflightPassed = false;
+    try {
+      if (!(hostRequest && options?.allowUnreachable === true)) {
+        const probe = await probeServerHost(origin);
+        if (probe !== "ok") return { success: false, error: hostRequest ? "Server host probe failed" : t(probe === "dns" ? I18N_KEYS.HostProbe.GUEST_DNS : I18N_KEYS.HostProbe.GUEST_UNREACHABLE), probe };
+      }
+      // A guest may have navigated away while the probe was running.
+      if (!isHostSender(event) && !(isTrustedBusinessSender(event, trustedOrigins()) &&
+        documents.get(documentKey(event)) === authGeneration))
+        return { success: false, error: "Stale document" };
+      preflightPassed = true;
+    } catch {
+      return { success: false, error: "Server host probe failed", probe: "unreachable" };
+    } finally {
+      if (!preflightPassed) switching = false;
+    }
+    let previousBusinessOrigin = "";
+    try { previousBusinessOrigin = currentBusinessOrigin(); } catch { /* Invalid old config can still be repaired. */ }
     authGeneration++;
     stopIMReceiver();
     cancelTransfers("switch-domain");
@@ -895,9 +918,16 @@ export function registerNuwaxBridgeHandlers(ctx: HandlerContext): void {
       const { refreshLoopbackGateway } =
         await import("../services/loopbackGateway");
       await refreshLoopbackGateway();
+      const previousHost = (typeof previousConfig?.serverHost === "string"
+        ? httpOrigin(previousConfig.serverHost) : null) || httpOrigin(previousBusinessOrigin);
+      if (previousHost && previousHost !== origin)
+        writeSetting("nuwax.previousServerHost", previousHost);
       ctx
         .getMainWindow()
         ?.webContents.send("nuwax:serverHostChanged", { serverHost: origin });
+      if (hostRequest && options?.restart === true) {
+        setTimeout(restartApplication, 100);
+      }
       return { success: true, serverHost: origin };
     } catch (error) {
       // 同文档允许再次操作重试，但旧会话仍不可写回（需重新读取上下文）。
