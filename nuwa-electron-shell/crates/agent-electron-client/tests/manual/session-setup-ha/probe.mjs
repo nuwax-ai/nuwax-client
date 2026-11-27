@@ -65,7 +65,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const seconds = (ms) => `${(ms / 1000).toFixed(2)}s`;
 
 class Engine {
-  static async start(binary, { home, cwd }) {
+  static async start(binary, { home, cwd, env }) {
     const port = await freePort();
     for (const sub of [
       ".config",
@@ -75,10 +75,11 @@ class Engine {
     ]) {
       fs.mkdirSync(path.join(home, sub), { recursive: true });
     }
-    return new Engine(binary, { home, cwd, port });
+    return new Engine(binary, { home, cwd, port, env });
   }
 
-  constructor(binary, { home, cwd, port }) {
+  constructor(binary, { home, cwd, port, env }) {
+    this.port = port;
     this.responses = new Map();
     this.sentAt = new Map();
     this.notifications = 0;
@@ -98,6 +99,7 @@ class Engine {
           XDG_CACHE_HOME: path.join(home, ".cache"),
           XDG_STATE_HOME: path.join(home, ".local", "state"),
           GIT_TERMINAL_PROMPT: "0",
+          ...env,
         },
         stdio: ["pipe", "pipe", "pipe"],
       },
@@ -324,7 +326,76 @@ async function scenarioHangDir(binary, work, wait) {
   return out;
 }
 
-const SCENARIOS = { clean: scenarioClean, slowmcp: scenarioSlowMcp, hangdir: scenarioHangDir };
+async function scenarioPluginRecovery(binary, work, wait) {
+  const home = path.join(work, "home");
+  const project = path.join(work, "project");
+  const pluginDir = path.join(project, ".opencode", "plugins");
+  fs.mkdirSync(project, { recursive: true });
+  let engine;
+  try {
+    engine = await Engine.start(binary, { home, cwd: work, env: { OPENCODE_PURE: "0" } });
+    await engine.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, wait(30_000));
+    const created = await engine.request("session/new", { cwd: project, mcpServers: [] }, wait(40_000));
+    const sessionId = created?.message.result?.sessionId;
+    if (!sessionId) throw new Error("Could not create the original session");
+    engine.close();
+
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.copyFileSync(path.join(here, "hang-plugin.js"), path.join(pluginDir, "hang.js"));
+    fs.writeFileSync(path.join(project, ".opencode", "opencode.json"), JSON.stringify({
+      permission: { bash: "deny" },
+    }));
+    const skillDir = path.join(project, ".opencode", "skills", "recovery-check");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: recovery-check\ndescription: Recovery probe skill\n---\n\nProbe.\n");
+    engine = await Engine.start(binary, { home, cwd: work, env: { OPENCODE_PURE: "0" } });
+    await engine.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, wait(30_000));
+    const blocked = await engine.request("session/load", { sessionId, cwd: project, mcpServers: [] }, wait(15_000));
+    if (blocked) throw new Error("Expected the external plugin to block session/load");
+    engine.close();
+
+    engine = await Engine.start(binary, { home, cwd: work, env: { OPENCODE_PURE: "1" } });
+    await engine.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, wait(30_000));
+    const restored = await engine.request("session/load", { sessionId, cwd: project, mcpServers: [] }, wait(40_000));
+    if (!restored || restored.message.error || !restored.message.result) {
+      throw new Error(`Could not restore original session: ${describe(restored)}`);
+    }
+    const query = `directory=${encodeURIComponent(project)}`;
+    const configResponse = await fetch(`http://127.0.0.1:${engine.port}/config?${query}`, { signal: AbortSignal.timeout(10_000) });
+    if (!configResponse.ok) throw new Error(`Config query failed: ${configResponse.status}`);
+    const config = await configResponse.json();
+    if (config.permission?.bash !== "deny") throw new Error("Project permission was not preserved");
+    const skillResponse = await fetch(`http://127.0.0.1:${engine.port}/skill?${query}`, { signal: AbortSignal.timeout(10_000) });
+    if (!skillResponse.ok) throw new Error(`Skill query failed: ${skillResponse.status}`);
+    const skills = await skillResponse.json();
+    if (!Array.isArray(skills) || !skills.some((skill) => skill.name === "recovery-check")) {
+      throw new Error("Project skill was not preserved");
+    }
+    engine.close();
+    engine = await Engine.start(binary, { home, cwd: project, env: { OPENCODE_PURE: "0" } });
+    const blockedHandshake = await engine.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, wait(15_000));
+    if (blockedHandshake) throw new Error("Expected the root plugin to block initialize");
+    engine.close();
+    engine = await Engine.start(binary, { home, cwd: project, env: { OPENCODE_PURE: "1" } });
+    const recoveredHandshake = await engine.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, wait(30_000));
+    if (!recoveredHandshake || recoveredHandshake.message.error || !recoveredHandshake.message.result) {
+      throw new Error(`Could not recover handshake: ${describe(recoveredHandshake)}`);
+    }
+    return {
+      "原会话": sessionId,
+      "插件卡住时恢复": withLatency(blocked),
+      "跳过外部插件后恢复同一会话": withLatency(restored),
+      "插件文件仍在原处": fs.existsSync(path.join(pluginDir, "hang.js")),
+      "项目权限和技能仍可见": true,
+      "根目录插件阻塞握手": withLatency(blockedHandshake),
+      "跳过插件后握手": withLatency(recoveredHandshake),
+    };
+  } finally {
+    engine?.close();
+  }
+}
+
+const SCENARIOS = { clean: scenarioClean, slowmcp: scenarioSlowMcp, hangdir: scenarioHangDir, "plugin-recovery": scenarioPluginRecovery };
 
 async function main() {
   const [scenario, ...flags] = process.argv.slice(2);

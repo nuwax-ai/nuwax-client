@@ -13,6 +13,7 @@
 node tests/manual/session-setup-ha/probe.mjs clean
 node tests/manual/session-setup-ha/probe.mjs slowmcp
 node tests/manual/session-setup-ha/probe.mjs hangdir
+node tests/manual/session-setup-ha/probe.mjs plugin-recovery
 # 只想快速冒烟：加 --fast（等待按 1/5 缩短）
 ```
 
@@ -21,6 +22,7 @@ node tests/manual/session-setup-ha/probe.mjs hangdir
 | `clean` | 干净目录 | 不存在的会话 `session/load` 约 1–2 秒就报错；`session/new`、对已有会话的 `session/load` 正常返回 |
 | `slowmcp` | 一个 20 秒才应答 `initialize` 的 MCP 服务 | `session/load` 在旧的 15 秒预算内无响应，约 21 秒才成功返回 —— 所以恢复超时要比冷启动 MCP 更长 |
 | `hangdir` | 工作目录里放一个永不返回的项目级插件 | `session/load` 与回退的 `session/new` 都无响应；同进程里另一个干净目录照常可用；引擎日志停在加载插件那一步 |
+| `plugin-recovery` | 先建会话，再放入永不返回的外部插件 | 普通模式恢复卡住；以 `OPENCODE_PURE=1` 重启后恢复原会话，项目权限、技能及插件文件保留 |
 
 文件说明：
 
@@ -43,26 +45,20 @@ node tests/manual/session-setup-ha/probe.mjs hangdir
 
 预期：
 
-- 主日志里依次出现 `[SessionSetup] slow restore`（15 秒）、`♻️ Session setup recovery (load_timeout)`
-  （40 秒）、`♻️ Session setup recovery (new_timeout)`，随后是这个会话的 home 被隔离
-  （`Quarantined engine home`），新进程里仍然建不出会话时出现
-  `[SessionSetup] engine log tail` 与 `[SessionSetup] failed`，原因是 `engine_env_hang`。
-- 整条消息在约 2 分半内有结果：前端收到「会话运行环境异常…」的可读文案，而不是
-  `java.net.http.HttpTimeoutException`。
-- 之后 5 分钟内在该会话再发消息会立刻返回同样的错误（熔断）；其他会话不受影响。
-- `~/.nuwax/run/projects/<userId>/<conversationId>/nuwaxcode/` 下出现
-  `home.quarantine-<时间戳>`，原会话数据在里面。
-- 「导出日志」得到的 ZIP 里有 `diagnostics/session-setup.json` 和
-  `engine-logs/<userId>/<conversationId>/nuwaxcode/home/opencode.log`。
+- 主日志出现 `[SessionSetup] slow restore`（15 秒）、`external_plugins_disabled`（40 秒），
+  然后用原 session ID 恢复。原 home 和插件文件不被移动或删除。
+- 前端出现确认：说明本次运行暂时跳过所有外部插件，包括插件提供的安全检查。
+  确认前消息不发送；拒绝、取消和超时都不会发送；确认后继续原会话。
+- 如果跳过外部插件后仍然无法恢复，返回明确错误并保留原会话数据；其他会话不受影响。
+- 「导出日志」应包含本次恢复的 `diagnostics/session-setup.json`。
 
-清理：删除工作目录里的 `.opencode/plugins/hang.js`；需要找回原会话上下文时，
-退出应用后把 `home.quarantine-<时间戳>` 改回 `home`（先删掉隔离后新建的 `home`）。
+清理：退出应用后删除测试用的 `.opencode/plugins/hang.js`。下一次启动恢复正常插件加载。
 
 ## 3. Windows 安装包验收（必做）
 
-进程树 kill 与目录改名在 Windows 上行为不同，同样的步骤要在安装包上再走一遍：
+进程树和进度事件在 Windows 上需要用安装包再验收一遍：
 
 - 任务管理器里没有残留的 `nuwaxcode.exe`。
-- `home.quarantine-<时间戳>` 改名成功；若因文件占用失败，主日志原因是
-  `quarantine_failed`，不重试、不循环。
-- 删除 `hang.js`、熔断过期（5 分钟）后，该会话恢复可用。
+- 旧会话 ID 保持不变，并在确认前显示插件停用提示；拒绝与超时均不执行消息。
+- 原 home、项目权限、技能与插件文件保留，其他会话不受影响。
+- 删除 `hang.js` 并重启后，原会话以正常插件模式恢复。
