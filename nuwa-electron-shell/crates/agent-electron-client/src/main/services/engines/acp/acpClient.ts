@@ -54,6 +54,10 @@ import { perfEmitter } from "../perf/perfEmitter";
 import { firstTokenTrace } from "../perf/firstTokenTrace";
 import { resolveCustomAgentBinary } from "../../agentInstaller";
 import {
+  HARNESS_LOG_DIR_MIN_ADAPTER_VERSION,
+  adapterSupportsHarnessLogDir,
+} from "./harnessLogDirSupport";
+import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
 } from "./openAICompatRouting";
@@ -76,6 +80,30 @@ export function resolveHarnessLogDir(
     return { dir: fallback, usedHostValue: false, ignoredHostValue: trimmed };
   }
   return { dir: trimmed, usedHostValue: true };
+}
+
+/** 进程内只提示一次：宿主机长期误配时不该每个会话刷一条。 */
+const loggedOnce = new Set<string>();
+
+function logOnce(level: "info" | "warn", message: string, meta?: Record<string, unknown>): void {
+  if (loggedOnce.has(message)) return;
+  loggedOnce.add(message);
+  if (level === "warn") log.warn(message, meta);
+  else log.info(message, meta);
+}
+
+/** 读取随包/已安装适配器的版本；读不到时返回 undefined。 */
+function readAdapterPackageVersion(): string | undefined {
+  const adapterDir =
+    getHarnessAcpBundledDir() ?? getAcpPackageDir("@nuwax-ai/nuwax-harness-acp-ts");
+  if (!adapterDir) return undefined;
+  try {
+    const raw = fs.readFileSync(path.join(adapterDir, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version;
+  } catch {
+    return undefined;
+  }
 }
 
 /** ACP 线上日志单行预览上限 */
@@ -1092,7 +1120,8 @@ export async function createAcpConnection(
     // 日志统一落在客户端的 logs 目录下，两个子目录各管一端：
     //   nuwax-harness-acp-ts/ 适配器自己的日志（app-server.<日期>.log 等）
     //   nuwax-harness/        引擎日志（适配器经 -c log_dir= 传给引擎的落点）
-    // 不这么指定时，引擎日志会写进每个项目隔离的 CODEX_HOME，排障要挨个项目目录翻。
+    // 后半段依赖适配器 ≥ 1.2.59 消费 NUWAX_HARNESS_LOG_DIR；更早的版本会静默忽略它，
+    // 引擎日志仍写进每个项目隔离的 CODEX_HOME（启动时会在下方提示一次）。
     const engineLogsRoot = path.join(
       app.getPath("home"),
       APP_DATA_DIR_NAME,
@@ -1100,23 +1129,45 @@ export async function createAcpConnection(
     );
     env.CODEX_LOG_DIR = path.join(engineLogsRoot, "nuwax-harness-acp-ts");
     // 引擎日志落点：宿主机显式设置时以其为准（与 NUWAX_UPDATE_PLAN 的透传口径一致），
-    // 否则跟随客户端 logs 目录。适配器只接受绝对路径——相对路径会让它在启动 App Server
-    // 时直接抛错、整个 agent 起不来，所以这里先拦下并回退默认值。
+    // 否则跟随客户端 logs 目录。适配器只接受绝对路径——相对路径会让它（≥ 1.2.59）在
+    // 启动 App Server 时抛错、整个 agent 起不来，所以这里先拦下并回退默认值。
     const harnessLogDir = resolveHarnessLogDir(
       process.env.NUWAX_HARNESS_LOG_DIR,
       path.join(engineLogsRoot, "nuwax-harness"),
     );
     if (harnessLogDir.ignoredHostValue !== undefined) {
-      log.warn("[AcpClient] ignoring a relative NUWAX_HARNESS_LOG_DIR", {
+      logOnce("warn", "[AcpClient] ignoring a relative NUWAX_HARNESS_LOG_DIR", {
         value: harnessLogDir.ignoredHostValue,
         using: harnessLogDir.dir,
       });
     } else if (harnessLogDir.usedHostValue) {
-      log.info("[AcpClient] NUWAX_HARNESS_LOG_DIR passthrough from host env", {
+      logOnce("info", "[AcpClient] NUWAX_HARNESS_LOG_DIR passthrough from host env", {
         dir: harnessLogDir.dir,
       });
     }
+    // 目录先建出来：引擎会按需创建，但权限问题只会在写入时以"日志不见了"的形式出现；
+    // 这里失败就点名目录告警，把"落点不可写"提前暴露。
+    try {
+      fs.mkdirSync(harnessLogDir.dir, { recursive: true });
+    } catch (error) {
+      logOnce("warn", "[AcpClient] cannot create the engine log directory", {
+        dir: harnessLogDir.dir,
+        error,
+      });
+    }
     env.NUWAX_HARNESS_LOG_DIR = harnessLogDir.dir;
+    // 适配器版本不够时该变量会被忽略：提示一次，避免"配了但没生效"没人发现。
+    const adapterVersion = readAdapterPackageVersion();
+    if (!adapterSupportsHarnessLogDir(adapterVersion)) {
+      logOnce(
+        "warn",
+        "[AcpClient] bundled nuwax-harness-acp-ts ignores NUWAX_HARNESS_LOG_DIR; engine logs stay in CODEX_HOME",
+        {
+          adapterVersion: adapterVersion ?? "unknown",
+          requiredVersion: HARNESS_LOG_DIR_MIN_ADAPTER_VERSION,
+        },
+      );
+    }
     env.RUST_LOG = "debug";
     // 适配器（nuwax-harness-acp-ts）只认 NUWAX_PATH/CODEX_PATH 定位引擎二进制，
     // 其 homedir() 缓存兜底在下方隔离 HOME 下必然落空，必须显式指向 bundled
