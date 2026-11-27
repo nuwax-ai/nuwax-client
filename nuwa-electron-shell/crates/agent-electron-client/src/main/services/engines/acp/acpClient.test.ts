@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resolveHarnessLogDir } from "./acpClient";
 import {
   applyOpenAICompatibleEnv,
   resolveOpenAICompatModel,
@@ -64,6 +65,36 @@ function createBaseConfig(
     ...overrides,
   };
 }
+
+describe("resolveHarnessLogDir", () => {
+  const fallback = "/home/u/.nuwaclaw/logs/nuwax-harness";
+
+  it("uses the default when the host names nothing", () => {
+    expect(resolveHarnessLogDir(undefined, fallback)).toEqual({
+      dir: fallback,
+      usedHostValue: false,
+    });
+    expect(resolveHarnessLogDir("   ", fallback)).toEqual({
+      dir: fallback,
+      usedHostValue: false,
+    });
+  });
+
+  it("honors an absolute host value", () => {
+    expect(resolveHarnessLogDir("/var/log/harness", fallback)).toEqual({
+      dir: "/var/log/harness",
+      usedHostValue: true,
+    });
+  });
+
+  it("ignores a relative host value instead of failing the whole agent", () => {
+    expect(resolveHarnessLogDir("logs/harness", fallback)).toEqual({
+      dir: fallback,
+      usedHostValue: false,
+      ignoredHostValue: "logs/harness",
+    });
+  });
+});
 
 describe("resolveOpenAICompatModel", () => {
   it("strips openai-compatible prefix for provider model env vars", () => {

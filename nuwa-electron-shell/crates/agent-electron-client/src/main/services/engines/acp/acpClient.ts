@@ -60,6 +60,24 @@ import {
 import { isHarnessEngineId } from "../types";
 import { redactStringForLog } from "../../utils/logRedact";
 
+/**
+ * 解析引擎日志目录：宿主机给的绝对路径优先，否则用默认值。
+ *
+ * 适配器会把该值转成 `-c log_dir=`，相对路径会让它在启动时报错（agent 完全起不来），
+ * 所以宿主机误配时这里只回退并上报，不把错误传给子进程。
+ */
+export function resolveHarnessLogDir(
+  hostValue: string | undefined,
+  fallback: string,
+): { dir: string; usedHostValue: boolean; ignoredHostValue?: string } {
+  const trimmed = hostValue?.trim();
+  if (!trimmed) return { dir: fallback, usedHostValue: false };
+  if (!path.isAbsolute(trimmed)) {
+    return { dir: fallback, usedHostValue: false, ignoredHostValue: trimmed };
+  }
+  return { dir: trimmed, usedHostValue: true };
+}
+
 /** ACP 线上日志单行预览上限 */
 const WIRE_LOG_PREVIEW_CHARS = 500;
 
@@ -1082,15 +1100,23 @@ export async function createAcpConnection(
     );
     env.CODEX_LOG_DIR = path.join(engineLogsRoot, "nuwax-harness-acp-ts");
     // 引擎日志落点：宿主机显式设置时以其为准（与 NUWAX_UPDATE_PLAN 的透传口径一致），
-    // 否则跟随客户端 logs 目录。适配器只接受绝对路径。
-    const harnessLogDirOverride = process.env.NUWAX_HARNESS_LOG_DIR?.trim();
-    env.NUWAX_HARNESS_LOG_DIR =
-      harnessLogDirOverride || path.join(engineLogsRoot, "nuwax-harness");
-    if (harnessLogDirOverride) {
+    // 否则跟随客户端 logs 目录。适配器只接受绝对路径——相对路径会让它在启动 App Server
+    // 时直接抛错、整个 agent 起不来，所以这里先拦下并回退默认值。
+    const harnessLogDir = resolveHarnessLogDir(
+      process.env.NUWAX_HARNESS_LOG_DIR,
+      path.join(engineLogsRoot, "nuwax-harness"),
+    );
+    if (harnessLogDir.ignoredHostValue !== undefined) {
+      log.warn("[AcpClient] ignoring a relative NUWAX_HARNESS_LOG_DIR", {
+        value: harnessLogDir.ignoredHostValue,
+        using: harnessLogDir.dir,
+      });
+    } else if (harnessLogDir.usedHostValue) {
       log.info("[AcpClient] NUWAX_HARNESS_LOG_DIR passthrough from host env", {
-        dir: harnessLogDirOverride,
+        dir: harnessLogDir.dir,
       });
     }
+    env.NUWAX_HARNESS_LOG_DIR = harnessLogDir.dir;
     env.RUST_LOG = "debug";
     // 适配器（nuwax-harness-acp-ts）只认 NUWAX_PATH/CODEX_PATH 定位引擎二进制，
     // 其 homedir() 缓存兜底在下方隔离 HOME 下必然落空，必须显式指向 bundled
