@@ -11,6 +11,7 @@ import { checkMacNotificationPermission } from "./system/macNotificationPermissi
 import { openMacPrivacySettings } from "./system/macPermissions";
 import { APP_DISPLAY_NAME, IS_DEV_PROFILE, COMMERCIAL_PROFILE_NAME } from "@shared/constants";
 import { permissionHelperName } from "@shared/utils/permissionIdentityText";
+import { restartApplication } from "./restartApplication";
 import {
   PermissionRestartTracker,
   isDragAddPermissionKey,
@@ -165,8 +166,7 @@ export function showPermissionApp(): boolean {
   return true;
 }
 export function restartForPermissions(): boolean {
-  app.relaunch();
-  app.quit();
+  restartApplication();
   return true;
 }
 /**

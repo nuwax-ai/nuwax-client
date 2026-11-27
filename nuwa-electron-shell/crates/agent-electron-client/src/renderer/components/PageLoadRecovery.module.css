@@ -59,6 +59,11 @@
   gap: 10px;
   margin-top: 24px;
 }
+.hostRecovery { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--color-border, #e7e8ee); }
+.currentHost { font-size: 13px; overflow-wrap: anywhere; }
+.hostLabel { display: block; text-align: left; font-size: 13px; }
+.hostInput { display: block; width: 100%; box-sizing: border-box; margin: 6px 0 10px; padding: 10px; color: inherit; background: transparent; border: 1px solid var(--color-border, #e7e8ee); border-radius: 8px; }
+.hostProblem { color: var(--color-error, #d4380d); font-size: 13px; line-height: 1.5; }
 .primary,
 .secondary {
   font: inherit;

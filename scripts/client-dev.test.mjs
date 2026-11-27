@@ -5,17 +5,53 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { assertPortAvailable, waitForHttp, launch, stopProcess, developmentEnv } from './client/dev.mjs';
+import { assertPortAvailable, waitForHttp, launch, stopProcess, developmentEnv, superviseElectron, DEV_RESTART_EXIT_CODE } from './client/dev.mjs';
 import { unsignedEnv } from './client/pack.mjs';
 
 test('all development modes isolate the profile while keeping the commercial host and automatic ports', () => {
   for (const mode of ['dist', 'source', 'remote']) {
     const env = developmentEnv('/client', mode, 3000);
     assert.equal(env.NUWAX_DEV_PROFILE, '1');
+    assert.equal(env.NUWAX_DEV_SUPERVISED, '1');
     assert.equal(env.NUWAX_APP_IDENTIFIER, 'nuwax');
     assert.equal(env.NUWAX_LOCAL_PORT_MODE, 'auto');
     assert.equal(env.NUWAX_WEBVIEW_ORIGIN, mode === 'source' ? 'http://localhost:3000' : '');
   }
+});
+
+test('supervisor restarts Electron without stopping Vite and ends on normal quit', async () => {
+  const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+  const viteExit = deferred();
+  const firstExit = deferred();
+  const secondExit = deferred();
+  const vite = { exit: viteExit.promise, alive: () => true };
+  const first = { exit: firstExit.promise };
+  const second = { exit: secondExit.promise };
+  let starts = 0;
+  const disposed = [];
+  const running = superviseElectron({ startElectron: () => [first, second][starts++], services: [vite], shouldStop: () => false, disposeElectron: async item => disposed.push(item) });
+  firstExit.resolve({ code: DEV_RESTART_EXIT_CODE });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(starts, 2);
+  assert.deepEqual(disposed, [first]);
+  secondExit.resolve({ code: 0 });
+  const result = await running;
+  assert.equal(result.electron, second);
+  assert.equal(result.result.code, 0);
+});
+
+test('supervisor does not restart after Vite exits during Electron cleanup', async () => {
+  let finishCleanup;
+  let viteAlive = true;
+  let starts = 0;
+  const vite = { exit: new Promise(() => {}), alive: () => viteAlive };
+  const electron = { exit: Promise.resolve({ code: DEV_RESTART_EXIT_CODE }) };
+  const running = superviseElectron({ startElectron: () => { starts++; return electron; }, services: [vite], shouldStop: () => false, disposeElectron: () => new Promise(resolve => { finishCleanup = resolve; }) });
+  await new Promise(resolve => setImmediate(resolve));
+  viteAlive = false;
+  finishCleanup();
+  await running;
+  assert.equal(starts, 1);
 });
 
 test('packaging cannot inherit the local development profile', () => {
